@@ -30,7 +30,10 @@ load_dotenv(ENV_FILE_PATH)
 
 COMPOSER_KEY_ID = os.getenv("COMPOSER_KEY_ID")
 COMPOSER_SECRET = os.getenv("COMPOSER_SECRET")
-ACCOUNT_UUIDS = [uid.strip() for uid in os.getenv("ACCOUNT_UUIDS", "").split(",") if uid.strip()]
+acc_ind = os.getenv("ACCOUNT_INDIVIDUAL", "").strip()
+acc_roth = os.getenv("ACCOUNT_ROTH", "").strip()
+acc_trad = os.getenv("ACCOUNT_TRAD", "").strip()
+ACCOUNT_UUIDS = [uid for uid in [acc_ind, acc_roth, acc_trad] if uid]
 
 ALPACA_KEY = os.getenv("ALPACA_KEY")
 ALPACA_SECRET = os.getenv("ALPACA_SECRET")
