@@ -1,10 +1,8 @@
-flask
-python-dotenv
 requests
 numpy
-schedule
 pandas
-alpaca-trade-api
-matplotlib
-seaborn
-scikit-optimize
+python-dotenv
+Flask
+schedule
+optuna
+joblib
