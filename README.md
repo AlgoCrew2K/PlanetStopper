@@ -1,119 +1,123 @@
-# **🤖 AlphaBot: Multi-Factor Volatility Engine (v4.0)**
+# AlphaBotNext
 
-AlphaBot is a high-performance quantitative risk-management framework and automated execution engine designed to interface directly with **Composer.trade** portfolios. By synthesizing real-time market sentiment (```VIX```), intraday time decay, structural volume support (True VWAP), and individual asset velocity, AlphaBot acts as an intelligent circuit breaker—protecting capital during systemic breakdowns while aggressively locking in gains during parabolic runs.
+## Summary
 
-AlphaBot (v4.0) marks the transition from a static execution script to a **Self-Optimizing Risk Engine**. It features a High-Concurrency SQLite Backend for robust state management and a daily Walk-Forward Optimization engine that continuously adapts the bot's defensive parameters to shifting market regimes.
+The primary intent of **AlphaBotNext** is to function as an institutional-grade, algorithmic risk engine that sits on top of Composer.trade portfolios (referred to as "symphonies"). Rather than relying on passive "buy-and-hold" strategies that leave capital exposed to intraday market crashes, AlphaBotNext actively monitors live market data minute-by-minute. Its goal is to dynamically calculate intelligent trailing stops and automatically execute "sell-to-cash" orders via API when mathematical risk thresholds are breached. Ultimately, it seeks to generate "Guard Alpha"—mathematically proving that its automated early exits saved the user money compared to holding the asset until the market close.
 
-## **🌟 Core Defensive Architecture**
+---
 
-AlphaBot no longer uses a "one-size-fits-all" trailing stop. It layers multiple distinct mathematical forces to dynamically manage risk every minute of the trading day:
+## Features Overview
 
-### **1. The Macro Foundation (VIX Regime Filter)**
+AlphaBotNext achieves its goals through a sophisticated combination of data ingestion, multi-layered mathematical defense protocols, concurrency management, and machine learning optimization.
 
-The bot determines the "Market Weather" using the **VIX Index**. Instead of a static baseline, it sets your trailing stop multiplier dynamically based on current market fear:
+### **Live Data Ingestion & Regime Detection**
+* Alpaca API Integration: Fetches real-time, 1-minute historical and live pricing data for all active holdings across user portfolios. It utilizes parallel processing and local caching to rapidly generate synthetic intraday history.
+* SPY-Conditioned Macro Environment: Filters the historical Monte Carlo dataset to only use days that closely match today's SPY performance. It uses a Nearest Neighbors matching algorithm based on SPY daily returns and rolling 20-day volatility to preserve cross-asset correlations.
+  *(Note: Legacy VIX Macro-Awareness has been explicitly removed in favor of Volatility-Scaled limits)*.
 
-* **Low Volatility (<15 ```VIX```):** Clamps stops tight (```VIX_LOW_MULT```) to prevent "slow bleed" losses in sideways chop.  
-* **Normal Regime (15-25 ```VIX```):** Balanced sensitivity (```VIX_MID_MULT```) for standard market conditions.  
-* **Crisis Regime (>25 ```VIX```):** Widens stops (```VIX_HIGH_MULT```) to allow for the systemic noise inherent in high-fear markets, preventing you from being shaken out by standard intraday volatility.
 
-### **2. Monte Carlo Probabilistic Arming**
+### **The Multi-Layered Risk Engine**
+**Volatility Scaling**
+* Calculates an active trailing stop distance based strictly on the portfolio's 20-day volatility.
+* **Logarithmic Time Squeeze:** Shrinks the trailing stop distance smoothly and predictably based on the time of day using a logarithmic decay curve. The dynamic multiplier decays from 1.5x at the open to 0.5x by the close.
+* **Parabolic Squeeze Ratchet:** Measures tick-by-tick return velocity. If the velocity exceeds the `PARABOLIC_VELOCITY_THRESHOLD`, the engine permanently ratchets the trailing stop tighter using the `MAX_PARABOLIC_SQUEEZE` multiplier to protect the peak.
+* **Risk Guard (Breakeven Lock):** To lock the absolute downside floor to breakeven (0.0%), the live return must hold above a dynamically calculated activation threshold (clamped between 0.4% and 3.0%) for 5 consecutive ticks.
+* **Monte Carlo State Engine:** Runs thousands of vectorized Monte Carlo simulations to calculate the probability of the symphony beating its current return. It dictates state-switching by arming defensive trailing stops when the probability falls below the `TRIGGER_THRESHOLD_PCT` and triggering take-profit traps when it falls below the `TAKE_PROFIT_MC_PCT`.
+* **Volatility-Scaled VWAP Defenses:** Implements a dual-system VWAP defense. System A (VWAP Breakdown) forces exits if the portfolio price drops below its VWAP after hitting a high-water mark. System B (VWAP Bleed Cut) dynamically calculates a stop floor using a `VWAP_BLEED_MULTIPLIER` applied to the asset's 20-day volatility, safely clamped between -0.50% and -3.0%, to amputate bleeding assets without being whipsawed by noise.
+* **Strict Exit Confirmation:** Standard trailing stops require 3 consecutive ticks below the stop line (with a 0.10% magnitude floor) AND a Monte Carlo sanity gate check (probability under 60.0) to prevent premature exits on market noise.
 
-Instead of arbitrary entry points, AlphaBot uses a localized Monte Carlo engine. It compares a symphony’s intraday return against 5,000 simulated paths generated from 3 years of historical correlation and today’s live market momentum (```SPY``` proxy). When the probability of the symphony continuing to beat its simulated peers falls below ```TRIGGER_THRESHOLD_PCT```, the defensive trailing stop is "Armed."
 
-### **3. Logarithmic Time-Decay Trailing Stop**
+### **Symphony-Level Database Architecture**
+* **SQLite State Management:** Uses a highly concurrent SQLite database to store states, isolated risk parameters, execution locks, and continuous chart histories.
+* **Symphony-Level Strategies:** Maintains independent parameter tuning and variable locks based on unique, normalized symphony names.
+* **Per-Symphony Activity Logging:** Captures and stores specific event logs (e.g., arming, triggers, execution) for each symphony into a local `symphony_logs.json` file, ensuring intraday actions are auditable.
 
-AlphaBot acknowledges that market volatility often increases toward the close. It calculates a trailing stop that tightens throughout the day based on a logarithmic decay curve:
 
-* **Morning:** The stop is wider (starting at ```TRAILING_STOP_PCT```), allowing the primary trend to establish.  
-* **Afternoon:** The stop aggressively "strangles" the price, narrowing toward ```ENDING_STOP_PCT``` to ensure that morning gains do not bleed out during End-of-Day profit-taking.
+### **Automated Execution & Alerting**
+* **Gatekeeper & Scheduler:** A fully internal Flask-based daemon process using the `schedule` library runs the bot every minute during market hours, removing reliance on external cron jobs.
+* **Composer API Trigger:** Fires a POST request to Composer's backend, liquidating a symphony to cash if the stop level is hit. It utilizes an exponential backoff retry mechanism (1, 2, 4, 10 seconds) to ensure resilience against rate limits (HTTP 429) and network spikes.
+* **Discord Webhooks (Multi-Embed):** Instantly sends a clean, multi-embed payload detailing the exit reason, Guard Alpha metrics, VWAP stats, and a summary chart powered by QuickChart. It chunks the Discord messages into batches of 10 to strictly adhere to Discord's rate limits.
 
-### **4. True VWAP (Volume Weighted Average Price) Defense**
 
-This feature acts as a structural momentum backstop. The bot calculates the True VWAP for every individual holding within a symphony minute-by-minute. If a symphony achieves a High Water Mark (HWM) over ```VWAP_CROSS_HWM_PCT``` but its aggregate, allocation-weighted price falls below VWAP support for three consecutive minutes, the bot triggers an immediate exit, bypassing standard percentage drops to exit on fundamental momentum failure.
+### **EOD Autotuning & Post-Mortem Analytics**
+* **Two-Stage EOD Pipeline:** Generates a daily post-mortem JSON snapshot using a two-stage process to prevent Composer API cash flatlines from corrupting the math. Stage 1 locks true shadow returns and Guard Alpha using live Alpaca pricing precisely at 15:53 ET. Stage 2 runs at 16:00 ET to inject tomorrow's target holdings without overwriting the previously locked math.
+* **Persistent Optimization Engine:** Performs a 125-trading-day Walk-Forward Analysis using an 80% Train / 20% Out-of-Sample test split. Powered by Optuna with a persistent SQLite backend, it runs 500 parallel trials per unique symphony name to tune dynamic stops, multipliers, and parabolic thresholds. It actively penalizes missed upside and peak-to-exit drawdowns. If the out-of-sample validation fails, the bot safely reverts to fallback parameters or global defaults.
 
-### **5. Asymmetric Parabolic Squeeze**
 
-When a symphony undergoes a "vertical" run, the bot calculates its **Velocity Ratio** (HWM divided by rolling 20-day volatility). If this ratio exceeds the ```PARABOLIC_VELOCITY_THRESHOLD```, the bot applies an asymmetric squeeze, reducing the allowable drawdown percentage by up to ```MAX_PARABOLIC_SQUEEZE``` to tightly trap the peak.
+### **Interactive Control Center (UI/UX)**
+* **Live Dashboard:** A real-time Flask command center to view the exact distance to the stop level, status ranks, EOD shadow returns, and active EOD EOD chart data.
+* **Settings Control Panel:** A dedicated API endpoint and UI structure to update `.env` globals and SQLite symphony strategies on the fly without restarting the application.
+* **Manual Overrides:** Includes API triggers to force an immediate run, force an EOD analysis computation, force a Discord push, or manually trigger an immediate account liquidation to cash.
 
-### **6. Smart Take-Profit (TP)**
 
-If a symphony experiences an exceptional gain that drops its Monte Carlo "beat probability" to extreme lows (below ```TAKE_PROFIT_MC_PCT```), a highly sensitive Take-Profit trap is armed. If momentum stalls, it exits immediately to capture the blow-off top.
 
-## **🧠 The EOD Autotuner (Walk-Forward Optimization)**
+---
 
-At 4:00 PM ET, AlphaBot stops trading and transitions into an optimization engine.
+## Variables Explanation
 
-1. **The Archive:** It saves the exact minute-by-minute price, volume, and probability data for every symphony into a permanent SQLite archive.  
-2. **The Grid Search:** It pulls a rolling 5-day window of this data and replays it against **26,244** unique combinations of the bot's strategy variables.  
-3. **Guard Alpha:** It scores every combination based on **Guard Alpha**—the exact percentage of capital that would have been saved by the bot's exits compared to passively holding to the close.  
-4. **Self-Correction:** The bot finds the most mathematically optimal variable setup for the current market environment, **automatically overwrites the ```.env``` file**, and pushes a 2D Heatmap of the parameter space to Discord for visual review.
+The bot's operation is customized through various variables set in the `.env` file and managed via the web Settings panel. Symphony-specific parameters can be isolated and tuned independently.
 
-## **⚙️ Variable Glossary**
+### API Keys and Identifiers
 
-Configure these in your local dashboard or ```.env``` file. (Note: The Autotuner will optimize the primary Strategy variables nightly).
+* **`COMPOSER_KEY_ID`** & **`COMPOSER_SECRET`**: Authentication credentials for the Composer API.
+* **`ACCOUNT_UUIDS`**: A comma-separated list of your Composer Account UUIDs.
+* **`ALPACA_KEY`** & **`ALPACA_SECRET`**: Alpaca API credentials used to fetch real-time and historical market data.
+* **`DISCORD_WEBHOOK_URL`**: The Discord webhook URL where the bot will send execution alerts and post-mortem reports.
 
-### **API & Core**
+### Master Control
 
-* ```LIVE_EXECUTION```: Boolean (True/False). Set to False to simulate trades safely.  
-* ```COMPOSER_KEY_ID``` / ```COMPOSER_SECRET```: Composer API credentials.  
-* ```ACCOUNT_UUIDS```: Comma-separated Composer account IDs.  
-* ```ALPACA_KEY``` / ```ALPACA_SECRET```: Alpaca Market Data API credentials.  
-* ```DISCORD_WEBHOOK_URL```: (Optional) URL for Live Alerts, EOD Snapshots, and Autotune Heatmaps.
+* **`LIVE_EXECUTION`**: A boolean switch (`True`/`False`). Set to `False` to run the bot in paper/simulation mode (Safe). Set to `True` to allow the bot to send live "sell-to-cash" requests (Danger).
+* **`EXECUTION_START_TIME`**: The time (e.g., `09:30`) when the bot begins monitoring and calculating live stops.
 
-### **Strategy & Defense**
+### Algorithm Parameters
 
-* ```TRIGGER_THRESHOLD_PCT```: The MC probability threshold (e.g., 15.0%) that "Arms" the standard trailing stop.  
-* ```TAKE_PROFIT_MC_PCT```: The extreme MC probability threshold (e.g., 5.0%) that arms the Smart TP.  
-* ```LOSS_ARM_PCT```: A hard floor; if a symphony drops below this % (or its daily vol), it arms instantly.  
-* ```BREAKEVEN_ACTIVATION_PCT```: The HWM % required to permanently lock the stop-loss above 0.0%.  
-* ```MAX_SQUEEZE_FLOOR```: The maximum limit applied to the dynamic stop-loss during a high-conviction strangle.  
-* ```VWAP_CROSS_HWM_PCT```: The minimum HWM required before the VWAP support breakdown defense is activated.  
-* ```MIN_MULTIPLIER_FLOOR```: The absolute minimum distance the stop is allowed to sit from the current price.
+* **`TRIGGER_THRESHOLD_PCT`**: The primary Monte Carlo threshold (e.g., 15.0) that triggers the initial "Trailing Stop" arming.
+* **`TAKE_PROFIT_MC_PCT`**: The target Monte Carlo probability threshold (e.g., 5.0) to activate aggressive "Take Profit" arming on exceptional gains.
+* **`MAX_SQUEEZE_FLOOR`**: The absolute tightest the stop distance can shrink during peak logarithmic decay.
+* **`VWAP_CROSS_HWM_PCT`**: The return threshold an asset must hit to activate the VWAP Breakdown (System A) logic.
+* **`VWAP_BLEED_MULTIPLIER`**: The dynamic multiplier applied to a symphony's 20-day volatility to establish its maximum VWAP Bleed Cut threshold.
+* **`VWAP_BLEED_TICKS`**: The number of consecutive ticks required below the calculated bleed threshold before liquidating (System B).
+* **`PARABOLIC_VELOCITY_THRESHOLD`**: The threshold of upward return velocity required to trigger the permanent "Parabolic Squeeze" ratchet.
+* **`MAX_PARABOLIC_SQUEEZE`**: The stop squeeze multiplier applied continuously once the Parabolic Squeeze is armed or the breakeven lock is achieved.
 
-### **Volatility Regimes & Parabolic Scaling**
+---
 
-* ```VIX_LOW_MULT```: The multiplier applied to volatility when ```VIX``` is < 15 (Default: 1.5).  
-* ```VIX_MID_MULT```: The multiplier applied when ```VIX``` is 15-25 (Default: 2.0).  
-* ```VIX_HIGH_MULT```: The multiplier applied when ```VIX``` is > 25 (Default: 2.5).  
-* ```PARABOLIC_VELOCITY_THRESHOLD```: The ratio of HWM to Volatility that classifies a run as "parabolic."  
-* ```MAX_PARABOLIC_SQUEEZE```: The maximum % reduction applied to the stop distance during a parabolic move.
-
-### **Engine Fallbacks & Calculators**
-
-* ```TRAILING_STOP_PCT```: Fallback starting stop percentage if historical volatility data is unavailable.  
-* ```ENDING_STOP_PCT```: Fallback ending stop percentage if historical volatility data is unavailable.  
-* ```SIMULATION_PATHS```: The number of paths generated for Monte Carlo analysis (Default: 5000).  
-* ```NEIGHBOR_K```: The number of historical "nearest neighbor" days used to seed MC simulations (Default: 150).
-
-## **🚀 Setup & Installation**
+## Installation Guide
 
 1. **Clone the Repository:**
-```   
-   git clone https://github.com/Jope31/AlphaBot.git
-   cd AlphaBot
-```
-
+Ensure you have the AlphaBotNext project files in your designated directory.
 2. **Install Dependencies:**
-```  
-pip install flask python-dotenv requests numpy schedule pandas alpaca-trade-api matplotlib seaborn
+It is recommended to use a virtual environment. Install the required Python packages by running:
+```
+pip install -r requirements.txt
+```
+4. **Configure the Environment Variables:**<br>
+Create or open the `.env` file and input your specific credentials:
+* Add your Composer Key, Secret, and Account UUIDs.
+* Add your Alpaca Key and Secret.
+* Paste your Discord Webhook URL (how to: https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks).
+* Adjust initial global algorithm parameters as needed. These are also editable from the "Edit Variables" window on the Dashboard.
+```
+COMPOSER_KEY_ID=
+COMPOSER_SECRET=
+ACCOUNT_UUIDS=
+ALPACA_KEY=
+ALPACA_SECRET=
+DISCORD_WEBHOOK_URL=
+LIVE_EXECUTION=False
+EXECUTION_START_TIME=09:30
 ```
 
-3. **Configure Environment:** Create a ```.env``` file in the root directory and populate it with your API keys. The mathematical variables will be generated upon first launch.  
-
-4. **Launch the Control Center:**
+5. **Initialize the Database:**
+The bot uses SQLite databases for state management and optimization persistence. Ensure the script has read/write permissions in its directory so it can automatically manage `alphabot_state.db` and `optuna_studies.db`.
+6. **Run the Application:**
+Start the Flask server and background scheduler by running:
 ```
 python app.py
+
 ```
 
-5. **Access Dashboard**:  
-   Open ```http://localhost:5000```. The bot will automatically initialize the SQLite database on its first run.
 
-## **🕒 Scheduling Details**
+Navigate to the local server address (`http://127.0.0.1:5000`) in your browser to view the interactive live dashboard, view per-symphony logs, and configure settings.
 
-AlphaBot utilizes a background schedule thread running via ```app.py```.
-
-* **10:30 AM ET Grace Period:** AlphaBot ignores the chaotic opening auction, beginning evaluations once the "Morning Noise" settles.  
-* **3:54 PM ET Rebalance Blackout:** To prevent API collisions during Composer's rebalancing window, AlphaBot automatically ceases all execution actions 6 minutes before the close.  
-* **4:00 PM ET EOD Processing:** AlphaBot locks final Shadow Returns, computes Guard Alpha, pushes the daily post-mortem to Discord, and begins the Walk-Forward Autotuning Grid Search.
-
-*Disclaimer: AlphaBot is an automated execution tool. Algorithmic trading carries significant risk. Always test parameters in Dry Run mode before enabling ```LIVE_EXECUTION```.*
+*Disclaimer: AlphaBotNext is an automated execution tool. Algorithmic trading carries significant risk. Always test parameters in Dry Run mode before enabling `LIVE_EXECUTION`.*
