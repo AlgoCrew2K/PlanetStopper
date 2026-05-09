@@ -1,14 +1,14 @@
-# AlphaBotNext
+# AlphaBot
 
 ## Summary
 
-The primary intent of **AlphaBotNext** is to function as an institutional-grade, algorithmic risk engine that sits on top of Composer.trade portfolios (referred to as "symphonies"). Rather than relying on passive "buy-and-hold" strategies that leave capital exposed to intraday market crashes, AlphaBotNext actively monitors live market data minute-by-minute. Its goal is to dynamically calculate intelligent trailing stops and automatically execute "sell-to-cash" orders via API when mathematical risk thresholds are breached. Ultimately, it seeks to generate "Guard Alpha"—mathematically proving that its automated early exits saved the user money compared to holding the asset until the market close.
+The primary intent of **AlphaBot** is to function as an institutional-grade, algorithmic risk engine that sits on top of Composer.trade portfolios (referred to as "symphonies"). Rather than relying on passive "buy-and-hold" strategies that leave capital exposed to intraday market crashes, AlphaBot actively monitors live market data minute-by-minute. Its goal is to dynamically calculate intelligent trailing stops and automatically execute "sell-to-cash" orders via API when mathematical risk thresholds are breached. Ultimately, it seeks to generate "Guard Alpha"—mathematically proving that its automated early exits saved the user money compared to holding the asset until the market close.
 
 ---
 
 ## Features Overview
 
-AlphaBotNext achieves its goals through a sophisticated combination of data ingestion, multi-layered mathematical defense protocols, concurrency management, and machine learning optimization.
+AlphaBot achieves its goals through a sophisticated combination of data ingestion, multi-layered mathematical defense protocols, concurrency management, and machine learning optimization.
 
 ### **Live Data Ingestion & Regime Detection**
 * Alpaca API Integration: Fetches real-time, 1-minute historical and live pricing data for all active holdings across user portfolios. It utilizes parallel processing and local caching to rapidly generate synthetic intraday history.
@@ -85,7 +85,7 @@ The bot's operation is customized through various variables set in the `.env` fi
 ## Installation Guide
 
 1. **Clone the Repository:**
-Ensure you have the AlphaBotNext project files in your designated directory.
+Ensure you have the AlphaBot project files in your designated directory.
 2. **Install Dependencies:**
 It is recommended to use a virtual environment. Install the required Python packages by running:
 ```
