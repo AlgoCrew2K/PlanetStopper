@@ -281,12 +281,22 @@
                                     class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
                             </div>
                         </div>
-                        <div>
-                            <label class="text-xs font-semibold text-slate-300 mb-2 block">Composer Account UUIDs (Comma
-                                Separated)</label>
-                            <textarea id="env-account-uuids" rows="2"
-                                class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                                placeholder="uuid1, uuid2, ..."></textarea>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="text-xs font-semibold text-slate-300 mb-1 block">Individual Account</label>
+                                <input type="text" id="env-acc-ind"
+                                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="text-xs font-semibold text-slate-300 mb-1 block">Roth IRA</label>
+                                <input type="text" id="env-acc-roth"
+                                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="text-xs font-semibold text-slate-300 mb-1 block">Trad IRA</label>
+                                <input type="text" id="env-acc-trad"
+                                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            </div>
                         </div>
                         <div class="mt-5">
                             <label class="text-xs font-semibold text-slate-300 mb-1 block">Discord Server Webhook
@@ -722,14 +732,12 @@
                 const response = await fetch('/api/settings');
                 const data = await response.json();
                 const vars = data.globals || {};
-                const accounts = vars.ACCOUNT_UUIDS ? vars.ACCOUNT_UUIDS.split(',').map(s => s.trim()) : [];
+                
                 // Reset labels
                 accountLabels = {};
-                // Since we no longer have hardcoded labels, we'll just use IDs or generic labels
-                accounts.forEach((acc, i) => {
-                    if (i === 0) accountLabels[acc] = "Primary Account";
-                    else accountLabels[acc] = `Account ${i + 1}`;
-                });
+                if (vars.ACCOUNT_INDIVIDUAL) accountLabels[vars.ACCOUNT_INDIVIDUAL] = "Individual";
+                if (vars.ACCOUNT_ROTH) accountLabels[vars.ACCOUNT_ROTH] = "Roth IRA";
+                if (vars.ACCOUNT_TRAD) accountLabels[vars.ACCOUNT_TRAD] = "Trad. IRA";
             } catch (e) {
                 console.error("Failed to load account labels", e);
             }
@@ -1387,7 +1395,9 @@
                 document.getElementById('env-alp-sec').value = vars.ALPACA_SECRET || '';
                 document.getElementById('env-discord').value = vars.DISCORD_WEBHOOK_URL || '';
 
-                document.getElementById('env-account-uuids').value = vars.ACCOUNT_UUIDS || '';
+                document.getElementById('env-acc-ind').value = vars.ACCOUNT_INDIVIDUAL || '';
+                document.getElementById('env-acc-roth').value = vars.ACCOUNT_ROTH || '';
+                document.getElementById('env-acc-trad').value = vars.ACCOUNT_TRAD || '';
 
                 if (typeof renderStrategyTabs === "function") {
                     renderStrategyTabs(data.symphonies || {});
@@ -1424,7 +1434,9 @@
                 COMPOSER_SECRET: document.getElementById('env-comp-sec').value.trim(),
                 ALPACA_KEY: document.getElementById('env-alp-key').value.trim(),
                 ALPACA_SECRET: document.getElementById('env-alp-sec').value.trim(),
-                ACCOUNT_UUIDS: document.getElementById('env-account-uuids').value.trim(),
+                ACCOUNT_INDIVIDUAL: document.getElementById('env-acc-ind').value.trim(),
+                ACCOUNT_ROTH: document.getElementById('env-acc-roth').value.trim(),
+                ACCOUNT_TRAD: document.getElementById('env-acc-trad').value.trim(),
                 DISCORD_WEBHOOK_URL: document.getElementById('env-discord').value.trim()
             };
 
