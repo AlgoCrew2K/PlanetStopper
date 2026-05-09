@@ -84,19 +84,32 @@ The bot's operation is customized through various variables set in the `.env` fi
 
 ## Installation Guide
 
-1. **Clone the Repository:**
-Ensure you have the AlphaBot project files in your designated directory.
-2. **Install Dependencies:**
-It is recommended to use a virtual environment. Install the required Python packages by running:
+1. **Clone the repository and enter the directory**
 ```
-pip install -r requirements.txt
+git clone https://github.com/Jope31/AlphaBot.git
+cd AlphaBot
+
 ```
-4. **Configure the Environment Variables:**<br>
+2. **Create and activate a virtual environment (Recommended)**<br>
+This keeps the bot's dependencies isolated from your system Python.
+* **On Mac/Linux:**
+```
+python3 -m venv venv
+source venv/bin/activate
+```
+
+* **On Windows:**
+```
+python -m venv venv
+venv\Scripts\activate
+```
+
+3. **Configure the Environment Variables:**<br>
 Create or open the `.env` file and input your specific credentials:
 * Add your Composer Key, Secret, and Account UUIDs.
 * Add your Alpaca Key and Secret.
 * Paste your Discord Webhook URL (how to: https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks).
-* Adjust initial global algorithm parameters as needed. These are also editable from the "Edit Variables" window on the Dashboard.
+* Adjust initial global algorithm parameters as needed.<br>*These are also editable from the "Edit Variables" window on the Dashboard.*
 ```
 COMPOSER_KEY_ID=
 COMPOSER_SECRET=
@@ -108,7 +121,7 @@ LIVE_EXECUTION=False
 EXECUTION_START_TIME=09:30
 ```
 
-5. **Initialize the Database:**
+4. **Initialize the Database:**
 The bot uses SQLite databases for state management and optimization persistence. Ensure the script has read/write permissions in its directory so it can automatically manage `alphabot_state.db` and `optuna_studies.db`.
 6. **Run the Application:**
 Start the Flask server and background scheduler by running:
