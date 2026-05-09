@@ -1,0 +1,1840 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlphaBot Dashboard</title>
+    <!-- Add Favicon -->
+    <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/morphdom@2.6.2/dist/morphdom-umd.min.js"></script>
+    <style>
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-900 text-slate-100 min-h-screen p-8 font-sans relative">
+
+    <div class="max-w-7xl mx-auto relative">
+        <header
+            class="flex justify-between items-start mb-8 bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700 relative overflow-hidden">
+            <!-- Subtle top accent line -->
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-emerald-400"></div>
+
+            <!-- Left: Branding & Clocks -->
+            <div class="flex flex-col gap-2">
+                <div class="flex items-center gap-3">
+                    <h1
+                        class="text-2xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
+                        AlphaBot Dashboard
+                    </h1>
+                    <div id="dashboard-mode-badge"
+                        class="px-2.5 py-0.5 bg-slate-700 text-slate-400 border border-slate-600 rounded text-[10px] font-bold tracking-widest hidden">
+                        DRY RUN
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <button onclick="forceEodAnalysis()" id="force-eod-btn"
+                            class="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600 rounded text-[10px] font-bold uppercase tracking-widest transition-colors shadow-sm w-full text-center">
+                            Create EOD Analysis
+                        </button>
+                        <button onclick="resendDiscordReport()" id="resend-discord-btn"
+                            class="px-3 py-1 bg-indigo-900/50 hover:bg-indigo-800/60 text-indigo-300 border border-indigo-700/50 rounded text-[10px] font-bold uppercase tracking-widest transition-colors shadow-sm w-full text-center">
+                            Push Discord Report
+                        </button>
+                        <button onclick="openHistoryModal(7)" id="history-btn"
+                            class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700 rounded text-[10px] font-bold uppercase tracking-widest transition-colors shadow-sm w-full text-center">
+                            AlphaBot History
+                        </button>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 mt-1">
+                    <span class="text-[11px] text-slate-400 font-medium" id="state-date">Ledger: Loading...</span>
+                    <div class="h-3 w-px bg-slate-600"></div>
+                    <div class="flex items-center gap-1.5 text-slate-400 text-[11px] font-mono">
+                        <svg class="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span id="ny-time">--:--:-- ET</span>
+                    </div>
+                    <div class="h-3 w-px bg-slate-600"></div>
+                    <div class="flex items-center gap-1.5 text-slate-400 text-[11px]">
+                        <span class="font-medium">Exec:</span>
+                        <span id="exec-start-display" class="font-mono text-slate-300">--:--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Center: Stats -->
+            <div class="flex items-center gap-6 mt-1">
+                <div class="flex flex-col items-center">
+                    <p class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Tracked</p>
+                    <p class="text-2xl font-bold text-slate-100 leading-none" id="total-symphonies">0</p>
+                </div>
+                <div class="h-8 w-px bg-slate-700"></div>
+                <div class="flex flex-col items-center">
+                    <p class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Armed</p>
+                    <p class="text-2xl font-bold text-amber-400 leading-none" id="total-armed">0</p>
+                </div>
+            </div>
+
+            <!-- Right: Controls -->
+            <div class="flex flex-col items-end gap-3">
+                <div class="flex items-center gap-4">
+                    <div class="flex flex-col items-end">
+                        <div class="flex items-center gap-2 mb-1">
+                            <div id="status-indicator"
+                                class="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse">
+                            </div>
+                            <span id="status-text"
+                                class="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">System
+                                Online</span>
+                        </div>
+                        <span id="countdown-text" class="text-[10px] text-slate-400 font-mono tracking-widest"
+                            title="Runs every 1-minute during market hours for multi-tick confirmations.">NEXT RUN:
+                            --:--</span>
+                    </div>
+                    <button onclick="triggerBot()" id="trigger-btn"
+                        class="bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white px-5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-[0_0_15px_rgba(37,99,235,0.3)] active:scale-95 border border-blue-400/20">
+                        Force Run Now
+                    </button>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button onclick="openSimulatorModal()"
+                        class="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold uppercase tracking-widest transition-colors flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+                            </path>
+                        </svg>
+                        Simulator
+                    </button>
+                    <div class="w-1 h-1 rounded-full bg-slate-600"></div>
+                    <button onclick="openSettingsModal()"
+                        class="text-[10px] text-blue-400 hover:text-blue-300 font-bold uppercase tracking-widest transition-colors flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z">
+                            </path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                        Edit Variables
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <div id="notification" class="hidden mb-6 p-4 rounded-xl text-sm font-medium transition-all duration-300"></div>
+
+        <div class="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700 min-h-[750px]">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-semibold text-slate-200">Symphony Status by Account</h2>
+                <div class="flex items-center gap-4">
+                    <div class="flex items-center gap-2">
+                        <label for="max-rows-input" class="text-xs text-slate-400 font-semibold tracking-wide">Rows
+                            Displayed:</label>
+                        <input type="number" id="max-rows-input"
+                            class="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-blue-500 transition-colors"
+                            value="10" min="1" max="500" onchange="updateMaxRows()">
+                    </div>
+                    <span class="text-xs text-slate-500" id="last-updated">Last Updated: ---</span>
+                </div>
+            </div>
+            <div id="accounts-container" class="space-y-8"></div>
+        </div>
+    </div>
+
+    <!-- Confirm Liquidation Modal -->
+    <div id="confirm-modal"
+        class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300">
+        <div class="bg-slate-800 rounded-2xl shadow-2xl border border-rose-500/50 w-full max-w-md overflow-hidden transform scale-95 transition-transform duration-300 p-6"
+            id="confirm-modal-content">
+            <h3 class="text-xl font-bold text-white mb-2 flex items-center gap-2">
+                <svg class="w-6 h-6 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                    </path>
+                </svg>
+                Confirm Liquidation
+            </h3>
+            <p class="text-sm text-slate-300 mb-6">Are you sure you want to execute a <strong class="text-rose-400">Sell
+                    to Cash</strong> for ALL symphonies in the <span id="confirm-account-name"
+                    class="font-bold text-white border-b border-slate-500"></span> account?</p>
+            <div class="flex justify-end gap-3">
+                <button onclick="closeConfirmModal()"
+                    class="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white transition-colors">Cancel</button>
+                <button id="confirm-execute-btn"
+                    class="bg-rose-600 hover:bg-rose-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-all shadow-lg active:scale-95 flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                    Liquidate Account
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Variables Modal -->
+    <div id="settings-modal"
+        class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300">
+        <div class="bg-slate-800 rounded-2xl shadow-2xl border border-slate-600 w-full max-w-2xl overflow-hidden transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh]"
+            id="settings-modal-content">
+
+            <div class="px-6 py-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 shrink-0">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4">
+                        </path>
+                    </svg>
+                    Strategy Control Panel
+                </h3>
+                <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                        </path>
+                    </svg>
+                </button>
+            </div>
+
+            <form id="settings-form" class="flex flex-col overflow-hidden h-full" onsubmit="saveSettings(event)">
+                <div class="p-6 overflow-y-auto space-y-8">
+                    <!-- SECTION 1: EXECUTION MODE -->
+                    <div>
+                        <h4
+                            class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-700 pb-2">
+                            Execution Mode</h4>
+                        <div class="space-y-4">
+                            <div class="bg-slate-900 border border-slate-700 p-5 rounded-xl flex items-center justify-between transition-colors duration-300"
+                                id="mode-container">
+                                <div>
+                                    <h4 class="text-sm font-bold text-white mb-0.5 transition-colors duration-300"
+                                        id="mode-title">Dry Run Mode</h4>
+                                    <p class="text-xs text-slate-400 transition-colors duration-300" id="mode-desc">
+                                        Safe: Bot will simulate trades but bypass actual execution.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="env-live-mode" class="sr-only peer"
+                                        onchange="toggleModeUI(this)">
+                                    <div
+                                        class="w-11 h-6 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500 shadow-inner">
+                                    </div>
+                                </label>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="text-xs font-semibold text-slate-300 mb-1 block">Execution Start Time
+                                        (ET)</label>
+                                    <input type="time" id="env-exec-start"
+                                        class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 2: API & ACCOUNTS -->
+                    <div>
+                        <h4
+                            class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-700 pb-2">
+                            API Credentials & Accounts</h4>
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <label class="text-xs font-semibold text-slate-300 mb-1 block">Composer Key ID</label>
+                                <input type="text" id="env-comp-key"
+                                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="text-xs font-semibold text-slate-300 mb-1 block">Composer Secret</label>
+                                <input type="password" id="env-comp-sec"
+                                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4 mb-5">
+                            <div>
+                                <label class="text-xs font-semibold text-slate-300 mb-1 block">Alpaca Key</label>
+                                <input type="text" id="env-alp-key"
+                                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="text-xs font-semibold text-slate-300 mb-1 block">Alpaca Secret</label>
+                                <input type="password" id="env-alp-sec"
+                                    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-300 mb-2 block">Composer Account UUIDs (Comma
+                                Separated)</label>
+                            <textarea id="env-account-uuids" rows="2"
+                                class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                placeholder="uuid1, uuid2, ..."></textarea>
+                        </div>
+                        <div class="mt-5">
+                            <label class="text-xs font-semibold text-slate-300 mb-1 block">Discord Server Webhook
+                                (Optional)</label>
+                            <input type="text" id="env-discord" placeholder="https://discord.com/api/webhooks/..."
+                                class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                        </div>
+                    </div>
+
+                    <!-- SECTION 3: STRATEGY VARIABLES -->
+                    <div id="strategy-tabs-container">
+                        <h4
+                            class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-700 pb-2">
+                            Strategy Variables</h4>
+
+                        <!-- Dynamic Tabs Header -->
+                        <div class="flex space-x-1 border-b border-slate-700 mb-4 overflow-x-auto"
+                            id="account-tabs-header">
+                            <!-- Tabs will be injected here -->
+                        </div>
+
+                        <!-- Dynamic Tabs Content -->
+                        <div id="account-tabs-content">
+                            <!-- Tab panes will be injected here -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="p-5 border-t border-slate-700 bg-slate-800 flex justify-end gap-3 shrink-0">
+                    <button type="button" onclick="closeSettingsModal()"
+                        class="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white transition-colors">Cancel</button>
+                    <button type="submit" id="save-settings-btn"
+                        class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-all shadow-lg active:scale-95">Save
+                        & Close</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Log Modal -->
+    <div id="log-modal"
+        class="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300">
+        <div class="bg-slate-800 rounded-2xl shadow-2xl border border-slate-600 w-full max-w-2xl overflow-hidden transform scale-95 transition-transform duration-300 flex flex-col max-h-[80vh]"
+            id="log-modal-content">
+            <div class="px-6 py-4 border-b border-slate-700 flex justify-between items-center bg-slate-900 shrink-0">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2" id="log-modal-title">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-400" fill="none"
+                        viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Activity Logs
+                </h3>
+                <button onclick="closeLogModal()" class="text-slate-400 hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                        </path>
+                    </svg>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto" id="log-modal-body">
+                <!-- Logs injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Chart Modal -->
+    <div id="chart-modal"
+        class="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300">
+        <div class="bg-slate-800 rounded-2xl shadow-2xl border border-slate-600 w-full max-w-4xl overflow-hidden transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh]"
+            id="chart-modal-content">
+            <div class="px-6 py-4 border-b border-slate-700 flex justify-between items-center bg-slate-900 shrink-0">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2" id="chart-modal-title">
+                    <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"></path>
+                    </svg>
+                    Intraday Trailing Stop Visualizer
+                </h3>
+                <button onclick="closeChartModal()" class="text-slate-400 hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                        </path>
+                    </svg>
+                </button>
+            </div>
+            <div id="chart-stats-header"
+                class="px-6 py-3 bg-slate-800/80 border-b border-slate-700 flex flex-wrap gap-2 shrink-0 hidden"></div>
+
+            <div class="p-6 bg-slate-900 flex-1 relative min-h-[400px]">
+                <canvas id="intradayChart"></canvas>
+            </div>
+
+            <!-- Custom Legend -->
+            <div
+                class="px-6 py-4 border-t border-slate-700 bg-slate-800 shrink-0 flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-1 bg-emerald-500 rounded"></div>
+                    <span class="text-xs font-semibold text-slate-300">Current Return</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-1 border-t-2 border-dashed border-orange-500"></div>
+                    <span class="text-xs font-semibold text-slate-300">Trailing Stop Floor</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-1 border-t-2 border-dashed border-rose-600"></div>
+                    <span class="text-xs font-semibold text-slate-300">Exit Return</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 bg-blue-500/30 border border-blue-500/50 rounded-[1px]"></div>
+                    <span class="text-xs font-semibold text-slate-300"
+                        title="Monte Carlo Engine Output. Lower bars squeeze the stop tighter.">MC Probability
+                        (Engine)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 bg-fuchsia-500/40 border border-fuchsia-500/80 rounded-[1px]"></div>
+                    <span class="text-xs font-semibold text-slate-300" title="Smart Take-Profit Armed Zone.">Smart TP
+                        Zone</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 bg-amber-500 clip-triangle"></div>
+                    <span class="text-xs font-semibold text-slate-300">Armed Event</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 bg-rose-600 rounded-sm transform rotate-45"></div>
+                    <span class="text-xs font-semibold text-slate-300">Triggered / Exit</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="text-violet-500 text-sm leading-none clip-star">★</div>
+                    <span class="text-xs font-semibold text-slate-300">VWAP Exit</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-1 border-t border-dashed border-emerald-500/50"></div>
+                    <span class="text-xs font-semibold text-slate-300"
+                        title="High-Water Mark must cross this line to lock Breakeven.">Breakeven Threshold</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-1 border-t border-dashed border-fuchsia-500/50"></div>
+                    <span class="text-xs font-semibold text-slate-300">TP MC Threshold</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-4 h-1 border-t border-dashed border-violet-500/50"></div>
+                    <span class="text-xs font-semibold text-slate-300">VWAP Bleed Floor</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- CSS for Custom Triangle in Legend -->
+    <style>
+        .clip-triangle {
+            clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+        }
+
+        .clip-star {
+            line-height: 0.8;
+            font-size: 16px;
+            margin-top: -2px;
+        }
+    </style>
+
+    <!-- Post-Market Simulator Modal -->
+    <div id="sim-modal"
+        class="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300">
+        <div class="bg-slate-800 rounded-2xl shadow-2xl border border-slate-600 w-full max-w-6xl overflow-hidden transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh]"
+            id="sim-modal-content">
+
+            <div class="px-6 py-4 border-b border-slate-700 flex justify-between items-center bg-slate-900 shrink-0">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z">
+                        </path>
+                    </svg>
+                    Post-Market Sandbox <span
+                        class="ml-2 text-xs text-rose-400 font-normal bg-rose-950/40 border border-rose-900/50 px-2 py-0.5 rounded-full">*Assumes
+                        2-Tick Confirmations instantly met</span>
+                </h3>
+                <button onclick="closeSimulatorModal()" class="text-slate-400 hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                        </path>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Parameters Grid (FIXED) -->
+            <div class="p-6 bg-slate-800 border-b border-slate-700 shrink-0 grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-[10px] font-semibold text-slate-300">Breakeven</label>
+                        <span class="text-sm font-mono text-emerald-400 font-bold" id="sim-breakeven-val">2.00</span>
+                    </div>
+                    <input type="range" id="sim-breakeven-slider" min="0.5" max="5.0" step="0.1" value="2.0"
+                        class="w-full accent-emerald-500" oninput="runSimulation()">
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-[10px] font-semibold text-slate-300">Stop MC Thr.</label>
+                        <span class="text-sm font-mono text-amber-400 font-bold" id="sim-trigger-val">15.0</span>
+                    </div>
+                    <input type="range" id="sim-trigger-slider" min="0.0" max="50.0" step="1.0" value="15.0"
+                        class="w-full accent-amber-500" oninput="runSimulation()">
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-[10px] font-semibold text-slate-300">TP MC Thr.</label>
+                        <span class="text-sm font-mono text-fuchsia-400 font-bold" id="sim-tpmc-val">5.0</span>
+                    </div>
+                    <input type="range" id="sim-tpmc-slider" min="0.0" max="25.0" step="1.0" value="5.0"
+                        class="w-full accent-fuchsia-500" oninput="runSimulation()">
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-[10px] font-semibold text-slate-300">Stop Sqz Fl.</label>
+                        <span class="text-sm font-mono text-amber-400 font-bold" id="sim-squeeze-val">0.20</span>
+                    </div>
+                    <input type="range" id="sim-squeeze-slider" min="0.05" max="1.0" step="0.05" value="0.20"
+                        class="w-full accent-amber-500" oninput="runSimulation()">
+                </div>
+            </div>
+
+            <!-- Simulation Controls (Time & Market Drop) -->
+            <div
+                class="px-6 py-4 bg-slate-900 border-b border-slate-700 shrink-0 grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Time of Day
+                            (Logarithmic Squeeze)</label>
+                        <span
+                            class="text-sm font-mono text-blue-400 font-bold bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20"
+                            id="sim-time-val">4:00 PM</span>
+                    </div>
+                    <input type="range" id="sim-time-slider" min="0" max="390" step="1" value="390"
+                        class="w-full accent-blue-500" oninput="runSimulation()">
+                    <div class="flex justify-between text-[10px] text-slate-500 font-mono mt-1 font-bold">
+                        <span>9:30 AM</span>
+                        <span>4:00 PM</span>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label
+                            class="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-1.5"
+                            title="Simulates the asset climbing to a new intraday high before any drop.">
+                            <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                            </svg>
+                            1. Intraday Run-up
+                        </label>
+                        <span
+                            class="text-sm font-mono text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20"
+                            id="sim-runup-val">+0.0%</span>
+                    </div>
+                    <input type="range" id="sim-runup-slider" min="0.0" max="15.0" step="0.1" value="0.0"
+                        class="w-full accent-emerald-500" oninput="runSimulation()">
+                    <div class="flex justify-between text-[10px] text-slate-500 font-mono mt-1 font-bold">
+                        <span>0.0%</span>
+                        <span>+15.0% (New Peak)</span>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label
+                            class="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-1.5"
+                            title="Simulates the asset falling from its highest point.">
+                            <svg class="w-4 h-4 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path>
+                            </svg>
+                            2. Intraday Pullback
+                        </label>
+                        <span
+                            class="text-sm font-mono text-rose-400 font-bold bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20"
+                            id="sim-pullback-val">0.0%</span>
+                    </div>
+                    <input type="range" id="sim-pullback-slider" min="-15.0" max="0.0" step="0.1" value="0.0"
+                        class="w-full accent-rose-500" oninput="runSimulation()">
+                    <div class="flex justify-between text-[10px] text-slate-500 font-mono mt-1 font-bold">
+                        <span>-15.0% (Drop)</span>
+                        <span>0.0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results Table -->
+            <div class="flex-1 overflow-auto bg-slate-900 p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <div class="flex items-center gap-6">
+                        <h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest">Simulation Results</h4>
+                        <div
+                            class="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="sim-force-arm" class="sr-only peer"
+                                    onchange="runSimulation()" checked>
+                                <div
+                                    class="w-7 h-4 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-500 shadow-inner">
+                                </div>
+                            </label>
+                            <span class="text-[10px] font-bold text-amber-400 uppercase tracking-widest cursor-help"
+                                title="Force all symphonies to be 'Armed' to test trailing stop behaviors on profitable runs.">Force
+                                Arm All</span>
+                        </div>
+                    </div>
+                    <span
+                        class="text-xs font-bold px-3 py-1 bg-rose-500/20 text-rose-400 rounded-full border border-rose-500/30"
+                        id="sim-trigger-count">0 Triggers</span>
+                </div>
+                <table class="w-full text-left text-sm whitespace-nowrap">
+                    <thead class="text-slate-500 text-xs uppercase tracking-wider border-b border-slate-700">
+                        <tr>
+                            <th class="pb-3 pl-3 font-medium w-1/4">Symphony Name</th>
+                            <th class="pb-3 pr-4 font-medium text-right" title="Current Return minus Simulated Drop">
+                                Sim. Return</th>
+                            <th class="pb-3 pr-4 font-medium text-right">HWM</th>
+                            <th class="pb-3 pr-4 font-medium text-right">Stop Dist.</th>
+                            <th class="pb-3 pr-4 font-medium text-right">Trigger Level</th>
+                            <th class="pb-3 pr-4 font-medium text-right">Dist. to Stop</th>
+                            <th class="pb-3 font-medium text-center">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sim-table-body" class="divide-y divide-slate-800">
+                        <!-- Simulated Rows -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- AlphaBot History Modal -->
+    <div id="history-modal"
+        class="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300">
+        <div class="bg-slate-800 rounded-2xl shadow-2xl border border-slate-600 w-full max-w-2xl p-8 transform scale-95 transition-transform duration-300"
+            id="history-modal-content">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold text-white flex items-center gap-2">
+                    <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+                        </path>
+                    </svg>
+                    AlphaBot Performance History
+                </h3>
+                <div class="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-700" id="history-tabs">
+                    <button id="hist-btn-1" onclick="updateHistoryTab(1)"
+                        class="hist-tab-btn px-3 py-1 text-[10px] font-bold text-slate-400 hover:text-white rounded uppercase tracking-tighter transition-colors">1d</button>
+                    <button id="hist-btn-7" onclick="updateHistoryTab(7)"
+                        class="hist-tab-btn px-3 py-1 text-[10px] font-bold text-slate-400 hover:text-white rounded uppercase tracking-tighter transition-colors">7d</button>
+                    <button id="hist-btn-30" onclick="updateHistoryTab(30)"
+                        class="hist-tab-btn px-3 py-1 text-[10px] font-bold text-slate-400 hover:text-white rounded uppercase tracking-tighter transition-colors">30d</button>
+                    <button id="hist-btn-90" onclick="updateHistoryTab(90)"
+                        class="hist-tab-btn px-3 py-1 text-[10px] font-bold text-slate-400 hover:text-white rounded uppercase tracking-tighter transition-colors">90d</button>
+                </div>
+            </div>
+            <div id="history-content" class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+                <!-- Main Stats Injected Here -->
+            </div>
+            <div id="history-reasons" class="grid grid-cols-2 gap-4 border-t border-slate-700 pt-6">
+                <!-- Reason Breakdown Injected Here -->
+            </div>
+            <div class="mt-8 flex justify-end">
+                <button onclick="closeHistoryModal()"
+                    class="text-sm font-medium text-slate-400 hover:text-white transition-colors">Close Report</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Globals ---
+        let accountLabels = {};
+        let globalStateCache = {};
+        let pendingAccountId = null;
+        let countdownSeconds = 0;
+        let activeChart = null; // Holds the Chart.js instance
+        let maxRowsDisplayed = 10;
+        let currentSortCol = 'name';
+        let currentSortDir = 'asc';
+
+        // --- Clocks & Timers ---
+        function startNYClock() {
+            setInterval(() => {
+                const nyTime = new Date().toLocaleTimeString('en-US', {
+                    timeZone: 'America/New_York',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                });
+                const clockEl = document.getElementById('ny-time');
+                if (clockEl) clockEl.textContent = `${nyTime} ET`;
+            }, 1000);
+        }
+
+        function startCountdown() {
+            setInterval(() => {
+                if (countdownSeconds > 0) {
+                    countdownSeconds--;
+                    const mins = String(Math.floor(countdownSeconds / 60)).padStart(2, '0');
+                    const secs = String(countdownSeconds % 60).padStart(2, '0');
+                    document.getElementById('countdown-text').textContent = `NEXT RUN: ${mins}:${secs}`;
+                } else {
+                    document.getElementById('countdown-text').textContent = `NEXT RUN: 00:00`;
+                }
+            }, 1000);
+        }
+
+        // --- UI Interactions ---
+        function toggleModeUI(checkbox) {
+            const title = document.getElementById('mode-title');
+            const desc = document.getElementById('mode-desc');
+            const container = document.getElementById('mode-container');
+
+            if (checkbox.checked) {
+                title.textContent = "Live Execution Mode";
+                title.classList.replace("text-white", "text-rose-400");
+                desc.textContent = "DANGER: Bot will execute real sell-to-cash orders via API.";
+                desc.classList.replace("text-slate-400", "text-rose-300/80");
+                container.classList.replace("bg-slate-900", "bg-rose-950/40");
+                container.classList.replace("border-slate-700", "border-rose-900/50");
+            } else {
+                title.textContent = "Dry Run Mode";
+                title.classList.replace("text-rose-400", "text-white");
+                desc.textContent = "Safe: Bot will simulate trades but bypass actual execution.";
+                desc.classList.replace("text-rose-300/80", "text-slate-400");
+                container.classList.replace("bg-rose-950/40", "bg-slate-900");
+                container.classList.replace("border-rose-900/50", "border-slate-700");
+            }
+        }
+
+        // --- Core Dashboard State Logic ---
+        async function initAccountLabels() {
+            try {
+                const response = await fetch('/api/settings');
+                const data = await response.json();
+                const vars = data.globals || {};
+                const accounts = vars.ACCOUNT_UUIDS ? vars.ACCOUNT_UUIDS.split(',').map(s => s.trim()) : [];
+                // Reset labels
+                accountLabels = {};
+                // Since we no longer have hardcoded labels, we'll just use IDs or generic labels
+                accounts.forEach((acc, i) => {
+                    if (i === 0) accountLabels[acc] = "Primary Account";
+                    else accountLabels[acc] = `Account ${i + 1}`;
+                });
+            } catch (e) {
+                console.error("Failed to load account labels", e);
+            }
+        }
+
+        function renderState(data) {
+            if (data.status === 'error' || data.status === 'waiting') return;
+
+            countdownSeconds = data.next_run_seconds || 0;
+
+            const modeBadge = document.getElementById('dashboard-mode-badge');
+            modeBadge.classList.remove('hidden');
+            if (data.live_mode) {
+                modeBadge.className = "px-3 py-1 bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-full text-[10px] font-bold tracking-widest";
+                modeBadge.textContent = "LIVE EXECUTION";
+            } else {
+                modeBadge.className = "px-3 py-1 bg-slate-700 text-slate-400 border border-slate-600 rounded-full text-[10px] font-bold tracking-widest";
+                modeBadge.textContent = "DRY RUN";
+            }
+
+            const stateObj = data.state;
+            globalStateCache = stateObj; // Cache for simulator
+
+            document.getElementById('state-date').innerHTML = `<span class="font-semibold text-slate-500">Ledger:</span> ${stateObj.date || 'Unknown'}`;
+            document.getElementById('exec-start-display').textContent = data.execution_start_time || '--:--';
+
+            const symphonyKeys = Object.keys(stateObj).filter(k => k !== 'date');
+            let armedCount = 0;
+            const accountsMap = {};
+
+            symphonyKeys.forEach(id => {
+                const sym = stateObj[id];
+                if ((sym.armed || sym.tp_armed || sym.para_armed) && !sym.triggered) armedCount++;
+                const accId = sym.account || 'Unknown Account';
+                if (!accountsMap[accId]) accountsMap[accId] = [];
+                accountsMap[accId].push({ id, ...sym });
+            });
+
+            document.getElementById('total-symphonies').textContent = symphonyKeys.length;
+            document.getElementById('total-armed').textContent = armedCount;
+
+            if (data.html) {
+                const container = document.getElementById('accounts-container');
+                if (typeof morphdom !== 'undefined') {
+                    const temp = document.createElement('div');
+                    temp.id = 'accounts-container';
+                    temp.className = container.className;
+                    temp.innerHTML = data.html;
+                    morphdom(container, temp);
+                } else {
+                    container.innerHTML = data.html;
+                }
+            }
+            document.getElementById('last-updated').textContent = `Last Updated: ${new Date().toLocaleTimeString()}`;
+
+        }
+
+        async function fetchState() {
+            try {
+                const response = await fetch(`/api/state?sortCol=${currentSortCol}&sortDir=${currentSortDir}`);
+                const data = await response.json();
+                renderState(data);
+            } catch (error) {
+                document.getElementById('status-indicator').classList.replace('bg-emerald-500', 'bg-red-500');
+                document.getElementById('status-text').textContent = "Disconnected";
+            }
+        }
+
+        async function triggerBot() {
+            const btn = document.getElementById('trigger-btn');
+            btn.disabled = true;
+            btn.textContent = "Executing...";
+
+            try {
+                const response = await fetch('/api/trigger', { method: 'POST' });
+                const result = await response.json();
+                showNotification("🚀 " + result.message, "success");
+                setTimeout(fetchState, 3000);
+            } catch (error) {
+                showNotification("⚠️ Failed to trigger bot.", "error");
+            } finally {
+                setTimeout(() => { btn.disabled = false; btn.textContent = "Force Run Now"; }, 4000);
+            }
+        }
+
+        async function forceEodAnalysis() {
+            const btn = document.getElementById('force-eod-btn');
+            const originalText = "CREATE EOD ANALYSIS";
+            btn.disabled = true;
+            btn.textContent = "ANALYZING...";
+            try {
+                const response = await fetch('/api/force_eod', { method: 'POST' });
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showNotification("✅ " + result.message, "success");
+                } else {
+                    showNotification("⚠️ " + result.message, "error");
+                }
+            } catch (error) {
+                showNotification("⚠️ Failed to trigger EOD Analysis.", "error");
+            } finally {
+                setTimeout(() => { btn.disabled = false; btn.textContent = originalText; }, 4000);
+            }
+        }
+
+        async function resendDiscordReport() {
+            const btn = document.getElementById('resend-discord-btn');
+            const originalText = "PUSH DISCORD REPORT";
+            btn.disabled = true;
+            btn.textContent = "PUSHING...";
+            try {
+                const response = await fetch('/api/resend_discord', { method: 'POST' });
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showNotification("✅ " + result.message, "success");
+                } else {
+                    showNotification("⚠️ " + result.message, "error");
+                }
+            } catch (error) {
+                showNotification("⚠️ Failed to push Discord report.", "error");
+            } finally {
+                setTimeout(() => { btn.disabled = false; btn.textContent = originalText; }, 4000);
+            }
+        }
+
+        async function fetchHistory(days) {
+            const response = await fetch(`/api/history/${days}`);
+            const stats = await response.json();
+
+            const totalSaved = stats.total_saved || 0;
+            document.getElementById('history-content').innerHTML = `
+                <div>
+                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Avg Guard Alpha</p>
+                    <p class="text-3xl font-black ${stats.avg_guard_alpha >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${stats.avg_guard_alpha >= 0 ? '+' : ''}${stats.avg_guard_alpha.toFixed(2)}%</p>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Win Rate</p>
+                    <p class="text-3xl font-black text-white">${stats.win_rate.toFixed(0)}%</p>
+                    <p class="text-[10px] text-slate-500 font-bold">${stats.wins} Wins / ${stats.trigger_count} Triggers</p>
+                </div>
+                <div class="bg-slate-900/50 p-4 rounded-xl border border-slate-700/50">
+                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Total Saved</p>
+                    <p class="text-2xl font-bold ${totalSaved >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+                        ${totalSaved >= 0 ? '$' : '-$'}${Math.abs(totalSaved).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                </div>
+            `;
+
+            let reasonHtml = '';
+            for (const [reason, rStats] of Object.entries(stats.by_reason)) {
+                const avg = rStats.alpha / rStats.count;
+                reasonHtml += `
+                    <div class="bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
+                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-tighter mb-1">${reason}</p>
+                        <p class="text-lg font-bold ${avg >= 0 ? 'text-emerald-500' : 'text-rose-500'}">${avg >= 0 ? '+' : ''}${avg.toFixed(2)}% Avg</p>
+                        <p class="text-[9px] text-slate-500 uppercase font-bold">${rStats.wins} Wins in ${rStats.count} Trig</p>
+                    </div>
+                `;
+            }
+            document.getElementById('history-reasons').innerHTML = reasonHtml || '<p class="col-span-2 text-center text-slate-500 italic text-xs py-4">No exit events recorded in this period.</p>';
+        }
+
+        function updateHistoryTab(days) {
+            // Reset all buttons to inactive
+            document.querySelectorAll('.hist-tab-btn').forEach(btn => {
+                btn.classList.remove('bg-slate-700', 'text-white');
+                btn.classList.add('text-slate-400');
+            });
+
+            // Highlight the active button
+            const activeBtn = document.getElementById(`hist-btn-${days}`);
+            if (activeBtn) {
+                activeBtn.classList.remove('text-slate-400');
+                activeBtn.classList.add('bg-slate-700', 'text-white');
+            }
+
+            // Fetch the data
+            fetchHistory(days);
+        }
+
+        function openHistoryModal(days) {
+            const modal = document.getElementById('history-modal');
+            const content = document.getElementById('history-modal-content');
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                content.classList.remove('scale-95');
+            }, 10);
+            updateHistoryTab(days);
+        }
+
+        function closeHistoryModal() {
+            const modal = document.getElementById('history-modal');
+            const content = document.getElementById('history-modal-content');
+            modal.classList.add('opacity-0');
+            content.classList.add('scale-95');
+            setTimeout(() => modal.classList.add('hidden'), 300);
+        }
+
+        function setSort(col) {
+            if (currentSortCol === col) {
+                currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSortCol = col;
+                currentSortDir = 'asc';
+            }
+            fetchState();
+        }
+
+        // --- Go To Cash (Account Liquidation) Logic ---
+        function openConfirmModal(accId) {
+            pendingAccountId = accId;
+            const displayLabel = accountLabels[accId] || accId;
+            document.getElementById('confirm-account-name').textContent = displayLabel;
+
+            const modal = document.getElementById('confirm-modal');
+            const content = document.getElementById('confirm-modal-content');
+
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                content.classList.remove('scale-95');
+            }, 10);
+        }
+
+        function closeConfirmModal() {
+            pendingAccountId = null;
+            const modal = document.getElementById('confirm-modal');
+            const content = document.getElementById('confirm-modal-content');
+
+            modal.classList.add('opacity-0');
+            content.classList.add('scale-95');
+            setTimeout(() => { modal.classList.add('hidden'); }, 300);
+        }
+
+        document.getElementById('confirm-execute-btn').addEventListener('click', async () => {
+            if (!pendingAccountId) return;
+            const btn = document.getElementById('confirm-execute-btn');
+
+            btn.disabled = true;
+            btn.innerHTML = `<svg class="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Executing...`;
+
+            try {
+                const response = await fetch('/api/sell_account', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ account_id: pendingAccountId })
+                });
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showNotification("✅ " + result.message, "success");
+                } else {
+                    showNotification("⚠️ " + result.message, "error");
+                }
+            } catch (error) {
+                showNotification("⚠️ Failed to liquidate account.", "error");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> Liquidate Account`;
+                closeConfirmModal();
+            }
+        });
+
+        // --- Activity Log Modal Logic ---
+        async function openLogModal(symphonyId, symphonyName) {
+            try {
+                const response = await fetch(`/api/logs/${symphonyId}`);
+                const logs = await response.json();
+
+                const modal = document.getElementById('log-modal');
+                const content = document.getElementById('log-modal-content');
+                const body = document.getElementById('log-modal-body');
+
+                document.getElementById('log-modal-title').innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    <div class="truncate max-w-[400px]" title="${symphonyName}">${symphonyName} Logs</div>
+                `;
+
+                if (!logs || logs.length === 0) {
+                    body.innerHTML = '<p class="text-slate-400 text-sm text-center py-4">No activity logs recorded for this symphony today.</p>';
+                } else {
+                    let html = '<ul class="space-y-3">';
+                    logs.forEach(log => {
+                        const date = new Date(log.timestamp);
+                        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+                        let badgeColor = "bg-slate-700 text-slate-300";
+                        if (log.event_type.includes("armed")) badgeColor = "bg-blue-900/50 text-blue-400";
+                        if (log.event_type.includes("disarmed")) badgeColor = "bg-slate-700 text-slate-400";
+                        if (log.event_type === "triggered") badgeColor = "bg-rose-900/50 text-rose-400";
+                        if (log.event_type === "execution") badgeColor = "bg-emerald-900/50 text-emerald-400";
+                        if (log.event_type === "warning") badgeColor = "bg-orange-900/50 text-orange-400";
+
+                        html += `
+                            <li class="bg-slate-900 p-3 rounded-lg border border-slate-700 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-xs font-mono text-slate-500">${timeStr}</span>
+                                    <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded ${badgeColor}">${log.event_type}</span>
+                                </div>
+                                <div class="text-sm text-slate-200 mt-1">${log.message}</div>
+                            </li>
+                        `;
+                    });
+                    html += '</ul>';
+                    body.innerHTML = html;
+                }
+
+                modal.classList.remove('hidden');
+                setTimeout(() => {
+                    modal.classList.remove('opacity-0');
+                    content.classList.remove('scale-95');
+                }, 10);
+            } catch (error) {
+                showNotification("Failed to load logs.", "error");
+            }
+        }
+
+        function closeLogModal() {
+            const modal = document.getElementById('log-modal');
+            const content = document.getElementById('log-modal-content');
+            modal.classList.add('opacity-0');
+            content.classList.add('scale-95');
+            setTimeout(() => { modal.classList.add('hidden'); }, 300);
+        }
+
+        // --- Intraday Chart Modal Logic ---
+        async function openChartModal(symphonyId, symphonyName) {
+            try {
+                // 1. Fetch data FIRST before opening the modal.
+                const response = await fetch(`/api/chart/${symphonyId}`);
+                const resData = await response.json();
+
+                let data = resData.data || [];
+                if (data.length === 0) {
+                    showNotification("Awaiting first minute-tick. No chart data available yet.", "error");
+                    return; // Abort entirely. Prevents the empty modal from flashing on screen.
+                }
+
+                // --- Calculate Stats ---
+                const latestData = data[data.length - 1];
+                const returnsArr = data.map(d => d.return);
+                const latestRet = latestData.return;
+                const maxRet = Math.max(...returnsArr);
+                const minRet = Math.min(...returnsArr);
+                const latestStop = latestData.stop;
+                const latestMcProb = latestData.mc_prob || 0;
+
+                // --- Split Exit vs Shadow Return ---
+                const isTriggered = globalStateCache[symphonyId]?.triggered;
+                const exitRet = isTriggered ? (globalStateCache[symphonyId]?.triggered_at_return ?? 0) : null;
+
+                let currentExit = null;
+                const exitReturns = data.map(d => {
+                    if (['Triggered', 'Trailing Stop', 'Take-Profit', 'VWAP_Break', 'VWAP Breakdown', 'VWAP Bleed Cut'].includes(d.event)) {
+                        currentExit = exitRet ?? d.return;
+                    }
+                    return currentExit;
+                });
+                // If it triggered before the current chart window, fill the whole array
+                if (isTriggered && currentExit === null) {
+                    exitReturns.fill(exitRet);
+                }
+
+                // --- Inject Stats Badge Logic ---
+                const statsHeader = document.getElementById('chart-stats-header');
+                const badgeClass = "px-2.5 py-1 rounded border text-xs font-bold transition-all duration-300";
+
+                statsHeader.innerHTML = `
+                    ${isTriggered ? `
+                    <div class="${badgeClass} bg-rose-500/10 text-rose-400 border-rose-500/20">
+                        EXIT: ${exitRet.toFixed(2)}%
+                    </div>` : ''}
+                    <div class="${badgeClass} ${latestRet >= 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-700/50 text-slate-400 border-slate-600/50'}">
+                        ${isTriggered ? 'SHADOW' : 'LATEST'}: ${latestRet.toFixed(2)}%
+                    </div>
+                    <div class="${badgeClass} bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                        MAX: ${maxRet.toFixed(2)}%
+                    </div>
+                    <div class="${badgeClass} bg-rose-500/10 text-rose-400 border-rose-500/20">
+                        MIN: ${minRet.toFixed(2)}%
+                    </div>
+                    <div class="${badgeClass} ${latestStop !== null ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' : 'bg-slate-700/50 text-slate-500 border-slate-600/50'}">
+                        STOP: ${latestStop !== null ? latestStop.toFixed(2) + '%' : 'OFF'}
+                    </div>
+                    <div class="${badgeClass} bg-blue-500/10 text-blue-400 border-blue-500/20">
+                        MC PROB: ${latestMcProb.toFixed(1)}%
+                    </div>
+                `;
+                statsHeader.classList.remove('hidden');
+
+                // 2. Only proceed with rendering the modal if we have data
+                const modal = document.getElementById('chart-modal');
+                const content = document.getElementById('chart-modal-content');
+
+                document.getElementById('chart-modal-title').innerHTML = `
+                    <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"></path></svg>
+                    <div class="truncate max-w-[400px]" title="${symphonyName}">${symphonyName}</div>
+                `;
+
+                modal.classList.remove('hidden');
+                setTimeout(() => {
+                    modal.classList.remove('opacity-0');
+                    content.classList.remove('scale-95');
+                }, 10);
+
+                // --- Fetch Specific Symphony Parameters ---
+                const symNameKey = Object.keys(currentStrategyData).find(k => k.toLowerCase() === symphonyName.toLowerCase());
+                const params = symNameKey && currentStrategyData[symNameKey] ? currentStrategyData[symNameKey].params : {};
+                const tpMcThreshold = params.TAKE_PROFIT_MC_PCT || 5.0;
+                const vwapBleedMultiplier = params.VWAP_BLEED_MULTIPLIER || 1.5;
+
+                // Calculate dynamic Breakeven Activation based on Volatility
+                const currentVol = data.length > 0 ? (data[data.length - 1].vol || 1.0) : 1.0;
+                const beActivation = Math.max(0.4, Math.min(3.0, currentVol));
+
+                // Process Chart.js Data Arrays
+                const labels = data.map(d => d.time);
+                const returns = data.map(d => d.return);
+                const stops = data.map(d => d.stop);
+                const mcProbs = data.map(d => d.mc_prob || 0);
+
+                // Generate Threshold Arrays
+                const beActivationLine = data.map(() => beActivation);
+                const vwapBleedLine = data.map(d => {
+                    const vol = d.vol || 1.0;
+                    const rawBleed = -(vol * vwapBleedMultiplier);
+                    return Math.max(-3.0, Math.min(-0.5, rawBleed));
+                });
+                const tpThresholdLine = data.map(() => tpMcThreshold);
+
+
+
+                // Create custom point shapes for events
+                const pointStyles = data.map(d => {
+                    if (d.event === 'Armed' || d.event === 'TP-Armed' || d.event === 'Para-Armed') return 'triangle';
+                    if (['Triggered', 'Trailing Stop', 'Take-Profit'].includes(d.event)) return 'rectRot';
+                    if (['VWAP_Break', 'VWAP Breakdown', 'VWAP Bleed Cut'].includes(d.event)) return 'star';
+                    return 'circle';
+                });
+
+                const pointRadii = data.map(d => {
+                    if (d.event === 'Armed' || d.event === 'TP-Armed' || d.event === 'Para-Armed') return 8;
+                    if (['Triggered', 'Trailing Stop', 'Take-Profit'].includes(d.event)) return 10;
+                    if (['VWAP_Break', 'VWAP Breakdown', 'VWAP Bleed Cut'].includes(d.event)) return 12;
+                    return 0; // Hide normal points for clean line
+                });
+
+                const pointColors = data.map(d => {
+                    if (d.event === 'Para-Armed') return '#06b6d4'; // cyan-500
+                    if (d.event === 'Armed' || d.event === 'TP-Armed') return '#eab308'; // amber-500
+                    if (['Triggered', 'Trailing Stop', 'Take-Profit'].includes(d.event)) return '#e11d48'; // rose-600
+                    if (['VWAP_Break', 'VWAP Breakdown', 'VWAP Bleed Cut'].includes(d.event)) return '#8b5cf6'; // violet-500
+                    return '#10b981';
+                });
+
+                const ctx = document.getElementById('intradayChart').getContext('2d');
+
+                // Destroy old instance if exists
+                if (activeChart) { activeChart.destroy(); }
+
+                activeChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: 'Current Return (%)',
+                                data: returns,
+                                borderColor: '#10b981', // Emerald
+                                borderWidth: 3,
+                                tension: 0.3, // smooth curve
+                                fill: true,
+                                backgroundColor: 'rgba(16, 185, 129, 0.05)',
+                                pointStyle: pointStyles,
+                                pointRadius: pointRadii,
+                                pointBackgroundColor: pointColors,
+                                pointBorderColor: pointColors,
+                                yAxisID: 'y',
+                                order: 2
+                            },
+                            {
+                                label: 'Exit Return (%)',
+                                data: exitReturns,
+                                borderColor: '#e11d48', // Rose-600
+                                borderWidth: 2,
+                                borderDash: [5, 5],
+                                pointRadius: 0,
+                                yAxisID: 'y',
+                                order: 1
+                            },
+                            {
+                                label: 'Trailing Stop Floor (%)',
+                                data: stops,
+                                borderColor: '#f97316', // Orange
+                                borderWidth: 2,
+                                borderDash: [5, 5],
+                                stepped: true,
+                                spanGaps: false, // Breaks the line when stop is null (unarmed)
+                                pointRadius: 0,
+                                yAxisID: 'y',
+                                order: 1
+                            },
+                            {
+                                label: 'MC Probability (%)',
+                                data: mcProbs,
+                                type: 'line',
+                                borderColor: 'rgba(59, 130, 246, 0.4)',
+                                backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                                fill: 'start',
+                                tension: 0.2,
+                                pointRadius: 0,
+                                yAxisID: 'y1', // Secondary Axis for bottom rendering
+                                order: 3
+                            },
+                            {
+                                label: 'Breakeven Threshold (%)',
+                                data: beActivationLine,
+                                borderColor: 'rgba(16, 185, 129, 0.4)', // Faded Emerald
+                                borderWidth: 1,
+                                borderDash: [4, 4],
+                                pointRadius: 0,
+                                yAxisID: 'y',
+                                order: 4
+                            },
+                            {
+                                label: 'VWAP Bleed Floor (%)',
+                                data: vwapBleedLine,
+                                borderColor: 'rgba(139, 92, 246, 0.4)', // Faded Violet
+                                borderWidth: 1,
+                                borderDash: [4, 4],
+                                pointRadius: 0,
+                                yAxisID: 'y',
+                                order: 5
+                            },
+                            {
+                                label: 'Take-Profit MC Threshold (%)',
+                                data: tpThresholdLine,
+                                borderColor: 'rgba(217, 70, 239, 0.4)', // Faded Fuchsia
+                                borderWidth: 1,
+                                borderDash: [4, 4],
+                                pointRadius: 0,
+                                yAxisID: 'y1',
+                                order: 6
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                        plugins: {
+                            legend: { display: false }, // Using custom HTML legend below
+                            tooltip: {
+                                backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                                titleColor: '#e2e8f0',
+                                bodyColor: '#94a3b8',
+                                borderColor: '#334155',
+                                borderWidth: 1,
+                                callbacks: {
+                                    label: function (context) {
+                                        let label = context.dataset.label || '';
+                                        if (label) { label += ': '; }
+                                        if (context.parsed.y !== null) {
+                                            label += context.parsed.y.toFixed(2) + '%';
+                                        }
+                                        return label;
+                                    },
+                                    afterBody: function (context) {
+                                        const event = data[context[0].dataIndex].event;
+                                        if (event) {
+                                            if (['VWAP_Break', 'VWAP Breakdown', 'VWAP Bleed Cut'].includes(event)) {
+                                                return `\n📉 [VWAP EXIT]`;
+                                            }
+                                            if (event === 'Para-Armed') {
+                                                return `\n⚡ [Parabolic Squeeze]`;
+                                            }
+                                            if (['Triggered', 'Trailing Stop', 'Take-Profit'].includes(event)) {
+                                                const reason = globalStateCache[symphonyId]?.triggered_reason || event;
+                                                return `\nEvent: Triggered (${reason})`;
+                                            }
+                                            return `\nEvent: ${event}`;
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                grid: { color: '#334155', drawBorder: false },
+                                ticks: { color: '#94a3b8', maxTicksLimit: 12 }
+                            },
+                            y: {
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                                grace: '5%',
+                                grid: {
+                                    color: (ctx) => ctx.tick.value === 0 ? '#64748b' : '#334155',
+                                    lineWidth: (ctx) => ctx.tick.value === 0 ? 2 : 1,
+                                    drawBorder: false
+                                },
+                                ticks: {
+                                    color: '#94a3b8',
+                                    callback: function (value) { return value.toFixed(2) + '%'; }
+                                }
+                            },
+                            y1: {
+                                type: 'linear',
+                                display: false, // Hides the labels/axis line to keep it clean
+                                position: 'right',
+                                min: 0,
+                                max: 400, // Forces the 0-100 bars to only occupy the bottom 25% of the chart area
+                                grid: { drawOnChartArea: false }
+                            }
+                        }
+                    }
+                });
+
+            } catch (error) {
+                showNotification("Failed to load chart data. Ensure bot has completed its first tick.", "error");
+            }
+        }
+
+        function closeChartModal() {
+            const modal = document.getElementById('chart-modal');
+            const content = document.getElementById('chart-modal-content');
+            modal.classList.add('opacity-0');
+            content.classList.add('scale-95');
+            setTimeout(() => { modal.classList.add('hidden'); }, 300);
+        }
+
+        // --- Settings Modal Logic ---
+        const settingsModal = document.getElementById('settings-modal');
+        const settingsModalContent = document.getElementById('settings-modal-content');
+
+        async function openSettingsModal() {
+            try {
+                const response = await fetch('/api/settings');
+                const data = await response.json();
+                const vars = data.globals || {};
+
+                const isLive = (vars.LIVE_EXECUTION || '').toLowerCase() === 'true';
+                const toggle = document.getElementById('env-live-mode');
+                toggle.checked = isLive;
+                toggleModeUI(toggle);
+
+                document.getElementById('env-exec-start').value = vars.EXECUTION_START_TIME || '09:30';
+                document.getElementById('env-comp-key').value = vars.COMPOSER_KEY_ID || '';
+                document.getElementById('env-comp-sec').value = vars.COMPOSER_SECRET || '';
+                document.getElementById('env-alp-key').value = vars.ALPACA_KEY || '';
+                document.getElementById('env-alp-sec').value = vars.ALPACA_SECRET || '';
+                document.getElementById('env-discord').value = vars.DISCORD_WEBHOOK_URL || '';
+
+                document.getElementById('env-account-uuids').value = vars.ACCOUNT_UUIDS || '';
+
+                if (typeof renderStrategyTabs === "function") {
+                    renderStrategyTabs(data.symphonies || {});
+                }
+
+                settingsModal.classList.remove('hidden');
+                setTimeout(() => {
+                    settingsModal.classList.remove('opacity-0');
+                    settingsModalContent.classList.remove('scale-95');
+                }, 10);
+            } catch (error) {
+                showNotification("Failed to load settings.", "error");
+            }
+        }
+
+        function closeSettingsModal() {
+            settingsModal.classList.add('opacity-0');
+            settingsModalContent.classList.add('scale-95');
+            setTimeout(() => { settingsModal.classList.add('hidden'); }, 300);
+        }
+
+        async function saveSettings(e) {
+            e.preventDefault();
+            const btn = document.getElementById('save-settings-btn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = "Saving...";
+            }
+
+            const globalsData = {
+                LIVE_EXECUTION: document.getElementById('env-live-mode').checked ? "True" : "False",
+                EXECUTION_START_TIME: document.getElementById('env-exec-start').value,
+                COMPOSER_KEY_ID: document.getElementById('env-comp-key').value.trim(),
+                COMPOSER_SECRET: document.getElementById('env-comp-sec').value.trim(),
+                ALPACA_KEY: document.getElementById('env-alp-key').value.trim(),
+                ALPACA_SECRET: document.getElementById('env-alp-sec').value.trim(),
+                ACCOUNT_UUIDS: document.getElementById('env-account-uuids').value.trim(),
+                DISCORD_WEBHOOK_URL: document.getElementById('env-discord').value.trim()
+            };
+
+            const symphoniesData = {};
+            const symphonyNames = Object.keys(currentStrategyData);
+            symphonyNames.forEach(symName => {
+                const safeId = symName.replace(/[^a-z0-9]/g, '_');
+                symphoniesData[symName] = {
+                    params: {
+                        TRIGGER_THRESHOLD_PCT: document.getElementById(`env-trigger-${safeId}`)?.value,
+                        MAX_SQUEEZE_FLOOR: document.getElementById(`env-squeeze-floor-${safeId}`)?.value,
+                        TAKE_PROFIT_MC_PCT: document.getElementById(`env-tp-mc-${safeId}`)?.value,
+                        VWAP_CROSS_HWM_PCT: document.getElementById(`env-vwap-hwm-${safeId}`)?.value,
+                        VWAP_BLEED_MULTIPLIER: document.getElementById(`env-vwap-bleed-arm-${safeId}`)?.value,
+                        VWAP_BLEED_TICKS: document.getElementById(`env-vwap-bleed-ticks-${safeId}`)?.value,
+                        PARABOLIC_VELOCITY_THRESHOLD: document.getElementById(`env-para-vel-${safeId}`)?.value,
+                        MAX_PARABOLIC_SQUEEZE: document.getElementById(`env-para-sqz-${safeId}`)?.value
+                    },
+                    locked_vars: currentStrategyData[symName]?.locked_vars || []
+                };
+            });
+
+            const payload = {
+                globals: globalsData,
+                symphonies: symphoniesData
+            };
+
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showNotification("✅ " + result.message, "success");
+                    await initAccountLabels();
+                    fetchState();
+                    closeSettingsModal();
+                } else {
+                    showNotification("⚠️ " + result.message, "error");
+                }
+            } catch (error) {
+                showNotification("⚠️ Failed to save settings.", "error");
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = "Save & Close";
+                }
+            }
+        }
+
+        // --- Post-Market Simulator Logic ---
+        const simModal = document.getElementById('sim-modal');
+        const simModalContent = document.getElementById('sim-modal-content');
+
+        async function openSimulatorModal() {
+            try {
+                const response = await fetch('/api/settings');
+                const data = await response.json();
+
+                // For simulator, we just grab the first symphony's params as a default
+                const symNames = Object.keys(data.symphonies || {});
+                let params = {};
+                if (symNames.length > 0) {
+                    params = data.symphonies[symNames[0]].params || {};
+                }
+
+                if (params.TRIGGER_THRESHOLD_PCT) document.getElementById('sim-trigger-slider').value = params.TRIGGER_THRESHOLD_PCT;
+                if (params.MAX_SQUEEZE_FLOOR) document.getElementById('sim-squeeze-slider').value = params.MAX_SQUEEZE_FLOOR;
+                if (params.TAKE_PROFIT_MC_PCT) document.getElementById('sim-tpmc-slider').value = params.TAKE_PROFIT_MC_PCT;
+
+            } catch (error) {
+                console.error("Failed to load live settings for simulator.", error);
+            }
+
+            // Defaults
+            document.getElementById('sim-time-slider').value = 390; // EOD (from 9:30)
+            document.getElementById('sim-runup-slider').value = 0.0;
+            document.getElementById('sim-pullback-slider').value = 0.0;
+            document.getElementById('sim-force-arm').checked = true;
+
+            runSimulation();
+
+            simModal.classList.remove('hidden');
+            setTimeout(() => {
+                simModal.classList.remove('opacity-0');
+                simModalContent.classList.remove('scale-95');
+            }, 10);
+        }
+
+        function closeSimulatorModal() {
+            simModal.classList.add('opacity-0');
+            simModalContent.classList.add('scale-95');
+            setTimeout(() => { simModal.classList.add('hidden'); }, 300);
+        }
+
+        function formatTimeLabel(minutesFromOpen) {
+            // Reflects the 9:30 AM open
+            const totalMinutes = 9 * 60 + 30 + parseInt(minutesFromOpen);
+            const hours = Math.floor(totalMinutes / 60);
+            const mins = totalMinutes % 60;
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            const displayHours = hours > 12 ? hours - 12 : hours;
+            const displayMins = mins.toString().padStart(2, '0');
+            return `${displayHours}:${displayMins} ${ampm}`;
+        }
+
+        function runSimulation() {
+            const simBreakeven = parseFloat(document.getElementById('sim-breakeven-slider').value);
+            const simTrigger = parseFloat(document.getElementById('sim-trigger-slider').value);
+            const simSqueeze = parseFloat(document.getElementById('sim-squeeze-slider').value);
+            const simTpMc = parseFloat(document.getElementById('sim-tpmc-slider').value);
+
+            const simMinutes = parseInt(document.getElementById('sim-time-slider').value);
+            const simRunUp = parseFloat(document.getElementById('sim-runup-slider').value);
+            const simPullback = parseFloat(document.getElementById('sim-pullback-slider').value);
+            const forceArm = document.getElementById('sim-force-arm').checked;
+
+            document.getElementById('sim-breakeven-val').innerText = simBreakeven.toFixed(2);
+            document.getElementById('sim-trigger-val').innerText = simTrigger.toFixed(1);
+            document.getElementById('sim-squeeze-val').innerText = simSqueeze.toFixed(2);
+            document.getElementById('sim-tpmc-val').innerText = simTpMc.toFixed(1);
+
+            document.getElementById('sim-time-val').innerText = formatTimeLabel(simMinutes);
+            document.getElementById('sim-runup-val').innerText = `+${simRunUp.toFixed(1)}%`;
+            document.getElementById('sim-pullback-val').innerText = `${simPullback.toFixed(1)}%`;
+
+            // Calculate Decay Curve
+            const timeRatio = Math.max(0.0, Math.min(1.0, simMinutes / 390.0));
+            const decayCurve = Math.log10(1 + 9 * timeRatio);
+
+            let html = '';
+            let triggerCount = 0;
+
+            const syms = Object.entries(globalStateCache)
+                .filter(([k, v]) => k !== 'date' && v.name)
+                .map(([k, v]) => ({ id: k, ...v }));
+
+            // Sort by simulated distance to trigger (closest first)
+            syms.sort((a, b) => {
+                const aDist = (a.current_return !== undefined ? a.current_return : 0.0) - (a.stop_trigger !== undefined ? a.stop_trigger : 0.0);
+                const bDist = (b.current_return !== undefined ? b.current_return : 0.0) - (b.stop_trigger !== undefined ? b.stop_trigger : 0.0);
+                return aDist - bDist;
+            });
+
+            syms.forEach(sym => {
+                // Actual static variables
+                const actualCurRet = sym.current_return !== undefined ? sym.current_return : 0.0;
+                const actualHwm = sym.high_water_mark !== undefined && sym.high_water_mark !== -999.0 ? sym.high_water_mark : actualCurRet;
+
+                // --- APPLY SIMULATED PRICE ACTION ---
+                // 1. Simulate the run-up to a new peak
+                const simulatedPeak = actualCurRet + simRunUp;
+                const hwm = Math.max(actualHwm, simulatedPeak);
+
+                // 2. Simulate the pullback from that peak
+                const simCurRet = simulatedPeak + simPullback;
+
+                // EOD Relief Valve
+                let symDecayCurve = decayCurve;
+                // 3:30 PM is 300 minutes after 10:30 AM
+                if (simMinutes >= 300) {
+                    const eodRatio = sym.eod_vol_ratio || 1.0;
+                    if (eodRatio > 1.2) {
+                        const reliefFactor = Math.min(0.15, (eodRatio - 1.0) * 0.1);
+                        symDecayCurve = symDecayCurve * (1.0 - reliefFactor);
+                    }
+                }
+
+                // Volatility calculation
+                const vol = sym.symphony_vol !== undefined ? sym.symphony_vol : -1.0;
+                const safeVol = vol > 0 ? vol : 1.5;
+                const morningStop = Math.max(safeVol * 1.5, 0.5);
+                const afternoonStop = Math.max(safeVol * 0.5, 0.25);
+
+                const dynamicStop = morningStop - ((morningStop - afternoonStop) * symDecayCurve);
+
+                // Flash Crash Fix applied to simulation
+                const effectiveBreakeven = Math.max(simBreakeven, vol);
+
+                // Arming logic
+                let isSimParaArmed = (sym.para_armed === true);
+                let isSimArmed = (sym.mc_prob !== undefined && sym.mc_prob < simTrigger && sym.mc_prob >= simTpMc);
+                let isSimTpArmed = (sym.mc_prob !== undefined && sym.mc_prob < simTpMc);
+                if (forceArm) isSimArmed = true;
+
+                // Strangler logic
+                let activeStopDistance = dynamicStop;
+                if (isSimArmed) {
+                    const safeSimTrigger = simTrigger > 0 ? simTrigger : 0.1;
+                    const mcHealthRatio = Math.max(0.0, Math.min(1.0, (sym.mc_prob || 0) / safeSimTrigger));
+                    const strangleMultiplier = simSqueeze + (mcHealthRatio * (1.0 - simSqueeze));
+                    activeStopDistance = dynamicStop * strangleMultiplier;
+                }
+
+                // Stop level & Breakeven math
+                let baseStopLevel = hwm - activeStopDistance;
+                let stopLevel = baseStopLevel;
+
+                if (hwm >= effectiveBreakeven) {
+                    stopLevel = Math.max(baseStopLevel, 0.0);
+                }
+
+                // Final trigger check
+                const distToStop = simCurRet - stopLevel;
+                const isTriggered = distToStop <= 0 && isSimArmed;
+
+                if (isTriggered) triggerCount++;
+
+                let statusBadge = `<span class="text-slate-500 text-[10px] font-bold tracking-widest">UNARMED</span>`;
+                if (isTriggered) {
+                    if (sym.triggered_reason === "VWAP Breakdown") {
+                        statusBadge = `<span class="bg-violet-500/20 text-violet-400 border border-violet-500/30 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(139,92,246,0.2)]" title="Triggered by VWAP Breakdown">VWAP EXIT</span>`;
+                    } else {
+                        statusBadge = `<span class="bg-rose-500/20 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(244,63,94,0.2)]">TRIGGERED</span>`;
+                    }
+                } else if (isSimParaArmed) {
+                    statusBadge = `<span class="bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(6,182,212,0.2)]">PARA-ARMED</span>`;
+                } else if (isSimTpArmed) {
+                    statusBadge = `<span class="bg-fuchsia-500/20 text-fuchsia-400 border border-fuchsia-500/30 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(217,70,239,0.2)]">TP-ARMED</span>`;
+                } else if (isSimArmed) {
+                    statusBadge = `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(245,158,11,0.2)]">ARMED</span>`;
+                }
+
+                const rowClass = isTriggered ? (sym.triggered_reason === "VWAP Breakdown" ? "bg-violet-950/20 hover:bg-violet-900/30 transition-colors border-l-2 border-violet-500" : "bg-rose-950/20 hover:bg-rose-900/30 transition-colors border-l-2 border-rose-500") : "hover:bg-slate-800 transition-colors border-l-2 border-transparent";
+
+                const distColor = isTriggered ? "text-rose-400 font-bold" : (distToStop < 0.5 ? "text-amber-400" : "text-emerald-400");
+                const distText = distToStop > 0 ? `+${distToStop.toFixed(2)}%` : `${distToStop.toFixed(2)}%`;
+
+                html += `
+                    <tr class="${rowClass}">
+                        <td class="py-3 pl-3 text-slate-200">
+                            <div class="max-w-[280px] truncate" title="${sym.name}">${sym.name}</div>
+                        </td>
+                        <td class="py-3 pr-4 text-right font-mono ${simCurRet >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${simCurRet > 0 ? '+' : ''}${simCurRet.toFixed(2)}%</td>
+                        <td class="py-3 pr-4 text-right font-mono text-slate-300">${hwm.toFixed(2)}%</td>
+                        <td class="py-3 pr-4 text-right font-mono text-slate-400">${activeStopDistance.toFixed(2)}%</td>
+                        <td class="py-3 pr-4 text-right font-mono font-bold text-slate-200">${stopLevel.toFixed(2)}%</td>
+                        <td class="py-3 pr-4 text-right font-mono ${distColor}">${distText}</td>
+                        <td class="py-3 text-center">${statusBadge}</td>
+                    </tr>
+                `;
+            });
+
+            document.getElementById('sim-table-body').innerHTML = html;
+            document.getElementById('sim-trigger-count').innerText = `${triggerCount} Triggers`;
+            if (triggerCount > 0) {
+                document.getElementById('sim-trigger-count').classList.replace('text-rose-400', 'text-white');
+                document.getElementById('sim-trigger-count').classList.replace('bg-rose-500/20', 'bg-rose-600');
+            } else {
+                document.getElementById('sim-trigger-count').classList.replace('text-white', 'text-rose-400');
+                document.getElementById('sim-trigger-count').classList.replace('bg-rose-600', 'bg-rose-500/20');
+            }
+        }
+
+        // --- Utils ---
+        function showNotification(msg, type) {
+            const notif = document.getElementById('notification');
+            notif.textContent = msg;
+            if (type === 'success') {
+                notif.className = "mb-6 p-4 rounded-xl text-sm font-medium transition-all duration-300 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 block z-50 relative";
+            } else {
+                notif.className = "mb-6 p-4 rounded-xl text-sm font-medium transition-all duration-300 bg-red-500/20 text-red-300 border border-red-500/30 block z-50 relative";
+            }
+            setTimeout(() => { notif.classList.add('hidden'); }, 4000);
+        }
+
+        function updateMaxRows() {
+            const inputVal = parseInt(document.getElementById('max-rows-input').value, 10);
+            if (!isNaN(inputVal) && inputVal > 0) {
+                maxRowsDisplayed = inputVal;
+                document.documentElement.style.setProperty('--max-rows', maxRowsDisplayed);
+            }
+        }
+
+        // Boot Sequence
+        document.documentElement.style.setProperty('--max-rows', maxRowsDisplayed);
+        startNYClock();
+        startCountdown();
+        initAccountLabels().then(() => {
+            fetchState();
+            setInterval(fetchState, 5000);
+        });
+
+        let currentStrategyData = {};
+
+        function renderStrategyTabs(symphonyData) {
+            currentStrategyData = symphonyData;
+            const headerContainer = document.getElementById('account-tabs-header');
+            const contentContainer = document.getElementById('account-tabs-content');
+
+            headerContainer.innerHTML = '';
+            contentContainer.innerHTML = '';
+
+            const symphonyNames = Object.keys(symphonyData);
+
+            if (symphonyNames.length === 0) {
+                contentContainer.innerHTML = '<p class="text-sm text-slate-400 italic mb-4">No symphonies detected in state. Run the bot once to populate.</p>';
+                return;
+            }
+
+            symphonyNames.forEach((name, index) => {
+                const isActive = index === 0;
+                const safeId = name.replace(/[^a-z0-9]/g, '_');
+
+                // Tab Button
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = `px-4 py-2 text-sm font-medium rounded-t-lg transition-colors focus:outline-none whitespace-nowrap ${isActive ? 'bg-slate-700 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'}`;
+                btn.textContent = name;
+                btn.onclick = (e) => switchTab(e, safeId);
+                headerContainer.appendChild(btn);
+
+                // Tab Content Pane
+                const pane = document.createElement('div');
+                pane.id = `pane-${safeId}`;
+                pane.className = `space-y-6 tab-pane ${isActive ? 'block' : 'hidden'}`;
+                pane.innerHTML = generateTabHTML(name, symphonyData[name]);
+                contentContainer.appendChild(pane);
+            });
+        }
+
+        function switchTab(event, safeId) {
+            // Update Tab Buttons
+            const buttons = document.getElementById('account-tabs-header').children;
+            for (let btn of buttons) {
+                btn.className = 'px-4 py-2 text-sm font-medium rounded-t-lg transition-colors focus:outline-none whitespace-nowrap text-slate-400 hover:text-slate-200 hover:bg-slate-800';
+            }
+            event.target.className = 'px-4 py-2 text-sm font-medium rounded-t-lg transition-colors focus:outline-none whitespace-nowrap bg-slate-700 text-blue-400 border-b-2 border-blue-500';
+
+            // Update Tab Panes
+            const panes = document.getElementsByClassName('tab-pane');
+            for (let pane of panes) {
+                pane.classList.replace('block', 'hidden');
+            }
+            document.getElementById(`pane-${safeId}`).classList.replace('hidden', 'block');
+        }
+
+        function generateTabHTML(name, data) {
+            const params = data.params || {};
+            const safeId = name.replace(/[^a-z0-9]/g, '_');
+            return `
+                            <!-- Layer 2: Core Triggers -->
+                            <div>
+                                <h5 class="text-[11px] font-bold text-indigo-400 uppercase tracking-widest mb-3 border-t border-slate-700 pt-5">Layer 2: Core Triggers</h5>
+                                <div class="space-y-4">
+                                    <div class="relative group">
+                                        <div class="flex justify-between items-center mb-1">
+                                            <label class="text-sm font-semibold text-indigo-300 flex items-center gap-1.5 cursor-help" title="Arm trailing stop when return exceeds this %.">TRIGGER_THRESHOLD_PCT</label>
+                                        </div>
+                                        <input type="number" step="0.1" id="env-trigger-${safeId}" value="${params.TRIGGER_THRESHOLD_PCT || 15.0}" required class="w-full bg-slate-900 border border-indigo-600/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+                                    </div>
+                                    <div class="relative group">
+                                        <div class="flex justify-between items-center mb-1">
+                                            <label class="text-sm font-semibold text-slate-300 flex items-center gap-1.5 cursor-help" title="Floor applied specifically during Time Squeeze.">MAX_SQUEEZE_FLOOR</label>
+                                        </div>
+                                        <input type="number" step="0.05" id="env-squeeze-floor-${safeId}" value="${params.MAX_SQUEEZE_FLOOR || 0.20}" required class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Layer 3: Advanced Conditionals -->
+                            <div>
+                                <h5 class="text-[11px] font-bold text-fuchsia-400 uppercase tracking-widest mb-3 border-t border-slate-700 pt-5">Layer 3: Advanced Conditionals</h5>
+                                <div class="space-y-4">
+                                    <div class="relative group">
+                                        <div class="flex justify-between items-center mb-1">
+                                            <label class="text-sm font-semibold text-fuchsia-400 flex items-center gap-1.5 cursor-help" title="When MC Probability dips below this threshold, arm a take-profit trap.">TAKE_PROFIT_MC_PCT (Smart TP)</label>
+                                        </div>
+                                        <input type="number" step="0.1" id="env-tp-mc-${safeId}" value="${params.TAKE_PROFIT_MC_PCT || 5.0}" required class="w-full bg-slate-900 border border-fuchsia-600/50 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-fuchsia-500 focus:ring-1 focus:ring-fuchsia-500">
+                                    </div>
+                                    <div class="relative group">
+                                        <div class="flex justify-between items-center mb-1">
+                                            <label class="text-[11px] font-bold text-slate-400 uppercase tracking-tighter cursor-help" title="Trigger VWAP Trailing Stop.">VWAP_CROSS_HWM_PCT</label>
+                                        </div>
+                                        <input type="number" step="0.1" id="env-vwap-hwm-${safeId}" value="${params.VWAP_CROSS_HWM_PCT || 1.0}" required class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-fuchsia-500">
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div class="relative group">
+                                            <div class="flex justify-between items-center mb-1">
+                                                <label class="text-[11px] font-bold text-slate-400 uppercase tracking-tighter cursor-help" title="Bleed Trigger Volatility Multiplier.">VWAP_BLEED_MULTIPLIER</label>
+                                            </div>
+                                            <input type="number" step="0.1" min="0.5" max="3.0" id="env-vwap-bleed-arm-${safeId}" value="${params.VWAP_BLEED_MULTIPLIER || 1.5}" required class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-fuchsia-500">
+                                        </div>
+                                        <div class="relative group">
+                                            <div class="flex justify-between items-center mb-1">
+                                                <label class="text-[11px] font-bold text-slate-400 uppercase tracking-tighter cursor-help" title="Consecutive Ticks.">VWAP_BLEED_TICKS</label>
+                                            </div>
+                                            <input type="number" step="1" id="env-vwap-bleed-ticks-${safeId}" value="${params.VWAP_BLEED_TICKS || 10}" required class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-fuchsia-500">
+                                        </div>
+                                    </div>
+                                    <div class="relative group">
+                                        <div class="flex justify-between items-center mb-1">
+                                            <label class="text-[11px] font-bold text-slate-400 uppercase tracking-tighter cursor-help" title="Velocity Required.">PARABOLIC_VELOCITY_THRESHOLD</label>
+                                        </div>
+                                        <input type="number" step="0.1" id="env-para-vel-${safeId}" value="${params.PARABOLIC_VELOCITY_THRESHOLD || 2.0}" required class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-fuchsia-500">
+                                    </div>
+                                    <div class="relative group">
+                                        <div class="flex justify-between items-center mb-1">
+                                            <label class="text-sm font-semibold text-slate-300 flex items-center gap-1.5 cursor-help" title="Squeeze floor for Parabolic Moves.">MAX_PARABOLIC_SQUEEZE</label>
+                                        </div>
+                                        <input type="number" step="0.05" id="env-para-sqz-${safeId}" value="${params.MAX_PARABOLIC_SQUEEZE || 0.50}" required class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-fuchsia-500 focus:ring-1 focus:ring-fuchsia-500">
+                                    </div>
+                                </div>
+                            </div>
+            `;
+        }
+    </script>
+</body>
+
+</html>
