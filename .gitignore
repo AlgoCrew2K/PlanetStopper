@@ -1,4 +1,13 @@
-bot_state.json
-history_cache.json
-__pycache__/
+Your keys:
 .env
+
+# Local Databases (Your personal strategy locks and bot state)
+alphabot_state.db
+optuna_studies.db
+
+# Caches and Post-Mortem Reports (Your personal daily returns)
+__pycache__/
+cache/
+history_cache.json
+symphony_logs.json
+post_mortem_*.json
