@@ -77,13 +77,14 @@ def get_state():
             sym["normalized_name"] = database.normalize_name(sym.get("name", ""))
             accounts_map[acc_id].append(sym)
             
-        account_uuids_str = env_vars.get("ACCOUNT_UUIDS", "")
-        accounts_list = [uid.strip() for uid in account_uuids_str.split(",") if uid.strip()]
-        
         account_labels = {}
-        if len(accounts_list) > 0: account_labels[accounts_list[0]] = "Individual"
-        if len(accounts_list) > 1: account_labels[accounts_list[1]] = "Roth IRA"
-        if len(accounts_list) > 2: account_labels[accounts_list[2]] = "Trad. IRA"
+        acc_ind = env_vars.get("ACCOUNT_INDIVIDUAL", "").strip()
+        acc_roth = env_vars.get("ACCOUNT_ROTH", "").strip()
+        acc_trad = env_vars.get("ACCOUNT_TRAD", "").strip()
+        
+        if acc_ind: account_labels[acc_ind] = "Individual"
+        if acc_roth: account_labels[acc_roth] = "Roth IRA"
+        if acc_trad: account_labels[acc_trad] = "Trad. IRA"
 
         # Sorting logic
         sort_col = request.args.get("sortCol", "name")
@@ -167,8 +168,10 @@ def force_eod():
             prev_date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
         env_vars = dotenv_values(ENV_FILE_PATH)
-        account_uuids_str = env_vars.get("ACCOUNT_UUIDS", "")
-        account_uuids = [uid.strip() for uid in account_uuids_str.split(",") if uid.strip()]
+        acc_ind = env_vars.get("ACCOUNT_INDIVIDUAL", "").strip()
+        acc_roth = env_vars.get("ACCOUNT_ROTH", "").strip()
+        acc_trad = env_vars.get("ACCOUNT_TRAD", "").strip()
+        account_uuids = [uid for uid in [acc_ind, acc_roth, acc_trad] if uid]
         discord_webhook = env_vars.get("DISCORD_WEBHOOK_URL", "")
 
         def run_eod_tasks():
@@ -302,7 +305,9 @@ def get_settings():
         "COMPOSER_SECRET": env_vars.get("COMPOSER_SECRET", ""),
         "ALPACA_KEY": env_vars.get("ALPACA_KEY", ""),
         "ALPACA_SECRET": env_vars.get("ALPACA_SECRET", ""),
-        "ACCOUNT_UUIDS": env_vars.get("ACCOUNT_UUIDS", ""),
+        "ACCOUNT_INDIVIDUAL": env_vars.get("ACCOUNT_INDIVIDUAL", ""),
+        "ACCOUNT_ROTH": env_vars.get("ACCOUNT_ROTH", ""),
+        "ACCOUNT_TRAD": env_vars.get("ACCOUNT_TRAD", ""),
         "DISCORD_WEBHOOK_URL": env_vars.get("DISCORD_WEBHOOK_URL", ""),
     }
 
