@@ -1,4 +1,0 @@
-[FORMAT]
-max-line-length=100
-[MESSAGES CONTROL]
-disable=too-many-locals,too-many-branches,too-many-statements,too-many-arguments,too-many-nested-blocks,too-many-positional-arguments,broad-exception-caught,implicit-str-concat,missing-module-docstring,missing-class-docstring
