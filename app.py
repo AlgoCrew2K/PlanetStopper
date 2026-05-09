@@ -1,102 +1,150 @@
-"""Flask application for the Alpha Bot Control Center with SQLite."""
+"""Flask application for AlphaBot Control Center with Account-Level settings."""
 
+import os
+import sys
 import time
 import threading
 import subprocess
 from datetime import datetime
 import schedule
 import requests
+import logging
 from flask import Flask, render_template, jsonify, request
-from dotenv import dotenv_values, set_key, find_dotenv
-from alpha_bot_execution import get_composer_headers, COMPOSER_BASE_URL
+from dotenv import dotenv_values, set_key
 
 import database
 
-app = Flask(__name__)
+ENV_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 
+app = Flask(__name__)
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
+COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
 
 # --- 1. Bot Execution Logic ---
 def trigger_alpha_bot(force=False):
-    """Triggers the alpha bot execution script."""
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Triggering Alpha Bot...")
     try:
-        cmd = ["python", "alpha_bot_execution.py"]
+        cmd = [sys.executable, "alpha_bot_execution.py"]
         if force:
             cmd.append("--force")
-        subprocess.run(cmd, check=True)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        subprocess.run(cmd, check=True, env=env)
     except subprocess.CalledProcessError as e:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Execution failed: {e}")
 
-
-# --- 2. Background Scheduler ---
 def threaded_trigger():
-    """Launches the bot execution in a background thread to prevent scheduler blocking."""
     threading.Thread(target=trigger_alpha_bot, daemon=True).start()
 
-
 def run_scheduler():
-    """Runs the scheduler every 1-minute to support Multi-Tick confirmations."""
     schedule.every().minute.at(":00").do(threaded_trigger)
-
     while True:
         schedule.run_pending()
         time.sleep(1)
 
-
-# --- 3. Web Dashboard Routes ---
+# --- 2. Web Dashboard Routes ---
 @app.route("/")
 def dashboard():
-    """Renders the dashboard template."""
     return render_template("index.html")
-
 
 @app.route("/api/state")
 def get_state():
-    """Returns the current state of the bot directly from SQLite."""
     try:
         state_data = database.load_state()
-
         if not state_data:
-            return jsonify(
-                {
-                    "status": "waiting",
-                    "message": "Bot state initializing. Please wait for the first run.",
-                }
-            )
+            return jsonify({"status": "waiting", "message": "Bot state initializing."})
 
         env_vars = dotenv_values(".env")
         live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
 
         next_run_seconds = 0
-        jobs = schedule.get_jobs()
-        valid_jobs = [job for job in jobs if job.next_run]
+        valid_jobs = [job for job in schedule.get_jobs() if job.next_run]
         if valid_jobs:
-            next_run_time = min(job.next_run for job in valid_jobs)
-            delta = next_run_time - datetime.now()
+            delta = min(job.next_run for job in valid_jobs) - datetime.now()
             next_run_seconds = max(0, int(delta.total_seconds()))
 
-        return jsonify(
-            {
-                "status": "active",
-                "state": state_data,
-                "live_mode": live_mode,
-                "execution_start_time": env_vars.get("EXECUTION_START_TIME", "09:30"),
-                "next_run_seconds": next_run_seconds,
-            }
-        )
+        # Render HTML for UI
+        symphony_keys = [k for k in state_data.keys() if isinstance(state_data[k], dict)]
+        accounts_map = {}
+        for k in symphony_keys:
+            sym = state_data[k]
+            acc_id = sym.get("account", "Unknown Account")
+            if acc_id not in accounts_map:
+                accounts_map[acc_id] = []
+            sym["id"] = k
+            sym["normalized_name"] = database.normalize_name(sym.get("name", ""))
+            accounts_map[acc_id].append(sym)
+            
+        account_uuids_str = env_vars.get("ACCOUNT_UUIDS", "")
+        accounts_list = [uid.strip() for uid in account_uuids_str.split(",") if uid.strip()]
+        
+        account_labels = {}
+        if len(accounts_list) > 0: account_labels[accounts_list[0]] = "Individual"
+        if len(accounts_list) > 1: account_labels[accounts_list[1]] = "Roth IRA"
+        if len(accounts_list) > 2: account_labels[accounts_list[2]] = "Trad. IRA"
 
+        # Sorting logic
+        sort_col = request.args.get("sortCol", "name")
+        sort_dir = request.args.get("sortDir", "asc")
+        is_desc = (sort_dir == "desc")
+
+        def get_status_rank(s):
+            if s.get("triggered"):
+                if s.get("triggered_reason") == "VWAP Breakdown": return 5
+                return 4
+            if s.get("para_armed"): return 3
+            if s.get("tp_armed"): return 2
+            if s.get("armed"): return 1
+            return 0
+
+        def get_exit_ret(s):
+            if s.get("triggered"):
+                return s.get("triggered_at_return") if s.get("triggered_at_return") is not None else (s.get("current_return") or -999.0)
+            return s.get("current_return") if s.get("current_return") is not None else -999.0
+
+        for acc_id in accounts_map:
+            if sort_col == "mc_prob":
+                accounts_map[acc_id].sort(key=lambda s: s.get("mc_prob") if s.get("mc_prob") is not None else -999.0, reverse=is_desc)
+            elif sort_col == "status":
+                accounts_map[acc_id].sort(key=get_status_rank, reverse=is_desc)
+            elif sort_col == "stop_level":
+                accounts_map[acc_id].sort(key=lambda s: s.get("triggered_at_stop") if s.get("triggered") and s.get("triggered_at_stop") is not None else (s.get("stop_trigger") if s.get("stop_trigger") is not None else -999.0), reverse=is_desc)
+            elif sort_col == "current_return":
+                accounts_map[acc_id].sort(key=get_exit_ret, reverse=is_desc)
+            elif sort_col == "high_water_mark":
+                accounts_map[acc_id].sort(key=lambda s: s.get("shadow_hwm", -999.0), reverse=is_desc)
+            elif sort_col == "shadow":
+                accounts_map[acc_id].sort(key=lambda s: s.get("current_return") if s.get("current_return") is not None else -999.0, reverse=is_desc)
+            else: # name
+                accounts_map[acc_id].sort(key=lambda s: (s.get("name") or s.get("id", "")).lower(), reverse=is_desc)
+
+        rendered_html = render_template("table_partial.html", accounts_map=accounts_map, account_labels=account_labels, sort_col=sort_col, sort_dir=sort_dir)
+
+        return jsonify({
+            "status": "active",
+            "state": state_data,
+            "live_mode": live_mode,
+            "execution_start_time": env_vars.get("EXECUTION_START_TIME", "09:30"),
+            "next_run_seconds": next_run_seconds,
+            "html": rendered_html
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route("/api/logs/<symphony_id>")
+def api_symphony_logs(symphony_id):
+    try:
+        logs = database.get_symphony_logs(symphony_id)
+        return jsonify(logs)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/chart/<symphony_id>")
 def get_chart_data(symphony_id):
-    """Returns the intraday timeseries chart data from SQLite."""
     try:
         chart_data = database.load_chart_history()
-        if not chart_data:
-            return jsonify({"status": "waiting", "data": []})
-
         symphony_data = chart_data.get("symphonies", {}).get(symphony_id, [])
         return jsonify({"status": "success", "data": symphony_data})
     except Exception as e:
@@ -105,159 +153,196 @@ def get_chart_data(symphony_id):
 
 @app.route("/api/trigger", methods=["POST"])
 def manual_trigger():
-    """Manually triggers the bot execution."""
     threading.Thread(target=trigger_alpha_bot, args=(True,)).start()
-    return jsonify({"status": "success", "message": "Bot execution forced (bypassing gatekeeper)."})
+    return jsonify({"status": "success", "message": "Bot execution forced."})
 
+@app.route("/api/force_eod", methods=["POST"])
+def force_eod():
+    try:
+        from datetime import datetime, timedelta
+        bot_state = database.load_state()
+        chart_history = database.load_chart_history()
+        prev_date_str = chart_history.get("date")
+        if not prev_date_str:
+            prev_date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-# --- 4. Account Liquidation Route ---
+        env_vars = dotenv_values(ENV_FILE_PATH)
+        account_uuids_str = env_vars.get("ACCOUNT_UUIDS", "")
+        account_uuids = [uid.strip() for uid in account_uuids_str.split(",") if uid.strip()]
+        discord_webhook = env_vars.get("DISCORD_WEBHOOK_URL", "")
+
+        def run_eod_tasks():
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Forcing EOD Analysis for {prev_date_str}...")
+            import reporting
+            import autotuner
+            reporting.generate_eod_snapshot(bot_state, prev_date_str, is_post_rebalance=False, discord_webhook_url=discord_webhook)
+            reporting.generate_eod_snapshot(bot_state, prev_date_str, is_post_rebalance=True, discord_webhook_url=discord_webhook)
+            autotuner_changes = autotuner.run_autotuner(bot_state, prev_date_str, account_uuids, is_forced=True)
+            reporting.send_eod_discord_post(prev_date_str, f"post_mortem_{prev_date_str}.json", autotuner_changes, discord_webhook)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Forced EOD Analysis complete.")
+
+        threading.Thread(target=run_eod_tasks, daemon=True).start()
+        return jsonify({"status": "success", "message": "EOD Analysis initiated for " + prev_date_str})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/resend_discord", methods=["POST"])
+def resend_discord():
+    try:
+        from datetime import datetime, timedelta
+        chart_history = database.load_chart_history()
+        prev_date_str = chart_history.get("date")
+        if not prev_date_str:
+            prev_date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        env_vars = dotenv_values(ENV_FILE_PATH)
+        discord_webhook = env_vars.get("DISCORD_WEBHOOK_URL", "")
+
+        def run_discord_push():
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Resending Discord Report for {prev_date_str}...")
+            import reporting
+            # Pass None for optimization_results to skip tuning and just send the current JSON
+            reporting.send_eod_discord_post(prev_date_str, f"post_mortem_{prev_date_str}.json", None, discord_webhook)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Discord resend complete.")
+
+        threading.Thread(target=run_discord_push, daemon=True).start()
+        return jsonify({"status": "success", "message": "Discord push initiated for " + prev_date_str})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/history/<int:days>")
+def get_history(days):
+    import glob, json, os
+    from datetime import datetime, timedelta
+    
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+    files = glob.glob("post_mortem_*.json")
+    
+    stats = {
+        "total_alpha": 0.0,
+        "total_saved": 0.0,
+        "trigger_count": 0,
+        "wins": 0,
+        "by_reason": {}
+    }
+    
+    for f_path in files:
+        try:
+            # Extract date from filename: post_mortem_YYYY-MM-DD.json
+            date_part = f_path.replace("post_mortem_", "").replace(".json", "")
+            file_date = datetime.strptime(date_part, "%Y-%m-%d")
+            if start_date <= file_date <= end_date:
+                with open(f_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    for t in data.get("triggers", []):
+                        alpha = t.get("saved_pct_guard_alpha", 0.0)
+                        dollars = t.get("saved_dollars", 0.0)
+                        reason = t.get("exit_reason", "Unknown")
+                        
+                        stats["total_alpha"] += alpha
+                        stats["total_saved"] += dollars
+                        stats["trigger_count"] += 1
+                        if alpha > 0: stats["wins"] += 1
+                        
+                        if reason not in stats["by_reason"]:
+                            stats["by_reason"][reason] = {"alpha": 0.0, "count": 0, "wins": 0}
+                        stats["by_reason"][reason]["alpha"] += alpha
+                        stats["by_reason"][reason]["count"] += 1
+                        if alpha > 0: stats["by_reason"][reason]["wins"] += 1
+        except: continue
+
+    # Final Averages
+    if stats["trigger_count"] > 0:
+        stats["avg_guard_alpha"] = stats["total_alpha"] / stats["trigger_count"]
+        stats["win_rate"] = (stats["wins"] / stats["trigger_count"]) * 100
+    else:
+        stats["avg_guard_alpha"] = 0
+        stats["win_rate"] = 0
+        
+    return jsonify(stats)
+
+# --- 3. Account Liquidation ---
 def perform_account_liquidation(account_id, key, secret, live_mode):
-    """Performs account liquidation via the Composer API."""
-    headers = get_composer_headers(key=key, secret=secret)
+    headers = {"x-api-key-id": key, "authorization": f"Bearer {secret}", "Content-Type": "application/json"}
     url = f"{COMPOSER_BASE_URL}/portfolio/accounts/{account_id}/symphony-stats-meta"
-
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
-            symphonies = resp.json().get("symphonies", [])
-            print(f"Found {len(symphonies)} symphonies to liquidate in account {account_id}...")
-
-            for sym in symphonies:
+            for sym in resp.json().get("symphonies", []):
                 if live_mode:
-                    act_sym_id = sym.get("symphony_id", sym["id"])
-                    sell_url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{act_sym_id}/go-to-cash"
+                    sell_url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{sym.get('symphony_id', sym['id'])}/go-to-cash"
                     sell_resp = requests.post(sell_url, headers=headers, json={}, timeout=10)
-
-                    sym_name = sym.get("name", sym["id"])
-                    if sell_resp.status_code in [200, 201, 202]:
-                        print(f"✅ Liquidated {sym_name} (HTTP {sell_resp.status_code})")
-                    else:
-                        print(
-                            f"❌ Failed to liquidate {sym_name}: HTTP {sell_resp.status_code} - {sell_resp.text}"
-                        )
+                    print(f"Liquidated {sym.get('name')} (HTTP {sell_resp.status_code})")
                     time.sleep(1.5)
-    except requests.RequestException as e:
+    except Exception as e:
         print(f"Liquidation Error: {e}")
-
 
 @app.route("/api/sell_account", methods=["POST"])
 def sell_account():
-    """Initiates account liquidation."""
     data = request.json
     account_id = data.get("account_id")
-    if not account_id:
-        return jsonify({"status": "error", "message": "No account ID provided"}), 400
-
     env_vars = dotenv_values(".env")
-    key = env_vars.get("COMPOSER_KEY_ID")
-    secret = env_vars.get("COMPOSER_SECRET")
     live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
 
-    if not key or not secret:
-        return (
-            jsonify({"status": "error", "message": "Composer API keys missing in settings."}),
-            400,
-        )
+    if account_id and env_vars.get("COMPOSER_KEY_ID"):
+        threading.Thread(target=perform_account_liquidation, args=(account_id, env_vars.get("COMPOSER_KEY_ID"), env_vars.get("COMPOSER_SECRET"), live_mode)).start()
+        return jsonify({"status": "success", "message": "Liquidation initiated."})
+    return jsonify({"status": "error", "message": "Missing credentials or account ID."}), 400
 
-    threading.Thread(
-        target=perform_account_liquidation, args=(account_id, key, secret, live_mode)
-    ).start()
-    mode_text = "LIVE EXECUTION" if live_mode else "DRY RUN"
-    return jsonify(
-        {
-            "status": "success",
-            "message": f"[{mode_text}] Initiated account liquidation. Watch terminal for queue confirmations.",
-        }
-    )
-
-
-# --- 5. Settings/Control Panel Routes ---
+# --- 4. Tabbed Settings / Control Panel Routes ---
 @app.route("/api/settings", methods=["GET"])
 def get_settings():
-    """Returns the current settings."""
-    env_vars = dotenv_values(".env")
-    return jsonify(
-        {
-            "LIVE_EXECUTION": env_vars.get("LIVE_EXECUTION", "False"),
-            "EXECUTION_START_TIME": env_vars.get("EXECUTION_START_TIME", "09:30"),
-            "COMPOSER_KEY_ID": env_vars.get("COMPOSER_KEY_ID", ""),
-            "COMPOSER_SECRET": env_vars.get("COMPOSER_SECRET", ""),
-            "ALPACA_KEY": env_vars.get("ALPACA_KEY", ""),
-            "ALPACA_SECRET": env_vars.get("ALPACA_SECRET", ""),
-            "ACCOUNT_UUIDS": env_vars.get("ACCOUNT_UUIDS", ""),
-            "DISCORD_WEBHOOK_URL": env_vars.get("DISCORD_WEBHOOK_URL", ""),
-            "TRIGGER_THRESHOLD_PCT": env_vars.get("TRIGGER_THRESHOLD_PCT", "15.0"),
-            "TAKE_PROFIT_MC_PCT": env_vars.get("TAKE_PROFIT_MC_PCT", "5.0"),
-            "LOSS_ARM_PCT": env_vars.get("LOSS_ARM_PCT", "1.5"),
-            "MAX_SQUEEZE_FLOOR": env_vars.get("MAX_SQUEEZE_FLOOR", "0.20"),
-            "VIX_LOW_THRESHOLD": env_vars.get("VIX_LOW_THRESHOLD", "15.0"),
-            "VIX_HIGH_THRESHOLD": env_vars.get("VIX_HIGH_THRESHOLD", "25.0"),
-            "VIX_LOW_MULT": env_vars.get("VIX_LOW_MULT", "1.5"),
-            "VIX_MID_MULT": env_vars.get("VIX_MID_MULT", "2.0"),
-            "VIX_HIGH_MULT": env_vars.get("VIX_HIGH_MULT", "2.5"),
-            "MIN_MULTIPLIER_FLOOR": env_vars.get("MIN_MULTIPLIER_FLOOR", "0.5"),
-            "TRAILING_STOP_PCT": env_vars.get("TRAILING_STOP_PCT", "1.5"),
-            "ENDING_STOP_PCT": env_vars.get("ENDING_STOP_PCT", "0.5"),
-            "BREAKEVEN_ACTIVATION_PCT": env_vars.get("BREAKEVEN_ACTIVATION_PCT", "2.0"),
-            "VWAP_CROSS_HWM_PCT": env_vars.get("VWAP_CROSS_HWM_PCT", "1.0"),
-            "PARABOLIC_VELOCITY_THRESHOLD": env_vars.get("PARABOLIC_VELOCITY_THRESHOLD", "2.0"),
-            "MAX_PARABOLIC_SQUEEZE": env_vars.get("MAX_PARABOLIC_SQUEEZE", "0.50"),
-            "SIMULATION_PATHS": env_vars.get("SIMULATION_PATHS", "5000"),
-            "NEIGHBOR_K": env_vars.get("NEIGHBOR_K", "150"),
-        }
-    )
+    """Returns Globals from .env and Symphony Strategies from SQLite."""
+    env_vars = dotenv_values(ENV_FILE_PATH)
+    globals_data = {
+        "LIVE_EXECUTION": env_vars.get("LIVE_EXECUTION", "False"),
+        "EXECUTION_START_TIME": env_vars.get("EXECUTION_START_TIME", "09:30"),
+        "COMPOSER_KEY_ID": env_vars.get("COMPOSER_KEY_ID", ""),
+        "COMPOSER_SECRET": env_vars.get("COMPOSER_SECRET", ""),
+        "ALPACA_KEY": env_vars.get("ALPACA_KEY", ""),
+        "ALPACA_SECRET": env_vars.get("ALPACA_SECRET", ""),
+        "ACCOUNT_UUIDS": env_vars.get("ACCOUNT_UUIDS", ""),
+        "DISCORD_WEBHOOK_URL": env_vars.get("DISCORD_WEBHOOK_URL", ""),
+    }
 
+    # Fetch unique symphony names from the current bot_state
+    state_data = database.load_state()
+    symphony_names = set()
+    for data in state_data.values():
+        if isinstance(data, dict) and "name" in data:
+            symphony_names.add(database.normalize_name(data["name"]))
+
+    symphonies_data = {}
+    for name in symphony_names:
+        symphonies_data[name] = database.get_symphony_strategy(name)
+
+    return jsonify({"globals": globals_data, "symphonies": symphonies_data})
 
 @app.route("/api/settings", methods=["POST"])
 def save_settings():
-    """Saves the settings."""
-    data = request.json
-    env_file = find_dotenv()
-    if not env_file:
-        env_file = ".env"
-
-    allowed_keys = [
-        "LIVE_EXECUTION",
-        "EXECUTION_START_TIME",
-        "COMPOSER_KEY_ID",
-        "COMPOSER_SECRET",
-        "ALPACA_KEY",
-        "ALPACA_SECRET",
-        "ACCOUNT_UUIDS",
-        "DISCORD_WEBHOOK_URL",
-        "TRIGGER_THRESHOLD_PCT",
-        "TAKE_PROFIT_MC_PCT",
-        "LOSS_ARM_PCT",
-        "MAX_SQUEEZE_FLOOR",
-        "VIX_LOW_THRESHOLD",
-        "VIX_HIGH_THRESHOLD",
-        "VIX_LOW_MULT",
-        "VIX_MID_MULT",
-        "VIX_HIGH_MULT",
-        "MIN_MULTIPLIER_FLOOR",
-        "TRAILING_STOP_PCT",
-        "ENDING_STOP_PCT",
-        "BREAKEVEN_ACTIVATION_PCT",
-        "VWAP_CROSS_HWM_PCT",
-        "PARABOLIC_VELOCITY_THRESHOLD",
-        "MAX_PARABOLIC_SQUEEZE",
-        "SIMULATION_PATHS",
-        "NEIGHBOR_K",
-    ]
+    """Saves Globals to .env and Symphony Strategies to SQLite."""
+    payload = request.json
 
     try:
-        for key in allowed_keys:
-            if key in data:
-                set_key(env_file, key, str(data[key]))
-        return jsonify(
-            {"status": "success", "message": "Variables updated successfully! Applied to next run."}
-        )
-    except OSError as e:
+        # Save Globals
+        for key, val in payload.get("globals", {}).items():
+            set_key(ENV_FILE_PATH, key, str(val))
+
+        # Save Symphony Strategies
+        for sym_name, strategy_data in payload.get("symphonies", {}).items():
+            params = {k: float(v) for k, v in strategy_data.get("params", {}).items()}
+            locked = strategy_data.get("locked_vars", [])
+            database.save_symphony_strategy(sym_name, params, locked)
+
+        return jsonify({"status": "success", "message": "Variables updated successfully!"})
+    except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-
 if __name__ == "__main__":
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
+    # Start the scheduler thread
+    threading.Thread(target=run_scheduler, daemon=True).start()
     print("\n🚀 Starting Alpha Bot Control Center at http://localhost:5000\n")
-    app.run(port=5000, debug=False)
+    
+    # Disable use_reloader to ensure the background thread runs once and only once
+    app.run(port=5000, debug=False, use_reloader=False)
