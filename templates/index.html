@@ -94,6 +94,11 @@
                     <p class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Armed</p>
                     <p class="text-2xl font-bold text-amber-400 leading-none" id="total-armed">0</p>
                 </div>
+                <div class="h-8 w-px bg-slate-700"></div>
+                <div class="flex flex-col items-center">
+                    <p class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Triggered</p>
+                    <p class="text-2xl font-bold text-rose-500 leading-none" id="total-triggered">0</p>
+                </div>
             </div>
 
             <!-- Right: Controls -->
@@ -766,18 +771,20 @@
 
             const symphonyKeys = Object.keys(stateObj).filter(k => k !== 'date');
             let armedCount = 0;
+            let triggeredCount = 0;
             const accountsMap = {};
 
             symphonyKeys.forEach(id => {
                 const sym = stateObj[id];
                 if ((sym.armed || sym.tp_armed || sym.para_armed) && !sym.triggered) armedCount++;
+                if (sym.triggered) triggeredCount++;
                 const accId = sym.account || 'Unknown Account';
                 if (!accountsMap[accId]) accountsMap[accId] = [];
                 accountsMap[accId].push({ id, ...sym });
             });
-
+            document.getElementById("total-armed").textContent = armedCount;
+            document.getElementById("total-triggered").textContent = triggeredCount;
             document.getElementById('total-symphonies').textContent = symphonyKeys.length;
-            document.getElementById('total-armed').textContent = armedCount;
 
             if (data.html) {
                 const container = document.getElementById('accounts-container');
