@@ -1,0 +1,17 @@
+{
+  "name": "missing_ticker_falls_back_to_calculate_20d_vol",
+  "description": "Pins ATR's missing-data fallback policy: unlike calculate_20d_vol which substitutes SPY's daily_ret for an absent ticker, calculate_14d_atr_pct falls back to calculate_20d_vol on the WHOLE function when any required OHLC field is missing for any day (see math_engine.py 'has_missing_data' branch). Construction: holding ticker 'MISSING' has no entry on any day; SPY has a daily_ret series only (no OHLC). 20 days so the vol fallback can compute. Inside vol, MISSING -> SPY.daily_ret substitution yields the SPY stdev. NOTE: ATR-side missing-data policy is NOT 'silently substitute SPY' -- the same input shape produces different results from ATR than from a hypothetical SPY-substituting ATR (which would yield 0 here since SPY has no OHLC).",
+  "function": "calculate_14d_atr_pct",
+  "inputs": {
+    "holdings": [
+      {"ticker": "MISSING", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "spy_only_daily_ret_alternating",
+      "num_days": 20,
+      "spy_amplitude": 0.02
+    }
+  },
+  "expected": 2.0,
+  "derivation": "Step 1: ATR slices the last 15 days. For each date, day_data.get('MISSING') is None -> has_missing_data = True -> break. After the for-ticker loop short-circuit, the function returns calculate_20d_vol(holdings, historical_data). Step 2: vol slices last 20 days (exactly 20). For each day, MISSING is absent -> returns_matrix[i,0] = SPY.daily_ret. SPY series alternates +/-0.02 over 20 days -> daily_returns = +/-2.0 -> population std = 2.0 exactly."
+}

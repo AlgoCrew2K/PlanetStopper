@@ -1,0 +1,20 @@
+{
+  "name": "lookback_boundary_exactly_14_falls_back_to_vol",
+  "description": "Exactly 14 days of OHLC -- one below the 15-day minimum. The function's documented short-circuit (len(valid_dates) < 15 -> return calculate_20d_vol(...)) must fire. The fallback then sees only 14 days (< 20) and ALSO short-circuits to 0.0. Expected = 0.0 even though the input has dispersion (catches a wrong impl that would compute ATR on 14 TRs of 13 samples).",
+  "function": "calculate_14d_atr_pct",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "ohlc_linear",
+      "num_days": 14,
+      "tickers": ["AAA"],
+      "close_start": 100.0,
+      "close_step": 1.0,
+      "half_range": 1.0
+    }
+  },
+  "expected": 0.0,
+  "derivation": "len(valid_dates) = 14 < 15 -> fall back to calculate_20d_vol(holdings, historical_data). calculate_20d_vol checks len(valid_dates) < 20 -> returns 0.0. Were the ATR short-circuit removed, the function would compute on a 14-day slice and yield ~1.77 (close_14 would be 113, avg_tr still 2, atr_pct = 200/113 = 1.7699...) -- this fixture catches that off-by-one."
+}

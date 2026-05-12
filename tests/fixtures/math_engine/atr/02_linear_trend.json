@@ -1,0 +1,20 @@
+{
+  "name": "linear_trend_constant_range",
+  "description": "15 days of OHLC where the close ladders up by exactly 1.0 per day and H/L are close+1 / close-1 (so H-L = 2 every day, and each close moves +1 from the prior close). Each TR = max(H-L=2, |H-Cprev|=2, |L-Cprev|=0) = 2. avg_tr = 2 across 14 TRs.",
+  "function": "calculate_14d_atr_pct",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "ohlc_linear",
+      "num_days": 15,
+      "tickers": ["AAA"],
+      "close_start": 100.0,
+      "close_step": 1.0,
+      "half_range": 1.0
+    }
+  },
+  "expected": 1.7543859649122806,
+  "derivation": "Day i (0-indexed 0..14): close_i = 100 + i, H_i = close_i + 1, L_i = close_i - 1. For day i>=1, Cprev = close_{i-1} = 100 + (i-1). TR_i = max(H_i - L_i, |H_i - Cprev|, |L_i - Cprev|) = max(2, |close_i + 1 - close_{i-1}| = 2, |close_i - 1 - close_{i-1}| = 0) = 2. 14 TR samples all equal 2, so avg_tr = 2. recent_close = close_14 = 114. atr_pct = (2 / 114) * 100 = 200 / 114 = 100 / 57 = 1.7543859649122806... Portfolio dot with weight 1.0 returns same value."
+}

@@ -1,0 +1,20 @@
+{
+  "name": "zero_recent_close_falls_back_to_vol",
+  "description": "Pins the documented 'if recent_close and recent_close > 0' guard. Construction: 15 days of OHLC, but the FINAL day's close is 0.0 (high and low are also 0 so TR computations remain non-negative and the missing-data branch does not fire). recent_close = last_close = 0 -> guard fails -> fall back to calculate_20d_vol. Vol fallback sees 15 < 20 -> returns 0.0. Catches an impl that would divide by zero or yield infinity.",
+  "function": "calculate_14d_atr_pct",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "ohlc_constant_with_zero_final_close",
+      "num_days": 15,
+      "tickers": ["AAA"],
+      "high": 0.0,
+      "low": 0.0,
+      "close": 100.0
+    }
+  },
+  "expected": 0.0,
+  "derivation": "Days 0..13 carry close=100, high=0, low=0 (degenerate but keys are present so missing-data branch does not fire; high/low aren't checked for sanity by the spec). Day 14 carries close=0, high=0, low=0. After the loop, last_close = 0. The guard 'if recent_close and recent_close > 0' is False (0 is falsy AND not > 0) -> function returns calculate_20d_vol(...). Vol sees 15 < 20 -> returns 0.0. Note: this fixture pins the exact spec behavior; whether degenerate H<L on intermediate days is sensible is out of scope here."
+}
