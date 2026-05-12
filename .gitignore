@@ -11,3 +11,14 @@ cache/
 history_cache.json
 symphony_logs.json
 post_mortem_*.json
+
+# Test / lint artefacts
+.coverage
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+
+# SQLite journal/WAL files (*.db itself is NOT ignored — may be tracked or excluded separately)
+*.db-journal
+*.db-wal
+*.db-shm
