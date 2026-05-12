@@ -1,0 +1,19 @@
+{
+  "name": "return_just_below_boundary_resets",
+  "description": "current_return is just below (dynamic_activation - DEADBAND). Ticks reset to 0 (full reset, NOT decrement).",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": 0.79,
+    "symphony_vol": 1.0,
+    "base_stop_level": 0.2,
+    "current_hold_ticks": 4,
+    "currently_breakeven_locked": false,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 0,
+    "new_breakeven_locked": false,
+    "stop_trigger_level": 0.2
+  },
+  "derivation": "dynamic_activation = 1.0 (unclamped). threshold = 1.0 - 0.2 = 0.8. current_return (0.79) < 0.8 -> ticks RESET to 0 (NOT 4 - 1). 0 < 5 -> not locked. not locked -> stop = base_stop_level = 0.2. CRITICAL: starting with current_hold_ticks=4, decrement would yield 3, while full reset yields 0. Catches an impl that decrements rather than resets."
+}

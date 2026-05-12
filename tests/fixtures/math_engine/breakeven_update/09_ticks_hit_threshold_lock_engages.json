@@ -1,0 +1,19 @@
+{
+  "name": "ticks_hit_threshold_lock_engages",
+  "description": "current_hold_ticks transitions from 4 -> 5 via this tick increment. 5 >= HWM_HOLD_TICKS_THRESHOLD (5), so breakeven_locked flips from False to True. Pins the lock-transition. Once locked, stop_trigger_level is floored at 0.0.",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": 1.5,
+    "symphony_vol": 1.0,
+    "base_stop_level": -0.25,
+    "current_hold_ticks": 4,
+    "currently_breakeven_locked": false,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 5,
+    "new_breakeven_locked": true,
+    "stop_trigger_level": 0.0
+  },
+  "derivation": "dynamic_activation = 1.0. threshold = 0.8. current_return (1.5) >= 0.8 -> ticks++ -> 4 + 1 = 5. 5 >= HWM_HOLD_TICKS_THRESHOLD (5) AND not currently_locked -> new_breakeven_locked = True. Locked AND base_stop_level (-0.25) < 0 -> stop_trigger_level = max(-0.25, 0.0) = 0.0 (floored). Catches an impl that uses strict `>` instead of `>=` for threshold check (would NOT lock at exactly 5), and an impl that omits the floor when locked (would emit -0.25)."
+}

@@ -1,0 +1,19 @@
+{
+  "name": "already_locked_persists_through_reset",
+  "description": "currently_breakeven_locked=True AND current_return drops below threshold (ticks reset to 0). The latching invariant: lock MUST stay True. Producer code never resets breakeven_locked to False.",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": -1.5,
+    "symphony_vol": 1.5,
+    "base_stop_level": -2.0,
+    "current_hold_ticks": 5,
+    "currently_breakeven_locked": true,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 0,
+    "new_breakeven_locked": true,
+    "stop_trigger_level": 0.0
+  },
+  "derivation": "dynamic_activation = 1.5. threshold = 1.3. current_return (-1.5) < 1.3 -> ticks RESET to 0. currently_breakeven_locked=True -> new_breakeven_locked = True OR (0 >= 5) = True OR False = True (LATCHED). Locked AND base_stop_level (-2.0) < 0 -> stop_trigger_level = max(-2.0, 0.0) = 0.0. CRITICAL LATCHING TEST: catches an impl that recomputes lock from ticks alone (would unlock)."
+}

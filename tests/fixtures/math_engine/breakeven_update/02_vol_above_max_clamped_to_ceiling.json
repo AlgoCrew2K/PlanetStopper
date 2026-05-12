@@ -1,0 +1,19 @@
+{
+  "name": "vol_above_max_clamped_to_ceiling",
+  "description": "symphony_vol (5.0) is above BREAKEVEN_ACTIVATION_MAX (3.0). dynamic_activation is clamped DOWN to 3.0. With current_return = 2.5 (below activation - DEADBAND = 2.8), ticks reset to 0.",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": 2.5,
+    "symphony_vol": 5.0,
+    "base_stop_level": 1.0,
+    "current_hold_ticks": 2,
+    "currently_breakeven_locked": false,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 0,
+    "new_breakeven_locked": false,
+    "stop_trigger_level": 1.0
+  },
+  "derivation": "dynamic_activation = max(0.4, min(3.0, 5.0)) = max(0.4, 3.0) = 3.0 (clamped DOWN to ceiling). threshold = 3.0 - 0.2 = 2.8. current_return (2.5) < 2.8 -> ticks RESET to 0 (NOT decrement). new_hold_ticks (0) < THRESHOLD (5) -> new_breakeven_locked = False. not locked -> stop_trigger_level = base_stop_level = 1.0. Catches an impl that omitted the upper clamp (would compute activation=5.0, threshold=4.8, still reset but the symmetry of clamping must hold). Also catches impl that decremented instead of resetting (would yield 1, not 0)."
+}

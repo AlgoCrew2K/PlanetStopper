@@ -1,0 +1,19 @@
+{
+  "name": "vol_exactly_at_max",
+  "description": "symphony_vol exactly equals BREAKEVEN_ACTIVATION_MAX (3.0). dynamic_activation = 3.0. Pins boundary behavior at the upper clamp.",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": 2.8,
+    "symphony_vol": 3.0,
+    "base_stop_level": -1.25,
+    "current_hold_ticks": 0,
+    "currently_breakeven_locked": false,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 1,
+    "new_breakeven_locked": false,
+    "stop_trigger_level": -1.25
+  },
+  "derivation": "dynamic_activation = max(0.4, min(3.0, 3.0)) = max(0.4, 3.0) = 3.0 (exact MAX). threshold = 3.0 - 0.2 = 2.8. current_return (2.8) >= 2.8 -> ticks++ -> 0 + 1 = 1 (boundary equality fires the >=). 1 < 5 -> not locked. not locked -> stop = base_stop_level = -1.25. Catches an impl using strict `<` instead of `<=` at the boundary (would reset instead of increment)."
+}

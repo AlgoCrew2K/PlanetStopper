@@ -1,0 +1,19 @@
+{
+  "name": "locked_with_zero_base",
+  "description": "Locked AND base_stop_level == 0.0: floor returns 0.0 (boundary equality with 0.0 sentinel).",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": 1.0,
+    "symphony_vol": 0.8,
+    "base_stop_level": 0.0,
+    "current_hold_ticks": 7,
+    "currently_breakeven_locked": true,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 8,
+    "new_breakeven_locked": true,
+    "stop_trigger_level": 0.0
+  },
+  "derivation": "dynamic_activation = 0.8. threshold = 0.6. current_return (1.0) >= 0.6 -> ticks++ -> 8. Already locked. Locked AND base (0.0) -> stop = max(0.0, 0.0) = 0.0. Pins the exact equality with the structural-zero floor."
+}

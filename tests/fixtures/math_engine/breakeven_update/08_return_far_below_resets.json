@@ -1,0 +1,19 @@
+{
+  "name": "return_far_below_resets",
+  "description": "current_return is well below (dynamic_activation - DEADBAND). Ticks reset fully.",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": -2.0,
+    "symphony_vol": 2.0,
+    "base_stop_level": -3.0,
+    "current_hold_ticks": 3,
+    "currently_breakeven_locked": false,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 0,
+    "new_breakeven_locked": false,
+    "stop_trigger_level": -3.0
+  },
+  "derivation": "dynamic_activation = max(0.4, min(3.0, 2.0)) = 2.0. threshold = 2.0 - 0.2 = 1.8. current_return (-2.0) < 1.8 (far below) -> ticks RESET to 0. 0 < 5 -> not locked. not locked -> stop = base_stop_level = -3.0. Confirms full-reset semantics for a deeply negative return."
+}
