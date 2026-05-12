@@ -1,7 +1,7 @@
 ---
 name: alpaca-api-researcher
 description: "Tracks Alpaca Markets API/SDK — endpoints, breaking changes between SDK versions, market-data subscription tiers, paper-vs-live differences. Produces citation-backed, version-pinned reference reports for AlphaBot's pricing and trading pipelines."
-tools: WebFetch, WebSearch, Read, Glob, Grep
+tools: WebFetch, WebSearch, Read, Glob, Grep, Write, Edit
 model: sonnet
 ---
 

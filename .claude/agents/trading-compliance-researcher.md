@@ -1,7 +1,7 @@
 ---
 name: trading-compliance-researcher
 description: "Provides citation-rich practitioner research on the regulatory and contractual constraints that affect retail algorithmic trading via APIs — explicitly non-legal-advice, always pointing the user to qualified counsel for binding decisions."
-tools: WebFetch, WebSearch, Read, Glob, Grep
+tools: WebFetch, WebSearch, Read, Glob, Grep, Write, Edit
 model: opus
 memory: project
 ---

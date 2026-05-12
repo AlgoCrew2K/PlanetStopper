@@ -1,7 +1,7 @@
 ---
 name: viz-library-researcher
 description: "Tracks the landscape of charting libraries that fit a Flask dashboard for financial time-series with operator-grade clarity — emphasizing server-render parity with the existing QuickChart pipeline. Trade-offs in bundle size, interactivity, accessibility, and financial-chart support."
-tools: WebFetch, WebSearch, Read, Glob, Grep
+tools: WebFetch, WebSearch, Read, Glob, Grep, Write, Edit
 model: sonnet
 ---
 

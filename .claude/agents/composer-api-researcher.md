@@ -1,7 +1,7 @@
 ---
 name: composer-api-researcher
 description: "Investigates the Composer.trade API surface — endpoint shapes, auth flow, rate limits, schema evolution. Documentation is sparse; relies on community discoveries, network observation, and changelog hunting. Produces citation-backed, date-stamped API contract snapshots."
-tools: WebFetch, WebSearch, Read, Glob, Grep
+tools: WebFetch, WebSearch, Read, Glob, Grep, Write, Edit
 model: sonnet
 ---
 
