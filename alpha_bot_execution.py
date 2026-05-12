@@ -579,13 +579,14 @@ def main():
                 dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
 
                 # Calculate active stop distance based strictly on 20-day volatility
-
-                safe_vol = symphony_vol if symphony_vol > 0 else 1.0
-                active_trailing_stop = max((safe_vol * dynamic_multiplier), dynamic_min_stop)
-
-                # Apply Parabolic Squeeze multiplier if armed
-                if bot_state[symphony_id].get("para_armed") or bot_state[symphony_id].get("breakeven_locked"):
-                    active_trailing_stop *= acc_params.get("MAX_PARABOLIC_SQUEEZE", MAX_PARABOLIC_SQUEEZE)
+                active_trailing_stop = math_engine.compute_active_trailing_stop(
+                    symphony_vol=symphony_vol,
+                    dynamic_multiplier=dynamic_multiplier,
+                    dynamic_min_stop=dynamic_min_stop,
+                    para_armed=bool(bot_state[symphony_id].get("para_armed")),
+                    breakeven_locked=bool(bot_state[symphony_id].get("breakeven_locked")),
+                    parabolic_squeeze_multiplier=acc_params.get("MAX_PARABOLIC_SQUEEZE", MAX_PARABOLIC_SQUEEZE),
+                )
 
                 base_stop_level = safe_hwm - active_trailing_stop
 
