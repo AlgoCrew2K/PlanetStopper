@@ -1,0 +1,20 @@
+{
+  "name": "gap_series_true_range_dominated_by_prev_close",
+  "description": "Closes jump +50 per day while intraday range stays at H-L=2. This regime catches an impl that incorrectly computes TR as (H-L) only (textbook 'average daily range') instead of max(H-L, |H-Cprev|, |L-Cprev|). The naive impl would yield ATR%=2/Cn*100; the correct true-range impl yields ~51/Cn*100, an order of magnitude apart.",
+  "function": "calculate_14d_atr_pct",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "ohlc_linear",
+      "num_days": 15,
+      "tickers": ["AAA"],
+      "close_start": 100.0,
+      "close_step": 50.0,
+      "half_range": 1.0
+    }
+  },
+  "expected": 6.375,
+  "derivation": "Day i (0-indexed): close_i = 100 + 50*i, H_i = close_i + 1, L_i = close_i - 1. For i>=1, Cprev = close_{i-1} = close_i - 50. TR_i = max(H_i - L_i = 2, |H_i - Cprev| = |close_i + 1 - (close_i - 50)| = 51, |L_i - Cprev| = |close_i - 1 - (close_i - 50)| = 49) = 51. 14 TRs all equal 51 -> avg_tr = 51. recent_close = close_14 = 100 + 50*14 = 800. atr_pct = (51 / 800) * 100 = 6.375. Wrong (H-L-only) impl would yield (2/800)*100 = 0.25 -- this fixture distinguishes them."
+}

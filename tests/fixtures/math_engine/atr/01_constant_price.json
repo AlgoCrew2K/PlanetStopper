@@ -1,0 +1,20 @@
+{
+  "name": "constant_price_zero_atr",
+  "description": "Across 15 days, high=low=close=100.0 every day. Every true range is max(0, 0, 0) = 0, so avg_tr = 0 and ATR% = 0 / 100 * 100 = 0. Pins the lower clamp at 0 for a zero-dispersion OHLC series.",
+  "function": "calculate_14d_atr_pct",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "ohlc_constant",
+      "num_days": 15,
+      "tickers": ["AAA"],
+      "high": 100.0,
+      "low": 100.0,
+      "close": 100.0
+    }
+  },
+  "expected": 0.0,
+  "derivation": "For each of the 14 TR-eligible days, H-L=0, |H-Cprev|=|100-100|=0, |L-Cprev|=|100-100|=0, so TR=0. avg_tr = mean([0]*14) = 0. recent_close = 100 > 0, so atr_pct = (0/100)*100 = 0.0. Portfolio dot product with weight 1.0 = 0.0."
+}

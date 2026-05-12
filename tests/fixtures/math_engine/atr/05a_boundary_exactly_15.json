@@ -1,0 +1,20 @@
+{
+  "name": "lookback_boundary_exactly_15",
+  "description": "Exactly 15 days of OHLC. This is the minimum that satisfies the documented short-circuit (len(valid_dates) < 15 -> fallback). 15 days yields exactly 14 TR samples (day 0 has no prev close). Uses the same linear_trend regime as fixture 02 so the expected value matches.",
+  "function": "calculate_14d_atr_pct",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "ohlc_linear",
+      "num_days": 15,
+      "tickers": ["AAA"],
+      "close_start": 100.0,
+      "close_step": 1.0,
+      "half_range": 1.0
+    }
+  },
+  "expected": 1.7543859649122806,
+  "derivation": "Same construction as fixture 02 -- 15 days is the boundary that exactly produces 14 TR samples. avg_tr = 2, recent_close = 114, atr_pct = 200/114 = 100/57 = 1.7543859649122806..."
+}

@@ -1,0 +1,20 @@
+{
+  "name": "single_day_history_falls_back_to_vol_zero",
+  "description": "A single day of OHLC. len(valid_dates) = 1 < 15 -> ATR falls back to calculate_20d_vol. Vol sees 1 < 20 -> returns 0.0. Catches an impl that would crash on a 1-element slice (e.g., np.mean of an empty tr_list).",
+  "function": "calculate_14d_atr_pct",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "ohlc_constant",
+      "num_days": 1,
+      "tickers": ["AAA"],
+      "high": 101.0,
+      "low": 99.0,
+      "close": 100.0
+    }
+  },
+  "expected": 0.0,
+  "derivation": "valid_dates length 1 < 15 -> ATR returns calculate_20d_vol(...). vol sees 1 < 20 -> returns 0.0."
+}
