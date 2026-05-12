@@ -1,0 +1,13 @@
+{
+  "name": "decay_curve_exactly_half",
+  "description": "time_ratio chosen so decay_curve = 0.5 EXACTLY: solve log10(1 + 9*tr) = 0.5 -> 1 + 9*tr = 10^0.5 = sqrt(10) -> tr = (sqrt(10) - 1) / 9 ~= 0.24025307335204216. At decay=0.5, dynamic_multiplier sits at MULT_OPEN - 0.5*(MULT_OPEN-MULT_CLOSE) = 1.0 (the midpoint of the linear-interp range), and dynamic_min_stop sits at the midpoint 0.225. This 'algebraic clean point' pins the exact midpoint of the multiplier range; a wrong impl that miscomputed the linear-interp coefficient (e.g., flipped end-points or used (MULT_OPEN + MULT_CLOSE) / 2 as the interpolant) would not produce 1.0 at this time_ratio.",
+  "function": "compute_time_squeeze_decay",
+  "inputs": {
+    "time_ratio": 0.24025307335204216
+  },
+  "expected": {
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.225
+  },
+  "derivation": "time_ratio = (sqrt(10) - 1) / 9 was chosen so that 1 + 9*time_ratio = sqrt(10), hence decay_curve = log10(sqrt(10)) = 0.5 (analytically exact; ~1 ulp of IEEE-754 noise from sqrt accumulates, hence rel-tolerance is appropriate). dynamic_multiplier = 1.5 - (1.5 - 0.5) * 0.5 = 1.5 - 0.5 = 1.0. dynamic_min_stop = 0.3 - (0.3 - 0.15) * 0.5 = 0.3 - 0.075 = 0.225. NOTE: floating-point evaluation of dynamic_min_stop returns 0.22499999999999998 (a single-ulp negative drift from 0.225); the rel-tolerance absorbs this."
+}
