@@ -1,0 +1,15 @@
+{
+  "name": "para_armed_only_applies_squeeze",
+  "description": "para_armed=True, breakeven_locked=False. The OR condition fires on para_armed alone. Vol-scale wins (3.0 > 0.30), then squeeze multiplier (0.5) is applied: 3.0 * 0.5 = 1.5. Pins the para_armed=True branch in isolation.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 2.0,
+    "dynamic_multiplier": 1.5,
+    "dynamic_min_stop": 0.30,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5
+  },
+  "expected": 1.5,
+  "derivation": "safe_vol = 2.0 (positive). raw = 2.0 * 1.5 = 3.0. max(3.0, 0.30) = 3.0. para_armed=True (OR fires) -> active *= squeeze = 3.0 * 0.5 = 1.5. Output = 1.5."
+}

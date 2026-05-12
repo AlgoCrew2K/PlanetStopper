@@ -1,0 +1,15 @@
+{
+  "name": "vol_floor_wins_no_squeeze",
+  "description": "safe_vol * dynamic_multiplier (0.1 * 1.5 = 0.15) is BELOW the dynamic_min_stop floor (0.30), so the max() clamp returns dynamic_min_stop. With para_armed=False and breakeven_locked=False, no squeeze multiplier is applied. Pins the 'floor wins' branch of the max() AND the no-squeeze branch of the conditional.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.1,
+    "dynamic_multiplier": 1.5,
+    "dynamic_min_stop": 0.30,
+    "para_armed": false,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5
+  },
+  "expected": 0.30,
+  "derivation": "symphony_vol > 0, so safe_vol = symphony_vol = 0.1. raw = safe_vol * dynamic_multiplier = 0.1 * 1.5 = 0.15. active = max(raw, dynamic_min_stop) = max(0.15, 0.30) = 0.30. Neither flag is armed -> no squeeze -> output = 0.30. Note: parabolic_squeeze_multiplier=0.5 is supplied but MUST be ignored because both flags are False; if a wrong impl multiplied unconditionally, the output would be 0.15 (catches that bug)."
+}

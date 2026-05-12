@@ -1,0 +1,15 @@
+{
+  "name": "symphony_vol_tiny_positive_not_clamped",
+  "description": "symphony_vol = 1e-9 is positive (the condition is `> 0`, strict). It must NOT be clamped to VOL_FALLBACK; safe_vol stays at 1e-9. The vol-floor then wins (because 1e-9 * 1.0 = 1e-9 << 0.001). Pins the boundary of the fallback condition: only strict non-positive (<= 0) triggers fallback. Catches an impl that used >= 0 or < 1e-9 or any other near-zero clamp.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 1e-9,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.001,
+    "para_armed": false,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5
+  },
+  "expected": 0.001,
+  "derivation": "symphony_vol = 1e-9 > 0, so safe_vol = symphony_vol = 1e-9 (NOT VOL_FALLBACK). raw = safe_vol * dynamic_multiplier = 1e-9 * 1.0 = 1e-9. active = max(1e-9, 0.001) = 0.001 (floor wins). No squeeze. Output = 0.001. If a wrong impl clamped tiny positives to VOL_FALLBACK=1.0, raw would be 1.0 and output would be 1.0 (off by 1000x)."
+}

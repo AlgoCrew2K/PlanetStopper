@@ -1,0 +1,15 @@
+{
+  "name": "no_flags_no_squeeze",
+  "description": "para_armed=False AND breakeven_locked=False with a NON-IDENTITY squeeze multiplier (0.5) supplied. The squeeze MUST be ignored. Output = max(safe_vol*mult, min_stop) unchanged. Catches an impl that applied squeeze unconditionally.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 2.0,
+    "dynamic_multiplier": 1.5,
+    "dynamic_min_stop": 0.30,
+    "para_armed": false,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5
+  },
+  "expected": 3.0,
+  "derivation": "safe_vol = 2.0. raw = 3.0. max(3.0, 0.30) = 3.0. (False OR False) = False -> no squeeze. Output = 3.0. If a wrong impl unconditionally applied the squeeze, output would be 1.5 (off by 2x)."
+}

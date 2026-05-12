@@ -16,6 +16,7 @@ MULT_OPEN = 1.5              # dynamic_multiplier at market open (loosest stop)
 MULT_CLOSE = 0.5             # dynamic_multiplier at market close (tightest)
 MIN_STOP_OPEN = 0.3          # min stop floor at market open, in percentage points
 MIN_STOP_CLOSE = 0.15        # min stop floor at market close, in percentage points
+VOL_FALLBACK = 1.0           # neutral fallback for safe_vol when symphony_vol <= 0 (preserves vol-scale arithmetic in the degenerate-vol case)
 
 
 def compute_para_arm_decision(
@@ -65,6 +66,35 @@ def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
     dynamic_multiplier = float(MULT_OPEN - (MULT_OPEN - MULT_CLOSE) * decay_curve)
     dynamic_min_stop = float(MIN_STOP_OPEN - (MIN_STOP_OPEN - MIN_STOP_CLOSE) * decay_curve)
     return dynamic_multiplier, dynamic_min_stop
+
+
+def compute_active_trailing_stop(
+    symphony_vol: float,
+    dynamic_multiplier: float,
+    dynamic_min_stop: float,
+    para_armed: bool,
+    breakeven_locked: bool,
+    parabolic_squeeze_multiplier: float,
+) -> float:
+    """
+    Computes the active trailing-stop distance (in percentage points).
+
+    Logic (extracted verbatim from alpha_bot_execution.py):
+      safe_vol = symphony_vol if symphony_vol > 0 else VOL_FALLBACK
+      active = max(safe_vol * dynamic_multiplier, dynamic_min_stop)
+      if para_armed or breakeven_locked:
+          active *= parabolic_squeeze_multiplier
+      return active
+
+    Pure. No I/O. No state. CALLER is responsible for normalizing
+    bot_state[...].get("para_armed") and ...get("breakeven_locked") to
+    strict Python bool BEFORE passing (typically via bool(...)).
+    """
+    safe_vol = symphony_vol if symphony_vol > 0 else VOL_FALLBACK
+    active = max(safe_vol * dynamic_multiplier, dynamic_min_stop)
+    if para_armed or breakeven_locked:
+        active *= parabolic_squeeze_multiplier
+    return float(active)
 
 
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):

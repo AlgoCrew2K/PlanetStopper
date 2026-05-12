@@ -1,0 +1,15 @@
+{
+  "name": "vol_scale_equals_min_stop_no_squeeze",
+  "description": "Boundary: safe_vol * dynamic_multiplier == dynamic_min_stop EXACTLY at a different value than fixture 03 (0.4 instead of 0.30), with both flags False. Confirms the max() returns the shared value regardless of which side of the tie the impl prefers, and that no squeeze is applied. Distinct from fixture 03 to triangulate the boundary behavior at a second operating point.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.4,
+    "dynamic_multiplier": 1.0,
+    "dynamic_min_stop": 0.4,
+    "para_armed": false,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5
+  },
+  "expected": 0.4,
+  "derivation": "safe_vol = 0.4 (positive). raw = 0.4 * 1.0 = 0.4 (IEEE-754 exact for this product; 0.4 itself has rounding error but 0.4 * 1.0 = 0.4 exactly). active = max(0.4, 0.4) = 0.4. No squeeze (both flags False). Output = 0.4."
+}

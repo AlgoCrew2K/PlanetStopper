@@ -1,0 +1,15 @@
+{
+  "name": "both_flags_squeeze_fires_once",
+  "description": "para_armed=True AND breakeven_locked=True. The squeeze multiplier must fire EXACTLY ONCE (not twice). Output identical to fixtures 07 and 08. Catches a buggy impl that double-multiplies when both flags are set (e.g., `if para_armed: active *= sq; if breakeven_locked: active *= sq`).",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 2.0,
+    "dynamic_multiplier": 1.5,
+    "dynamic_min_stop": 0.30,
+    "para_armed": true,
+    "breakeven_locked": true,
+    "parabolic_squeeze_multiplier": 0.5
+  },
+  "expected": 1.5,
+  "derivation": "safe_vol = 2.0. raw = 3.0. max(3.0, 0.30) = 3.0. (para_armed OR breakeven_locked) is True -> active *= 0.5 ONCE = 1.5. Output = 1.5. A double-multiplication bug would yield 0.75 (3.0 * 0.5 * 0.5)."
+}
