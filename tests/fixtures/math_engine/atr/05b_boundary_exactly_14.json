@@ -16,5 +16,5 @@
     }
   },
   "expected": 0.0,
-  "derivation": "len(valid_dates) = 14 < 15 -> fall back to calculate_20d_vol(holdings, historical_data). calculate_20d_vol checks len(valid_dates) < 20 -> returns 0.0. Were the ATR short-circuit removed, the function would compute on a 14-day slice and yield ~1.85 (close_14 would be 113, avg_tr still 2, atr_pct = 200/113) -- this fixture catches that off-by-one."
+  "derivation": "len(valid_dates) = 14 < 15 -> fall back to calculate_20d_vol(holdings, historical_data). calculate_20d_vol checks len(valid_dates) < 20 -> returns 0.0. Were the ATR short-circuit removed, the function would compute on a 14-day slice and yield ~1.77 (close_14 would be 113, avg_tr still 2, atr_pct = 200/113 = 1.7699...) -- this fixture catches that off-by-one."
 }
