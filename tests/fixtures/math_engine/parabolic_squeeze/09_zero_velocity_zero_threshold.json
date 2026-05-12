@@ -1,0 +1,16 @@
+{
+  "name": "zero_velocity_zero_threshold_boundary",
+  "description": "velocity = 0 AND threshold = 0. Inline uses >= so (0 >= 0) is True; currently_armed=False; should_arm=True. Pins the degenerate but valid case where any non-decreasing tick arms. A wrong impl using strict > would emit False here. Also catches an impl that special-cases zero velocity to never arm.",
+  "function": "compute_para_arm_decision",
+  "inputs": {
+    "current_return": 0.0,
+    "prev_return": 0.0,
+    "para_threshold": 0.0,
+    "currently_armed": false
+  },
+  "expected": {
+    "velocity": 0.0,
+    "should_arm": true
+  },
+  "derivation": "velocity = current_return - prev_return = 0.0 - 0.0 = 0.0. should_arm = (velocity >= para_threshold) AND (not currently_armed) = (0.0 >= 0.0) AND (not False) = True AND True = True. Inclusive >= boundary."
+}

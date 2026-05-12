@@ -1,0 +1,16 @@
+{
+  "name": "velocity_exactly_at_threshold_arms",
+  "description": "velocity == para_threshold exactly. Inline logic uses >= (not >), so this boundary case MUST arm. Pins the inclusive boundary. A wrong impl using > instead of >= would yield should_arm=False here and fail this fixture.",
+  "function": "compute_para_arm_decision",
+  "inputs": {
+    "current_return": 1.5,
+    "prev_return": 1.0,
+    "para_threshold": 0.5,
+    "currently_armed": false
+  },
+  "expected": {
+    "velocity": 0.5,
+    "should_arm": true
+  },
+  "derivation": "velocity = current_return - prev_return = 1.5 - 1.0 = 0.5. should_arm = (velocity >= para_threshold) AND (not currently_armed) = (0.5 >= 0.5) AND (not False) = True AND True = True. Note: inline uses '>=', so exact-equality arms."
+}

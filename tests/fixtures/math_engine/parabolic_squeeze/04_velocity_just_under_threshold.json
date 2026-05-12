@@ -1,0 +1,16 @@
+{
+  "name": "velocity_just_under_threshold_no_arm",
+  "description": "velocity is strictly less than threshold by an epsilon-scale gap. Pins the exclusive side of the boundary. Chosen so the subtraction is exact in IEEE-754 binary (0.5 - 0.0625 = 0.4375, both exactly representable) -- no float-noise excuse for a wrong impl that flips the comparison.",
+  "function": "compute_para_arm_decision",
+  "inputs": {
+    "current_return": 0.4375,
+    "prev_return": 0.0,
+    "para_threshold": 0.5,
+    "currently_armed": false
+  },
+  "expected": {
+    "velocity": 0.4375,
+    "should_arm": false
+  },
+  "derivation": "velocity = current_return - prev_return = 0.4375 - 0.0 = 0.4375. should_arm = (velocity >= para_threshold) AND (not currently_armed) = (0.4375 >= 0.5) AND (not False) = False AND True = False. 0.4375 is exactly representable in binary float (7 * 2^-4), so the subtraction is exact."
+}

@@ -1,0 +1,16 @@
+{
+  "name": "zero_velocity_no_arm",
+  "description": "current_return equals prev_return so velocity = 0. Threshold is positive (0.5), currently_armed=False. Velocity (0) is NOT >= threshold (0.5), so should_arm must be False. Pins the no-movement regime: a flat tape never arms parabolic.",
+  "function": "compute_para_arm_decision",
+  "inputs": {
+    "current_return": 1.25,
+    "prev_return": 1.25,
+    "para_threshold": 0.5,
+    "currently_armed": false
+  },
+  "expected": {
+    "velocity": 0.0,
+    "should_arm": false
+  },
+  "derivation": "velocity = current_return - prev_return = 1.25 - 1.25 = 0.0. should_arm = (velocity >= para_threshold) AND (not currently_armed) = (0.0 >= 0.5) AND (not False) = False AND True = False."
+}

@@ -1,0 +1,16 @@
+{
+  "name": "cold_start_from_zero_baseline",
+  "description": "First cycle of the trading day: prev_return defaults to 0.0 (no prior tick), current_return jumps to 5.0 on the open print. velocity = 5.0, well above threshold; arms. Pins the cold-start behavior at session start when bot_state has no prev_return entry yet (inline uses .get(\"prev_return\", current_return), but for the EXTRACTED pure function the caller passes whatever default they choose; this fixture pins the 0.0-baseline interpretation).",
+  "function": "compute_para_arm_decision",
+  "inputs": {
+    "current_return": 5.0,
+    "prev_return": 0.0,
+    "para_threshold": 0.5,
+    "currently_armed": false
+  },
+  "expected": {
+    "velocity": 5.0,
+    "should_arm": true
+  },
+  "derivation": "velocity = current_return - prev_return = 5.0 - 0.0 = 5.0. should_arm = (velocity >= para_threshold) AND (not currently_armed) = (5.0 >= 0.5) AND (not False) = True AND True = True."
+}

@@ -1,0 +1,16 @@
+{
+  "name": "negative_velocity_no_arm",
+  "description": "current_return < prev_return so velocity is negative (price moving against trend). Threshold is positive. Arming must NOT fire on a drawdown tick. Pins direction: subtraction order is current - prev (not prev - current). A wrong impl that flipped the subtraction would compute +1.0 and arm on what is actually a drawdown.",
+  "function": "compute_para_arm_decision",
+  "inputs": {
+    "current_return": 2.0,
+    "prev_return": 3.0,
+    "para_threshold": 0.5,
+    "currently_armed": false
+  },
+  "expected": {
+    "velocity": -1.0,
+    "should_arm": false
+  },
+  "derivation": "velocity = current_return - prev_return = 2.0 - 3.0 = -1.0. should_arm = (velocity >= para_threshold) AND (not currently_armed) = (-1.0 >= 0.5) AND (not False) = False AND True = False."
+}

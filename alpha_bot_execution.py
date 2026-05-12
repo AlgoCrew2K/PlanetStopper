@@ -558,15 +558,19 @@ def main():
 
                 # --- PARABOLIC SQUEEZE LOGIC ---
                 prev_return = bot_state[symphony_id].get("prev_return", current_return)
-                velocity = current_return - prev_return
+                para_threshold = acc_params.get("PARABOLIC_VELOCITY_THRESHOLD", PARABOLIC_VELOCITY_THRESHOLD)
+                velocity, should_para_arm = math_engine.compute_para_arm_decision(
+                    current_return=current_return,
+                    prev_return=prev_return,
+                    para_threshold=para_threshold,
+                    currently_armed=bot_state[symphony_id]["para_armed"],
+                )
                 bot_state[symphony_id]["prev_return"] = current_return
 
-                para_threshold = acc_params.get("PARABOLIC_VELOCITY_THRESHOLD", PARABOLIC_VELOCITY_THRESHOLD)
-                if velocity >= para_threshold:
-                    if not bot_state[symphony_id]["para_armed"]:
-                        bot_state[symphony_id]["para_armed"] = True
-                        print(f"  🚀 {symphony_name} PARA-ARMED (Velocity: {velocity:.2f}%) 🚀")
-                        database.log_symphony_event(symphony_id, f"{symphony_name} PARA-ARMED (Velocity: {velocity:.2f}%)", "para-armed")
+                if should_para_arm:
+                    bot_state[symphony_id]["para_armed"] = True
+                    print(f"  🚀 {symphony_name} PARA-ARMED (Velocity: {velocity:.2f}%) 🚀")
+                    database.log_symphony_event(symphony_id, f"{symphony_name} PARA-ARMED (Velocity: {velocity:.2f}%)", "para-armed")
 
                 # --- TIME SQUEEZE DECAY LOGIC ---
                 m_open_dt = current_et.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
