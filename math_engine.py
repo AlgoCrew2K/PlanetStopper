@@ -5,6 +5,7 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 LOOKBACK_DAYS = 20  # 20-day realized-volatility window — AlphaBot risk-sizing standard
+ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches AlphaBot's risk-sizing assumption
 PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
 
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):
@@ -109,8 +110,8 @@ def calculate_14d_atr_pct(holdings, historical_data):
     Calculates the 14-day Volatility-Adjusted (ATR) percentage for the holdings.
     Falls back to calculate_20d_vol if high/low data is missing.
     """
-    valid_dates = sorted(list(historical_data.keys()))[-15:]
-    if len(valid_dates) < 15:
+    valid_dates = sorted(list(historical_data.keys()))[-ATR_LOOKBACK_DAYS:]
+    if len(valid_dates) < ATR_LOOKBACK_DAYS:
         return calculate_20d_vol(holdings, historical_data)
 
     tickers = [h.get("ticker") for h in holdings]
@@ -144,7 +145,7 @@ def calculate_14d_atr_pct(holdings, historical_data):
         avg_tr = np.mean(tr_list)
         recent_close = last_close
         if recent_close and recent_close > 0:
-            atr_pct_array[j] = (avg_tr / recent_close) * 100.0
+            atr_pct_array[j] = (avg_tr / recent_close) * PCT_SCALAR
         else:
             return calculate_20d_vol(holdings, historical_data)
             
