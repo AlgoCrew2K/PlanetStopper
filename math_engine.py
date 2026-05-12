@@ -1,5 +1,12 @@
 import numpy as np
 
+# ---------------------------------------------------------------------------
+# Module-level named constants (project rule: no magic numbers in math_engine)
+# ---------------------------------------------------------------------------
+
+LOOKBACK_DAYS = 20  # 20-day realized-volatility window — AlphaBot risk-sizing standard
+PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
+
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.
@@ -72,15 +79,15 @@ def calculate_20d_vol(holdings, historical_data):
     Calculates the 20-day historical volatility of the given holdings based on historical_data.
     Vectorized for performance.
     """
-    valid_dates = sorted(list(historical_data.keys()))[-20:]
-    if len(valid_dates) < 20:
+    valid_dates = sorted(list(historical_data.keys()))[-LOOKBACK_DAYS:]
+    if len(valid_dates) < LOOKBACK_DAYS:
         return 0.0
 
     tickers = [h.get("ticker") for h in holdings]
     weights = np.array([h.get("allocation", 0.0) for h in holdings])
-    
+
     returns_matrix = np.zeros((len(valid_dates), len(tickers)))
-    
+
     for i, date in enumerate(valid_dates):
         day_data = historical_data[date]
         spy_ret = day_data.get("SPY", {}).get("daily_ret", 0.0)
@@ -90,7 +97,7 @@ def calculate_20d_vol(holdings, historical_data):
             else:
                 returns_matrix[i, j] = spy_ret
 
-    daily_returns = returns_matrix.dot(weights) * 100.0
+    daily_returns = returns_matrix.dot(weights) * PCT_SCALAR
 
     if len(daily_returns) == 0:
         return 0.0

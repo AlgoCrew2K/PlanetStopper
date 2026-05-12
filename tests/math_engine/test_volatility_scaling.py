@@ -380,25 +380,29 @@ def test_no_unnamed_magic_numbers_in_volatility_scaling_path() -> None:
 
 def test_no_unnamed_magic_numbers_appear_to_be_present_today() -> None:
     """
-    Sanity guard for the scanner above: confirms the literals 20 and 100.0
-    LITERALLY appear in the calculate_20d_vol source today (so the magic-
-    number test isn't passing because the scanner is broken). If a future
-    implementer renames them out, THIS test will fail and the scanner test
-    will pass — at which point both tests should be retired or rewritten.
+    Sanity guard for the scanner above: confirms the domain constants for
+    the volatility-scaling path (LOOKBACK_DAYS and PCT_SCALAR) are present
+    as MODULE-LEVEL named constants in math_engine.py, with their canonical
+    values (20 and 100.0 respectively). This cross-checks that the magic-
+    number scanner is not passing for the wrong reason (e.g., AST-walk
+    skipped a node type or the constants were silently removed).
 
-    This is NOT a tautology: the scanner could pass for the wrong reason
-    (e.g., AST-walk skipped a node type). We assert the raw source text
-    contains the substrings so the two tests cross-check each other.
+    Originally this test asserted the bare literals "20" and "100.0" existed
+    inside the calculate_20d_vol function body. After the GREEN-phase
+    extraction (refactor: extract magic numbers in calculate_20d_vol), those
+    literals now live as module-level named constants — this test was rewritten
+    accordingly (as the original comment anticipated: "both tests should be
+    retired or rewritten" once the implementer renames them out).
     """
-    src_path = pathlib.Path(math_engine.__file__)
-    source = src_path.read_text(encoding="utf-8")
-    # Locate the function body span.
-    match = re.search(
-        r"def calculate_20d_vol\(.*?\n(?=def |\Z)",
-        source,
-        flags=re.DOTALL,
+    assert hasattr(math_engine, "LOOKBACK_DAYS"), (
+        "math_engine.LOOKBACK_DAYS not found — module-level constant was removed or renamed."
     )
-    assert match is not None, "Could not locate calculate_20d_vol in source."
-    body = match.group(0)
-    assert "20" in body, "Expected literal 20 (lookback window) in source today."
-    assert "100.0" in body, "Expected literal 100.0 (decimal->percent) in source today."
+    assert math_engine.LOOKBACK_DAYS == 20, (
+        f"LOOKBACK_DAYS should be 20 (20-day realized-vol window), got {math_engine.LOOKBACK_DAYS}"
+    )
+    assert hasattr(math_engine, "PCT_SCALAR"), (
+        "math_engine.PCT_SCALAR not found — module-level constant was removed or renamed."
+    )
+    assert math_engine.PCT_SCALAR == 100.0, (
+        f"PCT_SCALAR should be 100.0 (decimal return -> percentage points), got {math_engine.PCT_SCALAR}"
+    )
