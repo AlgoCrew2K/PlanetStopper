@@ -1,0 +1,18 @@
+{
+  "name": "low_vol_alternating",
+  "description": "Period-2 alternating returns of +/- 0.001 (i.e., +/- 0.1%) across 20 days. Mean is exactly zero; population stdev equals the amplitude after the ×100 scaling. Chosen over a sin() shape because period-2 alternation gives a closed-form analytic stdev with no floating-point rounding at the sample level.",
+  "function": "calculate_20d_vol",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating_returns",
+      "num_days": 20,
+      "tickers": ["AAA", "SPY"],
+      "amplitude": 0.001
+    }
+  },
+  "expected": 0.1,
+  "derivation": "daily_returns[i] = (+/-0.001) * 1.0 * 100.0 = +/-0.1, mean = 0. Variance = (0.1^2 + (-0.1)^2 + ...)/20 = 0.01. std = sqrt(0.01) = 0.1 exactly."
+}

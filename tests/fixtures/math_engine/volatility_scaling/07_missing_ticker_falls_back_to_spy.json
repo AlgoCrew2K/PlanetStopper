@@ -1,0 +1,17 @@
+{
+  "name": "missing_ticker_falls_back_to_spy",
+  "description": "Pins the documented NaN/None policy by construction: when the holding's ticker is ABSENT from a day's data, the function substitutes the SPY daily_ret for that day (see math_engine.py lines 90-91, the 'else: returns_matrix[i, j] = spy_ret' branch). Constructed so that the SPY series alone has a known stdev and the holding's series is fully driven by that fallback.",
+  "function": "calculate_20d_vol",
+  "inputs": {
+    "holdings": [
+      {"ticker": "MISSING", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "spy_only_alternating",
+      "num_days": 20,
+      "spy_amplitude": 0.02
+    }
+  },
+  "expected": 2.0,
+  "derivation": "Ticker 'MISSING' is never present in any day's data, so for every day returns_matrix[i, 0] = SPY.daily_ret. SPY alternates +/-0.02 -> daily_returns = +/-2.0 after weight 1.0 and *100. Population std = 2.0 exactly."
+}
