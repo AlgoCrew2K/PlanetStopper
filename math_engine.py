@@ -8,6 +8,30 @@ LOOKBACK_DAYS = 20  # 20-day realized-volatility window — AlphaBot risk-sizing
 ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches AlphaBot's risk-sizing assumption
 PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
 
+
+def compute_para_arm_decision(
+    current_return: float,
+    prev_return: float,
+    para_threshold: float,
+    currently_armed: bool,
+) -> tuple[float, bool]:
+    """
+    Pure decision for parabolic-squeeze arming.
+
+    Returns (velocity, should_arm_transition).
+      - velocity = current_return - prev_return (no scaling, no clamping)
+      - should_arm_transition = True iff (velocity >= threshold) AND (not currently_armed)
+      - Once armed, never re-arms. Caller is responsible for state mutation,
+        prints, and DB logging.
+
+    Extracted from alpha_bot_execution.py:559-569 to comply with the project
+    file-map rule that math layers live in math_engine.py.
+    """
+    velocity = float(current_return) - float(prev_return)
+    should_arm = bool((velocity >= para_threshold) and (not currently_armed))
+    return velocity, should_arm
+
+
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.
