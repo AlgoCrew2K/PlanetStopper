@@ -1,0 +1,20 @@
+{
+  "name": "regime_shift_low_to_high",
+  "description": "First 10 days: zero return (calm). Last 10 days: alternating +/- 0.02. Tests behavior when volatility regime changes mid-window. The 20-day lookback should weight every day equally (unweighted population stdev), so the mix dilutes the high-vol portion by half.",
+  "function": "calculate_20d_vol",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "regime_shift",
+      "num_days": 20,
+      "tickers": ["AAA", "SPY"],
+      "calm_days": 10,
+      "calm_ret": 0.0,
+      "vol_amplitude": 0.02
+    }
+  },
+  "expected": 1.4142135623730951,
+  "derivation": "daily_returns = [0]*10 + [+2, -2, +2, -2, ...] (5 positive, 5 negative). Mean = 0. Variance = (0^2 * 10 + 2^2 * 10) / 20 = 40/20 = 2.0. std = sqrt(2.0) = 1.4142135623730951. Note: equal-weight stdev means the calm half does NOT vanish; it pulls the mean toward zero AND adds zero variance contribution, so the variance equals (10 * amplitude^2) / 20 = amplitude^2 / 2."
+}

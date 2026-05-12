@@ -1,0 +1,15 @@
+{
+  "name": "empty_history",
+  "description": "Empty historical_data dict. len(valid_dates) = 0 < 20 -> short-circuit returns 0.0. Guards against a wrong impl that would IndexError or NaN on an empty input.",
+  "function": "calculate_20d_vol",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "empty"
+    }
+  },
+  "expected": 0.0,
+  "derivation": "valid_dates = sorted([]) = [], length 0, hits 'if len(valid_dates) < 20: return 0.0'."
+}

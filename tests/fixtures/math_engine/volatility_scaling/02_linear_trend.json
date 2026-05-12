@@ -1,0 +1,18 @@
+{
+  "name": "linear_monotonic_trend",
+  "description": "Constant POSITIVE daily return of 0.01 (1%) across 20 days. Even though the price is monotonically rising, the dispersion of daily returns is zero so volatility scaling should still report 0.0. This distinguishes 'low volatility' from 'low return magnitude' — a wrong implementation that keyed off absolute return magnitude would fail here.",
+  "function": "calculate_20d_vol",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "constant_returns",
+      "num_days": 20,
+      "tickers": ["AAA", "SPY"],
+      "daily_ret": 0.01
+    }
+  },
+  "expected": 0.0,
+  "derivation": "daily_returns[i] = 0.01 * 1.0 * 100.0 = 1.0 for all i. np.std([1.0]*20, ddof=0) = 0.0. Constant series has zero dispersion regardless of mean."
+}

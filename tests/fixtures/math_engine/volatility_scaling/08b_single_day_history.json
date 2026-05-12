@@ -1,0 +1,18 @@
+{
+  "name": "single_day_history",
+  "description": "Exactly one day of historical data. len(valid_dates) = 1 < 20 -> short-circuit returns 0.0. With a 1-element series np.std would still be 0.0 BUT the function must not even compute it — using a non-zero amplitude on that single day catches an impl that skipped the clamp.",
+  "function": "calculate_20d_vol",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating_returns",
+      "num_days": 1,
+      "tickers": ["AAA", "SPY"],
+      "amplitude": 0.05
+    }
+  },
+  "expected": 0.0,
+  "derivation": "len(valid_dates) = 1 < 20 -> short-circuit returns 0.0 regardless of return magnitude."
+}

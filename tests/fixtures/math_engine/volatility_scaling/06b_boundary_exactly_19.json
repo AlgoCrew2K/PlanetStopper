@@ -1,0 +1,18 @@
+{
+  "name": "lookback_boundary_exactly_19",
+  "description": "Exactly 19 days of data — one below the 20-day lookback minimum. The function's documented short-circuit (len(valid_dates) < 20 -> return 0.0) must fire even though the underlying returns are highly dispersed. If a wrong impl computed stdev on 19 samples instead of clamping, it would return ~3.0 instead of 0.0 — this fixture catches that.",
+  "function": "calculate_20d_vol",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating_returns",
+      "num_days": 19,
+      "tickers": ["AAA", "SPY"],
+      "amplitude": 0.03
+    }
+  },
+  "expected": 0.0,
+  "derivation": "len(valid_dates) = 19 < 20 -> short-circuit returns 0.0 regardless of the input dispersion. Were the short-circuit removed, np.std of 19 alternating +/-3.0 samples would be ~2.997 (NOT 3.0 because 19 is odd) — confirms test would fail on a missing clamp."
+}
