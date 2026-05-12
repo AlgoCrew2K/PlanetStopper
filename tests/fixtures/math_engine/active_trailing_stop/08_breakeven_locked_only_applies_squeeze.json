@@ -1,0 +1,15 @@
+{
+  "name": "breakeven_locked_only_applies_squeeze",
+  "description": "para_armed=False, breakeven_locked=True. The OR condition fires on breakeven_locked alone. Mirror of fixture 07; same numerical result by construction (squeeze fires once regardless of which flag). Pins the breakeven_locked=True branch in isolation.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 2.0,
+    "dynamic_multiplier": 1.5,
+    "dynamic_min_stop": 0.30,
+    "para_armed": false,
+    "breakeven_locked": true,
+    "parabolic_squeeze_multiplier": 0.5
+  },
+  "expected": 1.5,
+  "derivation": "safe_vol = 2.0. raw = 3.0. max(3.0, 0.30) = 3.0. breakeven_locked=True (OR fires) -> active *= 0.5 = 1.5. Output = 1.5. Identical to fixture 07 by symmetry of the OR; the property test asserts this equivalence explicitly."
+}

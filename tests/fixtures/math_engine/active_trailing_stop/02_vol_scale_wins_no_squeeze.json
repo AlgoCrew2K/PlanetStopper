@@ -1,0 +1,15 @@
+{
+  "name": "vol_scale_wins_no_squeeze",
+  "description": "safe_vol * dynamic_multiplier (2.0 * 1.5 = 3.0) EXCEEDS dynamic_min_stop (0.30), so the max() clamp returns the product. With para_armed=False and breakeven_locked=False, no squeeze multiplier is applied. Pins the 'scale wins' branch of the max() AND the no-squeeze branch.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 2.0,
+    "dynamic_multiplier": 1.5,
+    "dynamic_min_stop": 0.30,
+    "para_armed": false,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5
+  },
+  "expected": 3.0,
+  "derivation": "symphony_vol > 0, so safe_vol = symphony_vol = 2.0. raw = safe_vol * dynamic_multiplier = 2.0 * 1.5 = 3.0. active = max(raw, dynamic_min_stop) = max(3.0, 0.30) = 3.0. Neither flag is armed -> no squeeze -> output = 3.0. A wrong impl that returned the floor regardless (e.g., always-min-stop) would yield 0.30, off by 10x."
+}

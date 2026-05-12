@@ -1,0 +1,15 @@
+{
+  "name": "exact_tie_no_squeeze",
+  "description": "safe_vol * dynamic_multiplier (0.2 * 1.5 = 0.30) is EXACTLY EQUAL to dynamic_min_stop (0.30). max(0.30, 0.30) = 0.30. With both flags False, no squeeze. Pins the boundary condition of the max() clamp where both arguments coincide; a wrong impl using '>' instead of '>=' or vice versa would still return the same value here, so this fixture is a sanity-check on the boundary rather than a branch-disambiguator (the disambiguators are fixtures 01 and 02).",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 0.2,
+    "dynamic_multiplier": 1.5,
+    "dynamic_min_stop": 0.30,
+    "para_armed": false,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.5
+  },
+  "expected": 0.30,
+  "derivation": "safe_vol = 0.2 (positive). raw = 0.2 * 1.5 = 0.30 (IEEE-754 exact: 0.2 has rounding error, 0.2*1.5 evaluates to 0.30000000000000004 but is within tolerance of 0.30). active = max(raw, 0.30) = 0.30. No squeeze. Output = 0.30."
+}

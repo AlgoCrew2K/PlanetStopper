@@ -1,0 +1,15 @@
+{
+  "name": "squeeze_multiplier_identity",
+  "description": "para_armed=True, but squeeze_mult = 1.0 (identity element of multiplication). The squeeze fires but has no effective impact on the output. Pins that the multiplier IS applied (i.e., the code path runs) but the value 1.0 leaves the stop unchanged. Useful for the property test that asserts squeeze multiplier is treated as a pure scaling parameter.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 2.0,
+    "dynamic_multiplier": 1.5,
+    "dynamic_min_stop": 0.30,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 1.0
+  },
+  "expected": 3.0,
+  "derivation": "safe_vol = 2.0. raw = 3.0. max(3.0, 0.30) = 3.0. para_armed=True -> active *= 1.0 = 3.0. Output = 3.0."
+}
