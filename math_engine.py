@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -7,6 +9,13 @@ import numpy as np
 LOOKBACK_DAYS = 20  # 20-day realized-volatility window — AlphaBot risk-sizing standard
 ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches AlphaBot's risk-sizing assumption
 PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
+
+# Time-squeeze decay constants (drives intraday tightening of trailing stops)
+DECAY_CURVE_SCALAR = 9       # log10(1 + 9*t) maps t in [0,1] to decay in [0,1]; produces the characteristic AlphaBot intraday decay curve
+MULT_OPEN = 1.5              # dynamic_multiplier at market open (loosest stop)
+MULT_CLOSE = 0.5             # dynamic_multiplier at market close (tightest)
+MIN_STOP_OPEN = 0.3          # min stop floor at market open, in percentage points
+MIN_STOP_CLOSE = 0.15        # min stop floor at market close, in percentage points
 
 
 def compute_para_arm_decision(
@@ -30,6 +39,32 @@ def compute_para_arm_decision(
     velocity = float(current_return) - float(prev_return)
     should_arm = bool((velocity >= para_threshold) and (not currently_armed))
     return velocity, should_arm
+
+
+def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
+    """
+    Returns (dynamic_multiplier, dynamic_min_stop) for the time-squeeze decay
+    curve.
+
+    - time_ratio in [0.0, 1.0] is fraction of trading session elapsed
+      (0.0 = market open, 1.0 = close). CALLER clamps before passing; this
+      function does not validate.
+    - decay_curve = log10(1 + DECAY_CURVE_SCALAR * time_ratio), ranges from
+      0.0 at open to 1.0 at close.
+    - dynamic_multiplier linearly interpolates from MULT_OPEN at decay=0
+      to MULT_CLOSE at decay=1.
+    - dynamic_min_stop linearly interpolates from MIN_STOP_OPEN at decay=0
+      to MIN_STOP_CLOSE at decay=1.
+
+    Pure. No I/O. No state. No datetime handling.
+
+    Extracted from alpha_bot_execution.py:574-585 (cycle 4 of math-layer
+    extraction).
+    """
+    decay_curve = math.log10(1 + DECAY_CURVE_SCALAR * time_ratio)
+    dynamic_multiplier = float(MULT_OPEN - (MULT_OPEN - MULT_CLOSE) * decay_curve)
+    dynamic_min_stop = float(MIN_STOP_OPEN - (MIN_STOP_OPEN - MIN_STOP_CLOSE) * decay_curve)
+    return dynamic_multiplier, dynamic_min_stop
 
 
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):
