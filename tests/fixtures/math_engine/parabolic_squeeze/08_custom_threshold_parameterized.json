@@ -1,0 +1,16 @@
+{
+  "name": "custom_threshold_parameterized",
+  "description": "Threshold is set to 3.5 (non-default value). velocity = 3.0 < 3.5, so should_arm=False even though velocity is well above the typical 0.5 default. Pins that threshold is genuinely parameterized -- a wrong impl that hardcoded a constant (e.g., 0.5) instead of using para_threshold would arm here and fail. Critical fixture for the GREEN-phase implementer who must NOT bake in a default.",
+  "function": "compute_para_arm_decision",
+  "inputs": {
+    "current_return": 4.0,
+    "prev_return": 1.0,
+    "para_threshold": 3.5,
+    "currently_armed": false
+  },
+  "expected": {
+    "velocity": 3.0,
+    "should_arm": false
+  },
+  "derivation": "velocity = current_return - prev_return = 4.0 - 1.0 = 3.0. should_arm = (velocity >= para_threshold) AND (not currently_armed) = (3.0 >= 3.5) AND (not False) = False AND True = False. Note: if the impl wrongly used a hardcoded 0.5 here, it would yield True instead of False."
+}

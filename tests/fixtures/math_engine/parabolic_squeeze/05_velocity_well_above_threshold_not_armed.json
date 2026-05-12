@@ -1,0 +1,16 @@
+{
+  "name": "velocity_well_above_threshold_arms_when_not_armed",
+  "description": "velocity comfortably exceeds threshold; currently_armed=False. This is the canonical 'arm' regime: parabolic squeeze fires for the first time. Pins the happy path.",
+  "function": "compute_para_arm_decision",
+  "inputs": {
+    "current_return": 5.0,
+    "prev_return": 2.0,
+    "para_threshold": 0.5,
+    "currently_armed": false
+  },
+  "expected": {
+    "velocity": 3.0,
+    "should_arm": true
+  },
+  "derivation": "velocity = current_return - prev_return = 5.0 - 2.0 = 3.0. should_arm = (velocity >= para_threshold) AND (not currently_armed) = (3.0 >= 0.5) AND (not False) = True AND True = True."
+}

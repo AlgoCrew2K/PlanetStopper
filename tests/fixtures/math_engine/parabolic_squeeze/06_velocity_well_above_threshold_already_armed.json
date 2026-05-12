@@ -1,0 +1,16 @@
+{
+  "name": "no_rearming_when_already_armed",
+  "description": "Same velocity regime as fixture 05 (velocity well above threshold), but currently_armed=True. Inline logic guards arming with 'if not bot_state[symphony_id][\"para_armed\"]' -- once armed, function MUST NOT re-emit an arm transition regardless of velocity. Pins the idempotency rule. A wrong impl that ignores currently_armed would arm here and fail.",
+  "function": "compute_para_arm_decision",
+  "inputs": {
+    "current_return": 5.0,
+    "prev_return": 2.0,
+    "para_threshold": 0.5,
+    "currently_armed": true
+  },
+  "expected": {
+    "velocity": 3.0,
+    "should_arm": false
+  },
+  "derivation": "velocity = current_return - prev_return = 5.0 - 2.0 = 3.0. should_arm = (velocity >= para_threshold) AND (not currently_armed) = (3.0 >= 0.5) AND (not True) = True AND False = False. Velocity is still computed correctly; only the arm-transition is suppressed."
+}
