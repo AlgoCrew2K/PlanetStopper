@@ -1,0 +1,13 @@
+{
+  "name": "market_open_boundary",
+  "description": "time_ratio = 0.0 (market open). decay_curve = log10(1) = 0 EXACTLY, so dynamic_multiplier collapses to MULT_OPEN and dynamic_min_stop collapses to MIN_STOP_OPEN. Pins the lower-boundary regime: at open, the time-squeeze layer applies the widest stop (1.5x vol multiplier, 0.30% minimum floor). A wrong impl that swapped log10 for ln, or that swapped the linear-interp end-points, would diverge by orders of magnitude here.",
+  "function": "compute_time_squeeze_decay",
+  "inputs": {
+    "time_ratio": 0.0
+  },
+  "expected": {
+    "dynamic_multiplier": 1.5,
+    "dynamic_min_stop": 0.3
+  },
+  "derivation": "decay_curve = log10(1 + DECAY_CURVE_SCALAR * time_ratio) = log10(1 + 9 * 0.0) = log10(1) = 0.0 EXACTLY. dynamic_multiplier = MULT_OPEN - (MULT_OPEN - MULT_CLOSE) * decay_curve = 1.5 - (1.5 - 0.5) * 0.0 = 1.5 - 1.0 * 0.0 = 1.5. dynamic_min_stop = MIN_STOP_OPEN - (MIN_STOP_OPEN - MIN_STOP_CLOSE) * decay_curve = 0.3 - (0.3 - 0.15) * 0.0 = 0.3 - 0.15 * 0.0 = 0.3."
+}

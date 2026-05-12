@@ -1,0 +1,13 @@
+{
+  "name": "early_session",
+  "description": "time_ratio = 0.1 (10% of the session elapsed; ~39 minutes after the 9:30 ET open in a standard 390-minute session). Decay is already ~28% complete at 10% wall-clock — this is the concavity of log10 doing the work the spec calls for (early-day tightening). Catches an impl that used linear decay or an off-by-scaling-factor inside log10.",
+  "function": "compute_time_squeeze_decay",
+  "inputs": {
+    "time_ratio": 0.1
+  },
+  "expected": {
+    "dynamic_multiplier": 1.2212463990471711,
+    "dynamic_min_stop": 0.2581869598570756
+  },
+  "derivation": "decay_curve = log10(1 + 9 * 0.1) = log10(1.9) = 0.2787536009528289 (IEEE-754 double; verified via Python math.log10). dynamic_multiplier = 1.5 - (1.5 - 0.5) * 0.2787536009528289 = 1.5 - 0.2787536009528289 = 1.2212463990471711. dynamic_min_stop = 0.3 - (0.3 - 0.15) * 0.2787536009528289 = 0.3 - 0.15 * 0.2787536009528289 = 0.3 - 0.041813040142924336 = 0.2581869598570756."
+}

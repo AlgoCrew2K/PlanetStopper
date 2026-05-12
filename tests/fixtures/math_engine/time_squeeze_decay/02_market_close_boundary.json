@@ -1,0 +1,13 @@
+{
+  "name": "market_close_boundary",
+  "description": "time_ratio = 1.0 (market close). decay_curve = log10(10) = 1.0 EXACTLY, so dynamic_multiplier collapses to MULT_CLOSE and dynamic_min_stop collapses to MIN_STOP_CLOSE. Pins the upper-boundary regime: at close, the time-squeeze layer applies the tightest stop (0.5x vol multiplier, 0.15% minimum floor). Catches a sign flip in the linear-interpolation direction (e.g., implementing MULT_CLOSE -> MULT_OPEN instead of MULT_OPEN -> MULT_CLOSE).",
+  "function": "compute_time_squeeze_decay",
+  "inputs": {
+    "time_ratio": 1.0
+  },
+  "expected": {
+    "dynamic_multiplier": 0.5,
+    "dynamic_min_stop": 0.15
+  },
+  "derivation": "decay_curve = log10(1 + DECAY_CURVE_SCALAR * time_ratio) = log10(1 + 9 * 1.0) = log10(10) = 1.0 EXACTLY. dynamic_multiplier = MULT_OPEN - (MULT_OPEN - MULT_CLOSE) * decay_curve = 1.5 - (1.5 - 0.5) * 1.0 = 1.5 - 1.0 = 0.5. dynamic_min_stop = MIN_STOP_OPEN - (MIN_STOP_OPEN - MIN_STOP_CLOSE) * decay_curve = 0.3 - (0.3 - 0.15) * 1.0 = 0.3 - 0.15 = 0.15."
+}

@@ -1,0 +1,13 @@
+{
+  "name": "late_session",
+  "description": "time_ratio = 0.9 (90% of the session elapsed; ~39 minutes before close). Decay is ~96% complete at 90% wall-clock — the curve plateaus near the close as MULT_OPEN -> MULT_CLOSE settles. Confirms the upper-tail shape of the log10 curve and that the linear-interp coefficient is correctly applied.",
+  "function": "compute_time_squeeze_decay",
+  "inputs": {
+    "time_ratio": 0.9
+  },
+  "expected": {
+    "dynamic_multiplier": 0.5409586076789065,
+    "dynamic_min_stop": 0.15614379115183596
+  },
+  "derivation": "decay_curve = log10(1 + 9 * 0.9) = log10(9.1) = 0.9590413923210935 (IEEE-754 double; verified via Python math.log10). dynamic_multiplier = 1.5 - (1.5 - 0.5) * 0.9590413923210935 = 1.5 - 0.9590413923210935 = 0.5409586076789065. dynamic_min_stop = 0.3 - (0.3 - 0.15) * 0.9590413923210935 = 0.3 - 0.15 * 0.9590413923210935 = 0.3 - 0.14385620884816403 = 0.15614379115183596."
+}

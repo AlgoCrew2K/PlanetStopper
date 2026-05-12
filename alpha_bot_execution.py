@@ -576,17 +576,7 @@ def main():
                 m_open_dt = current_et.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
                 m_close_dt = current_et.replace(hour=16, minute=0, second=0, microsecond=0)
                 time_ratio = max(0.0, min(1.0, (current_et - m_open_dt).total_seconds() / (m_close_dt - m_open_dt).total_seconds()))
-                decay_curve = math.log10(1 + 9 * time_ratio)
-                
-                # Calculate Dynamic Multiplier (Decays from 1.5x to 0.5x)
-                mult_open = 1.5
-                mult_close = 0.5
-                dynamic_multiplier = mult_open - ((mult_open - mult_close) * decay_curve)
-
-                # Calculate Minimum Floors (Decays from 0.3% to 0.15%)
-                min_stop_open = 0.3
-                min_stop_close = 0.15
-                dynamic_min_stop = min_stop_open - ((min_stop_open - min_stop_close) * decay_curve)
+                dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
 
                 # Calculate active stop distance based strictly on 20-day volatility
 

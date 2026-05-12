@@ -1,0 +1,13 @@
+{
+  "name": "midday",
+  "description": "time_ratio = 0.5 (halfway through the trading day by wall-clock). NOTE: half the wall-clock time does NOT yield half the decay; the log10 curve is concave so the decay at midday is ~0.74, NOT 0.5. This is exactly the spec the inline producer encodes (faster early-day tightening). A wrong impl that used a linear decay instead of log10 would diverge sharply here.",
+  "function": "compute_time_squeeze_decay",
+  "inputs": {
+    "time_ratio": 0.5
+  },
+  "expected": {
+    "dynamic_multiplier": 0.7596373105057561,
+    "dynamic_min_stop": 0.1889455965758634
+  },
+  "derivation": "decay_curve = log10(1 + 9 * 0.5) = log10(5.5) = 0.7403626894942439 (IEEE-754 double; verified via Python math.log10). dynamic_multiplier = 1.5 - (1.5 - 0.5) * 0.7403626894942439 = 1.5 - 0.7403626894942439 = 0.7596373105057561. dynamic_min_stop = 0.3 - (0.3 - 0.15) * 0.7403626894942439 = 0.3 - 0.15 * 0.7403626894942439 = 0.3 - 0.11105440342413658 = 0.1889455965758634."
+}
