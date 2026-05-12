@@ -590,22 +590,16 @@ def main():
 
                 base_stop_level = safe_hwm - active_trailing_stop
 
-                dynamic_activation = max(0.4, min(3.0, symphony_vol))
-                if current_return >= (dynamic_activation - 0.2):
-                    bot_state[symphony_id]["hwm_hold_ticks"] += 1
-                else:
-                    bot_state[symphony_id]["hwm_hold_ticks"] = 0
-                
-                if bot_state[symphony_id]["hwm_hold_ticks"] >= 5:
-                    bot_state[symphony_id]["breakeven_locked"] = True
-
-                if bot_state[symphony_id]["breakeven_locked"]:
-                    stop_trigger_level = max(base_stop_level, 0.0)
-                else:
-                    stop_trigger_level = base_stop_level
-
-                if bot_state[symphony_id]["triggered"]:
-                    stop_trigger_level = -999.0
+                new_hold_ticks, new_breakeven_locked, stop_trigger_level = math_engine.compute_breakeven_update(
+                    current_return=current_return,
+                    symphony_vol=symphony_vol,
+                    base_stop_level=base_stop_level,
+                    current_hold_ticks=bot_state[symphony_id]["hwm_hold_ticks"],
+                    currently_breakeven_locked=bot_state[symphony_id]["breakeven_locked"],
+                    is_triggered=bot_state[symphony_id]["triggered"],
+                )
+                bot_state[symphony_id]["hwm_hold_ticks"] = new_hold_ticks
+                bot_state[symphony_id]["breakeven_locked"] = new_breakeven_locked
 
                 # Check 1: Trailing Stop
                 is_trailing_stop_hit = False

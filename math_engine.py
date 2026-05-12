@@ -18,6 +18,13 @@ MIN_STOP_OPEN = 0.3          # min stop floor at market open, in percentage poin
 MIN_STOP_CLOSE = 0.15        # min stop floor at market close, in percentage points
 VOL_FALLBACK = 1.0           # neutral fallback for safe_vol when symphony_vol <= 0 (preserves vol-scale arithmetic in the degenerate-vol case)
 
+# Breakeven-lock constants (drives HWM-hold-based stop tightening)
+BREAKEVEN_ACTIVATION_MIN = 0.4         # lower clamp for dynamic activation threshold (in percentage points)
+BREAKEVEN_ACTIVATION_MAX = 3.0         # upper clamp for dynamic activation threshold
+BREAKEVEN_ACTIVATION_DEADBAND = 0.2    # current_return must be within this distance below dynamic_activation to count a tick
+HWM_HOLD_TICKS_THRESHOLD = 5          # consecutive qualifying ticks needed to lock breakeven (transition is one-way)
+TRIGGERED_OVERRIDE_LEVEL = -999.0      # sentinel stop level when position is already triggered (suppresses re-exit)
+
 
 def compute_para_arm_decision(
     current_return: float,
@@ -95,6 +102,55 @@ def compute_active_trailing_stop(
     if para_armed or breakeven_locked:
         active *= parabolic_squeeze_multiplier
     return float(active)
+
+
+def compute_breakeven_update(
+    current_return: float,
+    symphony_vol: float,
+    base_stop_level: float,
+    current_hold_ticks: int,
+    currently_breakeven_locked: bool,
+    is_triggered: bool,
+) -> tuple[int, bool, float]:
+    """
+    Computes the breakeven-lock state update and the resolved stop trigger level.
+
+    Returns (new_hold_ticks, new_breakeven_locked, stop_trigger_level).
+
+    Logic (extracted verbatim from alpha_bot_execution.py):
+      dynamic_activation = clamp(symphony_vol, BREAKEVEN_ACTIVATION_MIN, BREAKEVEN_ACTIVATION_MAX)
+      if current_return >= dynamic_activation - BREAKEVEN_ACTIVATION_DEADBAND:
+          new_hold_ticks = current_hold_ticks + 1
+      else:
+          new_hold_ticks = 0
+      new_breakeven_locked = currently_breakeven_locked or (new_hold_ticks >= HWM_HOLD_TICKS_THRESHOLD)
+      if new_breakeven_locked:
+          stop_trigger_level = max(base_stop_level, 0.0)   # 0.0 is structural — semantic anchor "breakeven = no worse than zero loss"
+      else:
+          stop_trigger_level = base_stop_level
+      if is_triggered:
+          stop_trigger_level = TRIGGERED_OVERRIDE_LEVEL
+
+    LATCHING INVARIANT: once currently_breakeven_locked=True, new_breakeven_locked
+    is ALWAYS True regardless of any other input. The inline producer never
+    resets breakeven_locked to False; that one-way transition must be preserved.
+
+    Pure. No I/O. No state. Caller assigns the returned new_hold_ticks and
+    new_breakeven_locked back into bot_state.
+    """
+    dynamic_activation = max(BREAKEVEN_ACTIVATION_MIN, min(BREAKEVEN_ACTIVATION_MAX, symphony_vol))
+    if current_return >= (dynamic_activation - BREAKEVEN_ACTIVATION_DEADBAND):
+        new_hold_ticks = current_hold_ticks + 1
+    else:
+        new_hold_ticks = 0
+    new_breakeven_locked = bool(currently_breakeven_locked or (new_hold_ticks >= HWM_HOLD_TICKS_THRESHOLD))
+    if new_breakeven_locked:
+        stop_trigger_level = max(base_stop_level, 0.0)
+    else:
+        stop_trigger_level = base_stop_level
+    if is_triggered:
+        stop_trigger_level = TRIGGERED_OVERRIDE_LEVEL
+    return int(new_hold_ticks), new_breakeven_locked, float(stop_trigger_level)
 
 
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):
