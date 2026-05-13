@@ -1,0 +1,24 @@
+{
+  "name": "04_weight_exactly_threshold_resets",
+  "description": "Branch 2 (gate fails): valid_vwap_weight EXACTLY 0.5 fails the strict `>` gate, so both tick counters reset to 0, both broken False.",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.5,
+    "weighted_vwap_diff": -1.0,
+    "safe_hwm": 3.0,
+    "current_return": -2.0,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 2,
+    "current_vwap_bleed_ticks": 2
+  },
+  "expected": {
+    "new_vwap_ticks": 0,
+    "new_vwap_bleed_ticks": 0,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Outer guard passes (is_triggered=False). Inner gate: `valid_vwap_weight > VWAP_WEIGHT_THRESHOLD(0.5)` -> 0.5 > 0.5 is FALSE (strict greater-than). Gate fails -> producer's else-branch sets BOTH ticks to 0 unconditionally. Returns (0, 0, False, False). Boundary case: confirms the gate uses `>` not `>=`."
+}

@@ -1,0 +1,24 @@
+{
+  "name": "17_system_b_met_well_past_threshold_still_breaks",
+  "description": "Branch 3 / System B: bleed_ticks well past threshold, still increments and still breaks. Confirms no clamp at threshold.",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.7,
+    "weighted_vwap_diff": -0.5,
+    "safe_hwm": 0.0,
+    "current_return": -2.5,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 0,
+    "current_vwap_bleed_ticks": 8
+  },
+  "expected": {
+    "new_vwap_ticks": 0,
+    "new_vwap_bleed_ticks": 9,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": true
+  },
+  "derivation": "Outer pass, gate pass. System A: safe_hwm 0.0 >= cross 2.0 FALSE -> vwap_ticks reset. System B: current_return -2.5 <= bleed_arm -1.0 TRUE -> new_bleed_ticks = 8+1 = 9 (NO clamp at threshold). bleed_broken = (9 >= 3) = TRUE. Returns (0, 9, False, True). Catches an impl that clamped bleed_ticks at threshold."
+}

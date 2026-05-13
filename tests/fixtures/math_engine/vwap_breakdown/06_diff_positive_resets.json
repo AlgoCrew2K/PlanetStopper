@@ -1,0 +1,24 @@
+{
+  "name": "06_diff_positive_resets",
+  "description": "Branch 2 (gate fails): weighted_vwap_diff slightly positive fails the gate, both ticks reset.",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.7,
+    "weighted_vwap_diff": 0.25,
+    "safe_hwm": 4.0,
+    "current_return": -3.0,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 5,
+    "current_vwap_bleed_ticks": 5
+  },
+  "expected": {
+    "new_vwap_ticks": 0,
+    "new_vwap_bleed_ticks": 0,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Outer guard passes (is_triggered=False). Weight 0.7 > 0.5 passes the weight clause, but diff 0.25 < 0 is FALSE. Gate fails -> both ticks reset to 0. Returns (0, 0, False, False). Confirms the AND-gate: either clause failing trips the reset."
+}

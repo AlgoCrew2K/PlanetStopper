@@ -1,0 +1,24 @@
+{
+  "name": "23_both_systems_fail_both_reset",
+  "description": "Branch 3 / Interaction: gate passes BUT both System A and System B conditions fail with non-zero prev counts -> both reset to 0.",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.8,
+    "weighted_vwap_diff": -0.4,
+    "safe_hwm": 1.0,
+    "current_return": -0.5,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 2,
+    "current_vwap_bleed_ticks": 2
+  },
+  "expected": {
+    "new_vwap_ticks": 0,
+    "new_vwap_bleed_ticks": 0,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Outer pass, gate pass. System A: safe_hwm 1.0 >= cross 2.0 FALSE -> vwap_ticks reset to 0. System B: current_return -0.5 <= bleed_arm -1.0 FALSE -> bleed_ticks reset to 0. Both broken False. Returns (0, 0, False, False). Note: this is DIFFERENT from Branch 2 (gate-fail outer-reset) -- here the gate PASSES, but both inner conditions miss. The end state is identical (both 0/0/False/False) but the producer code-path is different."
+}

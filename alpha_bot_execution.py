@@ -639,32 +639,25 @@ def main():
                         bot_state[symphony_id]["above_tp_count"] = 0
 
                 # Check 3: True VWAP Breakdown
-                is_vwap_broken = False
-                is_vwap_bleed_broken = False
-                
-                # ADDED GATE: Only evaluate if the symphony hasn't already exited
-                if not bot_state[symphony_id]['triggered']:
-                    if valid_vwap_weight > 0.5 and weighted_vwap_diff < 0:
-                        # System A (Profit):
-                        if safe_hwm >= acc_VWAP_CROSS_HWM_PCT and current_return < safe_hwm:
-                            bot_state[symphony_id]['vwap_ticks'] += 1
-                            if bot_state[symphony_id]['vwap_ticks'] >= 3:
-                                is_vwap_broken = True
-                                print(f'  📉 {symphony_name[:35]} Portfolio VWAP broken. Forcing exit to protect gains.')
-                        else:
-                            bot_state[symphony_id]['vwap_ticks'] = 0
-                            
-                        # System B (Bleed):
-                        if current_return <= acc_VWAP_BLEED_ARM_PCT:
-                            bot_state[symphony_id]['vwap_bleed_ticks'] += 1
-                            if bot_state[symphony_id]['vwap_bleed_ticks'] >= acc_VWAP_BLEED_TICKS:
-                                is_vwap_bleed_broken = True
-                                print(f'  🩸 {symphony_name[:35]} VWAP Bleed Limit Reached. Forcing exit.')
-                        else:
-                            bot_state[symphony_id]['vwap_bleed_ticks'] = 0
-                    else:
-                        bot_state[symphony_id]['vwap_ticks'] = 0
-                        bot_state[symphony_id]['vwap_bleed_ticks'] = 0
+                new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = math_engine.compute_vwap_breakdown_update(
+                    is_triggered=bot_state[symphony_id]['triggered'],
+                    valid_vwap_weight=valid_vwap_weight,
+                    weighted_vwap_diff=weighted_vwap_diff,
+                    safe_hwm=safe_hwm,
+                    current_return=current_return,
+                    vwap_cross_hwm_pct=acc_VWAP_CROSS_HWM_PCT,
+                    vwap_bleed_arm_pct=acc_VWAP_BLEED_ARM_PCT,
+                    vwap_bleed_ticks_threshold=acc_VWAP_BLEED_TICKS,
+                    current_vwap_ticks=bot_state[symphony_id]['vwap_ticks'],
+                    current_vwap_bleed_ticks=bot_state[symphony_id]['vwap_bleed_ticks'],
+                )
+                bot_state[symphony_id]['vwap_ticks'] = new_vwap_ticks
+                bot_state[symphony_id]['vwap_bleed_ticks'] = new_vwap_bleed_ticks
+
+                if is_vwap_broken:
+                    print(f'  📉 {symphony_name[:35]} Portfolio VWAP broken. Forcing exit to protect gains.')
+                if is_vwap_bleed_broken:
+                    print(f'  🩸 {symphony_name[:35]} VWAP Bleed Limit Reached. Forcing exit.')
 
                 safe_name = symphony_name[:35].encode('ascii', 'ignore').decode('ascii')
                 print(f"  -> {safe_name}: Ret: {current_return:.2f}% | HWM: {high_water_mark:.2f}% | Stop Dist: {active_trailing_stop:.2f}% | ArmProb: {prob_beating:.1f}%")

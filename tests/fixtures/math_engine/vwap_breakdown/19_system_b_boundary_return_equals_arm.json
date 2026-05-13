@@ -1,0 +1,24 @@
+{
+  "name": "19_system_b_boundary_return_equals_arm",
+  "description": "Branch 3 / System B boundary: current_return EXACTLY equals bleed_arm. The arm clause uses `<=`, so equality MEETS the condition.",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.7,
+    "weighted_vwap_diff": -0.3,
+    "safe_hwm": 0.0,
+    "current_return": -1.0,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 0,
+    "current_vwap_bleed_ticks": 0
+  },
+  "expected": {
+    "new_vwap_ticks": 0,
+    "new_vwap_bleed_ticks": 1,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Outer pass, gate pass. System A: safe_hwm 0.0 >= cross 2.0 FALSE -> vwap_ticks reset. System B: current_return -1.0 <= bleed_arm -1.0 is TRUE (`<=` inclusive) -> bleed_ticks = 0+1 = 1; bleed_broken = (1 >= 3) = False. Returns (0, 1, False, False). Boundary pin: System B uses `<=`."
+}

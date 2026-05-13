@@ -278,6 +278,88 @@ def compute_vwap_bleed_arm_threshold(
     return float(max(VWAP_BLEED_ARM_MIN, min(VWAP_BLEED_ARM_MAX, raw)))
 
 
+# VWAP breakdown constants (gates the VWAP exit state machine)
+VWAP_WEIGHT_THRESHOLD = 0.5         # minimum allocation coverage to evaluate VWAP signals; below this, the weighted diff is too unreliable
+VWAP_BREAK_CONFIRM_TICKS = 3        # consecutive qualifying ticks for System A (profit-protection break) to flip is_vwap_broken
+
+
+def compute_vwap_breakdown_update(
+    is_triggered: bool,
+    valid_vwap_weight: float,
+    weighted_vwap_diff: float,
+    safe_hwm: float,
+    current_return: float,
+    vwap_cross_hwm_pct: float,
+    vwap_bleed_arm_pct: float,
+    vwap_bleed_ticks_threshold: int,
+    current_vwap_ticks: int,
+    current_vwap_bleed_ticks: int,
+) -> tuple[int, int, bool, bool]:
+    """
+    Computes the VWAP-breakdown state machine update.
+
+    Returns (new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken,
+    is_vwap_bleed_broken).
+
+    BRANCH 1 — is_triggered guard:
+        State preserved unchanged. No signals.
+        Returns (current_vwap_ticks, current_vwap_bleed_ticks, False, False)
+
+    BRANCH 2 — gate fails (NOT armed for VWAP eval):
+        Gate: valid_vwap_weight > VWAP_WEIGHT_THRESHOLD
+              AND weighted_vwap_diff < 0
+        Both counters RESET to 0. No signals.
+
+    BRANCH 3 — gate passes:
+        System A (profit-protection break, INDEPENDENT of B):
+            Condition: safe_hwm >= vwap_cross_hwm_pct
+                       AND current_return < safe_hwm
+            Met:  new_vwap_ticks = current_vwap_ticks + 1
+                  is_vwap_broken = (new_vwap_ticks >= VWAP_BREAK_CONFIRM_TICKS)
+            Miss: new_vwap_ticks = 0
+        System B (bleed, INDEPENDENT of A):
+            Condition: current_return <= vwap_bleed_arm_pct
+            Met:  new_vwap_bleed_ticks = current_vwap_bleed_ticks + 1
+                  is_vwap_bleed_broken = (new_vwap_bleed_ticks >= vwap_bleed_ticks_threshold)
+            Miss: new_vwap_bleed_ticks = 0
+
+    Boundary semantics (each pinned by a fixture):
+      - Gate weight uses strict `>` (0.5 exact does NOT pass)
+      - Gate diff uses strict `<` (0 exact does NOT pass)
+      - System A safe_hwm uses `>=` (cross exact DOES arm)
+      - System A current_return uses strict `<` (safe_hwm exact does NOT trigger break)
+      - System B current_return uses `<=` (bleed_arm exact DOES trigger)
+
+    Pure. No I/O. No state. Caller handles print transitions.
+
+    Extracted from alpha_bot_execution.py:641-667 (cycle 10 of math-layer
+    extraction).
+    """
+    if is_triggered:
+        return int(current_vwap_ticks), int(current_vwap_bleed_ticks), False, False
+
+    if not (valid_vwap_weight > VWAP_WEIGHT_THRESHOLD and weighted_vwap_diff < 0):
+        return 0, 0, False, False
+
+    # System A
+    if safe_hwm >= vwap_cross_hwm_pct and current_return < safe_hwm:
+        new_vwap_ticks = int(current_vwap_ticks) + 1
+        is_vwap_broken = bool(new_vwap_ticks >= VWAP_BREAK_CONFIRM_TICKS)
+    else:
+        new_vwap_ticks = 0
+        is_vwap_broken = False
+
+    # System B
+    if current_return <= vwap_bleed_arm_pct:
+        new_vwap_bleed_ticks = int(current_vwap_bleed_ticks) + 1
+        is_vwap_bleed_broken = bool(new_vwap_bleed_ticks >= vwap_bleed_ticks_threshold)
+    else:
+        new_vwap_bleed_ticks = 0
+        is_vwap_bleed_broken = False
+
+    return new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken
+
+
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.

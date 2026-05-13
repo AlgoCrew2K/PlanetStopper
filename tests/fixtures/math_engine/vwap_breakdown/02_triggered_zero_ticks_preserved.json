@@ -1,0 +1,24 @@
+{
+  "name": "02_triggered_zero_ticks_preserved",
+  "description": "Branch 1 (is_triggered=True): zero tick counters stay at zero, both broken flags False. Symmetric to fixture 01.",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": true,
+    "valid_vwap_weight": 0.0,
+    "weighted_vwap_diff": 1.5,
+    "safe_hwm": 0.0,
+    "current_return": 0.0,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 0,
+    "current_vwap_bleed_ticks": 0
+  },
+  "expected": {
+    "new_vwap_ticks": 0,
+    "new_vwap_bleed_ticks": 0,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "is_triggered=True -> outer-guard fail, entire block skipped. Counters preserved at (0, 0). Both broken False. Returns (0, 0, False, False)."
+}

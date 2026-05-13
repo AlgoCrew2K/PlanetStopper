@@ -1,0 +1,24 @@
+{
+  "name": "10_system_a_met_five_to_six_still_breaks",
+  "description": "Branch 3 / System A: condition met with prev vwap_ticks=5 increments to 6, well past threshold, still breaks. Confirms no clamp / no decrement at threshold.",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.95,
+    "weighted_vwap_diff": -1.2,
+    "safe_hwm": 5.0,
+    "current_return": 2.0,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 5,
+    "current_vwap_bleed_ticks": 0
+  },
+  "expected": {
+    "new_vwap_ticks": 6,
+    "new_vwap_bleed_ticks": 0,
+    "is_vwap_broken": true,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Outer pass, gate pass. System A: safe_hwm 5.0 >= cross 2.0 AND current_return 2.0 < safe_hwm 5.0 -> MET. new_vwap_ticks = 5 + 1 = 6 (NO clamp at 3). is_vwap_broken = (6 >= 3) = TRUE. System B: current_return 2.0 <= bleed_arm -1.0 is FALSE -> bleed_ticks reset to 0. Returns (6, 0, True, False). Catches an impl that clamped vwap_ticks at VWAP_BREAK_CONFIRM_TICKS."
+}
