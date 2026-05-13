@@ -3,7 +3,7 @@
 import sqlite3
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 DB_FILE = "alphabot_state.db"
 
@@ -213,7 +213,7 @@ def log_symphony_event(symphony_id, message, event_type="info"):
     if symphony_id not in logs:
         logs[symphony_id] = []
         
-    timestamp = datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     logs[symphony_id].append({
         "timestamp": timestamp,
         "event_type": event_type,
