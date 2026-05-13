@@ -1,0 +1,22 @@
+{
+  "name": "small_sims_and_neighbors_overrides",
+  "description": "Caller overrides simulation_paths and neighbor_k away from defaults. Ensures the parameter wiring works regardless of how defaults are named after extraction (MC_DEFAULT_SIMULATION_PATHS / MC_DEFAULT_NEIGHBOR_K). Uses numpy seed 123 to demonstrate determinism under a different seed.",
+  "function": "run_monte_carlo",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating",
+      "num_days": 40,
+      "spy_amplitude": 0.01,
+      "aaa_amplitude": 0.015
+    },
+    "spy_today_return": 0.3,
+    "simulation_paths": 100,
+    "neighbor_k": 10,
+    "numpy_seed": 123
+  },
+  "expected": 100.0,
+  "derivation": "Captured behavioral pin under numpy.random.seed(123). Exercises non-default parameters: simulation_paths=100, neighbor_k=10. Under these parameters and seed, the resulting sim distribution places current_symphony_return at or below the smallest value (below_count=0 from searchsorted 'left' semantics on a value <= all sorted entries), yielding (100-0)/100*100=100.0. Pin protects against any default-value extraction altering parameter wiring."
+}

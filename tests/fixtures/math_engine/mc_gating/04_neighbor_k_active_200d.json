@@ -1,0 +1,22 @@
+{
+  "name": "neighbor_k_active_200d",
+  "description": "200 days forces len(distances) > neighbor_k (150), exercising the np.argpartition branch. This pins the neighbor-selection path and ensures the default neighbor_k (proposed MC_DEFAULT_NEIGHBOR_K) is wired correctly after extraction.",
+  "function": "run_monte_carlo",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating",
+      "num_days": 200,
+      "spy_amplitude": 0.01,
+      "aaa_amplitude": 0.015
+    },
+    "spy_today_return": 1.0,
+    "simulation_paths": 5000,
+    "neighbor_k": 150,
+    "numpy_seed": 42
+  },
+  "expected": 65.22,
+  "derivation": "Captured behavioral pin under numpy.random.seed(42). Exercises argpartition branch (len(distances)=200 > neighbor_k=150). Output must be byte-equivalent after extraction."
+}

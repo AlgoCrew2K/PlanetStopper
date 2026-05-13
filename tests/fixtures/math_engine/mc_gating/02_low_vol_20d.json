@@ -1,0 +1,22 @@
+{
+  "name": "low_vol_exactly_at_min_history",
+  "description": "Exactly MC_MIN_HISTORY_DAYS (20) days of alternating SPY and AAA returns. Pins the BOUNDARY of the history guard: at exactly 20 days, the function must NOT short-circuit; it must run the full MC path. With numpy seed 42 and the documented MC pipeline, the captured output is the behavioral-equivalence target.",
+  "function": "run_monte_carlo",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating",
+      "num_days": 20,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.01
+    },
+    "spy_today_return": 0.5,
+    "simulation_paths": 5000,
+    "neighbor_k": 150,
+    "numpy_seed": 42
+  },
+  "expected": 51.339999999999996,
+  "derivation": "Captured behavioral pin under numpy.random.seed(42). This regime exercises the boundary case len(valid_dates) == MC_MIN_HISTORY_DAYS (not short-circuited) AND len(distances) <= neighbor_k (uses np.arange path, not argpartition). The expected value is the exact output of the present implementation; any constant-extraction must not perturb it (zero tolerance)."
+}

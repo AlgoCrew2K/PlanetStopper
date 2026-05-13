@@ -1,0 +1,22 @@
+{
+  "name": "high_vol_50d",
+  "description": "50 days of higher-amplitude alternating returns; still smaller than neighbor_k so argpartition is NOT used. Pins the standard MC path with PCT_SCALAR conversions and Euclidean nearest-neighbor distance.",
+  "function": "run_monte_carlo",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating",
+      "num_days": 50,
+      "spy_amplitude": 0.02,
+      "aaa_amplitude": 0.03
+    },
+    "spy_today_return": 2.0,
+    "simulation_paths": 5000,
+    "neighbor_k": 150,
+    "numpy_seed": 42
+  },
+  "expected": 50.62,
+  "derivation": "Captured behavioral pin under numpy.random.seed(42). With len(distances)=50 <= neighbor_k=150, nearest_indices = np.arange(50); all 50 days enter the returns matrix. Output is the exact present-implementation result; constants extracted in GREEN must preserve byte equivalence."
+}

@@ -1,0 +1,22 @@
+{
+  "name": "constant_zero_returns",
+  "description": "All historical returns are exactly 0.0 across all tickers. spy_today_return=0.0. current_symphony_return = 0. Distribution is degenerate (all zeros) so searchsorted returns the full length when value equals all elements (left-insertion semantics) — pin captures present behavior.",
+  "function": "run_monte_carlo",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}
+    ],
+    "historical_data_spec": {
+      "kind": "constant",
+      "num_days": 30,
+      "spy_ret": 0.0,
+      "aaa_ret": 0.0
+    },
+    "spy_today_return": 0.0,
+    "simulation_paths": 5000,
+    "neighbor_k": 150,
+    "numpy_seed": 42
+  },
+  "expected": 100.0,
+  "derivation": "Captured behavioral pin under numpy.random.seed(42). All sim_results are 0.0; current_symphony_return = 0.01 * 100.0 * 0.0 contributions = 0.0 (last_percent_change=0.0); searchsorted 'left' on sorted-zeros for value 0.0 returns 0 (left-insertion); below_count=0; result = ((5000 - 0) / 5000) * 100.0 = 100.0. This pin protects against any sign/order swap in the searchsorted call or the simulation_paths arithmetic."
+}
