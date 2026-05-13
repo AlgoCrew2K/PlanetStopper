@@ -8,14 +8,21 @@
 
 ## Step 1 — Identify the call site
 
-`[COMPOSER REJECTED]: HTTP {code}` originates from one of two functions in `alpha_bot_execution.py`:
+`[COMPOSER REJECTED]: HTTP {code}` originates from **one function only** in `alpha_bot_execution.py`:
 
 | Call site | Function | Purpose |
 |---|---|---|
-| `fetch_symphony_stats` (line ~88) | GET `/portfolio/accounts/{account-id}/symphony-stats-meta` | Polling per-symphony state (every minute during market hours) |
-| `execute_sell_to_cash` (line ~115/120) | POST `/deploy/accounts/{account-id}/symphonies/{symphony-id}/go-to-cash` | Forced exit on Guard Alpha trigger |
+| `execute_sell_to_cash` (line ~124) | POST `/deploy/accounts/{account-id}/symphonies/{symphony-id}/go-to-cash` | Forced exit on Guard Alpha trigger |
 
-The log line context will identify which one. Polling failures are recoverable (next minute's poll retries). Exit-execution failures are operationally critical — capital is not exited.
+Exit-execution failures are operationally critical — capital is not exited.
+
+**Note — polling failures use a different log pattern.** `fetch_symphony_stats` (lines ~82–96) does NOT emit `[COMPOSER REJECTED]`. Its failure format is:
+
+```
+Error fetching account {account_id}: HTTP {status_code}
+```
+
+(line ~93). Polling failures are recoverable — the next minute's poll retries automatically. If you see the polling-failure format, triage with the same Step 2 status-code table below, but the urgency is lower.
 
 ---
 
@@ -83,9 +90,10 @@ Cycle #27 (merge `88198e5`) scrubbed these echoes file-wide. The diagnostic loss
 
 ## Related code references
 
-- Log format defined: `alpha_bot_execution.py:89, :115, :120`
+- `[COMPOSER REJECTED]` log format: `alpha_bot_execution.py:124` (`execute_sell_to_cash`)
+- Polling error log format: `alpha_bot_execution.py:93` (`fetch_symphony_stats`)
 - Status code mapping (Composer doc): `docs/research/composer/baseline__2026-05-12.md` § "Rate Limits & Throttling"
-- Auth header construction (single-active-key model): `alpha_bot_execution.py:73-78` + `docs/research/composer/baseline__2026-05-12.md` § 2
+- Auth header construction (single-active-key model): `alpha_bot_execution.py:72-76` + `docs/research/composer/baseline__2026-05-12.md` § 2
 
 ---
 
