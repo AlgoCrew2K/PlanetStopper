@@ -1,0 +1,18 @@
+{
+  "name": "06_vwap_is_zero_skipped",
+  "description": "Holding present in live_vwaps but vwap == 0.0 -> the `if v > 0:` guard skips the contribution (would otherwise divide by zero).",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAPL", "allocation": 0.6}
+    ],
+    "live_vwaps": {
+      "AAPL": {"last_price": 50.0, "vwap": 0.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 0.0,
+    "valid_vwap_weight": 0.0
+  },
+  "derivation": "AAPL is in live_vwaps; v=0.0. The producer's `if v > 0:` guard fails (0.0 is not strictly greater than 0). Inner block (both the diff accumulation AND the valid_vwap_weight += alloc) is skipped. Note: valid_vwap_weight increment lives INSIDE the `if v > 0:` block, so a v <= 0 holding contributes NOTHING to either accumulator. Final: (0.0, 0.0)."
+}

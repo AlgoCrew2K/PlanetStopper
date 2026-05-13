@@ -1,0 +1,23 @@
+{
+  "name": "09_mix_qualifying_and_skipped",
+  "description": "Mixed holdings: some qualify, some skipped via either (a) ticker absent from live_vwaps or (b) v <= 0. Only the qualifying ones contribute.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAPL", "allocation": 0.4},
+      {"ticker": "TSLA", "allocation": 0.3},
+      {"ticker": "SPY",  "allocation": 0.2},
+      {"ticker": "QQQ",  "allocation": 0.1}
+    ],
+    "live_vwaps": {
+      "AAPL": {"last_price": 110.0, "vwap": 100.0},
+      "SPY":  {"last_price": 0.0,   "vwap": 0.0},
+      "QQQ":  {"last_price": 50.0,  "vwap": 50.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 0.04,
+    "valid_vwap_weight": 0.5
+  },
+  "derivation": "AAPL: in live_vwaps, v=100>0 -> contributes alloc*(p-v)/v = 0.4*(110-100)/100 = 0.4*0.10 = 0.04; weight += 0.4. TSLA: NOT in live_vwaps -> skipped entirely (0 to both). SPY: in live_vwaps but v=0.0, fails `v > 0` -> skipped (0 to both). QQQ: in live_vwaps, v=50>0 -> contributes alloc*(p-v)/v = 0.1*(50-50)/50 = 0.1*0.0 = 0.0; weight += 0.1. Sum diff: 0.04 + 0.0 = 0.04. Sum weight: 0.4 + 0.1 = 0.5. Final: (0.04, 0.5)."
+}

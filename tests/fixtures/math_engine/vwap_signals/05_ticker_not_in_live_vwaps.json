@@ -1,0 +1,18 @@
+{
+  "name": "05_ticker_not_in_live_vwaps",
+  "description": "Single holding whose ticker is NOT in live_vwaps -> the `if t in live_vwaps:` guard skips it entirely; both accumulators stay at 0.0.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "TSLA", "allocation": 0.7}
+    ],
+    "live_vwaps": {
+      "AAPL": {"last_price": 100.0, "vwap": 99.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 0.0,
+    "valid_vwap_weight": 0.0
+  },
+  "derivation": "TSLA is not a key in live_vwaps. The producer's `if t in live_vwaps:` guard fails -> the entire inner block (p, v lookups AND the alloc accumulation into valid_vwap_weight) is skipped. The holding contributes NOTHING to either accumulator. Final: (0.0, 0.0)."
+}

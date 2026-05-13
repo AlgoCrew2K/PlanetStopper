@@ -1,0 +1,18 @@
+{
+  "name": "11_v_is_tiny_positive_boundary",
+  "description": "Boundary: vwap is a tiny strictly positive number (1e-9). Confirms the `v > 0` guard is STRICT (0.0 fails, 1e-9 passes). Division produces a large finite ratio.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAPL", "allocation": 1.0}
+    ],
+    "live_vwaps": {
+      "AAPL": {"last_price": 2.0e-9, "vwap": 1.0e-9}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 1.0,
+    "valid_vwap_weight": 1.0
+  },
+  "derivation": "AAPL in live_vwaps; v = 1e-9 > 0 -> guard passes (strictness against v=0.0 confirmed). (p-v)/v = (2e-9 - 1e-9) / 1e-9 = 1e-9 / 1e-9 = 1.0 exactly (algebraically; float arithmetic produces 1.0 with negligible drift, within the test's rel=1e-9 tolerance). alloc * 1.0 = 1.0. weight += 1.0. Final: (1.0, 1.0)."
+}

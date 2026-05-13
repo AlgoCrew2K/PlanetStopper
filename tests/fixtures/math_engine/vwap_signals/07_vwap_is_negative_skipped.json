@@ -1,0 +1,18 @@
+{
+  "name": "07_vwap_is_negative_skipped",
+  "description": "Holding present in live_vwaps but vwap < 0 (degenerate) -> the `if v > 0:` guard skips it.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAPL", "allocation": 0.3}
+    ],
+    "live_vwaps": {
+      "AAPL": {"last_price": 50.0, "vwap": -10.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 0.0,
+    "valid_vwap_weight": 0.0
+  },
+  "derivation": "AAPL is in live_vwaps; v=-10.0. The producer's `if v > 0:` guard fails (negative is not > 0). Inner block skipped. valid_vwap_weight += alloc is inside the v > 0 branch, so the holding contributes 0 to BOTH accumulators. Final: (0.0, 0.0)."
+}
