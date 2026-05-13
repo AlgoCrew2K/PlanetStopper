@@ -10,6 +10,13 @@ LOOKBACK_DAYS = 20  # 20-day realized-volatility window — AlphaBot risk-sizing
 ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches AlphaBot's risk-sizing assumption
 PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
 
+# Monte Carlo gating constants (run_monte_carlo)
+MC_INSUFFICIENT_HISTORY_PROB = 100.0  # Sentinel probability when MC history insufficient — emits 100% to skip MC exit gate
+MC_MIN_HISTORY_DAYS = 20              # Minimum history rows for MC simulation to run; below this we short-circuit
+MC_VOL_WINDOW_DAYS = 20              # Rolling SPY vol window; arithmetic uses (DAYS - 1) for inclusive endpoint
+MC_DEFAULT_SIMULATION_PATHS = 5000   # Default MC path count — CLT stability vs runtime tradeoff
+MC_DEFAULT_NEIGHBOR_K = 150          # Default kNN regime locality — smaller=tighter regime match, larger=smoother estimate
+
 # Time-squeeze decay constants (drives intraday tightening of trailing stops)
 DECAY_CURVE_SCALAR = 9       # log10(1 + 9*t) maps t in [0,1] to decay in [0,1]; produces the characteristic AlphaBot intraday decay curve
 MULT_OPEN = 1.5              # dynamic_multiplier at market open (loosest stop)
@@ -360,32 +367,32 @@ def compute_vwap_breakdown_update(
     return new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken
 
 
-def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):
+def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=MC_DEFAULT_SIMULATION_PATHS, neighbor_k=MC_DEFAULT_NEIGHBOR_K):
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.
     """
     current_symphony_return = sum(
-        (h.get("last_percent_change", 0.0) * 100.0) * h.get("allocation", 0.0)
+        (h.get("last_percent_change", 0.0) * PCT_SCALAR) * h.get("allocation", 0.0)
         for h in holdings if h.get("last_percent_change") is not None
     )
     valid_dates = sorted(list(historical_data.keys()))
-    if len(valid_dates) < 20:
-        return 100.0
+    if len(valid_dates) < MC_MIN_HISTORY_DAYS:
+        return MC_INSUFFICIENT_HISTORY_PROB
 
     # 1. Calculate distances based on SPY return and rolling 20-day volatility
     spy_returns = np.array([historical_data[date].get("SPY", {}).get("daily_ret", 0.0) for date in valid_dates])
     
     spy_vols = np.zeros_like(spy_returns)
     for i in range(len(spy_returns)):
-        start_idx = max(0, i - 19)
+        start_idx = max(0, i - (MC_VOL_WINDOW_DAYS - 1))
         if i > 0:
             spy_vols[i] = np.std(spy_returns[start_idx:i+1])
         else:
             spy_vols[i] = 0.0
             
-    spy_today_ret_dec = spy_today_return / 100.0
-    if len(spy_returns) >= 19:
-        today_vol = np.std(np.append(spy_returns[-19:], spy_today_ret_dec))
+    spy_today_ret_dec = spy_today_return / PCT_SCALAR
+    if len(spy_returns) >= (MC_VOL_WINDOW_DAYS - 1):
+        today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1):], spy_today_ret_dec))
     else:
         today_vol = np.std(np.append(spy_returns, spy_today_ret_dec))
 
@@ -418,14 +425,14 @@ def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_path
                 returns_matrix[i, j] = spy_ret
                 
     # 5. Calculate path returns (dot product is highly optimized in numpy)
-    nearest_day_returns = returns_matrix.dot(weights) * 100.0
+    nearest_day_returns = returns_matrix.dot(weights) * PCT_SCALAR
     
     # 6. Random selection & Cumulative Distribution
     sim_results = np.random.choice(nearest_day_returns, size=simulation_paths)
     
     sim_results.sort()
     below_count = np.searchsorted(sim_results, current_symphony_return)
-    return ((simulation_paths - below_count) / simulation_paths) * 100.0
+    return ((simulation_paths - below_count) / simulation_paths) * PCT_SCALAR
 
 def calculate_20d_vol(holdings, historical_data):
     """
