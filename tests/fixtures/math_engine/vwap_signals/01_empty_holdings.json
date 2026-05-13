@@ -1,0 +1,16 @@
+{
+  "name": "01_empty_holdings",
+  "description": "Empty holdings list -> no iterations; accumulators stay at their initial 0.0/0.0.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [],
+    "live_vwaps": {
+      "AAPL": {"last_price": 100.0, "vwap": 99.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 0.0,
+    "valid_vwap_weight": 0.0
+  },
+  "derivation": "for-loop over [] does zero iterations. weighted_vwap_diff and valid_vwap_weight remain at their initial 0.0/0.0. live_vwaps contents are irrelevant when there are no holdings to iterate."
+}

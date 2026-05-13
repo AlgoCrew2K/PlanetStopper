@@ -207,6 +207,44 @@ def compute_exit_confirmation(
         return 0, False
 
 
+def compute_vwap_signals(
+    holdings: list[dict],
+    live_vwaps: dict[str, dict],
+) -> tuple[float, float]:
+    """
+    Computes the allocation-weighted VWAP-deviation signal across holdings.
+
+    Returns (weighted_vwap_diff, valid_vwap_weight).
+
+    For each holding:
+      - skip if its ticker is not present in live_vwaps
+      - read p = live_vwaps[ticker]["last_price"], v = live_vwaps[ticker]["vwap"]
+      - skip if v <= 0 (degenerate vwap)
+      - else accumulate:
+          weighted_vwap_diff += allocation * (p - v) / v
+          valid_vwap_weight  += allocation
+
+    Pure. No I/O. No state. No input mutation. Caller is responsible for
+    normalizing each holding's "ticker" field BEFORE calling.
+
+    Extracted from alpha_bot_execution.py:472-484 (cycle 8 of math-layer
+    extraction).
+    """
+    weighted_vwap_diff = 0.0
+    valid_vwap_weight = 0.0
+    for h in holdings:
+        ticker = h.get("ticker")
+        allocation = h.get("allocation", 0.0)
+        if ticker in live_vwaps:
+            entry = live_vwaps[ticker]
+            p = entry["last_price"]
+            v = entry["vwap"]
+            if v > 0:
+                weighted_vwap_diff += allocation * ((p - v) / v)  # (p-v)/v first: preserves inline's IEEE-754 evaluation order
+                valid_vwap_weight += allocation
+    return float(weighted_vwap_diff), float(valid_vwap_weight)
+
+
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.

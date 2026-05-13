@@ -1,0 +1,22 @@
+{
+  "name": "08_multiple_all_qualifying",
+  "description": "Three holdings, all in live_vwaps with v > 0 -> weighted sum of contributions; weight is sum of allocations.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAPL", "allocation": 0.5},
+      {"ticker": "SPY",  "allocation": 0.3},
+      {"ticker": "QQQ",  "allocation": 0.2}
+    ],
+    "live_vwaps": {
+      "AAPL": {"last_price": 110.0, "vwap": 100.0},
+      "SPY":  {"last_price": 200.0, "vwap": 200.0},
+      "QQQ":  {"last_price": 90.0,  "vwap": 100.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 0.03,
+    "valid_vwap_weight": 1.0
+  },
+  "derivation": "AAPL: (110-100)/100 = 0.10; alloc*ratio = 0.5*0.10 = 0.05. SPY: (200-200)/200 = 0.0; alloc*ratio = 0.3*0.0 = 0.0. QQQ: (90-100)/100 = -0.10; alloc*ratio = 0.2*(-0.10) = -0.02. Sum: 0.05 + 0.0 + (-0.02) = 0.03. valid_vwap_weight = 0.5 + 0.3 + 0.2 = 1.0. Final: (0.03, 1.0)."
+}

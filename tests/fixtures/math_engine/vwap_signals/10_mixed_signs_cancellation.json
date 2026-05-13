@@ -1,0 +1,20 @@
+{
+  "name": "10_mixed_signs_cancellation",
+  "description": "Two qualifying holdings with EQUAL-MAGNITUDE OPPOSITE-SIGN (p-v)/v ratios and equal allocations -> diff contributions cancel to exactly 0.0; weight is sum of allocs.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAPL", "allocation": 0.5},
+      {"ticker": "QQQ",  "allocation": 0.5}
+    ],
+    "live_vwaps": {
+      "AAPL": {"last_price": 110.0, "vwap": 100.0},
+      "QQQ":  {"last_price": 90.0,  "vwap": 100.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 0.0,
+    "valid_vwap_weight": 1.0
+  },
+  "derivation": "AAPL: 0.5*(110-100)/100 = 0.5*0.10 = 0.05. QQQ: 0.5*(90-100)/100 = 0.5*(-0.10) = -0.05. Sum: 0.05 + (-0.05) = 0.0. Weight: 0.5 + 0.5 = 1.0. Final: (0.0, 1.0). This pins the additive-cancellation behaviour: the producer does NOT take absolute values; signed (p-v)/v matters."
+}

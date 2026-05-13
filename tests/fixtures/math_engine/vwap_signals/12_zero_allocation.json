@@ -1,0 +1,20 @@
+{
+  "name": "12_zero_allocation",
+  "description": "Qualifying holding with allocation=0.0 -> contributes 0 to both diff (0*anything=0) and weight (0 added). Other qualifying holdings unaffected.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAPL", "allocation": 0.0},
+      {"ticker": "SPY",  "allocation": 0.6}
+    ],
+    "live_vwaps": {
+      "AAPL": {"last_price": 110.0, "vwap": 100.0},
+      "SPY":  {"last_price": 105.0, "vwap": 100.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 0.03,
+    "valid_vwap_weight": 0.6
+  },
+  "derivation": "AAPL: alloc=0.0; alloc*(p-v)/v = 0.0*0.10 = 0.0; weight += 0.0. SPY: alloc=0.6; alloc*(p-v)/v = 0.6*(105-100)/100 = 0.6*0.05 = 0.03; weight += 0.6. Sum diff: 0.0 + 0.03 = 0.03. Sum weight: 0.0 + 0.6 = 0.6. Final: (0.03, 0.6). Note: a zero-alloc holding is NOT skipped by the producer (no alloc != 0 guard); it's processed normally but contributes nothing arithmetically."
+}

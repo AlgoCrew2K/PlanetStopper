@@ -1,0 +1,20 @@
+{
+  "name": "13_missing_allocation_key",
+  "description": "Qualifying holding with NO 'allocation' key -> producer uses h.get('allocation', 0.0); behaves identically to allocation=0.0.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAPL"},
+      {"ticker": "SPY", "allocation": 0.5}
+    ],
+    "live_vwaps": {
+      "AAPL": {"last_price": 110.0, "vwap": 100.0},
+      "SPY":  {"last_price": 95.0,  "vwap": 100.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": -0.025,
+    "valid_vwap_weight": 0.5
+  },
+  "derivation": "AAPL: no 'allocation' key -> h.get('allocation', 0.0) returns 0.0; alloc*(p-v)/v = 0.0*0.10 = 0.0; weight += 0.0. SPY: alloc=0.5; alloc*(p-v)/v = 0.5*(95-100)/100 = 0.5*(-0.05) = -0.025; weight += 0.5. Sum diff: 0.0 + (-0.025) = -0.025. Sum weight: 0.0 + 0.5 = 0.5. Final: (-0.025, 0.5). Pins the .get('allocation', 0.0) fallback exactly."
+}

@@ -1,0 +1,18 @@
+{
+  "name": "03_single_holding_p_above_v",
+  "description": "Single qualifying holding with last_price > vwap -> positive diff contribution.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "SPY", "allocation": 1.0}
+    ],
+    "live_vwaps": {
+      "SPY": {"last_price": 105.0, "vwap": 100.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 0.05,
+    "valid_vwap_weight": 1.0
+  },
+  "derivation": "SPY in live_vwaps; v=100.0 > 0. (p-v)/v = (105.0-100.0)/100.0 = 5.0/100.0 = 0.05. alloc*(p-v)/v = 1.0 * 0.05 = 0.05. valid_vwap_weight += 1.0. Final: (0.05, 1.0). Note 0.05 is exactly representable as a sum of binary fractions when computed as 5/100 here -- the test tolerance (rel=1e-9, abs=1e-12) absorbs any float drift."
+}

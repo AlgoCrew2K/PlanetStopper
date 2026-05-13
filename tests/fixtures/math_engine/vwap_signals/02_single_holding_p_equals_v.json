@@ -1,0 +1,18 @@
+{
+  "name": "02_single_holding_p_equals_v",
+  "description": "Single qualifying holding where last_price == vwap -> diff contribution is 0, but the holding still counts toward valid_vwap_weight.",
+  "function": "compute_vwap_signals",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAPL", "allocation": 0.5}
+    ],
+    "live_vwaps": {
+      "AAPL": {"last_price": 100.0, "vwap": 100.0}
+    }
+  },
+  "expected": {
+    "weighted_vwap_diff": 0.0,
+    "valid_vwap_weight": 0.5
+  },
+  "derivation": "AAPL is in live_vwaps; v=100.0 > 0. Contribution: alloc*(p-v)/v = 0.5*(100.0-100.0)/100.0 = 0.5*0.0 = 0.0. valid_vwap_weight += 0.5. Final: (0.0, 0.5)."
+}
