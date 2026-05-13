@@ -1,0 +1,11 @@
+{
+  "name": "04_raw_at_upper_clamp_boundary",
+  "description": "Raw value lands exactly on the upper clamp boundary (VWAP_BLEED_ARM_MAX = -0.5). The clamp returns -0.5 unchanged.",
+  "function": "compute_vwap_bleed_arm_threshold",
+  "inputs": {
+    "symphony_vol": 0.5,
+    "bleed_multiplier": 1.0
+  },
+  "expected": -0.5,
+  "derivation": "raw = -(0.5 * 1.0) = -0.5. min(-0.5, -0.5) = -0.5. max(-3.0, -0.5) = -0.5. Boundary case: raw equals VWAP_BLEED_ARM_MAX exactly."
+}

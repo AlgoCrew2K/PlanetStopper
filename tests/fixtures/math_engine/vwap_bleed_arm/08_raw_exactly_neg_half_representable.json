@@ -1,0 +1,11 @@
+{
+  "name": "08_raw_exactly_neg_half_representable",
+  "description": "Raw value exactly -0.5 via a different input combination (symphony_vol == 1.0, multiplier == 0.5). -0.5 is exactly representable in IEEE-754 double precision (binary fraction 2^-1), so this boundary is bit-exact.",
+  "function": "compute_vwap_bleed_arm_threshold",
+  "inputs": {
+    "symphony_vol": 1.0,
+    "bleed_multiplier": 0.5
+  },
+  "expected": -0.5,
+  "derivation": "raw = -(1.0 * 0.5) = -0.5. min(-0.5, -0.5) = -0.5. max(-3.0, -0.5) = -0.5. -0.5 is bit-exact (2^-1) in IEEE-754, so this is a deterministic boundary."
+}

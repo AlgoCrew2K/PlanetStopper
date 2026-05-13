@@ -1,0 +1,11 @@
+{
+  "name": "09_raw_exactly_neg_three_representable",
+  "description": "Raw value exactly -3.0 via a different input combination (symphony_vol == 3.0, multiplier == 1.0). -3.0 is exactly representable in IEEE-754 double precision (sign + integer exponent), so this boundary is bit-exact.",
+  "function": "compute_vwap_bleed_arm_threshold",
+  "inputs": {
+    "symphony_vol": 3.0,
+    "bleed_multiplier": 1.0
+  },
+  "expected": -3.0,
+  "derivation": "raw = -(3.0 * 1.0) = -3.0. min(-0.5, -3.0) = -3.0. max(-3.0, -3.0) = -3.0. -3.0 is bit-exact (integer) in IEEE-754; boundary equals VWAP_BLEED_ARM_MIN exactly."
+}

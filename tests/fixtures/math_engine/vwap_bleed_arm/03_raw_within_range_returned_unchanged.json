@@ -1,0 +1,11 @@
+{
+  "name": "03_raw_within_range_returned_unchanged",
+  "description": "Raw value sits strictly inside the [VWAP_BLEED_ARM_MIN, VWAP_BLEED_ARM_MAX] window; clamp returns it unchanged. Tests the linear pass-through regime where the dynamic value is preserved.",
+  "function": "compute_vwap_bleed_arm_threshold",
+  "inputs": {
+    "symphony_vol": 1.0,
+    "bleed_multiplier": 1.5
+  },
+  "expected": -1.5,
+  "derivation": "raw = -(1.0 * 1.5) = -1.5. min(-0.5, -1.5) = -1.5. max(-3.0, -1.5) = -1.5. -1.5 is strictly between VWAP_BLEED_ARM_MIN (-3.0) and VWAP_BLEED_ARM_MAX (-0.5), so neither clamp activates."
+}
