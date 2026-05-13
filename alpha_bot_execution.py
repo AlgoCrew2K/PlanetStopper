@@ -159,7 +159,7 @@ def fetch_alpaca_history(tickers, current_date_str):
 
         page_token = None
         while True:
-            url = f"{ALPACA_BASE_URL}/stocks/bars?symbols={symbol_string}&timeframe=1Day&start={start_date}&limit=10000&adjustment=split"
+            url = f"{ALPACA_BASE_URL}/stocks/bars?symbols={symbol_string}&timeframe=1Day&start={start_date}&limit=10000&adjustment=split&feed=iex"
             if page_token:
                 url += f"&page_token={page_token}"
 
@@ -228,7 +228,7 @@ def fetch_intraday_vwaps(tickers, headers, current_et):
     for i in range(0, len(tickers_list), batch_size):
         batch = tickers_list[i : i + batch_size]
         symbol_string = ",".join(batch)
-        url = f"{ALPACA_BASE_URL}/stocks/bars?symbols={symbol_string}&timeframe=1Min&start={start_utc_str}&limit=1000"
+        url = f"{ALPACA_BASE_URL}/stocks/bars?symbols={symbol_string}&timeframe=1Min&start={start_utc_str}&limit=1000&feed=iex"
 
         try:
             response = requests.get(url, headers=headers, timeout=15)
