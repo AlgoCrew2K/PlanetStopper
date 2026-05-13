@@ -457,10 +457,9 @@ def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_path
             spy_vols[i] = 0.0
             
     spy_today_ret_dec = spy_today_return / PCT_SCALAR
-    if len(spy_returns) >= (MC_VOL_WINDOW_DAYS - 1):
-        today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1):], spy_today_ret_dec))
-    else:
-        today_vol = np.std(np.append(spy_returns, spy_today_ret_dec))
+    # Invariant: len(spy_returns) >= MC_VOL_WINDOW_DAYS - 1 because the guard at line ~445 returns
+    # early when len(valid_dates) < MC_MIN_HISTORY_DAYS, and MC_MIN_HISTORY_DAYS >= MC_VOL_WINDOW_DAYS.
+    today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1):], spy_today_ret_dec))
 
     # Euclidean distance across 2 dimensions
     distances = np.sqrt((spy_returns - spy_today_ret_dec)**2 + (spy_vols - today_vol)**2)
