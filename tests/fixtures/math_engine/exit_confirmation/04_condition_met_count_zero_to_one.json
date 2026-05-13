@@ -1,0 +1,18 @@
+{
+  "name": "04_condition_met_count_zero_to_one",
+  "description": "Condition met (magnitude AND MC sanity), starting from count=0. Increments to 1; no hit yet (1 < 3).",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -1.5,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 30.0,
+    "current_below_stop_count": 0
+  },
+  "expected": {
+    "new_below_stop_count": 1,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "armed=True, not triggered, so guard passes. Magnitude check: current_return -1.5 <= (stop_trigger_level -1.0) - MAGNITUDE_FLOOR_PCT(0.10) = -1.10 -> -1.5 <= -1.10 is TRUE. MC sanity: prob_beating 30.0 < MC_SANITY_THRESHOLD(60.0) is TRUE. Condition met. new_count = 0 + 1 = 1. Hit = (1 >= EXIT_CONFIRM_TICKS(3)) is False."
+}

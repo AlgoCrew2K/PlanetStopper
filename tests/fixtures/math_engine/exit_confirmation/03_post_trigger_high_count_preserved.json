@@ -1,0 +1,18 @@
+{
+  "name": "03_post_trigger_high_count_preserved",
+  "description": "Guard composition: armed=True AND triggered=True simultaneously with a stale non-zero count (5). Triggered wins; count preserved exactly (not reset to 0, not incremented).",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": true,
+    "current_return": 3.0,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 80.0,
+    "current_below_stop_count": 5
+  },
+  "expected": {
+    "new_below_stop_count": 5,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "armed=True AND is_triggered=True -> guard `armed AND not triggered` evaluates True AND False = False. Block skipped. below_stop_count preserved at exactly 5; hit is False. This fixture catches an impl that would either (a) reset the count under the triggered branch or (b) increment because the inner condition is technically not evaluated."
+}

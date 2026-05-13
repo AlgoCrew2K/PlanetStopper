@@ -1,0 +1,18 @@
+{
+  "name": "16_both_at_boundary_just_passes",
+  "description": "Magnitude exactly at boundary (inclusive pass) AND MC just below threshold (strict pass). Condition met; count increments.",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -1.10,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 59.99,
+    "current_below_stop_count": 2
+  },
+  "expected": {
+    "new_below_stop_count": 3,
+    "is_trailing_stop_hit": true
+  },
+  "derivation": "Guard passes. Magnitude: -1.10 <= -1.0 - 0.10 = -1.10 is TRUE (inclusive). MC: 59.99 < 60.0 is TRUE (strict, but the gap is positive). Condition met. new_count = 2 + 1 = 3; hit = (3 >= 3) is True. This is the threshold crossing under tight boundary conditions, exercising both inequalities simultaneously."
+}

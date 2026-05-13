@@ -1,0 +1,18 @@
+{
+  "name": "07_condition_met_count_three_to_four_hit",
+  "description": "Condition met, count=3 -> 4. Already above threshold; hit remains True. NOTE: inline producer uses `elif >= 3` so the hit fires for any count after increment >= 3.",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -3.0,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 10.0,
+    "current_below_stop_count": 3
+  },
+  "expected": {
+    "new_below_stop_count": 4,
+    "is_trailing_stop_hit": true
+  },
+  "derivation": "Guard passes. Magnitude: -3.0 <= -1.10 is TRUE. MC: 10.0 < 60.0 is TRUE. Condition met. new_count = 3 + 1 = 4. Hit = (4 >= 3) is True. Pinned because the inline producer's `elif >= 3` (not `== 3`) means the hit stays True for arbitrarily high counts after the threshold has been crossed; an impl using strict equality would fail this."
+}

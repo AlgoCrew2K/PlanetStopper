@@ -1,0 +1,18 @@
+{
+  "name": "12_already_zero_stays_zero_on_fail",
+  "description": "Count is 0 in, condition fails. Stays 0 (the reset branch always assigns 0, regardless of prior value).",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": 2.0,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 80.0,
+    "current_below_stop_count": 0
+  },
+  "expected": {
+    "new_below_stop_count": 0,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "Guard passes. Magnitude: 2.0 <= -1.10 is FALSE. MC: 80.0 < 60.0 is FALSE. Reset branch; new_count = 0 (was already 0). hit = False. Sanity case: reset from 0 must stay 0."
+}

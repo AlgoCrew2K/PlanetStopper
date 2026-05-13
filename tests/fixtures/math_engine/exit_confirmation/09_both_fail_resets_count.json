@@ -1,0 +1,18 @@
+{
+  "name": "09_both_fail_resets_count",
+  "description": "Both magnitude and MC sanity gates fail. Count resets to 0; hit=False.",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -1.05,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 70.0,
+    "current_below_stop_count": 2
+  },
+  "expected": {
+    "new_below_stop_count": 0,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "Guard passes. Magnitude: -1.05 <= -1.0 - 0.10 = -1.10 is FALSE (-1.05 > -1.10). MC: 70.0 < 60.0 is FALSE. Combined `mag AND mc` = False AND False = False. Condition fails -> reset branch. new_count = 0; hit = False. Count was 2 in; the inline producer's else-branch unconditionally sets below_stop_count = 0 (no decrement)."
+}
