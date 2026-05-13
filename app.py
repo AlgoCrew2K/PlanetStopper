@@ -274,7 +274,7 @@ def perform_account_liquidation(account_id, key, secret, live_mode):
         if resp.status_code == 200:
             for sym in resp.json().get("symphonies", []):
                 if live_mode:
-                    sell_url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{sym.get('symphony_id', sym['id'])}/go-to-cash"
+                    sell_url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{sym.get('symphony_id') or sym.get('id')}/go-to-cash"
                     sell_resp = requests.post(sell_url, headers=headers, json={}, timeout=10)
                     print(f"Liquidated {sym.get('name')} (HTTP {sell_resp.status_code})")
                     time.sleep(1.5)
