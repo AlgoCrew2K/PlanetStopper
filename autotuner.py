@@ -3,6 +3,7 @@ import math
 import optuna
 from datetime import datetime, timedelta
 import database
+import math_engine
 import synthetic_history
 import glob
 import json
@@ -242,8 +243,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
                                 vwap_ticks += 1
                                 if vwap_ticks >= 3: is_vwap_broken = True
                             else: vwap_ticks = 0
-                            raw_dynamic_bleed = -(vol * p.get("VWAP_BLEED_MULTIPLIER", 1.5))
-                            vwap_bleed_arm_pct = max(-3.0, min(-0.5, raw_dynamic_bleed))
+                            vwap_bleed_arm_pct = math_engine.compute_vwap_bleed_arm_threshold(vol, p.get("VWAP_BLEED_MULTIPLIER", 1.5))
                             
                             if ret <= vwap_bleed_arm_pct:
                                 vwap_bleed_ticks += 1
