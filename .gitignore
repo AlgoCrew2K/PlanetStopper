@@ -22,3 +22,4 @@ htmlcov/
 *.db-journal
 *.db-wal
 *.db-shm
+coverage.json
