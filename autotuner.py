@@ -180,24 +180,13 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
                         # --- TIME SQUEEZE DECAY LOGIC ---
                         # Assuming ticks are minute bars (9:30-16:00 = 390 mins)
                         time_ratio = tick_idx / 390.0
-                        decay_curve = math.log10(1 + 9 * time_ratio)
-                        
-                        # Calculate Dynamic Multiplier (Decays from 1.5x to 0.5x)
-                        mult_open = 1.5
-                        mult_close = 0.5
-                        dynamic_multiplier = mult_open - ((mult_open - mult_close) * decay_curve)
-
-                        # Calculate Minimum Floors (Decays from 0.3% to 0.15%)
-                        min_stop_open = 0.3
-                        min_stop_close = 0.15
-                        dynamic_min_stop = min_stop_open - ((min_stop_open - min_stop_close) * decay_curve)
+                        dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
 
                         # Calculate active stop distance based strictly on 20-day volatility
-                        safe_vol = vol if vol > 0 else 1.0
-                        active_stop_dist = max((safe_vol * dynamic_multiplier), dynamic_min_stop)
-
-                        if para_armed or breakeven_locked:
-                            active_stop_dist *= p.get("MAX_PARABOLIC_SQUEEZE", 0.50)
+                        active_stop_dist = math_engine.compute_active_trailing_stop(
+                            vol, dynamic_multiplier, dynamic_min_stop,
+                            para_armed, breakeven_locked, p.get("MAX_PARABOLIC_SQUEEZE", 0.50)
+                        )
 
                         base_stop = safe_hwm - active_stop_dist
                         
