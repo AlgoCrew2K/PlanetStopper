@@ -1,0 +1,24 @@
+{
+  "name": "05_diff_exactly_zero_resets",
+  "description": "Branch 2 (gate fails): weighted_vwap_diff EXACTLY 0.0 fails the strict `< 0` gate, so both tick counters reset.",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.9,
+    "weighted_vwap_diff": 0.0,
+    "safe_hwm": 3.0,
+    "current_return": -2.0,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 1,
+    "current_vwap_bleed_ticks": 1
+  },
+  "expected": {
+    "new_vwap_ticks": 0,
+    "new_vwap_bleed_ticks": 0,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Outer guard passes. Inner gate: `weighted_vwap_diff < 0` -> 0.0 < 0 is FALSE (strict less-than). Gate fails -> both ticks reset to 0. Returns (0, 0, False, False). Boundary case: confirms diff gate uses `<` not `<=`."
+}

@@ -1,0 +1,24 @@
+{
+  "name": "03_triggered_overrides_armed_conditions",
+  "description": "Branch 1 (is_triggered=True): even when all inner conditions WOULD fire System A and System B if not triggered, the triggered guard takes absolute precedence.",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": true,
+    "valid_vwap_weight": 0.8,
+    "weighted_vwap_diff": -0.4,
+    "safe_hwm": 3.0,
+    "current_return": -2.0,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 2,
+    "current_vwap_bleed_ticks": 2
+  },
+  "expected": {
+    "new_vwap_ticks": 2,
+    "new_vwap_bleed_ticks": 2,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Inner gate AND both inner conditions WOULD fire if not triggered: weight 0.8 > 0.5 AND diff -0.4 < 0 (gate pass); System A: safe_hwm 3.0 >= cross 2.0 AND current_return -2.0 < safe_hwm 3.0 (would increment ticks to 3 -> would set is_vwap_broken True); System B: current_return -2.0 <= bleed_arm -1.0 (would increment bleed_ticks to 3 -> would set is_vwap_bleed_broken True). BUT is_triggered=True -> all skipped. Counters preserved at (2, 2). Both broken stay False. Returns (2, 2, False, False). Catches an impl that omitted the triggered guard."
+}

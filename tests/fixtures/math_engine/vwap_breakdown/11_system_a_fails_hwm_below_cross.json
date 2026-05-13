@@ -1,0 +1,24 @@
+{
+  "name": "11_system_a_fails_hwm_below_cross",
+  "description": "Branch 3 / System A: safe_hwm strictly below vwap_cross_hwm_pct fails the arm condition; vwap_ticks reset to 0. System B independent (here also fails -> bleed reset).",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.8,
+    "weighted_vwap_diff": -0.4,
+    "safe_hwm": 1.5,
+    "current_return": 0.5,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 2,
+    "current_vwap_bleed_ticks": 0
+  },
+  "expected": {
+    "new_vwap_ticks": 0,
+    "new_vwap_bleed_ticks": 0,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Outer pass, gate pass. System A: safe_hwm 1.5 >= cross 2.0 is FALSE -> System A condition not met -> else-branch resets vwap_ticks to 0. is_vwap_broken False. System B: current_return 0.5 <= bleed_arm -1.0 is FALSE -> bleed_ticks reset to 0. Returns (0, 0, False, False)."
+}

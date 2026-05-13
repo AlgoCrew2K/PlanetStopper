@@ -1,0 +1,24 @@
+{
+  "name": "13_system_a_boundary_hwm_equals_cross",
+  "description": "Branch 3 / System A boundary: safe_hwm EXACTLY equals vwap_cross_hwm_pct. The arm clause uses `>=`, so equality MEETS the condition.",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.8,
+    "weighted_vwap_diff": -0.4,
+    "safe_hwm": 2.0,
+    "current_return": 0.5,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 0,
+    "current_vwap_bleed_ticks": 0
+  },
+  "expected": {
+    "new_vwap_ticks": 1,
+    "new_vwap_bleed_ticks": 0,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Outer pass, gate pass. System A: safe_hwm 2.0 >= cross 2.0 is TRUE (`>=` inclusive) AND current_return 0.5 < safe_hwm 2.0 TRUE -> MET. new_vwap_ticks = 0+1 = 1; is_vwap_broken False. System B: current_return 0.5 <= bleed_arm -1.0 FALSE -> bleed reset. Returns (1, 0, False, False). Boundary pin: System A arm clause uses `>=` not `>`."
+}

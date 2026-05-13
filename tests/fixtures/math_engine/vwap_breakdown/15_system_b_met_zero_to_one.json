@@ -1,0 +1,24 @@
+{
+  "name": "15_system_b_met_zero_to_one",
+  "description": "Branch 3 / System B: bleed condition met, prev bleed_ticks=0 increments to 1, no bleed_broken (1 < threshold). System A fails (reset).",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.7,
+    "weighted_vwap_diff": -0.5,
+    "safe_hwm": 0.0,
+    "current_return": -1.5,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 0,
+    "current_vwap_bleed_ticks": 0
+  },
+  "expected": {
+    "new_vwap_ticks": 0,
+    "new_vwap_bleed_ticks": 1,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Outer pass, gate pass. System A: safe_hwm 0.0 >= cross 2.0 is FALSE -> vwap_ticks reset to 0. is_vwap_broken False. System B: current_return -1.5 <= bleed_arm -1.0 is TRUE -> new_bleed_ticks = 0+1 = 1. is_vwap_bleed_broken = (1 >= threshold 3) = False. Returns (0, 1, False, False)."
+}

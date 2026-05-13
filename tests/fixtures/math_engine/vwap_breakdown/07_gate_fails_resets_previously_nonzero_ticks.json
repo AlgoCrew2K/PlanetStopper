@@ -1,0 +1,24 @@
+{
+  "name": "07_gate_fails_resets_previously_nonzero_ticks",
+  "description": "Branch 2 (gate fails): even when previous tick counts were near threshold, gate-fail wipes them BOTH to 0. Confirms reset is unconditional (no partial-decrement).",
+  "function": "compute_vwap_breakdown_update",
+  "inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.4,
+    "weighted_vwap_diff": -0.8,
+    "safe_hwm": 3.0,
+    "current_return": -1.5,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": -1.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 2,
+    "current_vwap_bleed_ticks": 2
+  },
+  "expected": {
+    "new_vwap_ticks": 0,
+    "new_vwap_bleed_ticks": 0,
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false
+  },
+  "derivation": "Outer guard passes. Weight 0.4 > 0.5 is FALSE -> gate fails. Both ticks (previously 2, 2 -- close to threshold) reset to 0. Producer line: `bot_state[...]['vwap_ticks'] = 0; bot_state[...]['vwap_bleed_ticks'] = 0`. No decrement, no partial value. Returns (0, 0, False, False)."
+}
