@@ -153,6 +153,60 @@ def compute_breakeven_update(
     return int(new_hold_ticks), new_breakeven_locked, float(stop_trigger_level)
 
 
+# Exit-confirmation constants (gates trailing-stop trigger)
+MAGNITUDE_FLOOR_PCT = 0.10       # return must drop at least this far BELOW stop_trigger_level to count toward exit confirmation
+MC_SANITY_THRESHOLD = 60.0       # MC probability >= this value blocks exit ("if we still think we beat the benchmark, don't capitulate")
+EXIT_CONFIRM_TICKS = 3           # consecutive qualifying ticks needed to flip is_trailing_stop_hit
+
+
+def compute_exit_confirmation(
+    armed: bool,
+    is_triggered: bool,
+    current_return: float,
+    stop_trigger_level: float,
+    prob_beating: float,
+    current_below_stop_count: int,
+) -> tuple[int, bool]:
+    """
+    Computes the trailing-stop exit-confirmation state update.
+
+    Returns (new_below_stop_count, is_trailing_stop_hit).
+
+    Logic (extracted verbatim from alpha_bot_execution.py):
+      if not armed or is_triggered:
+          return current_below_stop_count, False     # whole block skipped; state unchanged
+      below_stop_condition = (current_return <= stop_trigger_level - MAGNITUDE_FLOOR_PCT)
+                             and (prob_beating < MC_SANITY_THRESHOLD)
+      if below_stop_condition:
+          new_count = current_below_stop_count + 1
+          hit = (new_count >= EXIT_CONFIRM_TICKS)
+          return new_count, hit
+      else:
+          return 0, False                            # reset on miss
+
+    GUARD INVARIANT: when (not armed) or is_triggered, the function returns
+    the INPUT below_stop_count unchanged AND False. This preserves the inline
+    behavior where the entire stop-check block is skipped — the count is
+    NEITHER incremented NOR reset under those conditions.
+
+    Pure. No I/O. No state. Caller handles print transitions by comparing
+    input current_below_stop_count to returned new_below_stop_count.
+    """
+    if (not armed) or is_triggered:
+        return int(current_below_stop_count), False
+
+    below_stop_condition = (
+        current_return <= (stop_trigger_level - MAGNITUDE_FLOOR_PCT)
+    ) and (prob_beating < MC_SANITY_THRESHOLD)
+
+    if below_stop_condition:
+        new_count = int(current_below_stop_count) + 1
+        hit = bool(new_count >= EXIT_CONFIRM_TICKS)
+        return new_count, hit
+    else:
+        return 0, False
+
+
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.

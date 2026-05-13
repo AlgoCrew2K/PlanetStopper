@@ -602,20 +602,23 @@ def main():
                 bot_state[symphony_id]["breakeven_locked"] = new_breakeven_locked
 
                 # Check 1: Trailing Stop
-                is_trailing_stop_hit = False
+                _prev_below_stop_count = bot_state[symphony_id]["below_stop_count"]
+                new_below_stop_count, is_trailing_stop_hit = math_engine.compute_exit_confirmation(
+                    armed=bot_state[symphony_id]["armed"],
+                    is_triggered=bot_state[symphony_id]["triggered"],
+                    current_return=current_return,
+                    stop_trigger_level=stop_trigger_level,
+                    prob_beating=prob_beating,
+                    current_below_stop_count=_prev_below_stop_count,
+                )
+                bot_state[symphony_id]["below_stop_count"] = new_below_stop_count
+
+                # Print transitions (caller's responsibility — pure function does no I/O)
                 if bot_state[symphony_id]["armed"] and not bot_state[symphony_id]["triggered"]:
-                    # Magnitude Floor (Return <= Stop - 0.10) AND MC Sanity Gate (Prob < 60.0)
-                    if current_return <= (stop_trigger_level - 0.10) and prob_beating < 60.0:
-                        bot_state[symphony_id]["below_stop_count"] += 1
-                        # Hardcoded exit threshold: 3 consecutive ticks
-                        if bot_state[symphony_id]["below_stop_count"] == 1:
-                            print(f"  ⚠️ {symphony_name[:35]} dipped below stop. Awaiting 3-tick confirmation...")
-                        elif bot_state[symphony_id]["below_stop_count"] >= 3:
-                            is_trailing_stop_hit = True
-                    else:
-                        if bot_state[symphony_id]["below_stop_count"] > 0:
-                            print(f"  ✅ {symphony_name[:35]} recovered or sanity check passed. Confirmation reset.")
-                        bot_state[symphony_id]["below_stop_count"] = 0
+                    if new_below_stop_count > _prev_below_stop_count and new_below_stop_count == 1:
+                        print(f"  ⚠️ {symphony_name[:35]} dipped below stop. Awaiting 3-tick confirmation...")
+                    elif new_below_stop_count == 0 and _prev_below_stop_count > 0:
+                        print(f"  ✅ {symphony_name[:35]} recovered or sanity check passed. Confirmation reset.")
 
                 # Check 2: Take Profit
                 tp_triggered_now = False
