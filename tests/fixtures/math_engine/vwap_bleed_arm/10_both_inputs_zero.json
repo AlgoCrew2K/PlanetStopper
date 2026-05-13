@@ -1,0 +1,11 @@
+{
+  "name": "10_both_inputs_zero",
+  "description": "Both inputs are zero -> raw is 0.0 -> clamped to VWAP_BLEED_ARM_MAX = -0.5. The 'no information' degenerate case still produces a valid, safe (most-cautious) bleed threshold.",
+  "function": "compute_vwap_bleed_arm_threshold",
+  "inputs": {
+    "symphony_vol": 0.0,
+    "bleed_multiplier": 0.0
+  },
+  "expected": -0.5,
+  "derivation": "raw = -(0.0 * 0.0) = -0.0 (== 0.0). min(-0.5, 0.0) = -0.5. max(-3.0, -0.5) = -0.5. With both inputs zero the function still returns a usable bleed threshold pinned to the conservative upper bound; no division, no NaN."
+}

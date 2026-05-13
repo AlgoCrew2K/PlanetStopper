@@ -1,0 +1,11 @@
+{
+  "name": "07_negative_vol_degenerate_clamps_to_upper",
+  "description": "Degenerate input (negative symphony_vol) produces a positive raw; the upper clamp pins the result at VWAP_BLEED_ARM_MAX = -0.5. The math is well-defined even on bogus inputs because the clamp window itself is always negative.",
+  "function": "compute_vwap_bleed_arm_threshold",
+  "inputs": {
+    "symphony_vol": -1.0,
+    "bleed_multiplier": 1.5
+  },
+  "expected": -0.5,
+  "derivation": "raw = -(-1.0 * 1.5) = 1.5 (positive). min(-0.5, 1.5) = -0.5. max(-3.0, -0.5) = -0.5. Even with a positive raw, the clamp window [-3.0, -0.5] forces the output to its upper bound. Output is still <= 0 (the bleed-threshold sign invariant)."
+}

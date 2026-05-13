@@ -1,0 +1,11 @@
+{
+  "name": "02_raw_far_below_lower_clamp",
+  "description": "Raw value is much more negative than VWAP_BLEED_ARM_MIN; clamp pins it at the floor of -3.0. Tests that arbitrary deep negatives are not propagated.",
+  "function": "compute_vwap_bleed_arm_threshold",
+  "inputs": {
+    "symphony_vol": 5.0,
+    "bleed_multiplier": 2.0
+  },
+  "expected": -3.0,
+  "derivation": "raw = -(5.0 * 2.0) = -10.0. min(-0.5, -10.0) = -10.0. max(-3.0, -10.0) = -3.0. Clamped at lower bound VWAP_BLEED_ARM_MIN."
+}

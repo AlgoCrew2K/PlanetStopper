@@ -1,0 +1,11 @@
+{
+  "name": "06_zero_vol_returns_upper_clamp",
+  "description": "symphony_vol == 0 produces raw == 0, which is above the upper clamp; result is VWAP_BLEED_ARM_MAX = -0.5. The 'no vol means most-cautious arm' invariant.",
+  "function": "compute_vwap_bleed_arm_threshold",
+  "inputs": {
+    "symphony_vol": 0.0,
+    "bleed_multiplier": 1.5
+  },
+  "expected": -0.5,
+  "derivation": "raw = -(0.0 * 1.5) = -0.0 (== 0.0). min(-0.5, 0.0) = -0.5. max(-3.0, -0.5) = -0.5. The bleed_multiplier value is irrelevant when symphony_vol is zero; result is always clamped to VWAP_BLEED_ARM_MAX."
+}

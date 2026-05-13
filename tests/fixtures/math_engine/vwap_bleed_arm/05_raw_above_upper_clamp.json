@@ -1,0 +1,11 @@
+{
+  "name": "05_raw_above_upper_clamp",
+  "description": "Raw value is less negative than VWAP_BLEED_ARM_MAX (closer to zero); clamp pins it at the ceiling of -0.5. The 'shallow drop never arms shallower than -0.5' rule.",
+  "function": "compute_vwap_bleed_arm_threshold",
+  "inputs": {
+    "symphony_vol": 0.1,
+    "bleed_multiplier": 1.0
+  },
+  "expected": -0.5,
+  "derivation": "raw = -(0.1 * 1.0) = -0.1. min(-0.5, -0.1) = -0.5. max(-3.0, -0.5) = -0.5. Clamped at upper bound VWAP_BLEED_ARM_MAX because -0.1 > -0.5."
+}
