@@ -115,10 +115,16 @@ def _simulate_position_lifetime(
     stop_trigger_level) tuples — one per tick, in order.
 
     NO clamping or monotonicity enforcement is applied here. The producer
-    math owns the invariant; this helper only persists state.
+    math owns the invariant; this helper only persists state, including
+    the previously-persisted stop_trigger_level threaded as the
+    `previously_persisted_stop_level` kwarg into each subsequent call.
+    On the first tick the kwarg is None (no prior level exists). It is
+    the math layer's responsibility to clamp the new resolved level
+    against this previously-persisted floor.
     """
     state_hold_ticks = 0
     state_locked = False
+    state_stop_level: float | None = None
     out: list[tuple[int, bool, float]] = []
     for tick in ticks:
         new_hold_ticks, new_locked, stop_level = math_engine.compute_breakeven_update(
@@ -128,12 +134,16 @@ def _simulate_position_lifetime(
             current_hold_ticks=state_hold_ticks,
             currently_breakeven_locked=state_locked,
             is_triggered=tick["is_triggered"],
+            previously_persisted_stop_level=state_stop_level,
         )
         out.append((new_hold_ticks, new_locked, stop_level))
         # Persist state forward (this is what the live engine does after
-        # each call; we mimic it faithfully).
+        # each call; we mimic it faithfully). The stop_trigger_level is
+        # now threaded forward so the math layer can enforce the
+        # canonical trailing-stop monotonicity invariant.
         state_hold_ticks = new_hold_ticks
         state_locked = new_locked
+        state_stop_level = stop_level
     return out
 
 
