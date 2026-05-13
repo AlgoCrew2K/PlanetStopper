@@ -15,9 +15,9 @@
 | `alpha_bot_execution.py` | Core engine — per-cycle execution |
 | `math_engine.py` | Risk math: volatility scaling, log time squeeze, parabolic ratchet, MC gating, VWAP, breakeven, exit confirm |
 | `autotuner.py` | Optuna walk-forward (125 trading days, 500 trials per symphony) |
-| `database.py` | Dual-SQLite state + optimization |
+| `database.py` | State DB (positions, decisions, chart history, strategies) |
 | `reporting.py` | Discord webhooks + QuickChart embeds |
-| `synthetic_history.py` | Fixture/replay data generation |
+| `synthetic_history.py` | 125-day live Alpaca historical fetcher (parallel + file cache); feeds autotuner replay |
 
 ## Build / Run
 ```

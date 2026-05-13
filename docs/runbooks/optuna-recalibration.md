@@ -153,7 +153,7 @@ print(results)
 python recalibrate.py
 ```
 
-**`is_forced=True` is required.** Without it, `alpha_bot_execution.py` only runs the autotuner on Fridays/weekends (`autotuner.py` line 415). The Flask `/api/force_eod` endpoint always passes `is_forced=True` (see `app.py` line 183).
+**About `is_forced` and the Friday/weekend gate.** The gate that skips the autotuner on non-Friday weekdays lives in `alpha_bot_execution.py` line 415 (the caller), not inside `autotuner.py`. `run_autotuner` itself runs unconditionally — it has no internal day-of-week gate. This means the bootstrap script above calls `run_autotuner` directly and it will always run regardless of day or the `is_forced` value. `is_forced=True` in the bootstrap script is only meaningful if you route through `alpha_bot_execution.py`'s caller-side gate — when using the bootstrap script directly, the parameter has no effect but is harmless to include. The Flask `/api/force_eod` endpoint routes through that caller path and passes `is_forced=True` to bypass the gate (see `app.py` line 183).
 
 ### Step 4 — Wait for completion
 
