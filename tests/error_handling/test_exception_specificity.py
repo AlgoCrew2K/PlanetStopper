@@ -397,3 +397,186 @@ def test_find_bare_excepts_helper_detects_only_typeless_except():
     src_typed = "try:\n    pass\nexcept Exception:\n    pass\n"
     assert len(_find_bare_excepts(src_bare)) == 1
     assert len(_find_bare_excepts(src_typed)) == 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers for narrow-union coverage tests (BLOCK 1 and BLOCK 2)
+# ---------------------------------------------------------------------------
+
+
+def _except_type_names(handler: ast.ExceptHandler) -> set[str]:
+    """Return the set of bare Name ids present in an ExceptHandler's type.
+
+    Handles three forms:
+      except SomeName:          -> {'SomeName'}
+      except (A, B, C):         -> {'A', 'B', 'C'}
+      except mod.Attr:          -> set() — Attribute nodes are ignored;
+                                   we are testing for bare Name presence only.
+
+    Only traverses one level of Tuple — no nested tuples (Python does not
+    allow nested exception tuples in except clauses).
+    """
+    if handler.type is None:
+        return set()
+    if isinstance(handler.type, ast.Name):
+        return {handler.type.id}
+    if isinstance(handler.type, ast.Tuple):
+        names: set[str] = set()
+        for elt in handler.type.elts:
+            if isinstance(elt, ast.Name):
+                names.add(elt.id)
+        return names
+    return set()
+
+
+def _handlers_in_function(source: str, function_name: str) -> list[ast.ExceptHandler]:
+    """Return every ExceptHandler node that is directly (or indirectly)
+    nested inside the first FunctionDef / AsyncFunctionDef whose name
+    matches *function_name*.
+
+    Search order: top-level walk, first match wins. Fails loudly if the
+    function is not found — a missing function means the production code
+    was restructured beyond the scope of a simple union-coverage fix and
+    the reviewer's BLOCK finding must be re-evaluated.
+    """
+    tree = ast.parse(source)
+    target_func: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == function_name:
+                target_func = node
+                break
+    assert target_func is not None, (
+        f"Function '{function_name}' not found in alpha_bot_execution.py. "
+        "The BLOCK finding assumed this function exists at the reviewed "
+        "commit; if it was renamed or deleted the reviewer's analysis "
+        "must be re-opened before narrowing the test."
+    )
+    return [
+        node
+        for node in ast.walk(target_func)
+        if isinstance(node, ast.ExceptHandler)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Test 6 — BLOCK 1: L248 fetch_intraday_vwaps except must include TypeError
+# ---------------------------------------------------------------------------
+
+
+def test_vwap_batch_except_includes_TypeError():
+    """The except handler inside fetch_intraday_vwaps (near L248) must
+    include TypeError in its exception union.
+
+    SPECIFIC EXCEPTION TYPE CHECKED: TypeError
+
+    REALISTIC FAILURE SCENARIO:
+    The line `df['pv'] = df['c'] * df['v']` performs pandas Series
+    multiplication. If the Alpaca /stocks/bars endpoint returns bar fields
+    as strings (an observed schema regression where numeric fields are
+    serialised as "123.45" instead of 123.45), `pd.DataFrame(bars)` builds
+    a DataFrame with dtype=object columns. The `*` operator on two object-
+    dtype Series raises TypeError: "can't multiply sequence by non-int of
+    type 'float'". This is a per-minute live-execution call site inside the
+    minute-cadence scheduler subprocess; an uncaught TypeError propagates
+    out of fetch_intraday_vwaps, unwinds the main() call stack, and kills
+    the subprocess for that minute — the engine misses an execution cycle.
+
+    REVIEWER'S BLOCK FINDING (cycle 27+28 GREEN commit):
+    The implementer narrowed the original broad `except Exception` to
+    `except (requests.RequestException, ValueError, KeyError)`. That union
+    correctly covers network failures (RequestException), JSON shape errors
+    (ValueError / KeyError), but omits TypeError. The reviewer flagged this
+    as BLOCK: the dtype-mismatch crash path is real, was observable in
+    staging logs from the Alpaca schema regression, and is NOT covered by
+    any of the three named types. The required fix is to add TypeError to
+    the union: `except (requests.RequestException, ValueError, KeyError,
+    TypeError)`.
+
+    This test is RED against the current GREEN commit and will turn GREEN
+    once the implementer adds TypeError to the union.
+    """
+    source = _read_source(ALPHA_BOT_PATH)
+    handlers = _handlers_in_function(source, "fetch_intraday_vwaps")
+    assert handlers, (
+        "fetch_intraday_vwaps contains no except handlers; at least one "
+        "is required to guard the Alpaca batch network call."
+    )
+    # Collect all exception type names across every handler in the function.
+    all_names: set[str] = set()
+    for h in handlers:
+        all_names.update(_except_type_names(h))
+
+    assert "TypeError" in all_names, (
+        "fetch_intraday_vwaps does not catch TypeError. "
+        "The line `df['c'] * df['v']` raises TypeError when Alpaca returns "
+        "string-typed bar fields (schema regression). Without TypeError in "
+        "the except union, this crash propagates to the scheduler subprocess "
+        "and drops an execution cycle. "
+        f"Current union names found across all handlers: {sorted(all_names)}. "
+        "Required fix: add TypeError to the except union at ~L248."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — BLOCK 2: L259 get_current_et except must include KeyError
+#           (covers ZoneInfoNotFoundError, which subclasses KeyError)
+# ---------------------------------------------------------------------------
+
+
+def test_get_current_et_except_includes_KeyError_for_ZoneInfoNotFoundError():
+    """The except handler inside get_current_et (near L259) must include
+    KeyError (or ZoneInfoNotFoundError directly) in its exception union.
+
+    SPECIFIC EXCEPTION TYPE CHECKED: KeyError
+    (ZoneInfoNotFoundError subclasses KeyError; catching KeyError is the
+    minimal correct way to cover it without importing zoneinfo at test time)
+
+    REALISTIC FAILURE SCENARIO:
+    `ZoneInfo("America/New_York")` raises zoneinfo.ZoneInfoNotFoundError
+    when the system tzdata package is absent. This is the normal state on
+    many minimal Docker base images (e.g., python:3.11-slim, Alpine). The
+    function has a manual DST-math fallback below the except block; the
+    original broad `except Exception` reached it. The implementer's narrow
+    union `except (ImportError, ModuleNotFoundError)` catches only the
+    case where the zoneinfo module itself is missing (Python < 3.9), but
+    NOT the case where the module imports fine but the timezone key is
+    absent. ZoneInfoNotFoundError is a subclass of KeyError; the minimal
+    correct union is `except (ImportError, KeyError)` — which also
+    makes ModuleNotFoundError redundant (it is a subclass of ImportError).
+
+    REVIEWER'S BLOCK FINDING (cycle 27+28 GREEN commit):
+    The implementer correctly removed the broad `except Exception` and
+    narrowed to `except (ImportError, ModuleNotFoundError)`. The reviewer
+    flagged this as BLOCK: the union misses ZoneInfoNotFoundError. On a
+    containerised deployment without tzdata, `ZoneInfo("America/New_York")`
+    raises ZoneInfoNotFoundError; the narrow except does not catch it; the
+    exception propagates out of get_current_et; every downstream call that
+    uses `current_et` (market-hours check, decision timestamps) crashes
+    for the entire cycle — much worse than silently falling back to manual
+    DST math. The required fix is `except (ImportError, KeyError)`.
+
+    This test is RED against the current GREEN commit and will turn GREEN
+    once the implementer adds KeyError to the union.
+    """
+    source = _read_source(ALPHA_BOT_PATH)
+    handlers = _handlers_in_function(source, "get_current_et")
+    assert handlers, (
+        "get_current_et contains no except handlers; at least one is "
+        "required to guard the zoneinfo import / ZoneInfo() constructor."
+    )
+    all_names: set[str] = set()
+    for h in handlers:
+        all_names.update(_except_type_names(h))
+
+    assert "KeyError" in all_names, (
+        "get_current_et does not catch KeyError. "
+        "ZoneInfoNotFoundError (raised by ZoneInfo('America/New_York') when "
+        "tzdata is absent) is a subclass of KeyError. Without KeyError in "
+        "the except union, a containerised deployment without tzdata causes "
+        "get_current_et to propagate an unhandled exception, crashing the "
+        "full execution cycle rather than falling back to manual DST math. "
+        f"Current union names found across all handlers: {sorted(all_names)}. "
+        "Required fix: add KeyError to the except union at ~L259, e.g. "
+        "`except (ImportError, KeyError):`."
+    )
