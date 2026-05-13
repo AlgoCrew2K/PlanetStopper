@@ -1,0 +1,22 @@
+{
+  "name": "present_ticker_normal_path",
+  "description": "Ticker 'XYZ' is present in all 30 historical days with amplitude 0.002 (smaller than SPY's 0.005). The normal branch at line 488-489 fires for every day: returns_matrix uses XYZ's own daily_ret, not the SPY fallback. Historical XYZ returns are +/-0.002 -> +/-0.2 pct after scaling. current_symphony_return=0.3 (last_percent_change=0.003) is above all XYZ returns (max 0.2) -> below_count=5000 -> prob=0.0. Negative control for the missing-ticker fixture: result (0.0) differs from the spy-substitution result (~50.46) because the own-returns distribution has a smaller range than SPY.",
+  "function": "run_monte_carlo",
+  "inputs": {
+    "holdings": [
+      {"ticker": "XYZ", "allocation": 1.0, "last_percent_change": 0.003}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating_with_xyz",
+      "num_days": 30,
+      "spy_amplitude": 0.005,
+      "xyz_amplitude": 0.002
+    },
+    "spy_today_return": 0.5,
+    "simulation_paths": 5000,
+    "neighbor_k": 150,
+    "numpy_seed": 42
+  },
+  "expected": 0.0,
+  "derivation": "XYZ present all days -> returns_matrix uses XYZ daily_ret (+-0.002 -> +-0.2 pct). current_symphony_return=0.3 > max(0.2) -> all sim paths are below current_return -> below_count=5000 -> prob=0.0. Differs from missing-ticker (50.46) because substituting SPY (+-0.5) vs using XYZ (+-0.2) changes the return distribution. Captured from production code with numpy.random.seed(42)."
+}

@@ -1,0 +1,22 @@
+{
+  "name": "short_history_spy_vol_fallback",
+  "description": "SPY history with only 15 days (< MC_MIN_HISTORY_DAYS=20). run_monte_carlo MUST short-circuit at the MC_MIN_HISTORY_DAYS guard and return MC_INSUFFICIENT_HISTORY_PROB=100.0. This pins the EARLY short-circuit branch (lines 445-446). NOTE: the vol-window fallback else-branch at line 463 is structurally unreachable when MC_MIN_HISTORY_DAYS >= MC_VOL_WINDOW_DAYS-1 (both are 20/19 today); the test covers the observable regression pin for the 'short history' scenario as declared by the coverage audit.",
+  "function": "run_monte_carlo",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating",
+      "num_days": 15,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.01
+    },
+    "spy_today_return": 0.5,
+    "simulation_paths": 5000,
+    "neighbor_k": 150,
+    "numpy_seed": 42
+  },
+  "expected": 100.0,
+  "derivation": "15 < MC_MIN_HISTORY_DAYS(20): guard at line 445 fires, returns MC_INSUFFICIENT_HISTORY_PROB sentinel (100.0). Captured from production code with numpy.random.seed(42). The vol-window else-branch at line 463 is unreachable at these constant values; see production_gap in the test module docstring."
+}
