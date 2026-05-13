@@ -219,22 +219,25 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
                                         above_tp_count = 0
                             else: above_tp_count = 0
 
-                        is_vwap_broken = False
-                        is_vwap_bleed_broken = False
-                        if vwap_diff < 0:
-                            if safe_hwm >= p.get("VWAP_CROSS_HWM_PCT", 1.0) and ret < safe_hwm:
-                                vwap_ticks += 1
-                                if vwap_ticks >= 3: is_vwap_broken = True
-                            else: vwap_ticks = 0
-                            vwap_bleed_arm_pct = math_engine.compute_vwap_bleed_arm_threshold(vol, p.get("VWAP_BLEED_MULTIPLIER", 1.5))
-                            
-                            if ret <= vwap_bleed_arm_pct:
-                                vwap_bleed_ticks += 1
-                                if vwap_bleed_ticks >= p.get("VWAP_BLEED_TICKS", 10): is_vwap_bleed_broken = True
-                            else: vwap_bleed_ticks = 0
-                        else:
-                            vwap_ticks = 0
-                            vwap_bleed_ticks = 0
+                        # Read valid_vwap_weight from tick with backward-compat fallback
+                        # (fallback covers any stale v1 cache that might slip through despite the v2 marker)
+                        valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
+
+                        vwap_bleed_arm_pct = math_engine.compute_vwap_bleed_arm_threshold(vol, p.get("VWAP_BLEED_MULTIPLIER", 1.5))
+
+                        # Canonical VWAP-breakdown state machine
+                        vwap_ticks, vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = math_engine.compute_vwap_breakdown_update(
+                            is_triggered=False,  # autotuner sim breaks on trigger; never re-enters with triggered state mid-tick
+                            valid_vwap_weight=valid_vwap_weight,
+                            weighted_vwap_diff=vwap_diff,
+                            safe_hwm=safe_hwm,
+                            current_return=ret,
+                            vwap_cross_hwm_pct=p.get("VWAP_CROSS_HWM_PCT", 1.0),
+                            vwap_bleed_arm_pct=vwap_bleed_arm_pct,
+                            vwap_bleed_ticks_threshold=p.get("VWAP_BLEED_TICKS", 10),
+                            current_vwap_ticks=vwap_ticks,
+                            current_vwap_bleed_ticks=vwap_bleed_ticks,
+                        )
 
                         if is_trailing_hit or is_tp_hit or is_vwap_broken or is_vwap_bleed_broken:
                             reason_str = "Trailing Stop"
