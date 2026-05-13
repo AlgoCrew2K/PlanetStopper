@@ -604,9 +604,17 @@ _JSON_COVERING_NAMES: frozenset[str] = frozenset(
 
 def _response_json_calls_in_function(
     source: str, function_name: str
-) -> list[ast.Call]:
-    """Return every ast.Call node that represents a `response.json()` call
-    inside *function_name*.
+) -> tuple[ast.Module, list[ast.Call]]:
+    """Return *(tree, calls)* where *tree* is the single ast.Module produced
+    by parsing *source* and *calls* is every ast.Call node that represents a
+    `response.json()` call inside *function_name*.
+
+    Returning the parse tree alongside the calls is intentional: callers that
+    also need to walk the AST (e.g. to find the enclosing function node) MUST
+    use this same tree so that all ast node objects share identity.  Calling
+    ast.parse(source) a second time produces a structurally identical but
+    object-distinct tree; cross-tree identity checks (`sub is target_call`)
+    will always return False even when the call is genuinely present.
 
     Matches the pattern `<any_name>.json()` where the attribute is 'json'
     and the argument list is empty — this is the canonical form of
@@ -639,7 +647,7 @@ def _response_json_calls_in_function(
         if node.args or node.keywords:
             continue  # .json() takes no arguments in normal usage
         calls.append(node)
-    return calls
+    return tree, calls
 
 
 def _call_is_inside_try(
@@ -755,9 +763,15 @@ def test_fetch_alpaca_history_wraps_response_json_in_try():
     try/except covering ValueError (or an accepted subclass/alias).
     """
     source = _read_source(ALPHA_BOT_PATH)
-    tree = ast.parse(source)
 
-    # Step 1: locate fetch_alpaca_history in the AST.
+    # Step 1 + 2 share ONE parse tree so that ast node identity is consistent.
+    # _response_json_calls_in_function returns (tree, calls); reusing that tree
+    # here ensures `sub is target_call` comparisons in _call_is_inside_try work
+    # correctly — a second ast.parse(source) call produces object-distinct nodes
+    # even for identical source, making all identity checks silently return False.
+    tree, json_calls = _response_json_calls_in_function(source, "fetch_alpaca_history")
+
+    # Step 2: locate fetch_alpaca_history in the SHARED tree (same tree as json_calls).
     target_func: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -769,9 +783,6 @@ def test_fetch_alpaca_history_wraps_response_json_in_try():
         "Function 'fetch_alpaca_history' not found in alpha_bot_execution.py. "
         "If the function was renamed, this test must be updated to match."
     )
-
-    # Step 2: find all .json() call sites inside the function.
-    json_calls = _response_json_calls_in_function(source, "fetch_alpaca_history")
 
     assert json_calls, (
         "No .json() call found inside fetch_alpaca_history. "
