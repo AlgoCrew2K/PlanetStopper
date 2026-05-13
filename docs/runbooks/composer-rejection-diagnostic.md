@@ -91,5 +91,5 @@ Cycle #27 (merge `88198e5`) scrubbed these echoes file-wide. The diagnostic loss
 
 ## Related runbooks
 
-- (Future) `tzdata-missing-on-host.md` — handles the `ZoneInfoNotFoundError` fallback documented in cycle #28 corrective
-- (Future) `optuna-recalibration.md` — handles the `optuna_studies.db` deletion procedure after VWAP calibration fix (task #24) and any future calibration-shifting changes
+- [`tzdata-missing-on-host.md`](tzdata-missing-on-host.md) — handles the `ZoneInfoNotFoundError` fallback documented in cycle #28 corrective
+- [`optuna-recalibration.md`](optuna-recalibration.md) — handles the `optuna_studies.db` rename procedure after a calibration-shifting change (canonical trigger: VWAP fix task #24)
