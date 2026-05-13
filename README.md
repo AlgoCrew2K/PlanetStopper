@@ -148,7 +148,9 @@ Procedures for common operational scenarios:
 ## Architecture Notes
 
 - **Math engine constants:** All numeric constants in `math_engine.py` are named and documented. The codebase has zero unnamed numeric literals in the math layer. Provenance for every constant is tracked in [docs/math_engine/constants.md](docs/math_engine/constants.md).
-- **Test harness:** `pytest` suite gates all math-layer changes via fixture-driven golden tests + AST regression canaries; live-execution tests excluded by default, opt in via `--include-live`. Run via `/run-tests` skill.
+- **Test harness:** `pytest` suite covers all production modules; live-execution tests excluded by default, opt in via `--include-live`. Run via `/run-tests` skill. Coverage as of the 2026-05-13 verification sweep: `math_engine.py` ~100%, `app.py` 89%, `database.py` 92%, `reporting.py` 81%, `autotuner.py` 75%, `alpha_bot_execution.py` ~50% (key execution paths).
+- **Schema migrations:** Additive schema changes are tracked in `migrations/` (SQL files + README). Apply in order before starting the daemon after a schema-affecting upgrade.
+- **Invariants enforced in the math layer:** Trailing-stop monotonicity is enforced inside `compute_active_trailing_stop` via the `previously_persisted_stop_level` kwarg (Fu & Zhang canonical clamp). NaN/Inf inputs are rejected at the boundary of 11 math functions — callers receive a raised `ValueError`, never a silent sentinel.
 
 ---
 

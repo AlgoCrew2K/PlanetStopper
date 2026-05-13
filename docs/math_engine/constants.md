@@ -27,6 +27,7 @@ rationale. Where evidence is absent, this document says so.
 - Cycle 9 (VWAP bleed arm) — commit `8db8030`, 2026-05-12
 - Cycle 10 (VWAP breakdown) — commit `5b90d47`, 2026-05-12
 - Cycle 11 (MC gating) — commit `d5e72cd`, 2026-05-13
+- Cycle 12 (trailing-stop monotonicity invariant) — 2026-05-13 (no new numeric constants; structural invariant only)
 
 ---
 
@@ -409,6 +410,24 @@ rationale. Where evidence is absent, this document says so.
 
 ---
 
+## Cycle 12 — Trailing-Stop Monotonicity Invariant
+
+**No new numeric constants were introduced in this cycle.** Cycle 12 enforces a structural invariant inside `compute_active_trailing_stop` via a new optional kwarg rather than a named constant.
+
+### `previously_persisted_stop_level` kwarg (structural invariant)
+
+**Used in:** `compute_active_trailing_stop` (cycle 12, math_engine.py)
+**Introduced:** 2026-05-13 — verification arc remediation cycle A2 (trailing-stop monotonicity)
+**Nature:** Optional keyword argument (`float | None`, default `None`). When provided, `compute_active_trailing_stop` clamps its output so the returned stop level is never lower than `previously_persisted_stop_level`. This is a one-way ratchet: the stop can only move up or stay flat between ticks.
+**Invariant source:** Fu & Zhang canonical trailing-stop formulation. A trailing stop that can retreat to a lower level than previously persisted violates the monotonicity property that makes a trailing stop meaningful as a risk control. Without this clamp, a sequence of declining vol readings could silently lower an already-armed stop, creating a real-money exposure gap.
+**Why at the math layer, not the caller:** The monotonicity invariant is a correctness property of the computation itself, not a caller-side policy. Placing the clamp inside `compute_active_trailing_stop` ensures every future caller gets the correct behavior by default; no caller can accidentally omit it.
+**Config-overridable:** No. The invariant is unconditional when `previously_persisted_stop_level` is supplied. Callers that genuinely need to reset (e.g., new position, post-execution cold start) pass `None`, which disables the clamp for that tick only.
+**Related code references:**
+- `math_engine.py` (current): `compute_active_trailing_stop` function signature and clamp site
+- `alpha_bot_execution.py`: call site passes the DB-persisted stop level on each tick; passes `None` on first tick after position open
+
+---
+
 ## Coverage Gaps
 
 The following constants have confirmed inline origins (git-traceable to the initial upload
@@ -448,7 +467,8 @@ document, or comment in the original code explains the choice of these specific 
 - MC_DEFAULT_SIMULATION_PATHS = 5000 — hand-tuned heuristic; CLT-stability rationale documented in commit `d5e72cd`
 - MC_DEFAULT_NEIGHBOR_K = 150 — hand-tuned heuristic; kNN locality rationale documented in commit `d5e72cd`
 
-**Coverage summary: 9 of 27 constants have confident documented origin; 18 have confirmed
+**Coverage summary: 9 of 27 named constants have confident documented origin; 18 have confirmed
 inline pre-extraction location but no pre-upload design rationale. The 5 MC-gating constants
 (Cycle 11, introduced 2026-05-13) were added directly as named constants with full provenance
-documented at introduction — they carry no pre-upload gap.**
+documented at introduction — they carry no pre-upload gap. Cycle 12 introduced no named
+constants; its contribution is a structural kwarg invariant documented above.**
