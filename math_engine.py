@@ -2,6 +2,22 @@ import math
 
 import numpy as np
 
+
+def _reject_non_finite(**kwargs):
+    """
+    Reject NaN / +Inf / -Inf in named float parameters at function entry.
+
+    Policy: math layers must never silently propagate non-finite values into
+    exit decisions (a NaN comparison short-circuits to False and can suppress
+    a legitimate stop trigger; an Inf can spuriously trigger one). Callers
+    pass ONLY float-typed parameters by name; ints and bools are intentionally
+    NOT validated (truthiness pins in existing tests rely on bool inputs).
+    """
+    for name, v in kwargs.items():
+        if isinstance(v, float) and not math.isfinite(v):
+            raise ValueError(f"NaN input not allowed: {name}={v!r}")
+
+
 # ---------------------------------------------------------------------------
 # Module-level named constants (project rule: no magic numbers in math_engine)
 # ---------------------------------------------------------------------------
@@ -51,6 +67,7 @@ def compute_para_arm_decision(
     Extracted from alpha_bot_execution.py:559-569 to comply with the project
     file-map rule that math layers live in math_engine.py.
     """
+    _reject_non_finite(current_return=current_return, prev_return=prev_return, para_threshold=para_threshold)
     velocity = float(current_return) - float(prev_return)
     should_arm = bool((velocity >= para_threshold) and (not currently_armed))
     return velocity, should_arm
@@ -76,6 +93,7 @@ def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
     Extracted from alpha_bot_execution.py:574-585 (cycle 4 of math-layer
     extraction).
     """
+    _reject_non_finite(time_ratio=time_ratio)
     decay_curve = math.log10(1 + DECAY_CURVE_SCALAR * time_ratio)
     dynamic_multiplier = float(MULT_OPEN - (MULT_OPEN - MULT_CLOSE) * decay_curve)
     dynamic_min_stop = float(MIN_STOP_OPEN - (MIN_STOP_OPEN - MIN_STOP_CLOSE) * decay_curve)
@@ -104,6 +122,12 @@ def compute_active_trailing_stop(
     bot_state[...].get("para_armed") and ...get("breakeven_locked") to
     strict Python bool BEFORE passing (typically via bool(...)).
     """
+    _reject_non_finite(
+        symphony_vol=symphony_vol,
+        dynamic_multiplier=dynamic_multiplier,
+        dynamic_min_stop=dynamic_min_stop,
+        parabolic_squeeze_multiplier=parabolic_squeeze_multiplier,
+    )
     safe_vol = symphony_vol if symphony_vol > 0 else VOL_FALLBACK
     active = max(safe_vol * dynamic_multiplier, dynamic_min_stop)
     if para_armed or breakeven_locked:
@@ -158,6 +182,11 @@ def compute_breakeven_update(
     Pure. No I/O. No state. Caller assigns the returned new_hold_ticks and
     new_breakeven_locked back into bot_state.
     """
+    _reject_non_finite(
+        current_return=current_return,
+        symphony_vol=symphony_vol,
+        base_stop_level=base_stop_level,
+    )
     dynamic_activation = max(BREAKEVEN_ACTIVATION_MIN, min(BREAKEVEN_ACTIVATION_MAX, symphony_vol))
     if current_return >= (dynamic_activation - BREAKEVEN_ACTIVATION_DEADBAND):
         new_hold_ticks = current_hold_ticks + 1
@@ -216,6 +245,11 @@ def compute_exit_confirmation(
     Pure. No I/O. No state. Caller handles print transitions by comparing
     input current_below_stop_count to returned new_below_stop_count.
     """
+    _reject_non_finite(
+        current_return=current_return,
+        stop_trigger_level=stop_trigger_level,
+        prob_beating=prob_beating,
+    )
     if (not armed) or is_triggered:
         return int(current_below_stop_count), False
 
@@ -298,6 +332,7 @@ def compute_vwap_bleed_arm_threshold(
     Extracted from alpha_bot_execution.py:525-526 (cycle 9 of math-layer
     extraction).
     """
+    _reject_non_finite(symphony_vol=symphony_vol, bleed_multiplier=bleed_multiplier)
     raw = -(symphony_vol * bleed_multiplier)
     return float(max(VWAP_BLEED_ARM_MIN, min(VWAP_BLEED_ARM_MAX, raw)))
 
@@ -359,6 +394,14 @@ def compute_vwap_breakdown_update(
     Extracted from alpha_bot_execution.py:641-667 (cycle 10 of math-layer
     extraction).
     """
+    _reject_non_finite(
+        valid_vwap_weight=valid_vwap_weight,
+        weighted_vwap_diff=weighted_vwap_diff,
+        safe_hwm=safe_hwm,
+        current_return=current_return,
+        vwap_cross_hwm_pct=vwap_cross_hwm_pct,
+        vwap_bleed_arm_pct=vwap_bleed_arm_pct,
+    )
     if is_triggered:
         return int(current_vwap_ticks), int(current_vwap_bleed_ticks), False, False
 
@@ -388,6 +431,12 @@ def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_path
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.
     """
+    _reject_non_finite(spy_today_return=spy_today_return)
+    for h in holdings:
+        _reject_non_finite(
+            last_percent_change=h.get("last_percent_change"),
+            allocation=h.get("allocation"),
+        )
     current_symphony_return = sum(
         (h.get("last_percent_change", 0.0) * PCT_SCALAR) * h.get("allocation", 0.0)
         for h in holdings if h.get("last_percent_change") is not None
