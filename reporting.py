@@ -197,7 +197,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                 alpha_list.append(round(d_alpha, 2))
                 saved_list.append(round(d_saved, 2))
                 win_rate_list.append(round(d_win_rate, 1))
-            except:
+            except (OSError, json.JSONDecodeError):
                 continue
 
         # 2. QuickChart API POST Request
@@ -320,7 +320,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                             rs["count"] += 1
                             if alpha_pct > 0:
                                 rs["wins"] += 1
-                except:
+                except (OSError, json.JSONDecodeError, ValueError):
                     continue
         except Exception as e:
             print(f"  -> Minor error calculating history: {e}")
