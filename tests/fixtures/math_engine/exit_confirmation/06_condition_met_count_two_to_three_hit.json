@@ -1,0 +1,18 @@
+{
+  "name": "06_condition_met_count_two_to_three_hit",
+  "description": "Condition met, count=2 -> 3. Threshold crossed; hit=True (3 >= 3).",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -1.5,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 50.0,
+    "current_below_stop_count": 2
+  },
+  "expected": {
+    "new_below_stop_count": 3,
+    "is_trailing_stop_hit": true
+  },
+  "derivation": "Guard passes. Magnitude: -1.5 <= -1.0 - 0.10 = -1.10 is TRUE. MC: 50.0 < 60.0 is TRUE. Condition met. new_count = 2 + 1 = 3. Hit = (3 >= EXIT_CONFIRM_TICKS(3)) is True. This is the threshold crossing -- the load-bearing exit transition."
+}

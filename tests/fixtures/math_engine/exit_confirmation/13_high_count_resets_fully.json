@@ -1,0 +1,18 @@
+{
+  "name": "13_high_count_resets_fully",
+  "description": "Count is 5 in, condition fails. Must reset to 0 (NOT 4 -- full reset, not decrement).",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": 0.5,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 90.0,
+    "current_below_stop_count": 5
+  },
+  "expected": {
+    "new_below_stop_count": 0,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "Guard passes. Magnitude: 0.5 <= -1.10 is FALSE. MC: 90.0 < 60.0 is FALSE. Reset branch fires unconditional `bot_state[...]['below_stop_count'] = 0`. new_count = 0 (NOT 4 -- this is a full reset, never a decrement). Catches an impl that used `max(0, count-1)` or `count - 1`."
+}

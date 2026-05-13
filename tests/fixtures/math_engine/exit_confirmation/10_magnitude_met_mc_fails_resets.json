@@ -1,0 +1,18 @@
+{
+  "name": "10_magnitude_met_mc_fails_resets",
+  "description": "Magnitude met (return deeply below stop) but MC sanity gate fails (model still believes in the trade). Resets count -- MC veto wins.",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -5.0,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 75.0,
+    "current_below_stop_count": 2
+  },
+  "expected": {
+    "new_below_stop_count": 0,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "Guard passes. Magnitude: -5.0 <= -1.10 is TRUE. MC: 75.0 < 60.0 is FALSE. Combined: True AND False = False. Reset branch fires; new_count = 0; hit = False. This is the canonical 'MC sanity veto' case -- price has crashed but the model still thinks we'll beat the benchmark, so don't capitulate."
+}

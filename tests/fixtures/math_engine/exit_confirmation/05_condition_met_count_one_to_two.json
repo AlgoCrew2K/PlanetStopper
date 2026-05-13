@@ -1,0 +1,18 @@
+{
+  "name": "05_condition_met_count_one_to_two",
+  "description": "Condition met, count=1 -> 2. Still below confirmation threshold (2 < 3); no hit.",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -2.5,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 25.0,
+    "current_below_stop_count": 1
+  },
+  "expected": {
+    "new_below_stop_count": 2,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "Guard passes. Magnitude: -2.5 <= -1.0 - 0.10 = -1.10 is TRUE. MC: 25.0 < 60.0 is TRUE. Condition met. new_count = 1 + 1 = 2. Hit = (2 >= 3) is False."
+}

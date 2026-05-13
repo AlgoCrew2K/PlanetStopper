@@ -1,0 +1,18 @@
+{
+  "name": "02_triggered_preserves_count",
+  "description": "Guard: when is_triggered=True, the stop-check block is skipped (already exited). Count preserved, hit=False.",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": true,
+    "current_return": -10.0,
+    "stop_trigger_level": -2.0,
+    "prob_beating": 5.0,
+    "current_below_stop_count": 1
+  },
+  "expected": {
+    "new_below_stop_count": 1,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "is_triggered=True -> the `if armed and not triggered:` guard fails on the SECOND clause (not triggered is False). The block is skipped entirely; below_stop_count is preserved at 1. Hit is False. The other inputs would trivially satisfy the condition if reached (current_return -10.0 <= -2.10 is TRUE, prob_beating 5.0 < 60.0 is TRUE) -- but is_triggered=True blocks all of that."
+}

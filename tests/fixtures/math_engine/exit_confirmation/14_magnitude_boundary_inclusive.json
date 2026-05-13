@@ -1,0 +1,18 @@
+{
+  "name": "14_magnitude_boundary_inclusive",
+  "description": "Boundary: current_return == stop_trigger_level - MAGNITUDE_FLOOR_PCT exactly. The inline producer uses `<=` so the boundary is INCLUSIVE -- this tick qualifies.",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -1.10,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 30.0,
+    "current_below_stop_count": 0
+  },
+  "expected": {
+    "new_below_stop_count": 1,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "Guard passes. Magnitude: current_return -1.10 <= (stop_trigger_level -1.0) - MAGNITUDE_FLOOR_PCT(0.10) = -1.10. -1.10 <= -1.10 is TRUE (inclusive). MC: 30.0 < 60.0 is TRUE. Condition met. new_count = 0 + 1 = 1; hit = False. The values chosen here yield an EXACT float boundary (-1.0 - 0.10 = -1.1 represented identically in IEEE-754 for the chosen inputs); an impl that mistakenly used `<` instead of `<=` would reset to 0 here."
+}

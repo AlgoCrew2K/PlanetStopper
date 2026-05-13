@@ -1,0 +1,18 @@
+{
+  "name": "15_mc_boundary_exclusive_fails",
+  "description": "Boundary: prob_beating == MC_SANITY_THRESHOLD exactly. The inline producer uses `<` (strict less-than) so the boundary FAILS the MC gate -- condition fails, count resets.",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -5.0,
+    "stop_trigger_level": -1.0,
+    "prob_beating": 60.0,
+    "current_below_stop_count": 2
+  },
+  "expected": {
+    "new_below_stop_count": 0,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "Guard passes. Magnitude: -5.0 <= -1.10 is TRUE. MC: prob_beating 60.0 < MC_SANITY_THRESHOLD(60.0) is FALSE (strict less-than; equality fails). Combined: True AND False = False. Reset branch; new_count = 0; hit = False. Pinned to catch an impl that mistakenly used `<=` for the MC gate (which would let equality through and continue counting toward exit)."
+}

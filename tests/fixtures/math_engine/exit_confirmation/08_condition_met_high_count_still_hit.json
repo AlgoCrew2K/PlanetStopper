@@ -1,0 +1,18 @@
+{
+  "name": "08_condition_met_high_count_still_hit",
+  "description": "Condition met, count=10 -> 11. Well above threshold; hit remains True.",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -5.0,
+    "stop_trigger_level": -2.0,
+    "prob_beating": 5.0,
+    "current_below_stop_count": 10
+  },
+  "expected": {
+    "new_below_stop_count": 11,
+    "is_trailing_stop_hit": true
+  },
+  "derivation": "Guard passes. Magnitude: -5.0 <= -2.0 - 0.10 = -2.10 is TRUE. MC: 5.0 < 60.0 is TRUE. Condition met. new_count = 10 + 1 = 11. Hit = (11 >= 3) is True. Catches an impl that capped the count at 3 (would return 3 not 11) or an impl using `== 3` (would fail at count > 3)."
+}
