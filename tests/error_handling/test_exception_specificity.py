@@ -809,3 +809,112 @@ def test_fetch_alpaca_history_wraps_response_json_in_try():
         "Fix: wrap response.json() in try/except (ValueError, KeyError) "
         "with a log + break fallback."
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — response.json() in fetch_symphony_stats must be try-wrapped
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_symphony_stats_wraps_response_json_in_try():
+    """response.json() inside fetch_symphony_stats must be enclosed in a
+    try/except whose handlers cover ValueError (or a recognised subclass
+    such as json.JSONDecodeError / requests.exceptions.JSONDecodeError).
+
+    SPECIFIC FAILURE MODE:
+    At authoring time, alpha_bot_execution.py L88 contains:
+
+        return response.json().get("symphonies", [])
+
+    This line sits OUTSIDE any try/except that covers ValueError — it is
+    inside the outer `if response.status_code == 200:` branch, which is
+    itself protected only by `except requests.RequestException`.
+    requests.RequestException does NOT catch json.JSONDecodeError
+    (a subclass of ValueError), which is raised by response.json() when
+    the HTTP body is not valid JSON.
+
+    PRODUCTION CONCERN:
+    An HTTP 200 response does not guarantee a JSON body.  Real scenarios
+    where Composer returns HTTP 200 with non-JSON content:
+      - Composer CDN edge nodes (Cloudflare or similar) return an HTML
+        error page with status 200 on transient gateway overload.
+      - API gateway proxy misroutes return plain-text diagnostics.
+      - Composer maintenance/canary deployments occasionally return a 200
+        with an HTML maintenance page.
+
+    In every one of these scenarios, `response.json()` raises
+    `requests.exceptions.JSONDecodeError` (a subclass of `ValueError`).
+    Because L88 is unguarded for ValueError, the exception propagates
+    uncaught out of `fetch_symphony_stats`, unwinds through the main
+    scheduler loop, and crashes the subprocess for that minute — the
+    engine misses a full execution cycle including all risk decisions for
+    live Composer portfolio positions.
+
+    REQUIRED FIX:
+    Wrap `response.json()` in an inner try/except that catches ValueError.
+    On decode failure: log the HTTP status code (no body echo — secrets
+    hygiene), then return [] (matches all other failure paths in the
+    function: requests.RequestException returns [], non-200 returns []).
+
+    Minimal correct pattern (inner try only; outer RequestException stays):
+        try:
+            return response.json().get("symphonies", [])
+        except ValueError as e:
+            print(f"Error parsing Composer response JSON: HTTP {response.status_code} - {e}")
+            return []
+
+    EXPECTED STATE AT AUTHORING: RED.
+    L88 is not wrapped for ValueError; this test will FAIL against the
+    current code.  It will turn GREEN once the implementer wraps
+    response.json() in an inner try/except covering ValueError.
+
+    Same class of fix as task #29 / test_fetch_alpaca_history_wraps_response_json_in_try.
+    """
+    source = _read_source(ALPHA_BOT_PATH)
+
+    # Step 1 + 2 share ONE parse tree so that ast node identity is consistent.
+    # _response_json_calls_in_function returns (tree, calls); reusing that tree
+    # here ensures `sub is target_call` comparisons in _call_is_inside_try work
+    # correctly — a second ast.parse(source) call produces object-distinct nodes
+    # even for identical source, making all identity checks silently return False.
+    tree, json_calls = _response_json_calls_in_function(source, "fetch_symphony_stats")
+
+    # Locate fetch_symphony_stats in the SHARED tree (same tree as json_calls).
+    target_func: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == "fetch_symphony_stats":
+                target_func = node
+                break
+
+    assert target_func is not None, (
+        "Function 'fetch_symphony_stats' not found in alpha_bot_execution.py. "
+        "If the function was renamed, this test must be updated to match."
+    )
+
+    assert json_calls, (
+        "No .json() call found inside fetch_symphony_stats. "
+        "If the JSON-decode step was refactored to a helper, locate the "
+        "new call site and update this test accordingly."
+    )
+
+    # For every .json() call, assert it is inside a Try whose handlers cover
+    # ValueError or a recognised subclass.
+    unguarded: list[int] = []
+    for call in json_calls:
+        if not _call_is_inside_try(target_func, call):
+            unguarded.append(call.lineno)
+
+    assert not unguarded, (
+        f"response.json() call(s) at line(s) {unguarded} inside "
+        "fetch_symphony_stats are NOT wrapped in a try/except that covers "
+        "ValueError (or json.JSONDecodeError / requests.exceptions."
+        "JSONDecodeError). An HTTP 200 response with a non-JSON body "
+        "(Composer CDN error page, gateway HTML, maintenance page) will "
+        "raise requests.exceptions.JSONDecodeError, propagate uncaught out "
+        "of fetch_symphony_stats, and crash the scheduler subprocess — the "
+        "engine misses the full execution cycle for all Composer portfolio "
+        "risk decisions. "
+        "Fix: wrap response.json() in an inner try/except ValueError with "
+        "a log + return [] fallback (matches all other failure paths)."
+    )

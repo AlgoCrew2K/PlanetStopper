@@ -85,7 +85,11 @@ def fetch_symphony_stats(account_id):
         response = requests.get(url, headers=get_composer_headers(), timeout=15)
         time.sleep(1.5)
         if response.status_code == 200:
-            return response.json().get("symphonies", [])
+            try:
+                return response.json().get("symphonies", [])
+            except ValueError as e:
+                print(f"Error parsing Composer response JSON: HTTP {response.status_code} - {e}")
+                return []
         print(f"Error fetching account {account_id}: HTTP {response.status_code}")
     except requests.RequestException as e:
         print(f"Exception fetching account {account_id}: {e}")
