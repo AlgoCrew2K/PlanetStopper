@@ -191,16 +191,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
                         base_stop = safe_hwm - active_stop_dist
                         
                         # --- RISK GUARD LOGIC ---
-                        dynamic_activation = max(0.4, min(3.0, vol))
-                        if ret >= (dynamic_activation - 0.2):
-                            hwm_hold_ticks += 1
-                        else:
-                            hwm_hold_ticks = 0
-                        
-                        if hwm_hold_ticks >= 5:
-                            breakeven_locked = True
-                        
-                        stop_level = max(base_stop, 0.0) if breakeven_locked else base_stop
+                        # is_triggered=False: simulation loop breaks on trigger before re-entering
+                        hwm_hold_ticks, breakeven_locked, stop_level = math_engine.compute_breakeven_update(
+                            ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, is_triggered=False
+                        )
                         # ------------------------
 
                         is_trailing_hit = False
