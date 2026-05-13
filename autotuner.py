@@ -160,10 +160,15 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
                         safe_hwm = max(hwm, ret)
                         
                         # --- PARABOLIC SQUEEZE LOGIC ---
-                        velocity = ret - prev_return
-                        prev_return = ret
                         para_threshold = p.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
-                        if velocity >= para_threshold:
+                        _velocity, should_arm = math_engine.compute_para_arm_decision(
+                            current_return=ret,
+                            prev_return=prev_return,
+                            para_threshold=para_threshold,
+                            currently_armed=para_armed,
+                        )
+                        prev_return = ret
+                        if should_arm:
                             para_armed = True
                         # ------------------------------
 
