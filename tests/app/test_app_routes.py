@@ -314,18 +314,18 @@ def test_perform_account_liquidation_skips_post_when_live_mode_false(monkeypatch
 
 
 def test_perform_account_liquidation_posts_when_live_mode_true(monkeypatch):
-    """Mirror of the previous test — live_mode=True must POST per symphony."""
+    """live_mode=True must POST per symphony.
+
+    Uses lazy fallback ``sym.get('symphony_id') or sym.get('id')``, so either
+    key alone is sufficient.  Verify with a mixed payload: one symphony carries
+    only ``symphony_id``, the other carries only ``id``.
+    """
     fake_get_resp = MagicMock()
     fake_get_resp.status_code = 200
-    # Note: production code at app.py:277 reads `sym.get('symphony_id', sym['id'])`
-    # — dict.get evaluates the default expression even when the key exists, so
-    # both keys must be present or the code raises KeyError.  Pinning the
-    # current contract: payload from Composer is expected to carry both `id`
-    # and `symphony_id`.
     fake_get_resp.json.return_value = {
         "symphonies": [
-            {"symphony_id": "S1", "id": "S1", "name": "A"},
-            {"symphony_id": "S2", "id": "S2", "name": "B"},
+            {"symphony_id": "S1", "name": "A"},   # only symphony_id
+            {"id": "S2", "name": "B"},             # only id — would KeyError under old code
         ]
     }
     posts = []
@@ -343,6 +343,8 @@ def test_perform_account_liquidation_posts_when_live_mode_true(monkeypatch):
     app_module.perform_account_liquidation("ACC1", "key", "secret", live_mode=True)
     assert len(posts) == 2
     assert all("/go-to-cash" in url for url in posts)
+    assert "S1/go-to-cash" in posts[0]
+    assert "S2/go-to-cash" in posts[1]
 
 
 # ---------------------------------------------------------------------------
