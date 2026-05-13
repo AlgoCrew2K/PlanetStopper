@@ -118,6 +118,7 @@ def compute_breakeven_update(
     current_hold_ticks: int,
     currently_breakeven_locked: bool,
     is_triggered: bool,
+    previously_persisted_stop_level: float | None = None,
 ) -> tuple[int, bool, float]:
     """
     Computes the breakeven-lock state update and the resolved stop trigger level.
@@ -142,6 +143,18 @@ def compute_breakeven_update(
     is ALWAYS True regardless of any other input. The inline producer never
     resets breakeven_locked to False; that one-way transition must be preserved.
 
+    MONOTONICITY INVARIANT (trailing-stop ratchet): a trailing stop must never
+    move DOWN over a position's lifetime. When the caller supplies the
+    previously-persisted stop level (``previously_persisted_stop_level``), the
+    returned ``stop_trigger_level`` is clamped to be no lower than that prior
+    value — this enforces the ratchet across cycles. The clamp is bypassed
+    when ``is_triggered=True`` because the sentinel TRIGGERED_OVERRIDE_LEVEL
+    (-999.0) is a committed-exit marker, not a live stop boundary. When
+    ``previously_persisted_stop_level is None`` (default), the clamp is a
+    no-op and behavior is identical to the pre-monotonicity contract — this
+    preserves backward-compatibility with fixture-driven callers that do not
+    thread prior state.
+
     Pure. No I/O. No state. Caller assigns the returned new_hold_ticks and
     new_breakeven_locked back into bot_state.
     """
@@ -156,7 +169,11 @@ def compute_breakeven_update(
     else:
         stop_trigger_level = base_stop_level
     if is_triggered:
+        # Triggered stop bypasses monotonicity by design — exit is committed.
         stop_trigger_level = TRIGGERED_OVERRIDE_LEVEL
+    elif previously_persisted_stop_level is not None:
+        # Trailing-stop ratchet: never move the stop DOWN across cycles.
+        stop_trigger_level = max(previously_persisted_stop_level, stop_trigger_level)
     return int(new_hold_ticks), new_breakeven_locked, float(stop_trigger_level)
 
 
