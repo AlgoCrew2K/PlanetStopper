@@ -133,4 +133,23 @@ python app.py
 
 Navigate to the local server address (`http://127.0.0.1:5000`) in your browser to view the interactive live dashboard, view per-symphony logs, and configure settings.
 
+---
+
+## Operator Runbooks
+
+Procedures for common operational scenarios:
+
+- [Composer Rejection Diagnostic](docs/runbooks/composer-rejection-diagnostic.md) — diagnosing and resolving Composer API rejection loops
+- [tzdata Missing on Host](docs/runbooks/tzdata-missing-on-host.md) — resolving `ZoneInfoNotFoundError` on hosts without IANA tzdata
+- [Optuna Recalibration](docs/runbooks/optuna-recalibration.md) — resetting the Optuna study DB after calibration-shifting code changes
+
+---
+
+## Architecture Notes
+
+- **Math engine constants:** All numeric constants in `math_engine.py` are named and documented. The codebase has zero unnamed numeric literals in the math layer. Provenance for every constant is tracked in [docs/math_engine/constants.md](docs/math_engine/constants.md).
+- **Test harness:** `pytest` suite (576 passing); live-execution tests excluded by default, opt in via `--include-live`. Run via `/run-tests` skill.
+
+---
+
 *Disclaimer: AlphaBotNext is an automated execution tool. Algorithmic trading carries significant risk. Always test parameters in Dry Run mode before enabling `LIVE_EXECUTION`.*
