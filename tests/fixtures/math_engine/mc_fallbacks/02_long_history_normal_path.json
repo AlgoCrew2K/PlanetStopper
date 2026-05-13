@@ -1,0 +1,22 @@
+{
+  "name": "long_history_normal_path",
+  "description": "SPY history with 50 days (well above MC_MIN_HISTORY_DAYS=20 and MC_VOL_WINDOW_DAYS-1=19). run_monte_carlo runs the full MC path using the windowed vol calculation (if-branch at line 460: len(spy_returns)=50 >= 19). Negative control for the short-history fixture: result must be a finite float distinct from 100.0.",
+  "function": "run_monte_carlo",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating",
+      "num_days": 50,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.01
+    },
+    "spy_today_return": 0.5,
+    "simulation_paths": 5000,
+    "neighbor_k": 150,
+    "numpy_seed": 42
+  },
+  "expected": 50.62,
+  "derivation": "50 >= MC_MIN_HISTORY_DAYS(20): guard passes, full MC runs. len(spy_returns)=50 >= 19: windowed vol if-branch taken (today_vol uses tail-19 slice + spy_today). Captured from production code with numpy.random.seed(42). Differs from the 15-day fixture (100.0) because different code paths produce different outputs."
+}

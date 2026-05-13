@@ -1,0 +1,21 @@
+{
+  "name": "missing_ticker_spy_substitution",
+  "description": "Ticker 'XYZ' is absent from all 30 historical days; SPY is present every day. When XYZ is not in day_data, the returns_matrix cell is set to spy_ret (line 491 fallback). All portfolio returns are therefore identical to the SPY daily returns. With current_symphony_return=0.3 (last_percent_change=0.003) and historical SPY returns in +/-0.5 range, roughly half the simulated paths exceed 0.3 -> prob ~50%. This pins that the missing-ticker fallback produces a valid, finite result in [0, 100].",
+  "function": "run_monte_carlo",
+  "inputs": {
+    "holdings": [
+      {"ticker": "XYZ", "allocation": 1.0, "last_percent_change": 0.003}
+    ],
+    "historical_data_spec": {
+      "kind": "spy_only",
+      "num_days": 30,
+      "spy_amplitude": 0.005
+    },
+    "spy_today_return": 0.5,
+    "simulation_paths": 5000,
+    "neighbor_k": 150,
+    "numpy_seed": 42
+  },
+  "expected": 50.46000000000001,
+  "derivation": "XYZ absent from all days -> returns_matrix uses spy_ret (line 491). historical SPY returns are +-0.005 -> +-0.5 pct after scaling. current_symphony_return = 0.003 * 100 * 1.0 = 0.3. Seed=42 produces below_count ~= 2477/5000 -> prob = (5000-2477)/5000*100 = 50.46. Captured from production code."
+}
