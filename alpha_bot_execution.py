@@ -180,7 +180,11 @@ def fetch_alpaca_history(tickers, current_date_str):
                 print("Failed to download batch after multiple retries.")
                 break
 
-            data = response.json()
+            try:
+                data = response.json()
+            except ValueError as e:
+                print(f"Error parsing Alpaca response JSON: HTTP {response.status_code} - {e}")
+                break
             if "bars" in data:
                 for symbol, bars in data["bars"].items():
                     for j in range(1, len(bars)):

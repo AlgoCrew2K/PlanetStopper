@@ -580,3 +580,232 @@ def test_get_current_et_except_includes_KeyError_for_ZoneInfoNotFoundError():
         "Required fix: add KeyError to the except union at ~L259, e.g. "
         "`except (ImportError, KeyError):`."
     )
+
+
+# ---------------------------------------------------------------------------
+# Helpers for Test 8 — response.json() wrap detection
+# ---------------------------------------------------------------------------
+
+
+# Exception type names (bare Name ids) that cover ValueError and its
+# relevant subclasses.  JSONDecodeError is a subclass of ValueError; the
+# requests library re-exports it as requests.exceptions.JSONDecodeError
+# (an Attribute node, not a bare Name).  We therefore accept any of the
+# following bare names as "covers ValueError":
+#   ValueError        — covers JSONDecodeError transitively
+#   JSONDecodeError   — narrower but still sufficient
+#   Exception         — over-broad but technically covers it; listed only
+#                       so the helper is exhaustive; the broad-except tests
+#                       above already forbid this form.
+_JSON_COVERING_NAMES: frozenset[str] = frozenset(
+    {"ValueError", "JSONDecodeError", "Exception"}
+)
+
+
+def _response_json_calls_in_function(
+    source: str, function_name: str
+) -> tuple[ast.Module, list[ast.Call]]:
+    """Return *(tree, calls)* where *tree* is the single ast.Module produced
+    by parsing *source* and *calls* is every ast.Call node that represents a
+    `response.json()` call inside *function_name*.
+
+    Returning the parse tree alongside the calls is intentional: callers that
+    also need to walk the AST (e.g. to find the enclosing function node) MUST
+    use this same tree so that all ast node objects share identity.  Calling
+    ast.parse(source) a second time produces a structurally identical but
+    object-distinct tree; cross-tree identity checks (`sub is target_call`)
+    will always return False even when the call is genuinely present.
+
+    Matches the pattern `<any_name>.json()` where the attribute is 'json'
+    and the argument list is empty — this is the canonical form of
+    `requests.Response.json()` in the codebase.  We do not require the
+    object to be named exactly 'response' to be robust against simple
+    variable renames, but we DO require the call to be attribute-style
+    (Attribute node) and zero-argument (no positional or keyword args),
+    which uniquely identifies the Response.json() decode call.
+    """
+    tree = ast.parse(source)
+    target_func: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == function_name:
+                target_func = node
+                break
+    assert target_func is not None, (
+        f"Function '{function_name}' not found in alpha_bot_execution.py. "
+        "If the function was renamed, this test must be updated to match."
+    )
+    calls: list[ast.Call] = []
+    for node in ast.walk(target_func):
+        if not isinstance(node, ast.Call):
+            continue
+        func_node = node.func
+        if not isinstance(func_node, ast.Attribute):
+            continue
+        if func_node.attr != "json":
+            continue
+        if node.args or node.keywords:
+            continue  # .json() takes no arguments in normal usage
+        calls.append(node)
+    return tree, calls
+
+
+def _call_is_inside_try(
+    function_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    target_call: ast.Call,
+) -> bool:
+    """Return True iff *target_call* is a descendant of at least one
+    ast.Try node inside *function_node* whose handlers include a type
+    that covers ValueError (see _JSON_COVERING_NAMES).
+
+    Algorithm: walk the function body collecting (Try, handler-names) pairs.
+    For each such Try, walk its subtree looking for the exact target_call
+    identity.  If found, inspect the Try's handlers for a covering name.
+
+    Note on Attribute-type handlers (e.g., `except requests.exceptions.
+    JSONDecodeError`): those have ast.Attribute type nodes, not ast.Name.
+    We accept them as valid by checking for any Attribute whose final
+    .attr is 'JSONDecodeError' — this avoids needing to resolve the full
+    dotted path while still being specific enough.
+    """
+    for node in ast.walk(function_node):
+        if not isinstance(node, ast.Try):
+            continue
+        # Check whether target_call lives inside this Try's body/orelse/
+        # finalbody subtrees (i.e., under protection of its handlers).
+        call_found_in_protected_body = any(
+            sub is target_call
+            for stmt in node.body
+            for sub in ast.walk(stmt)
+        )
+        if not call_found_in_protected_body:
+            continue
+        # The call is inside this Try's body.  Now check whether any
+        # handler covers ValueError or a named subclass.
+        for handler in node.handlers:
+            exc_type = handler.type
+            if exc_type is None:
+                # bare except — covers everything including ValueError
+                return True
+            if isinstance(exc_type, ast.Name) and exc_type.id in _JSON_COVERING_NAMES:
+                return True
+            if isinstance(exc_type, ast.Attribute) and exc_type.attr == "JSONDecodeError":
+                # e.g. requests.exceptions.JSONDecodeError or json.JSONDecodeError
+                return True
+            if isinstance(exc_type, ast.Tuple):
+                for elt in exc_type.elts:
+                    if isinstance(elt, ast.Name) and elt.id in _JSON_COVERING_NAMES:
+                        return True
+                    if isinstance(elt, ast.Attribute) and elt.attr == "JSONDecodeError":
+                        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — response.json() in fetch_alpaca_history must be try-wrapped
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_alpaca_history_wraps_response_json_in_try():
+    """response.json() inside fetch_alpaca_history must be enclosed in a
+    try/except whose handlers cover ValueError (or a recognised subclass
+    such as json.JSONDecodeError / requests.exceptions.JSONDecodeError).
+
+    SPECIFIC FAILURE MODE:
+    At authoring time, alpha_bot_execution.py L183 contains:
+
+        data = response.json()
+
+    This line sits OUTSIDE any try/except — it is at the top level of the
+    function's while-loop body, after the retry loop's `if not success:
+    break` guard.  The retry loop's own try/except only wraps
+    `requests.RequestException`, which covers network-level failures
+    (connection refused, timeout, DNS error).  It does NOT wrap the
+    JSON-decode step.
+
+    PRODUCTION CONCERN:
+    An HTTP 200 response does not guarantee a JSON body.  Real scenarios
+    where Alpaca returns HTTP 200 with non-JSON content:
+      - CDN edge nodes return an HTML error page (e.g., Cloudflare 503
+        served as 200 with content-type: text/html) on transient gateway
+        overload.
+      - API path misrouting (proxy config bug) returns a JSON-envelope
+        wrapper from the gateway rather than the Alpaca data layer; the
+        outer envelope may be valid JSON but lack the "bars" key, OR the
+        gateway may return a plain-text diagnostic that is not JSON at all.
+      - Alpaca staging/canary deployments occasionally return a 200 with
+        an HTML maintenance page before the health check redirects kick in.
+
+    In every one of these scenarios, `response.json()` raises
+    `requests.exceptions.JSONDecodeError` (a subclass of `ValueError`).
+    Because L183 is unguarded, the exception propagates uncaught out of
+    `fetch_alpaca_history`, unwinds through the main scheduler loop, and
+    crashes the subprocess for that minute — the engine misses a full
+    execution cycle including all risk decisions for live positions.
+
+    REQUIRED FIX:
+    Wrap `response.json()` in a try/except that catches ValueError (or
+    the narrower json.JSONDecodeError / requests.exceptions.JSONDecodeError).
+    On decode failure: log the content-type and first 200 chars of the
+    response body, then break out of the page loop with empty data for
+    this batch (same semantics as `if not success: break` above it).
+
+    Minimal correct pattern:
+        try:
+            data = response.json()
+        except (ValueError, KeyError):
+            print(f"Non-JSON response from Alpaca ...")
+            break
+
+    EXPECTED STATE AT AUTHORING: RED.
+    L183 is not wrapped; this test will FAIL against the current code.
+    It will turn GREEN once the implementer wraps response.json() in a
+    try/except covering ValueError (or an accepted subclass/alias).
+    """
+    source = _read_source(ALPHA_BOT_PATH)
+
+    # Step 1 + 2 share ONE parse tree so that ast node identity is consistent.
+    # _response_json_calls_in_function returns (tree, calls); reusing that tree
+    # here ensures `sub is target_call` comparisons in _call_is_inside_try work
+    # correctly — a second ast.parse(source) call produces object-distinct nodes
+    # even for identical source, making all identity checks silently return False.
+    tree, json_calls = _response_json_calls_in_function(source, "fetch_alpaca_history")
+
+    # Step 2: locate fetch_alpaca_history in the SHARED tree (same tree as json_calls).
+    target_func: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == "fetch_alpaca_history":
+                target_func = node
+                break
+
+    assert target_func is not None, (
+        "Function 'fetch_alpaca_history' not found in alpha_bot_execution.py. "
+        "If the function was renamed, this test must be updated to match."
+    )
+
+    assert json_calls, (
+        "No .json() call found inside fetch_alpaca_history. "
+        "If the JSON-decode step was refactored to a helper, locate the "
+        "new call site and update this test accordingly."
+    )
+
+    # Step 3: for every .json() call, assert it is inside a Try whose
+    # handlers cover ValueError or a recognised subclass.
+    unguarded: list[int] = []
+    for call in json_calls:
+        if not _call_is_inside_try(target_func, call):
+            unguarded.append(call.lineno)
+
+    assert not unguarded, (
+        f"response.json() call(s) at line(s) {unguarded} inside "
+        "fetch_alpaca_history are NOT wrapped in a try/except that covers "
+        "ValueError (or json.JSONDecodeError / requests.exceptions."
+        "JSONDecodeError). An HTTP 200 response with a non-JSON body "
+        "(CDN error page, gateway HTML, content-type misroute) will raise "
+        "requests.exceptions.JSONDecodeError, propagate uncaught out of "
+        "fetch_alpaca_history, and crash the scheduler subprocess — the "
+        "engine misses the full execution cycle. "
+        "Fix: wrap response.json() in try/except (ValueError, KeyError) "
+        "with a log + break fallback."
+    )
