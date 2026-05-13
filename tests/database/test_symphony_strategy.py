@@ -152,53 +152,112 @@ def test_round_trip_custom_strategy_preserved():
 
 
 # ---------------------------------------------------------------------------
-# Test 4: name normalization — PRODUCTION GAP documented
+# Test 4: name normalization — variants must merge to a single row
 # ---------------------------------------------------------------------------
 
-def test_name_normalization_gap_documented(isolated_db):
+def _count_all_rows(db_path: str) -> int:
+    """Return total row count in symphony_strategies."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM symphony_strategies")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+
+def test_name_normalization_merges_variants_to_same_row(isolated_db):
     """
-    PRODUCTION GAP: get_symphony_strategy and save_symphony_strategy do NOT
-    call normalize_name() internally.  The normalize_name() utility exists
-    in database.py but is not applied on the DB key.
+    get_symphony_strategy and save_symphony_strategy must apply normalize_name()
+    internally so that casing variants of the same symphony name map to a single
+    DB row.
 
-    This test ASSERTS THE CURRENT (BROKEN) BEHAVIOR so that any future fix
-    (calling normalize_name internally) will cause this test to fail and
-    prompt a reviewer to update the test to the correct contract.
+    Scenario A — save raw, fetch normalized:
+      Save custom params under "My Symphony!" (raw mixed-case with punctuation).
+      Fetch under normalize_name("My Symphony!") == "my symphony!".
+      The fetched params must equal the saved custom params, NOT DEFAULT_STRATEGY.
+      Only one row must exist in symphony_strategies after both operations.
 
-    When the gap is fixed, this test should be replaced with one that
-    asserts "My Symphony!" and its normalized form share the same row.
+    Scenario B — fetch normalized first, then save raw (inverse order):
+      A fresh symphony is auto-inited via a normalized lookup.
+      Then custom params are saved under the raw name variant.
+      The re-fetch under the normalized form must return the custom params.
+      Still only one row in the table.
 
-    Current observed behavior: the two name variants produce TWO independent
-    rows with independent data.
+    normalize_name() contract: name.strip().lower() — punctuation is preserved,
+    so normalize_name("My Symphony!") == "my symphony!" (not "my symphony").
     """
     raw_name = "My Symphony!"
-    normalized = normalize_name(raw_name)  # produces "my symphony!"
+    normalized = normalize_name(raw_name)  # "my symphony!"
 
+    # Precondition: the two forms must actually differ, otherwise the test is vacuous
     assert raw_name != normalized, (
-        "precondition: raw_name and normalized must differ for this test to be meaningful"
+        "precondition: raw_name and normalized must differ — "
+        "if normalize_name is a no-op for this input, choose a different fixture"
     )
 
-    # Save a custom strategy under the raw name
-    custom_params = {k: v * 2.0 for k, v in DEFAULT_STRATEGY.items()}
-    save_symphony_strategy(raw_name, custom_params, DEFAULT_LOCKED_VARS)
+    # ------------------------------------------------------------------
+    # Scenario A: save under raw name, fetch under normalized name
+    # ------------------------------------------------------------------
+    custom_params_a = {k: v * 2.0 for k, v in DEFAULT_STRATEGY.items()}
 
-    # Fetch under the normalized name — with the gap, this auto-inits a
-    # SECOND row and returns DEFAULT_STRATEGY, not the custom params.
-    result_via_normalized = get_symphony_strategy(normalized)
+    save_symphony_strategy(raw_name, custom_params_a, DEFAULT_LOCKED_VARS)
+    result_a = get_symphony_strategy(normalized)
 
-    # CURRENT (BROKEN) BEHAVIOR: normalized lookup returns defaults, not custom
-    assert result_via_normalized["params"] == DEFAULT_STRATEGY, (
-        "PRODUCTION GAP CONFIRMED: fetching via normalized name returns DEFAULT_STRATEGY "
-        "instead of the custom params saved under the raw name. "
-        "Fix: normalize the key inside get_symphony_strategy and save_symphony_strategy."
+    assert result_a["params"] == custom_params_a, (
+        "Scenario A: fetching via normalized name must return the params saved "
+        "under the raw name; got DEFAULT_STRATEGY — normalization is not applied "
+        "inside get_symphony_strategy / save_symphony_strategy"
+    )
+    assert result_a["locked_vars"] == DEFAULT_LOCKED_VARS, (
+        "Scenario A: fetching via normalized name must return the locked_vars "
+        "saved under the raw name"
     )
 
-    # Verify both rows exist independently (two DB rows = the gap)
-    raw_row = _fetch_raw_row(isolated_db, raw_name)
-    norm_row = _fetch_raw_row(isolated_db, normalized)
-    assert raw_row is not None, "row saved under raw name must exist"
-    assert norm_row is not None, (
-        "auto-init under normalized name created a second row — gap confirmed"
+    # One row only — no phantom duplicate created by the normalized lookup
+    assert _count_all_rows(isolated_db) == 1, (
+        "Scenario A: only one row must exist after save(raw) + get(normalized); "
+        f"found {_count_all_rows(isolated_db)} rows — a duplicate was created"
+    )
+
+    # ------------------------------------------------------------------
+    # Scenario B: fetch normalized first, then save under raw name
+    # ------------------------------------------------------------------
+    # Use a separate symphony name for a clean slate within the same isolated_db
+    raw_name_b = "Tech Momentum  "   # trailing spaces — normalize strips them
+    normalized_b = normalize_name(raw_name_b)  # "tech momentum"
+
+    assert raw_name_b != normalized_b, (
+        "precondition: raw_name_b and normalized_b must differ for Scenario B"
+    )
+
+    # Auto-init via normalized form
+    result_b_init = get_symphony_strategy(normalized_b)
+    assert result_b_init["params"] == DEFAULT_STRATEGY, (
+        "Scenario B precondition: normalized auto-init must return DEFAULT_STRATEGY"
+    )
+
+    row_count_after_init = _count_all_rows(isolated_db)  # should be 2 total (A + B)
+
+    # Now save custom params under the raw (un-normalized) form
+    custom_params_b = {k: v * 3.0 for k, v in DEFAULT_STRATEGY.items()}
+    save_symphony_strategy(raw_name_b, custom_params_b, [])
+
+    # Fetch again under the normalized form — must see the custom params
+    result_b_after_save = get_symphony_strategy(normalized_b)
+
+    assert result_b_after_save["params"] == custom_params_b, (
+        "Scenario B: after saving under raw name, fetching via normalized name "
+        "must return the custom params — not DEFAULT_STRATEGY"
+    )
+    assert result_b_after_save["locked_vars"] == [], (
+        "Scenario B: locked_vars must reflect the value saved under raw name"
+    )
+
+    # Row count must not have grown — save(raw) should UPDATE the existing row
+    assert _count_all_rows(isolated_db) == row_count_after_init, (
+        "Scenario B: save under raw name must UPDATE the existing normalized row, "
+        f"not INSERT a new one; row count changed from {row_count_after_init} "
+        f"to {_count_all_rows(isolated_db)}"
     )
 
 
