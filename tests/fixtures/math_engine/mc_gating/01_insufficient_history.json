@@ -1,0 +1,22 @@
+{
+  "name": "insufficient_history_short_circuit",
+  "description": "Fewer than the MC minimum-history threshold of valid_dates. run_monte_carlo MUST short-circuit and return the documented degenerate-case probability (today: 100.0 — 'no data means we cannot reject beating the benchmark'). This pins the integer threshold AND the float-output sentinel as TWO DIFFERENT semantic roles that happen to share value 100.0.",
+  "function": "run_monte_carlo",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating",
+      "num_days": 10,
+      "spy_amplitude": 0.01,
+      "aaa_amplitude": 0.01
+    },
+    "spy_today_return": 0.5,
+    "simulation_paths": 5000,
+    "neighbor_k": 150,
+    "numpy_seed": 42
+  },
+  "expected": 100.0,
+  "derivation": "len(valid_dates) = 10 < MC_MIN_HISTORY_DAYS (20). The function short-circuits at the first guard and returns the MC_INSUFFICIENT_HISTORY_PROB sentinel (currently 100.0). This is a structural pin — the value is not derived from inputs; it is the documented degenerate-output."
+}
