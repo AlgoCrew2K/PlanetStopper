@@ -27,7 +27,7 @@ These surface inside `get_current_et()` in `alpha_bot_execution.py` (lines 262�
 | Month range | Offset applied |
 |---|---|
 | March – November (months 3–11) | UTC − 4 h (EDT assumed) |
-December – February (months 12–2) | UTC − 5 h (EST assumed) |
+| December – February (months 12–2) | UTC − 5 h (EST assumed) |
 
 AlphaBot **does not crash, does not skip the tick, and does not log a warning**. It silently uses the hardcoded offset and continues. The engine stays operational but loses DST-change precision: during the brief window when UTC offset shifts (second Sunday in March; first Sunday in November) the offset will be wrong by 1 hour, which can cause AlphaBot to enter or exit its market-hours window at the wrong time.
 
