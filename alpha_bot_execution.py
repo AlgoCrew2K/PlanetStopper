@@ -470,18 +470,10 @@ def main():
                 # -----------------------------------
 
                 # Pre-calculate True VWAP difference unconditionally so it can be logged in the chart history
-                weighted_vwap_diff = 0.0
-                valid_vwap_weight = 0.0
+                # First normalize ticker fields (working_ticker fallback) — data prep, stays in caller
                 for h in holdings:
                     h["ticker"] = h.get("working_ticker", h.get("ticker"))
-                    t = h["ticker"]
-                    alloc = h.get("allocation", 0.0)
-                    if t in live_vwaps:
-                        p = live_vwaps[t]["last_price"]
-                        v = live_vwaps[t]["vwap"]
-                        if v > 0:
-                            weighted_vwap_diff += alloc * ((p - v) / v)
-                            valid_vwap_weight += alloc
+                weighted_vwap_diff, valid_vwap_weight = math_engine.compute_vwap_signals(holdings, live_vwaps)
                 symphony_holdings = [h.get("ticker") for h in holdings]
 
                 if symphony_id not in bot_state:
