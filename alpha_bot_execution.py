@@ -245,7 +245,7 @@ def fetch_intraday_vwaps(tickers, headers, current_et):
                         vwap = cumulative_pv / cumulative_v
                         last_price = df['c'].iloc[-1]
                         vwap_data[sym] = {"vwap": vwap, "last_price": last_price}
-        except (requests.RequestException, ValueError, KeyError) as e:
+        except (requests.RequestException, ValueError, KeyError, TypeError) as e:
             print(f"Error fetching VWAP for batch {batch}: {e}")
 
     return vwap_data
@@ -256,7 +256,7 @@ def get_current_et():
     try:
         from zoneinfo import ZoneInfo
         return datetime.now(ZoneInfo("America/New_York"))
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, KeyError):
         if 3 <= utc_now.month <= 11:
             return utc_now - timedelta(hours=4)
         return utc_now - timedelta(hours=5)
