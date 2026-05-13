@@ -167,6 +167,7 @@ def normalize_name(name):
 
 # --- Symphony Strategy Management (NEW) ---
 def get_symphony_strategy(symphony_name):
+    symphony_name = normalize_name(symphony_name)
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT parameters, locked_vars FROM symphony_strategies WHERE symphony_name = ?", (symphony_name,))
@@ -180,6 +181,7 @@ def get_symphony_strategy(symphony_name):
     return {"params": DEFAULT_STRATEGY.copy(), "locked_vars": DEFAULT_LOCKED_VARS.copy()}
 
 def save_symphony_strategy(symphony_name, params, locked_vars):
+    symphony_name = normalize_name(symphony_name)
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
