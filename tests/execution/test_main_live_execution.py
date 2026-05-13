@@ -20,10 +20,55 @@ Three scenarios cover the LIVE branch end-to-end:
 
   1. ``execute_sell_to_cash`` returns True   → state freeze + alert fire
   2. ``execute_sell_to_cash`` returns False  → NO state mutation, NO alert
-  3. ``execute_sell_to_cash`` raises          → exception PROPAGATES (no try/except
-                                                wraps the call in main()) but the
-                                                outer ``finally:`` still releases
-                                                the lock
+  3. ``execute_sell_to_cash`` RAISES          → main() catches it, logs it,
+                                                releases the lock, AND still
+                                                executes the final
+                                                ``save_state`` so any PRIOR
+                                                successful iterations are
+                                                persisted (was: re-raised /
+                                                final save_state skipped).
+
+  4. Multi-iteration loss-prevention (NEW):  two symphonies in the same tick,
+                                              one succeeds and one raises —
+                                              the success MUST be persisted
+                                              and the exception MUST NOT
+                                              propagate.
+
+B1-FU1.1 — RED: wrap execute_sell_to_cash
+------------------------------------------
+B1-FU1 surfaced a HIGH-RISK real-money gap: ``execute_sell_to_cash`` is NOT
+wrapped in try/except inside ``main()``. A ``requests.RequestException``
+(HTTP timeout, connection reset, non-JSON response from a partial body, etc.)
+raised mid-batch would:
+
+  * Propagate up through the for-loop, abandoning later items in the chunk.
+  * Skip the outer ``database.save_state(bot_state)`` at line 823 — meaning
+    in-memory mutations from EARLIER successful iterations of the same loop
+    (lines 779-805: ``triggered=True``, ``triggered_at_*``, ``trigger_prices``,
+    snapshot, HWM reset to -999.0) are LOST.
+  * Skip ``database.save_chart_history(chart_history)`` at line 824.
+  * Hit the ``finally:`` and release the lock cleanly.
+  * Re-raise out of ``main()``.
+
+The real-money failure mode: Composer-confirmed SELL (the order DID land on
+the wire) + lost ``triggered=True`` flag (state DB rolled back to pre-loop
+because ``save_state`` never ran) → engine re-fires the same trigger on the
+next minute-cadence tick → DOUBLE-CHARGE.
+
+The correct behaviour (binding contract for the implementer):
+
+  * ``main()`` MUST NOT propagate the exception (catch it at the call site).
+  * State for the CURRENT-iteration symphony: ``triggered`` / ``armed`` left
+    in pre-call state (the exception happened before the freeze block, so
+    nothing should have committed).
+  * State for PRIOR successful iterations in the same loop: MUST be
+    preserved — the final ``save_state`` at line 823 MUST still execute.
+  * Lock MUST be released (already correct via finally).
+  * Exception MUST be logged (so an operator can investigate).
+
+Scenarios 3 and 4 below pin this behaviour as RED tests against the current
+(buggy) implementation. Both should FAIL until ``main()`` wraps the executor
+call.
 
 Mocking philosophy
 ------------------
@@ -38,27 +83,6 @@ Per project memory ``feedback_no_hardcoded_test_values``, every assertion
 touching producer-computed values (returns, prices, hwm) is derived from the
 fixture this test seeds — never from literal expectations of math the engine
 produced.
-
-Real-money gap surfaced
------------------------
-``execute_sell_to_cash`` is NOT wrapped in try/except inside ``main()``. A
-``requests.RequestException`` (HTTP timeout, connection reset, etc.) raised
-mid-batch will:
-  * Propagate up through the for-loop, abandoning any later items in the chunk.
-  * Skip the outer ``database.save_state(bot_state)`` at line 823 — meaning
-    in-memory mutations from the LOOP-LOCAL state freeze (lines 779-805) are
-    LOST.
-  * Skip ``database.save_chart_history(chart_history)`` at line 824.
-  * Hit the ``finally:`` and release the lock cleanly.
-  * Re-raise out of ``main()``.
-
-This means a partial-chunk failure on a multi-symphony tick can leave the
-state DB inconsistent (earlier loop iterations' mutations dropped because
-``save_state`` never ran). This is a real-money concern: a Composer SELL
-that DID execute on the wire but raised on the response read would lose
-its ``triggered=True`` flag and re-fire on the next cycle. Flagged for PM.
-Scenario 3 below pins the CURRENT behaviour so any future fix is a
-deliberate, reviewed change rather than a silent regression.
 """
 
 from unittest.mock import patch
@@ -230,15 +254,6 @@ class TestLiveExecutionHttpFailureSkipsStateFreeze:
         any non-trigger updates earlier in the cycle (HWM advancement,
         below_stop_count increments, etc.)
       * Lock is released cleanly
-
-    REAL-MONEY GAP (documented for PM): on Composer rejection, the symphony's
-    ``armed`` state may have been independently set to False by the
-    DISARMED (Conditions Recovered) branch earlier in the cycle — meaning a
-    later tick on the SAME problem will NOT re-fire the trailing-stop logic
-    unless arming conditions return. This is the current production
-    behaviour and is intentional, but it means a transient Composer outage
-    coinciding with a recovery move could leave the symphony un-protected
-    for the rest of the day. Worth a follow-up cycle.
     """
 
     def test_live_failure_skips_state_freeze_and_alert(self, patched_environment):
@@ -312,31 +327,52 @@ class TestLiveExecutionHttpFailureSkipsStateFreeze:
 
 
 # =============================================================================
-# Scenario 3 — LIVE_EXECUTION=True, execute_sell_to_cash raises an exception.
+# Scenario 3 — LIVE_EXECUTION=True, execute_sell_to_cash RAISES.
+#
+# B1-FU1.1 RED: contract was "exception propagates + final save_state skipped".
+# It is now: "exception is caught + final save_state still runs + earlier
+# successful iterations are preserved + lock released + exception logged."
 # =============================================================================
-class TestLiveExecutionExceptionPropagates:
-    """Real-money path, unhandled exception.
+class TestLiveExecutionExceptionIsCaughtAndStateIsPreserved:
+    """Real-money path, unhandled-in-executor exception.
 
     Setup: B1 scenario-1 fixture, ``LIVE_EXECUTION=True``,
-    ``execute_sell_to_cash`` raises ``requests.RequestException``.
+    ``execute_sell_to_cash`` raises ``requests.RequestException`` (the same
+    family ``execute_sell_to_cash`` itself catches internally — but for the
+    sake of this test we simulate a defensive failure where the executor
+    DOES leak an exception out, since e.g. a JSON decode error or a
+    KeyError from a malformed response would NOT be caught by the
+    executor's own narrow ``except`` clause).
 
-    Production behaviour (verified against alpha_bot_execution.py:771-827):
-    there is NO try/except around the ``execute_sell_to_cash`` call at line
-    773. An exception raised there will:
-      * Abandon the execution-queue for-loop mid-batch.
-      * Skip the outer ``database.save_state(bot_state)`` at line 823.
-      * Skip the outer ``database.save_chart_history(...)`` at line 824.
-      * Hit the ``finally:`` at line 826 → ``release_lock()`` runs.
-      * Re-raise out of ``main()``.
+    Required correct behaviour (binding contract — B1-FU1.1):
 
-    This pins the CURRENT behaviour. A future fix to catch the exception
-    and proceed (so save_state still runs and partial-batch progress is
-    persisted) will need to update this test deliberately.
+      * ``main()`` MUST NOT propagate the exception. The call site at
+        ``alpha_bot_execution.py:773`` must be wrapped (try/except, journal
+        pattern, or equivalent) so a single-symphony executor failure does
+        NOT abandon the rest of the cycle.
 
-    Real-money concern documented in module docstring above.
+      * The state for the symphony whose executor raised: ``triggered``
+        remains False, ``armed`` left in pre-call state. The freeze block
+        at lines 779-805 must NOT have run for it (the exception happened
+        BEFORE commitment, so nothing should be persisted as "triggered").
+
+      * The final ``database.save_state(bot_state)`` at line 823 MUST
+        still execute. This is the load-bearing invariant: without it, any
+        in-memory mutations from EARLIER successful iterations of the same
+        chunk are lost.
+
+      * The lock MUST be released (already correct via the ``finally:``).
+
+      * The exception MUST be logged in some operator-visible way (so a
+        Composer outage is investigable). We accept any of: a Discord
+        error alert, a ``database.log_symphony_event`` event, a ``print``
+        call to stdout/stderr, or a ``logging`` record. We don't pin the
+        channel — only that SOMETHING was emitted.
     """
 
-    def test_live_exception_propagates_and_releases_lock(self, patched_environment):
+    def test_live_exception_does_not_propagate_lock_released_save_state_runs(
+        self, patched_environment, capsys
+    ):
         env = patched_environment
         _configure_trigger_scenario(env)
 
@@ -351,52 +387,348 @@ class TestLiveExecutionExceptionPropagates:
                  "execute_sell_to_cash",
                  side_effect=requests.RequestException("simulated HTTP failure"),
              ) as mock_execute:
-            # Production has no try/except around execute_sell_to_cash, so
-            # the exception MUST propagate. Pinning this prevents a silent
-            # regression where a future swallow-all except hides Composer
-            # outages from the operator.
-            with pytest.raises(requests.RequestException, match="simulated HTTP failure"):
+            # The exception MUST NOT escape main(). Any escape is a regression
+            # to the pre-FU1.1 behaviour and would re-introduce the
+            # double-charge real-money risk.
+            try:
                 alpha_bot_execution.main()
+            except BaseException as exc:  # pragma: no cover — only fires on regression
+                pytest.fail(
+                    f"main() must not propagate exceptions raised by "
+                    f"execute_sell_to_cash; got {type(exc).__name__}: {exc}. "
+                    f"Wrap the call site at alpha_bot_execution.py:~773 so a "
+                    f"single-symphony executor failure cannot abandon the rest "
+                    f"of the cycle (real-money: lost triggered=True → "
+                    f"double-charge on next tick)."
+                )
 
-        # The attempt was made before the exception.
+        # ----- 1. The attempt WAS made -----
         mock_execute.assert_called_once()
         assert mock_execute.call_args.args == (_ACTUAL_SYMPHONY_ID, _ACCOUNT_ID)
 
-        # CRITICAL invariant: the finally-clause MUST have released the lock,
-        # otherwise the next minute-cadence tick would dead-lock the engine.
+        # ----- 2. Lock acquired AND released (still must hold) -----
         env["db"].acquire_lock.assert_called_once()
         env["db"].release_lock.assert_called_once()
 
-        # Discord alert is INSIDE the success branch → never fired.
+        # ----- 3. Final save_state at line 823 MUST have run -----
+        # Before B1-FU1.1, the exception bypassed line 823 entirely and only
+        # earlier in-cycle save_state calls (e.g. the LIVE_EXECUTION-toggle
+        # wipe at line ~357) would have fired. Pin that the LAST save_state
+        # call carries the post-loop bot_state, by asserting it contains the
+        # fixture's symphony key (the toggle-wipe save would too, but the
+        # invariant is "save_state ran AT LEAST once after the exception
+        # site"). The simplest robust pin: save_state was called and the
+        # final call's state dict contains our symphony key.
+        save_calls = env["db"].save_state.call_args_list
+        assert save_calls, (
+            "save_state was never called — the final save_state at line 823 "
+            "is unreachable because the exception bypassed it. This is the "
+            "B1-FU1 bug: in-memory mutations from prior successful iterations "
+            "would be lost."
+        )
+        last_persisted_state = save_calls[-1].args[0]
+        assert _SYMPHONY_ID in last_persisted_state, (
+            "Final save_state must persist the symphony's state. The fact "
+            "that the symphony key is missing means the executor exception "
+            "bypassed the post-loop save_state call."
+        )
+
+        # ----- 4. The failed-iteration symphony was NOT committed as triggered -----
+        # The exception happened BEFORE the freeze block, so triggered must
+        # remain False and no freeze-block keys may be set.
+        last_sym_state = last_persisted_state[_SYMPHONY_ID]
+        assert last_sym_state.get("triggered") is not True, (
+            "An exception during execute_sell_to_cash MUST NOT result "
+            "in a persisted triggered=True for the failed-iteration "
+            "symphony — the freeze block at lines 779-805 is downstream of "
+            "the executor call and must not have run."
+        )
+        for freeze_key in (
+            "triggered_reason",
+            "triggered_at_return",
+            "trigger_prices",
+            "triggered_basket_snapshot",
+        ):
+            assert not last_sym_state.get(freeze_key), (
+                f"Freeze-block key {freeze_key!r} MUST NOT be present in "
+                f"persisted state for the symphony whose executor raised; "
+                f"got {last_sym_state.get(freeze_key)!r}"
+            )
+
+        # ----- 5. Discord exit alert NOT sent (the success-only alert) -----
         env["reporting"].send_discord_alert.assert_not_called()
 
-        # save_state at the BOTTOM of the try-block (line 823) is unreachable
-        # because the exception bypassed it. ``save_state`` MAY have been
-        # called earlier in main() for the LIVE_EXECUTION-toggle wipe
-        # (line 357) — that's expected and unrelated to the trigger freeze.
-        # The invariant we pin is: whatever state WAS persisted does NOT
-        # contain the post-freeze trigger fields (triggered=True, etc.).
-        save_calls = env["db"].save_state.call_args_list
-        if save_calls:
-            last_persisted_state = save_calls[-1].args[0]
-            last_sym_state = last_persisted_state.get(_SYMPHONY_ID, {})
-            assert last_sym_state.get("triggered") is not True, (
-                "An exception during execute_sell_to_cash MUST NOT result "
-                "in a persisted triggered=True — the freeze block at lines "
-                "779-805 is bypassed by the exception, and the final "
-                "save_state at line 823 is unreachable. If a future refactor "
-                "wraps the executor call in try/except and proceeds to "
-                "freeze, update this test deliberately."
+        # ----- 6. The exception MUST be logged (operator visibility) -----
+        # We accept ANY of: stdout/stderr text mentioning the failure,
+        # a database.log_symphony_event call, or a logging record. We don't
+        # pin the channel — just that the operator can find out something
+        # went wrong. The captured stdout from capsys is the simplest path.
+        captured = capsys.readouterr()
+        combined_text = (captured.out or "") + (captured.err or "")
+        log_event_calls = env["db"].log_symphony_event.call_args_list
+        logged_via_event = any(
+            "simulated HTTP failure" in repr(c)
+            or "RequestException" in repr(c)
+            or "exception" in repr(c).lower()
+            or "fail" in repr(c).lower()
+            for c in log_event_calls
+        )
+        logged_via_stdio = (
+            "simulated HTTP failure" in combined_text
+            or "RequestException" in combined_text
+            or "Exception" in combined_text
+            or "EXECUTION FAILED" in combined_text
+        )
+        assert logged_via_event or logged_via_stdio, (
+            "Executor exceptions MUST be logged in an operator-visible way "
+            "(Discord error alert, database.log_symphony_event, print, or "
+            "logging). No record of the simulated failure was found in "
+            "stdout/stderr or in log_symphony_event call args. Without a "
+            "log, a Composer outage is silently swallowed."
+        )
+
+
+# =============================================================================
+# Scenario 4 — Multi-iteration loss prevention (NEW for B1-FU1.1).
+#
+# Two symphonies in the same tick, BOTH trigger. Symphony A's executor
+# succeeds; Symphony B's executor raises. The required behaviour is:
+#
+#   * Symphony A's success is committed (its triggered=True is in the FINAL
+#     persisted state).
+#   * Symphony B remains un-triggered (the exception happened before its
+#     freeze block).
+#   * No exception propagates out of main().
+#   * The final save_state at line 823 runs (this is how A's success becomes
+#     durable; without the wrap, A's mutation would be in-memory only and
+#     lost when the exception unwound through line 823).
+# =============================================================================
+
+# Distinct sentinel IDs for symphony B. Same shape as test_main_pipeline's
+# constants, deliberately suffixed so the two symphonies fan out into TWO
+# separate execution-queue items inside main().
+_SYMPHONY_ID_B = "sym-pipeline-test-002"
+_ACTUAL_SYMPHONY_ID_B = "actual-sym-pipeline-test-002"
+_SYMPHONY_NAME_B = "Pipeline Test Symphony B"
+
+
+def _make_symphony_payload_b(last_percent_change: float):
+    """Composer-shaped payload for symphony B (distinct id from the default).
+
+    Shape mirrors ``_make_symphony_payload`` from ``test_main_pipeline``; only
+    the ids/name differ so the engine sees two distinct symphonies.
+    """
+    return {
+        "id": _SYMPHONY_ID_B,
+        "symphony_id": _ACTUAL_SYMPHONY_ID_B,
+        "name": _SYMPHONY_NAME_B,
+        "last_percent_change": last_percent_change,
+        "current_value": 10000.0,
+        "holdings": [
+            {"ticker": _TICKER, "allocation": 1.0},
+        ],
+    }
+
+
+def _seed_two_symphonies(armed: bool, hwm: float):
+    """Build a bot_state seeded with two distinct symphonies, both armed.
+
+    Mirrors ``_seed_state`` from ``test_main_pipeline`` but adds the second
+    symphony key. Returned state has BOTH _SYMPHONY_ID and _SYMPHONY_ID_B at
+    the top level.
+    """
+    def _per_sym(armed, hwm):
+        return {
+            "high_water_mark": hwm,
+            "shadow_hwm": hwm,
+            "prev_return": 0.0,
+            "armed": armed,
+            "tp_armed": False,
+            "para_armed": False,
+            "triggered": False,
+            "mc_history": [],
+            "below_stop_count": 0,
+            "above_tp_count": 0,
+            "vwap_ticks": 0,
+            "vwap_bleed_ticks": 0,
+            "breakeven_locked": False,
+            "hwm_hold_ticks": 0,
+        }
+
+    return {
+        "date": _FIXED_ET.strftime("%Y-%m-%d"),
+        "last_execution_mode": False,  # avoid the toggle-wipe branch
+        _SYMPHONY_ID: _per_sym(armed, hwm),
+        _SYMPHONY_ID_B: _per_sym(armed, hwm),
+    }
+
+
+class TestLiveExecutionMultiSymphonyPartialFailurePreservesEarlierSuccess:
+    """Two-symphony tick: A succeeds, B raises. A's commit must survive.
+
+    This is the load-bearing real-money invariant of B1-FU1.1. Pre-fix, B's
+    ``RequestException`` propagated out of the executor for-loop, skipped the
+    final ``save_state`` at line 823, and rolled the in-memory ``triggered=True``
+    flag for A out of existence. A was actually sold to cash by Composer (the
+    HTTP call returned 200 from A's perspective), but the engine "forgot"
+    that — and on the next minute tick, A would be re-evaluated as still
+    armed-and-not-triggered, and the engine would issue a SECOND sell-to-cash
+    for A → double-charge.
+
+    Post-fix:
+      * main() catches B's exception, logs it, continues past the failed
+        iteration (or breaks the loop cleanly), and reaches the final
+        save_state at line 823 with A's freeze block already applied.
+      * A is durably persisted as triggered.
+      * B is persisted in its pre-call state (triggered=False).
+    """
+
+    def test_a_succeeds_b_raises_a_is_preserved_no_exception_propagates(
+        self, patched_environment
+    ):
+        env = patched_environment
+
+        # Both symphonies report the same fixture-derived current_return so
+        # both will be evaluated identically downstream. compute_exit_confirmation
+        # is patched globally below to force the trailing-stop branch for both.
+        env["fetch_symphony_stats"].return_value = [
+            _make_symphony_payload(last_percent_change=_FIXTURE_PCT_CHANGE),
+            _make_symphony_payload_b(last_percent_change=_FIXTURE_PCT_CHANGE),
+        ]
+        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(_LIVE_PRICE)
+        env["db"].load_state.return_value = _seed_two_symphonies(
+            armed=True, hwm=_SEED_HWM
+        )
+
+        # Per-call dispatch: A's actual_id returns True; B's actual_id raises.
+        # We don't care about call order in the chunk loop — the production
+        # code preserves insertion order from ``execution_queue.append`` and
+        # the for-loop iterates in that order, so A is invoked first because
+        # ``fetch_symphony_stats`` returned A then B. Either order is fine
+        # for this assertion set, but A-before-B is the more interesting
+        # real-money scenario (A commits, then B blows up — A must survive).
+        def _executor_side_effect(actual_id, account):
+            if actual_id == _ACTUAL_SYMPHONY_ID:
+                return True
+            if actual_id == _ACTUAL_SYMPHONY_ID_B:
+                raise requests.RequestException("simulated HTTP failure for B")
+            # Anything else is a fixture wiring bug.
+            raise AssertionError(
+                f"executor invoked with unexpected actual_id={actual_id!r}; "
+                f"fixture expected {_ACTUAL_SYMPHONY_ID!r} or "
+                f"{_ACTUAL_SYMPHONY_ID_B!r}"
             )
-            # And no freeze keys should have been written to a persisted state.
-            for freeze_key in (
-                "triggered_reason",
-                "triggered_at_return",
-                "trigger_prices",
-                "triggered_basket_snapshot",
-            ):
-                assert not last_sym_state.get(freeze_key), (
-                    f"Freeze-block key {freeze_key!r} MUST NOT be present in "
-                    f"any persisted state when execute_sell_to_cash raises; "
-                    f"got {last_sym_state.get(freeze_key)!r}"
+
+        with patch.object(alpha_bot_execution, "LIVE_EXECUTION", True), \
+             patch.object(
+                 alpha_bot_execution.math_engine,
+                 "compute_exit_confirmation",
+                 return_value=(3, True),
+             ), \
+             patch.object(
+                 alpha_bot_execution,
+                 "execute_sell_to_cash",
+                 side_effect=_executor_side_effect,
+             ) as mock_execute:
+            try:
+                alpha_bot_execution.main()
+            except BaseException as exc:  # pragma: no cover — only fires on regression
+                pytest.fail(
+                    f"main() must not propagate B's executor exception; "
+                    f"got {type(exc).__name__}: {exc}. The pre-FU1.1 bug was "
+                    f"exactly this: B's exception unwound through the chunk "
+                    f"loop and rolled A's in-memory triggered=True out of "
+                    f"existence (next-tick double-charge for A)."
                 )
+
+        # ----- 1. Both executors were attempted -----
+        # (A first then B per the fan-out order; if B raises before A is even
+        # called, that's a different bug, but the assertion below catches it.)
+        called_actual_ids = [c.args[0] for c in mock_execute.call_args_list]
+        assert _ACTUAL_SYMPHONY_ID in called_actual_ids, (
+            "Symphony A's executor was never called — the chunk loop must "
+            "iterate both queued items."
+        )
+        assert _ACTUAL_SYMPHONY_ID_B in called_actual_ids, (
+            "Symphony B's executor was never called — A's success must not "
+            "short-circuit the rest of the chunk."
+        )
+
+        # ----- 2. Lock acquired AND released -----
+        env["db"].acquire_lock.assert_called_once()
+        env["db"].release_lock.assert_called_once()
+
+        # ----- 3. Final save_state ran AND contains A's freeze -----
+        save_calls = env["db"].save_state.call_args_list
+        assert save_calls, (
+            "save_state was never called — the final save_state at line 823 "
+            "is unreachable because B's exception bypassed it. A's "
+            "triggered=True is lost; next-tick double-charge for A."
+        )
+        last_persisted_state = save_calls[-1].args[0]
+        assert _SYMPHONY_ID in last_persisted_state, (
+            "Final save_state must persist symphony A's state."
+        )
+        assert _SYMPHONY_ID_B in last_persisted_state, (
+            "Final save_state must persist symphony B's state too."
+        )
+
+        # ----- 4. Symphony A's success is DURABLE -----
+        sym_a_state = last_persisted_state[_SYMPHONY_ID]
+        assert sym_a_state.get("triggered") is True, (
+            "Symphony A's triggered=True MUST be in the final persisted "
+            "state. The pre-FU1.1 bug: B's exception bypassed line 823, "
+            "rolling A's in-memory mutation out of existence — Composer had "
+            "already executed the SELL but the engine forgot, and re-fired "
+            "next minute → DOUBLE-CHARGE on A."
+        )
+        assert sym_a_state.get("armed") is False, (
+            "Symphony A must end un-armed (armed flipped to False inside "
+            "the success branch at line 779)."
+        )
+        # Fixture-derived: A's triggered_at_return echoes current_return.
+        expected_a_return = _FIXTURE_PCT_CHANGE * 100.0
+        assert sym_a_state.get("triggered_at_return") == pytest.approx(
+            expected_a_return, rel=1e-9
+        ), "A's triggered_at_return must be derived from the fixture."
+        assert sym_a_state.get("triggered_reason"), (
+            "A's triggered_reason must be set by the freeze block."
+        )
+        # A's trigger_prices snapshot uses the live_vwap last_price.
+        assert sym_a_state.get("trigger_prices", {}).get(_TICKER) == pytest.approx(
+            _LIVE_PRICE, rel=1e-9
+        ), "A's trigger_prices must be populated from live_vwaps."
+
+        # ----- 5. Symphony B was NOT committed as triggered -----
+        sym_b_state = last_persisted_state[_SYMPHONY_ID_B]
+        assert sym_b_state.get("triggered") is not True, (
+            "Symphony B's executor raised BEFORE the freeze block — "
+            "triggered MUST remain False in the persisted state."
+        )
+        for freeze_key in (
+            "triggered_reason",
+            "triggered_at_return",
+            "trigger_prices",
+            "triggered_basket_snapshot",
+        ):
+            assert not sym_b_state.get(freeze_key), (
+                f"Symphony B's freeze-block key {freeze_key!r} MUST NOT be "
+                f"present in the persisted state; got "
+                f"{sym_b_state.get(freeze_key)!r}"
+            )
+
+        # ----- 6. Discord alert fired exactly once — for A only -----
+        alert_calls = env["reporting"].send_discord_alert.call_args_list
+        assert len(alert_calls) == 1, (
+            f"Expected exactly one Discord exit alert (for A's success); "
+            f"got {len(alert_calls)}. B's failure must NOT produce a "
+            f"success-channel exit alert."
+        )
+        alert_args = alert_calls[0].args
+        # The first positional arg to send_discord_alert is the symphony_name.
+        # Pin that it's A's name, not B's — proves A's freeze block (which
+        # immediately precedes the Discord call at line 811) actually ran.
+        assert alert_args and alert_args[0] != _SYMPHONY_NAME_B, (
+            "The single Discord exit alert must NOT be for symphony B "
+            "(B's executor raised before its freeze/alert block)."
+        )
