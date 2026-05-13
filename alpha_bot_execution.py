@@ -86,7 +86,7 @@ def fetch_symphony_stats(account_id):
         time.sleep(1.5)
         if response.status_code == 200:
             return response.json().get("symphonies", [])
-        print(f"Error fetching account {account_id}: {response.text}")
+        print(f"Error fetching account {account_id}: HTTP {response.status_code}")
     except requests.RequestException as e:
         print(f"Exception fetching account {account_id}: {e}")
     return []
@@ -112,12 +112,12 @@ def execute_sell_to_cash(actual_symphony_id, account_id):
                 
             if response.status_code >= 500 and attempt < len(backoff_intervals):
                 delay = backoff_intervals[attempt]
-                print(f"     !!! [COMPOSER ERROR HTTP {response.status_code}]: {response.text}")
+                print(f"     !!! [COMPOSER ERROR HTTP {response.status_code}]")
                 print(f"     -> Retrying in {delay}s...")
                 time.sleep(delay)
                 continue
 
-            print(f"     !!! [COMPOSER REJECTED]: {response.text}")
+            print(f"     !!! [COMPOSER REJECTED]: HTTP {response.status_code}")
             time.sleep(1.5)
             return False
         except requests.RequestException as e:
@@ -245,7 +245,7 @@ def fetch_intraday_vwaps(tickers, headers, current_et):
                         vwap = cumulative_pv / cumulative_v
                         last_price = df['c'].iloc[-1]
                         vwap_data[sym] = {"vwap": vwap, "last_price": last_price}
-        except Exception as e:
+        except (requests.RequestException, ValueError, KeyError) as e:
             print(f"Error fetching VWAP for batch {batch}: {e}")
 
     return vwap_data
@@ -256,7 +256,7 @@ def get_current_et():
     try:
         from zoneinfo import ZoneInfo
         return datetime.now(ZoneInfo("America/New_York"))
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         if 3 <= utc_now.month <= 11:
             return utc_now - timedelta(hours=4)
         return utc_now - timedelta(hours=5)
@@ -283,7 +283,7 @@ def main():
 
         try:
             start_h, start_m = map(int, EXECUTION_START_TIME.split(":"))
-        except:
+        except (ValueError, AttributeError):
             start_h, start_m = 9, 30
 
         market_open = dt_time(start_h, start_m)
