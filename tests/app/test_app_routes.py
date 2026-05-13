@@ -16,10 +16,10 @@ Notes:
 - ``get_status_rank`` lives as a nested function inside ``get_state`` and is
   not patchable from the outside; we assert the *ordering* it produces against
   fixtures whose ranks span the full domain {0,1,2,3,4,5}.
-- ``/api/sell_account`` does NOT currently reject non-LIVE-mode callers — the
-  ``live_mode`` flag is forwarded to ``perform_account_liquidation`` and only
-  gates the actual go-to-cash POST.  Test #2 pins this current behaviour and
-  surfaces the gap (route returns 200 even when ``LIVE_EXECUTION=False``).
+- ``/api/sell_account`` MUST reject non-LIVE-mode callers at the route layer.
+  When ``LIVE_EXECUTION=False`` the route must return a clear dry-run signal
+  (``"live_mode": false, "executed": false`` in the JSON body) and must NOT
+  spawn a liquidation thread.  Test #2 pins this required behaviour.
 - All tests use ``app.app.test_client()`` so no port is bound.
 """
 
@@ -220,15 +220,19 @@ def test_sell_account_returns_400_when_composer_credentials_missing(client, monk
     assert resp.status_code == 400
 
 
-def test_sell_account_non_live_mode_still_returns_200_and_spawns_thread(client, monkeypatch):
+def test_sell_account_rejects_non_live_with_clear_signal(client, monkeypatch):
     """
-    PINS CURRENT (RISKY) BEHAVIOUR: when LIVE_EXECUTION=False the route still
-    returns 200 and dispatches the liquidation thread.  The live_mode flag is
-    forwarded to ``perform_account_liquidation`` and only gates the inner
-    Composer go-to-cash POST.  This is a *production gap* — a panic-stop button
-    that returns success even when no sells will be issued.  If the route is
-    later hardened to reject non-LIVE callers, flip this assertion to expect
-    403/400 and remove this test.
+    REQUIRED BEHAVIOUR: when LIVE_EXECUTION=False the panic-stop route must
+    return a clear dry-run signal — JSON body must contain both
+    ``"live_mode": false`` and ``"executed": false`` — so the operator UI can
+    surface "no sells were issued" unambiguously.  Critically, no liquidation
+    thread may be spawned: a thread that runs with live_mode=False silently
+    does nothing, which is indistinguishable from a genuine dry-run decision.
+    The route-layer gate is the only reliable defence.
+
+    Contract chosen: 200 with explicit dry-run envelope (rather than 403) so
+    the operator dashboard can inspect the JSON body without special-casing the
+    HTTP status, consistent with every other route's JSON-envelope pattern.
     """
     monkeypatch.setattr(
         app_module,
@@ -239,25 +243,38 @@ def test_sell_account_non_live_mode_still_returns_200_and_spawns_thread(client, 
             "COMPOSER_SECRET": "s",
         },
     )
-    started = []
-    real_thread = threading.Thread
 
-    def fake_thread(target=None, args=(), **kw):
-        started.append((target, args, kw))
-        # Return a no-op thread that doesn't actually start.
-        return real_thread(target=lambda: None)
+    class FakeThread:
+        """Records start() calls; start must NEVER be called for non-live mode."""
+        def __init__(self, target=None, args=(), **kw):
+            pass
 
-    monkeypatch.setattr(app_module.threading, "Thread", fake_thread)
+        def start(self):
+            # If this is reached the route spawned a liquidation thread when
+            # LIVE_EXECUTION=False — the test must fail.
+            raise AssertionError(
+                "liquidation thread must NOT be started when LIVE_EXECUTION=False"
+            )
+
+    monkeypatch.setattr(app_module.threading, "Thread", FakeThread)
     resp = client.post("/api/sell_account", json={"account_id": "ACC1"})
-    assert resp.status_code == 200
-    assert resp.get_json()["status"] == "success"
-    # Thread was scheduled with perform_account_liquidation
-    assert len(started) == 1
-    target, args, _ = started[0]
-    assert target is app_module.perform_account_liquidation
-    # Args order: (account_id, key, secret, live_mode)
-    assert args[0] == "ACC1"
-    assert args[3] is False  # live_mode forwarded as False
+
+    body = resp.get_json()
+
+    # The route must signal dry-run explicitly — both fields required.
+    assert body.get("live_mode") is False, (
+        "response body must include 'live_mode': false when LIVE_EXECUTION=False"
+    )
+    assert body.get("executed") is False, (
+        "response body must include 'executed': false when LIVE_EXECUTION=False"
+    )
+
+    # The response must NOT look like a success envelope for a real execution.
+    # Accepting {"status": "success"} with no dry-run signal is the gap we are
+    # closing — assert it is absent or explicitly marked as dry-run.
+    assert body.get("status") != "success" or body.get("executed") is False, (
+        "a 'success' status with no executed=false field would mislead the operator"
+    )
 
 
 def test_sell_account_live_mode_passes_true_to_liquidation(client, monkeypatch):
