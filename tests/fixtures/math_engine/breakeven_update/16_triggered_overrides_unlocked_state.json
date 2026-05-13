@@ -1,0 +1,19 @@
+{
+  "name": "triggered_overrides_unlocked_state",
+  "description": "is_triggered=True overrides everything: stop_trigger_level == TRIGGERED_OVERRIDE_LEVEL (-999.0). State (hold_ticks, breakeven_locked) still evolves normally; ONLY stop_trigger_level is overridden.",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": 0.5,
+    "symphony_vol": 1.0,
+    "base_stop_level": -0.3,
+    "current_hold_ticks": 2,
+    "currently_breakeven_locked": false,
+    "is_triggered": true
+  },
+  "expected": {
+    "new_hold_ticks": 0,
+    "new_breakeven_locked": false,
+    "stop_trigger_level": -999.0
+  },
+  "derivation": "dynamic_activation = 1.0. threshold = 0.8. current_return (0.5) < 0.8 -> ticks RESET to 0. 0 < 5 -> not locked. is_triggered=True -> stop_trigger_level = TRIGGERED_OVERRIDE_LEVEL = -999.0 (overrides the would-be base -0.3). Confirms the override path on the not-locked branch."
+}

@@ -1,0 +1,19 @@
+{
+  "name": "vol_within_range_no_clamp",
+  "description": "symphony_vol (1.5) is within [MIN=0.4, MAX=3.0]. dynamic_activation = 1.5 (passes through unclamped). With current_return = 1.4 (above activation - DEADBAND = 1.3), ticks increment.",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": 1.4,
+    "symphony_vol": 1.5,
+    "base_stop_level": 0.5,
+    "current_hold_ticks": 1,
+    "currently_breakeven_locked": false,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 2,
+    "new_breakeven_locked": false,
+    "stop_trigger_level": 0.5
+  },
+  "derivation": "dynamic_activation = max(0.4, min(3.0, 1.5)) = max(0.4, 1.5) = 1.5 (pass-through). threshold = 1.5 - 0.2 = 1.3. current_return (1.4) >= 1.3 -> ticks++ -> 1 + 1 = 2. 2 < 5 -> not locked. not locked -> stop = base_stop_level = 0.5. Catches an impl that always clamped (would produce wrong threshold) or that incremented by != 1."
+}

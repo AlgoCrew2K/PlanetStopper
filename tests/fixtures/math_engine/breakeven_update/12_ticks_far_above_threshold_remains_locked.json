@@ -1,0 +1,19 @@
+{
+  "name": "ticks_far_above_threshold_remains_locked",
+  "description": "current_hold_ticks=10 (already well past THRESHOLD) and incrementing further. Lock is True regardless. No upper bound on threshold check.",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": 2.0,
+    "symphony_vol": 1.5,
+    "base_stop_level": 0.75,
+    "current_hold_ticks": 10,
+    "currently_breakeven_locked": true,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 11,
+    "new_breakeven_locked": true,
+    "stop_trigger_level": 0.75
+  },
+  "derivation": "dynamic_activation = 1.5. threshold = 1.3. current_return (2.0) >= 1.3 -> ticks++ -> 10 + 1 = 11. currently_locked=True OR (11 >= 5) -> new_breakeven_locked = True. Locked AND base_stop_level (0.75) > 0 -> stop_trigger_level = max(0.75, 0.0) = 0.75 (floor does NOT change a positive base). Catches an impl that caps ticks at THRESHOLD (would yield 5 not 11) or floors a positive base."
+}

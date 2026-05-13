@@ -1,0 +1,19 @@
+{
+  "name": "locked_with_positive_base_unchanged",
+  "description": "Locked AND base_stop_level > 0: floor does NOT change the output (max(positive, 0.0) = positive).",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": 3.0,
+    "symphony_vol": 2.0,
+    "base_stop_level": 1.5,
+    "current_hold_ticks": 6,
+    "currently_breakeven_locked": true,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 7,
+    "new_breakeven_locked": true,
+    "stop_trigger_level": 1.5
+  },
+  "derivation": "dynamic_activation = 2.0. threshold = 1.8. current_return (3.0) >= 1.8 -> ticks++ -> 7. Already locked, stays locked. Locked AND base (1.5) > 0 -> stop = max(1.5, 0.0) = 1.5 unchanged. Catches an impl that clamps to 0 regardless of sign (would emit 0.0)."
+}

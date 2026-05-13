@@ -1,0 +1,19 @@
+{
+  "name": "ticks_increment_to_four_no_lock",
+  "description": "current_hold_ticks transitions from 3 -> 4 via this tick. 4 < THRESHOLD (5), so no lock. Pins the just-below-threshold case.",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": 1.0,
+    "symphony_vol": 0.9,
+    "base_stop_level": -0.1,
+    "current_hold_ticks": 3,
+    "currently_breakeven_locked": false,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 4,
+    "new_breakeven_locked": false,
+    "stop_trigger_level": -0.1
+  },
+  "derivation": "dynamic_activation = max(0.4, min(3.0, 0.9)) = 0.9. threshold = 0.9 - 0.2 = 0.7. current_return (1.0) >= 0.7 -> ticks++ -> 3 + 1 = 4. 4 < 5 AND not currently_locked -> new_breakeven_locked = False. not locked -> stop = base_stop_level = -0.1 (NOT floored at 0). Catches an impl that locks at >= 4 (off-by-one) or that floors unconditionally."
+}

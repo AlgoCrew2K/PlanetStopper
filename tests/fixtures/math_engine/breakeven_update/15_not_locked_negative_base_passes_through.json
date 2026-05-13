@@ -1,0 +1,19 @@
+{
+  "name": "not_locked_negative_base_passes_through",
+  "description": "Not locked: stop_trigger_level == base_stop_level even if base is negative. NO floor is applied when not locked.",
+  "function": "compute_breakeven_update",
+  "inputs": {
+    "current_return": -0.5,
+    "symphony_vol": 1.0,
+    "base_stop_level": -2.5,
+    "current_hold_ticks": 0,
+    "currently_breakeven_locked": false,
+    "is_triggered": false
+  },
+  "expected": {
+    "new_hold_ticks": 0,
+    "new_breakeven_locked": false,
+    "stop_trigger_level": -2.5
+  },
+  "derivation": "dynamic_activation = 1.0. threshold = 0.8. current_return (-0.5) < 0.8 -> ticks stay at 0 (reset, no change from already-zero). 0 < 5 -> not locked. NOT locked -> stop = base_stop_level = -2.5 (NEGATIVE, NOT floored). Catches an impl that floors unconditionally regardless of lock state (would emit 0.0)."
+}
