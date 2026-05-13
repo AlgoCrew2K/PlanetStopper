@@ -547,28 +547,25 @@ def test_mc_default_neighbor_k_is_named() -> None:
 
 # --- Sanity guard for the scanner ------------------------------------------
 
-def test_scanner_finds_offenders_today() -> None:
+def test_run_monte_carlo_has_zero_magic_number_offenders_regression_canary() -> None:
     """
-    Defensive cross-check: confirms the AST scanner is actually inspecting
-    run_monte_carlo and identifying offenders TODAY (RED state). If this
-    test PASSES today, the scanner is broken (silently skipping nodes or
-    accepting a wrong whitelist).
+    Permanent regression canary: asserts that run_monte_carlo contains ZERO
+    bare numeric literals outside the structural whitelist.
 
-    After GREEN, this test will FAIL — at which point it must be retired
-    or rewritten as a regression check ("the historical RED offenders are
-    all gone"). Test-writer will revise post-merge if needed.
+    The MC-gating cycle (task-mc-gating) eliminated all offending literals
+    ({100.0, 20, 19, 5000, 150}) by promoting them to named module-level
+    constants. This canary ensures they are never re-introduced.
 
-    NOTE: This test is intentionally inverted from the main scanner test
-    above. It exists so that if the scanner is later quietly defanged
-    (e.g., someone adds 100.0 to STRUCTURAL_WHITELIST), the inversion
-    surfaces the regression instead of letting both tests silently pass.
+    If this test fails, a bare numeric literal has been added back into
+    run_monte_carlo. Fix: extract the literal to a named constant in
+    math_engine.py and add a source comment explaining its provenance.
+    Do NOT add it to STRUCTURAL_WHITELIST unless it is genuinely a
+    structural/loop integer (0, 1, 2) with no domain meaning.
     """
     offenders = _collect_run_monte_carlo_numeric_literals()
-    # In RED state we expect at LEAST these offending values present:
-    expected_values = {100.0, 20, 19, 5000, 150}
     found_values = {v for _, v in offenders}
-    assert expected_values.issubset(found_values), (
-        f"Scanner did NOT find the expected RED-state offenders "
-        f"{expected_values}; it found {found_values}. The scanner is "
-        f"broken or the whitelist incorrectly absorbs domain knobs."
+    assert found_values == set(), (
+        f"Magic numbers re-introduced into run_monte_carlo: {found_values}. "
+        f"Each must be extracted to a named module-level constant. "
+        f"Full offender list (line, value): {sorted(offenders)}."
     )
