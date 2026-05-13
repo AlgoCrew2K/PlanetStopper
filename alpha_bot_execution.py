@@ -182,9 +182,9 @@ def fetch_alpaca_history(tickers, current_date_str):
 
             try:
                 data = response.json()
-            except (ValueError, KeyError) as e:
+            except ValueError as e:
                 print(f"Error parsing Alpaca response JSON: HTTP {response.status_code} - {e}")
-                data = {}
+                break
             if "bars" in data:
                 for symbol, bars in data["bars"].items():
                     for j in range(1, len(bars)):
