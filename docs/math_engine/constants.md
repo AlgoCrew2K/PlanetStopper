@@ -26,6 +26,7 @@ rationale. Where evidence is absent, this document says so.
 - Cycle 8 (VWAP signals) — commit `70b62e1`, 2026-05-12 (no new constants)
 - Cycle 9 (VWAP bleed arm) — commit `8db8030`, 2026-05-12
 - Cycle 10 (VWAP breakdown) — commit `5b90d47`, 2026-05-12
+- Cycle 11 (MC gating) — commit `d5e72cd`, 2026-05-13
 
 ---
 
@@ -341,6 +342,73 @@ rationale. Where evidence is absent, this document says so.
 
 ---
 
+## Cycle 11 — MC Gating
+
+### MC_INSUFFICIENT_HISTORY_PROB = 100.0
+
+**Used in:** `run_monte_carlo` (cycle 11, math_engine.py)
+**Introduced:** `d5e72cd` 2026-05-13 — `feat(math_engine): extract MC-gating magic numbers to named constants`
+**Pre-extraction location:** `math_engine.py` (original upload `6c4bad6`): literal `100.0` returned from the early-exit branch when insufficient history is available for MC simulation.
+**Origin classification:** Sentinel value
+**Rationale:** When the MC simulation cannot run (fewer than `MC_MIN_HISTORY_DAYS` rows), the function returns 100.0% probability — meaning "we are certain to beat the benchmark" — which ensures the MC exit gate is never armed due to a data absence. This is semantically distinct from `PCT_SCALAR = 100.0`: `PCT_SCALAR` is a unit-conversion multiplier (decimal → percent); `MC_INSUFFICIENT_HISTORY_PROB` is a protocol sentinel that carries deliberate exit-suppression semantics. The commit `d5e72cd` explicitly documents this distinction as a named precedent for future shared-value/distinct-role constants. Not Optuna-tuned; not env-var configurable.
+**Config-overridable:** No.
+**Related code references:**
+- `math_engine.py` (current): `run_monte_carlo` early-exit branch
+
+---
+
+### MC_MIN_HISTORY_DAYS = 20
+
+**Used in:** `run_monte_carlo` (cycle 11, math_engine.py)
+**Introduced:** `d5e72cd` 2026-05-13 — `feat(math_engine): extract MC-gating magic numbers to named constants`
+**Pre-extraction location:** `math_engine.py` (original upload `6c4bad6`): guard literal `20` checking minimum row count before running MC simulation.
+**Origin classification:** Hand-tuned heuristic
+**Rationale:** The minimum number of historical daily rows required for the MC simulation to produce statistically meaningful paths. Below 20 rows the nearest-neighbor regime filter has too few candidates for stable percentile estimates. 20 days corresponds to approximately one calendar month of trading history — the same convention as `LOOKBACK_DAYS` (20-day realized vol). Whether this value was independently chosen or deliberately mirrors `LOOKBACK_DAYS` is not documented; origin before the initial upload is unknown. Not Optuna-tuned.
+**Config-overridable:** No.
+**Related code references:**
+- `math_engine.py` (current): `run_monte_carlo` history-guard
+
+---
+
+### MC_VOL_WINDOW_DAYS = 20
+
+**Used in:** `run_monte_carlo` (cycle 11, math_engine.py)
+**Introduced:** `d5e72cd` 2026-05-13 — `feat(math_engine): extract MC-gating magic numbers to named constants`
+**Pre-extraction location:** `math_engine.py` (original upload `6c4bad6`): literal `20` in the rolling SPY volatility window computation inside `run_monte_carlo`. Use sites apply `(MC_VOL_WINDOW_DAYS - 1)` arithmetic for inclusive-endpoint rolling windows, as documented in the inline constant comment.
+**Origin classification:** Standard finance period
+**Rationale:** 20-day rolling volatility window for the SPY regime-conditioning step inside MC simulation. Consistent with `LOOKBACK_DAYS = 20` (portfolio vol) — both use the 20-day practitioner convention. The `-1` arithmetic at use sites is an inclusive-endpoint offset. Not Optuna-tuned.
+**Config-overridable:** No.
+**Related code references:**
+- `math_engine.py` (current): `run_monte_carlo` SPY regime filter
+
+---
+
+### MC_DEFAULT_SIMULATION_PATHS = 5000
+
+**Used in:** `run_monte_carlo` (cycle 11, math_engine.py)
+**Introduced:** `d5e72cd` 2026-05-13 — `feat(math_engine): extract MC-gating magic numbers to named constants`
+**Pre-extraction location:** `math_engine.py` (original upload `6c4bad6`): literal `5000` as the default number of simulation paths.
+**Origin classification:** Hand-tuned heuristic
+**Rationale:** Number of vectorized Monte Carlo simulation paths. 5000 paths gives CLT-stable percentile estimates (standard error on a 10th-percentile estimate ≈ 0.13%) at acceptable runtime on a single Python process. Inline comment at extraction: "CLT stability vs runtime tradeoff." No Optuna study tunes this; it is a runtime-performance parameter, not a risk parameter. Origin before initial upload is not documented.
+**Config-overridable:** No (default; callers may pass an override but none currently do).
+**Related code references:**
+- `math_engine.py` (current): `run_monte_carlo` signature default
+
+---
+
+### MC_DEFAULT_NEIGHBOR_K = 150
+
+**Used in:** `run_monte_carlo` (cycle 11, math_engine.py)
+**Introduced:** `d5e72cd` 2026-05-13 — `feat(math_engine): extract MC-gating magic numbers to named constants`
+**Pre-extraction location:** `math_engine.py` (original upload `6c4bad6`): literal `150` as the default kNN neighbor count for regime-locality filtering.
+**Origin classification:** Hand-tuned heuristic
+**Rationale:** The kNN filter selects the 150 historical days most similar to today's SPY regime (by return and rolling vol) as the sampling pool for simulation paths. Smaller k means tighter regime match (less data, higher variance); larger k means smoother estimates (more data, less specificity). 150 days is approximately 7 months of trading history — a pragmatic balance. Inline comment at extraction: "smaller=tighter regime match, larger=smoother estimate." No Optuna study tunes this. Origin before initial upload is not documented.
+**Config-overridable:** No (default; callers may pass an override but none currently do).
+**Related code references:**
+- `math_engine.py` (current): `run_monte_carlo` signature default
+
+---
+
 ## Coverage Gaps
 
 The following constants have confirmed inline origins (git-traceable to the initial upload
@@ -374,6 +442,13 @@ document, or comment in the original code explains the choice of these specific 
 - PCT_SCALAR = 100.0 — unit conversion (decimal to percent; no alternative possible)
 - ATR_LOOKBACK_DAYS = 15 — standard finance period (Wilder 14-day ATR + 1 prior close)
 - TRIGGERED_OVERRIDE_LEVEL = -999.0 — sentinel value with clear functional specification
+- MC_INSUFFICIENT_HISTORY_PROB = 100.0 — sentinel value; exit-suppression semantics explicitly distinguished from PCT_SCALAR in commit `d5e72cd` (2026-05-13)
+- MC_MIN_HISTORY_DAYS = 20 — hand-tuned heuristic; provenance documented at extraction time in commit `d5e72cd`
+- MC_VOL_WINDOW_DAYS = 20 — standard finance period (20-day vol convention, consistent with LOOKBACK_DAYS); documented in commit `d5e72cd`
+- MC_DEFAULT_SIMULATION_PATHS = 5000 — hand-tuned heuristic; CLT-stability rationale documented in commit `d5e72cd`
+- MC_DEFAULT_NEIGHBOR_K = 150 — hand-tuned heuristic; kNN locality rationale documented in commit `d5e72cd`
 
-**Coverage summary: 4 of 22 constants have confident documented origin; 18 have confirmed
-inline pre-extraction location but no pre-upload design rationale.**
+**Coverage summary: 9 of 27 constants have confident documented origin; 18 have confirmed
+inline pre-extraction location but no pre-upload design rationale. The 5 MC-gating constants
+(Cycle 11, introduced 2026-05-13) were added directly as named constants with full provenance
+documented at introduction — they carry no pre-upload gap.**
