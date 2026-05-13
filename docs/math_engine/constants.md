@@ -49,14 +49,14 @@ rationale. Where evidence is absent, this document says so.
 
 ### PCT_SCALAR = 100.0
 
-**Used in:** `calculate_20d_vol`, `calculate_14d_atr_pct` (cycles 1 and 2, math_engine.py)
+**Used in:** `calculate_20d_vol`, `calculate_14d_atr_pct`, `run_monte_carlo` (cycles 1, 2, and 11 — math_engine.py)
 **Introduced:** `1310a3dbdfdacc3500b3b726fc5497e08002a34a` 2026-05-12 — `refactor(math_engine): extract magic numbers in calculate_20d_vol (GREEN)`
-**Pre-extraction location:** `math_engine.py` (original upload `6c4bad6`): `* 100.0` literal at line 93 (`calculate_20d_vol`) and line 140 (`calculate_14d_atr_pct`). Also appears inline in `run_monte_carlo` at line 8 and 61 (those sites were not extracted; they remain as literals in the function body because they are inside `run_monte_carlo` which was not part of the magic-number sweep).
+**Pre-extraction location:** `math_engine.py` (original upload `6c4bad6`): `* 100.0` literal at line 93 (`calculate_20d_vol`) and line 140 (`calculate_14d_atr_pct`). The inline `100.0` literals in `run_monte_carlo` were extracted later in cycle 11 (commit `d5e72cd`, 2026-05-13) and now reference the same `PCT_SCALAR` — these are unit-conversion sites distinct from the new `MC_INSUFFICIENT_HISTORY_PROB` sentinel.
 **Origin classification:** Standard finance unit conversion
 **Rationale:** The math layer normalizes decimal returns (e.g., 0.012) to percentage points (1.2) throughout. This is a pure unit-conversion scalar with no free parameter: decimal × 100 = percent. No alternative value is meaningful. Named to eliminate ambiguity between this conversion and any other scalar multiply.
 **Config-overridable:** No.
 **Related code references:**
-- `math_engine.py` (current): `calculate_20d_vol` line 453, `calculate_14d_atr_pct` line 500
+- `math_engine.py` (current): `calculate_20d_vol` line 453, `calculate_14d_atr_pct` line 500, `run_monte_carlo` lines 375, 393, 428, 435
 
 ---
 

@@ -148,7 +148,7 @@ Procedures for common operational scenarios:
 ## Architecture Notes
 
 - **Math engine constants:** All numeric constants in `math_engine.py` are named and documented. The codebase has zero unnamed numeric literals in the math layer. Provenance for every constant is tracked in [docs/math_engine/constants.md](docs/math_engine/constants.md).
-- **Test harness:** `pytest` suite (576 passing); live-execution tests excluded by default, opt in via `--include-live`. Run via `/run-tests` skill.
+- **Test harness:** `pytest` suite gates all math-layer changes via fixture-driven golden tests + AST regression canaries; live-execution tests excluded by default, opt in via `--include-live`. Run via `/run-tests` skill.
 
 ---
 
