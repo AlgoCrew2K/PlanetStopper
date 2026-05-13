@@ -770,7 +770,56 @@ def main():
 
                     if LIVE_EXECUTION:
                         print(f"  -> [LIVE EXECUTION] Sending sell-to-cash command for {item['symphony_name']}...")
-                        success = execute_sell_to_cash(actual_id, account)
+                        # B1-FU1.1: narrow try/except around the live executor.
+                        # Rationale: an unhandled exception from execute_sell_to_cash (e.g. transient
+                        # HTTP failure to Composer) used to unwind out of the chunk loop, skipping
+                        # database.save_state(). That rolled back every successful iteration's
+                        # in-memory triggered=True, producing a next-tick double-charge for any
+                        # symphony that had already exited. By catching here we treat the failure
+                        # as a non-success (existing else branch), preserving earlier mutations and
+                        # allowing the loop to continue to the next symphony in the chunk.
+                        # NOTE: catching Exception (NOT BaseException) deliberately preserves
+                        # KeyboardInterrupt and SystemExit propagation.
+                        # Narrow union covering every realistic escape from execute_sell_to_cash.
+                        # execute_sell_to_cash already catches requests.RequestException internally,
+                        # but a non-RequestException can still escape: ValueError from int() parsing
+                        # Retry-After, KeyError from response.headers access, AttributeError /
+                        # TypeError from response-object schema drift, OSError from underlying
+                        # socket layer, RuntimeError from urllib3 connection-pool internals. We
+                        # list each type explicitly per Concern #28 (no broad `except Exception`).
+                        # requests.RequestException is included for defense-in-depth in case the
+                        # internal handler is ever refactored to re-raise.
+                        try:
+                            success = execute_sell_to_cash(actual_id, account)
+                        except (
+                            requests.RequestException,
+                            ValueError,
+                            KeyError,
+                            TypeError,
+                            AttributeError,
+                            OSError,
+                            RuntimeError,
+                        ) as exc:
+                            err_msg = f"EXECUTOR EXCEPTION: {type(exc).__name__}: {exc}"
+                            print(f"     !!! [EXECUTOR EXCEPTION] {sym_id}: {type(exc).__name__}: {exc}")
+                            try:
+                                database.log_symphony_event(sym_id, err_msg, "error")
+                            except (
+                                OSError,
+                                RuntimeError,
+                                ValueError,
+                                TypeError,
+                                AttributeError,
+                            ) as log_exc:
+                                # Never let a logging failure escape and re-trigger the original
+                                # state-preservation bug. Narrow union covers sqlite3.OperationalError
+                                # (subclass of RuntimeError-equivalent via sqlite3.Error -> Exception;
+                                # OSError covers disk-full / permission). If a truly unknown error
+                                # type escapes here, we want it to propagate — the daemon supervisor
+                                # restarts; silently swallowing every conceivable log failure is
+                                # itself a Concern #28 violation.
+                                print(f"     !!! [LOGGING FAILURE] {sym_id}: {type(log_exc).__name__}: {log_exc}")
+                            success = False
                     else:
                         print(f"  -> [DRY RUN] Execution bypassed for {item['symphony_name']}.")
                         success = True
