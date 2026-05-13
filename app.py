@@ -288,10 +288,28 @@ def sell_account():
     env_vars = dotenv_values(".env")
     live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
 
-    if account_id and env_vars.get("COMPOSER_KEY_ID"):
-        threading.Thread(target=perform_account_liquidation, args=(account_id, env_vars.get("COMPOSER_KEY_ID"), env_vars.get("COMPOSER_SECRET"), live_mode)).start()
-        return jsonify({"status": "success", "message": "Liquidation initiated."})
-    return jsonify({"status": "error", "message": "Missing credentials or account ID."}), 400
+    if not (account_id and env_vars.get("COMPOSER_KEY_ID")):
+        return jsonify({"status": "error", "message": "Missing credentials or account ID."}), 400
+
+    if not live_mode:
+        # Real-money safety gate: never spawn the liquidation thread when
+        # LIVE_EXECUTION is False.  Return an explicit dry-run signal so the
+        # operator dashboard can distinguish a successful no-op from a real
+        # execution.
+        return jsonify({
+            "status": "dry_run",
+            "message": "Panic-stop disabled in non-LIVE mode. Set LIVE_EXECUTION=True to arm.",
+            "live_mode": False,
+            "executed": False,
+        })
+
+    threading.Thread(target=perform_account_liquidation, args=(account_id, env_vars.get("COMPOSER_KEY_ID"), env_vars.get("COMPOSER_SECRET"), live_mode)).start()
+    return jsonify({
+        "status": "success",
+        "message": "Liquidation initiated.",
+        "live_mode": True,
+        "executed": True,
+    })
 
 # --- 4. Tabbed Settings / Control Panel Routes ---
 @app.route("/api/settings", methods=["GET"])
