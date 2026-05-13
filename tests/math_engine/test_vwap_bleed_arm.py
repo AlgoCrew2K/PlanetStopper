@@ -386,6 +386,16 @@ def test_named_clamp_constants_exist_with_source_comments() -> None:
 
     The function does not exist yet (RED); the constants do not exist
     yet (RED). This assertion will pass only after GREEN introduces both.
+
+    NOTE ON IMPLEMENTATION: uses runtime hasattr + getattr equality rather
+    than AST constant-value scanning. In Python 3.8+, the CPython parser
+    represents negative literals (e.g., -3.0) as
+    ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=3.0)), NOT as
+    ast.Constant(value=-3.0). An AST check for isinstance(node.value,
+    ast.Constant) will never match a negative assignment and would produce
+    a false failure. The runtime pattern (used for TRIGGERED_OVERRIDE_LEVEL
+    in test_breakeven_update.py) is correct for any sign. Source-comment
+    enforcement is still done via AST on the assignment line number.
     """
     src_path = pathlib.Path(math_engine.__file__)
     source = src_path.read_text(encoding="utf-8")
@@ -396,32 +406,47 @@ def test_named_clamp_constants_exist_with_source_comments() -> None:
         "VWAP_BLEED_ARM_MIN": -3.0,
         "VWAP_BLEED_ARM_MAX": -0.5,
     }
-    found: dict[str, tuple[float, int]] = {}
 
+    # Step 1: runtime existence + value check (sign-safe; avoids AST
+    # negative-literal representation issue described above).
+    for name, expected_val in expected_constants.items():
+        assert hasattr(math_engine, name), (
+            f"Expected module-level constant {name} = {expected_val} in "
+            f"math_engine.py, but it was not found at runtime. The project "
+            f"rule 'every constant named + source comment' forbids bare "
+            f"-3.0 / -0.5 literals inside compute_vwap_bleed_arm_threshold."
+        )
+        actual_val = getattr(math_engine, name)
+        assert actual_val == pytest.approx(expected_val, rel=TOL_REL, abs=TOL_ABS), (
+            # rel=1e-9 / abs=1e-12 matches the module tolerance policy; these
+            # boundary values are exactly representable IEEE-754 doubles so
+            # drift will be 0.0, but approx is used for consistency.
+            f"Constant {name} in math_engine.py has value {actual_val!r}, "
+            f"expected {expected_val!r}."
+        )
+
+    # Step 2: source-comment check -- the assignment line must have a
+    # trailing comment (before = lhs/rhs, after = comment text, both
+    # non-empty). Locate the lineno via AST, which reliably finds the
+    # assignment node regardless of the sign of the RHS value.
+    found_linenos: dict[str, int] = {}
     for node in ast.iter_child_nodes(tree):
-        # Module-level assignments only (no nested constants).
         if isinstance(node, ast.Assign):
             for tgt in node.targets:
                 if (
                     isinstance(tgt, ast.Name)
                     and tgt.id in expected_constants
-                    and isinstance(node.value, ast.Constant)
-                    and isinstance(node.value.value, (int, float))
                 ):
-                    found[tgt.id] = (float(node.value.value), node.lineno)
+                    found_linenos[tgt.id] = node.lineno
 
-    for name, expected_val in expected_constants.items():
-        assert name in found, (
-            f"Expected module-level constant {name} = {expected_val} in "
-            f"math_engine.py, but it was not defined. The project rule "
-            f"'every constant named + source comment' forbids bare -3.0 / "
-            f"-0.5 literals inside compute_vwap_bleed_arm_threshold."
+    for name in expected_constants:
+        assert name in found_linenos, (
+            f"AST scan could not locate the assignment for {name} at module "
+            f"level in math_engine.py. The constant exists at runtime but "
+            f"may be set dynamically (e.g., in an __init__ block) which "
+            f"violates the 'named module-level constant' requirement."
         )
-        actual_val, lineno = found[name]
-        assert actual_val == expected_val, (
-            f"Constant {name} in math_engine.py has value {actual_val}, "
-            f"expected {expected_val}."
-        )
+        lineno = found_linenos[name]
         line = src_lines[lineno - 1] if lineno - 1 < len(src_lines) else ""
         before, _, after = line.partition("#")
         assert before.strip() != "" and after.strip() != "", (

@@ -245,6 +245,39 @@ def compute_vwap_signals(
     return float(weighted_vwap_diff), float(valid_vwap_weight)
 
 
+# VWAP bleed-arm constants (dynamic exit threshold for VWAP-bleed system; always negative)
+VWAP_BLEED_ARM_MIN = -3.0    # most-negative clamp; deepest bleed threshold allowed (further drops do not arm any sooner)
+VWAP_BLEED_ARM_MAX = -0.5    # least-negative clamp; arm threshold must be at least this deep (shallower drops never arm)
+
+
+def compute_vwap_bleed_arm_threshold(
+    symphony_vol: float,
+    bleed_multiplier: float,
+) -> float:
+    """
+    Returns the dynamic VWAP-bleed arm threshold (in percentage points,
+    always negative — bleeding means dropping below zero).
+
+    Computation (extracted verbatim from alpha_bot_execution.py):
+      raw = -(symphony_vol * bleed_multiplier)
+      result = max(VWAP_BLEED_ARM_MIN, min(VWAP_BLEED_ARM_MAX, raw))
+
+    Interpretation:
+      - High vol × high multiplier produces a more-negative raw, clamped at
+        VWAP_BLEED_ARM_MIN (most permissive arm — current_return must drop
+        deeper to trigger bleed counter).
+      - Low vol produces a near-zero raw, clamped at VWAP_BLEED_ARM_MAX
+        (most cautious — shallower drops can arm).
+
+    Pure. No I/O. No state.
+
+    Extracted from alpha_bot_execution.py:525-526 (cycle 9 of math-layer
+    extraction).
+    """
+    raw = -(symphony_vol * bleed_multiplier)
+    return float(max(VWAP_BLEED_ARM_MIN, min(VWAP_BLEED_ARM_MAX, raw)))
+
+
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150):
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.

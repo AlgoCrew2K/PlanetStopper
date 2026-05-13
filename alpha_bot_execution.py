@@ -522,8 +522,10 @@ def main():
                 prob_beating = math_engine.run_monte_carlo(holdings, historical_data, spy_today, SIMULATION_PATHS, NEIGHBOR_K)
                 symphony_vol = math_engine.calculate_20d_vol(holdings, historical_data)
 
-                raw_dynamic_bleed = -(symphony_vol * acc_VWAP_BLEED_MULTIPLIER)
-                acc_VWAP_BLEED_ARM_PCT = max(-3.0, min(-0.5, raw_dynamic_bleed))
+                acc_VWAP_BLEED_ARM_PCT = math_engine.compute_vwap_bleed_arm_threshold(
+                    symphony_vol=symphony_vol,
+                    bleed_multiplier=acc_VWAP_BLEED_MULTIPLIER,
+                )
 
                 should_arm = False
                 arm_reason = ""
