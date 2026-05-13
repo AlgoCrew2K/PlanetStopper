@@ -6,7 +6,6 @@ import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 import time
 import json
-import math
 from datetime import datetime, timedelta, timezone, time as dt_time
 
 import requests
