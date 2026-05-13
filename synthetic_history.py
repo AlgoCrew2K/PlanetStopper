@@ -95,7 +95,7 @@ def generate_synthetic_history(bot_state, current_date_str):
     
     cache_dir = "cache"
     os.makedirs(cache_dir, exist_ok=True)
-    cache_file = os.path.join(cache_dir, f"synthetic_history_{current_date_str}_{holdings_hash}.json")
+    cache_file = os.path.join(cache_dir, f"synthetic_history_v2_{current_date_str}_{holdings_hash}.json")
     
     if os.path.exists(cache_file):
         print(f"  -> Loading cached synthetic history from {cache_file}...")
@@ -233,12 +233,13 @@ def generate_synthetic_history(bot_state, current_date_str):
                 mc_prob = math_engine.run_monte_carlo(holdings, hist_data_up_to_yesterday, spy_today, 300, 5)
                 
                 ticks.append({
-                    "time": ts[11:16], 
+                    "time": ts[11:16],
                     "return": agg_ret * 100.0,
                     "mc_prob": mc_prob,
                     "vol": vol,
                     "vwap_diff": weighted_vwap_diff,
-                    "base_atr_pct": base_atr
+                    "base_atr_pct": base_atr,
+                    "valid_vwap_weight": valid_alloc,
                 })
                 
             day_history[sym_id] = ticks
