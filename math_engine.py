@@ -18,6 +18,18 @@ def _reject_non_finite(**kwargs):
             raise ValueError(f"NaN input not allowed: {name}={v!r}")
 
 
+def _reject_non_finite_in_records(records, *field_names):
+    """Iterate list of dicts and reject any non-finite float in named fields.
+
+    Missing keys are skipped silently (matches production's existing
+    .get()/`in`-guarded handling of optional fields); only present-and-float
+    values are validated via _reject_non_finite.
+    """
+    for record in records:
+        kwargs = {field: record[field] for field in field_names if field in record}
+        _reject_non_finite(**kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Module-level named constants (project rule: no magic numbers in math_engine)
 # ---------------------------------------------------------------------------
@@ -288,6 +300,12 @@ def compute_vwap_signals(
     Extracted from alpha_bot_execution.py:472-484 (cycle 8 of math-layer
     extraction).
     """
+    _reject_non_finite_in_records(holdings, "allocation")
+    for ticker in live_vwaps:
+        entry = live_vwaps[ticker]
+        _reject_non_finite(
+            **{k: entry[k] for k in ("last_price", "vwap") if k in entry}
+        )
     weighted_vwap_diff = 0.0
     valid_vwap_weight = 0.0
     for h in holdings:
@@ -432,6 +450,9 @@ def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_path
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.
     """
     _reject_non_finite(spy_today_return=spy_today_return)
+    for day_data in historical_data.values():
+        for ticker_data in day_data.values():
+            _reject_non_finite_in_records([ticker_data], "daily_ret")
     for h in holdings:
         _reject_non_finite(
             last_percent_change=h.get("last_percent_change"),
@@ -504,6 +525,10 @@ def calculate_20d_vol(holdings, historical_data):
     Calculates the 20-day historical volatility of the given holdings based on historical_data.
     Vectorized for performance.
     """
+    _reject_non_finite_in_records(holdings, "allocation")
+    for day_data in historical_data.values():
+        for ticker_data in day_data.values():
+            _reject_non_finite_in_records([ticker_data], "daily_ret")
     valid_dates = sorted(list(historical_data.keys()))[-LOOKBACK_DAYS:]
     if len(valid_dates) < LOOKBACK_DAYS:
         return 0.0
@@ -534,6 +559,10 @@ def calculate_14d_atr_pct(holdings, historical_data):
     Calculates the 14-day Volatility-Adjusted (ATR) percentage for the holdings.
     Falls back to calculate_20d_vol if high/low data is missing.
     """
+    _reject_non_finite_in_records(holdings, "allocation")
+    for day_data in historical_data.values():
+        for ticker_data in day_data.values():
+            _reject_non_finite_in_records([ticker_data], "high", "low", "close")
     valid_dates = sorted(list(historical_data.keys()))[-ATR_LOOKBACK_DAYS:]
     if len(valid_dates) < ATR_LOOKBACK_DAYS:
         return calculate_20d_vol(holdings, historical_data)
