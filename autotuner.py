@@ -10,6 +10,18 @@ import json
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
+# Required keys for a complete Optuna best_params payload.
+# MUST be kept in sync with the suggest_* calls in the objective() closure
+# below (currently lines ~285-291). If any of these keys is missing from
+# study.best_params after optimization, the AI proposal is rejected wholesale
+# (no Frankenstein merge) and the baseline cascade (fallback -> default) runs.
+# Extra keys outside this set are tolerated for forward-compat.
+OPTUNA_SEARCH_SPACE_KEYS = frozenset({
+    "TRIGGER_THRESHOLD_PCT", "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
+    "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS",
+    "PARABOLIC_VELOCITY_THRESHOLD", "MAX_PARABOLIC_SQUEEZE",
+})
+
 def calculate_historical_deviation(current_date_str):
     """
     Scans local directory for post_mortem_*.json from the last 45 calendar days.
@@ -312,6 +324,26 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         best_alpha_train = study.best_value
         best_params = study.best_params
 
+        # --- BEST_PARAMS SCHEMA VALIDATION (B2-FU2) ---
+        # An empty best_params or one missing any required search-space key indicates
+        # a degenerate/aborted study. Reject the WHOLE AI proposal (no key-by-key
+        # merge -- partial merges produce Frankenstein params where some keys
+        # come from the AI and others from current/fallback). Force the cascade
+        # to fall through to fallback (or default if fallback also fails) by
+        # poisoning oos_alpha to -inf. Do NOT raise -- the daemon must keep ticking.
+        ai_proposal_invalid = (
+            not best_params
+            or not OPTUNA_SEARCH_SPACE_KEYS.issubset(best_params.keys())
+        )
+        if ai_proposal_invalid:
+            missing = sorted(OPTUNA_SEARCH_SPACE_KEYS - set(best_params.keys()))
+            print(
+                f"       Warning: best_params schema invalid for '{normalized_name}' "
+                f"(missing keys: {missing or '<empty dict>'}). "
+                f"Rejecting AI proposal; cascading to Fallback/Default."
+            )
+        # ---------------------------------------------
+
         # Evaluate OOS robustness
         best_p = current_params.copy()
         for name, val in best_params.items():
@@ -320,6 +352,12 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         acc_sym_ids = [k for k, v in bot_state.items() if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == normalized_name]
         target_sym_id = acc_sym_ids[0] if acc_sym_ids else None
         oos_alpha = -run_simulation(best_p, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
+
+        # If the AI proposal is schema-invalid, poison its OOS alpha so the
+        # cascade below naturally selects fallback (or default). Done AFTER
+        # the simulation runs so any side-effects/logging are preserved.
+        if ai_proposal_invalid:
+            oos_alpha = -math.inf
 
         optimization_results[normalized_name] = {}
         
@@ -339,7 +377,12 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         avg_oos_alpha = oos_alpha / test_days_count if test_days_count > 0 else 0
 
         baseline_decision = ""
-        if oos_alpha >= fallback_oos_alpha and oos_alpha >= default_oos_alpha:
+        # B2-FU1: Asymmetric tie rule -- STRICT-POSITIVE on the AI branch
+        # (over-fit risk: an AI proposal that only TIES the validated fallback
+        # is not worth displacing the last-known-good params for), LENIENT
+        # (>=) on the fallback branch below (favors last-known-good on tie
+        # vs the global default).
+        if oos_alpha > fallback_oos_alpha and oos_alpha > default_oos_alpha:
             if oos_alpha > 0:
                 print(f"       OOS validation passed! OOS Guard Alpha: +{oos_alpha:.2f}% (Average: {avg_oos_alpha:.2f}%)")
             else:
