@@ -388,6 +388,120 @@ def compute_quantstats_metrics(returns_series: list[float], freq: str = "D") -> 
 
 
 # ---------------------------------------------------------------------------
+# M1 data-layer helpers — per-symphony and portfolio TC / CR / MDD
+# ---------------------------------------------------------------------------
+# Data-source contract (binding):
+#   If-held side sourced from Composer symphony-stats-meta fields.
+#   Dry-run side sourced from bot_state (AlphaBot shadow tracking).
+#   Network-free: callers pass already-fetched data; no fetch_symphony_stats calls here.
+
+def get_symphony_today_change(sym_dict: dict, bot_state_entry: "dict | None") -> dict:
+    """
+    Per-symphony Today's Change.
+
+    if_held: last_percent_change * 100 (Composer decimal -> percent).
+    dry_run: bot_state_entry["current_return"] when triggered (engine stores pct*100);
+             otherwise equals if_held (AlphaBot did nothing).
+    """
+    if_held = float(sym_dict["last_percent_change"]) * 100.0
+    triggered = (
+        bot_state_entry is not None
+        and bot_state_entry.get("triggered") is True
+    )
+    if triggered:
+        dry_run = float(bot_state_entry["current_return"])
+    else:
+        dry_run = if_held
+    return {"if_held": if_held, "dry_run": dry_run}
+
+
+def get_symphony_cumulative_return(sym_dict: dict, bot_state_entry: "dict | None") -> dict:
+    """
+    Per-symphony Cumulative Return.
+
+    if_held: simple_return UNLESS (simple_return == 0.0 AND net_deposits == 0.0),
+             in which case falls back to time_weighted_return (anomalous withdrawn/re-funded
+             symphony where simple_return would be misleadingly zero).
+    dry_run: bot_state does not store CR; always equals if_held.
+    """
+    simple_return = float(sym_dict["simple_return"])
+    net_deposits = float(sym_dict["net_deposits"])
+    if simple_return == 0.0 and net_deposits == 0.0:
+        if_held = float(sym_dict["time_weighted_return"])
+    else:
+        if_held = simple_return
+    return {"if_held": if_held, "dry_run": if_held}
+
+
+def get_symphony_max_drawdown(sym_dict: dict, bot_state_entry: "dict | None") -> dict:
+    """
+    Per-symphony Max Drawdown.
+
+    if_held: max_drawdown from Composer (positive float, magnitude convention).
+    dry_run: bot_state does not store MDD; always equals if_held.
+    """
+    if_held = float(sym_dict["max_drawdown"])
+    return {"if_held": if_held, "dry_run": if_held}
+
+
+def _value_weighted_portfolio(
+    symphonies: "list[dict]",
+    bot_state: dict,
+    per_sym_fn,
+) -> dict:
+    """
+    Value-weighted aggregate of a per-symphony helper across all symphonies.
+
+    Symphonies missing "value" or with value <= 0 are skipped.
+    Returns {"if_held": 0.0, "dry_run": 0.0} when symphonies is empty or all
+    weights are non-positive.
+    """
+    total_weight = 0.0
+    if_held_wsum = 0.0
+    dry_run_wsum = 0.0
+
+    for sym in symphonies:
+        w = sym.get("value")
+        if w is None:
+            continue
+        try:
+            w = float(w)
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(w) and w > 0.0):
+            continue
+
+        entry = bot_state.get(sym.get("id"))
+        per = per_sym_fn(sym, entry)
+        if_held_wsum += per["if_held"] * w
+        dry_run_wsum += per["dry_run"] * w
+        total_weight += w
+
+    if total_weight == 0.0:
+        return {"if_held": 0.0, "dry_run": 0.0}
+
+    return {
+        "if_held": if_held_wsum / total_weight,
+        "dry_run": dry_run_wsum / total_weight,
+    }
+
+
+def get_portfolio_today_change(symphonies: "list[dict]", bot_state: dict) -> dict:
+    """Value-weighted portfolio Today's Change across all symphonies."""
+    return _value_weighted_portfolio(symphonies, bot_state, get_symphony_today_change)
+
+
+def get_portfolio_cumulative_return(symphonies: "list[dict]", bot_state: dict) -> dict:
+    """Value-weighted portfolio Cumulative Return across all symphonies."""
+    return _value_weighted_portfolio(symphonies, bot_state, get_symphony_cumulative_return)
+
+
+def get_portfolio_max_drawdown(symphonies: "list[dict]", bot_state: dict) -> dict:
+    """Value-weighted portfolio Max Drawdown across all symphonies."""
+    return _value_weighted_portfolio(symphonies, bot_state, get_symphony_max_drawdown)
+
+
+# ---------------------------------------------------------------------------
 # get_history_with_cache_invalidation
 # ---------------------------------------------------------------------------
 
