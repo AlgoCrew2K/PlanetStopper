@@ -473,3 +473,490 @@ def test_run_autotuner_aborts_cleanly_when_synthetic_history_empty():
     assert captured == [], (
         "save_symphony_strategy MUST NOT be called when history fetch fails"
     )
+
+
+# ===========================================================================
+# Cycle B2-FU1 — Tie semantics for the 3-way OOS baseline-selection decision
+# ===========================================================================
+#
+# Background
+# ----------
+# The current decision block at autotuner.py:342 uses ``>=`` for both
+# inequalities:
+#
+#     if oos_alpha >= fallback_oos_alpha and oos_alpha >= default_oos_alpha:
+#         <adopt AI>
+#     elif fallback_oos_alpha >= default_oos_alpha:
+#         <revert fallback>
+#     else:
+#         <reset default>
+#
+# Under the current ``>=`` rule AI WINS every tie. The most dangerous tie is
+# the all-zero case: when NO triggers fire in ANY of the three OOS evaluations,
+# all alphas are exactly 0.0 and AI "wins" by default — even though no
+# evidence exists that its params generalize. AI is the param set most prone
+# to over-fitting (it was selected by maximizing on the training window) so
+# defaulting to AI on a no-information tie is a category error for real-money
+# safety.
+#
+# Semantic decision (test-writer recommendation)
+# ----------------------------------------------
+# AI must beat BOTH baselines by a STRICTLY POSITIVE margin. On ties the
+# decision cascades:
+#
+#   * ``ai > fallback AND ai > default``  -> Adopt AI
+#   * else if ``fallback >= default``     -> Revert to Fallback
+#   * else                                -> Reset to Global Default
+#
+# Note: the fallback-vs-default tie KEEPS ``>=`` (favors fallback). Rationale:
+# fallback is the validated production params from the prior cycle; on a tie
+# vs. the global default it's strictly safer to preserve the last-known-good
+# state than to reset.
+#
+# If the implementer rejects this decision and keeps the current ``>=`` rule
+# at the first branch, these tests will need to be updated alongside the
+# math change — the reviewer adjudicates. The tests below pin the SAFER
+# behavior and document the rationale inline.
+#
+# Implementation note for the mock harness
+# ----------------------------------------
+# These FU1 tests can't use the VWAP-marker side_effect trick from the B2
+# tests above to force exactly equal alphas — VWAP-marker triggering produces
+# a penalty-laden alpha that varies with the marker value. To force exact
+# equality (and exactly-zero alphas in particular), we patch the
+# autotuner's ``run_simulation`` closure indirectly by patching the helpers
+# it calls so EVERY param set hits the SAME triggering pattern. Simpler:
+# patch ``math_engine.compute_vwap_breakdown_update`` to NEVER trigger and
+# ensure no other trigger path fires either — that yields alpha 0.0 for all
+# three param sets.
+# ===========================================================================
+
+
+def _make_constant_alpha_side_effect():
+    """
+    Side effect for ``math_engine.compute_vwap_breakdown_update`` that NEVER
+    flags a VWAP break, regardless of which marker is in flight. Combined
+    with the rest of the simulator's defaults (mc_prob=50.0, tick['return']=
+    2.0, no other trigger condition met), this guarantees that
+    ``run_simulation`` returns 0.0 -> negated to 0.0 by the caller -> all
+    three OOS alphas are exactly 0.0. This is the all-zero tie scenario.
+    """
+    def _side_effect(**kwargs):
+        # Returns (vwap_ticks, vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken)
+        return (0, 0, False, False)
+    return _side_effect
+
+
+def test_oos_all_three_alphas_tie_at_zero_prefers_fallback_not_ai():
+    """
+    FU1 Scenario 1 — Hard tie at zero alpha across AI, fallback, default.
+
+    Real-money rationale: when no triggers fire in any OOS evaluation, all
+    three param sets are equivalently uninformative. AI is the only param
+    set that was selected by maximizing on training data and is therefore
+    the most prone to silent over-fitting; defaulting to AI under no-signal
+    conditions imports that over-fit risk into the next live cycle.
+
+    Expected (strict-positive rule): AI does NOT strictly beat the
+    baselines, so it falls through to the fallback branch. Since fallback
+    also ties default (both 0.0), the ``fallback >= default`` cascade
+    chooses fallback.
+
+    This test FAILS under the current ``>=`` rule at autotuner.py:342, which
+    erroneously selects AI on a tie.
+    """
+    ai = _ai_best_params()
+    fallback = _fallback_params()
+    default = _patched_default_strategy()
+    side_effect = _make_constant_alpha_side_effect()
+
+    stdout, ctx = _run_and_capture(ai, fallback, default, side_effect)
+
+    save_calls = ctx["save_calls"]
+    assert len(save_calls) == 1
+    _name, persisted_params, _locked = save_calls[0]
+
+    # Under the strict-positive rule, AI cannot win a tie. Fallback wins via
+    # the ``fallback >= default`` cascade (both at 0.0).
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
+        FALLBACK_MARKER, abs=1e-9
+    ), (
+        "On an all-zero tie across AI/fallback/default, the safer choice is "
+        "to preserve the last-known-good fallback params — NOT to import "
+        "the over-fit-prone AI proposal. See test docstring for full "
+        "rationale. Under the current >= rule at autotuner.py:342 AI wins "
+        "this tie, which this test deliberately rejects."
+    )
+
+    # Banner must indicate fallback revert (not AI adoption).
+    assert "Reverting to Fallback" in stdout, (
+        f"Expected fallback-revert banner on all-zero tie; got:\n{stdout}"
+    )
+    assert "OOS validation passed" not in stdout, (
+        "AI-adoption banner must NOT print on a no-signal tie."
+    )
+
+
+def test_oos_ai_ties_fallback_above_default_prefers_fallback_not_ai():
+    """
+    FU1 Scenario 2 — AI ties fallback, both strictly beat default.
+
+    Force the tie by making AI and fallback BOTH not trigger (alpha = 0.0)
+    while default DOES trigger (alpha < 0.0 due to penalty). The tie
+    between AI and fallback at 0.0 must resolve to fallback under the
+    strict-positive rule (AI did not strictly beat fallback).
+
+    Fails under current ``>=`` rule (AI would win the tie and be adopted).
+    """
+    ai = _ai_best_params()
+    fallback = _fallback_params()
+    default = _patched_default_strategy()
+    # Only default triggers -> default goes negative; AI and fallback both 0.0.
+    side_effect = _make_vwap_side_effect(broken_for_marker={DEFAULT_MARKER})
+
+    stdout, ctx = _run_and_capture(ai, fallback, default, side_effect)
+
+    save_calls = ctx["save_calls"]
+    assert len(save_calls) == 1
+    _name, persisted_params, _locked = save_calls[0]
+
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
+        FALLBACK_MARKER, abs=1e-9
+    ), (
+        "AI tied fallback at 0.0 (both above default's negative alpha); "
+        "AI did not STRICTLY beat fallback, so fallback must be persisted. "
+        "Strict-positive rule guards against over-fit AI silently displacing "
+        "validated production params on ties."
+    )
+
+    assert "Reverting to Fallback" in stdout
+    assert "OOS validation passed" not in stdout
+
+
+def test_oos_ai_strictly_beats_both_baselines_persists_ai_params():
+    """
+    FU1 Scenario 3 — Happy path: AI STRICTLY beats both fallback AND
+    default.
+
+    Confirms that the strict-positive rule does not break the case where
+    AI legitimately wins. Mirrors the B2 'Adopted AI' test but is included
+    here under the FU1 banner to assert symmetry: tightening tie semantics
+    must NOT regress the AI-wins case.
+
+    AI does not trigger (alpha = 0.0); fallback and default both trigger
+    (both go negative). 0.0 > negative for both comparators -> AI wins
+    strictly.
+    """
+    ai = _ai_best_params()
+    fallback = _fallback_params()
+    default = _patched_default_strategy()
+    side_effect = _make_vwap_side_effect(
+        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
+    )
+
+    stdout, ctx = _run_and_capture(ai, fallback, default, side_effect)
+
+    save_calls = ctx["save_calls"]
+    assert len(save_calls) == 1
+    _name, persisted_params, _locked = save_calls[0]
+
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
+        AI_MARKER, abs=1e-9
+    ), (
+        "AI strictly beat both baselines (0.0 > negative for fallback AND "
+        "default); strict-positive rule MUST still adopt AI here."
+    )
+
+    assert "OOS validation passed" in stdout
+    assert "Reverting to Fallback" not in stdout
+    assert "Resetting to Global Default" not in stdout
+
+
+# ===========================================================================
+# Cycle B2-FU2 — Schema validation of Optuna's best_params dict
+# ===========================================================================
+#
+# Background
+# ----------
+# autotuner.py:317-318 consumes ``study.best_params``:
+#
+#     for name, val in best_params.items():
+#         best_p[name] = round(val, 2)
+#
+# If Optuna ever returns a dict missing one of the 7 Optuna-tuned keys,
+# ``round(val, 2)`` succeeds (it only iterates what's there) and the missing
+# keys silently retain their value from ``current_params`` (the fallback
+# baseline). The same happens at line 348 when persisting the AI choice:
+#
+#     for name, val in best_params.items():
+#         current_params[name] = round(val, 2)
+#
+# Result: a partial Optuna proposal is silently merged into fallback, and
+# the persisted dict is a Frankenstein of {partial AI} ∪ {rest of fallback}.
+# That hybrid was never evaluated OOS. Real-money risk: untested param
+# combinations get persisted to the strategy DB and drive the next cycle.
+#
+# The 7 keys Optuna searches (autotuner.py:285-291):
+#   TRIGGER_THRESHOLD_PCT, TAKE_PROFIT_MC_PCT, VWAP_CROSS_HWM_PCT,
+#   VWAP_BLEED_MULTIPLIER, VWAP_BLEED_TICKS, PARABOLIC_VELOCITY_THRESHOLD,
+#   MAX_PARABOLIC_SQUEEZE.
+#
+# Semantic decision (test-writer recommendation)
+# ----------------------------------------------
+# When ``best_params`` is missing ANY of the 7 Optuna-searched keys (or is
+# empty), the autotuner MUST treat the AI proposal as invalid and fall
+# through to the baseline cascade (fallback then default). Equivalent to
+# AI failing OOS validation. Specifically:
+#
+#   * Do NOT raise — the autotuner runs on a 1-minute scheduler; an
+#     unhandled raise corrupts the daemon cycle. Reject the proposal
+#     gracefully and persist fallback (or default if fallback also fails).
+#   * Do NOT silently merge partial AI keys into fallback — the resulting
+#     dict was never OOS-validated.
+#   * EXTRA keys not in the search space are IGNORED (forward-compat with
+#     future Optuna search-space expansion).
+#
+# Implementer can choose to raise + catch internally OR check upstream
+# before consuming — either is acceptable so long as the observable
+# behavior matches: no partial merge persisted, fallback used.
+#
+# These tests pin the OBSERVABLE behavior (what gets persisted), not the
+# internal mechanism.
+# ===========================================================================
+
+
+# The exhaustive list of keys the autotuner's Optuna search space populates.
+# Sourced from autotuner.py:285-291. If the search space changes, this list
+# must be regenerated. We do NOT import this from autotuner.py because the
+# search space is defined inline inside the ``objective`` closure and is not
+# externally importable — pinning the contract here is intentional.
+OPTUNA_SEARCH_SPACE_KEYS = {
+    "TRIGGER_THRESHOLD_PCT",
+    "TAKE_PROFIT_MC_PCT",
+    "VWAP_CROSS_HWM_PCT",
+    "VWAP_BLEED_MULTIPLIER",
+    "VWAP_BLEED_TICKS",
+    "PARABOLIC_VELOCITY_THRESHOLD",
+    "MAX_PARABOLIC_SQUEEZE",
+}
+
+
+def test_optuna_search_space_keys_match_autotuner_objective_source():
+    """
+    Guard: if the autotuner's Optuna search space is edited (a key added or
+    renamed at autotuner.py:285-291), this test fails so the schema
+    validation in FU2 is updated in lock-step. Without this guard, FU2's
+    schema check could drift silently from the producer.
+
+    We assert against the SOURCE of autotuner.py rather than importing the
+    closure (which is not externally importable). This is a contract pin,
+    not a behavioral test.
+    """
+    import autotuner
+    import inspect
+
+    source = inspect.getsource(autotuner.run_autotuner)
+    for key in OPTUNA_SEARCH_SPACE_KEYS:
+        assert f'"{key}"' in source, (
+            f"Expected Optuna search-space key '{key}' to be referenced in "
+            f"autotuner.run_autotuner source; if you renamed/removed it, "
+            f"update OPTUNA_SEARCH_SPACE_KEYS in this test file."
+        )
+
+
+def test_partial_best_params_missing_key_rejects_ai_and_persists_fallback():
+    """
+    FU2 Scenario 1 — Optuna returns a dict missing one of the 7 keys.
+
+    Simulate a partial best_params dict with only TRIGGER_THRESHOLD_PCT set.
+    Even if the AI would have won OOS evaluation (we force fallback and
+    default to fail by making them trigger while AI does not), the partial
+    schema MUST cause the AI proposal to be rejected. Persisted params must
+    NOT contain the partial AI dict merged into fallback.
+
+    Observable contract: the persisted VWAP_CROSS_HWM_PCT marker must be
+    the FALLBACK marker (not the AI marker, and not a Frankenstein merge).
+    """
+    # Partial: only one of the seven Optuna-searched keys is present.
+    # CRITICAL: the value MUST differ from fallback's TRIGGER_THRESHOLD_PCT
+    # (which equals DEFAULT_STRATEGY["TRIGGER_THRESHOLD_PCT"] == 15.0). Pick
+    # a value at the opposite end of the Optuna search range (5.0-25.0).
+    # If the silent-merge bug fires under the current ``>=`` code path, the
+    # AI's 22.0 leaks into the persisted dict; with schema validation, the
+    # AI proposal is rejected wholesale and fallback's 15.0 is preserved.
+    partial_ai = {"TRIGGER_THRESHOLD_PCT": 22.0}
+    fallback = _fallback_params()
+    default = _patched_default_strategy()
+    # AI does not trigger -> alpha 0; fallback and default both trigger ->
+    # both go negative. Under the OLD code path AI would win OOS, and the
+    # partial dict would be silently merged into fallback. Under the new
+    # schema validation, AI is rejected upstream and fallback is persisted.
+    side_effect = _make_vwap_side_effect(
+        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
+    )
+
+    stdout, ctx = _run_and_capture(partial_ai, fallback, default, side_effect)
+
+    save_calls = ctx["save_calls"]
+    assert len(save_calls) == 1, (
+        "Schema validation must reject the AI proposal gracefully, not raise; "
+        "exactly one save_symphony_strategy call must occur per symphony."
+    )
+    _name, persisted_params, _locked = save_calls[0]
+
+    # Persisted VWAP marker must be FALLBACK's, NOT AI's TRIGGER_THRESHOLD
+    # value merged into fallback (a partial merge would still carry
+    # FALLBACK's VWAP marker — so we additionally assert the persisted
+    # TRIGGER_THRESHOLD_PCT matches FALLBACK's, not the partial AI's, to
+    # detect a Frankenstein merge).
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
+        FALLBACK_MARKER, abs=1e-9
+    ), (
+        "Partial best_params must NOT cause the AI branch to fire; "
+        "fallback marker must be persisted."
+    )
+    assert persisted_params["TRIGGER_THRESHOLD_PCT"] == pytest.approx(
+        fallback["TRIGGER_THRESHOLD_PCT"], abs=1e-9
+    ), (
+        "Detected Frankenstein merge: TRIGGER_THRESHOLD_PCT from the "
+        "partial AI dict (22.0) leaked into the persisted fallback dict. "
+        "Schema validation must reject the WHOLE AI proposal, not "
+        "selectively merge keys present in the partial dict."
+    )
+
+    # Every Optuna-searched key in the persisted dict must equal fallback's
+    # value — no AI key should have leaked through.
+    for key in OPTUNA_SEARCH_SPACE_KEYS:
+        assert persisted_params[key] == fallback[key], (
+            f"Key {key!r} in persisted params differs from fallback — "
+            f"indicates a partial AI merge leaked through schema validation."
+        )
+
+
+def test_empty_best_params_rejects_ai_and_persists_fallback():
+    """
+    FU2 Scenario 2 — Optuna returns an empty dict.
+
+    Edge case of the partial schema: best_params = {}. The autotuner must
+    reject this proposal entirely. With AI alpha-dominant in the mock
+    (fallback and default trigger; AI does not), this would otherwise
+    appear to 'win' OOS — but with no proposed params there is literally
+    nothing to persist from AI. Must fall through to fallback.
+    """
+    empty_ai: dict = {}
+    fallback = _fallback_params()
+    default = _patched_default_strategy()
+    side_effect = _make_vwap_side_effect(
+        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
+    )
+
+    stdout, ctx = _run_and_capture(empty_ai, fallback, default, side_effect)
+
+    save_calls = ctx["save_calls"]
+    assert len(save_calls) == 1
+    _name, persisted_params, _locked = save_calls[0]
+
+    # Every Optuna-searched key in the persisted dict must match fallback.
+    for key in OPTUNA_SEARCH_SPACE_KEYS:
+        assert persisted_params[key] == fallback[key], (
+            f"Empty best_params must result in pure fallback persistence; "
+            f"key {key!r} drifted from fallback's value."
+        )
+
+    # And the banner must indicate fallback was used.
+    assert "Reverting to Fallback" in stdout or "Resetting to Global Default" in stdout, (
+        f"Expected baseline-cascade banner on empty best_params; got:\n{stdout}"
+    )
+    assert "OOS validation passed" not in stdout, (
+        "AI-adoption banner must NOT print when best_params is empty."
+    )
+
+
+def test_extra_keys_in_best_params_are_ignored_ai_proposal_still_valid():
+    """
+    FU2 Scenario 3 — Optuna returns ALL 7 required keys PLUS extras.
+
+    Forward-compat: if Optuna's search space is extended in a future cycle
+    and the persistence layer hasn't caught up yet, the autotuner must NOT
+    reject the proposal solely because extra keys are present. Extras are
+    ignored; the 7 required keys are persisted as the AI proposal.
+
+    Set up: AI has the 7 required keys + 2 extra keys. AI does not
+    trigger; fallback and default both trigger. AI should be adopted
+    (extra keys are silently ignored or carried through without breaking).
+    """
+    ai = _ai_best_params()
+    # Add two extra keys not in the Optuna search space.
+    ai_with_extras = dict(ai)
+    ai_with_extras["EXPERIMENTAL_FUTURE_PARAM"] = 42.0
+    ai_with_extras["ANOTHER_NEW_KEY"] = 0.99
+
+    fallback = _fallback_params()
+    default = _patched_default_strategy()
+    side_effect = _make_vwap_side_effect(
+        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
+    )
+
+    stdout, ctx = _run_and_capture(
+        ai_with_extras, fallback, default, side_effect
+    )
+
+    save_calls = ctx["save_calls"]
+    assert len(save_calls) == 1
+    _name, persisted_params, _locked = save_calls[0]
+
+    # AI's marker survives -> AI was adopted despite the extra keys.
+    assert persisted_params["VWAP_CROSS_HWM_PCT"] == pytest.approx(
+        AI_MARKER, abs=1e-9
+    ), (
+        "Extra keys in best_params must NOT cause AI rejection — schema "
+        "validation requires presence of the 7 known keys, not absence "
+        "of unknown keys (forward-compat with future Optuna expansion)."
+    )
+
+    # All 7 required keys must be present in the persisted dict.
+    for key in OPTUNA_SEARCH_SPACE_KEYS:
+        assert key in persisted_params, (
+            f"Required Optuna-searched key {key!r} missing from persisted "
+            f"params after AI adoption."
+        )
+
+
+def test_partial_best_params_does_not_raise_unhandled_exception():
+    """
+    FU2 Scenario 4 — Robustness: the daemon runs on a 1-minute cadence.
+    An unhandled exception in run_autotuner kills the EOD cycle. The
+    chosen schema-validation strategy MUST handle the partial-dict case
+    without surfacing an unhandled exception to the caller.
+
+    We allow the implementer to raise INTERNALLY (e.g., raise + catch in
+    a try/except inside run_autotuner) — but run_autotuner itself must
+    return without propagating the exception. The simulator harness
+    triggers any exception by attempting to run with the partial dict.
+    """
+    partial_ai = {"TAKE_PROFIT_MC_PCT": 5.0}
+    fallback = _fallback_params()
+    default = _patched_default_strategy()
+    side_effect = _make_vwap_side_effect(
+        broken_for_marker={FALLBACK_MARKER, DEFAULT_MARKER}
+    )
+
+    # Must complete without raising. Capture but do not assert on stdout
+    # here — this test is purely about exception-safety.
+    try:
+        _stdout, ctx = _run_and_capture(
+            partial_ai, fallback, default, side_effect
+        )
+    except Exception as exc:  # pragma: no cover - failure surface
+        pytest.fail(
+            f"run_autotuner must not propagate exceptions when best_params "
+            f"is partial; got {type(exc).__name__}: {exc}. Real-money risk: "
+            f"unhandled raise corrupts the daemon's 1-minute EOD cycle."
+        )
+
+    # And a strategy MUST still be persisted (fallback or default).
+    assert len(ctx["save_calls"]) == 1, (
+        "Even on partial best_params, run_autotuner must persist a strategy "
+        "(fallback or default) per symphony — silent no-op leaves the "
+        "strategy table stale and is itself a defect."
+    )
