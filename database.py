@@ -46,10 +46,24 @@ def init_db():
         )
     """)
 
+    # P1: Per-run Optuna validation metrics — durable audit trail for Claude context-assembly
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS autotune_runs (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_timestamp      TEXT    NOT NULL,
+            symphony_id        TEXT    NOT NULL,
+            oos_alpha          REAL    DEFAULT NULL,
+            train_alpha        REAL    DEFAULT NULL,
+            baseline_decision  TEXT    DEFAULT NULL,
+            fallback_oos_alpha REAL    DEFAULT NULL,
+            default_oos_alpha  REAL    DEFAULT NULL
+        )
+    """)
+
     cursor.execute("INSERT OR IGNORE INTO execution_lock (id, is_locked, timestamp) VALUES (1, 0, 0)")
     cursor.execute("INSERT OR IGNORE INTO bot_state (id, data) VALUES (1, '{}')")
     cursor.execute("INSERT OR IGNORE INTO chart_history (id, data) VALUES (1, '{}')")
-    
+
     conn.commit()
     conn.close()
 
@@ -235,6 +249,66 @@ def clear_symphony_logs():
             json.dump({}, f)
     except Exception as e:
         print(f"Error clearing symphony logs: {e}")
+
+# --- Autotune Run Persistence (P1) ---
+
+def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
+                      baseline_decision, fallback_oos_alpha, default_oos_alpha) -> None:
+    """Persist one row of per-run Optuna validation metrics to autotune_runs.
+
+    Called once per symphony per run_autotuner() invocation, after baseline_decision
+    is finalized.  All metric columns are NULLable so partial data never fails an
+    INSERT (though callers should supply all seven values).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO autotune_runs
+            (run_timestamp, symphony_id, oos_alpha, train_alpha,
+             baseline_decision, fallback_oos_alpha, default_oos_alpha)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (run_timestamp, symphony_id, oos_alpha, train_alpha,
+         baseline_decision, fallback_oos_alpha, default_oos_alpha),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_latest_autotune_run(symphony_id) -> dict | None:
+    """Return the most-recent autotune_runs row for symphony_id as a dict.
+
+    Returns None if no rows exist for that symphony — callers (e.g. Claude
+    context-assembly) treat None as "Optuna has not yet run for this symphony".
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT run_timestamp, symphony_id, oos_alpha, train_alpha,
+               baseline_decision, fallback_oos_alpha, default_oos_alpha
+        FROM autotune_runs
+        WHERE symphony_id = ?
+        ORDER BY run_timestamp DESC
+        LIMIT 1
+        """,
+        (symphony_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return {
+        "run_timestamp":      row[0],
+        "symphony_id":        row[1],
+        "oos_alpha":          row[2],
+        "train_alpha":        row[3],
+        "baseline_decision":  row[4],
+        "fallback_oos_alpha": row[5],
+        "default_oos_alpha":  row[6],
+    }
+
 
 # Initialize tables on import
 init_db()
