@@ -36,6 +36,12 @@ _PERFORMANCE_NONE_METRICS = {k: None for k in _PERFORMANCE_METRIC_KEYS}
 ENV_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 
 app = Flask(__name__)
+# Reload .html templates on every request without restarting the process.
+# NOTE: use_reloader / debug auto-restart are intentionally NOT enabled — the
+# process owns a minute-scheduler that spawns real-money execution subprocesses;
+# a Python-code restart would interrupt live ops.
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
