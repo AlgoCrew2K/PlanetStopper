@@ -8,23 +8,21 @@ import synthetic_history
 import glob
 import json
 
-<<<<<<< HEAD
-=======
-optuna.logging.set_verbosity(optuna.logging.WARNING)
-
 # Required keys for a complete Optuna best_params payload.
 # MUST be kept in sync with the suggest_* calls in the objective() closure
-# below (currently lines ~285-291). If any of these keys is missing from
-# study.best_params after optimization, the AI proposal is rejected wholesale
-# (no Frankenstein merge) and the baseline cascade (fallback -> default) runs.
+# below. If any of these keys is missing from study.best_params after
+# optimization, the AI proposal is rejected wholesale (no Frankenstein merge)
+# and the baseline cascade (fallback -> default) runs.
 # Extra keys outside this set are tolerated for forward-compat.
+# Note: optuna.logging.set_verbosity is now called inside run_autotuner
+# (not module-level) so import does not trigger logging side effects.
 OPTUNA_SEARCH_SPACE_KEYS = frozenset({
     "TRIGGER_THRESHOLD_PCT", "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
     "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS",
     "PARABOLIC_VELOCITY_THRESHOLD", "MAX_PARABOLIC_SQUEEZE",
 })
 
->>>>>>> origin/task-b2-fu1-fu2-tie-schema
+
 def calculate_historical_deviation(current_date_str):
     """
     Scans local directory for post_mortem_*.json from the last 45 calendar days.
