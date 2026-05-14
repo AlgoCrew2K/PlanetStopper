@@ -157,6 +157,36 @@
             </div>
         </header>
 
+        <!-- Portfolio 6-metric strip: Today's Change / Cumulative Return / Max Drawdown — dry-run vs if-held -->
+        <div id="portfolio-strip" class="bg-slate-800 px-6 py-4 rounded-2xl shadow-lg border border-slate-700 mb-6 flex items-center gap-8">
+            <span class="text-[10px] uppercase tracking-widest text-slate-500 font-bold flex-shrink-0">Portfolio</span>
+            <div class="h-4 w-px bg-slate-700 flex-shrink-0"></div>
+            <div class="flex items-center gap-2">
+                <span class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold" title="Today's Change">TC</span>
+                <div class="flex flex-col leading-tight">
+                    <span id="ps-tc-dry" class="text-xs font-mono font-bold text-slate-200">---</span>
+                    <span id="ps-tc-held" class="text-[10px] font-mono text-slate-500">---</span>
+                </div>
+            </div>
+            <div class="h-4 w-px bg-slate-700 flex-shrink-0"></div>
+            <div class="flex items-center gap-2">
+                <span class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold" title="Cumulative Return">CR</span>
+                <div class="flex flex-col leading-tight">
+                    <span id="ps-cr-dry" class="text-xs font-mono font-bold text-slate-200">---</span>
+                    <span id="ps-cr-held" class="text-[10px] font-mono text-slate-500">---</span>
+                </div>
+            </div>
+            <div class="h-4 w-px bg-slate-700 flex-shrink-0"></div>
+            <div class="flex items-center gap-2">
+                <span class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold" title="Max Drawdown">MDD</span>
+                <div class="flex flex-col leading-tight">
+                    <span id="ps-mdd-dry" class="text-xs font-mono font-bold text-slate-200">---</span>
+                    <span id="ps-mdd-held" class="text-[10px] font-mono text-slate-500">---</span>
+                </div>
+            </div>
+            <div class="ml-auto text-[10px] text-slate-600 font-mono" title="dry-run = AlphaBot; if-held = buy-and-hold Composer model">dry-run / if-held</div>
+        </div>
+
         <div id="notification" class="hidden mb-6 p-4 rounded-xl text-sm font-medium transition-all duration-300"></div>
 
         <div class="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700 min-h-[750px]">
@@ -808,6 +838,32 @@
                 }
             }
             document.getElementById('last-updated').textContent = `Last Updated: ${new Date().toLocaleTimeString()}`;
+
+            if (data.portfolio_strip) {
+                const ps = data.portfolio_strip;
+                function fmtPct(v) {
+                    if (v == null) return '---';
+                    return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+                }
+                function pctColor(v) {
+                    return v >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                }
+                const tc = ps.today_change || {};
+                const cr = ps.cumulative_return || {};
+                const mdd = ps.max_drawdown || {};
+                const tcDry = document.getElementById('ps-tc-dry');
+                const tcHeld = document.getElementById('ps-tc-held');
+                const crDry = document.getElementById('ps-cr-dry');
+                const crHeld = document.getElementById('ps-cr-held');
+                const mddDry = document.getElementById('ps-mdd-dry');
+                const mddHeld = document.getElementById('ps-mdd-held');
+                if (tcDry) { tcDry.textContent = fmtPct(tc.dry_run); tcDry.className = `text-xs font-mono font-bold ${pctColor(tc.dry_run)}`; }
+                if (tcHeld) { tcHeld.textContent = fmtPct(tc.if_held); }
+                if (crDry) { crDry.textContent = fmtPct(cr.dry_run); crDry.className = `text-xs font-mono font-bold ${pctColor(cr.dry_run)}`; }
+                if (crHeld) { crHeld.textContent = fmtPct(cr.if_held); }
+                if (mddDry) { mddDry.textContent = mdd.dry_run != null ? (mdd.dry_run * 100).toFixed(2) + '%' : '---'; }
+                if (mddHeld) { mddHeld.textContent = mdd.if_held != null ? (mdd.if_held * 100).toFixed(2) + '%' : '---'; }
+            }
 
         }
 

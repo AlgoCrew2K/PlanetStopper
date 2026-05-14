@@ -159,22 +159,21 @@ def get_state():
             })
 
         # Attach per-symphony TC/CR/MDD to each sym dict so the template can render them.
-        _zero_metric = {"if_held": 0.0, "dry_run": 0.0}
         for k in symphony_keys:
             s = state_data[k]
             sym_dict = next((d for d in symphonies_list if d["id"] == k), {})
             try:
                 s["_tc"] = analytics.get_symphony_today_change(sym_dict, s)
             except (KeyError, TypeError, ValueError):
-                s["_tc"] = _zero_metric
+                s["_tc"] = {"if_held": 0.0, "dry_run": 0.0}
             try:
                 s["_cr"] = analytics.get_symphony_cumulative_return(sym_dict, s)
             except (KeyError, TypeError, ValueError):
-                s["_cr"] = _zero_metric
+                s["_cr"] = {"if_held": 0.0, "dry_run": 0.0}
             try:
                 s["_mdd"] = analytics.get_symphony_max_drawdown(sym_dict, s)
             except (KeyError, TypeError, ValueError):
-                s["_mdd"] = _zero_metric
+                s["_mdd"] = {"if_held": 0.0, "dry_run": 0.0}
 
         portfolio_strip = {
             "today_change": analytics.get_portfolio_today_change(symphonies_list, state_data),
