@@ -812,12 +812,14 @@ def main():
                                 AttributeError,
                             ) as log_exc:
                                 # Never let a logging failure escape and re-trigger the original
-                                # state-preservation bug. Narrow union covers sqlite3.OperationalError
-                                # (subclass of RuntimeError-equivalent via sqlite3.Error -> Exception;
-                                # OSError covers disk-full / permission). If a truly unknown error
-                                # type escapes here, we want it to propagate — the daemon supervisor
-                                # restarts; silently swallowing every conceivable log failure is
-                                # itself a Concern #28 violation.
+                                # state-preservation bug. Narrow union covers JSON-file I/O (OSError)
+                                # + json.dumps encoding failures (TypeError, ValueError) + sentinel /
+                                # None attribute access (AttributeError) + RuntimeError from any
+                                # unforeseen writer path. NOTE: log_symphony_event is a JSON-file
+                                # writer, NOT SQLite — no sqlite3 exceptions reach this site.
+                                # If a truly unknown type escapes here, we want it to propagate —
+                                # the daemon supervisor restarts; silently swallowing every
+                                # conceivable log failure is itself a Concern #28 violation.
                                 print(f"     !!! [LOGGING FAILURE] {sym_id}: {type(log_exc).__name__}: {log_exc}")
                             success = False
                     else:

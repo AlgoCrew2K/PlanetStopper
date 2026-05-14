@@ -732,3 +732,91 @@ class TestLiveExecutionMultiSymphonyPartialFailurePreservesEarlierSuccess:
             "The single Discord exit alert must NOT be for symphony B "
             "(B's executor raised before its freeze/alert block)."
         )
+
+
+# =============================================================================
+# Scenario 5 — log_symphony_event itself raises inside the inner wrap.
+#
+# B1-FU1.1 audit follow-up: the inner except clause (lines 807-821) catches
+# (OSError, RuntimeError, ValueError, TypeError, AttributeError) and prints a
+# LOGGING FAILURE message. Verify that when BOTH execute_sell_to_cash raises
+# AND database.log_symphony_event raises, neither exception propagates, the
+# LOGGING FAILURE print runs, the lock is released, and save_state still runs.
+# =============================================================================
+class TestLogSymphonyEventFailureInsideWrapDoesNotPropagate:
+    """Double-failure: executor raises, then the logger raises.
+
+    Setup: LIVE_EXECUTION=True, trigger fires, ``execute_sell_to_cash`` raises
+    ``requests.RequestException``, and ``database.log_symphony_event`` ALSO
+    raises ``OSError("disk full")``.
+
+    Required correct behaviour:
+
+      * ``main()`` MUST NOT propagate either exception.
+      * The fallback ``print`` inside the inner except block MUST run — output
+        must contain the string "LOGGING FAILURE" (the literal in the print
+        format string at alpha_bot_execution.py line ~821).
+      * Lock MUST be released (via the outer finally).
+      * Final ``save_state`` MUST still run so earlier successful iterations
+        are durable.
+    """
+
+    def test_log_symphony_event_failure_inside_wrap_does_not_propagate(
+        self, patched_environment, capsys
+    ):
+        env = patched_environment
+        _configure_trigger_scenario(env)
+
+        # Make log_symphony_event raise OSError only when logging the executor
+        # error (event_type="error"). Other calls (para-armed, etc.) must pass
+        # through so they don't leak before the code under test is reached.
+        def _log_raises_on_error(sym_id, message, event_type=None):
+            if event_type == "error":
+                raise OSError("disk full")
+
+        env["db"].log_symphony_event.side_effect = _log_raises_on_error
+
+        with patch.object(alpha_bot_execution, "LIVE_EXECUTION", True), \
+             patch.object(
+                 alpha_bot_execution.math_engine,
+                 "compute_exit_confirmation",
+                 return_value=(3, True),  # force the trailing-stop-hit branch
+             ), \
+             patch.object(
+                 alpha_bot_execution,
+                 "execute_sell_to_cash",
+                 side_effect=requests.RequestException("simulated HTTP failure"),
+             ):
+            try:
+                alpha_bot_execution.main()
+            except BaseException as exc:  # pragma: no cover — only fires on regression
+                pytest.fail(
+                    f"main() must not propagate exceptions when both "
+                    f"execute_sell_to_cash AND log_symphony_event raise; "
+                    f"got {type(exc).__name__}: {exc}."
+                )
+
+        # ----- 1. LOGGING FAILURE print ran -----
+        captured = capsys.readouterr()
+        combined = (captured.out or "") + (captured.err or "")
+        assert "LOGGING FAILURE" in combined, (
+            "The inner except clause must print a [LOGGING FAILURE] message "
+            "when log_symphony_event raises; nothing was found in stdout/stderr. "
+            f"Captured output: {combined!r}"
+        )
+
+        # ----- 2. Lock released cleanly -----
+        env["db"].acquire_lock.assert_called_once()
+        env["db"].release_lock.assert_called_once()
+
+        # ----- 3. Final save_state still ran -----
+        save_calls = env["db"].save_state.call_args_list
+        assert save_calls, (
+            "save_state was never called — the double-failure (executor + "
+            "logger) must not bypass the final save_state at the end of main()."
+        )
+        last_persisted_state = save_calls[-1].args[0]
+        assert _SYMPHONY_ID in last_persisted_state, (
+            "Final save_state must still contain the symphony key even when "
+            "both the executor and the logger raised."
+        )
