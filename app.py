@@ -544,7 +544,8 @@ if __name__ == "__main__":
 
     # Start the scheduler thread
     threading.Thread(target=run_scheduler, daemon=True).start()
-    print("\n🚀 Starting Alpha Bot Control Center at http://localhost:5000\n")
-    
+    port = int(os.environ.get("PORT", 5000))
+    print(f"\n🚀 Starting Alpha Bot Control Center at http://localhost:{port}\n")
+
     # Disable use_reloader to ensure the background thread runs once and only once
-    app.run(port=5000, debug=False, use_reloader=False)
+    app.run(port=port, debug=False, use_reloader=False)

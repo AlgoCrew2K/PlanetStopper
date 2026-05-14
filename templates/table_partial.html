@@ -145,13 +145,17 @@
 
                         {% set tc_dr = tc.dry_run %}
                         {% set tc_ih = tc.if_held %}
+                        {% set cr_dr = cr.dry_run %}
                         {% set cr_ih = cr.if_held %}
+                        {% set mdd_dr = mdd.dry_run %}
                         {% set mdd_ih = mdd.if_held %}
 
                         {% set tc_dr_str = (('+' if tc_dr > 0 else '') ~ "%.2f"|format(tc_dr) ~ '%') if tc_dr is not none else '---' %}
                         {% set tc_ih_str = (('+' if tc_ih > 0 else '') ~ "%.2f"|format(tc_ih) ~ '%') if tc_ih is not none else '---' %}
-                        {% set cr_str = (('+' if cr_ih > 0 else '') ~ "%.2f"|format(cr_ih) ~ '%') if cr_ih is not none else '---' %}
-                        {% set mdd_str = ("%.2f"|format(mdd_ih * 100) ~ '%') if mdd_ih is not none else '---' %}
+                        {% set cr_dr_str = (('+' if cr_dr > 0 else '') ~ "%.2f"|format(cr_dr) ~ '%') if cr_dr is not none else '---' %}
+                        {% set cr_ih_str = (('+' if cr_ih > 0 else '') ~ "%.2f"|format(cr_ih) ~ '%') if cr_ih is not none else '---' %}
+                        {% set mdd_dr_str = ("%.2f"|format(mdd_dr * 100) ~ '%') if mdd_dr is not none else '---' %}
+                        {% set mdd_ih_str = ("%.2f"|format(mdd_ih * 100) ~ '%') if mdd_ih is not none else '---' %}
 
                         {% set tc_dr_color = 'text-emerald-400' if tc_dr is not none and tc_dr >= 0 else 'text-rose-400' %}
                         {% set tc_ih_color = 'text-emerald-400/60' if tc_ih is not none and tc_ih >= 0 else 'text-rose-400/60' %}
@@ -175,14 +179,9 @@
                             <td class="px-3 py-2.5 text-right font-mono {{ cur_ret_color }}">{{ cur_ret_str | safe }}</td>
                             <td class="px-3 py-2.5 text-right font-mono {{ shadow_hwm_color }}">{{ sym.shadow_hwm | round(2) }}%</td>
                             <td class="px-3 py-2.5 text-right font-mono">{{ shadow_str | safe }}</td>
-                            <td class="px-2 py-2.5 text-right font-mono">
-                                <div class="flex flex-col items-end leading-tight">
-                                    <span class="{{ tc_dr_color }} text-xs">{{ tc_dr_str }}</span>
-                                    <span class="{{ tc_ih_color }} text-[10px]">{{ tc_ih_str }}</span>
-                                </div>
-                            </td>
-                            <td class="px-2 py-2.5 text-right font-mono text-slate-400 text-xs">{{ cr_str }}</td>
-                            <td class="px-2 py-2.5 text-right font-mono text-slate-400 text-xs">{{ mdd_str }}</td>
+                            <td class="px-2 py-2.5 text-right font-mono text-xs {{ tc_dr_color }}">{{ tc_dr_str }} ({{ tc_ih_str }})</td>
+                            <td class="px-2 py-2.5 text-right font-mono text-slate-400 text-xs">{{ cr_dr_str }} ({{ cr_ih_str }})</td>
+                            <td class="px-2 py-2.5 text-right font-mono text-slate-400 text-xs">{{ mdd_dr_str }} ({{ mdd_ih_str }})</td>
                         </tr>
                     {% endfor %}
                 </tbody>
