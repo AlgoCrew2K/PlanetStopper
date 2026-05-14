@@ -15,6 +15,7 @@ from dotenv import dotenv_values, set_key
 
 import database
 import analytics
+import ai_advisor
 
 # Minimum observations before quantstats metrics are deemed statistically
 # meaningful for the dashboard.  Below this floor the route surfaces
@@ -507,6 +508,8 @@ def get_settings():
         "ACCOUNT_ROTH": env_vars.get("ACCOUNT_ROTH", ""),
         "ACCOUNT_TRAD": env_vars.get("ACCOUNT_TRAD", ""),
         "DISCORD_WEBHOOK_URL": env_vars.get("DISCORD_WEBHOOK_URL", ""),
+        # Never echo the raw key — return empty string regardless of whether set.
+        "ANTHROPIC_API_KEY": "",
     }
 
     # Fetch unique symphony names from the current bot_state
@@ -541,6 +544,76 @@ def save_settings():
         return jsonify({"status": "success", "message": "Variables updated successfully!"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+# --- 5. AI Advisor Routes ---
+@app.route("/ai-advisor", methods=["GET"])
+def ai_advisor_tab():
+    """Render the Claude AI Config Advisor tab."""
+    return render_template("ai_advisor.html")
+
+
+@app.route("/ai-advisor/suggest", methods=["POST"])
+def ai_advisor_suggest():
+    """Call Claude advisor and return suggestions as JSON."""
+    payload = request.json or {}
+    symphony_id = payload.get("symphony_id", "")
+    context = ai_advisor.assemble_advisor_context(scope="symphony", symphony_id=symphony_id)
+    suggestions_response, error_msg = ai_advisor.request_suggestions(context)
+    if error_msg is not None:
+        return jsonify({"error": error_msg}), 200
+    suggestions = [s.model_dump() for s in suggestions_response.suggestions]
+    return jsonify({"suggestions": suggestions})
+
+
+@app.route("/ai-advisor/accept", methods=["POST"])
+def ai_advisor_accept():
+    """Apply an accepted suggestion through all three C2 safety gates."""
+    payload = request.json or {}
+    symphony_id = payload.get("symphony_id", "")
+    suggestion_data = payload.get("suggestion", {})
+
+    suggestion_obj = ai_advisor.ConfigSuggestion(
+        config_key=suggestion_data.get("config_key", ""),
+        current_value=suggestion_data.get("current_value", 0),
+        suggested_value=suggestion_data.get("suggested_value", 0),
+        rationale=suggestion_data.get("rationale", ""),
+        risk_direction=suggestion_data.get("risk_direction", "neutral"),
+        confidence=suggestion_data.get("confidence", "medium"),
+        data_sufficiency=suggestion_data.get("data_sufficiency", "sufficient"),
+    )
+
+    # C2 Gate 1: allowlist
+    allowed, rejected = ai_advisor.enforce_suggestion_allowlist([suggestion_obj])
+    if rejected:
+        return jsonify({"status": "rejected", "error": "key not in allowlist"}), 200
+
+    # C2 Gate 2: risk direction (log disagreement, do not block)
+    ai_advisor.check_risk_direction_agreement(suggestion_obj)
+
+    # C2 Gate 3: OOS revalidation
+    current_strategy = database.get_symphony_strategy(symphony_id) or {"params": {}, "locked_vars": []}
+    oos_result = ai_advisor.revalidate_suggestion_oos(
+        symphony_id,
+        suggestion_obj.config_key,
+        suggestion_obj.suggested_value,
+        current_strategy,
+    )
+    if not oos_result["passed"]:
+        return jsonify({"status": "rejected", "error": oos_result["detail"]}), 200
+
+    # All gates passed — write the config change
+    params = dict(current_strategy.get("params", {}))
+    locked_vars = current_strategy.get("locked_vars", [])
+    params[suggestion_obj.config_key] = suggestion_obj.suggested_value
+    database.save_symphony_strategy(symphony_id, params, locked_vars)
+    return jsonify({"status": "accepted"})
+
+
+@app.route("/ai-advisor/reject", methods=["POST"])
+def ai_advisor_reject():
+    """Record operator rejection — no config write."""
+    return jsonify({"status": "rejected"})
+
 
 if __name__ == "__main__":
     # Reconfigure stdout to UTF-8 so emoji/non-Latin-1 chars don't crash on
