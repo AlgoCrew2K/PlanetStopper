@@ -602,7 +602,76 @@ def current_strategy() -> dict:
     }
 
 
-def test_revalidate_oos_passes_when_suggestion_beats_baseline(current_strategy):
+# ---------------------------------------------------------------------------
+# C2.2 — OOS arg-assembly mocks (offline fixture tier).
+#
+# revalidate_suggestion_oos assembles its run_simulation args from three live
+# sources before reaching the mocked run_simulation call:
+#   1. database.load_state()                   — hits SQLite state DB
+#   2. synthetic_history.generate_synthetic_history()  — live Alpaca fetches
+#   3. autotuner.calculate_historical_deviation()      — hits SQLite state DB
+#
+# Without mocking these, every OOS test incurs a full Alpaca network round-trip
+# (35 tickers × up to 125 days, with retries and sleeps) — turning the suite
+# from ~13s to ~600s. These patches must be applied to ALL revalidate_suggestion_oos
+# tests so the suite runs offline in the non-live tier.
+#
+# Patch targets (source modules, not ai_advisor.*):
+#   "database.load_state"                                   — called directly
+#   "synthetic_history.generate_synthetic_history"          — lazy import in fn
+#   "autotuner.calculate_historical_deviation"              — lazy import in fn
+#
+# Fixture data is deliberately minimal but structurally valid:
+#   - bot_state has one entry whose normalize_name("name") == "sym-a"
+#     (database.normalize_name strips + lowercases; tests use symphony_id="sym-A")
+#   - history_data is a non-empty dict so isinstance(…, dict) asserts pass
+#   - deviation_dict is an empty dict (valid: no deviations recorded)
+# ---------------------------------------------------------------------------
+
+_FIXTURE_BOT_STATE = {
+    "acc-sym-a": {
+        "name": "sym-A",
+        "current_return": 0.0,
+        "high_water_mark": 0.0,
+    }
+}
+_FIXTURE_HISTORY_DATA: dict = {"acc-sym-a": {}}
+_FIXTURE_DEVIATION_DICT: dict = {}
+
+
+@pytest.fixture
+def oos_assembly_mocks():
+    """Patch the three live arg-assembly sources in revalidate_suggestion_oos.
+
+    Yields a namespace with .load_state, .generate_synthetic_history, and
+    .calculate_historical_deviation mock objects so individual tests can inspect
+    call args or override return values as needed.
+
+    Applied to every revalidate_suggestion_oos test to keep the non-live tier
+    fast and offline (no Alpaca fetches, no DB reads).
+    """
+    with (
+        patch("database.load_state", return_value=_FIXTURE_BOT_STATE) as m_state,
+        patch(
+            "synthetic_history.generate_synthetic_history",
+            return_value=_FIXTURE_HISTORY_DATA,
+        ) as m_hist,
+        patch(
+            "autotuner.calculate_historical_deviation",
+            return_value=_FIXTURE_DEVIATION_DICT,
+        ) as m_dev,
+    ):
+        class _Mocks:
+            load_state = m_state
+            generate_synthetic_history = m_hist
+            calculate_historical_deviation = m_dev
+
+        yield _Mocks()
+
+
+def test_revalidate_oos_passes_when_suggestion_beats_baseline(
+    current_strategy, oos_assembly_mocks
+):
     """A suggestion whose OOS alpha BEATS the baseline OOS alpha must pass the
     gate -> ``passed: True``.
 
@@ -633,7 +702,7 @@ def test_revalidate_oos_passes_when_suggestion_beats_baseline(current_strategy):
 
 
 def test_revalidate_oos_fails_when_suggestion_worse_than_baseline(
-    current_strategy,
+    current_strategy, oos_assembly_mocks
 ):
     """A suggestion whose OOS alpha is WORSE than baseline must NOT be
     greenlit -> ``passed: False``.
@@ -662,7 +731,7 @@ def test_revalidate_oos_fails_when_suggestion_worse_than_baseline(
     assert mock_sim.call_count == 2
 
 
-def test_revalidate_oos_tie_does_not_pass(current_strategy):
+def test_revalidate_oos_tie_does_not_pass(current_strategy, oos_assembly_mocks):
     """A suggestion that merely TIES the baseline OOS alpha must not pass —
     the autotuner's own cascade uses a strict-positive rule (oos must strictly
     beat the baseline). A tie buys no validated improvement, so it must not be
@@ -700,7 +769,7 @@ def test_revalidate_oos_tie_does_not_pass(current_strategy):
 # ===========================================================================
 
 def test_revalidate_oos_passes_run_simulation_with_5_positional_args(
-    current_strategy,
+    current_strategy, oos_assembly_mocks
 ):
     """``revalidate_suggestion_oos`` must call ``run_simulation`` with the
     real 5-arg signature on EACH invocation:
@@ -715,10 +784,12 @@ def test_revalidate_oos_passes_run_simulation_with_5_positional_args(
     We assert:
     - Each call receives exactly 5 positional arguments.
     - Arg 0 (``p``) is a dict (the strategy params dict).
-    - Arg 1 (``history_data``) is a dict (keyed by symphony/account id).
+    - Arg 1 (``history_data``) is the value returned by the mocked
+      ``generate_synthetic_history`` — verifies fixture data flows through.
     - Arg 2 (``acc_sym_ids``) is a list or tuple of account/symphony ids.
     - Arg 3 (``current_date_str``) is a string matching YYYY-MM-DD format.
-    - Arg 4 (``deviation_dict``) is a dict.
+    - Arg 4 (``deviation_dict``) is the value returned by the mocked
+      ``calculate_historical_deviation`` — verifies fixture data flows through.
 
     Shape assertions only — no hardcoded producer values.
     """
@@ -748,9 +819,12 @@ def test_revalidate_oos_passes_run_simulation_with_5_positional_args(
             f"call {call_idx}: arg 0 (p) must be a dict of strategy params, "
             f"got {type(p).__name__!r}"
         )
-        assert isinstance(history_data, dict), (
-            f"call {call_idx}: arg 1 (history_data) must be a dict, "
-            f"got {type(history_data).__name__!r}"
+        # history_data must be exactly what generate_synthetic_history returned —
+        # the function must not transform or drop the fixture value.
+        assert history_data is _FIXTURE_HISTORY_DATA, (
+            f"call {call_idx}: arg 1 (history_data) must be the value returned "
+            "by generate_synthetic_history (the fixture dict); got a different "
+            f"object: {history_data!r}"
         )
         assert isinstance(acc_sym_ids, (list, tuple)), (
             f"call {call_idx}: arg 2 (acc_sym_ids) must be a list or tuple, "
@@ -766,14 +840,16 @@ def test_revalidate_oos_passes_run_simulation_with_5_positional_args(
             f"call {call_idx}: arg 3 (current_date_str) must be YYYY-MM-DD, "
             f"got {current_date_str!r}"
         )
-        assert isinstance(deviation_dict, dict), (
-            f"call {call_idx}: arg 4 (deviation_dict) must be a dict, "
-            f"got {type(deviation_dict).__name__!r}"
+        # deviation_dict must be exactly what calculate_historical_deviation returned.
+        assert deviation_dict is _FIXTURE_DEVIATION_DICT, (
+            f"call {call_idx}: arg 4 (deviation_dict) must be the value returned "
+            "by calculate_historical_deviation (the fixture dict); got a different "
+            f"object: {deviation_dict!r}"
         )
 
 
 def test_revalidate_oos_baseline_call_passes_current_strategy_as_p(
-    current_strategy,
+    current_strategy, oos_assembly_mocks
 ):
     """The FIRST call to ``run_simulation`` (baseline) must pass
     ``current_strategy`` as arg 0 (``p``) — unchanged, not patched.
@@ -807,7 +883,7 @@ def test_revalidate_oos_baseline_call_passes_current_strategy_as_p(
 
 
 def test_revalidate_oos_patched_call_passes_modified_strategy_as_p(
-    current_strategy,
+    current_strategy, oos_assembly_mocks
 ):
     """The SECOND call to ``run_simulation`` (patched) must pass a strategy
     dict where the targeted config_key has been replaced with suggested_value,
