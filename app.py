@@ -2,6 +2,7 @@
 
 import os
 import sys
+import io
 import time
 import threading
 import subprocess
@@ -491,6 +492,11 @@ def save_settings():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
+    # Reconfigure stdout to UTF-8 so emoji/non-Latin-1 chars don't crash on
+    # Windows (cp1252 default).  Guarded to __main__ so pytest's capture is
+    # not affected when this module is imported during test collection.
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+
     # Start the scheduler thread
     threading.Thread(target=run_scheduler, daemon=True).start()
     print("\n🚀 Starting Alpha Bot Control Center at http://localhost:5000\n")
