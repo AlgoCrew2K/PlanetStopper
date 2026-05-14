@@ -292,7 +292,7 @@ def performance_page():
     Client-side JS pulls /api/performance and /api/performance/symphonies on
     load and on scope/symphony changes.
     """
-    return render_template("performance.html")
+    return render_template("performance.html", min_history_days=_PERFORMANCE_MIN_HISTORY_DAYS)
 
 
 @app.route("/api/performance")
