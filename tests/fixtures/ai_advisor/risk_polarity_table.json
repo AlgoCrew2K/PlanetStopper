@@ -1,0 +1,16 @@
+{
+  "_provenance": "Transcribed from docs/research/claude-integration/config-surface.md §1 (Layer A table + _PARAM_DEFINITIONS risk_polarity field) by the C2.1 test-writer (independent reader from the C2 implementer). The authoritative spec is the config-surface.md document; this fixture encodes what a human reader takes from §1. To update: re-read config-surface.md §1 and edit this file, then re-run the test suite.",
+  "_rule": "raising_loosens_except_TAKE_PROFIT_MC_PCT",
+  "_lone_inverted_param": "TAKE_PROFIT_MC_PCT",
+  "_lone_inverted_reason": "TAKE_PROFIT_MC_PCT is the MC-probability FLOOR below which take-profit arming triggers — raising it tightens risk by arming the take-profit trigger in a wider band. All other suggestible keys are 'raising loosens risk' (they delay or widen exit thresholds).",
+  "raise_direction": {
+    "TRIGGER_THRESHOLD_PCT": "loosens",
+    "TAKE_PROFIT_MC_PCT": "tightens",
+    "VWAP_CROSS_HWM_PCT": "loosens",
+    "VWAP_BLEED_MULTIPLIER": "loosens",
+    "VWAP_BLEED_TICKS": "loosens",
+    "PARABOLIC_VELOCITY_THRESHOLD": "loosens",
+    "MAX_PARABOLIC_SQUEEZE": "loosens",
+    "MAX_SQUEEZE_FLOOR": "loosens"
+  }
+}
