@@ -590,22 +590,23 @@ def ai_advisor_accept():
     # C2 Gate 2: risk direction (log disagreement, do not block)
     ai_advisor.check_risk_direction_agreement(suggestion_obj)
 
-    # C2 Gate 3: OOS revalidation
-    current_strategy = database.get_symphony_strategy(symphony_id) or {"params": {}, "locked_vars": []}
+    # C2 Gate 3: OOS revalidation — pass flat params, not the DB wrapper
+    current_strategy_row = database.get_symphony_strategy(symphony_id) or {"params": {}, "locked_vars": []}
+    flat_params = dict(current_strategy_row.get("params", {}))
+    locked_vars = current_strategy_row.get("locked_vars", [])
     oos_result = ai_advisor.revalidate_suggestion_oos(
         symphony_id,
         suggestion_obj.config_key,
         suggestion_obj.suggested_value,
-        current_strategy,
+        flat_params,
     )
     if not oos_result["passed"]:
         return jsonify({"status": "rejected", "error": oos_result["detail"]}), 200
 
     # All gates passed — write the config change
-    params = dict(current_strategy.get("params", {}))
-    locked_vars = current_strategy.get("locked_vars", [])
-    params[suggestion_obj.config_key] = suggestion_obj.suggested_value
-    database.save_symphony_strategy(symphony_id, params, locked_vars)
+    patched_params = dict(flat_params)
+    patched_params[suggestion_obj.config_key] = suggestion_obj.suggested_value
+    database.save_symphony_strategy(symphony_id, patched_params, locked_vars)
     return jsonify({"status": "accepted"})
 
 
