@@ -1,0 +1,33 @@
+{
+  "_provenance": "SCHEMA-DERIVED. This is NOT a captured Claude API response. It is a hand-authored, valid instance of the ConfigSuggestionsResponse Pydantic schema that ai_advisor.py itself defines for structured output. Provenance is acceptable per the C1 brief because WE own the structured-output schema (Anthropic guarantees schema compliance at generation time). The runtime validator that keeps this fixture honest is the Tier 2 live contract test tests/ai_advisor/test_live_claude_advisor.py, which hits the real Claude API and asserts the real response conforms to the same schema. If the schema changes, BOTH this fixture and the schema must change together, and the Tier 2 test catches drift.",
+  "_note": "config_key / current_value / suggested_value are illustrative only. Tier 1 tests assert SHAPE and SCHEMA CONFORMANCE, never these specific literals. The suggestions deliberately mix risk_direction values (tightens / loosens / neutral) so error-path and field-population tests exercise all three.",
+  "suggestions": [
+    {
+      "config_key": "MAX_SQUEEZE_FLOOR",
+      "current_value": 0.20,
+      "suggested_value": 0.15,
+      "rationale": "MAX_SQUEEZE_FLOOR sits at its hand-set default of 0.20 and Optuna structurally never tunes it. The symphony's 20-day vol of 1.82% is in the lower third of its 125-day window range (1.4%-3.1%), so a tighter floor of 0.15 lets the parabolic squeeze protect gains more aggressively in this calmer regime. This is a Tier-1 value-add: not second-guessing an OOS-validated number.",
+      "risk_direction": "tightens",
+      "confidence": "medium",
+      "data_sufficiency": "sufficient"
+    },
+    {
+      "config_key": "VWAP_BLEED_TICKS",
+      "current_value": 10,
+      "suggested_value": 14,
+      "rationale": "baseline_decision is 'Reverted to Fallback' for this symphony, so the live VWAP_BLEED_TICKS of 10 is a last-known-good fallback, not an OOS-validated optimum. Optuna's optimization did not beat the fallback OOS this run, leaving room to reason into the gap. The 45-day post-mortem shows VWAP Bleed Cut exits averaging -0.3% guard alpha, suggesting premature cuts; raising the consecutive-tick confirmation to 14 delays the cut. NOTE: this loosens protection.",
+      "risk_direction": "loosens",
+      "confidence": "low",
+      "data_sufficiency": "thin"
+    },
+    {
+      "config_key": "PARABOLIC_VELOCITY_THRESHOLD",
+      "current_value": 2.0,
+      "suggested_value": 2.0,
+      "rationale": "PARABOLIC_VELOCITY_THRESHOLD's live value of 2.0 matches Optuna's best_params and baseline_decision is 'Adopted AI' with oos_alpha beating both fallback_oos_alpha and default_oos_alpha by a material margin. This is an OOS-validated result; the data does not well-support a change. No edit suggested - retained for completeness with a neutral risk direction.",
+      "risk_direction": "neutral",
+      "confidence": "high",
+      "data_sufficiency": "sufficient"
+    }
+  ]
+}
