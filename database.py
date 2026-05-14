@@ -71,6 +71,9 @@ def acquire_lock():
 def release_lock():
     conn = get_connection()
     cursor = conn.cursor()
+    # NOTE: timestamp is intentionally not reset — preserved so the 60s stale-expiry
+    # at acquire_lock still works correctly if a future code path inspects the
+    # release-time gap. See tests/database/test_lock_lifecycle.py.
     cursor.execute("UPDATE execution_lock SET is_locked = 0 WHERE id = 1")
     conn.commit()
     conn.close()
