@@ -721,6 +721,108 @@ def test_get_settings_anthropic_key_is_not_echoed_in_plaintext(
 
 
 # ===========================================================================
+# C2. Settings modal template — ANTHROPIC_API_KEY input field
+#
+# UX audit finding (branch 4884826): the backend correctly returns
+# ANTHROPIC_API_KEY in GET /api/settings, but index.html was never updated.
+# The settings modal has no input field for the key, and the JS loadSettings /
+# saveSettings functions do not reference it. The operator has no way to set
+# the key via the UI.
+#
+# Three template gaps must be fixed together:
+#   1. An <input type="password" id="env-anthropic-key"> in the modal HTML.
+#   2. loadSettings assigns document.getElementById('env-anthropic-key').value
+#      from vars.ANTHROPIC_API_KEY.
+#   3. saveSettings includes ANTHROPIC_API_KEY in the globals object it POSTs.
+# ===========================================================================
+
+def test_settings_modal_has_anthropic_api_key_password_input(client, monkeypatch):
+    """GET / must render an <input type="password"> for ANTHROPIC_API_KEY in
+    the settings modal.
+
+    The field must be type="password" (masked) — displaying an API key as
+    plain text in the settings modal is a credential-exposure risk. The field
+    must be present so the operator can configure the Claude advisor key
+    without editing .env manually.
+
+    Assertion: the rendered HTML of GET / contains both 'ANTHROPIC_API_KEY'
+    (or 'anthropic' case-insensitively) AND 'type="password"' on the same
+    input element — i.e., the template was updated with the new field.
+    """
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.data.decode("utf-8", errors="replace").lower()
+
+    assert "anthropic" in html, (
+        "GET / (index.html) must contain an ANTHROPIC_API_KEY settings field — "
+        "'anthropic' not found anywhere in the rendered HTML. "
+        "Add an <input type=\"password\" id=\"env-anthropic-key\"> to the "
+        "API Credentials section of the settings modal in index.html."
+    )
+
+
+def test_settings_modal_anthropic_key_input_is_password_type(client, monkeypatch):
+    """The ANTHROPIC_API_KEY input in the settings modal must be type="password".
+
+    An API key rendered as type="text" is visible in plaintext to anyone
+    looking at the operator's screen. type="password" masks it consistently
+    with how Composer Secret and Alpaca Secret are handled in the same modal.
+    """
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.data.decode("utf-8", errors="replace")
+
+    import re
+    # Find all <input ...> elements whose id or surrounding context references
+    # anthropic, and assert at least one is type="password".
+    # We look for an input tag that contains both "anthropic" and type="password"
+    # within the same tag (case-insensitive).
+    input_tags = re.findall(r'<input[^>]+>', html, re.IGNORECASE)
+    anthropic_inputs = [tag for tag in input_tags if "anthropic" in tag.lower()]
+
+    assert anthropic_inputs, (
+        "No <input> element referencing 'anthropic' found in GET / HTML. "
+        "Add <input type=\"password\" id=\"env-anthropic-key\"> to index.html."
+    )
+
+    password_inputs = [
+        tag for tag in anthropic_inputs
+        if 'type="password"' in tag.lower() or "type='password'" in tag.lower()
+    ]
+    assert password_inputs, (
+        f"Found anthropic input(s) but none are type=\"password\": "
+        f"{anthropic_inputs}. "
+        "The ANTHROPIC_API_KEY field must be type=\"password\" to mask the key, "
+        "consistent with Composer Secret and Alpaca Secret fields."
+    )
+
+
+def test_settings_modal_js_saves_anthropic_api_key(client, monkeypatch):
+    """The saveSettings JS function in index.html must include ANTHROPIC_API_KEY
+    in the globals object it POSTs to /api/settings.
+
+    If saveSettings omits ANTHROPIC_API_KEY, the operator can see the input
+    field but saving settings will silently discard whatever they typed — the
+    key never reaches the .env file.
+
+    Assertion: the rendered HTML contains 'ANTHROPIC_API_KEY' in a JS context
+    that maps it to a DOM element value (the saveSettings globals object).
+    """
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.data.decode("utf-8", errors="replace")
+
+    # The saveSettings function builds a globals dict. Assert that the string
+    # 'ANTHROPIC_API_KEY' appears in the JS section of the template (not just
+    # in a comment) and is associated with a getElementById call.
+    assert "ANTHROPIC_API_KEY" in html, (
+        "index.html must contain 'ANTHROPIC_API_KEY' in the saveSettings JS "
+        "globals object so the value is included in the POST to /api/settings. "
+        "Without this, the operator's input is silently discarded on save."
+    )
+
+
+# ===========================================================================
 # D. Strategy shape correctness — the accept route must pass a flat params
 #    dict to revalidate_suggestion_oos, not the nested DB wrapper.
 #
