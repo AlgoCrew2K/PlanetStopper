@@ -727,10 +727,42 @@ def revalidate_suggestion_oos(
         ``{passed: bool, oos_alpha: float, baseline_oos_alpha: float,
         detail: str}``.
     """
-    # Lazy import — deferred past the anthropic-SDK / optuna import-collision
-    # window. Module-scope `import autotuner` would break the C2 import-guard
-    # tests; keep it inside the function body.
-    from autotuner import run_simulation
+    # Lazy imports — deferred past the anthropic-SDK / optuna import-collision
+    # window. Module-scope imports of autotuner or synthetic_history would break
+    # the C2 import-guard tests; keep them inside the function body.
+    from autotuner import run_simulation, calculate_historical_deviation
+    import synthetic_history as _synthetic_history
+
+    # current_date_str: today in YYYY-MM-DD, the format autotuner.run_simulation
+    # expects (it calls datetime.strptime(current_date_str, "%Y-%m-%d")).
+    from datetime import datetime as _datetime
+    current_date_str = _datetime.now().strftime("%Y-%m-%d")
+
+    # bot_state: the live engine state from the state DB. Used to build history
+    # and to identify which account keys belong to this symphony.
+    bot_state = database.load_state()
+
+    # acc_sym_ids: the bot_state keys whose normalized symphony name matches
+    # symphony_id. Mirrors the derivation in autotuner.run_autotuner's objective
+    # closure (autotuner.py line 314).
+    acc_sym_ids = [
+        k for k, v in bot_state.items()
+        if isinstance(v, dict)
+        and database.normalize_name(v.get("name", "")) == symphony_id
+    ]
+
+    # history_data: 125-day synthetic replay history. This call is on the
+    # operator-accept path (rare human action), NOT the 1-minute engine cycle.
+    # Latency is acceptable because generate_synthetic_history maintains a
+    # date+holdings-keyed file cache; the autotuner fills this cache each cycle
+    # before market open, so the cold-fetch case (no cache) only occurs when
+    # the autotuner has not yet run — already a degraded-data situation.
+    history_data = _synthetic_history.generate_synthetic_history(
+        bot_state, current_date_str
+    )
+
+    # deviation_dict: 45-day trailing execution-deviation penalties by exit reason.
+    deviation_dict = calculate_historical_deviation(current_date_str)
 
     # Patch the strategy to the suggested value — same window, only one knob
     # changes, so the OOS comparison is apples-to-apples.
@@ -738,8 +770,12 @@ def revalidate_suggestion_oos(
     patched_strategy[config_key] = suggested_value
 
     # Call run_simulation twice: baseline first, then the patched strategy.
-    baseline_oos_alpha = run_simulation(current_strategy, symphony_id)
-    patched_oos_alpha = run_simulation(patched_strategy, symphony_id)
+    baseline_oos_alpha = run_simulation(
+        current_strategy, history_data, acc_sym_ids, current_date_str, deviation_dict
+    )
+    patched_oos_alpha = run_simulation(
+        patched_strategy, history_data, acc_sym_ids, current_date_str, deviation_dict
+    )
 
     # Strict `>` — a tie does not pass (autotuner strict-positive cascade rule).
     passed = patched_oos_alpha > baseline_oos_alpha
