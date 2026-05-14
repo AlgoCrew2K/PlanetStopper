@@ -13,6 +13,24 @@ from flask import Flask, render_template, jsonify, request
 from dotenv import dotenv_values, set_key
 
 import database
+import analytics
+
+# Minimum observations before quantstats metrics are deemed statistically
+# meaningful for the dashboard.  Below this floor the route surfaces
+# `insufficient_history=True` so the UI can render a "not enough history yet"
+# banner instead of misleadingly precise but underpowered numbers.
+_PERFORMANCE_MIN_HISTORY_DAYS = 30
+_PERFORMANCE_VALID_SCOPES = ("aggregate", "symphony")
+_PERFORMANCE_METRIC_KEYS = (
+    "total_return",
+    "annualized_return",
+    "sharpe",
+    "sortino",
+    "max_drawdown",
+    "calmar",
+    "win_rate",
+)
+_PERFORMANCE_NONE_METRICS = {k: None for k in _PERFORMANCE_METRIC_KEYS}
 
 ENV_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 
@@ -264,6 +282,116 @@ def get_history(days):
         stats["win_rate"] = 0
         
     return jsonify(stats)
+
+# --- 2b. Performance Tab (DV2) ---
+@app.route("/performance")
+def performance_page():
+    """Render the Performance tab (read-only operator surface).
+
+    Pure render — no database mutation, no engine invocation, no network I/O.
+    Client-side JS pulls /api/performance and /api/performance/symphonies on
+    load and on scope/symphony changes.
+    """
+    return render_template("performance.html")
+
+
+@app.route("/api/performance")
+def api_performance():
+    """Performance time series + quantstats metrics.
+
+    Query params:
+        scope:        "aggregate" (default) or "symphony"
+        days:         integer history window (default 60)
+        symphony_id:  required when scope=symphony
+
+    Response shape (binding — see tests/app/test_performance_routes.py):
+        {
+          "scope": "aggregate" | "symphony",
+          "dates": [...],
+          "live_returns": [...],
+          "shadow_returns": [...],
+          "live_metrics":   {7 documented keys},
+          "shadow_metrics": {7 documented keys},
+          "observation_count": int,
+          "insufficient_history": bool
+        }
+
+    Read-only contract: this route never calls database.save_*, never calls
+    database.acquire_lock(), and never issues a requests.post.  The live
+    engine holds the SQLite lock at the top of every minute; coupling UI
+    latency to that lock would let dashboard polls back up the execution
+    loop.
+    """
+    scope = request.args.get("scope", "aggregate")
+    if scope not in _PERFORMANCE_VALID_SCOPES:
+        return jsonify({
+            "status": "error",
+            "message": (
+                f"invalid scope {scope!r}; expected one of "
+                f"{list(_PERFORMANCE_VALID_SCOPES)}"
+            ),
+        }), 400
+
+    try:
+        days = int(request.args.get("days", 60))
+    except (TypeError, ValueError):
+        return jsonify({
+            "status": "error",
+            "message": "days must be an integer",
+        }), 400
+
+    symphony_id = request.args.get("symphony_id")
+    if scope == "symphony" and not symphony_id:
+        return jsonify({
+            "status": "error",
+            "message": "symphony_id is required when scope=symphony",
+        }), 400
+
+    history = analytics.get_history_with_cache_invalidation(days=days)
+
+    if scope == "aggregate":
+        dates, live_returns, shadow_returns = analytics.compute_aggregate_returns(
+            history
+        )
+    else:
+        dates, live_returns, shadow_returns = analytics.compute_per_symphony_returns(
+            history, symphony_id
+        )
+
+    observation_count = len(dates)
+    insufficient_history = observation_count < _PERFORMANCE_MIN_HISTORY_DAYS
+
+    if observation_count == 0:
+        live_metrics = dict(_PERFORMANCE_NONE_METRICS)
+        shadow_metrics = dict(_PERFORMANCE_NONE_METRICS)
+    else:
+        live_metrics = analytics.compute_quantstats_metrics(live_returns)
+        shadow_metrics = analytics.compute_quantstats_metrics(shadow_returns)
+
+    # Defensive float-cast so JSON serialization never trips over numpy/Decimal
+    # types coming back from the aggregator.
+    live_returns_out = [float(r) for r in live_returns]
+    shadow_returns_out = [float(r) for r in shadow_returns]
+
+    return jsonify({
+        "scope": scope,
+        "dates": list(dates),
+        "live_returns": live_returns_out,
+        "shadow_returns": shadow_returns_out,
+        "live_metrics": live_metrics,
+        "shadow_metrics": shadow_metrics,
+        "observation_count": observation_count,
+        "insufficient_history": insufficient_history,
+    })
+
+
+@app.route("/api/performance/symphonies")
+def api_performance_symphonies():
+    """Sorted list of symphony_ids present in the post-mortem history."""
+    history = analytics.get_history_with_cache_invalidation()
+    symphonies = analytics.list_available_symphonies(history)
+    return jsonify({"symphonies": list(symphonies)})
+
 
 # --- 3. Account Liquidation ---
 def perform_account_liquidation(account_id, key, secret, live_mode):
