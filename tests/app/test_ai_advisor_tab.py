@@ -718,3 +718,87 @@ def test_get_settings_anthropic_key_is_not_echoed_in_plaintext(
         f"the raw key value was returned as {returned_value!r}. "
         "Return an empty string or a masked indicator instead."
     )
+
+
+# ===========================================================================
+# D. Strategy shape correctness — the accept route must pass a flat params
+#    dict to revalidate_suggestion_oos, not the nested DB wrapper.
+#
+# database.get_symphony_strategy() returns {"params": {...}, "locked_vars": [...]}.
+# revalidate_suggestion_oos() expects a FLAT params dict as current_strategy
+# (it does dict(current_strategy) and patches current_strategy[config_key]).
+# Passing the nested wrapper causes the OOS simulation to run against the
+# wrapper structure (keys "params"/"locked_vars") instead of the real param
+# values — silently wrong OOS result.
+# ===========================================================================
+
+def test_accept_passes_flat_params_to_revalidate_suggestion_oos(client, mock_database):
+    """The accept route must unwrap database.get_symphony_strategy()'s nested
+    {'params': {...}, 'locked_vars': [...]} and pass the FLAT params dict to
+    revalidate_suggestion_oos as current_strategy.
+
+    If the route passes the whole wrapper dict, revalidate_suggestion_oos
+    receives {'params': {...}, 'locked_vars': [...]} as the baseline strategy —
+    patched_strategy[config_key] would add config_key to the top-level wrapper,
+    not into the params dict, making the OOS comparison meaningless.
+
+    We assert that the first positional arg to revalidate_suggestion_oos
+    (current_strategy) is a flat dict containing real param keys — NOT a dict
+    with a 'params' key.
+    """
+    oos_calls = []
+
+    def capturing_oos(symphony_id, config_key, suggested_value, current_strategy):
+        oos_calls.append({
+            "symphony_id": symphony_id,
+            "config_key": config_key,
+            "suggested_value": suggested_value,
+            "current_strategy": current_strategy,
+        })
+        return {"passed": True, "oos_alpha": 2.0, "baseline_oos_alpha": 1.0, "detail": "PASSED"}
+
+    with patch.object(ai_advisor, "revalidate_suggestion_oos", side_effect=capturing_oos):
+        resp = client.post(
+            "/ai-advisor/accept",
+            json={
+                "symphony_id": "test_sym",
+                "suggestion": {
+                    "config_key": "MAX_SQUEEZE_FLOOR",
+                    "current_value": 0.20,
+                    "suggested_value": 0.30,
+                    "rationale": "test",
+                    "risk_direction": "loosens",
+                    "confidence": "medium",
+                    "data_sufficiency": "sufficient",
+                },
+            },
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 200
+    assert oos_calls, "revalidate_suggestion_oos must have been called"
+
+    current_strategy_arg = oos_calls[0]["current_strategy"]
+
+    assert "params" not in current_strategy_arg, (
+        "revalidate_suggestion_oos must receive a FLAT params dict as "
+        "current_strategy, not the database wrapper {'params': {...}, "
+        "'locked_vars': [...]}. The route must call "
+        "current_strategy.get('params', {}) to unwrap before passing."
+    )
+    assert "locked_vars" not in current_strategy_arg, (
+        "revalidate_suggestion_oos must receive a FLAT params dict — "
+        "the 'locked_vars' key belongs in save_symphony_strategy, not "
+        "in the OOS baseline strategy dict."
+    )
+    # The flat dict must contain at least one real param key
+    known_param_keys = {
+        "TRIGGER_THRESHOLD_PCT", "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
+        "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS", "PARABOLIC_VELOCITY_THRESHOLD",
+        "MAX_PARABOLIC_SQUEEZE", "MAX_SQUEEZE_FLOOR",
+    }
+    assert any(k in current_strategy_arg for k in known_param_keys), (
+        f"current_strategy passed to revalidate_suggestion_oos has no known param "
+        f"keys — got: {sorted(current_strategy_arg.keys())}. "
+        "The route must unwrap the DB strategy wrapper before passing to OOS gate."
+    )
