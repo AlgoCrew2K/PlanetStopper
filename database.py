@@ -60,6 +60,29 @@ def init_db():
         )
     """)
 
+    # P3: Immutable append-only audit trail for Claude AI Config Advisor suggestions
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS llm_suggestions (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id          TEXT    NOT NULL,
+            created_at          TEXT    NOT NULL,
+            symphony_name       TEXT    NOT NULL,
+            operator_identity   TEXT    NOT NULL DEFAULT '',
+            prompt_inputs       TEXT    NOT NULL DEFAULT '{}',
+            model_id            TEXT    NOT NULL DEFAULT '',
+            generation_settings TEXT    NOT NULL DEFAULT '{}',
+            raw_response        TEXT    NOT NULL DEFAULT '{}',
+            validation_results  TEXT    NOT NULL DEFAULT '{}',
+            param_name          TEXT    NOT NULL DEFAULT '',
+            operator_decision   TEXT    NOT NULL DEFAULT 'pending',
+            decision_at         TEXT    DEFAULT NULL,
+            operator_note       TEXT    DEFAULT NULL,
+            before_value        TEXT    DEFAULT NULL,
+            after_value         TEXT    DEFAULT NULL,
+            oos_revalidation    TEXT    DEFAULT NULL
+        )
+    """)
+
     cursor.execute("INSERT OR IGNORE INTO execution_lock (id, is_locked, timestamp) VALUES (1, 0, 0)")
     cursor.execute("INSERT OR IGNORE INTO bot_state (id, data) VALUES (1, '{}')")
     cursor.execute("INSERT OR IGNORE INTO chart_history (id, data) VALUES (1, '{}')")
@@ -308,6 +331,140 @@ def get_latest_autotune_run(symphony_id) -> dict | None:
         "fallback_oos_alpha": row[5],
         "default_oos_alpha":  row[6],
     }
+
+
+# --- LLM Suggestions Audit Trail (P3) ---
+
+def record_llm_suggestion(
+    *,
+    session_id: str,
+    created_at: str,
+    symphony_name: str,
+    operator_identity: str,
+    prompt_inputs: dict,
+    model_id: str,
+    generation_settings: dict,
+    raw_response: dict,
+    validation_results: dict,
+    param_name: str,
+    operator_decision: str,
+    decision_at: str | None = None,
+    operator_note: str | None = None,
+    before_value=None,
+    after_value=None,
+    oos_revalidation: dict | None = None,
+) -> int:
+    """Insert one append-only LLM suggestion audit record.
+
+    Returns the new row id (AUTOINCREMENT surrogate key).  Dict-typed params are
+    JSON-serialized on write so large blobs survive round-trips without truncation.
+    This is the only write path for llm_suggestions — there is no update or delete
+    accessor; the audit trail is immutable by design.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO llm_suggestions (
+            session_id, created_at, symphony_name, operator_identity,
+            prompt_inputs, model_id, generation_settings, raw_response,
+            validation_results, param_name, operator_decision,
+            decision_at, operator_note, before_value, after_value, oos_revalidation
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            created_at,
+            symphony_name,
+            operator_identity,
+            json.dumps(prompt_inputs),
+            model_id,
+            json.dumps(generation_settings),
+            json.dumps(raw_response),
+            json.dumps(validation_results),
+            param_name,
+            operator_decision,
+            decision_at,
+            operator_note,
+            json.dumps(before_value) if before_value is not None else None,
+            json.dumps(after_value) if after_value is not None else None,
+            json.dumps(oos_revalidation) if oos_revalidation is not None else None,
+        ),
+    )
+    conn.commit()
+    row_id = cursor.lastrowid
+    conn.close()
+    return row_id
+
+
+def _parse_llm_suggestion_row(row: tuple, columns: list[str]) -> dict:
+    """Convert a raw llm_suggestions tuple into a fully-typed dict.
+
+    JSON-blob columns (prompt_inputs, generation_settings, raw_response,
+    validation_results, oos_revalidation, before_value, after_value) are
+    deserialized from their stored TEXT representation so callers always receive
+    the original Python objects, not raw JSON strings.
+    """
+    JSON_COLUMNS = {
+        "prompt_inputs",
+        "generation_settings",
+        "raw_response",
+        "validation_results",
+        "oos_revalidation",
+        "before_value",
+        "after_value",
+    }
+    result = {}
+    for col, val in zip(columns, row):
+        if col in JSON_COLUMNS and val is not None:
+            result[col] = json.loads(val)
+        else:
+            result[col] = val
+    return result
+
+
+_LLM_SUGGESTION_COLUMNS = [
+    "id", "session_id", "created_at", "symphony_name", "operator_identity",
+    "prompt_inputs", "model_id", "generation_settings", "raw_response",
+    "validation_results", "param_name", "operator_decision", "decision_at",
+    "operator_note", "before_value", "after_value", "oos_revalidation",
+]
+
+
+def get_suggestions_for_symphony(symphony_name: str) -> list[dict]:
+    """Return all llm_suggestions rows for a given symphony, oldest-first.
+
+    Returns an empty list if no rows exist — never raises for an unknown symphony.
+    Each element is a full-column dict with JSON-blob columns deserialized.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT " + ", ".join(_LLM_SUGGESTION_COLUMNS) +
+        " FROM llm_suggestions WHERE symphony_name = ? ORDER BY id ASC",
+        (symphony_name,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_llm_suggestion_row(row, _LLM_SUGGESTION_COLUMNS) for row in rows]
+
+
+def get_suggestions_for_session(session_id: str) -> list[dict]:
+    """Return all llm_suggestions rows for a given session_id.
+
+    Returns an empty list if no rows exist — never raises for an unknown session.
+    Each element is a full-column dict with JSON-blob columns deserialized.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT " + ", ".join(_LLM_SUGGESTION_COLUMNS) +
+        " FROM llm_suggestions WHERE session_id = ? ORDER BY id ASC",
+        (session_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_llm_suggestion_row(row, _LLM_SUGGESTION_COLUMNS) for row in rows]
 
 
 # Initialize tables on import
