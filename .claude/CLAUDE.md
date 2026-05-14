@@ -58,6 +58,10 @@ python app.py          # run daemon
 ## Project-Local Skills (`.claude/skills/`)
 `/backtest` · `/optuna-compare` · `/db-inspect` · `/api-fixture` · `/discord-test` · `/run-tests` · `/lint` · `/perf-snapshot` · `/symphony-diff`
 
-## Agent Team Composition
-Default team for this project: **Quad** (test-writer + implementer + `quant-code-reviewer` + domain specialist matched to the surface touched).
+## Agent Team Composition (HARD REQUIREMENT)
+**All new codepaths — and bug fixes that introduce new codepaths — MUST be built via Agent Teams TDD.** The PM may NOT approximate a team with sequential solo-agent RED → GREEN → review dispatches. Real Agent Teams only: shared worktree, one branch, `SendMessage` handoffs, autonomous Toxic Pair (test-writer ⇄ implementer) cycling with reviewers wrapped around it.
+
+Standing team: **Quad** (test-writer + implementer + `quant-code-reviewer` + domain specialist matched to the surface touched).
 Math-layer changes always add `quant-test-writer` as the adversarial test author.
+
+**Exceptions — no team required:** config/doc-only edits, one-line fixes to existing codepaths, behavior-preserving refactors fully covered by existing tests, and pure research/diagnosis tasks (no code written).
