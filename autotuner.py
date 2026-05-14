@@ -8,8 +8,6 @@ import synthetic_history
 import glob
 import json
 
-optuna.logging.set_verbosity(optuna.logging.WARNING)
-
 def calculate_historical_deviation(current_date_str):
     """
     Scans local directory for post_mortem_*.json from the last 45 calendar days.
@@ -66,6 +64,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
     Runs a 6-month walk-forward optimization to find the best variables using Bayesian Optimization per account.
     Implements True Walk-Forward Analysis (80% train, 20% OOS test).
     """
+    # Suppress Optuna's per-trial log noise; set here (not at module level) to
+    # avoid clobbering pytest's output-capture on import.
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
     print(f"  -> Starting EOD Autotune (125-day WFA: 80% Train / 20% OOS per Symphony)...")
 
     # 0. Calculate Historical Execution Deviation
