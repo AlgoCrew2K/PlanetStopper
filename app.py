@@ -133,14 +133,58 @@ def get_state():
                 accounts_map[acc_id].sort(key=lambda s: s.get("triggered_at_stop") if s.get("triggered") and s.get("triggered_at_stop") is not None else (s.get("stop_trigger") if s.get("stop_trigger") is not None else -999.0), reverse=is_desc)
             elif sort_col == "current_return":
                 accounts_map[acc_id].sort(key=get_exit_ret, reverse=is_desc)
-            elif sort_col == "high_water_mark":
+            elif sort_col == "shadow_hwm":
                 accounts_map[acc_id].sort(key=lambda s: s.get("shadow_hwm", -999.0), reverse=is_desc)
             elif sort_col == "shadow":
                 accounts_map[acc_id].sort(key=lambda s: s.get("current_return") if s.get("current_return") is not None else -999.0, reverse=is_desc)
             else: # name
                 accounts_map[acc_id].sort(key=lambda s: (s.get("name") or s.get("id", "")).lower(), reverse=is_desc)
 
-        rendered_html = render_template("table_partial.html", accounts_map=accounts_map, account_labels=account_labels, sort_col=sort_col, sort_dir=sort_dir)
+        # Build symphonies list for M1 analytics helpers from bot_state.
+        # Fields derived: last_percent_change from current_return/100, value from current_value.
+        # CR/MDD fallback to 0 when not stored in bot_state — helpers still need the fields.
+        symphonies_list = []
+        for k in symphony_keys:
+            s = state_data[k]
+            cr = s.get("current_return") or 0.0
+            val = s.get("current_value") or 0.0
+            symphonies_list.append({
+                "id": k,
+                "value": val,
+                "last_percent_change": cr / 100.0,
+                "simple_return": s.get("simple_return", 0.0),
+                "net_deposits": s.get("net_deposits", 0.0),
+                "time_weighted_return": s.get("time_weighted_return", 0.0),
+                "max_drawdown": s.get("max_drawdown", 0.0),
+            })
+
+        # Attach per-symphony TC/CR/MDD to each sym dict so the template can render them.
+        _zero_metric = {"if_held": 0.0, "dry_run": 0.0}
+        for k in symphony_keys:
+            s = state_data[k]
+            sym_dict = next((d for d in symphonies_list if d["id"] == k), {})
+            try:
+                s["_tc"] = analytics.get_symphony_today_change(sym_dict, s)
+            except (KeyError, TypeError, ValueError):
+                s["_tc"] = _zero_metric
+            try:
+                s["_cr"] = analytics.get_symphony_cumulative_return(sym_dict, s)
+            except (KeyError, TypeError, ValueError):
+                s["_cr"] = _zero_metric
+            try:
+                s["_mdd"] = analytics.get_symphony_max_drawdown(sym_dict, s)
+            except (KeyError, TypeError, ValueError):
+                s["_mdd"] = _zero_metric
+
+        portfolio_strip = {
+            "today_change": analytics.get_portfolio_today_change(symphonies_list, state_data),
+            "cumulative_return": analytics.get_portfolio_cumulative_return(symphonies_list, state_data),
+            "max_drawdown": analytics.get_portfolio_max_drawdown(symphonies_list, state_data),
+        }
+
+        data_as_of = datetime.now().strftime("%H:%M ET")
+
+        rendered_html = render_template("table_partial.html", accounts_map=accounts_map, account_labels=account_labels, sort_col=sort_col, sort_dir=sort_dir, data_as_of=data_as_of)
 
         return jsonify({
             "status": "active",
@@ -148,7 +192,9 @@ def get_state():
             "live_mode": live_mode,
             "execution_start_time": env_vars.get("EXECUTION_START_TIME", "09:30"),
             "next_run_seconds": next_run_seconds,
-            "html": rendered_html
+            "html": rendered_html,
+            "portfolio_strip": portfolio_strip,
+            "data_as_of": data_as_of,
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
