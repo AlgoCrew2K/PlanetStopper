@@ -1,12 +1,13 @@
 """
 RED tests — M2 dashboard rework.
 
-Covers five contracted changes to /api/state + table_partial.html:
+Covers six contracted changes to /api/state + table_partial.html + index.html:
   1. Portfolio 6-metric strip — TC/CR/MDD dry-run vs if-held in the JSON response
   2. Per-symphony clarity pass — improved column labels / tooltips in rendered HTML
   3. Per-symphony TC/CR/MDD vs if-held — new fields in rendered table rows
   4. HWM bug fix — sort key aligns with rendered value (both shadow_hwm)
   5. Freshness timestamp — data_as_of field in JSON + rendered in HTML
+  6. Portfolio strip UI wiring — index.html DOM target + renderState() consumer
 
 All tests use Flask test_client().  No live Composer/Alpaca calls are made.
 The M1 analytics helpers (get_portfolio_*) are mocked to avoid coupling this
@@ -851,4 +852,221 @@ class TestReadOnlyContract:
         # save_symphony_strategy is a settings route concern, not dashboard
         assert not mock_database.save_symphony_strategy.called, (
             "GET /api/state must not call database.save_symphony_strategy"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 7. Portfolio strip UI wiring — index.html DOM target + renderState() consumer
+# (Reviewer BLOCK finding: portfolio_strip returned in JSON but never consumed)
+# ---------------------------------------------------------------------------
+
+_INDEX_HTML_PATH = (
+    __import__("pathlib").Path(__file__).parent.parent.parent
+    / "templates"
+    / "index.html"
+)
+
+
+class TestPortfolioStripUiWiring:
+    """
+    index.html must contain:
+      (a) a DOM element that is the render target for the portfolio strip
+      (b) JS in renderState() that reads data.portfolio_strip and populates it
+
+    Without both, portfolio_strip is dead JSON — computed and returned by
+    /api/state but never shown to the operator.
+
+    These are static analysis tests against the template file — no Flask
+    test_client needed.  They will RED immediately against the current
+    index.html which has no portfolio strip DOM or JS consumer.
+    """
+
+    def test_index_html_has_portfolio_strip_dom_element(self):
+        """
+        index.html must contain a DOM element that serves as the render target
+        for the portfolio strip.  Acceptable identifiers: id='portfolio-strip',
+        id='portfolioStrip', or a class containing 'portfolio-strip'.
+        """
+        html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+        has_dom_target = (
+            "portfolio-strip" in html
+            or "portfolioStrip" in html
+            or "portfolio_strip" in html
+        )
+        assert has_dom_target, (
+            "index.html must contain a DOM render target for the portfolio strip "
+            "(e.g. id='portfolio-strip'); "
+            "reviewer BLOCK: /api/state returns portfolio_strip JSON but renderState() "
+            "never reads it — the 6-metric band is invisible to the operator"
+        )
+
+    def test_index_html_render_state_reads_portfolio_strip(self):
+        """
+        The renderState() function in index.html must reference data.portfolio_strip
+        (or equivalent) to populate the strip DOM element on each poll cycle.
+
+        Without this the strip element, even if present in the HTML, will always
+        show its initial empty/placeholder state.
+        """
+        html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+        # renderState must contain a reference to portfolio_strip from the API response
+        assert "portfolio_strip" in html, (
+            "renderState() in index.html must read data.portfolio_strip from the "
+            "/api/state response and populate the strip DOM element; "
+            "currently the key is returned but never consumed — strip is dead JSON"
+        )
+
+    def test_index_html_strip_shows_today_change(self):
+        """
+        The portfolio strip JS must reference today_change (TC) from portfolio_strip.
+        All three metrics (TC/CR/MDD) must be individually consumed.
+        """
+        html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+        assert "today_change" in html, (
+            "index.html must reference portfolio_strip.today_change to render the "
+            "Today's Change metric in the portfolio strip; "
+            "check renderState() or the strip DOM element's population logic"
+        )
+
+    def test_index_html_strip_shows_cumulative_return(self):
+        """The portfolio strip JS must reference cumulative_return from portfolio_strip."""
+        html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+        assert "cumulative_return" in html, (
+            "index.html must reference portfolio_strip.cumulative_return; "
+            "check renderState() strip population"
+        )
+
+    def test_index_html_strip_shows_max_drawdown(self):
+        """The portfolio strip JS must reference max_drawdown from portfolio_strip."""
+        html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+        assert "max_drawdown" in html, (
+            "index.html must reference portfolio_strip.max_drawdown; "
+            "check renderState() strip population"
+        )
+
+    def test_index_html_strip_dom_positioned_between_header_and_table(self):
+        """
+        Per A/C: the strip must appear between the header banner and the symphony
+        table (not inside either).  We assert the DOM target appears after </header>
+        and before the accounts-container div.
+        """
+        html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+        header_end = html.find("</header>")
+        accounts_start = html.find('id="accounts-container"')
+
+        # Find any portfolio strip DOM anchor in the document
+        strip_pos = -1
+        for candidate in ("portfolio-strip", "portfolioStrip", "portfolio_strip"):
+            pos = html.find(candidate)
+            if pos != -1:
+                strip_pos = pos
+                break
+
+        assert strip_pos != -1, (
+            "index.html must contain a portfolio strip DOM element; "
+            "none of 'portfolio-strip', 'portfolioStrip', 'portfolio_strip' found"
+        )
+        assert header_end != -1 and accounts_start != -1, (
+            "index.html structure unexpected: </header> or accounts-container not found"
+        )
+        assert header_end < strip_pos < accounts_start, (
+            f"portfolio strip DOM element (pos={strip_pos}) must appear after "
+            f"</header> (pos={header_end}) and before accounts-container "
+            f"(pos={accounts_start}); A/C requires the strip between header and table"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 8. Zero-metric fallback isolation — shared mutable dict must not corrupt state
+# (Reviewer advisory, encoded as a RED pin)
+# ---------------------------------------------------------------------------
+
+
+class TestZeroMetricFallbackIsolation:
+    """
+    app.py uses a single _zero_metric dict object for all exception-path
+    fallbacks.  If multiple sym["_tc"]/_cr/_mdd entries point to the same
+    dict and any code mutates one, all are corrupted.
+
+    The fix: each fallback must be a fresh dict literal, not a shared reference.
+    These tests pin that the fallback dicts for different symphonies are
+    independent objects (not the same identity).
+    """
+
+    def test_zero_metric_fallback_dicts_are_not_shared_across_symphonies(
+        self, client, mock_database, monkeypatch
+    ):
+        """
+        When analytics helpers raise (triggering the fallback path) for two
+        symphonies, the resulting _tc dicts must be distinct objects.
+        If they share identity, mutating one would corrupt the other.
+        """
+        state = {
+            "sym1": {
+                "name": "Alpha",
+                "account": "ACC1",
+                "current_return": None,  # will cause TypeError in helper
+                "current_value": 5000.0,
+                "triggered": False,
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "breakeven_locked": False,
+                "stop_trigger": -2.0,
+                "shadow_hwm": 2.0,
+                "high_water_mark": 2.0,
+                "mc_prob": 50.0,
+            },
+            "sym2": {
+                "name": "Beta",
+                "account": "ACC1",
+                "current_return": None,
+                "current_value": 5000.0,
+                "triggered": False,
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "breakeven_locked": False,
+                "stop_trigger": -2.0,
+                "shadow_hwm": 1.0,
+                "high_water_mark": 1.0,
+                "mc_prob": 30.0,
+            },
+        }
+        mock_database.load_state.return_value = state
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+
+        analytics_mock = _default_analytics_mock()
+        # Force the TC helper to raise so the fallback path is taken for both syms
+        analytics_mock.get_symphony_today_change.side_effect = KeyError("last_percent_change")
+        monkeypatch.setattr(app_module, "analytics", analytics_mock)
+
+        captured_render_args = {}
+
+        def capturing_render(template, **ctx):
+            captured_render_args.update(ctx)
+            return ""
+
+        monkeypatch.setattr(app_module, "render_template", capturing_render)
+        client.get("/api/state")
+
+        accounts_map = captured_render_args.get("accounts_map", {})
+        syms = list(accounts_map.values())[0] if accounts_map else []
+        assert len(syms) == 2, f"expected 2 syms in accounts_map; got {len(syms)}"
+
+        tc_dicts = [s["_tc"] for s in syms if "_tc" in s]
+        assert len(tc_dicts) == 2, (
+            f"both syms must have _tc set via fallback; got {len(tc_dicts)}"
+        )
+        # The two fallback dicts must be independent objects, not the same reference.
+        assert tc_dicts[0] is not tc_dicts[1], (
+            "_tc fallback dicts for sym1 and sym2 must be distinct objects; "
+            "currently _zero_metric is a single shared dict — mutating one corrupts the other; "
+            "fix: use a fresh dict literal {'if_held': 0.0, 'dry_run': 0.0} in each except branch"
         )
