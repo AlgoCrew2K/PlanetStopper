@@ -74,6 +74,165 @@ def calculate_historical_deviation(current_date_str):
     print(f"  -> Historical Execution Deviation Penalties: {deviation_dict}")
     return deviation_dict
 
+def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+    total_guard_alpha = 0.0
+    decay_rate = 0.015
+    current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
+
+    for sym_id in acc_sym_ids:
+        dates_data = history_data.get(sym_id, {})
+        for date, ticks in dates_data.items():
+            if not ticks: continue
+
+            hwm = -999.0
+            armed = False
+            tp_armed = False
+            vwap_ticks = 0
+            vwap_bleed_ticks = 0
+            para_armed = False
+            breakeven_locked = False
+            prev_return = 0.0
+            hwm_hold_ticks = 0
+            below_stop_count = 0
+            above_tp_count = 0
+            mc_history = []
+
+            triggered_return = None
+            eod_return = ticks[-1]["return"]
+            day_max_return = max(t.get("return", 0.0) for t in ticks)
+
+            for tick_idx, tick in enumerate(ticks):
+                ret = tick.get("return", 0.0)
+                mc = tick.get("mc_prob", 50.0)
+                vol = tick.get("vol", 1.0)
+                vwap_diff = tick.get("vwap_diff", 0.0)
+                base_atr_pct = tick.get("base_atr_pct", vol)
+
+                if ret > hwm: hwm = ret
+                safe_hwm = max(hwm, ret)
+
+                # --- PARABOLIC SQUEEZE LOGIC ---
+                para_threshold = p.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
+                _velocity, should_arm = math_engine.compute_para_arm_decision(
+                    current_return=ret,
+                    prev_return=prev_return,
+                    para_threshold=para_threshold,
+                    currently_armed=para_armed,
+                )
+                prev_return = ret
+                if should_arm:
+                    para_armed = True
+                # ------------------------------
+
+                if not armed:
+                    if p.get("TAKE_PROFIT_MC_PCT", 5.0) <= mc < p.get("TRIGGER_THRESHOLD_PCT", 15.0): armed = True
+                else:
+                    if mc > (p.get("TRIGGER_THRESHOLD_PCT", 15.0) * 2) and ret > 0.0:
+                        armed = False
+                        below_stop_count = 0
+
+                mc_history.append(mc)
+                if len(mc_history) > 5: mc_history.pop(0)
+
+                # --- TIME SQUEEZE DECAY LOGIC ---
+                # Assuming ticks are minute bars (9:30-16:00 = 390 mins)
+                time_ratio = tick_idx / 390.0
+                dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
+
+                # Calculate active stop distance based strictly on 20-day volatility
+                active_stop_dist = math_engine.compute_active_trailing_stop(
+                    vol, dynamic_multiplier, dynamic_min_stop,
+                    para_armed, breakeven_locked, p.get("MAX_PARABOLIC_SQUEEZE", 0.50)
+                )
+
+                base_stop = safe_hwm - active_stop_dist
+
+                # --- RISK GUARD LOGIC ---
+                # is_triggered=False: simulation loop breaks on trigger before re-entering
+                hwm_hold_ticks, breakeven_locked, stop_level = math_engine.compute_breakeven_update(
+                    ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, is_triggered=False
+                )
+                # ------------------------
+
+                is_trailing_hit = False
+                if armed:
+                    if ret <= (stop_level - 0.10) and mc < 60.0:
+                        below_stop_count += 1
+                        if below_stop_count >= 3: is_trailing_hit = True
+                    else: below_stop_count = 0
+
+                is_tp_hit = False
+                if mc < p.get("TAKE_PROFIT_MC_PCT", 5.0):
+                    if not tp_armed:
+                        tp_armed = True
+                        above_tp_count = 0
+                elif tp_armed:
+                    if mc >= p.get("TAKE_PROFIT_MC_PCT", 5.0):
+                        above_tp_count += 1
+                        if above_tp_count >= 2:
+                            if ret > 0: is_tp_hit = True
+                            else:
+                                tp_armed = False
+                                above_tp_count = 0
+                    else: above_tp_count = 0
+
+                # Read valid_vwap_weight from tick with backward-compat fallback
+                # (fallback covers any stale v1 cache that might slip through despite the v2 marker)
+                valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
+
+                vwap_bleed_arm_pct = math_engine.compute_vwap_bleed_arm_threshold(vol, p.get("VWAP_BLEED_MULTIPLIER", 1.5))
+
+                # Canonical VWAP-breakdown state machine
+                vwap_ticks, vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = math_engine.compute_vwap_breakdown_update(
+                    is_triggered=False,  # autotuner sim breaks on trigger; never re-enters with triggered state mid-tick
+                    valid_vwap_weight=valid_vwap_weight,
+                    weighted_vwap_diff=vwap_diff,
+                    safe_hwm=safe_hwm,
+                    current_return=ret,
+                    vwap_cross_hwm_pct=p.get("VWAP_CROSS_HWM_PCT", 1.0),
+                    vwap_bleed_arm_pct=vwap_bleed_arm_pct,
+                    vwap_bleed_ticks_threshold=p.get("VWAP_BLEED_TICKS", 10),
+                    current_vwap_ticks=vwap_ticks,
+                    current_vwap_bleed_ticks=vwap_bleed_ticks,
+                )
+
+                if is_trailing_hit or is_tp_hit or is_vwap_broken or is_vwap_bleed_broken:
+                    reason_str = "Trailing Stop"
+                    if is_tp_hit: reason_str = "Take-Profit"
+                    elif is_vwap_broken: reason_str = "VWAP Breakdown"
+                    elif is_vwap_bleed_broken: reason_str = "VWAP Bleed Cut"
+
+                    penalty = deviation_dict.get(reason_str, -0.20)
+                    triggered_return = ret + penalty
+                    break
+
+            if triggered_return is not None:
+                guard_alpha = triggered_return - eod_return
+                missed_upside = day_max_return - triggered_return
+                drawdown_from_peak = safe_hwm - triggered_return
+
+                # Exponential Time-Decay Weighting
+                days_ago = (current_dt - datetime.strptime(date, "%Y-%m-%d")).days
+                weight = math.exp(-decay_rate * days_ago)
+
+                # 1. Penalize Missed Upside (Exiting too early before a run)
+                if missed_upside > 1.0: # Only penalize if we missed out on more than 1%
+                    total_guard_alpha -= (missed_upside * 1.5 * weight)
+
+                # 2. NEW: Penalize Peak-to-Exit Drawdown (Giving back too much profit)
+                # If we reached at least a 1% gain, penalize giving back more than 1.5% of it
+                if safe_hwm > 1.0 and drawdown_from_peak > 1.5:
+                    total_guard_alpha -= (drawdown_from_peak * 0.75 * weight)
+
+                # 3. Apply standard EOD-based guard alpha
+                if guard_alpha < 0:
+                    total_guard_alpha += (guard_alpha * 2.0 * weight)
+                else:
+                    total_guard_alpha += (guard_alpha * weight)
+
+    return -total_guard_alpha
+
+
 def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
     """
     Runs a 6-month walk-forward optimization to find the best variables using Bayesian Optimization per account.
@@ -137,165 +296,6 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         locked_vars = strat_data.get("locked_vars", [])
         current_params = strat_data.get("params", {})
         original_params = current_params.copy()
-
-        # Helper to run the simulation
-        def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
-            total_guard_alpha = 0.0
-            decay_rate = 0.015
-            current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
-
-            for sym_id in acc_sym_ids:
-                dates_data = history_data.get(sym_id, {})
-                for date, ticks in dates_data.items():
-                    if not ticks: continue
-
-                    hwm = -999.0
-                    armed = False
-                    tp_armed = False
-                    vwap_ticks = 0
-                    vwap_bleed_ticks = 0
-                    para_armed = False
-                    breakeven_locked = False
-                    prev_return = 0.0
-                    hwm_hold_ticks = 0
-                    below_stop_count = 0
-                    above_tp_count = 0
-                    mc_history = []
-
-                    triggered_return = None
-                    eod_return = ticks[-1]["return"]
-                    day_max_return = max(t.get("return", 0.0) for t in ticks)
-
-                    for tick_idx, tick in enumerate(ticks):
-                        ret = tick.get("return", 0.0)
-                        mc = tick.get("mc_prob", 50.0)
-                        vol = tick.get("vol", 1.0)
-                        vwap_diff = tick.get("vwap_diff", 0.0)
-                        base_atr_pct = tick.get("base_atr_pct", vol)
-
-                        if ret > hwm: hwm = ret
-                        safe_hwm = max(hwm, ret)
-                        
-                        # --- PARABOLIC SQUEEZE LOGIC ---
-                        para_threshold = p.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
-                        _velocity, should_arm = math_engine.compute_para_arm_decision(
-                            current_return=ret,
-                            prev_return=prev_return,
-                            para_threshold=para_threshold,
-                            currently_armed=para_armed,
-                        )
-                        prev_return = ret
-                        if should_arm:
-                            para_armed = True
-                        # ------------------------------
-
-                        if not armed:
-                            if p.get("TAKE_PROFIT_MC_PCT", 5.0) <= mc < p.get("TRIGGER_THRESHOLD_PCT", 15.0): armed = True
-                        else:
-                            if mc > (p.get("TRIGGER_THRESHOLD_PCT", 15.0) * 2) and ret > 0.0:
-                                armed = False
-                                below_stop_count = 0
-
-                        mc_history.append(mc)
-                        if len(mc_history) > 5: mc_history.pop(0)
-
-                        # --- TIME SQUEEZE DECAY LOGIC ---
-                        # Assuming ticks are minute bars (9:30-16:00 = 390 mins)
-                        time_ratio = tick_idx / 390.0
-                        dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
-
-                        # Calculate active stop distance based strictly on 20-day volatility
-                        active_stop_dist = math_engine.compute_active_trailing_stop(
-                            vol, dynamic_multiplier, dynamic_min_stop,
-                            para_armed, breakeven_locked, p.get("MAX_PARABOLIC_SQUEEZE", 0.50)
-                        )
-
-                        base_stop = safe_hwm - active_stop_dist
-                        
-                        # --- RISK GUARD LOGIC ---
-                        # is_triggered=False: simulation loop breaks on trigger before re-entering
-                        hwm_hold_ticks, breakeven_locked, stop_level = math_engine.compute_breakeven_update(
-                            ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, is_triggered=False
-                        )
-                        # ------------------------
-
-                        is_trailing_hit = False
-                        if armed:
-                            if ret <= (stop_level - 0.10) and mc < 60.0:
-                                below_stop_count += 1
-                                if below_stop_count >= 3: is_trailing_hit = True
-                            else: below_stop_count = 0
-
-                        is_tp_hit = False
-                        if mc < p.get("TAKE_PROFIT_MC_PCT", 5.0):
-                            if not tp_armed:
-                                tp_armed = True
-                                above_tp_count = 0
-                        elif tp_armed:
-                            if mc >= p.get("TAKE_PROFIT_MC_PCT", 5.0):
-                                above_tp_count += 1
-                                if above_tp_count >= 2:
-                                    if ret > 0: is_tp_hit = True
-                                    else:
-                                        tp_armed = False
-                                        above_tp_count = 0
-                            else: above_tp_count = 0
-
-                        # Read valid_vwap_weight from tick with backward-compat fallback
-                        # (fallback covers any stale v1 cache that might slip through despite the v2 marker)
-                        valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
-
-                        vwap_bleed_arm_pct = math_engine.compute_vwap_bleed_arm_threshold(vol, p.get("VWAP_BLEED_MULTIPLIER", 1.5))
-
-                        # Canonical VWAP-breakdown state machine
-                        vwap_ticks, vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = math_engine.compute_vwap_breakdown_update(
-                            is_triggered=False,  # autotuner sim breaks on trigger; never re-enters with triggered state mid-tick
-                            valid_vwap_weight=valid_vwap_weight,
-                            weighted_vwap_diff=vwap_diff,
-                            safe_hwm=safe_hwm,
-                            current_return=ret,
-                            vwap_cross_hwm_pct=p.get("VWAP_CROSS_HWM_PCT", 1.0),
-                            vwap_bleed_arm_pct=vwap_bleed_arm_pct,
-                            vwap_bleed_ticks_threshold=p.get("VWAP_BLEED_TICKS", 10),
-                            current_vwap_ticks=vwap_ticks,
-                            current_vwap_bleed_ticks=vwap_bleed_ticks,
-                        )
-
-                        if is_trailing_hit or is_tp_hit or is_vwap_broken or is_vwap_bleed_broken:
-                            reason_str = "Trailing Stop"
-                            if is_tp_hit: reason_str = "Take-Profit"
-                            elif is_vwap_broken: reason_str = "VWAP Breakdown"
-                            elif is_vwap_bleed_broken: reason_str = "VWAP Bleed Cut"
-                            
-                            penalty = deviation_dict.get(reason_str, -0.20)
-                            triggered_return = ret + penalty
-                            break
-
-                    if triggered_return is not None:
-                        guard_alpha = triggered_return - eod_return
-                        missed_upside = day_max_return - triggered_return
-                        drawdown_from_peak = safe_hwm - triggered_return
-                        
-                        # Exponential Time-Decay Weighting
-                        days_ago = (current_dt - datetime.strptime(date, "%Y-%m-%d")).days
-                        weight = math.exp(-decay_rate * days_ago)
-
-                        # 1. Penalize Missed Upside (Exiting too early before a run)
-                        if missed_upside > 1.0: # Only penalize if we missed out on more than 1%
-                            total_guard_alpha -= (missed_upside * 1.5 * weight)
-
-                        # 2. NEW: Penalize Peak-to-Exit Drawdown (Giving back too much profit)
-                        # If we reached at least a 1% gain, penalize giving back more than 1.5% of it
-                        if safe_hwm > 1.0 and drawdown_from_peak > 1.5:
-                            total_guard_alpha -= (drawdown_from_peak * 0.75 * weight)
-
-                        # 3. Apply standard EOD-based guard alpha
-                        if guard_alpha < 0:
-                            total_guard_alpha += (guard_alpha * 2.0 * weight)
-                        else:
-                            total_guard_alpha += (guard_alpha * weight)
-
-            return -total_guard_alpha
 
         def objective(trial):
             p = current_params.copy()
