@@ -547,3 +547,220 @@ def request_suggestions(
         return None, msg
 
     return response, None
+
+
+# ---------------------------------------------------------------------------
+# C2 — safety gates on the suggestions Claude emits.
+#
+# Three independent layers, defense-in-depth on top of C1's context allowlist:
+#   1. enforce_suggestion_allowlist — structural rejection of any config_key
+#      Claude emits that is not one of the 9 suggestible params (hallucinated
+#      keys, credentials, LIVE_EXECUTION, methodology knobs).
+#   2. compute_risk_direction / check_risk_direction_agreement — the engine
+#      computes risk polarity itself and flags any contradiction with Claude's
+#      self-reported risk_direction. A real-money system never trusts a model's
+#      self-classification.
+#   3. revalidate_suggestion_oos — routes an accepted suggestion through the
+#      autotuner's run_simulation OOS gate before it can reach live config.
+# ---------------------------------------------------------------------------
+
+# The 9-item suggestible allowlist: the 7 Optuna search-space keys plus the one
+# untuned hand-set key. Derived from the C1 constants so it cannot drift.
+# (config-surface.md §1 — an allowlist, not a denylist.)
+_SUGGESTIBLE_ALLOWLIST = frozenset(_OPTUNA_SEARCH_SPACE_KEYS) | {
+    _UNTUNED_SUGGESTIBLE_KEY
+}
+
+# Risk-direction outcomes.
+_LOOSENS = "loosens"
+_TIGHTENS = "tightens"
+_NEUTRAL = "neutral"
+
+# Per-key polarity when a param's value is RAISED (suggested > current).
+# Derived from the ``risk_polarity`` field of _PARAM_DEFINITIONS
+# (config-surface.md §1). Every suggestible key is "raising loosens risk"
+# EXCEPT TAKE_PROFIT_MC_PCT, the lone inverted param ("raising tightens risk").
+# Built from _PARAM_DEFINITIONS rather than re-listed so it cannot drift.
+_RAISE_RISK_DIRECTION: dict[str, str] = {
+    key: (
+        _TIGHTENS
+        if definition.get("risk_polarity") == "raising tightens risk"
+        else _LOOSENS
+    )
+    for key, definition in _PARAM_DEFINITIONS.items()
+}
+
+# Inverse of a raise: lowering a param does the opposite of raising it.
+_OPPOSITE_DIRECTION = {
+    _LOOSENS: _TIGHTENS,
+    _TIGHTENS: _LOOSENS,
+    _NEUTRAL: _NEUTRAL,
+}
+
+
+def enforce_suggestion_allowlist(
+    suggestions: list[ConfigSuggestion],
+) -> tuple[list[ConfigSuggestion], list[ConfigSuggestion]]:
+    """Partition suggestions into (allowed, rejected) by ``config_key``.
+
+    Defense-in-depth: even though the C1 *context* is allowlisted, Claude could
+    hallucinate a ``config_key`` that was never in the prompt — or emit a
+    credential, the ``LIVE_EXECUTION`` master safety flag, an account UUID, or a
+    methodology knob. Any ``config_key`` not in the 9-item suggestible allowlist
+    is structurally routed to ``rejected``; it must be impossible for such a key
+    to reach a live config write.
+
+    Args:
+        suggestions: the suggestions Claude emitted (may be empty).
+
+    Returns:
+        ``(allowed, rejected)`` — two lists, order-preserving, with every input
+        suggestion in exactly one partition (no drop, no duplication).
+    """
+    allowed: list[ConfigSuggestion] = []
+    rejected: list[ConfigSuggestion] = []
+    for suggestion in suggestions:
+        if suggestion.config_key in _SUGGESTIBLE_ALLOWLIST:
+            allowed.append(suggestion)
+        else:
+            rejected.append(suggestion)
+    return allowed, rejected
+
+
+def compute_risk_direction(
+    config_key: str, current_value, suggested_value
+) -> str:
+    """Compute, code-side, whether a suggestion loosens or tightens risk.
+
+    The engine never trusts Claude's self-reported ``risk_direction``; it
+    derives the direction itself from each param's documented risk polarity
+    (config-surface.md §1, mirrored in ``_RAISE_RISK_DIRECTION``).
+
+    Polarity rule: for every suggestible key, RAISING the value loosens risk —
+    EXCEPT ``TAKE_PROFIT_MC_PCT``, the lone inverted param, where raising the
+    value tightens risk. Lowering a value is the exact inverse of raising it.
+    An unchanged value (suggested == current) is always ``neutral``.
+
+    Args:
+        config_key: one of the 9 suggestible keys.
+        current_value: the current live value.
+        suggested_value: Claude's proposed value.
+
+    Returns:
+        ``"loosens"`` | ``"tightens"`` | ``"neutral"``.
+    """
+    if suggested_value == current_value:
+        return _NEUTRAL
+
+    raise_direction = _RAISE_RISK_DIRECTION.get(config_key)
+    if raise_direction is None:
+        # Not a recognised suggestible key — no polarity is defined, so the
+        # engine cannot classify the risk delta. The allowlist gate is the
+        # layer that rejects such keys; here we simply decline to guess.
+        return _NEUTRAL
+
+    if suggested_value > current_value:
+        return raise_direction
+    return _OPPOSITE_DIRECTION[raise_direction]
+
+
+def check_risk_direction_agreement(suggestion: ConfigSuggestion) -> dict:
+    """Cross-check Claude's self-reported risk direction against the engine's.
+
+    Claude self-classifies each suggestion's ``risk_direction``; a real-money
+    system never trusts that. This gate computes the direction independently
+    and reports whether the two agree, surfacing BOTH directions so the
+    operator UI can show a contradiction explicitly.
+
+    Args:
+        suggestion: the ConfigSuggestion to check.
+
+    Returns:
+        ``{agrees: bool, code_direction: str, claimed_direction: str}``.
+    """
+    code_direction = compute_risk_direction(
+        suggestion.config_key,
+        suggestion.current_value,
+        suggestion.suggested_value,
+    )
+    claimed_direction = suggestion.risk_direction
+    return {
+        "agrees": code_direction == claimed_direction,
+        "code_direction": code_direction,
+        "claimed_direction": claimed_direction,
+    }
+
+
+def revalidate_suggestion_oos(
+    symphony_id: str,
+    config_key: str,
+    suggested_value,
+    current_strategy: dict,
+) -> dict:
+    """Re-validate an accepted suggestion through the autotuner's OOS gate.
+
+    A Claude suggestion is an *unvalidated hypothesis*; Optuna's output is
+    walk-forward validated. Before an accepted suggestion can reach live config,
+    it must pass the same out-of-sample gate Optuna's own output faces: its OOS
+    alpha must strictly beat the current strategy's baseline OOS alpha.
+
+    ``run_simulation`` is called TWICE over the same history window —
+    apples-to-apples: once with ``current_strategy`` (the baseline), once with
+    the strategy patched to ``suggested_value``.
+
+    Pass rule is strict ``>``: a TIE does NOT pass — a tie buys no validated
+    improvement, mirroring the autotuner's own strict-positive cascade rule.
+
+    The ``autotuner`` import is LAZY (inside this function body, not at module
+    scope): importing ``autotuner`` pulls in optuna + joblib, whose process-pool
+    / resource-tracker import side effects collide with the anthropic SDK import
+    under pytest's output capture. Deferring the import past that fragile window
+    is mandatory.
+
+    Args:
+        symphony_id: the symphony the suggestion targets.
+        config_key: the config key the suggestion edits.
+        suggested_value: Claude's proposed value for ``config_key``.
+        current_strategy: the current per-symphony strategy dict — the baseline.
+
+    Returns:
+        ``{passed: bool, oos_alpha: float, baseline_oos_alpha: float,
+        detail: str}``.
+    """
+    # Lazy import — deferred past the anthropic-SDK / optuna import-collision
+    # window. Module-scope `import autotuner` would break the C2 import-guard
+    # tests; keep it inside the function body.
+    from autotuner import run_simulation
+
+    # Patch the strategy to the suggested value — same window, only one knob
+    # changes, so the OOS comparison is apples-to-apples.
+    patched_strategy = dict(current_strategy)
+    patched_strategy[config_key] = suggested_value
+
+    # Call run_simulation twice: baseline first, then the patched strategy.
+    baseline_oos_alpha = run_simulation(current_strategy, symphony_id)
+    patched_oos_alpha = run_simulation(patched_strategy, symphony_id)
+
+    # Strict `>` — a tie does not pass (autotuner strict-positive cascade rule).
+    passed = patched_oos_alpha > baseline_oos_alpha
+
+    if passed:
+        detail = (
+            f"OOS re-validation PASSED for {config_key}={suggested_value} on "
+            f"{symphony_id}: patched OOS alpha {patched_oos_alpha} strictly "
+            f"beats baseline {baseline_oos_alpha}."
+        )
+    else:
+        detail = (
+            f"OOS re-validation FAILED for {config_key}={suggested_value} on "
+            f"{symphony_id}: patched OOS alpha {patched_oos_alpha} does not "
+            f"strictly beat baseline {baseline_oos_alpha} — not greenlit for a "
+            f"live config write."
+        )
+
+    return {
+        "passed": passed,
+        "oos_alpha": patched_oos_alpha,
+        "baseline_oos_alpha": baseline_oos_alpha,
+        "detail": detail,
+    }
