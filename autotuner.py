@@ -1,7 +1,7 @@
 import time
 import math
 import optuna
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import database
 import math_engine
 import synthetic_history
@@ -290,6 +290,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
 
     optimization_results = {}
 
+    # Single timestamp shared across all symphonies in this run — groups all
+    # per-symphony rows from one invocation into a logical "run" for Claude context-assembly.
+    run_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
     for normalized_name in symphony_names:
         print(f"     Optimizing Symphony: {normalized_name}")
         strat_data = database.get_symphony_strategy(normalized_name)
@@ -415,6 +419,20 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         print(f"       Optimization completed in {elapsed:.2f}s. Train Alpha: {best_alpha_train:+.2f}% (Average: {avg_train_alpha:.2f}%)")
 
         database.save_symphony_strategy(normalized_name, current_params, locked_vars)
+
+        # P1: Persist per-run validation metrics so Claude context-assembly can
+        # retrieve them via get_latest_autotune_run().  Called AFTER baseline_decision
+        # is finalized and save_symphony_strategy has written the chosen params,
+        # so the row captures the decision that was actually applied.
+        database.save_autotune_run(
+            run_timestamp=run_timestamp,
+            symphony_id=normalized_name,
+            oos_alpha=oos_alpha,
+            train_alpha=best_alpha_train,
+            baseline_decision=baseline_decision,
+            fallback_oos_alpha=fallback_oos_alpha,
+            default_oos_alpha=default_oos_alpha,
+        )
 
     print("  -> Autotuner finished all symphonies.")
     return optimization_results
