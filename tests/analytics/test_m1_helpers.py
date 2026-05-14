@@ -787,3 +787,145 @@ class TestTwrFallbackConditions:
             f"both conditions met: must use time_weighted_return=3.13212; "
             f"got {result['if_held']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TIER 1 — Missing-field contract (reviewer advisory, encoded as RED/GREEN pin)
+#
+# Current implementation uses bare dict key access (sym_dict["field"]).
+# These tests document that contract: a missing required field raises KeyError.
+# The live contract test (test_live_m1_helpers.py) is the drift guard.
+# If a future implementer changes to graceful degradation, these tests must be
+# updated deliberately — they must not silently pass on both behaviors.
+# ---------------------------------------------------------------------------
+
+class TestMissingFieldContract:
+
+    def test_today_change_raises_on_missing_last_percent_change(self):
+        """
+        get_symphony_today_change raises KeyError when last_percent_change is absent.
+        Documents the current bare-key-access contract — not silent degradation.
+        """
+        from analytics import get_symphony_today_change
+
+        sym = {
+            "id": "test-sym",
+            # last_percent_change intentionally omitted
+            "simple_return": 0.1,
+            "net_deposits": 100.0,
+            "time_weighted_return": 0.1,
+            "max_drawdown": 0.05,
+            "value": 1000.0,
+        }
+        with pytest.raises(KeyError):
+            get_symphony_today_change(sym, bot_state_entry=None)
+
+    def test_cumulative_return_raises_on_missing_simple_return(self):
+        """
+        get_symphony_cumulative_return raises KeyError when simple_return is absent.
+        """
+        from analytics import get_symphony_cumulative_return
+
+        sym = {
+            "id": "test-sym",
+            "last_percent_change": -0.01,
+            # simple_return intentionally omitted
+            "net_deposits": 100.0,
+            "time_weighted_return": 0.1,
+            "max_drawdown": 0.05,
+            "value": 1000.0,
+        }
+        with pytest.raises(KeyError):
+            get_symphony_cumulative_return(sym, bot_state_entry=None)
+
+    def test_cumulative_return_raises_on_missing_net_deposits(self):
+        """
+        get_symphony_cumulative_return raises KeyError when net_deposits is absent.
+        The TWR-fallback branch reads net_deposits unconditionally.
+        """
+        from analytics import get_symphony_cumulative_return
+
+        sym = {
+            "id": "test-sym",
+            "last_percent_change": -0.01,
+            "simple_return": 0.1,
+            # net_deposits intentionally omitted
+            "time_weighted_return": 0.1,
+            "max_drawdown": 0.05,
+            "value": 1000.0,
+        }
+        with pytest.raises(KeyError):
+            get_symphony_cumulative_return(sym, bot_state_entry=None)
+
+    def test_cumulative_return_raises_on_missing_twr_when_fallback_needed(self):
+        """
+        get_symphony_cumulative_return raises KeyError when time_weighted_return is
+        absent AND the TWR fallback is triggered (simple_return==0, net_deposits==0).
+        """
+        from analytics import get_symphony_cumulative_return
+
+        sym = {
+            "id": "test-sym",
+            "last_percent_change": -0.01,
+            "simple_return": 0.0,
+            "net_deposits": 0.0,
+            # time_weighted_return intentionally omitted — fallback path would need it
+            "max_drawdown": 0.05,
+            "value": 1000.0,
+        }
+        with pytest.raises(KeyError):
+            get_symphony_cumulative_return(sym, bot_state_entry=None)
+
+    def test_max_drawdown_raises_on_missing_max_drawdown(self):
+        """
+        get_symphony_max_drawdown raises KeyError when max_drawdown is absent.
+        """
+        from analytics import get_symphony_max_drawdown
+
+        sym = {
+            "id": "test-sym",
+            "last_percent_change": -0.01,
+            "simple_return": 0.1,
+            "net_deposits": 100.0,
+            "time_weighted_return": 0.1,
+            # max_drawdown intentionally omitted
+            "value": 1000.0,
+        }
+        with pytest.raises(KeyError):
+            get_symphony_max_drawdown(sym, bot_state_entry=None)
+
+    def test_portfolio_skips_symphony_missing_value_field(self):
+        """
+        _value_weighted_portfolio skips symphonies where 'value' key is absent.
+        A symphony list with one valid and one missing-value entry must still
+        return a result derived from the valid symphony only.
+        """
+        from analytics import get_portfolio_today_change
+
+        symphonies = [
+            {
+                "id": "sym-good",
+                "last_percent_change": 0.02,
+                "simple_return": 0.1,
+                "net_deposits": 100.0,
+                "time_weighted_return": 0.1,
+                "max_drawdown": 0.05,
+                "value": 1000.0,
+            },
+            {
+                "id": "sym-no-value",
+                "last_percent_change": 0.99,   # sentinel — must not contribute
+                "simple_return": 0.9,
+                "net_deposits": 100.0,
+                "time_weighted_return": 0.9,
+                "max_drawdown": 0.5,
+                # "value" key intentionally absent
+            },
+        ]
+        result = get_portfolio_today_change(symphonies, bot_state={})
+
+        # Only sym-good contributes — its last_percent_change*100 = 2.0
+        assert result["if_held"] == pytest.approx(2.0, abs=1e-9), (
+            f"symphony missing 'value' must be skipped by portfolio kernel; "
+            f"expected 2.0 (sym-good only), got {result['if_held']}"
+        )
