@@ -1,0 +1,14 @@
+{
+  "provenance": "Hand-computed. Sortino = mean(r) / downside_std, target=0. All three returns are negative so all contribute to downside. Divide by N=3 (population denominator).",
+  "returns": [-0.01, -0.02, -0.03],
+  "target_return": 0.0,
+  "description": "All returns negative. mean=-0.02, downside_std=sqrt(0.0014/3).",
+  "calculation": {
+    "mean_return": -0.02,
+    "downside_returns": [-0.01, -0.02, -0.03],
+    "sum_squared_downside": 0.0014,
+    "mean_squared_downside": 0.00046666666666666667,
+    "downside_std": 0.021602468994692867,
+    "expected_sortino": -0.9258200997722482
+  }
+}

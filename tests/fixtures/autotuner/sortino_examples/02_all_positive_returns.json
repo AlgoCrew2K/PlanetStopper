@@ -1,0 +1,15 @@
+{
+  "provenance": "Hand-computed. All returns above target=0; no downside deviation. Sortino is undefined (divide by zero). Implementation must handle this as +inf or large positive float.",
+  "returns": [0.01, 0.02, 0.03],
+  "target_return": 0.0,
+  "description": "All returns positive. Downside deviation = 0. Sortino = +inf.",
+  "calculation": {
+    "mean_return": 0.02,
+    "downside_returns": [],
+    "sum_squared_downside": 0.0,
+    "mean_squared_downside": 0.0,
+    "downside_std": 0.0,
+    "expected_sortino": null,
+    "expected_sortino_note": "downside_std=0 => implementation returns float('inf') or large positive sentinel; must be > 0"
+  }
+}
