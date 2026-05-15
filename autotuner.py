@@ -234,6 +234,45 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
     return -total_guard_alpha
 
 
+def _apply_optuna_archive_migration_if_needed():
+    """
+    One-time idempotent migration: renames bare legacy study names in
+    optuna_studies.db with a LEGACY__ prefix so they are distinguishable
+    from new timestamp__symphony names.
+
+    Reads migrations/optuna_001_archive_accumulated_studies.sql and applies
+    it only if at least one non-prefixed, non-timestamp study exists.
+    Safe to call on every startup — the SQL is idempotent.
+    """
+    import os
+    import sqlite3 as _sqlite3
+    import pathlib as _pathlib
+
+    db_path = "optuna_studies.db"
+    if not os.path.exists(db_path):
+        return
+
+    migration_path = _pathlib.Path(__file__).parent / "migrations" / "optuna_001_archive_accumulated_studies.sql"
+    if not migration_path.exists():
+        return
+
+    try:
+        conn = _sqlite3.connect(db_path)
+        # Check for any legacy (non-prefixed) studies
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM studies WHERE study_name NOT LIKE 'LEGACY__%' AND INSTR(study_name, '__') = 0"
+        ).fetchone()
+        needs_migration = rows and rows[0] > 0
+        if needs_migration:
+            sql = migration_path.read_text(encoding="utf-8")
+            conn.executescript(sql)
+            conn.commit()
+            print(f"  -> Applied optuna_001 archive migration ({rows[0]} legacy studies renamed).")
+        conn.close()
+    except Exception as exc:
+        print(f"  -> WARNING: optuna_001 archive migration failed (non-fatal): {exc}")
+
+
 def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
     """
     Runs a 6-month walk-forward optimization to find the best variables using Bayesian Optimization per account.
@@ -242,6 +281,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
     # Suppress Optuna's per-trial log noise; set here (not at module level) to
     # avoid clobbering pytest's output-capture on import.
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    # Apply optuna_001 archive migration once if any bare (non-prefixed) legacy
+    # studies exist — renames them to LEGACY__<name> non-destructively.
+    _apply_optuna_archive_migration_if_needed()
 
     print(f"  -> Starting EOD Autotune (125-day WFA: 80% Train / 20% OOS per Symphony)...")
 
@@ -326,7 +369,8 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             url=db_url,
             engine_kwargs={"connect_args": {"timeout": 60}}
         )
-        study = optuna.create_study(study_name=normalized_name, storage=storage, load_if_exists=True, direction="maximize")
+        study_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        study = optuna.create_study(study_name=f"{study_timestamp}__{normalized_name}", storage=storage, load_if_exists=False, direction="maximize")
         study.optimize(objective, n_trials=500, n_jobs=-1)
         
 

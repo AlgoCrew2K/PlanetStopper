@@ -1,0 +1,29 @@
+{
+  "name": "study_naming_pairs",
+  "description": "Named constant pairs (timestamp, normalized_name) used to verify the timestamp__symphony study name format. Provenance: schema-derived constants; values are chosen to be unambiguous and cover separator edge cases (underscores in normalized_name, ISO timestamp format). No bare literals in assertions — tests import this file and assert format properties against these constants.",
+  "format_rule": "f\"{timestamp}__{normalized_name}\"",
+  "separator": "__",
+  "pairs": [
+    {
+      "id": "basic",
+      "timestamp": "2026-05-15T160000Z",
+      "normalized_name": "my_symphony",
+      "expected_study_name": "2026-05-15T160000Z__my_symphony",
+      "description": "Basic case: ISO-style timestamp + snake_case normalized name"
+    },
+    {
+      "id": "with_spaces_normalized",
+      "timestamp": "2026-01-01T093000Z",
+      "normalized_name": "blue_chip_growth",
+      "expected_study_name": "2026-01-01T093000Z__blue_chip_growth",
+      "description": "Multi-word symphony name already normalized to snake_case"
+    },
+    {
+      "id": "separator_uniqueness",
+      "timestamp": "2026-05-15T160000Z",
+      "normalized_name": "alpha_beta",
+      "expected_study_name": "2026-05-15T160000Z__alpha_beta",
+      "description": "Normalized name contains underscores; double-underscore separator must still be unique and parseable"
+    }
+  ]
+}
