@@ -147,6 +147,7 @@ def wipe_transient_state(state_dict):
             s_data["para_armed"] = False
             s_data["triggered"] = False
             s_data["breakeven_locked"] = False
+            s_data["stop_trigger"] = None  # AC-E2.5: new position must not inherit prior position's stop floor
             s_data["below_stop_count"] = 0
             s_data["above_tp_count"] = 0
             s_data["vwap_ticks"] = 0
