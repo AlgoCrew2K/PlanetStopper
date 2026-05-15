@@ -133,7 +133,7 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     so the Sortino objective can compute risk-adjusted return across triggered days.
     """
     daily_returns = []
-    decay_rate = 0.015
+    decay_rate = 0.015  # same exponential decay as run_simulation; must stay in sync
     current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
 
     for sym_id in acc_sym_ids:
@@ -649,7 +649,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             optimization_results[normalized_name][k] = {"old": original_val, "new": current_params.get(k, original_val)}
 
         elapsed = time.time() - start_time
-        print(f"       Optimization completed in {elapsed:.2f}s. Train Alpha: {best_alpha_train:+.2f}% (Average: {avg_train_alpha:.2f}%)")
+        print(f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count})")
 
         database.save_symphony_strategy(normalized_name, current_params, locked_vars)
 
