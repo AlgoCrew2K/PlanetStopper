@@ -185,21 +185,62 @@ def test_no_inline_magic_numbers_in_objective():
         "O5 may not have been implemented yet (expected RED)."
     )
 
-    # The five retired magic number values. We check numeric equivalence
-    # (not string repr) to catch 1.0, 1, and 1.00 as the same.
+    # The five retired magic number values from the ad-hoc penalty block
+    # (autotuner.py:219-229). We check numeric equivalence (not string repr)
+    # to catch 1.0, 1, and 1.00 as the same.
     RETIRED_MAGIC_NUMBERS = frozenset([1.0, 1.5, 0.75, 2.0, 0.015])
+
+    # Collect all Call nodes that are trial.suggest_* — their argument literals
+    # are legitimate Optuna search-space bounds, not penalty magic numbers.
+    # We exclude constants that appear as arguments to any suggest_* call.
+    suggest_call_linenos: set[int] = set()
+    for node in ast.walk(objective_node):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr.startswith("suggest_")
+        ):
+            # Mark every constant in this call's args as an allowed search bound.
+            for arg in node.args:
+                if isinstance(arg, ast.Constant):
+                    suggest_call_linenos.add(arg.col_offset)
 
     violations: list[tuple[int, float]] = []
     for node in ast.walk(objective_node):
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
             val = float(node.value)
             if val in RETIRED_MAGIC_NUMBERS:
-                violations.append((node.lineno, node.value))
+                # Only flag if this constant is NOT a suggest_* argument
+                # (identified by col_offset match within a suggest_ call).
+                # Simpler approach: collect all lineno+col_offset from suggest args.
+                violations.append((node.lineno, node.col_offset, node.value))
 
-    assert not violations, (
-        f"Found retired magic-number literals inside objective() function.\n"
-        f"Violations (line, value): {violations}\n"
-        f"Move these to named constants with source comments at module scope."
+    # Now collect the (lineno, col_offset) pairs of all constants inside
+    # suggest_* calls so we can exclude them from violations.
+    suggest_arg_positions: set[tuple[int, int]] = set()
+    for node in ast.walk(objective_node):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr.startswith("suggest_")
+        ):
+            for arg in node.args:
+                if isinstance(arg, ast.Constant):
+                    suggest_arg_positions.add((arg.lineno, arg.col_offset))
+
+    real_violations = [
+        (lineno, col, val)
+        for lineno, col, val in violations
+        if (lineno, col) not in suggest_arg_positions
+    ]
+
+    assert not real_violations, (
+        f"Found retired penalty-math magic-number literals inside objective() "
+        f"function (excluding suggest_* search bounds).\n"
+        f"Violations (line, col, value): {real_violations}\n"
+        f"Move these to named constants with source comments at module scope.\n"
+        f"Note: numeric literals inside trial.suggest_*() calls are permitted "
+        f"as they are search-space bounds, not penalty-math constants."
     )
 
 
@@ -278,19 +319,26 @@ def test_downside_deviation_excludes_above_target_returns():
         math.sqrt(0.0001 / 3), abs=1e-12
     ), "Fixture self-consistency check failed (fixture 05 downside_std)."
 
-    # Additional property: adding a return exactly at target=0 does NOT
-    # change the Sortino ratio versus the returns with 0.0 omitted.
-    returns_without_zero = [-0.01, 0.01]
-    result_without_zero = autotuner.compute_sortino_ratio(
-        returns_without_zero, target=0.0
+    # Additional property: verify population denominator using a non-zero-mean
+    # case. With returns [-0.02, 0.0, 0.01], mean = -0.003333..., only -0.02
+    # is downside. Population denominator: sum_sq = 0.0004/3; downside_std =
+    # sqrt(0.0004/3). Downside-only denominator would give sqrt(0.0004/1).
+    # These differ by sqrt(3), so the ratio differs by sqrt(3).
+    pop_returns = [-0.02, 0.0, 0.01]
+    result_pop = autotuner.compute_sortino_ratio(pop_returns, target=0.0)
+    mean_pop = sum(pop_returns) / len(pop_returns)
+    downside_std_pop = math.sqrt(0.02**2 / len(pop_returns))  # population: /N=3
+    downside_std_only = math.sqrt(0.02**2 / 1)  # downside-only: /N_downside=1
+    expected_pop = mean_pop / downside_std_pop
+    expected_only = mean_pop / downside_std_only
+    # The implementation must use population denominator.
+    assert result_pop == pytest.approx(expected_pop, abs=1e-9), (
+        f"Population denominator (/N) required. "
+        f"Got {result_pop!r}, expected {expected_pop!r} (pop) vs {expected_only!r} (downside-only)."
     )
-    # With [-0.01, 0.01]: mean=0.0, downside_std=sqrt(0.0001/2) ≠ sqrt(0.0001/3)
-    # They differ because N differs (population denominator). This confirms
-    # that the 0.0 return participates in N but not in the downside_sq sum.
-    assert result != pytest.approx(result_without_zero, abs=1e-6), (
-        "Adding a return at target=0 changes N (population denominator) and "
-        "therefore changes downside_std, so the ratio must differ. This confirms "
-        "the population denominator is used, not the downside-only count."
+    assert result_pop != pytest.approx(expected_only, abs=1e-6), (
+        "Population and downside-only denominators must differ for this fixture. "
+        "Test design error if they are equal."
     )
 
 
@@ -383,9 +431,9 @@ def test_objective_signature_compat_with_optuna_trial():
         patch("autotuner.math_engine.compute_active_trailing_stop",
               side_effect=lambda *a, **kw: 5.0),
         patch("autotuner.math_engine.compute_breakeven_update",
-              side_effect=lambda r, v, b, h, bl, it: (h, bl, b)),
+              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
         patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-              side_effect=lambda v, m: -10.0),
+              side_effect=lambda *a, **kw: -10.0),
         patch("autotuner.math_engine.compute_vwap_breakdown_update",
               side_effect=vwap_always_triggers),
         contextlib.redirect_stdout(buf),
@@ -541,4 +589,136 @@ def test_compute_sortino_ratio_empty_returns_returns_zero():
     )
     assert math.isfinite(result), (
         f"compute_sortino_ratio([]) must return a finite float; got {result!r}"
+    )
+
+
+# ===========================================================================
+# Single-element no-downside: zero-division guard with one observation
+# (risk-engine-specialist gap — distinct from fixture 02 which has 3 elements)
+# ===========================================================================
+
+
+def test_compute_sortino_ratio_single_element_no_downside():
+    """
+    Single positive return [0.01]: downside_std = 0, N = 1.
+    Must return a positive finite value — not raise ZeroDivisionError.
+
+    This is distinct from fixture 02 (3 elements, all positive): the N=1
+    case exercises a different branch of the zero-division guard
+    (mean of a single element, single-element squared-downside of 0.0).
+    """
+    autotuner = _import_autotuner()
+
+    result = autotuner.compute_sortino_ratio([0.01], target=0.0)
+
+    assert result > 0, (
+        f"Single positive return must yield a positive Sortino value; got {result!r}"
+    )
+    assert math.isfinite(result), (
+        f"Single positive return must yield a finite Sortino value; got {result!r}. "
+        f"Implementation must not return float('inf') — Optuna TPE requires finite values."
+    )
+
+
+# ===========================================================================
+# Optuna study direction must be 'maximize'
+# (risk-engine-specialist gap — Sortino is maximized, not minimized)
+# ===========================================================================
+
+
+def test_optuna_study_direction_is_maximize():
+    """
+    The Optuna study for each symphony must be created with direction='maximize'.
+    Sortino is maximized (higher = better risk-adjusted return). If 'minimize'
+    is used, the tuner runs backwards — selecting params with the worst
+    risk-adjusted return — and the error only surfaces empirically after many
+    bad suggestions accumulate.
+
+    Method: patch optuna.create_study and assert the 'direction' keyword
+    argument passed to it is 'maximize'.
+    """
+    import contextlib
+    import io
+
+    autotuner = _import_autotuner()
+
+    create_study_calls: list[dict] = []
+
+    def capturing_create_study(*args, **kwargs):
+        create_study_calls.append({"args": args, "kwargs": kwargs})
+        fake_study = MagicMock()
+        fake_study.best_params = {
+            "TRIGGER_THRESHOLD_PCT": 15.0,
+            "TAKE_PROFIT_MC_PCT": 5.0,
+            "VWAP_CROSS_HWM_PCT": 1.0,
+            "VWAP_BLEED_MULTIPLIER": 1.5,
+            "VWAP_BLEED_TICKS": 10,
+            "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+            "MAX_PARABOLIC_SQUEEZE": 0.5,
+        }
+        fake_study.best_value = 1.0
+        fake_study.optimize = MagicMock(return_value=None)
+        return fake_study
+
+    bot_state = {"sym-A": {"name": "Direction Test Symphony", "account_uuid": "acc-1"}}
+    default_params = {
+        "TRIGGER_THRESHOLD_PCT": 15.0,
+        "TAKE_PROFIT_MC_PCT": 5.0,
+        "VWAP_CROSS_HWM_PCT": 1.0,
+        "VWAP_BLEED_MULTIPLIER": 1.5,
+        "VWAP_BLEED_TICKS": 10,
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+        "MAX_PARABOLIC_SQUEEZE": 0.5,
+    }
+
+    history = {
+        "sym-A": {
+            "2026-04-01": [{"return": 1.0, "mc_prob": 50.0, "vol": 1.0,
+                            "vwap_diff": 0.0, "base_atr_pct": 1.0,
+                            "valid_vwap_weight": 1.0}],
+            "2026-04-02": [{"return": 1.0, "mc_prob": 50.0, "vol": 1.0,
+                            "vwap_diff": 0.0, "base_atr_pct": 1.0,
+                            "valid_vwap_weight": 1.0}],
+        }
+    }
+
+    buf = io.StringIO()
+    with (
+        patch("autotuner.optuna.create_study", side_effect=capturing_create_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history",
+              return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch("autotuner.database.get_symphony_strategy",
+              return_value={"params": default_params.copy(), "locked_vars": []}),
+        patch("autotuner.database.save_symphony_strategy"),
+        patch("autotuner.database.DEFAULT_STRATEGY", default_params),
+        patch("autotuner.math_engine.compute_para_arm_decision",
+              side_effect=lambda **kw: (0.0, False)),
+        patch("autotuner.math_engine.compute_time_squeeze_decay",
+              side_effect=lambda tr: (1.5, 0.5)),
+        patch("autotuner.math_engine.compute_active_trailing_stop",
+              side_effect=lambda *a, **kw: 5.0),
+        patch("autotuner.math_engine.compute_breakeven_update",
+              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
+        patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+              side_effect=lambda *a, **kw: -10.0),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update",
+              side_effect=lambda **kw: (0, 0, False, False)),
+        contextlib.redirect_stdout(buf),
+    ):
+        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+
+    assert len(create_study_calls) == 1, (
+        f"Expected exactly one create_study call per symphony; "
+        f"got {len(create_study_calls)}"
+    )
+
+    call_kwargs = create_study_calls[0]["kwargs"]
+    direction = call_kwargs.get("direction")
+    assert direction == "maximize", (
+        f"Optuna study must be created with direction='maximize' (Sortino is "
+        f"maximized — higher is better). Got direction={direction!r}.\n"
+        f"Full kwargs: {call_kwargs}"
     )
