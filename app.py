@@ -1,6 +1,8 @@
 """Flask application for AlphaBot Control Center with Account-Level settings."""
 
+import atexit
 import os
+import signal
 import sys
 import io
 import time
@@ -10,6 +12,7 @@ from datetime import datetime
 import schedule
 import requests
 import logging
+import psutil
 from flask import Flask, render_template, jsonify, request
 from dotenv import dotenv_values, set_key
 
@@ -47,6 +50,121 @@ log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
 COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
+
+# ---------------------------------------------------------------------------
+# Daemon singleton — pidfile lifecycle
+# ---------------------------------------------------------------------------
+# Resolves the pidfile path at import time so both startup and shutdown always
+# reference the same absolute path, regardless of cwd changes.
+_PIDFILE_PATH: str = os.environ.get(
+    "ALPHABOT_PIDFILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "alphabot.pid"),
+)
+
+
+def _is_alphabot_process_alive(pid: int) -> bool:
+    """Return True if *pid* is a live python process whose argv contains 'app.py'.
+
+    Uses psutil for a single-call, cross-platform check.  Returns False for
+    any psutil exception (NoSuchProcess, AccessDenied, ZombieProcess) so that
+    a stale pidfile is always treated as dead rather than blocking a restart.
+    """
+    try:
+        proc = psutil.Process(pid)
+        # cmdline() raises NoSuchProcess / AccessDenied if the process is gone
+        # or belongs to another user; both are treated as "not alive".
+        cmdline = proc.cmdline()
+        return any("app.py" in arg for arg in cmdline)
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return False
+
+
+def _write_pidfile(path: str, pid: int) -> None:
+    """Atomically write *pid* to *path* (plain text, no trailing newline)."""
+    with open(path, "w", encoding="ascii") as fh:
+        fh.write(str(pid))
+
+
+def _read_pidfile(path: str) -> int | None:
+    """Read the integer PID from *path*.  Returns None on any read/parse error."""
+    try:
+        with open(path, "r", encoding="ascii") as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _remove_pidfile_if_ours(path: str, our_pid: int) -> None:
+    """Remove *path* only if it still contains *our_pid*.
+
+    Called at exit — never clobbers a pidfile written by a different daemon
+    instance (e.g., if this process was the stale one and a new daemon already
+    took ownership).
+    """
+    stored = _read_pidfile(path)
+    if stored == our_pid:
+        try:
+            os.remove(path)
+        except OSError:
+            pass  # Already gone — fine.
+
+
+def _acquire_daemon_singleton(pidfile: str) -> None:
+    """Enforce the daemon singleton contract at startup.
+
+    Reads the pidfile (if present) and checks whether the stored PID refers to
+    a live AlphaBot process.
+
+      - Live process found  → print error and exit(1).  Flask and the scheduler
+        are never started.
+      - Dead / stale PID    → log a notice, take ownership, continue.
+      - No pidfile          → create it, continue.
+
+    Registers an atexit handler and a SIGTERM handler to remove the pidfile on
+    clean shutdown.  On Windows, SIGTERM may not be delivered reliably by
+    Stop-Process; the atexit handler covers the normal Ctrl+C / graceful-exit
+    path.
+    """
+    our_pid = os.getpid()
+
+    if os.path.exists(pidfile):
+        stored_pid = _read_pidfile(pidfile)
+        if stored_pid is not None and _is_alphabot_process_alive(stored_pid):
+            print(
+                f"Another AlphaBot daemon is already running (PID {stored_pid}); "
+                f"refusing to start. "
+                f"If this is wrong, delete {pidfile} or stop PID {stored_pid} first.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        # Stale pidfile — the stored process is dead.
+        print(
+            f"Stale pidfile found (PID {stored_pid} not alive); taking ownership.",
+            flush=True,
+        )
+
+    _write_pidfile(pidfile, our_pid)
+
+    # --- Cleanup handlers ---
+    # atexit covers: clean Ctrl+C, normal Python exit, app.run() returning.
+    atexit.register(_remove_pidfile_if_ours, pidfile, our_pid)
+
+    # SIGTERM: sent by restart.ps1 → Stop-Process.  On Windows the signal
+    # module supports SIGTERM as of Python 3.8+, but CPython converts it to a
+    # KeyboardInterrupt rather than running the signal handler directly.  We
+    # register it anyway so the cleanup runs on POSIX-compatible environments
+    # (WSL, CI).  The atexit handler is the reliable path on native Windows.
+    def _sigterm_handler(signum, frame):  # noqa: ANN001
+        _remove_pidfile_if_ours(pidfile, our_pid)
+        sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGTERM, _sigterm_handler)
+    except (OSError, ValueError):
+        # ValueError: signal only works in the main thread.
+        # OSError: SIGTERM not available on this platform (shouldn't happen).
+        pass
+
 
 # --- 1. Bot Execution Logic ---
 def trigger_alpha_bot(force=False):
@@ -622,10 +740,15 @@ if __name__ == "__main__":
     # not affected when this module is imported during test collection.
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
+    # Enforce daemon singleton BEFORE starting Flask or the scheduler thread.
+    # If another AlphaBot is alive this call prints an error and exits non-zero.
+    # If a stale pidfile exists (ungraceful prior kill) it is overwritten cleanly.
+    _acquire_daemon_singleton(_PIDFILE_PATH)
+
     # Start the scheduler thread
     threading.Thread(target=run_scheduler, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
-    print(f"\n🚀 Starting Alpha Bot Control Center at http://localhost:{port}\n")
+    print(f"\nStarting Alpha Bot Control Center at http://localhost:{port}\n")
 
     # Disable use_reloader to ensure the background thread runs once and only once
     app.run(port=port, debug=False, use_reloader=False)
