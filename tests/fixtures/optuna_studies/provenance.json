@@ -1,0 +1,18 @@
+{
+  "name": "optuna_studies_migration_fixtures",
+  "description": "SQLite fixture DBs for O3 archive migration tests. Provenance: schema-derived from a live Optuna RDB storage DB (introspected via optuna.create_study + PRAGMA table_info on 2026-05-15). The 'studies' table schema (study_id INTEGER PK, study_name VARCHAR(512)) is the Optuna 3.x internal schema for study naming. Fixture DBs are minimal: three pre-existing studies using the old normalized_name-only scheme, no trial data, no LEGACY__ prefix.",
+  "fixture_files": {
+    "legacy_studies_before_archive.sqlite": {
+      "description": "Three studies with bare normalized_name values (no timestamp prefix, no LEGACY__ prefix). Simulates an optuna_studies.db before migrations/optuna_001_archive_accumulated_studies.sql is applied.",
+      "study_names": ["my_symphony", "blue_chip_growth", "alpha_beta"]
+    },
+    "legacy_studies_after_archive.sqlite": {
+      "description": "Same three studies after the archive migration renames them with LEGACY__ prefix. Expected post-migration state for test_archive_migration_is_rename_only.",
+      "study_names": ["LEGACY__my_symphony", "LEGACY__blue_chip_growth", "LEGACY__alpha_beta"]
+    }
+  },
+  "schema_source": "Optuna 3.x RDB storage — introspected 2026-05-15 via optuna.create_study(storage='sqlite:///...') + PRAGMA table_info(studies)",
+  "tables_included": ["studies", "version_info", "study_directions"],
+  "tables_omitted_rationale": "trial_params, trial_values, trial_intermediate_values, etc. omitted — O3 migration only touches the studies table; no trial data is needed for the migration tests.",
+  "target_db": "optuna_studies.db (Optuna internal DB) — NOT alphabot_state.db"
+}
