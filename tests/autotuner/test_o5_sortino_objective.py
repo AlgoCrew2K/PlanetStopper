@@ -245,6 +245,68 @@ def test_no_inline_magic_numbers_in_objective():
 
 
 # ===========================================================================
+# Test 2b — No inline magic numbers in _collect_sim_returns
+# Reviewer BLOCK: bare 0.015 in _collect_sim_returns at autotuner.py:136
+# ===========================================================================
+
+
+def test_no_bare_decay_rate_in_collect_sim_returns():
+    """
+    _collect_sim_returns contains the same set of retired magic numbers that
+    objective() is barred from using. In particular, the bare literal 0.015
+    (exponential decay rate) at autotuner.py:136 must be replaced with the
+    named constant _GUARD_ALPHA_DECAY_RATE so the no-magic-numbers rule
+    (project CLAUDE.md) covers both functions.
+
+    Method: parse autotuner.py via ast, find _collect_sim_returns FunctionDef,
+    walk all Constant nodes in its subtree, assert none match the retired set
+    {1.0, 1.5, 0.75, 2.0, 0.015}.
+
+    Named module-scope constants are permitted. Only bare literals inside the
+    function body are rejected.
+
+    This test will be RED until the implementer adds:
+      1. _GUARD_ALPHA_DECAY_RATE = 0.015  at module scope with a source comment
+      2. Replaces `decay_rate = 0.015` in _collect_sim_returns with
+         `decay_rate = _GUARD_ALPHA_DECAY_RATE`
+    """
+    autotuner_path = pathlib.Path(__file__).parent.parent.parent / "autotuner.py"
+    source = autotuner_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    collect_sim_node = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_collect_sim_returns":
+            collect_sim_node = node
+            break
+
+    assert collect_sim_node is not None, (
+        "Could not locate '_collect_sim_returns' FunctionDef in autotuner.py. "
+        "Implementer must add this helper as part of O5."
+    )
+
+    RETIRED_MAGIC_NUMBERS = frozenset([1.0, 1.5, 0.75, 2.0, 0.015])
+
+    violations: list[tuple[int, int, object]] = []
+    for node in ast.walk(collect_sim_node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            val = float(node.value)
+            if val in RETIRED_MAGIC_NUMBERS:
+                violations.append((node.lineno, node.col_offset, node.value))
+
+    assert not violations, (
+        f"Found retired magic-number literals inside _collect_sim_returns().\n"
+        f"Violations (line, col, value): {violations}\n"
+        f"Required fix:\n"
+        f"  1. Add _GUARD_ALPHA_DECAY_RATE = 0.015 at module scope (near _SS_* "
+        f"constants) with a source comment explaining it is the exponential "
+        f"half-life weighting for historical guard-alpha observations.\n"
+        f"  2. Replace `decay_rate = 0.015` in _collect_sim_returns with "
+        f"`decay_rate = _GUARD_ALPHA_DECAY_RATE`."
+    )
+
+
+# ===========================================================================
 # Test 3 — target_return is zero by default
 # Mandatory RED test: test_target_return_is_zero_by_default
 # ===========================================================================
