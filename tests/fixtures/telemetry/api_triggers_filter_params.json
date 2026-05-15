@@ -1,0 +1,62 @@
+{
+  "_provenance": "schema-derived from AC-H1.5 /api/triggers query param spec; values are named constants for boundary testing",
+  "rows": [
+    {
+      "ts_utc": "2026-05-15T14:30:00Z",
+      "ts_et": "2026-05-15T10:30:00",
+      "symphony_id": "SYM_A",
+      "account_id": "ACC_HIDDEN",
+      "triggered_reason": "Trailing Stop",
+      "at_return": -1.25,
+      "gate_state_json": null,
+      "cycle_id": "C001"
+    },
+    {
+      "ts_utc": "2026-05-15T15:00:00Z",
+      "ts_et": "2026-05-15T11:00:00",
+      "symphony_id": "SYM_B",
+      "account_id": "ACC_HIDDEN",
+      "triggered_reason": "Take-Profit",
+      "at_return": 2.10,
+      "gate_state_json": null,
+      "cycle_id": "C002"
+    },
+    {
+      "ts_utc": "2026-05-15T15:30:00Z",
+      "ts_et": "2026-05-15T11:30:00",
+      "symphony_id": "SYM_A",
+      "account_id": "ACC_HIDDEN",
+      "triggered_reason": "VWAP Breakdown",
+      "at_return": -0.80,
+      "gate_state_json": null,
+      "cycle_id": "C003"
+    }
+  ],
+  "query_params": {
+    "since_filters_correctly": {
+      "since": "2026-05-15T14:45:00Z",
+      "expected_count": 2,
+      "expected_symphony_ids": ["SYM_B", "SYM_A"]
+    },
+    "symphony_id_filter": {
+      "symphony_id": "SYM_A",
+      "expected_count": 2
+    },
+    "reason_filter": {
+      "reason": "Take-Profit",
+      "expected_count": 1
+    },
+    "limit_default": {
+      "limit_omitted": true,
+      "expected_max": 100
+    },
+    "limit_clamp": {
+      "requested_limit": 10000,
+      "expected_max_returned": 500
+    }
+  },
+  "security": {
+    "account_id_must_be_absent_from_response": true,
+    "note": "account_id column must never appear in /api/triggers JSON response per PA-9"
+  }
+}

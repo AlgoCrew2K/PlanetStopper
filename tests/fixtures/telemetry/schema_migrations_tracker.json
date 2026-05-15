@@ -1,0 +1,23 @@
+{
+  "_provenance": "schema-derived from panel cross-cutting consensus — migration 004 DDL spec",
+  "migration_004": {
+    "name": "004_schema_migrations_tracker",
+    "ddl": "CREATE TABLE IF NOT EXISTS schema_migrations (migration_name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))",
+    "expected_columns": ["migration_name", "applied_at"],
+    "primary_key": "migration_name"
+  },
+  "migration_005": {
+    "name": "005_exit_triggers",
+    "ddl_table": "CREATE TABLE IF NOT EXISTS exit_triggers (id INTEGER PRIMARY KEY AUTOINCREMENT, ts_utc TEXT NOT NULL, ts_et TEXT NOT NULL, symphony_id TEXT NOT NULL, account_id TEXT, triggered_reason TEXT NOT NULL, at_return REAL, gate_state_json TEXT, cycle_id TEXT)",
+    "expected_columns": ["id", "ts_utc", "ts_et", "symphony_id", "account_id", "triggered_reason", "at_return", "gate_state_json", "cycle_id"],
+    "indexes": [
+      {"name": "idx_exit_triggers_ts", "on": "exit_triggers (ts_utc DESC)"},
+      {"name": "idx_exit_triggers_symphony_ts", "on": "exit_triggers (symphony_id, ts_utc DESC)"}
+    ]
+  },
+  "expected_behavior": {
+    "migration_name_recorded_on_apply": true,
+    "applied_at_is_non_empty_string": true,
+    "idempotent_on_reapply": true
+  }
+}
