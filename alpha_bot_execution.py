@@ -219,12 +219,15 @@ def fetch_alpaca_history(tickers, current_date_str):
             if not page_token:
                 break
 
-    print("  -> History download complete. Saving to daily cache.")
-    try:
-        with open(HISTORY_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump({"date": current_date_str, "tickers": tickers_list, "data": historical_data}, f)
-    except OSError as e:
-        print(f"  -> Failed to write cache: {e}")
+    if historical_data:
+        print("  -> History download complete. Saving to daily cache.")
+        try:
+            with open(HISTORY_CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump({"date": current_date_str, "tickers": tickers_list, "data": historical_data}, f)
+        except OSError as e:
+            print(f"  -> Failed to write cache: {e}")
+    else:
+        print("  -> History download returned empty data — skipping cache write to avoid poisoning.")
 
     return historical_data
 
@@ -302,12 +305,18 @@ def main():
         except (ValueError, AttributeError):
             start_h, start_m = 9, 30
 
+        # action gate: EXECUTION_START_TIME from .env (e.g. 10:30 to avoid open-volatility noise)
         market_open = dt_time(start_h, start_m)
         market_close = dt_time(16, 0)
         rebalance_blackout = dt_time(15, 53)
         post_mortem_cutoff = dt_time(16, 5)
+        # data gate: US equity open is always 09:30 ET regardless of EXECUTION_START_TIME
+        REAL_MARKET_OPEN = dt_time(9, 30)
 
-        if not is_weekday or current_time < market_open or current_time > post_mortem_cutoff:
+        # Fully closed: weekend, after post-mortem window, or weekday before 09:30 —
+        # persist Composer inception fields and sleep. The pre-09:30 case preserves
+        # bc65d57 behavior: dashboard gets fresh CR/MDD even before market open.
+        if not is_weekday or current_time > post_mortem_cutoff or current_time < REAL_MARKET_OPEN:
             if not force_run:
                 print(f"  -> Market closed or in Grace Period (ET: {current_et.strftime('%a %H:%M')}). Sleeping...")
                 _closed_bot_state = database.load_state()
@@ -356,7 +365,7 @@ def main():
             print(f"  -> Execution mode toggle detected ({prev_live_execution} -> {LIVE_EXECUTION}). Wiping transient state.")
             database.wipe_transient_state(bot_state)
             state_changed = True
-        
+
         if bot_state.get("last_execution_mode") != LIVE_EXECUTION:
             bot_state["last_execution_mode"] = LIVE_EXECUTION
             state_changed = True
@@ -381,26 +390,99 @@ def main():
         all_tickers = set()
         symphony_data_cache = {}
 
-        for account in ACCOUNT_UUIDS:
-            symphonies = fetch_symphony_stats(account)
-            symphony_data_cache[account] = symphonies
-            for sym in symphonies:
-                for holding in sym.get("holdings", []):
-                    raw_ticker = holding.get("ticker", "")
-                    clean_ticker = raw_ticker.split("::")[-1].split("//")[0]
-                    alpaca_ticker = clean_ticker.replace("/", ".")
-                    if alpaca_ticker:
-                        all_tickers.add(alpaca_ticker)
-                        holding["working_ticker"] = alpaca_ticker
+        # -----------------------------------------------------------------------
+        # DATA PHASE — runs every cycle from 09:30 ET onward, regardless of
+        # EXECUTION_START_TIME. Gathers Composer stats, updates HWM and vol so
+        # the action phase at EXECUTION_START_TIME starts with warm state.
+        # -----------------------------------------------------------------------
+        if current_time >= REAL_MARKET_OPEN or force_run:
+            for account in ACCOUNT_UUIDS:
+                symphonies = fetch_symphony_stats(account)
+                symphony_data_cache[account] = symphonies
+                for sym in symphonies:
+                    for holding in sym.get("holdings", []):
+                        raw_ticker = holding.get("ticker", "")
+                        clean_ticker = raw_ticker.split("::")[-1].split("//")[0]
+                        alpaca_ticker = clean_ticker.replace("/", ".")
+                        if alpaca_ticker:
+                            all_tickers.add(alpaca_ticker)
+                            holding["working_ticker"] = alpaca_ticker
 
-        # Add frozen tickers to all_tickers for true Shadow Return tracking
-        for s_id, s_data in bot_state.items():
-            if isinstance(s_data, dict) and s_data.get("triggered"):
-                for h in s_data.get("current_holdings", []):
-                    t = h.get("ticker")
-                    if t and "cash" not in t.lower():
-                        all_tickers.add(t)
+            # Add frozen tickers to all_tickers for true Shadow Return tracking
+            for s_id, s_data in bot_state.items():
+                if isinstance(s_data, dict) and s_data.get("triggered"):
+                    for h in s_data.get("current_holdings", []):
+                        t = h.get("ticker")
+                        if t and "cash" not in t.lower():
+                            all_tickers.add(t)
 
+            # Fetch Alpaca history here so calculate_20d_vol can warm symphony_vol
+            # before the action phase fires. Same-day calls are cache hits (no live I/O).
+            data_phase_history = fetch_alpaca_history(list(all_tickers), current_date_str)
+
+            for account, symphonies in symphony_data_cache.items():
+                for sym in symphonies:
+                    s_id = sym["id"]
+                    current_return = sym.get("last_percent_change", 0.0) * 100
+
+                    if s_id not in bot_state:
+                        bot_state[s_id] = {
+                            "high_water_mark": current_return,
+                            "shadow_hwm": current_return,
+                            "prev_return": current_return,
+                            "armed": False,
+                            "tp_armed": False,
+                            "para_armed": False,
+                            "triggered": False,
+                            "mc_history": [],
+                            "below_stop_count": 0,
+                            "above_tp_count": 0,
+                            "vwap_ticks": 0,
+                            "vwap_bleed_ticks": 0,
+                            "breakeven_locked": False,
+                            "hwm_hold_ticks": 0,
+                        }
+
+                    bot_state[s_id]["current_return"] = current_return
+                    bot_state[s_id]["current_value"] = sym.get("current_value", sym.get("value", 0.0))
+                    bot_state[s_id]["name"] = sym.get("name", bot_state[s_id].get("name", ""))
+                    bot_state[s_id]["account"] = account
+
+                    if not bot_state[s_id].get("triggered"):
+                        holdings_for_vol = sym.get("holdings", [])
+                        bot_state[s_id]["symphony_vol"] = math_engine.calculate_20d_vol(
+                            holdings_for_vol, data_phase_history
+                        )
+
+                    # Advance HWM (monotonic — never decreases)
+                    if current_return > bot_state[s_id].get("high_water_mark", current_return) and not bot_state[s_id].get("triggered"):
+                        bot_state[s_id]["high_water_mark"] = current_return
+                    if "shadow_hwm" not in bot_state[s_id]:
+                        bot_state[s_id]["shadow_hwm"] = current_return
+                    if current_return > bot_state[s_id]["shadow_hwm"]:
+                        bot_state[s_id]["shadow_hwm"] = current_return
+
+                    if not bot_state[s_id].get("triggered"):
+                        bot_state[s_id]["current_holdings"] = [
+                            {"ticker": h.get("working_ticker", h.get("ticker")), "allocation": h.get("allocation", 0.0)}
+                            for h in sym.get("holdings", [])
+                        ]
+
+                    _persist_composer_fields_to_bot_state(bot_state, s_id, sym)
+
+            # Only persist here on pre-gate cycles; the action phase terminal save_state
+            # covers post-gate cycles atomically (CX-1: all triggered fields in one write).
+            if current_time < market_open and not force_run:
+                bot_state["last_successful_cycle_at"] = current_et.isoformat()
+                database.save_state(bot_state)
+
+        # Gate: before EXECUTION_START_TIME — data phase done, action phase not yet open
+        if current_time < market_open and not force_run:
+            return
+
+        # -----------------------------------------------------------------------
+        # EOD POST-MORTEM — runs at 16:00-16:05 ET (or forced on weekends)
+        # -----------------------------------------------------------------------
         if (market_close <= current_time <= post_mortem_cutoff) or (force_run and current_et.weekday() >= 5):
             if bot_state.get("post_mortem_run") == current_date_str:
                 if not force_run:
@@ -433,14 +515,20 @@ def main():
                 autotuner_changes = autotuner.run_autotuner(bot_state, current_date_str, ACCOUNT_UUIDS, is_forced=force_run)
             else:
                 print(f"  -> Day is {current_et.strftime('%A')}. Skipping weekly autotune.")
-            
+
             reporting.send_eod_discord_post(current_date_str, f"post_mortem_{current_date_str}.json", autotuner_changes, DISCORD_WEBHOOK_URL)
 
             print("  -> EOD Post-Mortem complete. Ending execution for the day.")
             return
 
+        # -----------------------------------------------------------------------
+        # ACTION PHASE — gated at EXECUTION_START_TIME (default 10:30 ET)
+        # Reads warm state written by the data phase above.
+        # -----------------------------------------------------------------------
         historical_data = fetch_alpaca_history(list(all_tickers), current_date_str)
         if not historical_data:
+            print("[ENGINE ERROR] fetch_alpaca_history returned empty historical_data — "
+                  "Alpaca fetch may have failed or cache may be poisoned. Skipping action phase.")
             return
 
         live_vwaps = fetch_intraday_vwaps(list(all_tickers), get_alpaca_headers(), current_et)
@@ -694,7 +782,6 @@ def main():
                 bot_state[symphony_id]["active_stop_distance"] = active_trailing_stop
                 bot_state[symphony_id]["symphony_vol"] = symphony_vol
                 bot_state[symphony_id]["current_value"] = sym.get("current_value", sym.get("value", 0.0))
-                _persist_composer_fields_to_bot_state(bot_state, symphony_id, sym)
                 if not bot_state[symphony_id].get("triggered"):
                     bot_state[symphony_id]["current_holdings"] = [{"ticker": h.get("ticker"), "allocation": h.get("allocation", 0.0)} for h in holdings]
 
@@ -888,6 +975,7 @@ def main():
                     else:
                         print(f"     !!! EXECUTION FAILED FOR {item['symphony_name']}. Skipping state update !!!")
 
+        bot_state["last_successful_cycle_at"] = current_et.isoformat()
         database.save_state(bot_state)
         database.save_chart_history(chart_history)
 

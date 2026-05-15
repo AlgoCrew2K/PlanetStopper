@@ -35,6 +35,7 @@ _PERFORMANCE_METRIC_KEYS = (
 _PERFORMANCE_NONE_METRICS = {k: None for k in _PERFORMANCE_METRIC_KEYS}
 
 ENV_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alphabot_daemon.log")
 
 app = Flask(__name__)
 # Reload .html templates on every request without restarting the process.
@@ -57,7 +58,8 @@ def trigger_alpha_bot(force=False):
             cmd.append("--force")
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
-        subprocess.run(cmd, check=True, env=env)
+        with open(LOG_FILE, "a", encoding="utf-8") as log_fh:
+            subprocess.run(cmd, check=True, env=env, stdout=log_fh, stderr=log_fh)
     except subprocess.CalledProcessError as e:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Execution failed: {e}")
 
