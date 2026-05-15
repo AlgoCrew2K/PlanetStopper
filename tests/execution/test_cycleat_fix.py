@@ -1,6 +1,6 @@
 """
 RED-phase tests for the cycleat-fix cycle — two reviewer BLOCKs from the
-data-vs-action split merge (46fe019):
+data-vs-action split merge (46fe019) plus a CR unit-error:
 
   BLOCK 1 — /api/state must surface last_successful_cycle_at at the TOP LEVEL
              of its JSON response (not only nested in 'state').
@@ -15,7 +15,14 @@ data-vs-action split merge (46fe019):
   BLOCK 4 — The staleness badge must read data from data-attribute or from the
              top-level /api/state field (i.e. JS must reference it).
 
-All four tests are RED on the HEAD b7b6b0f codebase.  None touch math_engine.
+  BLOCK 5 — analytics.py get_symphony_cumulative_return must return a
+             PERCENT-scaled value (simple_return * 100), not the raw Composer
+             decimal. TC already converts correctly; CR does not.
+             The template (table_partial.html + index.html JS) renders CR with
+             fmtPct(v) which only appends '%' — it expects a percent value,
+             not a decimal. 0.65976 → 0.66% (wrong); 65.976 → 65.98% (right).
+
+All tests are RED on the HEAD b7b6b0f codebase.  None touch math_engine.
 No live API calls — all external I/O mocked.
 """
 
@@ -495,4 +502,207 @@ class TestStalenessBadgeJsWiring:
             "(e.g. document.getElementById('cycle-staleness-badge')) AND in the "
             "HTML markup (as id=\"cycle-staleness-badge\"). "
             "Both are absent today."
+        )
+
+
+# ===========================================================================
+# BLOCK 5 — CR 100x unit error: get_symphony_cumulative_return must return
+#           PERCENT-scaled value, not raw Composer decimal
+# ===========================================================================
+
+class TestCumulativeReturnPercentScaling:
+    """
+    analytics.py get_symphony_cumulative_return returns raw Composer simple_return
+    (e.g. 0.65976) but the dashboard renders it via fmtPct(v) = v.toFixed(2)+'%',
+    which expects a percent value.  Result: 0.65976 renders as +0.66% instead
+    of +65.98%.  The helper must return simple_return * 100 (like TC does).
+
+    Root cause confirmed by code inspection:
+      - TC: returns last_percent_change * 100  (correct)
+      - CR: returns simple_return              (missing * 100)
+      - MDD: returns max_drawdown raw          (template multiplies by 100, correct)
+
+    Fix site: analytics.py:get_symphony_cumulative_return — add * 100.
+    Note: existing test_m1_helpers.py TestGetSymphonyCumulativeReturn asserts
+    the raw value and will also need updating after the fix.
+    """
+
+    # Load fixture at class level to avoid repeated file I/O
+    _FIXTURE_PATH = (
+        "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM"
+        "/.claude/worktrees/cycleat-team/tests/fixtures/composer/symphony_stats_meta.json"
+    )
+
+    @pytest.fixture(scope="class")
+    def fixture_symphonies(self):
+        import json
+        with open(self._FIXTURE_PATH, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        return payload.get("symphonies", [])
+
+    @pytest.fixture(scope="class")
+    def normal_symphony(self, fixture_symphonies):
+        """symphony[1]: simple_return=0.65976, net_deposits=658.5."""
+        return fixture_symphonies[1]
+
+    @pytest.fixture(scope="class")
+    def twr_symphony(self, fixture_symphonies):
+        """symphony[0]: simple_return=0.0, net_deposits=0.0, TWR fallback."""
+        return fixture_symphonies[0]
+
+    def test_cr_if_held_is_percent_not_decimal_for_normal_symphony(self, normal_symphony):
+        """
+        get_symphony_cumulative_return must return simple_return * 100.
+
+        Fixture anchor: normal_symphony.simple_return = 0.65976 = 65.976%.
+        Expected if_held: 65.976, NOT 0.65976.
+
+        RED: current code returns 0.65976 (raw decimal).
+        """
+        from analytics import get_symphony_cumulative_return
+
+        result = get_symphony_cumulative_return(normal_symphony, bot_state_entry=None)
+
+        raw = normal_symphony["simple_return"]       # 0.65976
+        expected_pct = raw * 100                     # 65.976
+        raw_threshold = 5.0                          # no real CR is < 5% of the expected pct
+
+        assert result["if_held"] == pytest.approx(expected_pct, rel=1e-6), (
+            f"get_symphony_cumulative_return.if_held must be simple_return * 100 = {expected_pct}; "
+            f"got {result['if_held']!r}. "
+            f"If the value is ~{raw!r}, the helper is returning the raw Composer decimal — "
+            f"it must multiply by 100 like get_symphony_today_change does for last_percent_change."
+        )
+
+    def test_cr_dry_run_is_percent_not_decimal_for_normal_symphony(self, normal_symphony):
+        """
+        dry_run CR must also be percent-scaled (equals if_held for non-triggered).
+
+        RED: same root cause as if_held.
+        """
+        from analytics import get_symphony_cumulative_return
+
+        result = get_symphony_cumulative_return(normal_symphony, bot_state_entry=None)
+
+        raw = normal_symphony["simple_return"]
+        expected_pct = raw * 100
+
+        assert result["dry_run"] == pytest.approx(expected_pct, rel=1e-6), (
+            f"get_symphony_cumulative_return.dry_run must be simple_return * 100 = {expected_pct}; "
+            f"got {result['dry_run']!r}."
+        )
+
+    def test_twr_fallback_cr_is_percent_not_decimal(self, twr_symphony):
+        """
+        TWR fallback: if_held CR must be time_weighted_return * 100.
+
+        Fixture: symphony[0].time_weighted_return = 3.13212 → expected 313.212%.
+        Note: Composer TWR is also a decimal, same unit as simple_return.
+
+        RED: current code returns raw 3.13212.
+        """
+        from analytics import get_symphony_cumulative_return
+
+        assert twr_symphony["simple_return"] == pytest.approx(0.0, abs=1e-9), (
+            "fixture assumption violated: twr_symphony.simple_return must be 0.0"
+        )
+        assert twr_symphony["net_deposits"] == pytest.approx(0.0, abs=1e-9), (
+            "fixture assumption violated: twr_symphony.net_deposits must be 0.0"
+        )
+
+        result = get_symphony_cumulative_return(twr_symphony, bot_state_entry=None)
+
+        raw_twr = twr_symphony["time_weighted_return"]   # 3.13212
+        expected_pct = raw_twr * 100                      # 313.212
+
+        assert result["if_held"] == pytest.approx(expected_pct, rel=1e-6), (
+            f"TWR fallback: if_held CR must be time_weighted_return * 100 = {expected_pct}; "
+            f"got {result['if_held']!r}. "
+            f"The TWR field is also a Composer decimal — it must be scaled by 100."
+        )
+
+    def test_cr_magnitude_is_operator_readable_percent(self, fixture_symphonies):
+        """
+        Property test: for any non-None CR result from the fixture, the value
+        must be in a plausible percent range for a real portfolio.
+
+        Invariant: |CR| < 10000 (i.e. not in decimal [0,1] range which would
+        be < 1.0 for all realistic Composer symphonies).
+
+        This test catches the category of bug where the helper returns a decimal
+        and the value never exceeds ~1.5 for any real symphony.
+
+        RED: all fixture symphonies have simple_return < 2.0 (decimal), so
+        current code returns < 2.0.  After the fix, values should be < 200 (%)
+        but easily > 1.0 for the normals.
+        """
+        from analytics import get_symphony_cumulative_return
+
+        has_nonzero = False
+        for sym in fixture_symphonies:
+            result = get_symphony_cumulative_return(sym, bot_state_entry=None)
+            if result["if_held"] is None:
+                continue
+            v = result["if_held"]
+            # After fix: simple_return values like 0.65976 become 65.976.
+            # Trigger RED now: assert the value is > 1.0 (decimal 0.65976 < 1.0).
+            # A correctly scaled 65.976% is > 1.0.
+            # The only exception is a symphony with CR between 0 and 1% -- very rare,
+            # but we can't rule it out without knowing all 11 fixture values.
+            # Use > 1.5 as the threshold: no real cumulative return is between 0 and 1.5%.
+            # This asserts the category, not the exact value.
+            if abs(v) > 0.01:  # skip near-zero (could be real 0% CR)
+                assert abs(v) > 1.5, (
+                    f"CR if_held={v!r} looks like a raw Composer decimal (< 1.5). "
+                    f"Expected a percent value like 65.98, not 0.65976. "
+                    f"Symphony id={sym.get('id')!r}, simple_return={sym.get('simple_return')!r}. "
+                    f"Fix: add * 100 in get_symphony_cumulative_return."
+                )
+                has_nonzero = True
+
+        assert has_nonzero, (
+            "All 11 fixture symphonies returned None or near-zero CR — "
+            "fixture may be invalid or all symphonies are the TWR fallback case."
+        )
+
+    def test_portfolio_cr_is_percent_not_decimal(self, fixture_symphonies):
+        """
+        get_portfolio_cumulative_return must also return a percent-scaled value,
+        since it delegates to get_symphony_cumulative_return.
+
+        Build a minimal symphonies list from the fixture (with 'value' field) and
+        assert the portfolio aggregate CR is > 1.5 (not a raw decimal).
+
+        RED: same root cause, propagates through _value_weighted_portfolio.
+        """
+        from analytics import get_portfolio_cumulative_return
+
+        symphonies = []
+        for sym in fixture_symphonies:
+            if sym.get("simple_return") is not None and sym.get("simple_return") != 0.0:
+                symphonies.append({
+                    "id": sym.get("id", ""),
+                    "value": 10000.0,  # equal weight for simplicity
+                    "last_percent_change": sym.get("last_percent_change", 0.0),
+                    "simple_return": sym.get("simple_return"),
+                    "net_deposits": sym.get("net_deposits", 1.0),
+                    "time_weighted_return": sym.get("time_weighted_return"),
+                    "max_drawdown": sym.get("max_drawdown"),
+                })
+
+        assert len(symphonies) >= 2, (
+            f"Need at least 2 non-TWR-fallback symphonies from fixture; got {len(symphonies)}"
+        )
+
+        # bot_state has no entries for these symphonies (non-triggered)
+        result = get_portfolio_cumulative_return(symphonies, bot_state={})
+
+        assert result["if_held"] is not None, (
+            "Portfolio CR must not be None when symphonies have valid simple_return."
+        )
+        v = result["if_held"]
+        assert abs(v) > 1.5, (
+            f"Portfolio CR if_held={v!r} looks like a raw decimal (< 1.5). "
+            f"Expected a percent value like ~65. "
+            f"Root cause: get_symphony_cumulative_return not scaling by 100."
         )
