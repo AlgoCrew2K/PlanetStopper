@@ -39,6 +39,10 @@ _SS_PARA_VEL_MAX = 4.0
 _SS_MAX_PARA_SQUEEZE_MIN = 0.1
 _SS_MAX_PARA_SQUEEZE_MAX = 0.8
 
+# Exponential time-decay rate applied to per-day guard-alpha in run_simulation
+# and _collect_sim_returns. Half-life ≈ 46 trading days (ln2 / 0.015).
+_GUARD_ALPHA_DECAY_RATE = 0.015
+
 # Target return for Sortino denominator: capital preservation baseline (0 = break-even).
 # Operator decision PA-5; Sortino & van der Meer 1994, J. Portfolio Management.
 SORTINO_TARGET_RETURN = 0.0
@@ -133,7 +137,7 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     so the Sortino objective can compute risk-adjusted return across triggered days.
     """
     daily_returns = []
-    decay_rate = 0.015  # same exponential decay as run_simulation; must stay in sync
+    decay_rate = _GUARD_ALPHA_DECAY_RATE
     current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
 
     for sym_id in acc_sym_ids:
@@ -264,7 +268,7 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
 
 def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
     total_guard_alpha = 0.0
-    decay_rate = 0.015
+    decay_rate = _GUARD_ALPHA_DECAY_RATE
     current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
 
     for sym_id in acc_sym_ids:
@@ -547,6 +551,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             if not acc_sym_ids: return 0.0
             target_sym_id = acc_sym_ids[0]
             daily_returns = _collect_sim_returns(p, history_train, [target_sym_id], current_date_str, deviation_dict)
+            # Annualization intentionally omitted — this is a ranking signal, not an annualized statistic.
             return compute_sortino_ratio(daily_returns)
 
         start_time = time.time()
