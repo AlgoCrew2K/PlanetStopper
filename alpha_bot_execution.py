@@ -940,6 +940,24 @@ def main():
                         bot_state[sym_id]["triggered_at_hwm"] = item["safe_hwm"]
                         bot_state[sym_id]["triggered_at_stop"] = item["attempted_level"]
                         bot_state[sym_id]["triggered_at_time"] = current_time_str
+
+                        # H1: non-blocking telemetry write — opens its own connection,
+                        # never joins save_state transaction; failure is swallowed.
+                        database.record_exit_trigger(
+                            symphony_id=sym_id,
+                            account_id=bot_state[sym_id].get("account"),
+                            triggered_reason=reason,
+                            at_return=item["current_return"],
+                            gate_state={
+                                "high_water_mark": item["safe_hwm"],
+                                "vwap_ticks": item.get("vwap_ticks", 0),
+                                "vwap_bleed_ticks": bot_state[sym_id].get("vwap_bleed_ticks", 0),
+                                "mc_prob": item["prob_beating"],
+                                "symphony_vol": item["symphony_vol"],
+                            },
+                            cycle_id=bot_state.get("last_successful_cycle_at"),
+                        )
+
                         bot_state[sym_id]["high_water_mark"] = -999.0
 
                         # Freeze ticker prices and basket snapshot

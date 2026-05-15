@@ -187,6 +187,13 @@
             <div class="ml-auto text-[10px] text-slate-600 font-mono" title="dry-run = AlphaBot; if-held = buy-and-hold Composer model">dry-run (if-held)</div>
         </div>
 
+        <!-- H1: Aggregate triggers strip — hidden when no triggers today -->
+        <div id="triggers-strip" class="hidden bg-slate-800 px-6 py-3 rounded-2xl shadow-lg border border-slate-700 mb-6 flex items-center gap-4 flex-wrap">
+            <span class="text-xs uppercase tracking-widest text-slate-500 font-bold flex-shrink-0">Today's Triggers</span>
+            <div class="h-4 w-px bg-slate-700 flex-shrink-0"></div>
+            <div id="triggers-pills" class="flex items-center gap-2 flex-wrap"></div>
+        </div>
+
         <div id="notification" class="hidden mb-6 p-4 rounded-xl text-sm font-medium transition-all duration-300"></div>
 
         <!-- flex-1 + min-h-0: table card expands to fill remaining viewport after header and portfolio strip -->
@@ -896,6 +903,35 @@
                 }
             }
 
+        }
+
+        const _TRIGGER_REASON_COLORS = {
+            'Take-Profit':    'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20',
+            'Trailing Stop':  'bg-rose-500/10 text-rose-500 border-rose-500/20',
+            'VWAP Breakdown': 'bg-violet-500/10 text-violet-400 border-violet-500/20',
+            'VWAP Bleed Cut': 'bg-violet-500/10 text-violet-400 border-violet-500/20',
+        };
+
+        async function fetchTriggerStrip() {
+            try {
+                const today = new Date().toISOString().slice(0, 10);
+                const resp = await fetch(`/api/triggers?since=${today}T00:00:00Z&limit=500`);
+                if (!resp.ok) return;
+                const rows = await resp.json();
+                const strip = document.getElementById('triggers-strip');
+                const pills = document.getElementById('triggers-pills');
+                if (!strip || !pills) return;
+                if (!rows.length) { strip.classList.add('hidden'); return; }
+                const counts = {};
+                for (const r of rows) {
+                    counts[r.triggered_reason] = (counts[r.triggered_reason] || 0) + 1;
+                }
+                pills.innerHTML = Object.entries(counts).map(([reason, count]) => {
+                    const cls = _TRIGGER_REASON_COLORS[reason] || 'bg-slate-700 text-slate-300 border-slate-600';
+                    return `<span class="inline-flex items-center gap-1 ${cls} border px-2 py-0.5 rounded text-[10px] font-bold tracking-widest">${reason.toUpperCase()} <span class="text-[9px] opacity-70">${count}×</span></span>`;
+                }).join('');
+                strip.classList.remove('hidden');
+            } catch (_) {}
         }
 
         async function fetchState() {
@@ -1825,7 +1861,9 @@
         startCountdown();
         initAccountLabels().then(() => {
             fetchState();
+            fetchTriggerStrip();
             setInterval(fetchState, 5000);
+            setInterval(fetchTriggerStrip, 30000);
         });
 
         let currentStrategyData = {};

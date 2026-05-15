@@ -807,33 +807,35 @@ def test_run_scheduler_registers_minute_job_and_can_be_interrupted(monkeypatch):
       (2) the thread does not crash on startup
       (3) the scheduled callable is threaded_trigger
     """
-    registered = {}
+    registered_jobs = []
 
     class FakeJob:
         def __init__(self):
-            self.calls = []
+            self._at = None
 
         def every(self):
             return self
 
-        # The fluent chain: schedule.every().minute.at(":00").do(threaded_trigger)
+        # Fluent chains: .minute.at(":00").do(fn) and .day.at("02:00").do(fn)
         @property
         def minute(self):
             return self
 
+        @property
+        def day(self):
+            return self
+
         def at(self, spec):
-            registered["at"] = spec
+            self._at = spec
             return self
 
         def do(self, fn):
-            registered["fn"] = fn
+            registered_jobs.append({"at": self._at, "fn": fn})
             return self
 
+    # Return a fresh FakeJob per every() call so multiple registrations don't collide.
     fake_schedule_module = MagicMock()
-    fake_schedule_module.every.return_value = FakeJob().every()
-    # Build chain so schedule.every().minute.at(":00").do(fn) works.
-    chain = FakeJob()
-    fake_schedule_module.every.return_value = chain
+    fake_schedule_module.every.side_effect = lambda: FakeJob()
 
     monkeypatch.setattr(app_module, "schedule", fake_schedule_module)
 
@@ -853,9 +855,12 @@ def test_run_scheduler_registers_minute_job_and_can_be_interrupted(monkeypatch):
     with pytest.raises(StopLoop):
         app_module.run_scheduler()
 
-    # Cadence + callable were registered before the loop began.
-    assert registered.get("at") == ":00"
-    assert registered.get("fn") is app_module.threaded_trigger
+    # The minute-cadence job (threaded_trigger) must be registered at ":00".
+    minute_jobs = [j for j in registered_jobs if j["at"] == ":00"]
+    assert minute_jobs, "No job registered at ':00'"
+    assert any(j["fn"] is app_module.threaded_trigger for j in minute_jobs), (
+        "threaded_trigger must be the callable registered for the ':00' cadence"
+    )
     # run_pending was at least attempted once.
     assert fake_schedule_module.run_pending.call_count >= 1
 

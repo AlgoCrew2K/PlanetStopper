@@ -1,0 +1,29 @@
+{
+  "_provenance": "schema-derived from AC-H1.1 exit_triggers column spec; all field values are representative named constants, not captured from a live run",
+  "_columns": ["ts_utc", "ts_et", "symphony_id", "account_id", "triggered_reason", "at_return", "gate_state_json", "cycle_id"],
+  "input": {
+    "ts_utc": "2026-05-15T14:30:00Z",
+    "ts_et": "2026-05-15T10:30:00",
+    "symphony_id": "SYM_ALPHA_001",
+    "account_id": "ACC_TEST_001",
+    "triggered_reason": "Trailing Stop",
+    "at_return": -1.25,
+    "gate_state_json": {
+      "hwm": 1.50,
+      "vwap_ticks": 0,
+      "bleed_ticks": 0,
+      "mc_prob": 8.3,
+      "symphony_vol": 1.12
+    },
+    "cycle_id": "CYCLE_20260515_1030"
+  },
+  "expected_shape": {
+    "id": {"type": "int", "positive": true},
+    "ts_utc": {"type": "str", "non_empty": true},
+    "ts_et": {"type": "str", "non_empty": true},
+    "symphony_id": {"type": "str", "non_empty": true},
+    "triggered_reason": {"type": "str", "non_empty": true},
+    "at_return": {"type": "float"},
+    "gate_state_json": {"type": "str_or_none"}
+  }
+}

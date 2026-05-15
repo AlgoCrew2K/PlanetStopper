@@ -1,0 +1,19 @@
+{
+  "_provenance": "schema-derived from AC-H1.6; row counts and day offsets are named constants, not live data",
+  "setup": {
+    "total_rows": 5,
+    "rows_older_than_retention_days": 3,
+    "rows_within_retention_window": 2,
+    "retention_days": 90,
+    "batch_size": 1000,
+    "note": "TRIGGER_TELEMETRY_RETENTION_DAYS=90 per AC-H1.6; batched DELETE with LIMIT per sqlite-specialist PA-3"
+  },
+  "expected_after_rotation": {
+    "remaining_rows": 2,
+    "deleted_rows": 3
+  },
+  "concurrent_write_test": {
+    "description": "A concurrent write attempt during retention rotation must succeed — retention must NOT lock long enough to block the cycle write",
+    "assertion": "write_completes_without_OperationalError"
+  }
+}
