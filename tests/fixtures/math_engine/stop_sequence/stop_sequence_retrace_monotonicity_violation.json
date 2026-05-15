@@ -1,0 +1,17 @@
+{
+  "_provenance": "Stop sequence for test_trailing_stop_cannot_decrease_tick_to_tick_live_consumer. Simulates a live-consumer tick sequence where current_return rises to 2.5% (advancing the stop to 2.0), then retraces to 2.0% (naive math would lower stop to 1.0). The ratchet must retain 2.0. symphony_vol=1.0 throughout; 5 pre-lock ticks (current_return=1.5, base_stop=-1.0) followed by the post-lock retrace. Tick values derived by hand: with symphony_vol=1.0, dynamic_activation=clamp(1.0, 0.4, 3.0)=1.0, qualifying_threshold=1.0-0.2=0.8. current_return=1.5 > 0.8 so each pre-lock tick qualifies. Lock fires after 5 consecutive qualifying ticks (HWM_HOLD_TICKS_THRESHOLD=5). Post-lock base_stop_levels: 2.0 (tick 6), then 1.0 (tick 7 — retrace). Naive max(1.0, 0.0)=1.0 < 2.0 is the violation. Ratcheted result must be max(2.0, max(1.0,0.0))=2.0.",
+  "description": "7-tick position lifetime: 5 pre-lock ticks locking breakeven, then stop advances to 2.0, then retraces to base 1.0. Ratchet must hold 2.0.",
+  "symphony_vol": 1.0,
+  "ticks": [
+    {"tick": 1, "current_return": 1.5, "base_stop_level": -1.0, "is_triggered": false, "expected_stop_min": -1.0, "note": "pre-lock tick 1; stop passes through as -1.0"},
+    {"tick": 2, "current_return": 1.5, "base_stop_level": -1.0, "is_triggered": false, "expected_stop_min": -1.0, "note": "pre-lock tick 2"},
+    {"tick": 3, "current_return": 1.5, "base_stop_level": -1.0, "is_triggered": false, "expected_stop_min": -1.0, "note": "pre-lock tick 3"},
+    {"tick": 4, "current_return": 1.5, "base_stop_level": -1.0, "is_triggered": false, "expected_stop_min": -1.0, "note": "pre-lock tick 4"},
+    {"tick": 5, "current_return": 1.5, "base_stop_level": -1.0, "is_triggered": false, "expected_stop_min": 0.0, "note": "lock fires (5 qualifying ticks); base=-1.0 floored to 0.0"},
+    {"tick": 6, "current_return": 2.5, "base_stop_level": 2.0, "is_triggered": false, "expected_stop_min": 2.0, "note": "post-lock; max(2.0,0.0)=2.0; ratchet floor now 2.0"},
+    {"tick": 7, "current_return": 2.0, "base_stop_level": 1.0, "is_triggered": false, "expected_stop_min": 2.0, "note": "retrace; naive max(1.0,0.0)=1.0 < 2.0; ratchet must clamp to 2.0"}
+  ],
+  "monotonicity_assertion": "persisted stop_trigger_level sequence must be non-decreasing across all 7 ticks",
+  "ratchet_critical_tick": 7,
+  "ratchet_expected_floor": 2.0
+}
