@@ -310,6 +310,13 @@ def main():
         if not is_weekday or current_time < market_open or current_time > post_mortem_cutoff:
             if not force_run:
                 print(f"  -> Market closed or in Grace Period (ET: {current_et.strftime('%a %H:%M')}). Sleeping...")
+                _closed_bot_state = database.load_state()
+                for _account in ACCOUNT_UUIDS:
+                    for _sym in fetch_symphony_stats(_account):
+                        _s_id = _sym["id"]
+                        if _s_id in _closed_bot_state:
+                            _persist_composer_fields_to_bot_state(_closed_bot_state, _s_id, _sym)
+                database.save_state(_closed_bot_state)
                 return
             print("  -> Market closed, but --force flag detected! Bypassing gatekeeper...")
 
@@ -410,7 +417,8 @@ def main():
                             for h in sym.get("holdings", [])
                         ]
                         bot_state[s_id]["current_return"] = sym.get("last_percent_change", 0.0) * 100
-            
+                        _persist_composer_fields_to_bot_state(bot_state, s_id, sym)
+
             # Save post_mortem flag immediately to prevent race conditions if execution is slow
             bot_state["post_mortem_run"] = current_date_str
             database.save_state(bot_state)
