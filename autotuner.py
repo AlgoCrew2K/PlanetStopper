@@ -48,12 +48,17 @@ _GUARD_ALPHA_DECAY_RATE = 0.015
 SORTINO_TARGET_RETURN = 0.0
 
 # Walk-forward purge window: training samples whose feature lookback window overlaps
-# the test fold are excluded. The binding constraint is the exponential decay half-life
-# of the composite objective (ln2 / _GUARD_ALPHA_DECAY_RATE = ln2 / 0.015 ≈ 46 trading
-# days), which exceeds the vol (20 days) and ATR (14 days) lookbacks.
-# PURGE_DAYS = max(20, 14, 46) = 46.
+# the test fold are excluded. Purge-relevant lookbacks are only those that cause a
+# train sample's FEATURE COMPUTATION to reach into the test fold:
+#   - calculate_20d_vol:      LOOKBACK_DAYS      = 20 trading days
+#   - calculate_14d_atr_pct:  ATR_LOOKBACK_DAYS  = 15 trading days (14 TR periods + 1 prior close)
+# PURGE_DAYS = max(20, 15) = 20.
+# NOTE: The exponential decay weight (_GUARD_ALPHA_DECAY_RATE, half-life ≈ 46 days) is an
+# OBJECTIVE AGGREGATION WEIGHT, not a feature lookback — it does not cause any train
+# sample's feature computation to reach into the test fold and is therefore excluded from
+# purge sizing. mc_prob is pre-computed in tick data, not computed live in the sim loop.
 # López de Prado 2018, Advances in Financial Machine Learning, Ch. 7 (Purged k-fold CV).
-PURGE_DAYS = 46
+PURGE_DAYS = 20
 
 # Embargo period between train-end and test-start. Prevents autocorrelation leakage
 # from serial dependence in adjacent samples. Default: 1 trading day.
@@ -485,12 +490,13 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
 
     Walk-forward split methodology (López de Prado 2018 Ch. 7):
     - 125-day history is split 80/20: ~100 train days, ~25 raw OOS test days.
-    - Purge (PURGE_DAYS=46): train samples whose feature lookback window overlaps the test
-      fold are excluded. The binding constraint is the decay-weighted objective's half-life
-      (46 trading days), which exceeds vol (20) and ATR (14) lookbacks.
+    - Purge (PURGE_DAYS=20): train samples whose feature lookback window overlaps the test
+      fold are excluded. Binding constraint is max(vol=20, ATR=15)=20 trading days. The
+      decay weight (_GUARD_ALPHA_DECAY_RATE half-life ≈ 46 days) is an objective aggregation
+      weight, not a feature lookback, and is excluded from purge sizing.
     - Embargo (EMBARGO_DAYS=1): one additional trading day gap between train-end and
       test-start prevents autocorrelation leakage from serial dependence.
-    - OOS fold collapse (PA-26): after a 46-day purge on a 125-day window, the usable
+    - OOS fold collapse (PA-26): after a 20-day purge on a 125-day window, the usable
       test fold shrinks to approximately 5 trading days. This is an acknowledged tradeoff —
       the purge is methodologically correct and the short test window is the cost of
       honest OOS evaluation. Future workstream: expand history window or use purged k-fold
