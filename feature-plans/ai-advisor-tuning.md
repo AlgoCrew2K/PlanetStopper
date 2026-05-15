@@ -278,3 +278,74 @@ Carry-forward to Cycle B: OQ-B1 through OQ-B5 in `feature-plans/portfolio-mode.m
 **Consult-only:** `sqlite-specialist` for the additive `best_params` + `autotune_reviews` migrations. `optuna-specialist` for the writeback semantics fix and the EOD auto-review batch hook in `autotuner.run_autotuner`.
 
 Standing team per project CLAUDE.md is a Quad; `risk-engine-specialist` is consult-only since the engine read path is untouched (autotuner writeback is the only engine-side change, runs only EOD, never on the minute scheduler).
+
+## Gate-2 — Implementation Approach (HOW)
+
+### Worktree + branch
+- Implementation branch: `cycle-a/tuning-page` (forked from `main` after this plan is finalized)
+- Shared worktree: `../AlphaBotPM-cycle-a-tuning`
+- All 4 Quad agents share the worktree; autonomous Toxic Pair handoffs via `SendMessage`. PM does NOT relay between handoffs.
+- Single PR back to `main` at cycle-complete.
+
+### Phase ordering (dependency-driven)
+
+**Phase 1 — Foundation (no functional behavior change; unblocks later phases):**
+- DB migrations (additive, idempotent): `autotune_runs.best_params TEXT NULL` + new `autotune_reviews` table with `(symphony_id, run_timestamp DESC)` index
+- Promote `_PARAM_VALID_RANGES` → public `ai_advisor.PARAM_SPEC` (label, definition, range, step, type, risk_direction)
+- New `analytics.py` helpers: `compute_return_correlation_matrix`, `compute_co_trigger_counts`, `compute_concentration_hhi`
+- New `database.py` helpers: `save_autotune_review`, `get_latest_review_batch`, `get_latest_review_for_symphony`, `get_symphony_scope_list`
+
+**Phase 2 — Backend write paths:**
+- `autotuner.run_autotuner` writeback merges `best_params` into current params, skipping `locked_vars`; full `best_params` persists to `autotune_runs.best_params` regardless of locks
+- `autotuner.run_autotuner` fires Tier-1 review batch at end of run; market-hours guard raises during 09:30–16:00 ET
+- `ai_advisor.assemble_review_context(symphony_id, portfolio_state)` + `request_optuna_review(context)` + new Pydantic models (`PerParamReview`, `PortfolioCorrelation`)
+- Extend `assemble_advisor_context` with `include_portfolio_context: bool = True`
+- C2 gates on `/ai-advisor/accept` untouched
+
+**Phase 3 — API routes:**
+- 7 new Flask routes (5 tuning + 2 review, per `Architecture > Routes (new)` above)
+- Hard-cut `GET /ai-advisor` page route; keep `/ai-advisor/suggest|accept|reject` unchanged
+
+**Phase 4 — UI:**
+- `templates/tuning.html` + `static/tuning.js` — scope picker, 8-row table, side-by-side columns, cost-confirmation modal, lock toggle, portfolio banner, per-row Optuna chips
+- `templates/index.html` — header link rename, Settings modal Strategy Variables section deletion, "Edit Variables" → "App Settings"
+- Delete `templates/ai_advisor.html` + `static/ai_advisor.js`
+
+**Phase 5 — Cycle-complete:**
+- Full pytest run (`tests/tuning/`, `tests/analytics/test_correlation_matrix.py`, `tests/autotuner/test_tier1_review_batch.py`, schema migration tests)
+- Playwright behavioral pass via `flask-dashboard-specialist`
+- `quant-code-reviewer` final pass on math + schema + live/replay safety boundary
+- PM opens PR to `main`; awaits user approval before merge
+
+### RED test inventory — ordered by phase
+
+`quant-test-writer` writes all RED tests in the initial sweep before `implementer` starts.
+
+| Phase | Test file | Asserts |
+|---|---|---|
+| 1 | `tests/tuning/test_param_spec_source_of_truth.py` | PARAM_SPEC ranges match autotuner trial bounds (drift = CI fail) |
+| 1 | `tests/analytics/test_correlation_matrix.py` | symmetric, NaN-safe, matches `numpy.corrcoef` on fixture |
+| 1 | `tests/database/test_autotune_runs_best_params.py` | migration idempotent, NULLable, old rows survive |
+| 1 | `tests/database/test_autotune_reviews_table.py` | migration idempotent, indexed correctly |
+| 2 | `tests/autotuner/test_writeback_honors_locks.py` | locked keys preserved, unlocked keys take best_params, best_params column always full |
+| 2 | `tests/autotuner/test_tier1_review_batch.py` | N rows written, portfolio_correlation on row 0 only, failure isolation, market-hours guard |
+| 2 | `tests/ai_advisor/test_review_context_assembly.py` | payload includes all running symphonies + correlation metrics + aggregates |
+| 3 | `tests/tuning/test_routes.py` | 7 routes, happy + error paths |
+| 3 | `tests/tuning/test_save_validation.py` | allowlist, range, type, NaN/inf, SQL-injection probe |
+| 3 | `tests/tuning/test_ai_auto_lock.py` | post-AI-accept `locked_vars` contains the key |
+| 3 | `tests/tuning/test_ai_gates_not_bypassed.py` | C2 gates all 3 invoked on accept path |
+| 4 (Playwright) | `tests/tuning/tuning_page.spec.py` | scope picker, table render, edit+save, AI button + cost modal, lock semantics matrix, portfolio banner, per-row chips |
+
+### Risks flagged for Quad kickoff
+
+1. **Daily-return data source for correlation matrix.** 60-day pairwise correlation needs per-symphony daily return series. Test-writer must verify source (likely `chart_archive` keyed by `(date, symphony_id)`, or daily-aggregated `simple_return`/`time_weighted_return`) is queryable BEFORE writing `test_correlation_matrix.py`. < 30 days history → NaN-pad and document fallback.
+2. **`symphony_logic.get_condensed_logic` Composer API calls during Tier-1 batch.** In-process cache resets on subprocess exit, so every Friday batch fetches N times. Confirm Composer rate limits accommodate N ≤ 10; if not, persist daily on-disk cache keyed by `(date, symphony_id)`.
+3. **Autotuner writeback semantics change is one line but in EOD path.** `quant-code-reviewer` verifies no downstream consumer of `save_symphony_strategy` implicitly depended on the "all keys overwritten" behavior.
+4. **`autotune_reviews.portfolio_correlation` dedup ordering.** RED test must assert deterministic alphabetical-by-`normalized_name` ordering, not insertion-order accident.
+5. **Tier-1 review cost & wall time.** N=10 × ~100KB prompts × Opus 4.7 30s timeout = ~5 min worst case in EOD subprocess. Phase 5 includes a real-budget dry-run with mocked Anthropic responses to verify batch failure isolation under timeout.
+
+### Model routing for Quad agents
+All four Quad roles and the two consult specialists → `sonnet` (per global model-routing guidance for implementation, test writing, review, and UI surfaces).
+
+### Dispatch readiness
+Gate-1 and Gate-2 are both captured in this document. Dispatch is gated on explicit user go-ahead for Quad kickoff.
