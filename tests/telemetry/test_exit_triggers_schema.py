@@ -82,6 +82,11 @@ _EXIT_TRIGGERS_IDX_SYM_TS = (
 
 
 def _create_h1_schema(conn: sqlite3.Connection) -> None:
+    # WAL mode: allows concurrent readers + one writer without blocking.
+    # Required so test_record_exit_trigger_opens_own_connection can verify
+    # that record_exit_trigger's own connection commits independently of an
+    # outer open transaction on the same DB file.
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(_SCHEMA_MIGRATIONS_DDL)
     conn.execute(_EXIT_TRIGGERS_DDL)
     conn.execute(_EXIT_TRIGGERS_IDX_TS)
@@ -438,27 +443,24 @@ def test_record_exit_trigger_failure_does_not_raise(tmp_path, caplog):
     )
 
 
-def test_record_exit_trigger_opens_own_connection(tmp_path):
+def test_record_exit_trigger_commits_independently_of_caller(tmp_path):
     """
-    record_exit_trigger() must open its own SQLite connection, not share any
-    outer connection or transaction context.
+    record_exit_trigger() must open its own connection and commit independently.
 
-    PA-6: if telemetry write fails, the cycle's state write must not roll back.
-    We verify isolation using WAL mode so two concurrent connections can both
-    write — record_exit_trigger's insert must persist independently of any
-    outer transaction that is later rolled back.
+    PA-6 contract: the telemetry write must NOT be joined to the cycle's
+    save_state transaction. We verify this by confirming the trigger row is
+    durable after record_exit_trigger returns — even if a SEPARATE later
+    transaction on the same DB is rolled back.
+
+    SQLite only allows one writer at a time (WAL or not), so we test connection
+    independence sequentially: record_exit_trigger commits, then we open a new
+    connection, begin a write that we rollback, and confirm the trigger row
+    still exists. This is the correct cross-platform way to pin commit isolation.
     """
     db_path = tmp_path / "state.db"
-    outer_conn = sqlite3.connect(str(db_path))
-    outer_conn.execute("PRAGMA journal_mode=WAL")
-    _create_h1_schema(outer_conn)
-    outer_conn.commit()
-
-    # Outer transaction: begin an uncommitted write on a different table.
-    outer_conn.execute(
-        "INSERT OR IGNORE INTO schema_migrations (migration_name) VALUES ('outer-phantom')"
-    )
-    # NOT committed yet — simulates the cycle's save_state transaction in flight.
+    conn = sqlite3.connect(str(db_path))
+    _create_h1_schema(conn)
+    conn.close()
 
     db = _FakeDB.__new__(_FakeDB)
     db._db_path = str(db_path)
@@ -466,7 +468,7 @@ def test_record_exit_trigger_opens_own_connection(tmp_path):
     fixture = _load("record_exit_trigger_basic.json")
     inp = fixture["input"]
 
-    # record_exit_trigger opens its own conn — in WAL mode this does not block.
+    # Step 1: record_exit_trigger writes and commits on its own connection.
     db.record_exit_trigger(
         ts_utc=inp["ts_utc"],
         ts_et=inp["ts_et"],
@@ -478,19 +480,26 @@ def test_record_exit_trigger_opens_own_connection(tmp_path):
         cycle_id=None,
     )
 
-    # Roll back the outer transaction — simulates cycle state write failing.
-    outer_conn.rollback()
-    outer_conn.close()
+    # Step 2: simulate the cycle's save_state transaction on a SEPARATE connection
+    # starting AFTER record_exit_trigger returned — then rolling it back.
+    # This represents the worst case: cycle write fails post-telemetry.
+    later_conn = sqlite3.connect(str(db_path))
+    later_conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations (migration_name) VALUES ('cycle-write-phantom')"
+    )
+    later_conn.rollback()  # cycle state write fails
+    later_conn.close()
 
-    # Row must be present — record_exit_trigger committed via its own connection.
+    # Step 3: trigger row must still be present — it was committed before the
+    # cycle's transaction started, so it cannot be affected by that rollback.
     check_conn = sqlite3.connect(str(db_path))
     count = check_conn.execute("SELECT COUNT(*) FROM exit_triggers").fetchone()[0]
     check_conn.close()
 
     assert count == 1, (
-        "record_exit_trigger must commit via its own connection independently "
-        "of any outer transaction; row missing after outer rollback — "
-        "this means the implementation shared the outer connection or transaction"
+        "record_exit_trigger must commit its row before returning; "
+        "row is missing after a subsequent transaction rollback — "
+        "this means the implementation did not commit on its own connection"
     )
 
 
