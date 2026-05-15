@@ -736,3 +736,255 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
             f"MDD helper with None inputs must return if_held=None; "
             f"got {mdd_result['if_held']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# BLOCKER 1 (flask-dashboard-specialist) — _value_weighted_portfolio must
+# return None sentinel when ALL symphonies are skipped due to None if_held.
+#
+# Currently returns {"if_held": 0.0, "dry_run": 0.0} when total_weight==0.0,
+# which re-introduces the "0.00%" bug at the portfolio-strip level even after
+# per-symphony None propagation is working correctly.
+# ---------------------------------------------------------------------------
+
+
+class TestPortfolioReturnsNoneSentinelWhenAllSymphoniesMissing:
+
+    def test_portfolio_cr_returns_none_when_all_symphonies_have_none_simple_return(self):
+        """
+        get_portfolio_cumulative_return must return {"if_held": None, "dry_run": None}
+        when every symphony has simple_return=None (all skipped by per-sym None guard).
+
+        Currently returns {"if_held": 0.0, "dry_run": 0.0} because _value_weighted_portfolio
+        falls through to `return {"if_held": 0.0, "dry_run": 0.0}` when total_weight==0.0
+        (all symphonies skipped). That 0.0 reaches the JS as a real value and renders
+        '+0.00%' — the portfolio strip bug is back.
+
+        Fix: change analytics.py:491-492 to return {"if_held": None, "dry_run": None}
+        when total_weight == 0.0 (no valid contributors).
+        """
+        from analytics import get_portfolio_cumulative_return
+
+        symphonies_all_none = [
+            {
+                "id": f"sym-{i}",
+                "simple_return": None,
+                "net_deposits": None,
+                "time_weighted_return": None,
+                "last_percent_change": -0.01,
+                "max_drawdown": None,
+                "value": 1000.0,
+            }
+            for i in range(3)
+        ]
+
+        result = get_portfolio_cumulative_return(symphonies_all_none, bot_state={})
+
+        assert result["if_held"] is None, (
+            f"portfolio CR must return None when all symphonies have None CR inputs; "
+            f"got {result['if_held']}. "
+            f"0.0 here is indistinguishable from a real zero and re-introduces the bug. "
+            f"Fix: analytics.py:491-492 — return {{\"if_held\": None, \"dry_run\": None}} "
+            f"when total_weight == 0.0."
+        )
+        assert result["dry_run"] is None, (
+            f"portfolio CR dry_run must also be None when all inputs are None; "
+            f"got {result['dry_run']}"
+        )
+
+    def test_portfolio_mdd_returns_none_when_all_symphonies_have_none_max_drawdown(self):
+        """
+        get_portfolio_max_drawdown must return {"if_held": None, "dry_run": None}
+        when every symphony has max_drawdown=None (all skipped).
+        """
+        from analytics import get_portfolio_max_drawdown
+
+        symphonies_all_none = [
+            {
+                "id": f"sym-{i}",
+                "simple_return": None,
+                "net_deposits": None,
+                "time_weighted_return": None,
+                "last_percent_change": 0.01,
+                "max_drawdown": None,
+                "value": 500.0,
+            }
+            for i in range(3)
+        ]
+
+        result = get_portfolio_max_drawdown(symphonies_all_none, bot_state={})
+
+        assert result["if_held"] is None, (
+            f"portfolio MDD must return None when all symphonies have None max_drawdown; "
+            f"got {result['if_held']}. "
+            f"Fix: analytics.py:491-492 — return {{\"if_held\": None, \"dry_run\": None}} "
+            f"when total_weight == 0.0."
+        )
+        assert result["dry_run"] is None, (
+            f"portfolio MDD dry_run must also be None when all inputs are None; "
+            f"got {result['dry_run']}"
+        )
+
+    def test_portfolio_cr_returns_none_when_symphony_list_is_empty(self):
+        """
+        Empty symphony list: total_weight==0.0, must return None sentinel not 0.0.
+        This changes the existing contract documented in test_m1_helpers.py
+        TestGetPortfolioCumulativeReturn.test_empty_symphonies_returns_zeros —
+        that test must also be updated by the implementer when going GREEN.
+        """
+        from analytics import get_portfolio_cumulative_return
+
+        result = get_portfolio_cumulative_return([], bot_state={})
+
+        assert result["if_held"] is None, (
+            f"empty symphony list: portfolio CR must return None (no data), not 0.0; "
+            f"got {result['if_held']}. "
+            f"0.0 here falsely implies a computed zero return."
+        )
+
+    def test_portfolio_mdd_returns_none_when_symphony_list_is_empty(self):
+        """Empty symphony list: portfolio MDD must return None sentinel not 0.0."""
+        from analytics import get_portfolio_max_drawdown
+
+        result = get_portfolio_max_drawdown([], bot_state={})
+
+        assert result["if_held"] is None, (
+            f"empty symphony list: portfolio MDD must return None (no data), not 0.0; "
+            f"got {result['if_held']}"
+        )
+
+    def test_portfolio_today_change_still_returns_zero_when_empty(self):
+        """
+        Today's Change portfolio is NOT affected by the None-sentinel change —
+        TC always has last_percent_change available (it comes from bot_state
+        current_return which is always present). Portfolio TC on empty list
+        correctly returns 0.0 (no symphonies, no change). This test pins that
+        TC is NOT changed by the None-sentinel fix.
+        """
+        from analytics import get_portfolio_today_change
+
+        result = get_portfolio_today_change([], bot_state={})
+
+        # TC empty guard returns 0.0 — this is correct and must not change
+        assert result["if_held"] == pytest.approx(0.0, abs=1e-9), (
+            f"portfolio TC empty guard must remain 0.0 (not None); got {result['if_held']}. "
+            f"TC 0.0 is semantically correct for 'no symphonies, no change today'."
+        )
+
+    def test_partial_none_portfolio_uses_valid_symphonies_only(self):
+        """
+        Mixed list: some None, some valid. Portfolio CR must be derived from
+        valid symphonies only and must NOT be None (valid contributors exist).
+        This guards against over-application of the None-sentinel fix.
+        """
+        from analytics import get_portfolio_cumulative_return
+
+        symphonies = [
+            {
+                "id": "sym-none",
+                "simple_return": None,
+                "net_deposits": None,
+                "time_weighted_return": None,
+                "last_percent_change": -0.01,
+                "max_drawdown": None,
+                "value": 500.0,
+            },
+            {
+                "id": "sym-valid",
+                "simple_return": 0.65976,
+                "net_deposits": 658.5,
+                "time_weighted_return": 0.65,
+                "last_percent_change": -0.02,
+                "max_drawdown": 0.1495,
+                "value": 1000.0,
+            },
+        ]
+
+        result = get_portfolio_cumulative_return(symphonies, bot_state={})
+
+        assert result["if_held"] is not None, (
+            "portfolio CR must not be None when at least one valid symphony contributes"
+        )
+        assert result["if_held"] == pytest.approx(0.65976, abs=1e-6), (
+            f"portfolio CR with one valid symphony (CR=0.65976) and one None must "
+            f"equal the valid symphony's CR; got {result['if_held']}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# BLOCKER 2 (flask-dashboard-specialist) — pctColor(null) must return a
+# neutral CSS class, not text-emerald-400.
+#
+# In index.html, `function pctColor(v) {{ return v >= 0 ? ... : ...; }}` —
+# JS coerces null >= 0 to true, so null portfolio values get colored green.
+# Fix: add `if (v == null) return 'text-slate-400';` before the comparison.
+# ---------------------------------------------------------------------------
+
+
+class TestPctColorNullGuardInIndexHtml:
+
+    def test_pct_color_function_contains_null_guard(self):
+        """
+        The pctColor JS function in templates/index.html must contain a null guard
+        that returns a neutral color class when v is null.
+
+        Currently pctColor has no null guard — `null >= 0` is true in JS, so
+        null sentinel values (missing portfolio CR/MDD) get colored text-emerald-400
+        (green), which is misleading for a '---' display value.
+
+        Fix: add `if (v == null) return 'text-slate-400';` (or equivalent neutral
+        class) as the first line of pctColor.
+
+        This test asserts the fix is present by checking the template source text.
+        """
+        template_path = (
+            Path(__file__).parent.parent.parent / "templates" / "index.html"
+        )
+        source = template_path.read_text(encoding="utf-8")
+
+        # Find the pctColor function body
+        pct_color_idx = source.find("function pctColor(")
+        assert pct_color_idx != -1, "pctColor function must exist in index.html"
+
+        # Extract up to 300 chars after the function declaration to cover the body
+        pct_color_body = source[pct_color_idx: pct_color_idx + 300]
+
+        # The null guard must appear before any comparison
+        has_null_guard = (
+            "v == null" in pct_color_body
+            or "v === null" in pct_color_body
+            or "null ==" in pct_color_body
+            or "v == undefined" in pct_color_body
+        )
+        assert has_null_guard, (
+            f"pctColor must guard against null before the >= comparison; "
+            f"null >= 0 is true in JS and colors '---' values green. "
+            f"Fix: add `if (v == null) return 'text-slate-400';` as first line. "
+            f"Current pctColor body:\n{pct_color_body}"
+        )
+
+    def test_pct_color_null_guard_returns_neutral_slate_class(self):
+        """
+        The null guard in pctColor must return a neutral class (text-slate-400
+        or text-slate-500), not an emerald or rose class.
+
+        Guards against a fix that adds the null check but returns the wrong class
+        (e.g. accidentally returning 'text-emerald-400' for null).
+        """
+        template_path = (
+            Path(__file__).parent.parent.parent / "templates" / "index.html"
+        )
+        source = template_path.read_text(encoding="utf-8")
+
+        pct_color_idx = source.find("function pctColor(")
+        assert pct_color_idx != -1
+
+        pct_color_body = source[pct_color_idx: pct_color_idx + 300]
+
+        has_slate = "text-slate-" in pct_color_body
+        assert has_slate, (
+            f"pctColor null guard must return a slate/neutral class (text-slate-400 "
+            f"or text-slate-500) for null values; "
+            f"emerald/rose classes are semantically wrong for missing data. "
+            f"Current pctColor body:\n{pct_color_body}"
+        )
