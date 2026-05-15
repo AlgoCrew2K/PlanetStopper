@@ -225,9 +225,9 @@ class TestGetSymphonyCumulativeReturn:
             f"result must have 'if_held' and 'dry_run'; got {list(result.keys())}"
         )
 
-        expected_twr = first_symphony["time_weighted_return"]  # 3.13212
-        assert result["if_held"] == pytest.approx(expected_twr, abs=1e-9), (
-            f"TWR fallback: if_held CR must equal time_weighted_return={expected_twr}; "
+        expected_twr = first_symphony["time_weighted_return"] * 100.0  # 3.13212 -> 313.212
+        assert result["if_held"] == pytest.approx(expected_twr, abs=1e-6), (
+            f"TWR fallback: if_held CR must equal time_weighted_return*100={expected_twr}; "
             f"got {result['if_held']} — check fallback branch for simple_return==0, net_deposits==0"
         )
 
@@ -247,9 +247,9 @@ class TestGetSymphonyCumulativeReturn:
 
         result = get_symphony_cumulative_return(normal_symphony, bot_state_entry=None)
 
-        expected = normal_symphony["simple_return"]
-        assert result["if_held"] == pytest.approx(expected, abs=1e-9), (
-            f"normal CR: if_held must equal simple_return={expected}; "
+        expected = normal_symphony["simple_return"] * 100.0  # 0.65976 -> 65.976
+        assert result["if_held"] == pytest.approx(expected, abs=1e-6), (
+            f"normal CR: if_held must equal simple_return*100={expected}; "
             f"got {result['if_held']}"
         )
 
@@ -301,9 +301,9 @@ class TestGetSymphonyCumulativeReturn:
 
         result = get_symphony_cumulative_return(first_symphony, bot_state_entry=None)
 
-        expected_twr = first_symphony["time_weighted_return"]
-        assert result["dry_run"] == pytest.approx(expected_twr, abs=1e-9), (
-            f"TWR fallback symphony: dry_run CR must also equal TWR={expected_twr}; "
+        expected_twr = first_symphony["time_weighted_return"] * 100.0
+        assert result["dry_run"] == pytest.approx(expected_twr, abs=1e-6), (
+            f"TWR fallback symphony: dry_run CR must also equal TWR*100={expected_twr}; "
             f"got {result['dry_run']}"
         )
 
@@ -746,9 +746,9 @@ class TestTwrFallbackConditions:
         }
         result = get_symphony_cumulative_return(sym, bot_state_entry=None)
 
-        assert result["if_held"] == pytest.approx(0.5, abs=1e-9), (
-            f"simple_return=0.5 with net_deposits=0 must use simple_return, not TWR; "
-            f"got {result['if_held']} (TWR sentinel=99.0 would indicate fallback triggered)"
+        assert result["if_held"] == pytest.approx(50.0, abs=1e-6), (
+            f"simple_return=0.5 with net_deposits=0 must use simple_return*100=50.0, not TWR; "
+            f"got {result['if_held']} (TWR sentinel=9900.0 would indicate fallback triggered)"
         )
 
     def test_fallback_not_triggered_when_only_simple_return_is_zero(self):
@@ -791,8 +791,8 @@ class TestTwrFallbackConditions:
         }
         result = get_symphony_cumulative_return(sym, bot_state_entry=None)
 
-        assert result["if_held"] == pytest.approx(3.13212, abs=1e-9), (
-            f"both conditions met: must use time_weighted_return=3.13212; "
+        assert result["if_held"] == pytest.approx(313.212, abs=1e-6), (
+            f"both conditions met: must use time_weighted_return*100=313.212; "
             f"got {result['if_held']}"
         )
 

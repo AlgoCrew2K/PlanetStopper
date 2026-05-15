@@ -605,9 +605,9 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
             f"None-sentinel symphonies must be skipped, not zero-weighted."
         )
         # And must equal the valid symphony's CR (the only contributor)
-        assert result["if_held"] == pytest.approx(valid_sym["simple_return"], abs=1e-6), (
-            f"with one valid symphony (CR={valid_sym['simple_return']}) and one "
-            f"None-sentinel, portfolio CR must equal the valid symphony's CR; "
+        assert result["if_held"] == pytest.approx(valid_sym["simple_return"] * 100.0, abs=1e-4), (
+            f"with one valid symphony (CR={valid_sym['simple_return']*100.0}) and one "
+            f"None-sentinel, portfolio CR must equal the valid symphony's CR*100; "
             f"got {result['if_held']}"
         )
 
@@ -905,9 +905,9 @@ class TestPortfolioReturnsNoneSentinelWhenAllSymphoniesMissing:
         assert result["if_held"] is not None, (
             "portfolio CR must not be None when at least one valid symphony contributes"
         )
-        assert result["if_held"] == pytest.approx(0.65976, abs=1e-6), (
-            f"portfolio CR with one valid symphony (CR=0.65976) and one None must "
-            f"equal the valid symphony's CR; got {result['if_held']}"
+        assert result["if_held"] == pytest.approx(65.976, abs=1e-4), (
+            f"portfolio CR with one valid symphony (CR=65.976) and one None must "
+            f"equal the valid symphony's CR*100; got {result['if_held']}"
         )
 
 

@@ -432,9 +432,9 @@ def get_symphony_cumulative_return(sym_dict: dict, bot_state_entry: "dict | None
     simple_return = float(sym_dict["simple_return"])
     net_deposits = float(sym_dict["net_deposits"])
     if simple_return == 0.0 and net_deposits == 0.0:
-        if_held = float(sym_dict["time_weighted_return"])
+        if_held = float(sym_dict["time_weighted_return"]) * 100.0
     else:
-        if_held = simple_return
+        if_held = simple_return * 100.0
     return {"if_held": if_held, "dry_run": if_held}
 
 

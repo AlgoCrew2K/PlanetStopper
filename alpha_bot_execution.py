@@ -503,6 +503,7 @@ def main():
 
             # Save post_mortem flag immediately to prevent race conditions if execution is slow
             bot_state["post_mortem_run"] = current_date_str
+            bot_state["last_successful_cycle_at"] = current_et.isoformat()
             database.save_state(bot_state)
 
             # NEW: Execute Phase 2 Reporting
