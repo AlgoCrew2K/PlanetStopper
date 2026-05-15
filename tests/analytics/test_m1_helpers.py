@@ -598,14 +598,18 @@ class TestGetPortfolioCumulativeReturn:
                 f"portfolio CR {key} must be finite; got {v}"
             )
 
-    def test_empty_symphonies_returns_zeros(self):
-        """Empty input must not raise; returns 0.0 for both sides."""
+    def test_empty_symphonies_returns_none(self):
+        """Empty input must not raise; returns None sentinel for both sides (no data)."""
         from analytics import get_portfolio_cumulative_return
 
         result = get_portfolio_cumulative_return([], bot_state={})
 
-        assert result["if_held"] == pytest.approx(0.0, abs=1e-9)
-        assert result["dry_run"] == pytest.approx(0.0, abs=1e-9)
+        assert result["if_held"] is None, (
+            f"empty symphonies: CR if_held must be None (no-data sentinel); got {result['if_held']}"
+        )
+        assert result["dry_run"] is None, (
+            f"empty symphonies: CR dry_run must be None; got {result['dry_run']}"
+        )
 
     def test_dry_run_equals_if_held_when_no_triggered_symphonies(self, symphony_stats_meta):
         """All-untriggered: portfolio CR dry_run == if_held."""
@@ -690,14 +694,18 @@ class TestGetPortfolioMaxDrawdown:
                 f"portfolio MDD {key} must be finite; got {v}"
             )
 
-    def test_empty_symphonies_returns_zeros(self):
-        """Empty input must not raise; returns 0.0 for both sides."""
+    def test_empty_symphonies_returns_none(self):
+        """Empty input must not raise; returns None sentinel for both sides (no data)."""
         from analytics import get_portfolio_max_drawdown
 
         result = get_portfolio_max_drawdown([], bot_state={})
 
-        assert result["if_held"] == pytest.approx(0.0, abs=1e-9)
-        assert result["dry_run"] == pytest.approx(0.0, abs=1e-9)
+        assert result["if_held"] is None, (
+            f"empty symphonies: MDD if_held must be None (no-data sentinel); got {result['if_held']}"
+        )
+        assert result["dry_run"] is None, (
+            f"empty symphonies: MDD dry_run must be None; got {result['dry_run']}"
+        )
 
     def test_dry_run_equals_if_held_when_no_triggered_symphonies(self, symphony_stats_meta):
         """All-untriggered: portfolio MDD dry_run == if_held."""

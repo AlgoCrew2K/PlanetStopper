@@ -457,13 +457,19 @@ def _value_weighted_portfolio(
     symphonies: "list[dict]",
     bot_state: dict,
     per_sym_fn,
+    *,
+    none_on_empty: bool = False,
 ) -> dict:
     """
     Value-weighted aggregate of a per-symphony helper across all symphonies.
 
-    Symphonies missing "value" or with value <= 0 are skipped.
-    Returns {"if_held": 0.0, "dry_run": 0.0} when symphonies is empty or all
-    weights are non-positive.
+    Symphonies missing "value", with value <= 0, or whose per_sym_fn returns
+    if_held=None (missing-data sentinel) are skipped.
+    When none_on_empty=True: returns {"if_held": None, "dry_run": None} when
+    symphonies is empty, all weights are non-positive, or all symphonies have
+    missing data — used by CR and MDD where 0.0 is ambiguous with real zero.
+    When none_on_empty=False (default): returns {"if_held": 0.0, "dry_run": 0.0}
+    — used by TC where 0.0 is semantically correct for no-data.
     """
     total_weight = 0.0
     if_held_wsum = 0.0
@@ -489,6 +495,8 @@ def _value_weighted_portfolio(
         total_weight += w
 
     if total_weight == 0.0:
+        if none_on_empty:
+            return {"if_held": None, "dry_run": None}
         return {"if_held": 0.0, "dry_run": 0.0}
 
     return {
@@ -504,12 +512,16 @@ def get_portfolio_today_change(symphonies: "list[dict]", bot_state: dict) -> dic
 
 def get_portfolio_cumulative_return(symphonies: "list[dict]", bot_state: dict) -> dict:
     """Value-weighted portfolio Cumulative Return across all symphonies."""
-    return _value_weighted_portfolio(symphonies, bot_state, get_symphony_cumulative_return)
+    return _value_weighted_portfolio(
+        symphonies, bot_state, get_symphony_cumulative_return, none_on_empty=True
+    )
 
 
 def get_portfolio_max_drawdown(symphonies: "list[dict]", bot_state: dict) -> dict:
     """Value-weighted portfolio Max Drawdown across all symphonies."""
-    return _value_weighted_portfolio(symphonies, bot_state, get_symphony_max_drawdown)
+    return _value_weighted_portfolio(
+        symphonies, bot_state, get_symphony_max_drawdown, none_on_empty=True
+    )
 
 
 # ---------------------------------------------------------------------------
