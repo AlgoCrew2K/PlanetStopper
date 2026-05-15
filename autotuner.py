@@ -22,6 +22,58 @@ OPTUNA_SEARCH_SPACE_KEYS = frozenset({
     "PARABOLIC_VELOCITY_THRESHOLD", "MAX_PARABOLIC_SQUEEZE",
 })
 
+# Optuna search space bounds — named so the search space is inspectable via
+# optuna-compare without re-parsing logs, and to satisfy the no-magic-numbers rule.
+_SS_TRIGGER_THRESHOLD_MIN = 5.0
+_SS_TRIGGER_THRESHOLD_MAX = 25.0
+_SS_TAKE_PROFIT_MC_MIN = 2.0
+_SS_TAKE_PROFIT_MC_MAX = 10.0
+_SS_VWAP_CROSS_HWM_MIN = 0.5
+_SS_VWAP_CROSS_HWM_MAX = 2.5
+_SS_VWAP_BLEED_MULT_MIN = 0.5
+_SS_VWAP_BLEED_MULT_MAX = 3.0
+_SS_VWAP_BLEED_TICKS_MIN = 3
+_SS_VWAP_BLEED_TICKS_MAX = 30
+_SS_PARA_VEL_MIN = 1.0
+_SS_PARA_VEL_MAX = 4.0
+_SS_MAX_PARA_SQUEEZE_MIN = 0.1
+_SS_MAX_PARA_SQUEEZE_MAX = 0.8
+
+# Target return for Sortino denominator: capital preservation baseline (0 = break-even).
+# Operator decision PA-5; Sortino & van der Meer 1994, J. Portfolio Management.
+SORTINO_TARGET_RETURN = 0.0
+
+
+def compute_sortino_ratio(returns: list, target: float = SORTINO_TARGET_RETURN) -> float:
+    """Sortino ratio on a returns series.
+
+    Formula: mean(r) / downside_deviation
+    where downside_deviation = sqrt(mean(min(r - target, 0)^2))
+    Population denominator: divide by N (all observations), not N_downside.
+
+    Reference: Sortino & van der Meer 1994, "Downside Risk",
+    Journal of Portfolio Management.
+
+    Args:
+        returns: Per-period return values (e.g., per-day guard-alpha).
+        target: Minimum acceptable return; defaults to SORTINO_TARGET_RETURN (0.0).
+
+    Returns:
+        Sortino ratio as a finite float. Returns 1e6 when downside_deviation
+        is zero (all returns >= target) so Optuna TPE receives a finite value.
+        Returns 0.0 for an empty series.
+    """
+    if not returns:
+        return 0.0
+    n = len(returns)
+    mean_r = sum(returns) / n
+    sum_sq_downside = sum(min(r - target, 0.0) ** 2 for r in returns)
+    mean_sq_downside = sum_sq_downside / n
+    downside_deviation = math.sqrt(mean_sq_downside)
+    if downside_deviation == 0.0:
+        return 1e6
+    return mean_r / downside_deviation
+
 
 def calculate_historical_deviation(current_date_str):
     """
@@ -73,6 +125,142 @@ def calculate_historical_deviation(current_date_str):
 
     print(f"  -> Historical Execution Deviation Penalties: {deviation_dict}")
     return deviation_dict
+
+def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+    """Run the guard-alpha simulation and return per-triggered-day guard_alpha values.
+
+    Identical tick logic to run_simulation; returns a list instead of a scalar
+    so the Sortino objective can compute risk-adjusted return across triggered days.
+    """
+    daily_returns = []
+    decay_rate = 0.015
+    current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
+
+    for sym_id in acc_sym_ids:
+        dates_data = history_data.get(sym_id, {})
+        for date, ticks in dates_data.items():
+            if not ticks: continue
+
+            hwm = -999.0
+            armed = False
+            tp_armed = False
+            vwap_ticks = 0
+            vwap_bleed_ticks = 0
+            para_armed = False
+            breakeven_locked = False
+            prev_return = None
+            hwm_hold_ticks = 0
+            below_stop_count = 0
+            above_tp_count = 0
+            mc_history = []
+
+            triggered_return = None
+            eod_return = ticks[-1]["return"]
+            day_max_return = max(t.get("return", 0.0) for t in ticks)
+
+            for tick_idx, tick in enumerate(ticks):
+                ret = tick.get("return", 0.0)
+                mc = tick.get("mc_prob", 50.0)
+                vol = tick.get("vol", 1.0)
+                vwap_diff = tick.get("vwap_diff", 0.0)
+                base_atr_pct = tick.get("base_atr_pct", vol)
+
+                if ret > hwm: hwm = ret
+                safe_hwm = max(hwm, ret)
+
+                para_threshold = p.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
+                effective_prev = ret if prev_return is None else prev_return
+                _velocity, should_arm = math_engine.compute_para_arm_decision(
+                    current_return=ret,
+                    prev_return=effective_prev,
+                    para_threshold=para_threshold,
+                    currently_armed=para_armed,
+                )
+                prev_return = ret
+                if should_arm:
+                    para_armed = True
+
+                if not armed:
+                    if p.get("TAKE_PROFIT_MC_PCT", 5.0) <= mc < p.get("TRIGGER_THRESHOLD_PCT", 15.0): armed = True
+                else:
+                    if mc > (p.get("TRIGGER_THRESHOLD_PCT", 15.0) * 2) and ret > 0.0:
+                        armed = False
+                        below_stop_count = 0
+
+                mc_history.append(mc)
+                if len(mc_history) > 5: mc_history.pop(0)
+
+                time_ratio = tick_idx / 390.0
+                dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
+
+                active_stop_dist = math_engine.compute_active_trailing_stop(
+                    vol, dynamic_multiplier, dynamic_min_stop,
+                    para_armed, breakeven_locked, p.get("MAX_PARABOLIC_SQUEEZE", 0.50)
+                )
+
+                base_stop = safe_hwm - active_stop_dist
+
+                hwm_hold_ticks, breakeven_locked, stop_level = math_engine.compute_breakeven_update(
+                    ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, False
+                )
+
+                is_trailing_hit = False
+                if armed:
+                    if ret <= (stop_level - 0.10) and mc < 60.0:
+                        below_stop_count += 1
+                        if below_stop_count >= 3: is_trailing_hit = True
+                    else: below_stop_count = 0
+
+                is_tp_hit = False
+                if mc < p.get("TAKE_PROFIT_MC_PCT", 5.0):
+                    if not tp_armed:
+                        tp_armed = True
+                        above_tp_count = 0
+                elif tp_armed:
+                    if mc >= p.get("TAKE_PROFIT_MC_PCT", 5.0):
+                        above_tp_count += 1
+                        if above_tp_count >= 2:
+                            if ret > 0: is_tp_hit = True
+                            else:
+                                tp_armed = False
+                                above_tp_count = 0
+                    else: above_tp_count = 0
+
+                valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
+
+                vwap_bleed_arm_pct = math_engine.compute_vwap_bleed_arm_threshold(vol, p.get("VWAP_BLEED_MULTIPLIER", 1.5))
+
+                vwap_ticks, vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = math_engine.compute_vwap_breakdown_update(
+                    is_triggered=False,
+                    valid_vwap_weight=valid_vwap_weight,
+                    weighted_vwap_diff=vwap_diff,
+                    safe_hwm=safe_hwm,
+                    current_return=ret,
+                    vwap_cross_hwm_pct=p.get("VWAP_CROSS_HWM_PCT", 1.0),
+                    vwap_bleed_arm_pct=vwap_bleed_arm_pct,
+                    vwap_bleed_ticks_threshold=p.get("VWAP_BLEED_TICKS", 10),
+                    current_vwap_ticks=vwap_ticks,
+                    current_vwap_bleed_ticks=vwap_bleed_ticks,
+                )
+
+                if is_trailing_hit or is_tp_hit or is_vwap_broken or is_vwap_bleed_broken:
+                    reason_str = "Trailing Stop"
+                    if is_tp_hit: reason_str = "Take-Profit"
+                    elif is_vwap_broken: reason_str = "VWAP Breakdown"
+                    elif is_vwap_bleed_broken: reason_str = "VWAP Bleed Cut"
+
+                    penalty = deviation_dict.get(reason_str, -0.20)
+                    triggered_return = ret + penalty
+                    break
+
+            if triggered_return is not None:
+                guard_alpha = triggered_return - eod_return
+                days_ago = (current_dt - datetime.strptime(date, "%Y-%m-%d")).days
+                weight = math.exp(-decay_rate * days_ago)
+                daily_returns.append(guard_alpha * weight)
+
+    return daily_returns
+
 
 def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
     total_guard_alpha = 0.0
@@ -347,19 +535,19 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
 
         def objective(trial):
             p = current_params.copy()
-            p["TRIGGER_THRESHOLD_PCT"] = trial.suggest_float("TRIGGER_THRESHOLD_PCT", 5.0, 25.0)
-            p["TAKE_PROFIT_MC_PCT"] = trial.suggest_float("TAKE_PROFIT_MC_PCT", 2.0, 10.0)
-            p["VWAP_CROSS_HWM_PCT"] = trial.suggest_float("VWAP_CROSS_HWM_PCT", 0.5, 2.5)
-            p["VWAP_BLEED_MULTIPLIER"] = trial.suggest_float("VWAP_BLEED_MULTIPLIER", 0.5, 3.0)
-            p["VWAP_BLEED_TICKS"] = trial.suggest_int("VWAP_BLEED_TICKS", 3, 30)
-            p["PARABOLIC_VELOCITY_THRESHOLD"] = trial.suggest_float("PARABOLIC_VELOCITY_THRESHOLD", 1.0, 4.0)
-            p["MAX_PARABOLIC_SQUEEZE"] = trial.suggest_float("MAX_PARABOLIC_SQUEEZE", 0.1, 0.8)
+            p["TRIGGER_THRESHOLD_PCT"] = trial.suggest_float("TRIGGER_THRESHOLD_PCT", _SS_TRIGGER_THRESHOLD_MIN, _SS_TRIGGER_THRESHOLD_MAX)
+            p["TAKE_PROFIT_MC_PCT"] = trial.suggest_float("TAKE_PROFIT_MC_PCT", _SS_TAKE_PROFIT_MC_MIN, _SS_TAKE_PROFIT_MC_MAX)
+            p["VWAP_CROSS_HWM_PCT"] = trial.suggest_float("VWAP_CROSS_HWM_PCT", _SS_VWAP_CROSS_HWM_MIN, _SS_VWAP_CROSS_HWM_MAX)
+            p["VWAP_BLEED_MULTIPLIER"] = trial.suggest_float("VWAP_BLEED_MULTIPLIER", _SS_VWAP_BLEED_MULT_MIN, _SS_VWAP_BLEED_MULT_MAX)
+            p["VWAP_BLEED_TICKS"] = trial.suggest_int("VWAP_BLEED_TICKS", _SS_VWAP_BLEED_TICKS_MIN, _SS_VWAP_BLEED_TICKS_MAX)
+            p["PARABOLIC_VELOCITY_THRESHOLD"] = trial.suggest_float("PARABOLIC_VELOCITY_THRESHOLD", _SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX)
+            p["MAX_PARABOLIC_SQUEEZE"] = trial.suggest_float("MAX_PARABOLIC_SQUEEZE", _SS_MAX_PARA_SQUEEZE_MIN, _SS_MAX_PARA_SQUEEZE_MAX)
 
             acc_sym_ids = [k for k, v in bot_state.items() if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == normalized_name]
             if not acc_sym_ids: return 0.0
             target_sym_id = acc_sym_ids[0]
-            alpha = -run_simulation(p, history_train, [target_sym_id], current_date_str, deviation_dict)
-            return alpha
+            daily_returns = _collect_sim_returns(p, history_train, [target_sym_id], current_date_str, deviation_dict)
+            return compute_sortino_ratio(daily_returns)
 
         start_time = time.time()
         
