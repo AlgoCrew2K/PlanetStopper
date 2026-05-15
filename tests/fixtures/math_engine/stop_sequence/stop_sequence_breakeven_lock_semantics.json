@@ -1,0 +1,15 @@
+{
+  "_provenance": "Fixture for test_breakeven_lock_semantics_preserved. Scenario: a position advances into profit-locked territory (breakeven_locked latches True after 5 qualifying ticks). Then on tick 6, current_return drops below the stop level — the ratchet should retain the locked stop; breakeven_locked must remain True. base_stop_level on tick 6 is -0.5 (position in drawdown), but the locked floor is max(-0.5, 0.0)=0.0, and the ratchet further clamps to max(ratchet_floor, 0.0). Tick 5 is the first locked tick with base_stop=0.5 -> stop=max(0.5,0.0)=0.5. Tick 6: base_stop=-0.5 -> locked: max(-0.5,0.0)=0.0; ratchet: max(0.5, 0.0)=0.5. The ratchet holds 0.5 even as base retraces below zero. breakeven_locked remains True (one-way latch). This confirms the breakeven-lock semantics (zero-loss floor) are not broken by the monotonicity kwarg.",
+  "description": "6-tick sequence: 5 pre-lock ticks (vol=1.0, cr=1.5, base=-1.0), then tick 6 with drawdown (base=-0.5). Ratchet holds the tick-5 stop floor. breakeven_locked=True persists.",
+  "symphony_vol": 1.0,
+  "ticks": [
+    {"tick": 1, "current_return": 1.5, "base_stop_level": -1.0, "is_triggered": false, "locked_after": false, "note": "pre-lock"},
+    {"tick": 2, "current_return": 1.5, "base_stop_level": -1.0, "is_triggered": false, "locked_after": false, "note": "pre-lock"},
+    {"tick": 3, "current_return": 1.5, "base_stop_level": -1.0, "is_triggered": false, "locked_after": false, "note": "pre-lock"},
+    {"tick": 4, "current_return": 1.5, "base_stop_level": -1.0, "is_triggered": false, "locked_after": false, "note": "pre-lock"},
+    {"tick": 5, "current_return": 1.5, "base_stop_level": 0.5, "is_triggered": false, "locked_after": true, "expected_stop": 0.5, "note": "lock fires; max(0.5,0.0)=0.5; ratchet floor set to 0.5"},
+    {"tick": 6, "current_return": 0.3, "base_stop_level": -0.5, "is_triggered": false, "locked_after": true, "expected_stop": 0.5, "note": "drawdown; locked: max(-0.5,0.0)=0.0; ratchet: max(0.5,0.0)=0.5; lock stays True"}
+  ],
+  "breakeven_lock_assertion": "breakeven_locked must be True on ticks 5 and 6 (one-way latch). stop_trigger_level on tick 6 must be >= tick 5's stop (ratchet). Zero-loss floor (>= 0.0) must hold throughout.",
+  "ratchet_floor_at_tick_6": 0.5
+}
