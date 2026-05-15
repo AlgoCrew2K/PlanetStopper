@@ -722,3 +722,119 @@ def test_optuna_study_direction_is_maximize():
         f"maximized — higher is better). Got direction={direction!r}.\n"
         f"Full kwargs: {call_kwargs}"
     )
+
+
+# ===========================================================================
+# Train-alpha completion log must not label Sortino ratio as '%'
+# (risk-engine-specialist reporting defect — blocking for merge)
+# ===========================================================================
+
+
+def test_train_alpha_log_line_does_not_label_sortino_as_percent():
+    """
+    After O5, `best_alpha_train` (autotuner.py:566) is a Sortino ratio
+    (~1-3 typical range), not a guard_alpha percent. The completion log line
+    at autotuner.py:652 currently prints:
+
+        "Train Alpha: {best_alpha_train:+.2f}% (Average: {avg_train_alpha:.2f}%)"
+
+    Both the `%` suffix and the `avg_train_alpha` (Sortino / days — a
+    dimensionally meaningless quantity) are misleading to operators reading
+    the Discord report or daemon log.
+
+    Required fix (either of):
+      (a) Change the label from '%' to 'Sortino' on the train alpha value, OR
+      (b) Remove avg_train_alpha entirely and log only best_alpha_train with
+          a 'Sortino' unit label.
+
+    This test asserts that the stdout from run_autotuner does NOT contain the
+    pattern "Train Alpha: ...%" where the value is followed immediately by '%'
+    — indicating the stale percent label is still in place.
+
+    The test drives a minimal run_autotuner to capture stdout and inspects the
+    completion log line.
+    """
+    import contextlib
+    import io
+    import re
+
+    autotuner = _import_autotuner()
+
+    fake_study = MagicMock()
+    fake_study.best_params = {
+        "TRIGGER_THRESHOLD_PCT": 15.0,
+        "TAKE_PROFIT_MC_PCT": 5.0,
+        "VWAP_CROSS_HWM_PCT": 1.0,
+        "VWAP_BLEED_MULTIPLIER": 1.5,
+        "VWAP_BLEED_TICKS": 10,
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+        "MAX_PARABOLIC_SQUEEZE": 0.5,
+    }
+    fake_study.best_value = 2.3  # realistic Sortino ratio, not a % value
+    fake_study.optimize = MagicMock(return_value=None)
+
+    bot_state = {"sym-A": {"name": "Log Label Test Symphony", "account_uuid": "acc-1"}}
+    default_params = fake_study.best_params.copy()
+
+    history = {
+        "sym-A": {
+            "2026-04-01": [{"return": 1.0, "mc_prob": 50.0, "vol": 1.0,
+                            "vwap_diff": 0.0, "base_atr_pct": 1.0,
+                            "valid_vwap_weight": 1.0}],
+            "2026-04-02": [{"return": 1.0, "mc_prob": 50.0, "vol": 1.0,
+                            "vwap_diff": 0.0, "base_atr_pct": 1.0,
+                            "valid_vwap_weight": 1.0}],
+        }
+    }
+
+    buf = io.StringIO()
+    with (
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history",
+              return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch("autotuner.database.get_symphony_strategy",
+              return_value={"params": default_params.copy(), "locked_vars": []}),
+        patch("autotuner.database.save_symphony_strategy"),
+        patch("autotuner.database.DEFAULT_STRATEGY", default_params),
+        patch("autotuner.math_engine.compute_para_arm_decision",
+              side_effect=lambda **kw: (0.0, False)),
+        patch("autotuner.math_engine.compute_time_squeeze_decay",
+              side_effect=lambda tr: (1.5, 0.5)),
+        patch("autotuner.math_engine.compute_active_trailing_stop",
+              side_effect=lambda *a, **kw: 5.0),
+        patch("autotuner.math_engine.compute_breakeven_update",
+              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
+        patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+              side_effect=lambda *a, **kw: -10.0),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update",
+              side_effect=lambda **kw: (0, 0, False, False)),
+        contextlib.redirect_stdout(buf),
+    ):
+        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+
+    stdout = buf.getvalue()
+
+    # Find the completion log line.
+    completion_lines = [
+        line for line in stdout.splitlines()
+        if "Train Alpha" in line or "Optimization completed" in line
+    ]
+    assert completion_lines, (
+        f"Expected a 'Train Alpha' or 'Optimization completed' log line in stdout.\n"
+        f"stdout:\n{stdout}"
+    )
+
+    # The stale pattern is a numeric value immediately followed by '%' on the
+    # Train Alpha portion of the completion line.
+    # Pattern: "Train Alpha: <number>%" — the '%' directly after the train value.
+    stale_pattern = re.compile(r"Train Alpha:\s*[+-]?\d+\.\d+%")
+    for line in completion_lines:
+        assert not stale_pattern.search(line), (
+            f"Completion log line labels Sortino ratio as '%' — stale unit.\n"
+            f"  line: {line!r}\n"
+            f"  Fix: change label to 'Sortino' (e.g. 'Train Sortino: +2.30') "
+            f"and remove avg_train_alpha (Sortino/days is dimensionally meaningless)."
+        )
