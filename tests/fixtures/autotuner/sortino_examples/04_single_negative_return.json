@@ -1,0 +1,14 @@
+{
+  "provenance": "Hand-computed. Single return below target=0. mean=-0.05, downside_std=sqrt(0.0025/1)=0.05, Sortino=-1.0.",
+  "returns": [-0.05],
+  "target_return": 0.0,
+  "description": "Degenerate case: single negative return. Sortino = mean / downside_std = -0.05/0.05 = -1.0.",
+  "calculation": {
+    "mean_return": -0.05,
+    "downside_returns": [-0.05],
+    "sum_squared_downside": 0.0025,
+    "mean_squared_downside": 0.0025,
+    "downside_std": 0.05,
+    "expected_sortino": -1.0
+  }
+}

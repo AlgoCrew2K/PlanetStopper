@@ -1,0 +1,14 @@
+{
+  "provenance": "Hand-computed. Returns exactly at target=0 are NOT counted as downside (filter is r < target, strict). Only r=-0.01 contributes. mean=0. downside_std=sqrt(0.0001/3). Sortino=0.",
+  "returns": [0.0, -0.01, 0.01],
+  "target_return": 0.0,
+  "description": "Return exactly at target=0 is excluded from downside. Strict inequality r < target=0.",
+  "calculation": {
+    "mean_return": 0.0,
+    "downside_returns": [-0.01],
+    "sum_squared_downside": 0.0001,
+    "mean_squared_downside": 0.00003333333333333333,
+    "downside_std": 0.005773502691896258,
+    "expected_sortino": 0.0
+  }
+}

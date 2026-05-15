@@ -1,0 +1,14 @@
+{
+  "provenance": "Hand-computed. Sortino = mean(r) / downside_std, target=0. Downside squared deviations divide by N (population), not N_downside.",
+  "returns": [0.02, -0.01, 0.03, -0.02, 0.01],
+  "target_return": 0.0,
+  "description": "Mixed positive and negative returns. Two downside returns: -0.01, -0.02.",
+  "calculation": {
+    "mean_return": 0.006,
+    "downside_returns": [-0.01, -0.02],
+    "sum_squared_downside": 0.0005,
+    "mean_squared_downside": 0.0001,
+    "downside_std": 0.01,
+    "expected_sortino": 0.6
+  }
+}
