@@ -509,3 +509,36 @@ def test_compute_sortino_ratio_all_positive_returns_is_positive():
     # Must be finite so Optuna TPE can model it (inf is allowed here at the
     # helper level; the objective layer is responsible for clamping to finite).
     # We only assert positivity — the sentinel choice is implementation-defined.
+
+
+# ===========================================================================
+# Bonus — empty returns list: no triggers fired in OOS fold
+# ===========================================================================
+
+
+def test_compute_sortino_ratio_empty_returns_returns_zero():
+    """
+    When run_simulation returns an empty list (no triggers fired on any day
+    in the OOS fold), compute_sortino_ratio must return 0.0 rather than
+    raising ZeroDivisionError or returning NaN.
+
+    Rationale: an OOS fold with no exits means the strategy held through the
+    entire period without being triggered. There is no return signal to measure.
+    Returning 0.0 (neutral) is the correct sentinel — it does not reward a
+    parameter set for simply never triggering (which could be achieved by
+    setting extremely permissive thresholds), nor does it punish it.
+
+    The empty-list case arises naturally when the implementer changes
+    run_simulation to return List[float] and an OOS fold produces no exits.
+    """
+    autotuner = _import_autotuner()
+
+    result = autotuner.compute_sortino_ratio([], target=0.0)
+
+    assert result == pytest.approx(0.0, abs=1e-9), (
+        f"compute_sortino_ratio([]) must return 0.0 (no-exit neutral sentinel); "
+        f"got {result!r}. Must not raise ZeroDivisionError or return NaN."
+    )
+    assert math.isfinite(result), (
+        f"compute_sortino_ratio([]) must return a finite float; got {result!r}"
+    )
