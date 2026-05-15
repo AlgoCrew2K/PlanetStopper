@@ -184,8 +184,17 @@ def trigger_alpha_bot(force=False):
 def threaded_trigger():
     threading.Thread(target=trigger_alpha_bot, daemon=True).start()
 
+def _run_trigger_retention():
+    from dotenv import dotenv_values
+    env_vars = dotenv_values(ENV_FILE_PATH)
+    retention_days = int(env_vars.get("TRIGGER_TELEMETRY_RETENTION_DAYS", "90"))
+    deleted = database.prune_old_triggers(retention_days)
+    if deleted:
+        print(f"[retention] pruned {deleted} old exit_triggers rows (>{retention_days}d)")
+
 def run_scheduler():
     schedule.every().minute.at(":00").do(threaded_trigger)
+    schedule.every().day.at("02:00").do(_run_trigger_retention)
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -285,6 +294,20 @@ def get_state():
                 "max_drawdown": s.get("max_drawdown"),
             })
 
+        # Attach last_trigger (today's most-recent) to each symphony for the Status sub-line.
+        today_start = datetime.now().strftime("%Y-%m-%d") + "T00:00:00Z"
+        try:
+            today_triggers = database.get_triggers(since=today_start, limit=500)
+            last_trigger_by_sym = {}
+            for t in today_triggers:
+                sid = t["symphony_id"]
+                if sid not in last_trigger_by_sym:
+                    last_trigger_by_sym[sid] = t
+        except Exception:
+            last_trigger_by_sym = {}
+        for k in symphony_keys:
+            state_data[k]["last_trigger"] = last_trigger_by_sym.get(k)
+
         # Attach per-symphony TC/CR/MDD to each sym dict so the template can render them.
         for k in symphony_keys:
             s = state_data[k]
@@ -342,6 +365,28 @@ def get_chart_data(symphony_id):
         return jsonify({"status": "success", "data": symphony_data})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/triggers")
+def api_triggers():
+    try:
+        since = request.args.get("since")
+        symphony_id = request.args.get("symphony_id")
+        reason = request.args.get("reason")
+        try:
+            limit = int(request.args.get("limit", 100))
+        except (ValueError, TypeError):
+            limit = 100
+        limit = min(limit, 500)
+        rows = database.get_triggers(
+            since=since,
+            symphony_id=symphony_id,
+            reason=reason,
+            limit=limit,
+        )
+        return jsonify(rows)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/trigger", methods=["POST"])

@@ -1,5 +1,7 @@
 """SQLite state management for AlphaBot with Account-Level Strategies."""
 
+import logging
+import os
 import sqlite3
 import json
 import time
@@ -89,6 +91,8 @@ def init_db():
 
     conn.commit()
     conn.close()
+    run_migrations()
+
 
 # --- Lock Management ---
 def acquire_lock():
@@ -465,6 +469,175 @@ def get_suggestions_for_session(session_id: str) -> list[dict]:
     rows = cursor.fetchall()
     conn.close()
     return [_parse_llm_suggestion_row(row, _LLM_SUGGESTION_COLUMNS) for row in rows]
+
+
+# --- H1: Schema Migration Runner ---
+
+_MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
+
+# Ordered list of numbered migration files to apply to alphabot_state.db.
+# Append new entries here; never reorder or remove existing entries.
+_MIGRATION_FILES = [
+    "004_schema_migrations_tracker.sql",
+    "005_exit_triggers.sql",
+]
+
+
+def run_migrations() -> None:
+    """Apply any pending numbered migrations to alphabot_state.db.
+
+    Idempotent: schema_migrations tracker prevents re-applying a migration that
+    has already been recorded.  Safe to call on every daemon startup.
+    """
+    conn = get_connection()
+    # Ensure the tracker table itself exists before we try to query it.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        "  migration_name TEXT PRIMARY KEY,"
+        "  applied_at     TEXT NOT NULL DEFAULT (datetime('now'))"
+        ")"
+    )
+    conn.commit()
+
+    for migration_name in _MIGRATION_FILES:
+        row = conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
+            (migration_name,),
+        ).fetchone()
+        if row is not None:
+            continue  # already applied
+
+        migration_path = os.path.join(_MIGRATIONS_DIR, migration_name)
+        try:
+            with open(migration_path, "r", encoding="utf-8") as fh:
+                sql = fh.read()
+            conn.executescript(sql)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (migration_name) VALUES (?)",
+                (migration_name,),
+            )
+            conn.commit()
+        except Exception as exc:
+            logging.error("run_migrations: failed to apply %s: %s", migration_name, exc)
+
+    conn.close()
+
+
+# --- H1: Trigger Attribution Telemetry ---
+
+
+def record_exit_trigger(
+    *,
+    symphony_id: str,
+    account_id: str | None,
+    triggered_reason: str,
+    at_return: float | None,
+    gate_state: dict | None,
+    cycle_id: str | None,
+) -> None:
+    """Write one exit-trigger telemetry row.
+
+    Opens its own connection — does NOT join the cycle's save_state transaction.
+    A failure here must never fail the cycle; any exception is logged at ERROR
+    and swallowed.  Called from alpha_bot_execution.py at the triggered=True set site.
+    """
+    from datetime import timedelta
+
+    now_utc = datetime.now(timezone.utc)
+    ts_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # ET offset approximation for display; EDT = UTC-4.
+    ts_et = (now_utc - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S")
+    gate_state_json = json.dumps(gate_state) if gate_state is not None else None
+
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn.execute(
+            "INSERT INTO exit_triggers "
+            "(ts_utc, ts_et, symphony_id, account_id, triggered_reason, at_return, gate_state_json, cycle_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                ts_utc,
+                ts_et,
+                symphony_id,
+                account_id,
+                triggered_reason,
+                at_return,
+                gate_state_json,
+                cycle_id,
+            ),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logging.error("record_exit_trigger failed for %s: %s", symphony_id, exc)
+
+
+def get_triggers(
+    *,
+    since: str | None = None,
+    symphony_id: str | None = None,
+    reason: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Read exit_triggers rows with optional filters.
+
+    account_id is excluded from the returned dicts (PA-9).
+    limit is server-side clamped to 500 max.
+    """
+    limit = min(limit, 500)
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    clauses: list[str] = []
+    params: list = []
+    if since:
+        clauses.append("ts_utc > ?")
+        params.append(since)
+    if symphony_id:
+        clauses.append("symphony_id = ?")
+        params.append(symphony_id)
+    if reason:
+        clauses.append("triggered_reason = ?")
+        params.append(reason)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(
+        f"SELECT id, ts_utc, ts_et, symphony_id, triggered_reason, at_return, gate_state_json, cycle_id "
+        f"FROM exit_triggers {where} ORDER BY ts_utc DESC LIMIT ?",
+        params + [limit],
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def prune_old_triggers(retention_days: int) -> int:
+    """Delete exit_triggers rows older than retention_days, in batches of 1000.
+
+    Returns the total number of rows deleted.
+    Called by the daily scheduled task in app.py — never during a cycle write.
+    Batched DELETE with LIMIT avoids long write locks on the shared state DB.
+    """
+    from datetime import timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    _PRUNE_BATCH_SIZE = 1000
+    deleted_total = 0
+    try:
+        conn = get_connection()
+        while True:
+            cursor = conn.execute(
+                "DELETE FROM exit_triggers WHERE id IN "
+                "(SELECT id FROM exit_triggers WHERE ts_utc < ? LIMIT ?)",
+                (cutoff, _PRUNE_BATCH_SIZE),
+            )
+            conn.commit()
+            deleted_total += cursor.rowcount
+            if cursor.rowcount == 0:
+                break
+        conn.close()
+    except Exception as exc:
+        logging.error("prune_old_triggers failed: %s", exc)
+    return deleted_total
 
 
 # Initialize tables on import

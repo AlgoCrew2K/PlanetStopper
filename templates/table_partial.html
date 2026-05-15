@@ -175,7 +175,12 @@
                                 </div>
                             </td>
                             <td class="px-3 py-2.5 text-right font-mono {{ mc_color }}">{{ mc_prob }}</td>
-                            <td class="px-3 py-2.5 text-center">{{ status_badge | safe }}</td>
+                            <td class="px-3 py-2.5 text-center">
+                                {{ status_badge | safe }}
+                                {% if sym.last_trigger %}
+                                    <div class="text-[9px] text-slate-500 font-mono mt-0.5">{{ sym.last_trigger.triggered_reason }} @ {{ sym.last_trigger.ts_et[11:16] }}</div>
+                                {% endif %}
+                            </td>
                             <td class="px-3 py-2.5 text-right font-mono text-slate-400">{{ stop_level_str | safe }}</td>
                             <td class="px-3 py-2.5 text-right font-mono {{ cur_ret_color }}">{{ cur_ret_str | safe }}</td>
                             <td class="px-3 py-2.5 text-right font-mono {{ shadow_hwm_color }}">{{ sym.shadow_hwm | round(2) }}%</td>
