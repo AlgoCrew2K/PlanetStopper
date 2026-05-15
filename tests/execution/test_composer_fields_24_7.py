@@ -623,3 +623,95 @@ class TestNoPersistDoubleCallWithinIntraday:
                 f"for symphony {sym_id} in a single intraday cycle; must be <= 1. "
                 f"If the lifted path and line-689 both call it, remove one."
             )
+
+
+# ---------------------------------------------------------------------------
+# Scenario 6 — Missing COMPOSER_KEY_ID on market-closed path
+#
+# The credential guard (alpha_bot_execution.py:342) is below the market-closed
+# early-return (line 310). When COMPOSER_KEY_ID is None, fetch_symphony_stats
+# makes a call with None credentials → Composer returns 4xx → function returns [].
+# The market-closed loop iterates zero times, prior values survive, save_state is
+# called. This is silent (no "CRITICAL: Missing API Keys" log) but safe.
+#
+# Pins: (a) no exception, (b) save_state called, (c) prior values preserved.
+# Finding raised by composer-alpaca-integration review.
+# ---------------------------------------------------------------------------
+
+class TestMarketClosedWithMissingComposerKeyGracefullyDegrades:
+
+    def test_market_closed_with_no_composer_key_does_not_crash_and_preserves_state(self):
+        """
+        When COMPOSER_KEY_ID is None during a market-closed cycle, fetch_symphony_stats
+        returns [] (4xx from Composer → caught → returns []). The market-closed persist
+        block iterates zero times, prior bot_state Composer fields are preserved, and
+        save_state is still called.
+
+        This pins the silent-failure / graceful-degradation behavior so a future code
+        change (e.g. moving the credential guard above the early-return) doesn't
+        accidentally introduce a crash or erase prior values on this path.
+        """
+        import copy
+
+        prior_state = _seed_state_with_composer_fields()
+        date_str = _WEEKDAY_PRE_OPEN.strftime("%Y-%m-%d")
+        captured_states: list[dict] = []
+
+        def capture_save_state(state):
+            captured_states.append(copy.deepcopy(state))
+
+        with patch.object(alpha_bot_execution, "database") as mock_db, \
+             patch.object(alpha_bot_execution, "reporting"), \
+             patch.object(alpha_bot_execution, "fetch_symphony_stats",
+                          return_value=[]) as mock_fetch, \
+             patch.object(alpha_bot_execution, "get_current_et",
+                          return_value=_WEEKDAY_PRE_OPEN), \
+             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
+             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", None), \
+             patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
+             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
+             patch.object(alpha_bot_execution.time, "sleep"), \
+             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
+
+            mock_db.acquire_lock.return_value = True
+            mock_db.load_state.return_value = copy.deepcopy(prior_state)
+            mock_db.load_chart_history.return_value = {
+                "date": date_str, "symphonies": {}
+            }
+            mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
+            mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
+            mock_db.wipe_transient_state.side_effect = lambda s: s
+            mock_db.save_state.side_effect = capture_save_state
+
+            # Must not raise
+            alpha_bot_execution.main()
+
+        # (a) save_state was called — cycle completed without crashing
+        assert captured_states, (
+            "save_state must be called even when COMPOSER_KEY_ID is None on a "
+            "market-closed cycle; fetch returns [] → loop iterates zero times → "
+            "save_state still runs before early-return"
+        )
+
+        # (b) prior Composer field values are preserved in the saved state
+        final = captured_states[-1]
+        for sym in _FIXTURE_SYMPHONIES:
+            sym_id = sym["id"]
+            if sym_id not in final:
+                continue  # symphony not in bot_state — not a failure of this test
+            for field in _FOUR_FIELDS:
+                if field not in prior_state.get(sym_id, {}):
+                    continue  # prior state didn't have this field — nothing to preserve
+                expected = prior_state[sym_id][field]
+                actual = final.get(sym_id, {}).get(field)
+                if expected is None:
+                    assert actual is None, (
+                        f"prior {sym_id}['{field}'] was None; must remain None after "
+                        f"missing-key market-closed cycle, got {actual!r}"
+                    )
+                else:
+                    assert actual == pytest.approx(expected, abs=1e-9), (
+                        f"prior {sym_id}['{field}']={expected!r} must be preserved "
+                        f"after missing-key market-closed cycle; got {actual!r}. "
+                        f"fetch returning [] must not erase existing values."
+                    )
