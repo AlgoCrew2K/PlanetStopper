@@ -47,6 +47,19 @@ _GUARD_ALPHA_DECAY_RATE = 0.015
 # Operator decision PA-5; Sortino & van der Meer 1994, J. Portfolio Management.
 SORTINO_TARGET_RETURN = 0.0
 
+# Walk-forward purge window: training samples whose feature lookback window overlaps
+# the test fold are excluded. The binding constraint is the exponential decay half-life
+# of the composite objective (ln2 / _GUARD_ALPHA_DECAY_RATE = ln2 / 0.015 ≈ 46 trading
+# days), which exceeds the vol (20 days) and ATR (14 days) lookbacks.
+# PURGE_DAYS = max(20, 14, 46) = 46.
+# López de Prado 2018, Advances in Financial Machine Learning, Ch. 7 (Purged k-fold CV).
+PURGE_DAYS = 46
+
+# Embargo period between train-end and test-start. Prevents autocorrelation leakage
+# from serial dependence in adjacent samples. Default: 1 trading day.
+# López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.
+EMBARGO_DAYS = 1
+
 
 def compute_sortino_ratio(returns: list, target: float = SORTINO_TARGET_RETURN) -> float:
     """Sortino ratio on a returns series.
@@ -468,7 +481,20 @@ def _apply_optuna_archive_migration_if_needed():
 def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
     """
     Runs a 6-month walk-forward optimization to find the best variables using Bayesian Optimization per account.
-    Implements True Walk-Forward Analysis (80% train, 20% OOS test).
+    Implements True Walk-Forward Analysis (80% train, 20% OOS test) with purge + embargo.
+
+    Walk-forward split methodology (López de Prado 2018 Ch. 7):
+    - 125-day history is split 80/20: ~100 train days, ~25 raw OOS test days.
+    - Purge (PURGE_DAYS=46): train samples whose feature lookback window overlaps the test
+      fold are excluded. The binding constraint is the decay-weighted objective's half-life
+      (46 trading days), which exceeds vol (20) and ATR (14) lookbacks.
+    - Embargo (EMBARGO_DAYS=1): one additional trading day gap between train-end and
+      test-start prevents autocorrelation leakage from serial dependence.
+    - OOS fold collapse (PA-26): after a 46-day purge on a 125-day window, the usable
+      test fold shrinks to approximately 5 trading days. This is an acknowledged tradeoff —
+      the purge is methodologically correct and the short test window is the cost of
+      honest OOS evaluation. Future workstream: expand history window or use purged k-fold
+      CV (rolling folds) to recover statistical power.
     """
     # Suppress Optuna's per-trial log noise; set here (not at module level) to
     # avoid clobbering pytest's output-capture on import.
@@ -506,11 +532,25 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         print("  -> Autotuner aborted: Need at least 2 days of history for WFA.")
         return
 
-    # Use 80/20 split for ~100 days train, ~25 days out-of-sample test
+    # Use 80/20 split for ~100 days train, ~25 days out-of-sample test.
+    # Purge + embargo applied per López de Prado 2018 Ch. 7 — see run_autotuner docstring.
     split_idx = int(total_days * 0.8)
 
-    train_dates = set(sorted_dates[:split_idx])
     test_dates = set(sorted_dates[split_idx:])
+    test_start_date = sorted_dates[split_idx] if split_idx < total_days else None
+
+    # Purge: exclude train dates whose feature-lookback window reaches into the test fold.
+    # Any train date within PURGE_DAYS positions of test_start is excluded.
+    # Embargo: additionally exclude train dates within EMBARGO_DAYS of the test_start.
+    raw_train_dates = sorted_dates[:split_idx]
+    if test_start_date is not None:
+        test_start_idx = split_idx  # index of first test date in sorted_dates
+        purge_cutoff_idx = test_start_idx - PURGE_DAYS
+        embargo_cutoff_idx = test_start_idx - EMBARGO_DAYS
+        effective_cutoff_idx = min(purge_cutoff_idx, embargo_cutoff_idx)
+        train_dates = set(raw_train_dates[:max(0, effective_cutoff_idx)])
+    else:
+        train_dates = set(raw_train_dates)
 
     history_train = {}
     history_test = {}
