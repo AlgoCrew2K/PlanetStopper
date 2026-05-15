@@ -91,7 +91,7 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
             vwap_bleed_ticks = 0
             para_armed = False
             breakeven_locked = False
-            prev_return = 0.0
+            prev_return = None  # sentinel: cycle-1 velocity = 0 (mirrors database.py wipe)
             hwm_hold_ticks = 0
             below_stop_count = 0
             above_tp_count = 0
@@ -113,9 +113,10 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
 
                 # --- PARABOLIC SQUEEZE LOGIC ---
                 para_threshold = p.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
+                effective_prev = ret if prev_return is None else prev_return
                 _velocity, should_arm = math_engine.compute_para_arm_decision(
                     current_return=ret,
-                    prev_return=prev_return,
+                    prev_return=effective_prev,
                     para_threshold=para_threshold,
                     currently_armed=para_armed,
                 )

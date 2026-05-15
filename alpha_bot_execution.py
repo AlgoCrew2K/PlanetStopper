@@ -663,7 +663,8 @@ def main():
                     bot_state[symphony_id]["mc_history"].pop(0)
 
                 # --- PARABOLIC SQUEEZE LOGIC ---
-                prev_return = bot_state[symphony_id].get("prev_return", current_return)
+                _stored_prev = bot_state[symphony_id].get("prev_return", None)
+                prev_return = current_return if _stored_prev is None else _stored_prev
                 para_threshold = acc_params.get("PARABOLIC_VELOCITY_THRESHOLD", PARABOLIC_VELOCITY_THRESHOLD)
                 velocity, should_para_arm = math_engine.compute_para_arm_decision(
                     current_return=current_return,

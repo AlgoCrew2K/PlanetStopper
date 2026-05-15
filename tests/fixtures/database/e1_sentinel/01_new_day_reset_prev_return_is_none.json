@@ -1,0 +1,10 @@
+{
+  "name": "new_day_reset_prev_return_is_none",
+  "description": "After wipe_transient_state runs a new-day reset, prev_return must be None (the E1 sentinel), NOT 0.0. A value of None signals cycle-1 has no prior observation; the velocity consumer treats None as 'zero velocity this tick'. A value of 0.0 produces false velocity equal to current_return on any symphony that opens positive.",
+  "layer": "database.wipe_transient_state",
+  "key_under_test": "prev_return",
+  "expected_type": "null",
+  "expected_value": null,
+  "derivation": "database.py wipe_transient_state sets prev_return = None (sentinel). None serialises as JSON null. Assertion: sym['prev_return'] is None.",
+  "why_not_zero": "0.0 as sentinel causes velocity = current_return - 0.0 = current_return on cycle-1. Any symphony opening >= PARABOLIC_VELOCITY_THRESHOLD auto-PARA-ARMs by accident (root cause of 2026-05-15 11-symphony cascade)."
+}

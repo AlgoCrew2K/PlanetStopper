@@ -1,0 +1,19 @@
+{
+  "name": "autotuner_replay_cycle1_velocity_zero",
+  "description": "autotuner.py replay loop: at the start of each day's tick sequence, prev_return is initialised to None (sentinel), NOT 0.0. On tick_idx=0 (cycle-1 equivalent), the replay must compute velocity=0 regardless of the first tick's return value. Confirms autotuner.py:94 is fixed to match production sentinel, so PARABOLIC_VELOCITY_THRESHOLD tuning is calibrated against the correct signal.",
+  "layer": "autotuner_replay_prev_return_init",
+  "scenario": "replay_cycle1_sentinel",
+  "inputs": {
+    "initial_prev_return": null,
+    "tick_idx": 0,
+    "tick_return": 3.5,
+    "para_threshold": 2.0
+  },
+  "expected": {
+    "prev_return_before_tick": null,
+    "effective_prev_return": 3.5,
+    "velocity": 0.0,
+    "should_arm": false
+  },
+  "derivation": "prev_return starts as None. Tick 0: None sentinel => effective_prev = tick_return = 3.5. velocity = 3.5 - 3.5 = 0.0. 0.0 < 2.0 => should_arm = False. prev_return updated to 3.5 for tick 1."
+}
