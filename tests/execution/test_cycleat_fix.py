@@ -644,25 +644,32 @@ class TestCumulativeReturnPercentScaling:
             if result["if_held"] is None:
                 continue
             v = result["if_held"]
-            # After fix: simple_return values like 0.65976 become 65.976.
-            # Trigger RED now: assert the value is > 1.0 (decimal 0.65976 < 1.0).
-            # A correctly scaled 65.976% is > 1.0.
-            # The only exception is a symphony with CR between 0 and 1% -- very rare,
-            # but we can't rule it out without knowing all 11 fixture values.
-            # Use > 1.5 as the threshold: no real cumulative return is between 0 and 1.5%.
-            # This asserts the category, not the exact value.
-            if abs(v) > 0.01:  # skip near-zero (could be real 0% CR)
-                assert abs(v) > 1.5, (
-                    f"CR if_held={v!r} looks like a raw Composer decimal (< 1.5). "
-                    f"Expected a percent value like 65.98, not 0.65976. "
-                    f"Symphony id={sym.get('id')!r}, simple_return={sym.get('simple_return')!r}. "
-                    f"Fix: add * 100 in get_symphony_cumulative_return."
-                )
+            raw = sym.get("simple_return")
+            if raw is None:
+                continue
+            raw_f = float(raw)
+            if raw_f == 0.0 and float(sym.get("net_deposits", 1.0)) == 0.0:
+                # TWR fallback — compare against time_weighted_return * 100
+                twr = sym.get("time_weighted_return")
+                if twr is None:
+                    continue
+                expected = float(twr) * 100.0
+            else:
+                expected = raw_f * 100.0
+
+            # The core invariant: result must equal raw * 100 (percent-scaled).
+            # Use rel tolerance of 1e-6 — same as the targeted per-symphony tests.
+            assert v == pytest.approx(expected, rel=1e-6), (
+                f"CR if_held={v!r} must equal simple_return*100={expected!r}. "
+                f"Symphony id={sym.get('id')!r}, simple_return={raw!r}. "
+                f"If result equals simple_return (not *100), the * 100 scaling is missing."
+            )
+            if abs(raw_f) > 0.0:
                 has_nonzero = True
 
         assert has_nonzero, (
-            "All 11 fixture symphonies returned None or near-zero CR — "
-            "fixture may be invalid or all symphonies are the TWR fallback case."
+            "All 11 fixture symphonies returned None or zero-CR — "
+            "fixture may be invalid."
         )
 
     def test_portfolio_cr_is_percent_not_decimal(self, fixture_symphonies):
