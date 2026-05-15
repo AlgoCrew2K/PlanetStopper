@@ -116,6 +116,10 @@
                         <span id="countdown-text" class="text-[10px] text-slate-400 font-mono tracking-widest"
                             title="Runs every 1-minute during market hours for multi-tick confirmations.">NEXT RUN:
                             --:--</span>
+                        <span id="cycle-staleness-badge" hidden
+                            class="text-[10px] font-bold font-mono tracking-widest px-2 py-0.5 rounded bg-rose-900/60 text-rose-400 border border-rose-500/40 mt-1">
+                            STALE
+                        </span>
                     </div>
                     <button onclick="triggerBot()" id="trigger-btn"
                         class="bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white px-5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-[0_0_15px_rgba(37,99,235,0.3)] active:scale-95 border border-blue-400/20">
@@ -840,6 +844,26 @@
                 }
             }
             document.getElementById('last-updated').textContent = `Last Updated: ${new Date().toLocaleTimeString()}`;
+
+            // Staleness badge — floor is 15 s to match engine minute cadence; threshold is 3 min (180 s)
+            const STALENESS_THRESHOLD_SECONDS = 180;
+            const badge = document.getElementById('cycle-staleness-badge');
+            const cycleAt = data.last_successful_cycle_at;
+            if (badge) {
+                const now = new Date();
+                const isMarketHours = now.getUTCHours() >= 13 && now.getUTCHours() < 21;
+                if (cycleAt && isMarketHours) {
+                    const ageSec = (now - new Date(cycleAt)) / 1000;
+                    if (ageSec > STALENESS_THRESHOLD_SECONDS) {
+                        badge.textContent = `STALE — last cycle ${new Date(cycleAt).toLocaleTimeString()}`;
+                        badge.removeAttribute('hidden');
+                    } else {
+                        badge.setAttribute('hidden', '');
+                    }
+                } else {
+                    badge.setAttribute('hidden', '');
+                }
+            }
 
             if (data.portfolio_strip) {
                 const ps = data.portfolio_strip;

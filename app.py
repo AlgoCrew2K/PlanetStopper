@@ -321,6 +321,7 @@ def get_state():
             "html": rendered_html,
             "portfolio_strip": portfolio_strip,
             "data_as_of": data_as_of,
+            "last_successful_cycle_at": state_data.get("last_successful_cycle_at"),
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
