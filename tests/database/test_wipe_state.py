@@ -143,10 +143,12 @@ def test_wipe_transient_state_resets_all_transient_keys():
             f"'{key}' sentinel must be negative (HWM reset semantics); got {sym[key]}"
         )
 
-    # prev_return must be zero
-    assert sym["prev_return"] == pytest.approx(0.0, abs=1e-9), (
-        # tolerance: float round-trip; conceptually this must be exactly 0.0
-        f"wipe_transient_state must reset 'prev_return' to 0.0; got {sym['prev_return']!r}"
+    # prev_return must be None (E1 sentinel: no prior observation on a fresh day)
+    # None signals to the velocity consumer that cycle-1 has no baseline, so velocity=0.
+    # A value of 0.0 would produce false velocity = current_return on any positive-gap open.
+    # See: tests/fixtures/database/e1_sentinel/01_new_day_reset_prev_return_is_none.json
+    assert sym["prev_return"] is None, (
+        f"wipe_transient_state must reset 'prev_return' to None (E1 sentinel); got {sym['prev_return']!r}"
     )
 
 

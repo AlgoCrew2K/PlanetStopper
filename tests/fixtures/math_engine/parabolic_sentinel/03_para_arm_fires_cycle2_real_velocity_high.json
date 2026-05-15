@@ -1,0 +1,18 @@
+{
+  "name": "para_arm_fires_cycle2_real_velocity_high",
+  "description": "Cycle-2: symphony was at 2.0% after cycle-1 (prev_return = 2.0, a real intraday observation). Now at 4.0%. velocity = 4.0 - 2.0 = 2.0, which meets PARABOLIC_VELOCITY_THRESHOLD=2.0. PARA-ARM must fire. Proves sentinel fix does NOT suppress legitimate intraday velocity after cycle-1.",
+  "layer": "compute_para_arm_decision",
+  "function": "compute_para_arm_decision",
+  "scenario": "cycle_2_real_velocity",
+  "inputs": {
+    "current_return": 4.0,
+    "prev_return": 2.0,
+    "para_threshold": 2.0,
+    "currently_armed": false
+  },
+  "expected": {
+    "velocity": 2.0,
+    "should_arm": true
+  },
+  "derivation": "velocity = 4.0 - 2.0 = 2.0. should_arm = (2.0 >= 2.0) AND (not False) = True."
+}

@@ -1,0 +1,17 @@
+{
+  "name": "opening_gap_2pct_no_para_arm_cycle1",
+  "description": "A symphony opens +2.0% on a new day (prev_return=None sentinel). Even though 2.0% equals the default PARABOLIC_VELOCITY_THRESHOLD, cycle-1 must NOT para-arm because true intraday velocity is 0 (we have no prior intraday observation to compute a meaningful delta). This fixture pins the E1 fix: opening gap must never count as PARA velocity.",
+  "layer": "alpha_bot_execution_velocity_consumer",
+  "scenario": "new_day_cycle_1_opening_gap",
+  "inputs": {
+    "prev_return_in_bot_state": null,
+    "current_return": 2.0,
+    "para_threshold": 2.0,
+    "currently_armed": false
+  },
+  "expected": {
+    "para_armed": false,
+    "velocity": 0.0
+  },
+  "derivation": "sentinel None => effective_prev = 2.0. velocity = 0.0. 0.0 < 2.0 (threshold) => should_arm = False. para_armed stays False."
+}

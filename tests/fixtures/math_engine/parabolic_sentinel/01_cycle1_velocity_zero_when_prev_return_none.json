@@ -1,0 +1,17 @@
+{
+  "name": "cycle1_velocity_zero_when_prev_return_none",
+  "description": "When prev_return is None (E1 sentinel — new-day, no prior observation), the velocity computation must yield 0.0. The caller (alpha_bot_execution.py) substitutes current_return for prev_return when sentinel is detected, so velocity = current_return - current_return = 0.0. This fixture drives that caller-level contract, not the pure math_engine function.",
+  "layer": "alpha_bot_execution_velocity_consumer",
+  "scenario": "new_day_cycle_1",
+  "inputs": {
+    "prev_return_in_bot_state": null,
+    "current_return": 2.0
+  },
+  "expected": {
+    "effective_prev_return_passed_to_compute_para_arm_decision": 2.0,
+    "velocity": 0.0,
+    "should_arm": false
+  },
+  "derivation": "prev_return is None => use current_return as baseline => effective_prev_return = 2.0. velocity = 2.0 - 2.0 = 0.0. threshold is typically 2.0; 0.0 < 2.0 => should_arm = False.",
+  "threshold_used": 2.0
+}
