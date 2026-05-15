@@ -1,0 +1,38 @@
+{
+  "_provenance": "Synthetic fixture for O1 purge/embargo RED tests. Lookback values derived directly from named constants in math_engine.py (MC_VOL_WINDOW_DAYS=20, calculate_20d_vol lookback=20, calculate_14d_atr_pct lookback=14) and autotuner.py (_GUARD_ALPHA_DECAY_RATE=0.015 → half-life ln2/0.015 ≈ 46.2 trading days). The decay weighting is applied per-day in the objective, so the effective memory of the composite objective extends ~46 days back — this is treated as a lookback for purge purposes per PA-26 (plan-validation-verdict.md O1 section). Lopez de Prado 2018 Ch. 7: purge by MAX of all feature lookbacks.",
+  "features": [
+    {
+      "name": "20d_historical_vol",
+      "function": "math_engine.calculate_20d_vol",
+      "source_file": "math_engine.py",
+      "lookback_trading_days": 20,
+      "provenance": "Function iterates hist_data_up_to_yesterday to compute 20-day std dev of daily returns. Rolling window = 20 trading days. synthetic_history.py:206 calls this per tick."
+    },
+    {
+      "name": "14d_atr_pct",
+      "function": "math_engine.calculate_14d_atr_pct",
+      "source_file": "math_engine.py",
+      "lookback_trading_days": 14,
+      "provenance": "Function computes 14-day Average True Range as pct. Rolling window = 14 trading days. synthetic_history.py:207 calls this per tick."
+    },
+    {
+      "name": "mc_knn_spy_vol",
+      "function": "math_engine.run_monte_carlo",
+      "source_file": "math_engine.py",
+      "lookback_trading_days": 20,
+      "provenance": "kNN uses rolling 20-day SPY vol window (MC_VOL_WINDOW_DAYS=20, math_engine.py:44). Pool spans full history but distance metric is computed on a 20-day rolling window, so early test days' MC distances are biased by late training-day vol observations."
+    },
+    {
+      "name": "decay_weighted_objective",
+      "function": "autotuner._GUARD_ALPHA_DECAY_RATE",
+      "source_file": "autotuner.py",
+      "lookback_trading_days": 46,
+      "provenance": "Objective applies exp(-0.015 * days_ago) weight per day. Half-life = ln(2)/0.015 ≈ 46.2 trading days. Days within 46 days of the split boundary receive >50% weight in the objective; the test fold's early days are correlated with training days' outcomes through this weighting. Per verdict PA-26 (plan-validation-verdict.md O1): inventory must include this as a lookback. Purge must use MAX, not partial."
+    }
+  ],
+  "max_lookback_trading_days": 46,
+  "purge_days_required": 46,
+  "embargo_days_default": 1,
+  "embargo_constant_name": "EMBARGO_DAYS",
+  "citation": "Lopez de Prado 2018, Advances in Financial Machine Learning, Ch. 7 — Purged k-fold CV"
+}
