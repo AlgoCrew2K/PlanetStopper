@@ -269,3 +269,27 @@ def test_autotuner_replay_mirrors_sentinel_cycle1_velocity_zero():
         f"autotuner replay cycle-1 should_arm must be {exp['should_arm']}; got {should_arm!r}. "
         f"Fixture: {fx['name']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 6: passing None directly to compute_para_arm_decision raises TypeError
+# (documents WHY the sentinel guard must live in the caller, not math_engine)
+# ---------------------------------------------------------------------------
+
+def test_compute_para_arm_decision_raises_on_none_prev_return():
+    """
+    math_engine.compute_para_arm_decision accepts only float inputs.
+    Passing prev_return=None raises TypeError at float(None) on line 83.
+
+    This test pins the crash vector: if the caller (alpha_bot_execution.py or
+    autotuner.py) passes None through without the sentinel guard, the engine
+    dies on the first tick after a new-day reset.  The None guard MUST be in
+    the caller, not in math_engine (which must stay a pure-float layer).
+    """
+    with pytest.raises((TypeError, ValueError)):
+        math_engine.compute_para_arm_decision(
+            current_return=2.0,
+            prev_return=None,  # type: ignore[arg-type]
+            para_threshold=2.0,
+            currently_armed=False,
+        )
