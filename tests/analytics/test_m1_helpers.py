@@ -822,7 +822,7 @@ class TestMissingFieldContract:
 
     def test_cumulative_return_raises_on_missing_simple_return(self):
         """
-        get_symphony_cumulative_return raises KeyError when simple_return is absent.
+        get_symphony_cumulative_return returns None sentinel when simple_return is absent.
         """
         from analytics import get_symphony_cumulative_return
 
@@ -835,8 +835,9 @@ class TestMissingFieldContract:
             "max_drawdown": 0.05,
             "value": 1000.0,
         }
-        with pytest.raises(KeyError):
-            get_symphony_cumulative_return(sym, bot_state_entry=None)
+        result = get_symphony_cumulative_return(sym, bot_state_entry=None)
+        assert result["if_held"] is None
+        assert result["dry_run"] is None
 
     def test_cumulative_return_raises_on_missing_net_deposits(self):
         """
@@ -878,7 +879,7 @@ class TestMissingFieldContract:
 
     def test_max_drawdown_raises_on_missing_max_drawdown(self):
         """
-        get_symphony_max_drawdown raises KeyError when max_drawdown is absent.
+        get_symphony_max_drawdown returns None sentinel when max_drawdown is absent.
         """
         from analytics import get_symphony_max_drawdown
 
@@ -891,8 +892,9 @@ class TestMissingFieldContract:
             # max_drawdown intentionally omitted
             "value": 1000.0,
         }
-        with pytest.raises(KeyError):
-            get_symphony_max_drawdown(sym, bot_state_entry=None)
+        result = get_symphony_max_drawdown(sym, bot_state_entry=None)
+        assert result["if_held"] is None
+        assert result["dry_run"] is None
 
     def test_portfolio_skips_symphony_missing_value_field(self):
         """

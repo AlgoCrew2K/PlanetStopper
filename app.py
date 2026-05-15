@@ -149,7 +149,7 @@ def get_state():
 
         # Build symphonies list for M1 analytics helpers from bot_state.
         # Fields derived: last_percent_change from current_return/100, value from current_value.
-        # CR/MDD fallback to 0 when not stored in bot_state — helpers still need the fields.
+        # Composer CR/MDD fields use None default so missing data is distinguishable from 0.0.
         symphonies_list = []
         for k in symphony_keys:
             s = state_data[k]
@@ -159,10 +159,10 @@ def get_state():
                 "id": k,
                 "value": val,
                 "last_percent_change": cr / 100.0,
-                "simple_return": s.get("simple_return", 0.0),
-                "net_deposits": s.get("net_deposits", 0.0),
-                "time_weighted_return": s.get("time_weighted_return", 0.0),
-                "max_drawdown": s.get("max_drawdown", 0.0),
+                "simple_return": s.get("simple_return"),
+                "net_deposits": s.get("net_deposits"),
+                "time_weighted_return": s.get("time_weighted_return"),
+                "max_drawdown": s.get("max_drawdown"),
             })
 
         # Attach per-symphony TC/CR/MDD to each sym dict so the template can render them.
@@ -172,15 +172,15 @@ def get_state():
             try:
                 s["_tc"] = analytics.get_symphony_today_change(sym_dict, s)
             except (KeyError, TypeError, ValueError):
-                s["_tc"] = {"if_held": 0.0, "dry_run": 0.0}
+                s["_tc"] = {"if_held": None, "dry_run": None}
             try:
                 s["_cr"] = analytics.get_symphony_cumulative_return(sym_dict, s)
             except (KeyError, TypeError, ValueError):
-                s["_cr"] = {"if_held": 0.0, "dry_run": 0.0}
+                s["_cr"] = {"if_held": None, "dry_run": None}
             try:
                 s["_mdd"] = analytics.get_symphony_max_drawdown(sym_dict, s)
             except (KeyError, TypeError, ValueError):
-                s["_mdd"] = {"if_held": 0.0, "dry_run": 0.0}
+                s["_mdd"] = {"if_held": None, "dry_run": None}
 
         portfolio_strip = {
             "today_change": analytics.get_portfolio_today_change(symphonies_list, state_data),
