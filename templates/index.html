@@ -847,6 +847,7 @@
                     return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
                 }
                 function pctColor(v) {
+                    if (v == null) return 'text-slate-400';
                     return v >= 0 ? 'text-emerald-400' : 'text-rose-400';
                 }
                 const tc = ps.today_change || {};

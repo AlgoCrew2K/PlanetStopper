@@ -423,7 +423,12 @@ def get_symphony_cumulative_return(sym_dict: dict, bot_state_entry: "dict | None
              in which case falls back to time_weighted_return (anomalous withdrawn/re-funded
              symphony where simple_return would be misleadingly zero).
     dry_run: bot_state does not store CR; always equals if_held.
+
+    Returns {"if_held": None, "dry_run": None} when simple_return is None (missing data),
+    allowing the template to render '---' instead of '0.00%'.
     """
+    if sym_dict.get("simple_return") is None:
+        return {"if_held": None, "dry_run": None}
     simple_return = float(sym_dict["simple_return"])
     net_deposits = float(sym_dict["net_deposits"])
     if simple_return == 0.0 and net_deposits == 0.0:
@@ -439,7 +444,11 @@ def get_symphony_max_drawdown(sym_dict: dict, bot_state_entry: "dict | None") ->
 
     if_held: max_drawdown from Composer (positive float, magnitude convention).
     dry_run: bot_state does not store MDD; always equals if_held.
+
+    Returns {"if_held": None, "dry_run": None} when max_drawdown is None (missing data).
     """
+    if sym_dict.get("max_drawdown") is None:
+        return {"if_held": None, "dry_run": None}
     if_held = float(sym_dict["max_drawdown"])
     return {"if_held": if_held, "dry_run": if_held}
 
@@ -448,13 +457,19 @@ def _value_weighted_portfolio(
     symphonies: "list[dict]",
     bot_state: dict,
     per_sym_fn,
+    *,
+    none_on_empty: bool = False,
 ) -> dict:
     """
     Value-weighted aggregate of a per-symphony helper across all symphonies.
 
-    Symphonies missing "value" or with value <= 0 are skipped.
-    Returns {"if_held": 0.0, "dry_run": 0.0} when symphonies is empty or all
-    weights are non-positive.
+    Symphonies missing "value", with value <= 0, or whose per_sym_fn returns
+    if_held=None (missing-data sentinel) are skipped.
+    When none_on_empty=True: returns {"if_held": None, "dry_run": None} when
+    symphonies is empty, all weights are non-positive, or all symphonies have
+    missing data — used by CR and MDD where 0.0 is ambiguous with real zero.
+    When none_on_empty=False (default): returns {"if_held": 0.0, "dry_run": 0.0}
+    — used by TC where 0.0 is semantically correct for no-data.
     """
     total_weight = 0.0
     if_held_wsum = 0.0
@@ -473,11 +488,15 @@ def _value_weighted_portfolio(
 
         entry = bot_state.get(sym.get("id"))
         per = per_sym_fn(sym, entry)
+        if per["if_held"] is None:
+            continue
         if_held_wsum += per["if_held"] * w
         dry_run_wsum += per["dry_run"] * w
         total_weight += w
 
     if total_weight == 0.0:
+        if none_on_empty:
+            return {"if_held": None, "dry_run": None}
         return {"if_held": 0.0, "dry_run": 0.0}
 
     return {
@@ -493,12 +512,16 @@ def get_portfolio_today_change(symphonies: "list[dict]", bot_state: dict) -> dic
 
 def get_portfolio_cumulative_return(symphonies: "list[dict]", bot_state: dict) -> dict:
     """Value-weighted portfolio Cumulative Return across all symphonies."""
-    return _value_weighted_portfolio(symphonies, bot_state, get_symphony_cumulative_return)
+    return _value_weighted_portfolio(
+        symphonies, bot_state, get_symphony_cumulative_return, none_on_empty=True
+    )
 
 
 def get_portfolio_max_drawdown(symphonies: "list[dict]", bot_state: dict) -> dict:
     """Value-weighted portfolio Max Drawdown across all symphonies."""
-    return _value_weighted_portfolio(symphonies, bot_state, get_symphony_max_drawdown)
+    return _value_weighted_portfolio(
+        symphonies, bot_state, get_symphony_max_drawdown, none_on_empty=True
+    )
 
 
 # ---------------------------------------------------------------------------

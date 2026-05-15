@@ -95,6 +95,14 @@ def fetch_symphony_stats(account_id):
         print(f"Exception fetching account {account_id}: {e}")
     return []
 
+def _persist_composer_fields_to_bot_state(bot_state: dict, symphony_id: str, sym: dict) -> None:
+    """Write Composer inception metrics into the per-symphony bot_state entry (additive)."""
+    bot_state[symphony_id]["simple_return"] = sym.get("simple_return")
+    bot_state[symphony_id]["net_deposits"] = sym.get("net_deposits")
+    bot_state[symphony_id]["time_weighted_return"] = sym.get("time_weighted_return")
+    bot_state[symphony_id]["max_drawdown"] = sym.get("max_drawdown")
+
+
 def execute_sell_to_cash(actual_symphony_id, account_id):
     url = f"{COMPOSER_BASE_URL}/deploy/accounts/{account_id}/symphonies/{actual_symphony_id}/go-to-cash"
     backoff_intervals = [1, 2, 4, 10]
@@ -678,6 +686,7 @@ def main():
                 bot_state[symphony_id]["active_stop_distance"] = active_trailing_stop
                 bot_state[symphony_id]["symphony_vol"] = symphony_vol
                 bot_state[symphony_id]["current_value"] = sym.get("current_value", sym.get("value", 0.0))
+                _persist_composer_fields_to_bot_state(bot_state, symphony_id, sym)
                 if not bot_state[symphony_id].get("triggered"):
                     bot_state[symphony_id]["current_holdings"] = [{"ticker": h.get("ticker"), "allocation": h.get("allocation", 0.0)} for h in holdings]
 
