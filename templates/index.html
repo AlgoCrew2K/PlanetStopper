@@ -818,6 +818,19 @@
         }
 
         function renderState(data) {
+            // R1 (AC-DM.4.4): update banner even on 'waiting' status so fresh-deploy
+            // notice is shown. The early return below skips the rest of the live render,
+            // but the banner must still reflect market_state + notice when present.
+            if (data.status === 'waiting' && (data.market_state || data.notice)) {
+                const banner = document.getElementById('market-state-banner');
+                if (banner) {
+                    banner.removeAttribute('hidden');
+                    banner.classList.remove('hidden');
+                    banner.className = 'mb-4 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-center bg-slate-700/60 text-slate-400 border border-slate-600/40';
+                    banner.setAttribute('data-market-state', data.market_state || 'closed_frozen');
+                    banner.textContent = data.notice || 'Market Closed';
+                }
+            }
             if (data.status === 'error' || data.status === 'waiting') return;
 
             // DM: Update market-state banner (AC-DM.4.1)

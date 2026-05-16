@@ -224,6 +224,11 @@ def get_state():
         if market_state in ("closed_frozen", "pre_market"):
             snapshot = (state_data or {}).get("last_market_close_snapshot")
             if snapshot:
+                # R2: remap shadow_divergence "portfolio" -> "portfolio_today" to match
+                # the live path's key name (from database.get_shadow_divergence()).
+                sd = dict(snapshot.get("shadow_divergence") or {})
+                if "portfolio" in sd and "portfolio_today" not in sd:
+                    sd["portfolio_today"] = sd.pop("portfolio")
                 return jsonify({
                     "status": "active",
                     "market_state": market_state,
@@ -231,7 +236,7 @@ def get_state():
                     "data_as_of": snapshot.get("data_as_of"),
                     "state": snapshot.get("data_as_of"),
                     "portfolio_strip": snapshot.get("portfolio_strip"),
-                    "shadow_divergence": snapshot.get("shadow_divergence"),
+                    "shadow_divergence": sd,
                     "accounts_map": snapshot.get("accounts_map"),
                 })
 
