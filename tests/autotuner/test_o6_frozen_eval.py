@@ -544,11 +544,16 @@ class TestFrozenEvalConsumedOncePostSelection:
 
     def test_frozen_eval_consumed_once_post_selection(self):
         """
-        Spy on run_simulation calls after the Optuna sweep completes.
-        Assert that exactly one call to run_simulation includes frozen-eval dates,
-        and that call happens AFTER the trial selection.
+        Spy on _collect_sim_returns calls after the Optuna sweep completes.
+        Assert that exactly one call to _collect_sim_returns includes frozen-eval dates,
+        and that call happens post-selection (objective only sees validation dates).
 
-        RED until O6 adds the post-selection frozen-eval evaluation step.
+        The correct O6 implementation uses _collect_sim_returns(history_frozen) once for
+        the Sortino metric. run_simulation must NOT be called with frozen-eval dates —
+        that would be a redundant second read violating the 'consumed once' contract.
+
+        RED until O6 adds post-selection frozen-eval scoring via _collect_sim_returns,
+        and removes any redundant run_simulation(history_frozen) call.
         """
         n_days = 125
         history = _build_history(n_days)
@@ -559,40 +564,59 @@ class TestFrozenEvalConsumedOncePostSelection:
         split_80 = int(n_days * 0.80)
         frozen_dates: frozenset[str] = frozenset(all_dates_sorted[split_80:])
 
-        # Capture all run_simulation calls and the dates each saw.
-        run_sim_calls: list[frozenset[str]] = []
+        # Capture all _collect_sim_returns calls and their date-sets.
+        collect_calls: list[frozenset[str]] = []
+        # Also watch run_simulation for any frozen reads — must be 0 after the O6 fix.
+        run_sim_frozen_calls: list[frozenset[str]] = []
 
         import autotuner as at
+        original_collect = at._collect_sim_returns
         original_run_sim = at.run_simulation
 
-        def spy_run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+        def spy_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
             for sym_id, dates_dict in history_data.items():
-                run_sim_calls.append(frozenset(dates_dict.keys()))
+                collect_calls.append(frozenset(dates_dict.keys()))
+            return original_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict)
+
+        def spy_run_sim(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+            for sym_id, dates_dict in history_data.items():
+                if frozenset(dates_dict.keys()) & frozen_dates:
+                    run_sim_frozen_calls.append(frozenset(dates_dict.keys()))
             return original_run_sim(p, history_data, acc_sym_ids, current_date_str, deviation_dict)
 
         calls: list[dict] = []
         buf = io.StringIO()
         with _autotuner_patches(params, history, save_autotune_run_calls=calls):
-            with patch("autotuner.run_simulation", side_effect=spy_run_simulation):
+            with (
+                patch("autotuner._collect_sim_returns", side_effect=spy_collect),
+                patch("autotuner.run_simulation", side_effect=spy_run_sim),
+            ):
                 with contextlib.redirect_stdout(buf):
                     at.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
 
-        # Count calls where frozen-eval dates appeared.
+        # Count _collect_sim_returns calls that included frozen-eval dates.
         frozen_eval_invocations = [
-            s for s in run_sim_calls if s & frozen_dates
+            s for s in collect_calls if s & frozen_dates
         ]
 
         assert len(frozen_eval_invocations) >= 1, (
-            "The frozen-eval fold must be evaluated at least once (post best-trial selection). "
-            "No run_simulation call included frozen-eval dates. "
+            "The frozen-eval fold must be passed to _collect_sim_returns at least once "
+            "(post best-trial selection). No _collect_sim_returns call included frozen-eval dates. "
             "RED until O6 adds the post-selection frozen-eval scoring step."
         )
         assert len(frozen_eval_invocations) == 1, (
-            f"The frozen-eval fold must be evaluated EXACTLY ONCE (post-selection). "
+            f"_collect_sim_returns must receive frozen-eval dates EXACTLY ONCE (post-selection). "
             f"Found {len(frozen_eval_invocations)} invocation(s) with frozen-eval dates. "
-            f"Multiple evaluations would condition the frozen metric on selection, "
+            f"Multiple evaluations condition the frozen metric on selection, "
             f"which defeats O6's reporting-bias prevention purpose. "
             f"RED until the implementation evaluates frozen-eval exactly once."
+        )
+        assert len(run_sim_frozen_calls) == 0, (
+            f"run_simulation must NOT receive frozen-eval dates. "
+            f"Found {len(run_sim_frozen_calls)} run_simulation call(s) with frozen-eval dates. "
+            f"The frozen-eval Sortino is computed via _collect_sim_returns only; "
+            f"a redundant run_simulation(history_frozen) violates the 'consumed once' contract. "
+            f"RED until the redundant call is removed."
         )
 
     def test_frozen_eval_total_reads_across_all_paths_is_one(self):
@@ -1079,6 +1103,43 @@ class TestAutotuneRunsRecordsBothMetrics:
         if frozen_sharpe is not None:
             assert isinstance(frozen_sharpe, (int, float)), (
                 f"frozen_eval_sharpe must be numeric or None; got {type(frozen_sharpe).__name__}"
+            )
+
+    def test_migration_007_registered_in_migration_files(self):
+        """
+        '007_autotune_runs_frozen_eval.sql' must appear in database._MIGRATION_FILES.
+
+        run_migrations() only applies migrations listed in _MIGRATION_FILES. If the
+        entry is absent, existing DBs never receive the two new columns — migration 007
+        is silently skipped on every upgrade. This is the registration gate.
+
+        sqlite-specialist gate 5 failure: _MIGRATION_FILES ends at 006 on current HEAD.
+
+        RED until the implementer appends '007_autotune_runs_frozen_eval.sql' to
+        _MIGRATION_FILES in database.py.
+        """
+        fix = _load_fixture("migration_007_schema.json")
+        migration_file = fix["migration_file"]
+
+        import database as db
+        registered = getattr(db, "_MIGRATION_FILES", [])
+
+        assert migration_file in registered, (
+            f"'{migration_file}' is not in database._MIGRATION_FILES. "
+            f"run_migrations() will never apply migration 007 on existing DBs. "
+            f"Current _MIGRATION_FILES: {registered}. "
+            f"Append '{migration_file}' after '006_autotune_runs_sharpe.sql'. "
+            "RED until registered."
+        )
+
+        # Ordering invariant: 007 must come after 006 (migrations are ordered).
+        if "006_autotune_runs_sharpe.sql" in registered:
+            idx_006 = registered.index("006_autotune_runs_sharpe.sql")
+            idx_007 = registered.index(migration_file)
+            assert idx_007 > idx_006, (
+                f"'{migration_file}' must appear AFTER '006_autotune_runs_sharpe.sql' "
+                f"in _MIGRATION_FILES (got indices 006={idx_006}, 007={idx_007}). "
+                "Migration files must be applied in ascending order."
             )
 
 
