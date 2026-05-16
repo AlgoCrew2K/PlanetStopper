@@ -1,0 +1,27 @@
+{
+  "_provenance": "schema-derived from autotuner.OPTUNA_SEARCH_SPACE_KEYS (frozenset at module scope) + project AC-V1 scope decision",
+  "_scope_decision": "V1 calibration sweep tunes ONLY PARABOLIC_VELOCITY_THRESHOLD and VWAP_CROSS_HWM_PCT. All other params remain in the general autotuner search space but are NOT the focus of run_calibration_sweep.",
+  "_do_not_tune": [
+    "VWAP_BREAK_CONFIRM_TICKS",
+    "VWAP_BLEED_TICKS"
+  ],
+  "_note_on_clamp_endpoints": "bleed-arm clamp endpoints (VWAP_BLEED_ARM_MIN, VWAP_BLEED_ARM_MAX) are hand-set named constants in math_engine.py; they are not Optuna trial parameters in either run_autotuner or run_calibration_sweep.",
+  "tuned_params": [
+    {
+      "name": "PARABOLIC_VELOCITY_THRESHOLD",
+      "source_constant_min": "_SS_PARA_VEL_MIN",
+      "source_constant_max": "_SS_PARA_VEL_MAX",
+      "must_be_in_search_space": true
+    },
+    {
+      "name": "VWAP_CROSS_HWM_PCT",
+      "source_constant_min": "_SS_VWAP_CROSS_HWM_MIN",
+      "source_constant_max": "_SS_VWAP_CROSS_HWM_MAX",
+      "must_be_in_search_space": true
+    }
+  ],
+  "hand_set_must_not_be_tuned_by_calibration_sweep": [
+    "VWAP_BREAK_CONFIRM_TICKS",
+    "VWAP_BLEED_TICKS"
+  ]
+}
