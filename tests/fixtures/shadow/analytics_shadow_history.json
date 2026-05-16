@@ -1,0 +1,121 @@
+{
+  "_provenance": "Synthetic multi-day shadow_history rows for testing analytics consumers. Derived from AC-M1F.3.1-3.3 and PA-M1F-16 chain-link formula. Return values are representative — never production output.",
+  "_scenario": "Two symphonies across two trading days. SYM_ALPHA triggers on day 1. SYM_BETA never triggers. Exercises distinct dry_run vs if_held, chain-link CR, EOD last-row-per-day selection.",
+  "rows": [
+    {
+      "_comment": "SYM_ALPHA day 1, cycle 1 — pre-trigger",
+      "symphony_id": "SYM_ALPHA",
+      "trading_day": "2026-05-14",
+      "ts_utc": "2026-05-14T14:00:00Z",
+      "ts_et": "2026-05-14T10:00:00",
+      "current_return": 2.10,
+      "shadow_return": 2.10,
+      "is_post_trigger": 0,
+      "trigger_id": null
+    },
+    {
+      "_comment": "SYM_ALPHA day 1, cycle 2 — pre-trigger, higher return",
+      "symphony_id": "SYM_ALPHA",
+      "trading_day": "2026-05-14",
+      "ts_utc": "2026-05-14T15:30:00Z",
+      "ts_et": "2026-05-14T11:30:00",
+      "current_return": 3.50,
+      "shadow_return": 3.50,
+      "is_post_trigger": 0,
+      "trigger_id": null
+    },
+    {
+      "_comment": "SYM_ALPHA day 1, cycle 3 — POST-TRIGGER (EOD value). is_post_trigger=1, shadow frozen.",
+      "symphony_id": "SYM_ALPHA",
+      "trading_day": "2026-05-14",
+      "ts_utc": "2026-05-14T19:55:00Z",
+      "ts_et": "2026-05-14T15:55:00",
+      "current_return": 1.80,
+      "shadow_return": 3.50,
+      "is_post_trigger": 1,
+      "trigger_id": 10
+    },
+    {
+      "_comment": "SYM_ALPHA day 2, cycle 1 — new day, trigger wiped",
+      "symphony_id": "SYM_ALPHA",
+      "trading_day": "2026-05-15",
+      "ts_utc": "2026-05-15T13:30:00Z",
+      "ts_et": "2026-05-15T09:30:00",
+      "current_return": 0.50,
+      "shadow_return": 0.50,
+      "is_post_trigger": 0,
+      "trigger_id": null
+    },
+    {
+      "_comment": "SYM_ALPHA day 2, EOD row (last by ts_utc DESC LIMIT 1)",
+      "symphony_id": "SYM_ALPHA",
+      "trading_day": "2026-05-15",
+      "ts_utc": "2026-05-15T19:59:00Z",
+      "ts_et": "2026-05-15T15:59:00",
+      "current_return": 1.20,
+      "shadow_return": 1.20,
+      "is_post_trigger": 0,
+      "trigger_id": null
+    },
+    {
+      "_comment": "SYM_BETA day 1 — never triggered, single cycle",
+      "symphony_id": "SYM_BETA",
+      "trading_day": "2026-05-14",
+      "ts_utc": "2026-05-14T19:55:00Z",
+      "ts_et": "2026-05-14T15:55:00",
+      "current_return": 0.80,
+      "shadow_return": 0.80,
+      "is_post_trigger": 0,
+      "trigger_id": null
+    },
+    {
+      "_comment": "SYM_BETA day 2",
+      "symphony_id": "SYM_BETA",
+      "trading_day": "2026-05-15",
+      "ts_utc": "2026-05-15T19:59:00Z",
+      "ts_et": "2026-05-15T15:59:00",
+      "current_return": 1.10,
+      "shadow_return": 1.10,
+      "is_post_trigger": 0,
+      "trigger_id": null
+    }
+  ],
+  "expected": {
+    "SYM_ALPHA": {
+      "today_dry_run_latest_shadow_return": 1.20,
+      "comment_today": "latest row on 2026-05-15 has shadow_return=1.20 (same as current_return, untriggered that day)",
+      "eod_day1_shadow_return": 3.50,
+      "eod_day1_current_return": 1.80,
+      "eod_day1_divergence": -1.70,
+      "comment_eod": "PA-M1F-5b: last row by ts_utc DESC LIMIT 1 on day1. divergence = current_return - shadow_return = 1.80 - 3.50 = -1.70",
+      "shadow_hwm_day1": 3.50,
+      "comment_hwm": "BC-3: max(current_return) over day1 rows = max(2.10, 3.50, 1.80) = 3.50",
+      "chain_link_cr_day1_r": 3.50,
+      "chain_link_cr_day2_r": 1.20,
+      "chain_link_cumulative": "(1 + 3.50/100) * (1 + 1.20/100) - 1 expressed as percent",
+      "comment_cr": "PA-M1F-16: chain-link on EOD shadow_return per day. Requires >= 2 distinct days."
+    },
+    "SYM_BETA": {
+      "shadow_hwm_day1": 0.80,
+      "comment_hwm": "BC-3: max(current_return) over day1 rows = 0.80"
+    }
+  },
+  "v1_queries": {
+    "query1_post_trigger_alpha_attribution": {
+      "description": "Per-day post-trigger alpha-attribution — AC-M1F.6.2 with WHERE is_post_trigger=1 (BC-5)",
+      "expected_rows_for_SYM_ALPHA_day1": 1,
+      "expected_avg_post_trigger_divergence_SYM_ALPHA_day1": -1.70,
+      "comment": "BC-5: WHERE is_post_trigger=1 required — without it signal diluted by zero-divergence pre-trigger rows"
+    },
+    "query2_intraday_trajectory": {
+      "description": "Per-cycle intraday trajectory for SYM_ALPHA on 2026-05-14",
+      "expected_row_count": 3,
+      "expected_column_names": ["ts_utc", "current_return", "shadow_return", "is_post_trigger", "trigger_id"]
+    },
+    "query3_hwm_reconstruction": {
+      "description": "HWM reconstruction via max(current_return) per trading_day",
+      "expected_SYM_ALPHA_day1_shadow_hwm_counterfactual": 3.50,
+      "comment": "BC-3 provable from schema: max(current_return) where not filtered by is_post_trigger"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "_provenance": "Schema-derived fixture for V1 bootstrap period three-state fold-sufficiency check. Derived from AC-M1F.6.4 and PA-M1F-11 (Bailey/de-Prado 2014 N>=30 threshold).",
+  "_scenario": "Three distinct sample sizes exercising each of the three states.",
+  "test_cases": [
+    {
+      "sample_size": 10,
+      "divergence_detected": false,
+      "expected_state": "indeterminate",
+      "comment": "N<30: insufficient data regardless of divergence signal"
+    },
+    {
+      "sample_size": 35,
+      "divergence_detected": false,
+      "expected_state": "provisional_no_overfit",
+      "comment": "N>=30 and no divergence detected"
+    },
+    {
+      "sample_size": 45,
+      "divergence_detected": true,
+      "expected_state": "overfit_confirmed",
+      "comment": "N>=30 and divergence detected"
+    }
+  ],
+  "threshold": {
+    "n_min": 30,
+    "citation": "Bailey/de-Prado 2014 interpretability threshold"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "_provenance": "Synthetic per-symphony input representing a cycle after the trigger fires. Derived from AC-M1F.2.1 (Model A freeze rule) and AC-M1F.1.2 (is_post_trigger flag). triggered_at_return is a representative value captured at trigger time — never production output.",
+  "_scenario": "Post-trigger: bot_state['triggered']=True. shadow_return must freeze at triggered_at_return; is_post_trigger=1.",
+  "input": {
+    "symphony_id": "SYM_ALPHA",
+    "account_id": "acct-001",
+    "cycle_id": "20260516_1023",
+    "ts_utc": "2026-05-16T14:23:00Z",
+    "ts_et": "2026-05-16T10:23:00",
+    "trading_day": "2026-05-16",
+    "current_return": 1.10,
+    "triggered": true,
+    "triggered_at_return": 3.20,
+    "trigger_id": 42
+  },
+  "expected_shadow_return": 3.20,
+  "expected_is_post_trigger": 1,
+  "expected_trigger_id": 42,
+  "expected_shape": {
+    "shadow_return": {"equals_triggered_at_return": true, "comment": "post-trigger: shadow_return frozen at triggered_at_return (Model A, AC-M1F.2.1)"},
+    "is_post_trigger": {"value": 1},
+    "current_return": {"type": "float", "comment": "continues tracking Composer live value"},
+    "trigger_id": {"advisory_soft_ref": true, "no_fk_constraint": true, "comment": "BC-2"}
+  }
+}
