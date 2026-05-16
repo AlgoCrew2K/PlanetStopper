@@ -40,6 +40,14 @@ _SS_PARA_VEL_MAX = 4.0
 _SS_MAX_PARA_SQUEEZE_MIN = 0.1
 _SS_MAX_PARA_SQUEEZE_MAX = 0.8
 
+# V1 calibration sweep — narrowed VWAP_CROSS_HWM_PCT bounds.
+# Lower: 0.3 (vs general 0.5) — 3-tick confirm gate (math_engine.py) prevents spurious
+# single-tick exits at this level; gives the sweep more room to find the true optimum.
+# Upper: 2.0 (~2σ typical daily return) — above this System A is effectively disabled
+# for normal sessions, making calibration unreliable.
+_SS_VWAP_CROSS_HWM_V1_MIN = 0.3
+_SS_VWAP_CROSS_HWM_V1_MAX = 2.0
+
 # Exponential time-decay rate applied to per-day guard-alpha in run_simulation
 # and _collect_sim_returns. Half-life ≈ 46 trading days (ln2 / 0.015).
 _GUARD_ALPHA_DECAY_RATE = 0.015
@@ -884,3 +892,197 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
 
     print("  -> Autotuner finished all symphonies.")
     return optimization_results
+
+
+def run_calibration_sweep(
+    history_data: dict,
+    current_params: dict,
+    current_date_str: str,
+    deviation_dict: dict,
+    random_state: int,
+) -> list[dict]:
+    """V1 calibration sweep over PARABOLIC_VELOCITY_THRESHOLD and VWAP_CROSS_HWM_PCT only.
+
+    Consumes O1 purge+embargo, O2 DSR re-ranking, O3 timestamped study names,
+    O5 Sortino objective, O6 frozen-eval fold — same methodology as run_autotuner
+    but search space is limited to the two V1 parameters. Does NOT persist anything
+    to the DB (AC-V1.3: read-only, operator-gated rollout).
+
+    Returns a list of report dicts, one per tuned param per symphony found in
+    history_data. The caller decides whether to act on proposals.
+    """
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    run_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    # --- Fold partitioning (same O1 logic as run_autotuner) ---
+    all_dates: set[str] = set()
+    for sym_data in history_data.values():
+        all_dates.update(sym_data.keys())
+    sorted_dates = sorted(all_dates)
+    total_days = len(sorted_dates)
+
+    if total_days < 2:
+        return []
+
+    val_start_idx = int(total_days * TRAIN_RATIO)
+    frozen_start_idx = int(total_days * (TRAIN_RATIO + VALIDATION_RATIO))
+
+    # Boundary 1 — train | validation: purge + embargo on train side.
+    effective_train_cutoff = max(0, val_start_idx - PURGE_DAYS - EMBARGO_DAYS)
+    train_dates = set(sorted_dates[:effective_train_cutoff])
+
+    # Boundary 2 — validation | frozen-eval: purge + embargo on validation side.
+    val_purge_end_idx = frozen_start_idx - PURGE_DAYS - EMBARGO_DAYS
+    validation_dates_purged = set(sorted_dates[val_start_idx:max(val_start_idx, val_purge_end_idx)])
+
+    frozen_dates = set(sorted_dates[frozen_start_idx:])
+
+    trading_day_start = sorted_dates[0] if sorted_dates else ""
+    trading_day_end = sorted_dates[frozen_start_idx - 1] if frozen_start_idx > 0 else ""
+
+    history_validation: dict = {}
+    history_frozen: dict = {}
+    for sym_id, sym_data in history_data.items():
+        history_validation[sym_id] = {d: t for d, t in sym_data.items() if d in validation_dates_purged}
+        history_frozen[sym_id] = {d: t for d, t in sym_data.items() if d in frozen_dates}
+
+    # Derive trigger counts on validation fold for current params (denominator for freq change).
+    def _count_triggers(p: dict, sym_ids: list, h: dict) -> int:
+        total = 0
+        for sid in sym_ids:
+            returns = _collect_sim_returns(p, h, [sid], current_date_str, deviation_dict)
+            total += len(returns)
+        return total
+
+    report_rows: list[dict] = []
+    symphony_ids = list(history_data.keys())
+
+    for sym_id in symphony_ids:
+        study_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        study_name = f"{study_timestamp}__{sym_id}"
+
+        base_p = current_params.copy()
+
+        def objective(trial, _sym_id=sym_id, _base=base_p):
+            p = _base.copy()
+            p["PARABOLIC_VELOCITY_THRESHOLD"] = trial.suggest_float(
+                "PARABOLIC_VELOCITY_THRESHOLD", _SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX
+            )
+            p["VWAP_CROSS_HWM_PCT"] = trial.suggest_float(
+                "VWAP_CROSS_HWM_PCT", _SS_VWAP_CROSS_HWM_V1_MIN, _SS_VWAP_CROSS_HWM_V1_MAX
+            )
+            daily_returns = _collect_sim_returns(
+                p, history_validation, [_sym_id], current_date_str, deviation_dict
+            )
+            return compute_sortino_ratio(daily_returns)
+
+        sampler = optuna.samplers.TPESampler(seed=random_state)
+        study = optuna.create_study(
+            study_name=study_name,
+            direction="maximize",
+            sampler=sampler,
+            load_if_exists=False,
+        )
+        study.optimize(objective, n_trials=100, n_jobs=1)
+
+        naive_sharpe_value: float | None = study.best_value
+        best_params = study.best_params
+        n_trials = len([t for t in study.trials if t.value is not None])
+
+        # --- O2: DSR re-ranking ---
+        deflated_sharpe_value: float | None = None
+        T_val = len(validation_dates_purged)
+        completed_trials = [t for t in study.trials if t.value is not None]
+
+        if len(completed_trials) >= 2:
+            trial_values = [t.value for t in completed_trials]
+            n_tv = len(trial_values)
+            mean_v = sum(trial_values) / n_tv
+            variance_v = sum((v - mean_v) ** 2 for v in trial_values) / n_tv
+            std_v = math.sqrt(variance_v) if variance_v > 0 else 0.0
+            if std_v > 0:
+                gamma3 = sum((v - mean_v) ** 3 for v in trial_values) / (n_tv * std_v ** 3)
+                gamma4 = sum((v - mean_v) ** 4 for v in trial_values) / (n_tv * std_v ** 4)
+            else:
+                gamma3, gamma4 = 0.0, 3.0
+
+            best_dsr = float("-inf")
+            best_trial_by_dsr = None
+            for t in completed_trials:
+                dsr = compute_deflated_sharpe_ratio(
+                    SR_obs=t.value,
+                    SR_0=0.0,
+                    gamma3=gamma3,
+                    gamma4=gamma4,
+                    T=T_val,
+                )
+                if math.isfinite(dsr) and dsr > best_dsr:
+                    best_dsr = dsr
+                    best_trial_by_dsr = t
+
+            if best_trial_by_dsr is not None and math.isfinite(best_dsr):
+                best_params = best_trial_by_dsr.params
+                naive_sharpe_value = best_trial_by_dsr.value
+                deflated_sharpe_value = best_dsr
+
+        if deflated_sharpe_value is None and naive_sharpe_value is not None:
+            dsr_fallback = compute_deflated_sharpe_ratio(
+                SR_obs=naive_sharpe_value,
+                SR_0=0.0,
+                gamma3=0.0,
+                gamma4=3.0,
+                T=T_val,
+            )
+            if math.isfinite(dsr_fallback):
+                deflated_sharpe_value = dsr_fallback
+
+        # Validation-fold Sortino of best trial params
+        best_p = current_params.copy()
+        for k, v in best_params.items():
+            best_p[k] = round(v, 4)
+
+        val_returns = _collect_sim_returns(
+            best_p, history_validation, [sym_id], current_date_str, deviation_dict
+        )
+        sortino_value = compute_sortino_ratio(val_returns) if val_returns else None
+
+        # --- O6: frozen eval — consumed once, post-selection ---
+        frozen_returns = _collect_sim_returns(
+            best_p, history_frozen, [sym_id], current_date_str, deviation_dict
+        )
+        frozen_eval_alpha = compute_sortino_ratio(frozen_returns) if frozen_returns else None
+
+        # Trigger frequency change: current params vs proposed params on validation fold
+        current_trigger_count = _count_triggers(current_params, [sym_id], history_validation)
+        proposed_trigger_count = _count_triggers(best_p, [sym_id], history_validation)
+        expected_trigger_freq_change = float(proposed_trigger_count - current_trigger_count)
+
+        # Emit one row per tuned param
+        for param_name in ("PARABOLIC_VELOCITY_THRESHOLD", "VWAP_CROSS_HWM_PCT"):
+            current_value = float(current_params.get(param_name, best_p.get(param_name, 0.0)))
+            proposed_value = float(best_p.get(param_name, current_value))
+            delta_pct = (
+                (proposed_value - current_value) / abs(current_value) * 100.0
+                if current_value != 0
+                else 0.0
+            )
+            report_rows.append({
+                "symphony_id": sym_id,
+                "param_name": param_name,
+                "current_value": current_value,
+                "proposed_value": proposed_value,
+                "delta_pct": delta_pct,
+                "expected_trigger_freq_change": expected_trigger_freq_change,
+                "frozen_eval_alpha": frozen_eval_alpha,
+                "naive_sharpe": naive_sharpe_value,
+                "deflated_sharpe": deflated_sharpe_value,
+                "sortino": sortino_value,
+                "n_trials": n_trials,
+                "study_name": study_name,
+                "trading_day_start": trading_day_start,
+                "trading_day_end": trading_day_end,
+                "cycle_id": run_timestamp,
+            })
+
+    return report_rows
