@@ -814,3 +814,142 @@ class TestDstBoundary:
         assert result == fx["expected"]["market_state"], (
             f"Fall-back DST: expected {fx['expected']['market_state']!r}, got {result!r}"
         )
+
+
+# ===========================================================================
+# REVISE GROUP: Gaps found during implementer GREEN review
+# ===========================================================================
+
+
+class TestReviseGaps:
+    """
+    Two gaps identified during Revise pass on GREEN implementation:
+
+    R1 — AC-DM.4.4: renderState() has an early return on status='waiting', so
+         the banner notice is never rendered on fresh deploy (no snapshot, market closed).
+         The waiting handler in the JS must also update the banner when notice is present.
+         We test this at the API level: the /api/state response when status='waiting' and
+         market_state='closed_frozen' must include the notice so that any JS handler can
+         render it. The backend already does this (notice is in the waiting response).
+         The gap is that the frontend ignores it. We pin the API contract here; the
+         implementer must ensure the JS waiting-handler also calls the banner update.
+
+    R2 — shadow_divergence key mismatch: the engine writes snapshot["shadow_divergence"]
+         with key "portfolio" (matching eod_divergence_by_sym structure), but the live
+         /api/state path uses "portfolio_today" (from database.get_shadow_divergence()).
+         When the frozen snapshot is served, consumers expecting "portfolio_today" won't
+         find it. The snapshot must use "portfolio_today" for consistency, OR the app.py
+         frozen path must remap the key before returning.
+    """
+
+    def test_api_state_waiting_response_includes_notice_and_market_state_for_fresh_deploy(
+        self, monkeypatch
+    ):
+        """
+        R1: /api/state with status='waiting' + closed_frozen must include both
+        market_state and notice fields so the JS banner handler can render them
+        even when renderState() skips due to status='waiting'.
+
+        This pins the API contract — the backend is already correct; this test
+        documents the required shape so the JS handler cannot silently ignore it.
+        """
+        import app as app_module
+
+        app_module.app.config["TESTING"] = True
+        with (
+            patch.object(app_module, "database") as mock_db,
+            patch.object(app_module, "dotenv_values", return_value={}),
+        ):
+            mock_db.load_state.return_value = {}  # empty state → status=waiting
+            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            monkeypatch.setattr(
+                app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
+            )
+
+            with app_module.app.test_client() as client:
+                resp = client.get("/api/state")
+
+            assert resp.status_code == 200
+            body = resp.get_json()
+            assert body.get("status") == "waiting", (
+                f"Expected status='waiting' on empty state, got {body.get('status')!r}"
+            )
+            assert "market_state" in body, (
+                "waiting response must include market_state so JS can render banner notice. "
+                f"Keys present: {list(body.keys())}"
+            )
+            assert body.get("market_state") == "closed_frozen", (
+                f"Expected market_state='closed_frozen' in waiting response, got {body.get('market_state')!r}"
+            )
+            assert "notice" in body, (
+                "waiting response on fresh deploy must include notice field for banner rendering. "
+                f"Keys present: {list(body.keys())}"
+            )
+            assert body.get("notice"), (
+                "notice field must be a non-empty string on fresh deploy waiting response"
+            )
+
+    def test_snapshot_shadow_divergence_uses_portfolio_today_key_for_consistency(self, monkeypatch):
+        """
+        R2: The frozen snapshot's shadow_divergence dict must use the key 'portfolio_today'
+        (matching the live path from database.get_shadow_divergence()) rather than 'portfolio'
+        (which is the engine's internal EOD key name).
+
+        When the dashboard consumes the frozen snapshot, downstream JS and consumers
+        expecting shadow_divergence.portfolio_today will silently get None instead of
+        the captured EOD value if the key is 'portfolio' instead.
+
+        The fix can be either:
+          (a) engine stores 'portfolio_today' in the snapshot, OR
+          (b) app.py remaps 'portfolio' -> 'portfolio_today' when serving the snapshot.
+        Either approach satisfies this test.
+        """
+        import app as app_module
+
+        app_module.app.config["TESTING"] = True
+        with (
+            patch.object(app_module, "analytics") as mock_analytics,
+            patch.object(app_module, "schedule"),
+        ):
+            mock_analytics.get_portfolio_today_change.return_value = None
+            mock_analytics.get_portfolio_cumulative_return.return_value = None
+            mock_analytics.get_portfolio_max_drawdown.return_value = None
+
+            snapshot = {
+                "trading_day": "2026-05-11",
+                "captured_at_et": "16:00:00 ET",
+                "data_as_of": "16:00 ET",
+                "portfolio_strip": {"today_change": None, "cumulative_return": None, "max_drawdown": None},
+                "shadow_divergence": {
+                    "by_symphony": {"sym-abc": 0.05},
+                    "portfolio": 0.03,        # engine key — should be 'portfolio_today'
+                },
+                "accounts_map": {},
+            }
+            bot_state = {"date": "2026-05-11", "last_market_close_snapshot": snapshot}
+
+            with (
+                patch.object(app_module, "database") as mock_db,
+                patch.object(app_module, "dotenv_values", return_value={}),
+                patch.object(app_module, "render_template", return_value=""),
+            ):
+                mock_db.load_state.return_value = bot_state
+                mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+                mock_db.get_triggers.return_value = []
+                mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
+                monkeypatch.setattr(
+                    app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
+                )
+                with app_module.app.test_client() as client:
+                    resp = client.get("/api/state")
+
+            assert resp.status_code == 200
+            body = resp.get_json()
+            sd = body.get("shadow_divergence", {})
+            assert "portfolio_today" in sd, (
+                "Frozen snapshot's shadow_divergence must expose 'portfolio_today' key to match "
+                "the live path's key name (from database.get_shadow_divergence()). "
+                f"Keys present in shadow_divergence: {list(sd.keys())}. "
+                "Fix: remap 'portfolio' -> 'portfolio_today' when serving the snapshot in app.py, "
+                "OR store 'portfolio_today' in the snapshot at EOD capture time."
+            )
