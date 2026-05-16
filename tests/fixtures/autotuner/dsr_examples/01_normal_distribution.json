@@ -1,0 +1,18 @@
+{
+  "provenance": "Hand-computed. Bailey & López de Prado 2014, 'The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality', Financial Analysts Journal, Eq. 9. Formula: DSR = (SR_obs - SR_0) * sqrt(T-1) / sqrt(1 - gamma3*SR_obs + (gamma4-1)/4 * SR_obs^2). SR_0 = 0 (null hypothesis: random-trading Sharpe). All values independently verified in Python (math.sqrt).",
+  "description": "Normal-distribution returns: gamma3=0 (no skew), gamma4=3 (normal kurtosis). SR_obs=1.0, T=252 daily observations, SR_0=0 (null). Represents a typical well-performing strategy with Gaussian return distribution.",
+  "inputs": {
+    "SR_obs": 1.0,
+    "SR_0": 0.0,
+    "gamma3": 0.0,
+    "gamma4": 3.0,
+    "T": 252,
+    "N": 500
+  },
+  "calculation": {
+    "numerator_factor": 15.842979517754859,
+    "denominator": 1.224744871391589,
+    "denominator_breakdown": "sqrt(1 - 0*1.0 + (3-1)/4 * 1.0^2) = sqrt(1 + 0.5) = sqrt(1.5)",
+    "expected_dsr": 12.935738607954837
+  }
+}

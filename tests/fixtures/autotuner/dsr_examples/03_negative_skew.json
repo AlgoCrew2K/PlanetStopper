@@ -1,0 +1,18 @@
+{
+  "provenance": "Hand-computed. Bailey & López de Prado 2014, 'The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality', Financial Analysts Journal, Eq. 9. Formula: DSR = (SR_obs - SR_0) * sqrt(T-1) / sqrt(1 - gamma3*SR_obs + (gamma4-1)/4 * SR_obs^2). SR_0 = 0 (null hypothesis). Independently verified in Python.",
+  "description": "Negatively-skewed returns: gamma3=-1.0 (left-skew), gamma4=4.0. SR_obs=1.0, T=252, SR_0=0. Negative skew (gamma3<0) INCREASES the denominator, deflating DSR — left-skewed strategies (common in options-selling or barrier-hitting strategies) get penalized relative to naive Sharpe. Key test: DSR(neg-skew) < DSR(normal) for same SR_obs.",
+  "inputs": {
+    "SR_obs": 1.0,
+    "SR_0": 0.0,
+    "gamma3": -1.0,
+    "gamma4": 4.0,
+    "T": 252,
+    "N": 500
+  },
+  "calculation": {
+    "numerator_factor": 15.842979517754859,
+    "denominator": 1.658312395177700,
+    "denominator_breakdown": "sqrt(1 - (-1.0)*1.0 + (4-1)/4 * 1.0^2) = sqrt(1 + 1.0 + 0.75) = sqrt(2.75)",
+    "expected_dsr": 9.553676113032473
+  }
+}
