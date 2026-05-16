@@ -595,6 +595,79 @@ class TestFrozenEvalConsumedOncePostSelection:
             f"RED until the implementation evaluates frozen-eval exactly once."
         )
 
+    def test_frozen_eval_total_reads_across_all_paths_is_one(self):
+        """
+        Adversarial Revise test: count ALL reads from frozen-eval dates across
+        BOTH run_simulation AND _collect_sim_returns. The 'consumed once' invariant
+        must hold over both entry points, not just run_simulation.
+
+        A naive implementation calls _collect_sim_returns(history_frozen) for the
+        Sortino metric AND run_simulation(history_frozen) for the audit scalar —
+        two reads from the same withheld fold, violating the 'exactly once' contract.
+
+        The correct implementation derives frozen_eval_sharpe_value from a single
+        call and does not make a redundant second call.
+
+        RED until the implementer consolidates to a single frozen-fold read.
+        """
+        source = _parse_autotuner_source()
+        assert "FROZEN_EVAL_RATIO" in source, (
+            "autotuner.py must define FROZEN_EVAL_RATIO before frozen-eval "
+            "isolation can be tested. RED until O6 is implemented."
+        )
+
+        n_days = 125
+        history = _build_history(n_days)
+        params = _default_params()
+        bot_state = {"sym-A": {"name": "O6 Frozen Total Reads", "account_uuid": "acc-1"}}
+
+        all_dates_sorted = sorted(history["sym-A"].keys())
+        split_80 = int(n_days * 0.80)
+        frozen_dates: frozenset[str] = frozenset(all_dates_sorted[split_80:])
+
+        all_frozen_reads: list[str] = []  # one entry per call that touched frozen dates
+
+        import autotuner as at
+        original_collect = at._collect_sim_returns
+        original_run_sim = at.run_simulation
+
+        def spy_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+            for sym_id, dates_dict in history_data.items():
+                if frozenset(dates_dict.keys()) & frozen_dates:
+                    all_frozen_reads.append("_collect_sim_returns")
+            return original_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict)
+
+        def spy_run_sim(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+            for sym_id, dates_dict in history_data.items():
+                if frozenset(dates_dict.keys()) & frozen_dates:
+                    all_frozen_reads.append("run_simulation")
+            return original_run_sim(p, history_data, acc_sym_ids, current_date_str, deviation_dict)
+
+        calls: list[dict] = []
+        buf = io.StringIO()
+        with _autotuner_patches(params, history, save_autotune_run_calls=calls):
+            with (
+                patch("autotuner._collect_sim_returns", side_effect=spy_collect),
+                patch("autotuner.run_simulation", side_effect=spy_run_sim),
+            ):
+                with contextlib.redirect_stdout(buf):
+                    at.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+
+        assert len(all_frozen_reads) >= 1, (
+            "The frozen-eval fold must be read at least once post-selection "
+            "(via either run_simulation or _collect_sim_returns). "
+            "No frozen-fold access detected. RED until O6 adds post-selection evaluation."
+        )
+        assert len(all_frozen_reads) == 1, (
+            f"The frozen-eval fold must be read EXACTLY ONCE in total across both "
+            f"run_simulation and _collect_sim_returns. "
+            f"Found {len(all_frozen_reads)} read(s): {all_frozen_reads}. "
+            f"A double-read (e.g., _collect_sim_returns for Sortino then run_simulation "
+            f"for audit scalar) violates the 'consumed once' contract — "
+            f"both reads see withheld data and the second read is redundant. "
+            f"Consolidate to a single frozen-fold call. RED until fixed."
+        )
+
 
 # ===========================================================================
 # Test 5 — Purge + embargo applied at both fold boundaries
