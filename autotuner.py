@@ -930,7 +930,6 @@ def run_calibration_sweep(
 
     # Boundary 1 — train | validation: purge + embargo on train side.
     effective_train_cutoff = max(0, val_start_idx - PURGE_DAYS - EMBARGO_DAYS)
-    train_dates = set(sorted_dates[:effective_train_cutoff])
 
     # Boundary 2 — validation | frozen-eval: purge + embargo on validation side.
     val_purge_end_idx = frozen_start_idx - PURGE_DAYS - EMBARGO_DAYS
