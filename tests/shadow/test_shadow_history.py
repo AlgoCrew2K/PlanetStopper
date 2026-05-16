@@ -673,8 +673,10 @@ def test_get_symphony_today_change_returns_distinct_dry_run_from_shadow_history(
     _seed_rows(conn, day2_rows)
     conn.close()
 
+    # Implementation reads trading_day from sym_dict["trading_day"], not a kwarg.
     sym_dict = {
         "id": "SYM_ALPHA",
+        "trading_day": "2026-05-15",
         "last_percent_change": 0.012,
         "simple_return": 0.05,
         "net_deposits": 500.0,
@@ -683,12 +685,11 @@ def test_get_symphony_today_change_returns_distinct_dry_run_from_shadow_history(
         "value": 10000.0,
     }
 
-    with patch.object(analytics, "DB_FILE", str(db_path)) if hasattr(analytics, "DB_FILE") else pytest.MonkeyPatch().context():
+    import database as _database_mod
+    with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_symphony_today_change(
             sym_dict,
             bot_state_entry=None,
-            trading_day="2026-05-15",
-            db_path=str(db_path),
         )
 
     assert isinstance(result, dict), f"Expected dict; got {type(result)}"
@@ -720,6 +721,7 @@ def test_get_symphony_today_change_returns_none_when_shadow_history_empty(tmp_pa
 
     sym_dict = {
         "id": "SYM_NEW",
+        "trading_day": "2026-05-16",
         "last_percent_change": 0.01,
         "simple_return": 0.02,
         "net_deposits": 100.0,
@@ -728,12 +730,11 @@ def test_get_symphony_today_change_returns_none_when_shadow_history_empty(tmp_pa
         "value": 5000.0,
     }
 
-    with patch.object(analytics, "DB_FILE", str(db_path)) if hasattr(analytics, "DB_FILE") else pytest.MonkeyPatch().context():
+    import database as _database_mod
+    with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_symphony_today_change(
             sym_dict,
             bot_state_entry=None,
-            trading_day="2026-05-16",
-            db_path=str(db_path),
         )
 
     assert result["dry_run"] is None, (
@@ -771,6 +772,7 @@ def test_get_symphony_cumulative_return_uses_chain_link_of_last_row_per_day(tmp_
 
     sym_dict = {
         "id": "SYM_ALPHA",
+        "trading_day": "2026-05-15",
         "last_percent_change": 0.012,
         "simple_return": 0.05,
         "net_deposits": 500.0,
@@ -779,12 +781,11 @@ def test_get_symphony_cumulative_return_uses_chain_link_of_last_row_per_day(tmp_
         "value": 10000.0,
     }
 
-    with patch.object(analytics, "DB_FILE", str(db_path)) if hasattr(analytics, "DB_FILE") else pytest.MonkeyPatch().context():
+    import database as _database_mod
+    with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_symphony_cumulative_return(
             sym_dict,
             bot_state_entry=None,
-            trading_day="2026-05-15",
-            db_path=str(db_path),
         )
 
     # Tolerance 1e-6: floating-point chain-link arithmetic; fixture comment explains derivation
@@ -817,6 +818,7 @@ def test_get_symphony_cumulative_return_returns_none_when_fewer_than_2_days(tmp_
 
     sym_dict = {
         "id": "SYM_ALPHA",
+        "trading_day": "2026-05-14",
         "last_percent_change": 0.012,
         "simple_return": 0.05,
         "net_deposits": 500.0,
@@ -825,12 +827,11 @@ def test_get_symphony_cumulative_return_returns_none_when_fewer_than_2_days(tmp_
         "value": 10000.0,
     }
 
-    with patch.object(analytics, "DB_FILE", str(db_path)) if hasattr(analytics, "DB_FILE") else pytest.MonkeyPatch().context():
+    import database as _database_mod
+    with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_symphony_cumulative_return(
             sym_dict,
             bot_state_entry=None,
-            trading_day="2026-05-14",
-            db_path=str(db_path),
         )
 
     assert result["dry_run"] is None, (
@@ -865,6 +866,7 @@ def test_get_symphony_max_drawdown_returns_none_when_fewer_than_2_days(tmp_path)
 
     sym_dict = {
         "id": "SYM_ALPHA",
+        "trading_day": "2026-05-14",
         "last_percent_change": 0.012,
         "simple_return": 0.05,
         "net_deposits": 500.0,
@@ -873,12 +875,11 @@ def test_get_symphony_max_drawdown_returns_none_when_fewer_than_2_days(tmp_path)
         "value": 10000.0,
     }
 
-    with patch.object(analytics, "DB_FILE", str(db_path)) if hasattr(analytics, "DB_FILE") else pytest.MonkeyPatch().context():
+    import database as _database_mod
+    with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_symphony_max_drawdown(
             sym_dict,
             bot_state_entry=None,
-            trading_day="2026-05-14",
-            db_path=str(db_path),
         )
 
     assert result["dry_run"] is None, (
@@ -907,6 +908,7 @@ def test_helpers_return_none_not_if_held_fallback_when_shadow_history_empty(tmp_
 
     sym_dict = {
         "id": "SYM_EMPTY",
+        "trading_day": "2026-05-16",
         "last_percent_change": 0.05,
         "simple_return": 0.10,
         "net_deposits": 1000.0,
@@ -915,16 +917,11 @@ def test_helpers_return_none_not_if_held_fallback_when_shadow_history_empty(tmp_
         "value": 8000.0,
     }
 
-    kwargs = dict(
-        bot_state_entry=None,
-        trading_day="2026-05-16",
-        db_path=str(db_path),
-    )
-
-    with patch.object(analytics, "DB_FILE", str(db_path)) if hasattr(analytics, "DB_FILE") else pytest.MonkeyPatch().context():
-        tc = analytics.get_symphony_today_change(sym_dict, **kwargs)
-        cr = analytics.get_symphony_cumulative_return(sym_dict, **kwargs)
-        mdd = analytics.get_symphony_max_drawdown(sym_dict, **kwargs)
+    import database as _database_mod
+    with patch.object(_database_mod, "DB_FILE", str(db_path)):
+        tc = analytics.get_symphony_today_change(sym_dict, bot_state_entry=None)
+        cr = analytics.get_symphony_cumulative_return(sym_dict, bot_state_entry=None)
+        mdd = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None)
 
     for helper_name, result in [("today_change", tc), ("cumulative_return", cr), ("max_drawdown", mdd)]:
         assert result["dry_run"] is None, (
@@ -963,6 +960,7 @@ def test_portfolio_aggregator_excludes_none_dry_run_contributors(tmp_path):
     symphonies = [
         {
             "id": "SYM_ALPHA",
+            "trading_day": "2026-05-15",
             "last_percent_change": 0.012,
             "simple_return": 0.05,
             "net_deposits": 500.0,
@@ -972,6 +970,7 @@ def test_portfolio_aggregator_excludes_none_dry_run_contributors(tmp_path):
         },
         {
             "id": "SYM_NONE",
+            "trading_day": "2026-05-15",
             "last_percent_change": 0.02,
             "simple_return": 0.03,
             "net_deposits": 200.0,
@@ -981,10 +980,9 @@ def test_portfolio_aggregator_excludes_none_dry_run_contributors(tmp_path):
         },
     ]
 
-    with patch.object(analytics, "DB_FILE", str(db_path)) if hasattr(analytics, "DB_FILE") else pytest.MonkeyPatch().context():
-        result = analytics.get_portfolio_today_change(
-            symphonies, bot_state={}, trading_day="2026-05-15", db_path=str(db_path)
-        )
+    import database as _database_mod
+    with patch.object(_database_mod, "DB_FILE", str(db_path)):
+        result = analytics.get_portfolio_today_change(symphonies, bot_state={})
 
     assert result["dry_run"] is not None, "Portfolio dry_run must not be None when one symphony has data"
     import math
@@ -1080,14 +1078,15 @@ def test_shadow_performance_widget_renders_dash_for_no_shadow_history_rows(tmp_p
     """
     import app as app_module
 
-    db_path = tmp_path / "state.db"
-    conn = sqlite3.connect(str(db_path))
-    _create_shadow_schema(conn)
-    conn.close()
+    # Minimal bot_state that passes the early-return guard (load_state() must be truthy).
+    _minimal_state = {"date": "2026-05-16", "last_successful_cycle_at": "2026-05-16T14:00:00"}
 
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         with patch.object(app_module, "database") as db_mock:
+            db_mock.load_state = MagicMock(return_value=_minimal_state)
+            db_mock.normalize_name = MagicMock(return_value="")
+            db_mock.get_triggers = MagicMock(return_value=[])
             db_mock.get_shadow_divergence = MagicMock(return_value={
                 "by_symphony": {"SYM_ALPHA": {"today": None, "cumulative": None}},
                 "portfolio_today": None,
@@ -1095,7 +1094,8 @@ def test_shadow_performance_widget_renders_dash_for_no_shadow_history_rows(tmp_p
             resp = c.get("/api/state")
 
     assert resp.status_code == 200, (
-        f"/api/state returned {resp.status_code}; must be 200"
+        f"/api/state returned {resp.status_code}; must be 200. "
+        f"Check that load_state mock is non-empty to pass the early-return guard."
     )
     body = resp.get_json()
     assert body is not None, "/api/state must return JSON"
@@ -1146,18 +1146,25 @@ def test_api_state_includes_shadow_divergence_key():
     """
     import app as app_module
 
+    # Minimal bot_state that passes the early-return guard (load_state() must be truthy).
+    _minimal_state = {"date": "2026-05-16", "last_successful_cycle_at": "2026-05-16T14:00:00"}
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         with patch.object(app_module, "database") as db_mock:
+            db_mock.load_state = MagicMock(return_value=_minimal_state)
+            db_mock.normalize_name = MagicMock(return_value="")
+            db_mock.get_triggers = MagicMock(return_value=[])
             db_mock.get_shadow_divergence = MagicMock(return_value={
                 "by_symphony": {},
                 "portfolio_today": None,
             })
-            # Mock other database calls that /api/state uses
-            db_mock.load_state = MagicMock(return_value={})
             resp = c.get("/api/state")
 
-    assert resp.status_code == 200
+    assert resp.status_code == 200, (
+        f"/api/state returned {resp.status_code}. "
+        "load_state mock must return non-empty dict to bypass the 'initializing' early return."
+    )
     body = resp.get_json()
     assert body is not None
 
