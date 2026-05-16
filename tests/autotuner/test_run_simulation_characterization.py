@@ -601,8 +601,9 @@ def test_run_simulation_drawdown_penalty_fires_when_peak_exceeds_threshold():
     GUARD_ALPHA_NEG_MULTIPLIER = 2.0  # autotuner.py:294
 
     current_dt = datetime.strptime(_CURRENT_DATE_STR, "%Y-%m-%d")
-    # OOS gets the last day after 80/20 split on 5 dates.
-    trigger_date = datetime.strptime(_TEST_DATES_5[-1], "%Y-%m-%d")
+    # O6 (60/20/20): OOS cascade uses full validation fold = dates[3] = _TEST_DATES_5[-2].
+    # dates[-1] is the frozen-eval fold (withheld from cascade evaluation).
+    trigger_date = datetime.strptime(_TEST_DATES_5[-2], "%Y-%m-%d")
     days_ago = (current_dt - trigger_date).days
     weight = _math.exp(-DECAY_RATE * days_ago)
 
@@ -858,20 +859,15 @@ def test_run_simulation_single_day_single_tick_no_trigger_zero_alpha():
 
 def test_run_simulation_called_three_times_per_symphony_for_oos_evaluation():
     """
-    CHARACTERIZATION INVARIANT — run_simulation must be invoked exactly
-    THREE times during the OOS-evaluation block (autotuner.py:359, 371,
-    375) — once each for AI, fallback, default. Training-loop invocation
-    is suppressed in this test because study.optimize is a no-op (real
-    Optuna would invoke it N_TRIALS times; we don't pin that here).
+    CHARACTERIZATION INVARIANT — compute_vwap_breakdown_update must be invoked
+    exactly FIVE times per symphony with a 5-day, 1-tick-per-day fixture:
+      - 3 cascade evals (AI/fallback/default) on the validation fold (1 day x 1 tick each)
+      - 1 _collect_sim_returns call on frozen-eval fold (1 day x 1 tick)
+      - 1 run_simulation call on frozen-eval fold (1 day x 1 tick)
+    Training-loop invocation is suppressed (study.optimize is a no-op).
 
-    The closure-hoist refactor MUST preserve this call count exactly: a
-    refactor that accidentally collapses two OOS evaluations into one (e.g.,
-    by sharing state across the three calls) would corrupt the decision.
-
-    We pin by counting the number of times
-    ``math_engine.compute_vwap_breakdown_update`` is called per day. With
-    a single-tick-per-day fixture (5 days, 80/20 split -> 1 OOS day), and 3
-    OOS calls (AI/fallback/default), we expect exactly 1 * 3 = 3 invocations.
+    O6 extended the OOS block with two frozen-eval calls post-selection:
+    _collect_sim_returns (for Sortino) + run_simulation (for audit scalar).
     """
     ai = _ai_full_params()
     fallback = _ai_full_params()
@@ -896,12 +892,14 @@ def test_run_simulation_called_three_times_per_symphony_for_oos_evaluation():
         vwap_side_effect=counting_vwap_stub,
     )
 
-    # 1 OOS day x 1 tick per day x 3 OOS evaluations = 3 invocations.
-    assert counter["calls"] == 3, (
-        f"Expected exactly 3 OOS-phase invocations of "
-        f"compute_vwap_breakdown_update (one per of AI/fallback/default); "
-        f"got {counter['calls']}. Closure-hoist refactor must preserve "
-        f"this call count exactly."
+    # O6 (60/20/20 split on 5 dates): validation fold = 1 day, frozen-eval fold = 1 day.
+    # 3 OOS cascade (AI/fallback/default) on validation (1 tick each) = 3 VWAP calls.
+    # 1 _collect_sim_returns + 1 run_simulation on frozen-eval (1 tick each) = 2 VWAP calls.
+    # Total = 5. Both frozen calls are post-selection and use the same held-out fold.
+    assert counter["calls"] == 5, (
+        f"Expected exactly 5 compute_vwap_breakdown_update invocations: "
+        f"3 cascade (AI/fallback/default on validation) + 1 _collect_sim_returns "
+        f"on frozen + 1 run_simulation on frozen; got {counter['calls']}."
     )
 
 
@@ -1014,9 +1012,10 @@ def test_run_simulation_eod_return_taken_from_last_tick():
     guard_alpha = triggered_return - eod_return  # -4.4
     missed_upside = day_max_return - triggered_return  # 4.4
     drawdown_from_peak = safe_hwm - triggered_return  # 2.4
+    # O6 (60/20/20): OOS cascade uses full validation = dates[3] = _TEST_DATES_5[-2].
     days_ago = (
         datetime.strptime(_CURRENT_DATE_STR, "%Y-%m-%d")
-        - datetime.strptime(_TEST_DATES_5[-1], "%Y-%m-%d")
+        - datetime.strptime(_TEST_DATES_5[-2], "%Y-%m-%d")
     ).days
     weight = _math.exp(-DECAY_RATE * days_ago)
 

@@ -51,14 +51,18 @@ def init_db():
     # P1: Per-run Optuna validation metrics — durable audit trail for Claude context-assembly
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS autotune_runs (
-            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_timestamp      TEXT    NOT NULL,
-            symphony_id        TEXT    NOT NULL,
-            oos_alpha          REAL    DEFAULT NULL,
-            train_alpha        REAL    DEFAULT NULL,
-            baseline_decision  TEXT    DEFAULT NULL,
-            fallback_oos_alpha REAL    DEFAULT NULL,
-            default_oos_alpha  REAL    DEFAULT NULL
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_timestamp       TEXT    NOT NULL,
+            symphony_id         TEXT    NOT NULL,
+            oos_alpha           REAL    DEFAULT NULL,
+            train_alpha         REAL    DEFAULT NULL,
+            baseline_decision   TEXT    DEFAULT NULL,
+            fallback_oos_alpha  REAL    DEFAULT NULL,
+            default_oos_alpha   REAL    DEFAULT NULL,
+            deflated_sharpe     REAL    DEFAULT NULL,
+            naive_sharpe        REAL    DEFAULT NULL,
+            validation_sharpe   REAL    DEFAULT NULL,
+            frozen_eval_sharpe  REAL    DEFAULT NULL
         )
     """)
 
@@ -282,7 +286,8 @@ def clear_symphony_logs():
 
 def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
                       baseline_decision, fallback_oos_alpha, default_oos_alpha,
-                      deflated_sharpe=None, naive_sharpe=None) -> None:
+                      deflated_sharpe=None, naive_sharpe=None,
+                      validation_sharpe=None, frozen_eval_sharpe=None) -> None:
     """Persist one row of per-run Optuna validation metrics to autotune_runs.
 
     Called once per symphony per run_autotuner() invocation, after baseline_decision
@@ -293,6 +298,12 @@ def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
       deflated_sharpe: DSR value for the AI-branch best trial (Bailey & López de Prado 2014).
                        None when the fallback or default cascade was used instead.
       naive_sharpe:    Raw Optuna best trial Sortino before DSR correction. None for non-AI rows.
+
+    O6 additions:
+      validation_sharpe:  Sortino on the validation fold (20% of history); the metric used for
+                          trial selection. Selection truth; visible to operator for audit.
+      frozen_eval_sharpe: Sortino on the frozen-eval fold (final 20% of history); consumed once
+                          post-selection for honest performance reporting (López de Prado 2018 Ch. 7.4).
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -301,12 +312,12 @@ def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
         INSERT INTO autotune_runs
             (run_timestamp, symphony_id, oos_alpha, train_alpha,
              baseline_decision, fallback_oos_alpha, default_oos_alpha,
-             deflated_sharpe, naive_sharpe)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (run_timestamp, symphony_id, oos_alpha, train_alpha,
          baseline_decision, fallback_oos_alpha, default_oos_alpha,
-         deflated_sharpe, naive_sharpe),
+         deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe),
     )
     conn.commit()
     conn.close()

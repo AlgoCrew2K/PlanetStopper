@@ -1,40 +1,12 @@
 {
-  "_provenance": "schema-derived: named constants required by O6 spec, citing López de Prado 2018 Ch. 7.4",
-  "_citation": "López de Prado, M. (2018). Advances in Financial Machine Learning. Wiley. Ch. 7.4 (Nested cross-validation / frozen evaluation window).",
-
   "required_constants": [
-    {
-      "name": "TRAIN_RATIO",
-      "expected_value": 0.60,
-      "type": "float",
-      "source_comment_must_cite": "López de Prado 2018 Ch. 7.4",
-      "_rationale": "60% of history for hyperparameter optimization training fold"
-    },
-    {
-      "name": "VALIDATION_RATIO",
-      "expected_value": 0.20,
-      "type": "float",
-      "source_comment_must_cite": "López de Prado 2018 Ch. 7.4",
-      "_rationale": "20% of history for trial selection (Optuna objective scoring fold)"
-    },
-    {
-      "name": "FROZEN_EVAL_RATIO",
-      "expected_value": 0.20,
-      "type": "float",
-      "source_comment_must_cite": "López de Prado 2018 Ch. 7.4",
-      "_rationale": "20% of history for honest post-selection performance reporting; never consumed during Optuna trial sweep"
-    }
+    {"name": "TRAIN_RATIO",       "expected_value": 0.60},
+    {"name": "VALIDATION_RATIO",  "expected_value": 0.20},
+    {"name": "FROZEN_EVAL_RATIO", "expected_value": 0.20}
   ],
-
   "sum_invariant": {
-    "formula": "TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO",
     "expected_sum": 1.0,
     "tolerance": 1e-9
   },
-
-  "partition_ordering": {
-    "train_precedes_validation": true,
-    "validation_precedes_frozen_eval": true,
-    "_note": "Temporal ordering preserved: chronologically earliest dates in train, latest in frozen-eval"
-  }
+  "citation": "López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4"
 }
