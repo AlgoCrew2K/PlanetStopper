@@ -1,0 +1,9 @@
+{
+  "_provenance": "schema-derived from autotuner.py optuna.create_study — determinism requirement from AC-V1 mandate",
+  "_assertion_strategy": "run run_calibration_sweep twice with same deterministic sampler seed and same fixture history; assert param recommendations are identical across both runs",
+  "seed_param_name": "random_state",
+  "seed_value": 42,
+  "sampler_class": "optuna.samplers.TPESampler",
+  "requirement": "same fixture input + same seed => same proposed_value for each param in every report row",
+  "prohibited_pattern": "non-deterministic sampler (no seed) makes golden-fixture comparison impossible and hides implementation variance"
+}

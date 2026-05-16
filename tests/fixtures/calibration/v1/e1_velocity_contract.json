@@ -1,0 +1,13 @@
+{
+  "_provenance": "schema-derived from autotuner.py _collect_sim_returns and run_simulation; E1 fix captured in tests/fixtures/autotuner/e1_sentinel/01_autotuner_replay_cycle1_velocity_zero.json",
+  "_e1_summary": "E1 corrected the cycle-1 velocity baseline. prev_return starts as None (sentinel). On tick_idx=0, effective_prev = tick_return, producing velocity=0 regardless of opening gap magnitude. This matches production's database.wipe_transient_state which sets prev_return=None.",
+  "cycle1_velocity_contract": {
+    "prev_return_init": null,
+    "tick_idx_0_behavior": "effective_prev = current_return => velocity = 0.0",
+    "reference_line_comment": "sentinel: cycle-1 velocity = 0 (mirrors database.py wipe)",
+    "source_file": "autotuner.py",
+    "source_functions": ["_collect_sim_returns", "run_simulation"]
+  },
+  "assertion_strategy": "assert prev_return starts as None in both sim loops; assert effective_prev = tick_return when prev_return is None; assert velocity = current_return - effective_prev = 0.0 for tick_idx 0",
+  "prohibited_pattern": "prev_return = 0.0 (hard zero init instead of None sentinel) — would produce non-zero velocity on opening gaps, miscalibrating PARABOLIC_VELOCITY_THRESHOLD"
+}

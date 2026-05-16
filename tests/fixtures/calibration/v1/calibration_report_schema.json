@@ -1,0 +1,48 @@
+{
+  "_provenance": "schema-derived from V1 mandate AC-V1 (feature-plans/engine-correctness-remediation.md §V1, lines 66-70) and autotuner.py save_autotune_run signature",
+  "_scope": "V1 calibration sweep report: per-symphony recommendation for PARABOLIC_VELOCITY_THRESHOLD and VWAP_CROSS_HWM_PCT only",
+  "_assertion_strategy": "assert required keys present; assert numeric fields are finite floats; assert delta_pct derivable from current_value and proposed_value; never assert specific computed values",
+  "required_fields": [
+    "symphony_id",
+    "param_name",
+    "current_value",
+    "proposed_value",
+    "delta_pct",
+    "expected_trigger_freq_change",
+    "frozen_eval_alpha",
+    "naive_sharpe",
+    "deflated_sharpe",
+    "sortino",
+    "n_trials",
+    "study_name",
+    "trading_day_start",
+    "trading_day_end",
+    "cycle_id"
+  ],
+  "field_types": {
+    "symphony_id": "str",
+    "param_name": "str",
+    "current_value": "float",
+    "proposed_value": "float",
+    "delta_pct": "float — must equal (proposed_value - current_value) / abs(current_value) * 100 when current_value != 0",
+    "expected_trigger_freq_change": "float",
+    "frozen_eval_alpha": "float or null — None indicates frozen fold produced no triggers",
+    "naive_sharpe": "float or null",
+    "deflated_sharpe": "float or null",
+    "sortino": "float or null",
+    "n_trials": "int — positive",
+    "study_name": "str — must match pattern YYYYMMDDTHHMMSS*Z__<symphony_id>",
+    "trading_day_start": "str — ISO date YYYY-MM-DD",
+    "trading_day_end": "str — ISO date YYYY-MM-DD",
+    "cycle_id": "str — references shadow_history post-deploy verification"
+  },
+  "tuned_params_only": ["PARABOLIC_VELOCITY_THRESHOLD", "VWAP_CROSS_HWM_PCT"],
+  "prohibited_params": [
+    "VWAP_BREAK_CONFIRM_TICKS",
+    "VWAP_BLEED_TICKS",
+    "VWAP_BLEED_MULTIPLIER",
+    "TRIGGER_THRESHOLD_PCT",
+    "TAKE_PROFIT_MC_PCT",
+    "MAX_PARABOLIC_SQUEEZE"
+  ]
+}
