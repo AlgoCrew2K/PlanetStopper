@@ -1,5 +1,6 @@
 """Core execution logic for Alpha Bot with SQLite State Management and EOD Autotuner."""
 
+import logging
 import os
 import sys
 import io
@@ -375,6 +376,9 @@ def main():
             bot_state["date"] = current_date_str
             database.wipe_transient_state(bot_state)
             database.clear_symphony_logs()
+            # PA-M1F-2: resume_shadow_baselines AFTER wipe_transient_state so yesterday's
+            # rows do not overwrite today's freshly-wiped state.
+            database.resume_shadow_baselines(bot_state, current_date_str)
             state_changed = True
 
         if state_changed:
@@ -470,6 +474,39 @@ def main():
 
                     _persist_composer_fields_to_bot_state(bot_state, s_id, sym)
 
+                    # M1F: compute shadow_return (Model A) and write telemetry row.
+                    # PA-M1F-15: gated on successful Composer fetch — sym came from
+                    # fetch_symphony_stats, so reaching this point means data is valid.
+                    # AC-M1F.2.1: pre-trigger shadow_return = current_return;
+                    #              post-trigger shadow_return frozen at triggered_at_return.
+                    is_post_trigger = bool(bot_state[s_id].get("triggered"))
+                    if is_post_trigger:
+                        shadow_return = float(bot_state[s_id].get("triggered_at_return", current_return))
+                        trigger_id = bot_state[s_id].get("_last_trigger_id")
+                    else:
+                        shadow_return = current_return
+                        trigger_id = None
+
+                    # cycle_id formatted as YYYYMMDD_HHMM (PA-M1F-4)
+                    cycle_id_str = current_et.strftime("%Y%m%d_%H%M")
+                    # ts_et hardcoded UTC-4 (matches H1 pattern, PA-M1F-6)
+                    now_utc = datetime.now(timezone.utc)
+                    ts_utc_str = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    ts_et_str = (now_utc - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S")
+
+                    database.record_shadow_observation(
+                        symphony_id=s_id,
+                        account_id=account,
+                        cycle_id=cycle_id_str,
+                        ts_utc=ts_utc_str,
+                        ts_et=ts_et_str,
+                        trading_day=current_date_str,
+                        current_return=current_return,
+                        shadow_return=shadow_return,
+                        is_post_trigger=int(is_post_trigger),
+                        trigger_id=trigger_id,
+                    )
+
             # Only persist here on pre-gate cycles; the action phase terminal save_state
             # covers post-gate cycles atomically (CX-1: all triggered fields in one write).
             if current_time < market_open and not force_run:
@@ -500,6 +537,55 @@ def main():
                         ]
                         bot_state[s_id]["current_return"] = sym.get("last_percent_change", 0.0) * 100
                         _persist_composer_fields_to_bot_state(bot_state, s_id, sym)
+
+            # M1F: EOD divergence — observational only, no order calls (PA-M1F-9).
+            # Row selection: last shadow_history row per symphony by ts_utc DESC LIMIT 1
+            # (PA-M1F-5b). May not be the market-close row if engine was down at session end.
+            eod_divergence_by_sym: dict = {}
+            total_value_weight = 0.0
+            portfolio_div_wsum = 0.0
+            symphony_keys_eod = [k for k in bot_state if isinstance(bot_state[k], dict)]
+            for s_id in symphony_keys_eod:
+                last_row = database.load_latest_shadow_row(s_id, current_date_str)
+                if not isinstance(last_row, dict):
+                    # AC-M1F.5.4: log coverage gap when no rows exist for the symphony
+                    logging.error(
+                        "EOD divergence: no shadow_history rows for %s on %s — coverage gap",
+                        s_id, current_date_str,
+                    )
+                    continue
+                try:
+                    eod_div = float(last_row["current_return"]) - float(last_row["shadow_return"])
+                except (TypeError, ValueError, KeyError):
+                    continue
+                eod_divergence_by_sym[s_id] = eod_div
+                val = bot_state[s_id].get("current_value", 0.0) or 0.0
+                if val > 0.0:
+                    portfolio_div_wsum += eod_div * val
+                    total_value_weight += val
+            portfolio_eod_div = (
+                portfolio_div_wsum / total_value_weight if total_value_weight > 0.0 else None
+            )
+            post_mortem_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                f"post_mortem_{current_date_str}.json",
+            )
+            try:
+                existing_pm: dict = {}
+                if os.path.exists(post_mortem_path):
+                    with open(post_mortem_path, "r", encoding="utf-8") as fh:
+                        existing_pm = json.load(fh)
+            except (OSError, json.JSONDecodeError):
+                existing_pm = {}
+            existing_pm["shadow_divergence"] = {
+                "by_symphony": eod_divergence_by_sym,
+                "portfolio": portfolio_eod_div,
+            }
+            try:
+                with open(post_mortem_path, "w", encoding="utf-8") as fh:
+                    json.dump(existing_pm, fh, indent=2)
+            except OSError as exc:
+                logging.error("EOD post-mortem write failed: %s", exc)
 
             # Save post_mortem flag immediately to prevent race conditions if execution is slow
             bot_state["post_mortem_run"] = current_date_str

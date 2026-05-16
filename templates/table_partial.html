@@ -59,7 +59,7 @@
                             Shadow Peak <span class="inline-block ml-1 transition-opacity opacity-{{ '100 text-blue-400' if sort_col == 'shadow_hwm' else '0 group-hover:opacity-50' }}">{{ '↓' if sort_dir == 'desc' and sort_col == 'shadow_hwm' else '↑' }}</span>
                         </th>
                         <th class="px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none" title="The current live return of the symphony model. Shows what you would have if the bot didn't trigger. When triggered, the second line is Guard Alpha: % saved (+) or given up (−) by exiting." onclick="setSort('shadow')">
-                            If Held <span class="inline-block ml-1 transition-opacity opacity-{{ '100 text-blue-400' if sort_col == 'shadow' else '0 group-hover:opacity-50' }}">{{ '↓' if sort_dir == 'desc' and sort_col == 'shadow' else '↑' }}</span>
+                            Held Return <span class="inline-block ml-1 transition-opacity opacity-{{ '100 text-blue-400' if sort_col == 'shadow' else '0 group-hover:opacity-50' }}">{{ '↓' if sort_dir == 'desc' and sort_col == 'shadow' else '↑' }}</span>
                         </th>
                         <th class="px-2 py-2.5 font-medium text-right text-slate-500" title="Today's Change: AlphaBot dry-run vs if-held">TC</th>
                         <th class="px-2 py-2.5 font-medium text-right text-slate-500" title="Cumulative Return: AlphaBot dry-run vs if-held">CR</th>

@@ -191,6 +191,11 @@ def _run_trigger_retention():
     deleted = database.prune_old_triggers(retention_days)
     if deleted:
         print(f"[retention] pruned {deleted} old exit_triggers rows (>{retention_days}d)")
+    # BC-4: prune shadow_history alongside exit_triggers in the same scheduler callback.
+    shadow_retention_days = int(env_vars.get("SHADOW_HISTORY_RETENTION_DAYS", "180"))
+    shadow_deleted = database.prune_old_shadow_history(shadow_retention_days)
+    if shadow_deleted:
+        print(f"[retention] pruned {shadow_deleted} old shadow_history rows (>{shadow_retention_days}d)")
 
 def run_scheduler():
     schedule.every().minute.at(":00").do(threaded_trigger)
@@ -209,7 +214,12 @@ def get_state():
     try:
         state_data = database.load_state()
         if not state_data:
-            return jsonify({"status": "waiting", "message": "Bot state initializing."})
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            try:
+                shadow_divergence = database.get_shadow_divergence(today_str)
+            except Exception:
+                shadow_divergence = {"by_symphony": {}, "portfolio_today": None}
+            return jsonify({"status": "waiting", "message": "Bot state initializing.", "shadow_divergence": shadow_divergence})
 
         env_vars = dotenv_values(".env")
         live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
@@ -279,6 +289,7 @@ def get_state():
         # Build symphonies list for M1 analytics helpers from bot_state.
         # Fields derived: last_percent_change from current_return/100, value from current_value.
         # Composer CR/MDD fields use None default so missing data is distinguishable from 0.0.
+        today_str = datetime.now().strftime("%Y-%m-%d")
         symphonies_list = []
         for k in symphony_keys:
             s = state_data[k]
@@ -292,6 +303,7 @@ def get_state():
                 "net_deposits": s.get("net_deposits"),
                 "time_weighted_return": s.get("time_weighted_return"),
                 "max_drawdown": s.get("max_drawdown"),
+                "trading_day": today_str,
             })
 
         # Attach last_trigger (today's most-recent) to each symphony for the Status sub-line.
@@ -335,6 +347,12 @@ def get_state():
 
         rendered_html = render_template("table_partial.html", accounts_map=accounts_map, account_labels=account_labels, sort_col=sort_col, sort_dir=sort_dir, data_as_of=data_as_of)
 
+        # PA-M1F-14: shadow_divergence — one lightweight GROUP BY query, not on execution path.
+        try:
+            shadow_divergence = database.get_shadow_divergence(today_str)
+        except Exception:
+            shadow_divergence = {"by_symphony": {}, "portfolio_today": None}
+
         return jsonify({
             "status": "active",
             "state": state_data,
@@ -345,6 +363,7 @@ def get_state():
             "portfolio_strip": portfolio_strip,
             "data_as_of": data_as_of,
             "last_successful_cycle_at": state_data.get("last_successful_cycle_at"),
+            "shadow_divergence": shadow_divergence,
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
