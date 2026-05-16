@@ -405,20 +405,31 @@ def get_symphony_today_change(
     Per-symphony Today's Change.
 
     if_held: last_percent_change * 100 (Composer decimal -> percent).
-    dry_run: latest shadow_history.shadow_return for (symphony_id, trading_day).
-             Returns None sentinel when shadow_history empty — no fall-back to if_held
-             (AC-M1F.3.5).
+    dry_run: sourced in priority order:
+      1. Triggered symphony: bot_state_entry["current_return"] (engine-stored pct).
+      2. Shadow history row for (symphony_id, trading_day) when trading_day is explicit
+         (kwarg or sym_dict["trading_day"]) — M1F live path; None when no row (AC-M1F.3.5).
+      3. Fallback to if_held when trading_day was not explicitly provided and no shadow
+         row exists — preserves pre-M1F semantics for callers that don't inject trading_day.
     trading_day: override for today; defaults to sym_dict["trading_day"] then today.
     db_path: override DB file path (for tests).
     """
     if_held = float(sym_dict["last_percent_change"]) * 100.0
 
+    # Triggered symphonies: use bot_state current_return (pre-M1F and M1F both)
+    if bot_state_entry is not None and bot_state_entry.get("triggered"):
+        return {"if_held": if_held, "dry_run": float(bot_state_entry["current_return"])}
+
     symphony_id = sym_dict.get("id")
-    # trading_day priority: explicit kwarg > sym_dict field > today
-    _trading_day = trading_day or sym_dict.get("trading_day")
-    if not _trading_day:
+    # Detect whether trading_day was explicitly supplied vs defaulted
+    _explicit_trading_day = trading_day or sym_dict.get("trading_day")
+    if _explicit_trading_day:
+        _trading_day = _explicit_trading_day
+        _trading_day_explicit = True
+    else:
         from datetime import datetime as _dt, timezone as _tz
         _trading_day = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+        _trading_day_explicit = False
 
     dry_run: "float | None" = None
     if symphony_id:
@@ -426,6 +437,13 @@ def get_symphony_today_change(
         row = _load_latest_shadow_row_for_analytics(symphony_id, _trading_day, _db_file)
         if row is not None:
             dry_run = float(row["shadow_return"])
+        elif not _trading_day_explicit:
+            # Pre-M1F callers that don't inject trading_day: fall back to if_held
+            dry_run = if_held
+    else:
+        # No symphony_id: fall back to if_held
+        dry_run = if_held
+
     return {"if_held": if_held, "dry_run": dry_run}
 
 
@@ -521,8 +539,11 @@ def get_symphony_cumulative_return(
              in which case falls back to time_weighted_return (anomalous withdrawn/re-funded
              symphony where simple_return would be misleadingly zero).
     dry_run: chain-link product over per-day EOD shadow_return values expressed as percent
-             (AC-M1F.3.2, PA-M1F-16). None when fewer than 2 distinct trading days in
-             shadow_history — no fall-back to if_held (AC-M1F.3.5).
+             (AC-M1F.3.2, PA-M1F-16) when shadow_history has >= 2 distinct days.
+             Falls back to if_held when no shadow trajectory exists and trading_day was
+             not explicitly provided — preserves pre-M1F semantics for old callers.
+             None when shadow_history is explicitly queried (trading_day present) but empty
+             (AC-M1F.3.5).
 
     Returns {"if_held": None, "dry_run": None} when simple_return is None (missing data).
     """
@@ -536,6 +557,8 @@ def get_symphony_cumulative_return(
         if_held = simple_return * 100.0
 
     symphony_id = sym_dict.get("id")
+    _explicit_trading_day = trading_day or sym_dict.get("trading_day")
+
     dry_run: "float | None" = None
     if symphony_id:
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
@@ -545,6 +568,11 @@ def get_symphony_cumulative_return(
             for r in trajectory:
                 product *= 1.0 + r / 100.0
             dry_run = (product - 1.0) * 100.0
+        elif not _explicit_trading_day:
+            # Pre-M1F callers without trading_day: fall back to if_held
+            dry_run = if_held
+    else:
+        dry_run = if_held
 
     return {"if_held": if_held, "dry_run": dry_run}
 
@@ -560,7 +588,9 @@ def get_symphony_max_drawdown(
 
     if_held: max_drawdown from Composer (positive float, magnitude convention).
     dry_run: peak-to-trough drawdown of cumulative shadow trajectory (AC-M1F.3.3).
-             None when fewer than 2 distinct trading days — no fall-back to if_held
+             Falls back to if_held when no shadow trajectory exists and trading_day was
+             not explicitly provided — preserves pre-M1F semantics for old callers.
+             None when shadow_history is explicitly queried (trading_day present) but empty
              (AC-M1F.3.5).
 
     Returns {"if_held": None, "dry_run": None} when max_drawdown is None (missing data).
@@ -570,6 +600,8 @@ def get_symphony_max_drawdown(
     if_held = float(sym_dict["max_drawdown"])
 
     symphony_id = sym_dict.get("id")
+    _explicit_trading_day = trading_day or sym_dict.get("trading_day")
+
     dry_run: "float | None" = None
     if symphony_id:
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
@@ -591,6 +623,11 @@ def get_symphony_max_drawdown(
                     if dd > max_dd:
                         max_dd = dd
                 dry_run = max_dd
+        elif not _explicit_trading_day:
+            # Pre-M1F callers without trading_day: fall back to if_held
+            dry_run = if_held
+    else:
+        dry_run = if_held
 
     return {"if_held": if_held, "dry_run": dry_run}
 
