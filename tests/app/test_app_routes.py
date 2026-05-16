@@ -65,6 +65,7 @@ def mock_database():
         db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
         db_mock.get_symphony_logs.return_value = []
         db_mock.save_symphony_strategy.return_value = None
+        db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
         yield db_mock
 
 

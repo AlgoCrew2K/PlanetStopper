@@ -395,37 +395,157 @@ def compute_quantstats_metrics(returns_series: list[float], freq: str = "D") -> 
 #   Dry-run side sourced from bot_state (AlphaBot shadow tracking).
 #   Network-free: callers pass already-fetched data; no fetch_symphony_stats calls here.
 
-def get_symphony_today_change(sym_dict: dict, bot_state_entry: "dict | None") -> dict:
+def get_symphony_today_change(
+    sym_dict: dict,
+    bot_state_entry: "dict | None",
+    trading_day: "str | None" = None,
+    db_path: "str | None" = None,
+) -> dict:
     """
     Per-symphony Today's Change.
 
     if_held: last_percent_change * 100 (Composer decimal -> percent).
-    dry_run: bot_state_entry["current_return"] when triggered (engine stores pct*100);
-             otherwise equals if_held (AlphaBot did nothing).
+    dry_run: sourced in priority order:
+      1. Triggered symphony: bot_state_entry["current_return"] (engine-stored pct).
+      2. Shadow history row for (symphony_id, trading_day) when trading_day is explicit
+         (kwarg or sym_dict["trading_day"]) — M1F live path; None when no row (AC-M1F.3.5).
+      3. Fallback to if_held when trading_day was not explicitly provided and no shadow
+         row exists — preserves pre-M1F semantics for callers that don't inject trading_day.
+    trading_day: override for today; defaults to sym_dict["trading_day"] then today.
+    db_path: override DB file path (for tests).
     """
     if_held = float(sym_dict["last_percent_change"]) * 100.0
-    triggered = (
-        bot_state_entry is not None
-        and bot_state_entry.get("triggered") is True
-    )
-    if triggered:
-        dry_run = float(bot_state_entry["current_return"])
+
+    # Triggered symphonies: use bot_state current_return (pre-M1F and M1F both)
+    if bot_state_entry is not None and bot_state_entry.get("triggered"):
+        return {"if_held": if_held, "dry_run": float(bot_state_entry["current_return"])}
+
+    symphony_id = sym_dict.get("id")
+    # Detect whether trading_day was explicitly supplied vs defaulted
+    _explicit_trading_day = trading_day or sym_dict.get("trading_day")
+    if _explicit_trading_day:
+        _trading_day = _explicit_trading_day
+        _trading_day_explicit = True
     else:
+        from datetime import datetime as _dt, timezone as _tz
+        _trading_day = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+        _trading_day_explicit = False
+
+    dry_run: "float | None" = None
+    if symphony_id:
+        _db_file = db_path if db_path is not None else _get_shadow_db_file()
+        row = _load_latest_shadow_row_for_analytics(symphony_id, _trading_day, _db_file)
+        if row is not None:
+            dry_run = float(row["shadow_return"])
+        elif not _trading_day_explicit:
+            # Pre-M1F callers that don't inject trading_day: fall back to if_held
+            dry_run = if_held
+    else:
+        # No symphony_id: fall back to if_held
         dry_run = if_held
+
     return {"if_held": if_held, "dry_run": dry_run}
 
 
-def get_symphony_cumulative_return(sym_dict: dict, bot_state_entry: "dict | None") -> dict:
+# Patched by tests to redirect DB queries to tmp_path databases.
+DB_FILE: "str | None" = None
+
+
+def _get_shadow_db_file() -> str:
+    """Return the shadow_history DB file path; honours test-time DB_FILE override."""
+    if DB_FILE is not None:
+        return DB_FILE
+    import database as _db
+    return _db.DB_FILE
+
+
+def _load_latest_shadow_row_for_analytics(
+    symphony_id: str, trading_day: str, db_file: str
+) -> "dict | None":
+    """Read the most-recent shadow_history row for (symphony_id, trading_day)."""
+    import sqlite3
+    try:
+        conn = sqlite3.connect(db_file, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM shadow_history "
+            "WHERE symphony_id = ? AND trading_day = ? "
+            "ORDER BY ts_utc DESC LIMIT 1",
+            (symphony_id, trading_day),
+        ).fetchone()
+        conn.close()
+        return dict(row) if row is not None else None
+    except Exception:
+        return None
+
+
+def _get_shadow_cumulative_trajectory(
+    symphony_id: str, db_file: str
+) -> "list[float] | None":
+    """Return ordered list of per-day EOD shadow_return values for chain-link CR.
+
+    Day-row selection: last row per trading_day by ts_utc (AC-M1F.3.2).
+    Returns None when fewer than 2 distinct trading days exist.
+    Result is cached per (symphony_id, db_file) in database._shadow_cr_cache;
+    invalidated on new row write (record_shadow_observation).
+    """
+    import sqlite3
+    import database as _db
+
+    from datetime import datetime as _dt, timezone as _tz
+    today = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+    cache_key = (symphony_id, today, db_file)
+    cached = _db._shadow_cr_cache.get(cache_key)
+    if cached is not None:
+        return cached  # type: ignore[return-value]
+
+    try:
+        conn = sqlite3.connect(db_file, timeout=10.0)
+        rows = conn.execute(
+            "SELECT trading_day, shadow_return "
+            "FROM shadow_history "
+            "WHERE symphony_id = ? "
+            "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+            "                WHERE s2.symphony_id = shadow_history.symphony_id "
+            "                  AND s2.trading_day = shadow_history.trading_day) "
+            "ORDER BY trading_day ASC",
+            (symphony_id,),
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    if len(rows) < 2:
+        return None
+
+    result = [float(r[1]) for r in rows]
+    _db._shadow_cr_cache[cache_key] = result  # type: ignore[assignment]
+    return result
+
+
+
+
+
+def get_symphony_cumulative_return(
+    sym_dict: dict,
+    bot_state_entry: "dict | None",
+    trading_day: "str | None" = None,
+    db_path: "str | None" = None,
+) -> dict:
     """
     Per-symphony Cumulative Return.
 
     if_held: simple_return UNLESS (simple_return == 0.0 AND net_deposits == 0.0),
              in which case falls back to time_weighted_return (anomalous withdrawn/re-funded
              symphony where simple_return would be misleadingly zero).
-    dry_run: bot_state does not store CR; always equals if_held.
+    dry_run: chain-link product over per-day EOD shadow_return values expressed as percent
+             (AC-M1F.3.2, PA-M1F-16) when shadow_history has >= 2 distinct days.
+             Falls back to if_held when no shadow trajectory exists and trading_day was
+             not explicitly provided — preserves pre-M1F semantics for old callers.
+             None when shadow_history is explicitly queried (trading_day present) but empty
+             (AC-M1F.3.5).
 
-    Returns {"if_held": None, "dry_run": None} when simple_return is None (missing data),
-    allowing the template to render '---' instead of '0.00%'.
+    Returns {"if_held": None, "dry_run": None} when simple_return is None (missing data).
     """
     if sym_dict.get("simple_return") is None:
         return {"if_held": None, "dry_run": None}
@@ -435,22 +555,81 @@ def get_symphony_cumulative_return(sym_dict: dict, bot_state_entry: "dict | None
         if_held = float(sym_dict["time_weighted_return"]) * 100.0
     else:
         if_held = simple_return * 100.0
-    return {"if_held": if_held, "dry_run": if_held}
+
+    symphony_id = sym_dict.get("id")
+    _explicit_trading_day = trading_day or sym_dict.get("trading_day")
+
+    dry_run: "float | None" = None
+    if symphony_id:
+        _db_file = db_path if db_path is not None else _get_shadow_db_file()
+        trajectory = _get_shadow_cumulative_trajectory(symphony_id, _db_file)
+        if trajectory is not None:
+            product = 1.0
+            for r in trajectory:
+                product *= 1.0 + r / 100.0
+            dry_run = (product - 1.0) * 100.0
+        elif not _explicit_trading_day:
+            # Pre-M1F callers without trading_day: fall back to if_held
+            dry_run = if_held
+    else:
+        dry_run = if_held
+
+    return {"if_held": if_held, "dry_run": dry_run}
 
 
-def get_symphony_max_drawdown(sym_dict: dict, bot_state_entry: "dict | None") -> dict:
+def get_symphony_max_drawdown(
+    sym_dict: dict,
+    bot_state_entry: "dict | None",
+    trading_day: "str | None" = None,
+    db_path: "str | None" = None,
+) -> dict:
     """
     Per-symphony Max Drawdown.
 
     if_held: max_drawdown from Composer (positive float, magnitude convention).
-    dry_run: bot_state does not store MDD; always equals if_held.
+    dry_run: peak-to-trough drawdown of cumulative shadow trajectory (AC-M1F.3.3).
+             Falls back to if_held when no shadow trajectory exists and trading_day was
+             not explicitly provided — preserves pre-M1F semantics for old callers.
+             None when shadow_history is explicitly queried (trading_day present) but empty
+             (AC-M1F.3.5).
 
     Returns {"if_held": None, "dry_run": None} when max_drawdown is None (missing data).
     """
     if sym_dict.get("max_drawdown") is None:
         return {"if_held": None, "dry_run": None}
     if_held = float(sym_dict["max_drawdown"])
-    return {"if_held": if_held, "dry_run": if_held}
+
+    symphony_id = sym_dict.get("id")
+    _explicit_trading_day = trading_day or sym_dict.get("trading_day")
+
+    dry_run: "float | None" = None
+    if symphony_id:
+        _db_file = db_path if db_path is not None else _get_shadow_db_file()
+        trajectory = _get_shadow_cumulative_trajectory(symphony_id, _db_file)
+        if trajectory is not None:
+            # Build cumulative series then compute peak-to-trough
+            cum_series: list[float] = []
+            product = 1.0
+            for r in trajectory:
+                product *= 1.0 + r / 100.0
+                cum_series.append((product - 1.0) * 100.0)
+            if len(cum_series) >= 2:
+                peak = cum_series[0]
+                max_dd = 0.0
+                for val in cum_series:
+                    if val > peak:
+                        peak = val
+                    dd = peak - val
+                    if dd > max_dd:
+                        max_dd = dd
+                dry_run = max_dd
+        elif not _explicit_trading_day:
+            # Pre-M1F callers without trading_day: fall back to if_held
+            dry_run = if_held
+    else:
+        dry_run = if_held
+
+    return {"if_held": if_held, "dry_run": dry_run}
 
 
 def _value_weighted_portfolio(
@@ -464,7 +643,9 @@ def _value_weighted_portfolio(
     Value-weighted aggregate of a per-symphony helper across all symphonies.
 
     Symphonies missing "value", with value <= 0, or whose per_sym_fn returns
-    if_held=None (missing-data sentinel) are skipped.
+    if_held=None (missing-data sentinel) are skipped for both if_held and dry_run.
+    dry_run=None contributors are excluded from the dry_run aggregate independently
+    (AC-M1F.3.6 — consistent with existing if_held=None skip behavior).
     When none_on_empty=True: returns {"if_held": None, "dry_run": None} when
     symphonies is empty, all weights are non-positive, or all symphonies have
     missing data — used by CR and MDD where 0.0 is ambiguous with real zero.
@@ -474,6 +655,7 @@ def _value_weighted_portfolio(
     total_weight = 0.0
     if_held_wsum = 0.0
     dry_run_wsum = 0.0
+    dry_run_weight = 0.0
 
     for sym in symphonies:
         w = sym.get("value")
@@ -491,17 +673,23 @@ def _value_weighted_portfolio(
         if per["if_held"] is None:
             continue
         if_held_wsum += per["if_held"] * w
-        dry_run_wsum += per["dry_run"] * w
         total_weight += w
+        # AC-M1F.3.6: exclude None dry_run contributors independently
+        if per["dry_run"] is not None:
+            dry_run_wsum += per["dry_run"] * w
+            dry_run_weight += w
 
     if total_weight == 0.0:
         if none_on_empty:
             return {"if_held": None, "dry_run": None}
         return {"if_held": 0.0, "dry_run": 0.0}
 
+    dry_run_result: "float | None" = (
+        dry_run_wsum / dry_run_weight if dry_run_weight > 0.0 else None
+    )
     return {
         "if_held": if_held_wsum / total_weight,
-        "dry_run": dry_run_wsum / total_weight,
+        "dry_run": dry_run_result,
     }
 
 
@@ -560,3 +748,23 @@ def get_history_with_cache_invalidation(days: int = 60, base_dir: str = ".") -> 
     data = load_post_mortem_history(days=days, base_dir=base_dir)
     _HISTORY_CACHE = {"key": cache_key, "data": data}
     return data
+
+
+# V1 bootstrap gate — three-state fold-sufficiency check (PA-M1F-11, AC-M1F.6.4)
+# Threshold: N >= 30 per Bailey/de-Prado 2014 interpretability floor.
+_V1_BOOTSTRAP_MIN_DAYS = 30
+
+
+def compute_v1_bootstrap_state(sample_size: int, divergence_detected: bool) -> str:
+    """Return V1 bootstrap state string based on shadow_history sample size.
+
+    States (PA-M1F-11 / AC-M1F.6.4):
+      'indeterminate'         — sample_size < 30 (below Bailey/de-Prado 2014 threshold)
+      'provisional_no_overfit' — sample_size >= 30 and no divergence detected
+      'overfit_confirmed'     — sample_size >= 30 and divergence detected
+    """
+    if sample_size < _V1_BOOTSTRAP_MIN_DAYS:
+        return "indeterminate"
+    if divergence_detected:
+        return "overfit_confirmed"
+    return "provisional_no_overfit"

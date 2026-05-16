@@ -49,6 +49,7 @@ def mock_database():
     with patch.object(app_module, "database") as db_mock:
         db_mock.load_state.return_value = {}
         db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
+        db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
         yield db_mock
 
 

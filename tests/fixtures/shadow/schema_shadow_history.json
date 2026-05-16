@@ -1,0 +1,39 @@
+{
+  "_provenance": "Schema-derived from feature-plans/m1f-real-shadow-equity-series.md AC-M1F.1.1; columns match the CREATE TABLE spec verbatim. No values computed by production code.",
+  "migration_name": "008_shadow_history.sql",
+  "expected_columns": [
+    "id",
+    "ts_utc",
+    "ts_et",
+    "trading_day",
+    "symphony_id",
+    "account_id",
+    "cycle_id",
+    "current_return",
+    "shadow_return",
+    "is_post_trigger",
+    "trigger_id",
+    "math_mode"
+  ],
+  "expected_indexes": [
+    "idx_shadow_history_sym_day",
+    "idx_shadow_history_day",
+    "idx_shadow_history_ts_utc"
+  ],
+  "column_constraints": {
+    "id": {"primary_key": true, "autoincrement": true},
+    "ts_utc": {"not_null": true, "no_default": true},
+    "ts_et": {"not_null": true, "no_default": true},
+    "trading_day": {"not_null": true, "no_default": true},
+    "symphony_id": {"not_null": true, "no_default": true},
+    "account_id": {"nullable": true},
+    "cycle_id": {"nullable": true},
+    "current_return": {"not_null": true, "no_default": true, "type": "REAL"},
+    "shadow_return": {"not_null": true, "no_default": true, "type": "REAL"},
+    "is_post_trigger": {"not_null": true, "default": 0, "type": "INTEGER"},
+    "trigger_id": {"nullable": true, "no_foreign_key": true},
+    "math_mode": {"not_null": true, "default": "per_symphony", "type": "TEXT"}
+  },
+  "no_foreign_key_constraint_on_trigger_id": true,
+  "comment": "BC-2: trigger_id is an advisory soft reference, NOT a FK. BC-6: idx_shadow_history_ts_utc required for prune DELETE. PA-M1F-10: NOT NULL columns have no DEFAULT. AC-M1F.6.5: math_mode added for V1 discrimination."
+}

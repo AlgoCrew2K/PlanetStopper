@@ -505,6 +505,7 @@ _MIGRATION_FILES = [
     "005_exit_triggers.sql",
     "006_autotune_runs_sharpe.sql",
     "007_autotune_runs_frozen_eval.sql",
+    "008_shadow_history.sql",
 ]
 
 
@@ -595,6 +596,217 @@ def record_exit_trigger(
         conn.close()
     except Exception as exc:
         logging.error("record_exit_trigger failed for %s: %s", symphony_id, exc)
+
+
+# --- M1F: Shadow-equity history ---
+
+# In-memory cache of (symphony_id, trading_day) → cumulative shadow return.
+# Invalidated when a new shadow_history row is written for that day.
+_shadow_cr_cache: dict[tuple[str, str], float] = {}
+
+
+def record_shadow_observation(
+    *,
+    symphony_id: str,
+    account_id: "str | None",
+    cycle_id: "str | None",
+    ts_utc: str,
+    ts_et: str,
+    trading_day: str,
+    current_return: float,
+    shadow_return: float,
+    is_post_trigger: int,
+    trigger_id: "int | None",
+) -> None:
+    """Write one shadow-equity telemetry row (M1F).
+
+    Opens its own connection — does NOT join the cycle's save_state transaction.
+    Failure is logged at ERROR and swallowed; the cycle must never fail on telemetry.
+    AC-M1F.1.2, PA-M1F-10: both current_return and shadow_return are required (NOT NULL,
+    no DEFAULT) — caller must supply real values.
+    """
+    # Invalidate all cache entries for this symphony (keys now include db_file as 3rd element).
+    stale = [k for k in _shadow_cr_cache if k[0] == symphony_id]
+    for k in stale:
+        del _shadow_cr_cache[k]
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn.execute(
+            "INSERT INTO shadow_history "
+            "(ts_utc, ts_et, trading_day, symphony_id, account_id, cycle_id, "
+            " current_return, shadow_return, is_post_trigger, trigger_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                ts_utc,
+                ts_et,
+                trading_day,
+                symphony_id,
+                account_id,
+                cycle_id,
+                current_return,
+                shadow_return,
+                is_post_trigger,
+                trigger_id,
+            ),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logging.error("record_shadow_observation failed for %s: %s", symphony_id, exc)
+
+
+def prune_old_shadow_history(retention_days: int) -> int:
+    """Delete shadow_history rows older than retention_days. Returns total rows deleted.
+
+    Uses a portable subquery DELETE loop (PA-M1F-5) — works on all SQLite builds
+    regardless of SQLITE_ENABLE_UPDATE_DELETE_LIMIT compile flag.
+    """
+    from datetime import timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    total_deleted = 0
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        while True:
+            cursor = conn.execute(
+                "DELETE FROM shadow_history WHERE id IN "
+                "(SELECT id FROM shadow_history WHERE ts_utc < ? ORDER BY ts_utc LIMIT 1000)",
+                (cutoff,),
+            )
+            conn.commit()
+            batch = cursor.rowcount
+            total_deleted += batch
+            if batch == 0:
+                break
+        conn.close()
+    except Exception as exc:
+        logging.error("prune_old_shadow_history failed: %s", exc)
+    return total_deleted
+
+
+def load_latest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
+    """Return the most-recent shadow_history row for a symphony+day, or None."""
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM shadow_history "
+            "WHERE symphony_id = ? AND trading_day = ? "
+            "ORDER BY ts_utc DESC LIMIT 1",
+            (symphony_id, trading_day),
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return dict(row)
+    except Exception as exc:
+        logging.error("load_latest_shadow_row failed for %s %s: %s", symphony_id, trading_day, exc)
+        return None
+
+
+def resume_shadow_baselines(bot_state: dict, trading_day: str) -> None:
+    """Reconcile in-memory shadow_hwm cache against shadow_history on daemon restart.
+
+    Reads the latest shadow_history row per symphony for trading_day and updates
+    bot_state accordingly. The table is canonical; it wins on any divergence.
+    AC-M1F.2.4, AC-M1F.7.2: must be called AFTER wipe_transient_state for the day.
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT symphony_id, current_return, shadow_return, is_post_trigger, trigger_id "
+            "FROM shadow_history "
+            "WHERE trading_day = ? "
+            "GROUP BY symphony_id "
+            "HAVING ts_utc = MAX(ts_utc)",
+            (trading_day,),
+        ).fetchall()
+        conn.close()
+    except Exception as exc:
+        logging.error("resume_shadow_baselines failed: %s", exc)
+        return
+
+    for row in rows:
+        s_id = row["symphony_id"]
+        if s_id not in bot_state or not isinstance(bot_state[s_id], dict):
+            continue
+        # Update shadow_hwm from table's max(current_return) for the day
+        bot_state[s_id]["shadow_hwm"] = row["current_return"]
+        if row["is_post_trigger"]:
+            bot_state[s_id]["triggered_at_return"] = row["shadow_return"]
+
+
+def get_eod_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
+    """Return the last shadow_history row for (symphony_id, trading_day) by ts_utc DESC.
+
+    PA-M1F-5b: EOD divergence uses this row; it may not be the market-close row
+    if the engine was down for the session's final interval.
+    """
+    return load_latest_shadow_row(symphony_id, trading_day)
+
+
+def compute_shadow_hwm(symphony_id: str, trading_day: str) -> "float | None":
+    """Return shadow_hwm = MAX(current_return) for (symphony_id, trading_day).
+
+    BC-3: formula is max(current_return), NOT max(shadow_return). The shadow_hwm
+    represents the counterfactual peak Composer-reported value during the day.
+    Returns None when no rows exist for the given symphony+day.
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        row = conn.execute(
+            "SELECT MAX(current_return) FROM shadow_history "
+            "WHERE symphony_id = ? AND trading_day = ?",
+            (symphony_id, trading_day),
+        ).fetchone()
+        conn.close()
+        return float(row[0]) if row and row[0] is not None else None
+    except Exception as exc:
+        logging.error("compute_shadow_hwm failed for %s %s: %s", symphony_id, trading_day, exc)
+        return None
+
+
+def get_shadow_divergence(trading_day: str) -> dict:
+    """Return per-symphony and portfolio-level shadow divergence for the current day.
+
+    Used by /api/state to populate the shadow_divergence key (PA-M1F-14).
+    One lightweight GROUP BY query — not on the execution path.
+    Returns {"by_symphony": {<id>: {"today": float|None, "cumulative": float|None}}, "portfolio_today": float|None}.
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT symphony_id, "
+            "       (SELECT current_return - shadow_return "
+            "        FROM shadow_history s2 "
+            "        WHERE s2.symphony_id = s1.symphony_id AND s2.trading_day = ? "
+            "          AND s2.is_post_trigger = 1 "
+            "        ORDER BY s2.ts_utc DESC LIMIT 1) AS today_divergence "
+            "FROM shadow_history s1 "
+            "WHERE trading_day = ? "
+            "GROUP BY symphony_id",
+            (trading_day, trading_day),
+        ).fetchall()
+        conn.close()
+    except Exception as exc:
+        logging.error("get_shadow_divergence failed: %s", exc)
+        return {"by_symphony": {}, "portfolio_today": None}
+
+    by_symphony: dict = {}
+    divergences = []
+    for row in rows:
+        s_id = row["symphony_id"]
+        div = row["today_divergence"]
+        by_symphony[s_id] = {"today": div, "cumulative": None}
+        if div is not None:
+            divergences.append(div)
+
+    portfolio_today = (sum(divergences) / len(divergences)) if divergences else None
+    return {"by_symphony": by_symphony, "portfolio_today": portfolio_today}
 
 
 def get_triggers(

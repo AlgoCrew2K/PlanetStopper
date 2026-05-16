@@ -1,0 +1,27 @@
+{
+  "_provenance": "Schema-derived fixture for /api/state shadow_divergence key extension. Derived from AC-M1F.4.4 (PA-M1F-14). Structure matches the specified Option A extension: top-level 'shadow_divergence' key added to existing /api/state response.",
+  "_scenario": "Two symphonies with divergence data. SYM_ALPHA has post-trigger divergence. SYM_BETA has no history (null).",
+  "expected_shadow_divergence_structure": {
+    "by_symphony": {
+      "SYM_ALPHA": {
+        "today": "float or null",
+        "cumulative": "float or null"
+      },
+      "SYM_BETA": {
+        "today": null,
+        "cumulative": null
+      }
+    },
+    "portfolio_today": "float or null"
+  },
+  "null_guard": {
+    "no_shadow_history_yields_null": true,
+    "no_nan_or_zero_fallback": true,
+    "comment": "PA-M1F-new: null guard — never NaN% or 0.00% for symphonies with no shadow_history rows"
+  },
+  "query_constraint": {
+    "is_one_lightweight_group_by_query": true,
+    "not_on_execution_path": true,
+    "comment": "AC-M1F.4.4: shadow_history read is one lightweight GROUP BY per polling cycle"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "_provenance": "Synthetic retention scenario. Derived from AC-M1F.1.3 (subquery DELETE LIMIT loop pattern, PA-M1F-5) and AC-M1F.1.4 (prune runs in app.py scheduler callback, BC-4). Counts are chosen to exercise the loop at batch_size=1000.",
+  "_scenario": "180-day retention. 5 rows older than cutoff. 3 rows within window. After rotation: 5 deleted, 3 remain.",
+  "setup": {
+    "retention_days": 180,
+    "rows_older_than_retention_days": 5,
+    "rows_within_retention_window": 3,
+    "batch_size": 1000
+  },
+  "expected_after_rotation": {
+    "remaining_rows": 3,
+    "deleted_rows": 5
+  },
+  "subquery_pattern": {
+    "sql_shape": "DELETE FROM shadow_history WHERE id IN (SELECT id FROM shadow_history WHERE ts_utc < ? ORDER BY ts_utc LIMIT ?)",
+    "comment": "PA-M1F-5: portable subquery form — works on all SQLite builds without SQLITE_ENABLE_UPDATE_DELETE_LIMIT. Loop until rowcount==0."
+  },
+  "scheduler_placement": {
+    "must_be_in_app_py_scheduler_callback": true,
+    "must_not_be_flask_route": true,
+    "comment": "BC-4: prune runs in existing background scheduler callback alongside prune_old_triggers(), NOT in any Flask route handler."
+  }
+}

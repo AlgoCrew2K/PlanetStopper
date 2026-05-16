@@ -1,0 +1,27 @@
+{
+  "_provenance": "Synthetic per-symphony input representing a cycle before any trigger fires. Derived from the shadow_history schema spec (AC-M1F.1.1) and shadow_return computation rule (AC-M1F.2.1). Values are representative — never copied from production output.",
+  "_scenario": "Pre-trigger: bot_state['triggered']=False. shadow_return must equal current_return.",
+  "input": {
+    "symphony_id": "SYM_ALPHA",
+    "account_id": "acct-001",
+    "cycle_id": "20260516_1001",
+    "ts_utc": "2026-05-16T14:01:00Z",
+    "ts_et": "2026-05-16T10:01:00",
+    "trading_day": "2026-05-16",
+    "current_return": 2.45,
+    "triggered": false,
+    "triggered_at_return": null
+  },
+  "expected_shadow_return": 2.45,
+  "expected_is_post_trigger": 0,
+  "expected_trigger_id": null,
+  "expected_shape": {
+    "shadow_return": {"equals_current_return": true, "comment": "pre-trigger: shadow_return = current_return (Model A, AC-M1F.2.1)"},
+    "is_post_trigger": {"value": 0},
+    "current_return": {"type": "float"},
+    "ts_utc": {"non_empty": true, "pattern": "Z-terminated ISO8601"},
+    "ts_et": {"non_empty": true},
+    "trading_day": {"non_empty": true, "pattern": "YYYY-MM-DD"},
+    "cycle_id": {"pattern": "YYYYMMDD_HHMM", "regex": "^\\d{8}_\\d{4}$"}
+  }
+}

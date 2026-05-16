@@ -194,6 +194,16 @@
             <div id="triggers-pills" class="flex items-center gap-2 flex-wrap"></div>
         </div>
 
+        <!-- M1F: Shadow Performance strip — hidden when no post-trigger divergence today (AC-M1F.4.3) -->
+        <div id="shadow-performance-strip" class="hidden bg-slate-800 px-6 py-2 rounded-2xl shadow-lg border border-slate-700 mb-6 flex items-center gap-4 flex-wrap" style="max-height:48px;overflow:hidden;">
+            <span class="text-xs uppercase tracking-widest text-slate-500 font-bold flex-shrink-0">Shadow Perf</span>
+            <div class="h-4 w-px bg-slate-700 flex-shrink-0"></div>
+            <!-- Sign legend: green = engine helped (exited before drop), red = engine cost (exited before recovery) -->
+            <span class="text-[10px] text-slate-500 flex-shrink-0">&#x25A0;<span class="text-emerald-400"> helped</span> &nbsp;&#x25A0;<span class="text-rose-400"> cost</span></span>
+            <div class="h-4 w-px bg-slate-700 flex-shrink-0"></div>
+            <div id="shadow-pills" class="flex items-center gap-2 flex-wrap"></div>
+        </div>
+
         <div id="notification" class="hidden mb-6 p-4 rounded-xl text-sm font-medium transition-all duration-300"></div>
 
         <!-- flex-1 + min-h-0: table card expands to fill remaining viewport after header and portfolio strip -->
@@ -869,6 +879,36 @@
                     }
                 } else {
                     badge.setAttribute('hidden', '');
+                }
+            }
+
+            // M1F: Shadow Performance strip (AC-M1F.4.3)
+            // Sign convention: green = current_return < shadow_return (engine helped — exited before drop)
+            //                  red   = current_return > shadow_return (engine cost — exited before recovery)
+            if (data.shadow_divergence) {
+                const sd = data.shadow_divergence;
+                const strip = document.getElementById('shadow-performance-strip');
+                const pills = document.getElementById('shadow-pills');
+                if (strip && pills) {
+                    const bySym = sd.by_symphony || {};
+                    const entries = Object.entries(bySym).filter(([, d]) => d.today != null);
+                    if (!entries.length) {
+                        strip.classList.add('hidden');
+                    } else {
+                        pills.innerHTML = entries.map(([symId, d]) => {
+                            const v = d.today;
+                            // null guard: render '—' for null/undefined
+                            if (v == null) return `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-700 text-slate-400 border border-slate-600">${symId.slice(-8)} <span class="ml-1 opacity-60">—</span></span>`;
+                            // green when engine helped (v < 0 means current < shadow, bot exited high)
+                            const helped = v < 0;
+                            const cls = helped
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                : 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+                            const sign = v >= 0 ? '+' : '';
+                            return `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${cls} border">${symId.slice(-8)} <span class="ml-1">${sign}${v.toFixed(2)}%</span></span>`;
+                        }).join('');
+                        strip.classList.remove('hidden');
+                    }
                 }
             }
 

@@ -1,0 +1,38 @@
+{
+  "_provenance": "Synthetic scenario for daemon restart mid-day. Derived from AC-M1F.2.4 (resume_shadow_baselines runs AFTER wipe_transient_state), AC-M1F.7.2 (table is canonical source of truth on restart). Rows represent what the DB contains at restart time.",
+  "_scenario": "Daemon restarted mid-day. DB has existing shadow_history rows for today. resume_shadow_baselines must read latest row per symphony for today's trading_day AFTER wipe_transient_state wipes in-memory state.",
+  "db_rows_at_restart": [
+    {
+      "symphony_id": "SYM_ALPHA",
+      "trading_day": "2026-05-16",
+      "ts_utc": "2026-05-16T14:01:00Z",
+      "current_return": 2.45,
+      "shadow_return": 2.45,
+      "is_post_trigger": 0,
+      "trigger_id": null
+    },
+    {
+      "symphony_id": "SYM_ALPHA",
+      "trading_day": "2026-05-16",
+      "ts_utc": "2026-05-16T14:23:00Z",
+      "current_return": 1.10,
+      "shadow_return": 3.20,
+      "is_post_trigger": 1,
+      "trigger_id": 42
+    }
+  ],
+  "resume_order_constraint": {
+    "wipe_transient_state_runs_first": true,
+    "resume_shadow_baselines_runs_after": true,
+    "comment": "PA-M1F-2: resume_shadow_baselines MUST run after wipe_transient_state. Inverted order would overwrite today's wiped state with yesterday's rows."
+  },
+  "expected_resumed_state": {
+    "SYM_ALPHA": {
+      "triggered": true,
+      "triggered_at_return": 3.20,
+      "is_post_trigger": 1,
+      "source": "shadow_history table",
+      "comment": "AC-M1F.7.2: table wins on divergence with in-memory cache"
+    }
+  }
+}

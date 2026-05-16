@@ -1,0 +1,22 @@
+{
+  "_provenance": "Synthetic input for the new-day reset scenario. Derived from AC-M1F.2.3 (new-day reset wipes triggered=False, first row of new day uses current_return) and AC-M1F.2.4 (resume_shadow_baselines order).",
+  "_scenario": "New trading day: triggered wiped to False by wipe_transient_state. First row of the day: shadow_return = current_return regardless of previous day's trigger state.",
+  "input": {
+    "symphony_id": "SYM_ALPHA",
+    "account_id": "acct-001",
+    "cycle_id": "20260519_0930",
+    "ts_utc": "2026-05-19T13:30:00Z",
+    "ts_et": "2026-05-19T09:30:00",
+    "trading_day": "2026-05-19",
+    "current_return": 0.15,
+    "triggered": false,
+    "triggered_at_return": null,
+    "previous_day_was_triggered": true
+  },
+  "expected_shadow_return": 0.15,
+  "expected_is_post_trigger": 0,
+  "expected_shape": {
+    "shadow_return": {"equals_current_return": true, "comment": "New day: wipe_transient_state cleared triggered. AC-M1F.2.3."},
+    "is_post_trigger": {"value": 0}
+  }
+}
