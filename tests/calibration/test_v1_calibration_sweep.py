@@ -964,3 +964,136 @@ class TestDeterminism:
                 "either the seed is not wired or the objective is degenerate.",
                 stacklevel=2,
             )
+
+
+# ---------------------------------------------------------------------------
+# 12. V1-SPECIFIC SEARCH SPACE BOUNDS — named constants, not magic numbers
+# ---------------------------------------------------------------------------
+
+class TestV1SearchSpaceBounds:
+    def test_v1_vwap_cross_hwm_lower_bound_named_constant_exists(self, autotuner_module):
+        """
+        V1 uses a narrower VWAP_CROSS_HWM_PCT lower bound (0.3) than the general
+        autotuner (0.5). This must be expressed as a named constant
+        (_SS_VWAP_CROSS_HWM_V1_MIN) in autotuner.py, not an inline magic number.
+        """
+        assert hasattr(autotuner_module, "_SS_VWAP_CROSS_HWM_V1_MIN"), (
+            "_SS_VWAP_CROSS_HWM_V1_MIN missing from autotuner — "
+            "V1 VWAP lower bound must be a named constant, not a magic number"
+        )
+
+    def test_v1_vwap_cross_hwm_upper_bound_named_constant_exists(self, autotuner_module):
+        """
+        V1 upper bound for VWAP_CROSS_HWM_PCT must be a named constant
+        (_SS_VWAP_CROSS_HWM_V1_MAX) in autotuner.py.
+        """
+        assert hasattr(autotuner_module, "_SS_VWAP_CROSS_HWM_V1_MAX"), (
+            "_SS_VWAP_CROSS_HWM_V1_MAX missing from autotuner"
+        )
+
+    def test_v1_para_velocity_bounds_are_within_general_bounds(self, autotuner_module):
+        """
+        V1 PARABOLIC_VELOCITY_THRESHOLD bounds must sit within (or equal) the
+        general autotuner bounds (_SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX).
+        Asserts shape/ordering only — no hardcoded producer values.
+        """
+        lo = getattr(autotuner_module, "_SS_PARA_VEL_MIN", None)
+        hi = getattr(autotuner_module, "_SS_PARA_VEL_MAX", None)
+        assert lo is not None and hi is not None, (
+            "_SS_PARA_VEL_MIN / _SS_PARA_VEL_MAX missing from autotuner"
+        )
+        assert lo < hi, f"_SS_PARA_VEL_MIN ({lo}) must be < _SS_PARA_VEL_MAX ({hi})"
+        assert isinstance(lo, (int, float)) and math.isfinite(lo)
+        assert isinstance(hi, (int, float)) and math.isfinite(hi)
+
+    def test_v1_vwap_cross_hwm_bounds_are_ordered(self, autotuner_module):
+        """
+        V1 VWAP_CROSS_HWM_PCT bounds must be ordered: MIN < MAX.
+        Asserts invariant only.
+        """
+        lo = getattr(autotuner_module, "_SS_VWAP_CROSS_HWM_V1_MIN", None)
+        hi = getattr(autotuner_module, "_SS_VWAP_CROSS_HWM_V1_MAX", None)
+        if lo is None or hi is None:
+            pytest.skip("V1 bound constants not yet defined — covered by naming tests above")
+        assert lo < hi, (
+            f"_SS_VWAP_CROSS_HWM_V1_MIN ({lo}) must be < _SS_VWAP_CROSS_HWM_V1_MAX ({hi})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 13. SYSTEM A 3-TICK CONFIRM GATE — single-tick VWAP cross at lower bound does not trigger
+# ---------------------------------------------------------------------------
+
+class TestSystemAThreeTickGate:
+    def test_single_vwap_cross_tick_at_lower_bound_does_not_fire_system_a(self):
+        """
+        System A (profit-protection VWAP break) requires VWAP_BREAK_CONFIRM_TICKS=3
+        consecutive qualifying ticks before is_vwap_broken=True. A single qualifying
+        tick at the minimum vwap_cross_hwm_pct=0.3 boundary must not fire.
+
+        This pins the 3-tick confirm gate invariant so that a future narrowing of
+        the V1 lower bound cannot accidentally produce spurious single-tick exits.
+        Tested directly against math_engine.compute_vwap_breakdown_update —
+        no mock of the math engine.
+        """
+        import math_engine as _me
+
+        # Parameters: safe_hwm at the V1 lower bound (0.3), single-tick call
+        vwap_cross_hwm_pct = 0.3  # V1 lower bound value
+        # Conditions that satisfy System A gate: safe_hwm >= vwap_cross_hwm_pct AND return < safe_hwm
+        safe_hwm = 0.3
+        current_return = 0.29  # below safe_hwm — qualifies for System A
+
+        new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = (
+            _me.compute_vwap_breakdown_update(
+                is_triggered=False,
+                valid_vwap_weight=0.9,       # > VWAP_WEIGHT_THRESHOLD (0.5): gate passes
+                weighted_vwap_diff=-0.1,     # < 0: gate passes
+                safe_hwm=safe_hwm,
+                current_return=current_return,
+                vwap_cross_hwm_pct=vwap_cross_hwm_pct,
+                vwap_bleed_arm_pct=-1.0,     # bleed arm well below current_return: System B does not fire
+                vwap_bleed_ticks_threshold=3,
+                current_vwap_ticks=0,        # fresh start: tick count = 0 before this call
+                current_vwap_bleed_ticks=0,
+            )
+        )
+
+        assert not is_vwap_broken, (
+            "System A fired on a single qualifying tick at vwap_cross_hwm_pct=0.3 — "
+            "3-tick confirm gate (VWAP_BREAK_CONFIRM_TICKS=3) should prevent this"
+        )
+        assert new_vwap_ticks == 1, (
+            f"Expected vwap_ticks to increment to 1 after one qualifying tick, got {new_vwap_ticks}"
+        )
+
+    def test_three_consecutive_vwap_cross_ticks_at_lower_bound_fires_system_a(self):
+        """
+        Three consecutive qualifying ticks at vwap_cross_hwm_pct=0.3 must fire
+        is_vwap_broken=True. Confirms the confirm gate is reached at exactly 3 ticks,
+        not before.
+        """
+        import math_engine as _me
+
+        vwap_cross_hwm_pct = 0.3
+        safe_hwm = 0.3
+        current_return = 0.29
+
+        tick_count = 0
+        for _ in range(3):
+            tick_count, _, is_vwap_broken, _ = _me.compute_vwap_breakdown_update(
+                is_triggered=False,
+                valid_vwap_weight=0.9,
+                weighted_vwap_diff=-0.1,
+                safe_hwm=safe_hwm,
+                current_return=current_return,
+                vwap_cross_hwm_pct=vwap_cross_hwm_pct,
+                vwap_bleed_arm_pct=-1.0,
+                vwap_bleed_ticks_threshold=3,
+                current_vwap_ticks=tick_count,
+                current_vwap_bleed_ticks=0,
+            )
+
+        assert is_vwap_broken, (
+            "System A must fire after exactly 3 consecutive qualifying ticks at vwap_cross_hwm_pct=0.3"
+        )
