@@ -1,0 +1,13 @@
+{
+  "_provenance": "Hand-authored fixture. Represents Sunday 2026-05-17 at 14:00 ET. Expected get_market_state output: 'closed_frozen'.",
+  "scenario": "sunday",
+  "input": {
+    "iso_datetime_et": "2026-05-17T14:00:00",
+    "weekday": 6,
+    "time_et": "14:00:00",
+    "timezone": "America/New_York"
+  },
+  "expected": {
+    "market_state": "closed_frozen"
+  }
+}

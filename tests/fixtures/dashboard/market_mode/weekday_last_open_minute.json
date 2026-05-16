@@ -1,0 +1,13 @@
+{
+  "_provenance": "Hand-authored fixture. Represents a weekday (Monday 2026-05-11) at 15:59 ET — the last minute the market is open (open window is 09:30 <= time < 16:00). Expected get_market_state output: 'open'.",
+  "scenario": "weekday_last_open_minute",
+  "input": {
+    "iso_datetime_et": "2026-05-11T15:59:00",
+    "weekday": 0,
+    "time_et": "15:59:00",
+    "timezone": "America/New_York"
+  },
+  "expected": {
+    "market_state": "open"
+  }
+}

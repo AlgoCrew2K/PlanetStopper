@@ -1,0 +1,28 @@
+{
+  "_provenance": "Hand-authored fixture. Represents a valid bot_state entry after EOD post-mortem on 2026-05-11. The 'last_market_close_snapshot' field must contain the specified sub-fields. Values are representative — tests assert structure/schema not these literal values.",
+  "scenario": "eod_snapshot",
+  "trading_day": "2026-05-11",
+  "snapshot": {
+    "trading_day": "2026-05-11",
+    "captured_at_et": "16:00:00 ET",
+    "data_as_of": "16:00 ET",
+    "portfolio_strip": {
+      "today_change": null,
+      "cumulative_return": null,
+      "max_drawdown": null
+    },
+    "shadow_divergence": {
+      "by_symphony": {},
+      "portfolio_today": null
+    },
+    "accounts_map": {}
+  },
+  "expected_schema_keys": [
+    "trading_day",
+    "captured_at_et",
+    "data_as_of",
+    "portfolio_strip",
+    "shadow_divergence",
+    "accounts_map"
+  ]
+}

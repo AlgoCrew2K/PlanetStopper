@@ -1,0 +1,12 @@
+{
+  "_provenance": "Hand-authored fixture documenting a v1 known limitation. On trading half-days (e.g. Black Friday 2026-11-27, market closes at 13:00 ET), get_market_state uses the fixed MARKET_CLOSE_TIME=16:00 and will incorrectly return 'open' between 13:00 and 16:00. This is a documented v1 limitation; v2 will integrate a full US-equity calendar. This fixture is for documentation/future regression, not tested in the current suite.",
+  "scenario": "half_day_v1_limitation",
+  "v1_limitation": true,
+  "example": {
+    "date": "2026-11-27",
+    "actual_market_close": "13:00 ET",
+    "v1_returns_at_1400": "open",
+    "correct_would_be": "closed_frozen",
+    "note": "v1 uses fixed MARKET_CLOSE_TIME=time(16,0); half-day handling is v2 scope"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "_provenance": "Hand-authored fixture. Represents Saturday 2026-05-16 at 10:00 ET — a weekend day at a time that would be market-open if it were a weekday. Expected get_market_state output: 'closed_frozen'.",
+  "scenario": "saturday",
+  "input": {
+    "iso_datetime_et": "2026-05-16T10:00:00",
+    "weekday": 5,
+    "time_et": "10:00:00",
+    "timezone": "America/New_York"
+  },
+  "expected": {
+    "market_state": "closed_frozen"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "_provenance": "Hand-authored fixture. Represents a fresh daemon deployment where no market-close snapshot exists yet. The bot_state has no 'last_market_close_snapshot' key. /api/state must return market_state='closed_frozen', frozen_at=null, and a notice field.",
+  "scenario": "fresh_deploy_no_snapshot",
+  "input": {
+    "bot_state": {},
+    "current_et_iso": "2026-05-11T18:00:00",
+    "weekday": 0,
+    "time_et": "18:00:00"
+  },
+  "expected": {
+    "market_state": "closed_frozen",
+    "frozen_at": null,
+    "has_notice": true,
+    "notice_contains": "No closing snapshot yet"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "_provenance": "Hand-authored fixture. Represents a weekday (Monday 2026-05-11) at exactly 16:00 ET — the first instant after market close. Expected get_market_state output: 'closed_frozen' (boundary exclusive on the open side, meaning 16:00 is closed).",
+  "scenario": "weekday_market_close_boundary",
+  "input": {
+    "iso_datetime_et": "2026-05-11T16:00:00",
+    "weekday": 0,
+    "time_et": "16:00:00",
+    "timezone": "America/New_York"
+  },
+  "expected": {
+    "market_state": "closed_frozen"
+  }
+}
