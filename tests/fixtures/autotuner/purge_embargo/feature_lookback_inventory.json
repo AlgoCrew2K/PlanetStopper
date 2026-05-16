@@ -1,0 +1,38 @@
+{
+  "_provenance": "Synthetic fixture for O1 purge/embargo RED tests. Lookback values derived from named constants in math_engine.py: LOOKBACK_DAYS=20 (calculate_20d_vol), ATR_LOOKBACK_DAYS=15 (calculate_14d_atr_pct: 14 true-range periods + 1 prior close). MC kNN and decay weighting are excluded from purge sizing — see _excluded_from_purge. Updated per risk-engine-specialist methodology verdict: decay is an objective weight, not a feature lookback; MC is pre-computed in tick data, not live in the autotuner loop. Lopez de Prado 2018 Ch. 7: purge by feature lookbacks only.",
+  "_excluded_from_purge": [
+    {
+      "name": "mc_knn_spy_vol",
+      "reason": "Pre-computed: in the autotuner simulation, mc_prob is consumed from tick.get('mc_prob', 50.0). run_monte_carlo is NOT called live inside the autotuner simulation loop. The mc_prob values for each training day were computed by synthetic_history.py using hist_data_up_to_yesterday — strictly prior-day data. No test-fold SPY vol data contaminates training feature computation.",
+      "source": "autotuner.py run_simulation loop (tick.get); synthetic_history.py:233 (pre-computation site)"
+    },
+    {
+      "name": "decay_weighted_objective",
+      "reason": "Objective aggregation weight, not a feature lookback. _GUARD_ALPHA_DECAY_RATE=0.015 is applied in run_simulation to weight past guard-alpha outcomes when summing the objective. The decay does not extend any feature computation window into the test fold — it re-weights training-set outcomes only. Lopez de Prado 2018 Ch. 7 defines purge by feature windows that reach across the fold boundary, which the decay weighting does not do.",
+      "source": "autotuner.py run_simulation:262-264 and _collect_sim_returns:140; constant _GUARD_ALPHA_DECAY_RATE at autotuner.py:44"
+    }
+  ],
+  "features": [
+    {
+      "name": "20d_historical_vol",
+      "function": "math_engine.calculate_20d_vol",
+      "source_constant": "math_engine.LOOKBACK_DAYS",
+      "lookback_trading_days": 20,
+      "purge_relevant": true,
+      "provenance": "LOOKBACK_DAYS=20 (math_engine.py:37). Rolling 20-day std dev of daily returns. synthetic_history.py:206 calls this per date when pre-computing tick data. A train sample on date D uses vol computed over the 20 trading days ending on D — if any of those 20 days falls in the test fold, the feature leaks across the boundary."
+    },
+    {
+      "name": "14d_atr_pct",
+      "function": "math_engine.calculate_14d_atr_pct",
+      "source_constant": "math_engine.ATR_LOOKBACK_DAYS",
+      "lookback_trading_days": 15,
+      "purge_relevant": true,
+      "provenance": "ATR_LOOKBACK_DAYS=15 (math_engine.py:38): 14 true-range periods + 1 prior close required to compute the first TR. The function slices [-ATR_LOOKBACK_DAYS:] from sorted valid_dates (math_engine.py:566), so the effective window is 15 trading days. synthetic_history.py:207 calls this per date."
+    }
+  ],
+  "max_lookback_trading_days": 20,
+  "purge_days_required": 20,
+  "embargo_days_default": 1,
+  "embargo_constant_name": "EMBARGO_DAYS",
+  "citation": "Lopez de Prado 2018, Advances in Financial Machine Learning, Ch. 7 — Purged k-fold CV"
+}

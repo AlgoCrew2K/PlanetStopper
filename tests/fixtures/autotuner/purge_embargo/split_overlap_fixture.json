@@ -1,0 +1,37 @@
+{
+  "_provenance": "Synthetic deterministic fixture for O1 purge/embargo RED tests. Dates are simplified trading-day strings (no weekends, no holidays in this toy sequence). All overlap and embargo logic is derived mechanically from the lookback rules in feature_lookback_inventory.json. No bare literals in test assertions — tests load this fixture and derive expectations from its fields.",
+  "_scenario": "30-day history, 80/20 split → split_idx=24, train_dates=[day01..day24], test_dates=[day25..day30]. Purge=20 days: train days whose feature window (trailing 20 days) overlaps any test day are excluded. Embargo=1 day: no train sample within 1 trading day of test start (day25). After purge, train days day05..day24 survive if none overlap test; however days within 20 days of test start overlap: day25-20=day05, so day05..day24 have windows extending to day24 at earliest which is < day25, so only day24 overlaps (its 20-day window ends on day24, which is 1 day before day25). Re-examining: a train sample on date D has a feature window [D-19, D]. If ANY day in [D-19, D] >= test_start_date, that sample is purged. test_start_date=day25. A sample is purged if D-19 >= day25, i.e. D >= day44 (impossible with 30 days), OR more precisely: window overlaps test if D-19 <= day25 <= D AND D < day25. This means: D >= day25-19 = day06. So train samples day06..day24 are purged (their 20-day window includes day25 or earlier test days). Train samples day01..day05 survive the 20-day purge. With embargo=1: the sample immediately before test_start (day24) is also embargoed (|day24 - day25| = 1 = EMBARGO_DAYS). Since day24 is already purged by the 20-day rule, embargo has no additional effect here. If we used a shorter purge (e.g. 14-day), day15..day24 would be purged by purge and day24 also by embargo — the max-lookback test uses PURGE=20 not 14.",
+  "_note_on_46day_purge": "In production O1, the purge is 46 trading days (max lookback per feature_lookback_inventory.json). This fixture uses a 30-day history to keep the scenario tractable; a 46-day purge on 30-day history would eliminate all train samples, which is the OOS-fold-collapse documented in PA-26. The 46-day purge is asserted in test_purge_uses_max_lookback_not_partial using the inventory fixture directly, not this split fixture.",
+  "total_trading_days": 30,
+  "split_ratio": 0.8,
+  "split_idx": 24,
+  "train_dates": [
+    "2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07",
+    "2025-01-08", "2025-01-09", "2025-01-10", "2025-01-13", "2025-01-14",
+    "2025-01-15", "2025-01-16", "2025-01-17", "2025-01-20", "2025-01-21",
+    "2025-01-22", "2025-01-23", "2025-01-24", "2025-01-27", "2025-01-28",
+    "2025-01-29", "2025-01-30", "2025-01-31", "2025-02-03"
+  ],
+  "test_dates": [
+    "2025-02-04", "2025-02-05", "2025-02-06", "2025-02-07", "2025-02-10",
+    "2025-02-11"
+  ],
+  "test_start_date": "2025-02-04",
+  "purge_lookback_days": 20,
+  "embargo_days": 1,
+  "expected_purged_train_dates": [
+    "2025-01-08", "2025-01-09", "2025-01-10", "2025-01-13", "2025-01-14",
+    "2025-01-15", "2025-01-16", "2025-01-17", "2025-01-20", "2025-01-21",
+    "2025-01-22", "2025-01-23", "2025-01-24", "2025-01-27", "2025-01-28",
+    "2025-01-29", "2025-01-30", "2025-01-31", "2025-02-03"
+  ],
+  "_purge_derivation": "A train date D is purged if its 20-day feature window [D - 19 days, D] overlaps any test date. Test starts 2025-02-04. The earliest train date whose 20-day window reaches 2025-02-04 is 2025-02-04 - 19 trading days = 2025-01-08 (counting back 19 trading days in the sequence). So all train dates >= 2025-01-08 are purged.",
+  "expected_surviving_train_dates": [
+    "2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07"
+  ],
+  "expected_embargoed_train_dates": [
+    "2025-02-03"
+  ],
+  "_embargo_derivation": "Train dates within EMBARGO_DAYS=1 trading day of test_start_date=2025-02-04 are embargoed. 2025-02-03 is 1 trading day before 2025-02-04. Already purged by the 20-day rule, but explicitly listed here for the embargo test.",
+  "citation": "Lopez de Prado 2018, Advances in Financial Machine Learning, Ch. 7"
+}
