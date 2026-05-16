@@ -1,5 +1,6 @@
 import time
 import math
+import statistics
 import optuna
 from datetime import datetime, timedelta, timezone
 import database
@@ -95,6 +96,42 @@ def compute_sortino_ratio(returns: list, target: float = SORTINO_TARGET_RETURN) 
     if downside_deviation == 0.0:
         return 1e6
     return mean_r / downside_deviation
+
+
+def compute_deflated_sharpe_ratio(
+    SR_obs: float,
+    SR_0: float,
+    gamma3: float,
+    gamma4: float,
+    T: int,
+) -> float:
+    """Deflated Sharpe Ratio (DSR) — corrects for selection bias from multiple testing.
+
+    Formula: (SR_obs - SR_0) * sqrt(T-1) / sqrt(1 - gamma3*SR_obs + (gamma4-1)/4 * SR_obs^2)
+
+    Reference: Bailey, D.H. & López de Prado, M. (2014). "The Deflated Sharpe Ratio:
+    Correcting for Selection Bias, Backtest Overfitting, and Non-Normality."
+    Financial Analysts Journal, 70(5), 94-107. Equation 9.
+
+    Args:
+        SR_obs: Observed Sharpe/Sortino ratio of the candidate trial.
+        SR_0:   Null-hypothesis Sharpe (random-trading baseline; typically 0.0).
+        gamma3: Skewness of the trial Sharpe distribution across N trials.
+        gamma4: Kurtosis of the trial Sharpe distribution across N trials.
+        T:      Number of observations in the in-sample return series.
+
+    Returns:
+        DSR as a finite float. Degenerate cases return sentinels:
+          - T <= 1 (no degree of freedom in sqrt(T-1)) → returns 0.0.
+          - Invalid denominator (sqrt of non-positive) → returns float('-inf').
+          Never returns +inf (would unfairly favor the AI branch).
+    """
+    if T <= 1:
+        return 0.0
+    denom_sq = 1.0 - gamma3 * SR_obs + ((gamma4 - 1.0) / 4.0) * (SR_obs ** 2)
+    if denom_sq <= 0.0:
+        return float("-inf")
+    return (SR_obs - SR_0) * math.sqrt(T - 1) / math.sqrt(denom_sq)
 
 
 def calculate_historical_deviation(current_date_str):
@@ -614,8 +651,70 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         
 
         
-        best_alpha_train = study.best_value
+        naive_sharpe_value = study.best_value
+        best_alpha_train = naive_sharpe_value
         best_params = study.best_params
+
+        # --- O2: DSR RE-RANKING (AI branch only) ---
+        # Collect completed trial values to derive the cross-trial Sharpe distribution
+        # moments (gamma3, gamma4). Then re-rank all completed trials by DSR and select
+        # the DSR-maximizing trial instead of the naive-Sortino winner.
+        # Fallback/default branches are single parameter sets — DSR not applicable.
+        # Reference: Bailey & López de Prado 2014, Eq. 9.
+        deflated_sharpe_value: float | None = None
+        T_train = len(train_dates)
+        try:
+            completed_trials = [t for t in study.trials if t.value is not None]
+        except TypeError:
+            completed_trials = []
+
+        if len(completed_trials) >= 2:
+            trial_values = [t.value for t in completed_trials]
+            n_trials = len(trial_values)
+            mean_v = statistics.mean(trial_values)
+            # Population variance (divisor = N) for moment computation
+            variance_v = sum((v - mean_v) ** 2 for v in trial_values) / n_trials
+            std_v = math.sqrt(variance_v) if variance_v > 0 else 0.0
+            if std_v > 0:
+                gamma3 = sum((v - mean_v) ** 3 for v in trial_values) / (n_trials * std_v ** 3)
+                gamma4 = sum((v - mean_v) ** 4 for v in trial_values) / (n_trials * std_v ** 4)
+            else:
+                gamma3, gamma4 = 0.0, 3.0  # normal-distribution fallback for degenerate spread
+
+            best_dsr = float("-inf")
+            best_trial_by_dsr = None
+            for t in completed_trials:
+                dsr = compute_deflated_sharpe_ratio(
+                    SR_obs=t.value,
+                    SR_0=0.0,
+                    gamma3=gamma3,
+                    gamma4=gamma4,
+                    T=T_train,
+                )
+                if math.isfinite(dsr) and dsr > best_dsr:
+                    best_dsr = dsr
+                    best_trial_by_dsr = t
+
+            if best_trial_by_dsr is not None and math.isfinite(best_dsr):
+                best_params = best_trial_by_dsr.params
+                best_alpha_train = best_trial_by_dsr.value
+                deflated_sharpe_value = best_dsr
+            # If no valid DSR trial found, fall through with naive Optuna winner
+
+        if deflated_sharpe_value is None and naive_sharpe_value is not None:
+            # Fewer than 2 completed trials — moments are undefined; use normal-distribution
+            # assumption (gamma3=0, gamma4=3) as a conservative fallback so operator still
+            # receives a finite DSR signal rather than NULL.
+            dsr_fallback = compute_deflated_sharpe_ratio(
+                SR_obs=naive_sharpe_value,
+                SR_0=0.0,
+                gamma3=0.0,
+                gamma4=3.0,
+                T=T_train,
+            )
+            if math.isfinite(dsr_fallback):
+                deflated_sharpe_value = dsr_fallback
+        # ----------------------------------------------------
 
         # --- BEST_PARAMS SCHEMA VALIDATION (B2-FU2) ---
         # An empty best_params or one missing any required search-space key indicates
@@ -635,6 +734,8 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
                 f"(missing keys: {missing or '<empty dict>'}). "
                 f"Rejecting AI proposal; cascading to Fallback/Default."
             )
+            deflated_sharpe_value = None
+            naive_sharpe_value = None
         # ---------------------------------------------
 
         # Evaluate OOS robustness
@@ -700,7 +801,12 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             optimization_results[normalized_name][k] = {"old": original_val, "new": current_params.get(k, original_val)}
 
         elapsed = time.time() - start_time
-        print(f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count})")
+        dsr_log = (
+            f" | DSR: {deflated_sharpe_value:.4f} (naive: {naive_sharpe_value:.4f})"
+            if deflated_sharpe_value is not None and naive_sharpe_value is not None
+            else " | DSR: N/A"
+        )
+        print(f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count}){dsr_log}")
 
         database.save_symphony_strategy(normalized_name, current_params, locked_vars)
 
@@ -708,6 +814,8 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # retrieve them via get_latest_autotune_run().  Called AFTER baseline_decision
         # is finalized and save_symphony_strategy has written the chosen params,
         # so the row captures the decision that was actually applied.
+        # O2: deflated_sharpe (DSR winner) and naive_sharpe (raw Optuna best) recorded for
+        # backward-comparison and operator awareness of deflation magnitude.
         database.save_autotune_run(
             run_timestamp=run_timestamp,
             symphony_id=normalized_name,
@@ -716,6 +824,8 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             baseline_decision=baseline_decision,
             fallback_oos_alpha=fallback_oos_alpha,
             default_oos_alpha=default_oos_alpha,
+            deflated_sharpe=deflated_sharpe_value,
+            naive_sharpe=naive_sharpe_value,
         )
 
     print("  -> Autotuner finished all symphonies.")

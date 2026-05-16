@@ -281,12 +281,18 @@ def clear_symphony_logs():
 # --- Autotune Run Persistence (P1) ---
 
 def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
-                      baseline_decision, fallback_oos_alpha, default_oos_alpha) -> None:
+                      baseline_decision, fallback_oos_alpha, default_oos_alpha,
+                      deflated_sharpe=None, naive_sharpe=None) -> None:
     """Persist one row of per-run Optuna validation metrics to autotune_runs.
 
     Called once per symphony per run_autotuner() invocation, after baseline_decision
     is finalized.  All metric columns are NULLable so partial data never fails an
-    INSERT (though callers should supply all seven values).
+    INSERT (though callers should supply all values).
+
+    O2 additions:
+      deflated_sharpe: DSR value for the AI-branch best trial (Bailey & López de Prado 2014).
+                       None when the fallback or default cascade was used instead.
+      naive_sharpe:    Raw Optuna best trial Sortino before DSR correction. None for non-AI rows.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -294,11 +300,13 @@ def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
         """
         INSERT INTO autotune_runs
             (run_timestamp, symphony_id, oos_alpha, train_alpha,
-             baseline_decision, fallback_oos_alpha, default_oos_alpha)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+             baseline_decision, fallback_oos_alpha, default_oos_alpha,
+             deflated_sharpe, naive_sharpe)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (run_timestamp, symphony_id, oos_alpha, train_alpha,
-         baseline_decision, fallback_oos_alpha, default_oos_alpha),
+         baseline_decision, fallback_oos_alpha, default_oos_alpha,
+         deflated_sharpe, naive_sharpe),
     )
     conn.commit()
     conn.close()
@@ -315,7 +323,8 @@ def get_latest_autotune_run(symphony_id) -> dict | None:
     cursor.execute(
         """
         SELECT run_timestamp, symphony_id, oos_alpha, train_alpha,
-               baseline_decision, fallback_oos_alpha, default_oos_alpha
+               baseline_decision, fallback_oos_alpha, default_oos_alpha,
+               deflated_sharpe, naive_sharpe
         FROM autotune_runs
         WHERE symphony_id = ?
         ORDER BY run_timestamp DESC
@@ -335,6 +344,8 @@ def get_latest_autotune_run(symphony_id) -> dict | None:
         "baseline_decision":  row[4],
         "fallback_oos_alpha": row[5],
         "default_oos_alpha":  row[6],
+        "deflated_sharpe":    row[7],
+        "naive_sharpe":       row[8],
     }
 
 
@@ -481,6 +492,7 @@ _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migr
 _MIGRATION_FILES = [
     "004_schema_migrations_tracker.sql",
     "005_exit_triggers.sql",
+    "006_autotune_runs_sharpe.sql",
 ]
 
 

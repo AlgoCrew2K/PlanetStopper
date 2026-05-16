@@ -1,0 +1,18 @@
+{
+  "provenance": "Hand-computed. Bailey & López de Prado 2014, 'The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality', Financial Analysts Journal, Eq. 9. Formula: DSR = (SR_obs - SR_0) * sqrt(T-1) / sqrt(1 - gamma3*SR_obs + (gamma4-1)/4 * SR_obs^2). SR_0 = 0 (null hypothesis). Independently verified in Python.",
+  "description": "Normal distribution with low observed Sharpe: gamma3=0, gamma4=3, SR_obs=0.5, T=252, SR_0=0. Represents a marginal strategy. DSR scales linearly in SR_obs for the normal case (denominator sqrt(1.125) at SR=0.5 vs sqrt(1.5) at SR=1.0), producing a proportionally lower DSR for a lower-Sharpe strategy — verifies linear-in-SR scaling for the normal case.",
+  "inputs": {
+    "SR_obs": 0.5,
+    "SR_0": 0.0,
+    "gamma3": 0.0,
+    "gamma4": 3.0,
+    "T": 252,
+    "N": 500
+  },
+  "calculation": {
+    "numerator_factor": 7.921489758877430,
+    "denominator": 1.060660171779821,
+    "denominator_breakdown": "sqrt(1 - 0*0.5 + (3-1)/4 * 0.5^2) = sqrt(1 + 0.5*0.25) = sqrt(1.125)",
+    "expected_dsr": 7.468452167469360
+  }
+}
