@@ -1,0 +1,15 @@
+{
+  "_provenance": "Hand-authored DST fixture. US fall-back 2026: clocks fall from 02:00 EDT to 01:00 EST on 2026-11-01 (first Sunday in November). This fixture verifies that at 15:59 EST on 2026-11-02 (the first post-fall-back weekday), market_state is 'open'. Uses zoneinfo 'America/New_York'. UTC offset is -5 (EST).",
+  "scenario": "dst_fall_back",
+  "input": {
+    "iso_datetime_et": "2026-11-02T15:59:00",
+    "weekday": 0,
+    "time_et": "15:59:00",
+    "timezone": "America/New_York",
+    "utc_offset_hours": -5,
+    "dst_note": "EST (UTC-5) — first weekday after fall-back 2026-11-01"
+  },
+  "expected": {
+    "market_state": "open"
+  }
+}

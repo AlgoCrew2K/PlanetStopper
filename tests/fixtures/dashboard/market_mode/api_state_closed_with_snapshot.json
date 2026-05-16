@@ -1,0 +1,25 @@
+{
+  "_provenance": "Hand-authored fixture. Expected /api/state response shape when market_state='closed_frozen' and a snapshot exists. portfolio_strip, shadow_divergence, and accounts_map must come from the snapshot, not from a fresh live query. frozen_at must be a non-null string sourced from snapshot.captured_at_et.",
+  "scenario": "api_state_closed_with_snapshot",
+  "snapshot_input": {
+    "trading_day": "2026-05-11",
+    "captured_at_et": "16:00:00 ET",
+    "data_as_of": "16:00 ET",
+    "portfolio_strip": {
+      "today_change": 0.42,
+      "cumulative_return": 8.7,
+      "max_drawdown": -3.1
+    },
+    "shadow_divergence": {
+      "by_symphony": {"sym-abc": 0.05},
+      "portfolio_today": 0.03
+    },
+    "accounts_map": {"ACC-1": []}
+  },
+  "expected": {
+    "market_state": "closed_frozen",
+    "frozen_at_is_nonnull": true,
+    "portfolio_strip_from_snapshot": true,
+    "shadow_divergence_from_snapshot": true
+  }
+}

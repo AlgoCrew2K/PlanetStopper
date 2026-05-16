@@ -19,6 +19,10 @@ from dotenv import dotenv_values, set_key
 import database
 import analytics
 import ai_advisor
+from market_calendar import get_market_state
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
 
 # Minimum observations before quantstats metrics are deemed statistically
 # meaningful for the dashboard.  Below this floor the route surfaces
@@ -212,14 +216,49 @@ def dashboard():
 @app.route("/api/state")
 def get_state():
     try:
+        market_state = get_market_state(datetime.now(_ET))
+
         state_data = database.load_state()
+
+        # AC-DM.3.3: closed + snapshot → serve frozen snapshot.
+        if market_state in ("closed_frozen", "pre_market"):
+            snapshot = (state_data or {}).get("last_market_close_snapshot")
+            if snapshot:
+                # R2: remap shadow_divergence "portfolio" -> "portfolio_today" to match
+                # the live path's key name (from database.get_shadow_divergence()).
+                sd = dict(snapshot.get("shadow_divergence") or {})
+                if "portfolio" in sd and "portfolio_today" not in sd:
+                    sd["portfolio_today"] = sd.pop("portfolio")
+                return jsonify({
+                    "status": "active",
+                    "market_state": market_state,
+                    "frozen_at": snapshot.get("captured_at_et"),
+                    "data_as_of": snapshot.get("data_as_of"),
+                    "state": snapshot.get("data_as_of"),
+                    "portfolio_strip": snapshot.get("portfolio_strip"),
+                    "shadow_divergence": sd,
+                    "accounts_map": snapshot.get("accounts_map"),
+                })
+
+        # No live state — return waiting with market_state context and notice on fresh deploy.
+        # AC-DM.3.4: closed + no snapshot + empty state → notice fields included in waiting.
         if not state_data:
             today_str = datetime.now().strftime("%Y-%m-%d")
             try:
                 shadow_divergence = database.get_shadow_divergence(today_str)
             except Exception:
                 shadow_divergence = {"by_symphony": {}, "portfolio_today": None}
-            return jsonify({"status": "waiting", "message": "Bot state initializing.", "shadow_divergence": shadow_divergence})
+            waiting_resp = {
+                "status": "waiting",
+                "message": "Bot state initializing.",
+                "shadow_divergence": shadow_divergence,
+                "market_state": market_state,
+                "frozen_at": None,
+            }
+            # AC-DM.3.4: include notice on fresh deploy (no snapshot, market closed)
+            if market_state in ("closed_frozen", "pre_market"):
+                waiting_resp["notice"] = "No closing snapshot yet — waiting for first market close at 16:00 ET."
+            return jsonify(waiting_resp)
 
         env_vars = dotenv_values(".env")
         live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
@@ -355,6 +394,8 @@ def get_state():
 
         return jsonify({
             "status": "active",
+            "market_state": market_state,
+            "frozen_at": None,
             "state": state_data,
             "live_mode": live_mode,
             "execution_start_time": env_vars.get("EXECUTION_START_TIME", "09:30"),

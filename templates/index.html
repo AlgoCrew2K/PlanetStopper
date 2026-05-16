@@ -166,6 +166,13 @@
             </div>
         </header>
 
+        <!-- DM: Market-state banner — updated by JS from /api/state market_state + frozen_at.
+             Positioned above portfolio strip (AC-DM.4.2). Read-only, not interactive (AC-DM.4.3).
+             Distinct from the per-cycle cycleat-fix staleness badge (which tracks cycle freshness). -->
+        <div id="market-state-banner" data-market-state=""
+            class="mb-4 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-center hidden">
+        </div>
+
         <!-- Portfolio 6-metric strip: Today's Change / Cumulative Return / Max Drawdown — dry-run (if-held) -->
         <div id="portfolio-strip" class="bg-slate-800 px-6 py-6 rounded-2xl shadow-lg border border-slate-700 mb-6 flex items-center gap-8">
             <span class="text-xs uppercase tracking-widest text-slate-500 font-bold flex-shrink-0">Portfolio</span>
@@ -811,7 +818,46 @@
         }
 
         function renderState(data) {
+            // R1 (AC-DM.4.4): update banner even on 'waiting' status so fresh-deploy
+            // notice is shown. The early return below skips the rest of the live render,
+            // but the banner must still reflect market_state + notice when present.
+            if (data.status === 'waiting' && (data.market_state || data.notice)) {
+                const banner = document.getElementById('market-state-banner');
+                if (banner) {
+                    banner.removeAttribute('hidden');
+                    banner.classList.remove('hidden');
+                    banner.className = 'mb-4 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-center bg-slate-700/60 text-slate-400 border border-slate-600/40';
+                    banner.setAttribute('data-market-state', data.market_state || 'closed_frozen');
+                    banner.textContent = data.notice || 'Market Closed';
+                }
+            }
             if (data.status === 'error' || data.status === 'waiting') return;
+
+            // DM: Update market-state banner (AC-DM.4.1)
+            (function() {
+                const banner = document.getElementById('market-state-banner');
+                if (!banner) return;
+                const ms = data.market_state;
+                const frozenAt = data.frozen_at;
+                banner.removeAttribute('hidden');
+                banner.classList.remove('hidden');
+                if (ms === 'open') {
+                    banner.className = 'mb-4 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-center bg-emerald-900/40 text-emerald-400 border border-emerald-500/40';
+                    banner.setAttribute('data-market-state', 'open');
+                    banner.textContent = 'Market Open';
+                } else if (ms === 'pre_market') {
+                    const label = frozenAt ? `Pre-Market — frozen at ${frozenAt}` : (data.notice || 'Pre-Market');
+                    banner.className = 'mb-4 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-center bg-slate-700/60 text-slate-400 border border-slate-600/40';
+                    banner.setAttribute('data-market-state', 'pre_market');
+                    banner.textContent = label;
+                } else {
+                    // closed_frozen or unknown
+                    const label = frozenAt ? `Market Closed — frozen at ${frozenAt}` : (data.notice || 'Market Closed');
+                    banner.className = 'mb-4 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-center bg-slate-700/60 text-slate-400 border border-slate-600/40';
+                    banner.setAttribute('data-market-state', 'closed_frozen');
+                    banner.textContent = label;
+                }
+            })();
 
             countdownSeconds = data.next_run_seconds || 0;
 

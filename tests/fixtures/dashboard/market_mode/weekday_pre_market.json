@@ -1,0 +1,13 @@
+{
+  "_provenance": "Hand-authored fixture. Represents a weekday (Monday 2026-05-11) at 09:29 ET — one minute before the 09:30 real market open. Expected get_market_state output: 'pre_market'.",
+  "scenario": "weekday_pre_market",
+  "input": {
+    "iso_datetime_et": "2026-05-11T09:29:00",
+    "weekday": 0,
+    "time_et": "09:29:00",
+    "timezone": "America/New_York"
+  },
+  "expected": {
+    "market_state": "pre_market"
+  }
+}

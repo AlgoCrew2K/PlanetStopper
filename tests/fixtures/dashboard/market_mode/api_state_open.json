@@ -1,0 +1,13 @@
+{
+  "_provenance": "Hand-authored fixture. Expected /api/state response shape when market_state='open'. The 'market_state' key must be present at the top level. 'state' and 'portfolio_strip' come from live bot_state (not from snapshot). frozen_at must be null when market is open.",
+  "scenario": "api_state_open",
+  "expected_top_level_keys": [
+    "market_state",
+    "frozen_at",
+    "status"
+  ],
+  "expected": {
+    "market_state": "open",
+    "frozen_at": null
+  }
+}

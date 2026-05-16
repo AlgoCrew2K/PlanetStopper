@@ -1,0 +1,15 @@
+{
+  "_provenance": "Hand-authored DST fixture. US spring-forward 2026: clocks jump from 02:00 EST to 03:00 EDT on 2026-03-08 (second Sunday in March). This fixture verifies that at 09:30 EDT on 2026-03-09 (the first post-DST weekday), market_state is 'open'. Uses zoneinfo 'America/New_York' which handles DST transitions correctly. The UTC offset changes from -5 (EST) to -4 (EDT) at the transition.",
+  "scenario": "dst_spring_forward",
+  "input": {
+    "iso_datetime_et": "2026-03-09T09:30:00",
+    "weekday": 0,
+    "time_et": "09:30:00",
+    "timezone": "America/New_York",
+    "utc_offset_hours": -4,
+    "dst_note": "EDT (UTC-4) — first weekday after spring-forward 2026-03-08"
+  },
+  "expected": {
+    "market_state": "open"
+  }
+}
