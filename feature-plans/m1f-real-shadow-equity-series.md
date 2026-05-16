@@ -1,176 +1,196 @@
-# Feature: M1F — Real Shadow-Equity Series Instrumentation
-Status: ready (queued behind E2; pending panel-validation before dispatch)
+# Feature: M1F — Real Shadow-Equity Series Instrumentation (v2 — panel-revised)
+Status: ready
 Created: 2026-05-15
+Revised: 2026-05-16 (post panel-validation; all 6 BCs + 18 PAs applied; 3 operator decisions resolved)
 
 ## Summary
 
-Instrument the AlphaBot engine to persist a real per-cycle shadow-equity time series — the actual numerical trajectory of "what each symphony's equity would be if AlphaBot's exits had fired when they triggered." Today the M1 dashboard helpers return `dry_run == if_held` literally by construction (`analytics.py:438, 453, 414`) because `bot_state` has no shadow-equity series; `current_return` is computed from Composer's `last_percent_change` — the same source the `if_held` value reads. M1F closes that gap: the engine writes a `shadow_history` row per symphony per cycle; the M1 helpers consume it to produce genuinely-distinct `dry_run` values; `shadow_hwm` (which exists today as an underspecified field) becomes meaningfully consumed; the V1 calibration sweep gains a real backtest-vs-live divergence signal; the EOD post-mortem can compare actual vs hypothetical engine value-add.
+Instrument the AlphaBot engine to persist a real per-cycle shadow-equity time series. Today the M1 dashboard helpers return `dry_run == if_held` literally by construction (`analytics.py:438, 453, 414`) because `bot_state` has no shadow-equity series; `current_return` is computed from Composer's `last_percent_change` — the same source `if_held` reads. M1F closes that gap: the engine writes a `shadow_history` row per symphony per cycle; the M1 helpers consume it for genuinely-distinct `dry_run` values; `shadow_hwm` (currently underspecified) becomes meaningfully consumed; V1's calibration sweep gains a real backtest-vs-live divergence signal for post-selection validation; the EOD post-mortem can compare actual vs hypothetical engine value-add.
 
-Sequenced AFTER E2 lands (E2 is small, ~1 cycle), BEFORE V1 calibration sweep (so V1's recommendations are calibrated against a real shadow trajectory). Operator dispatches the Hex validation panel against this plan before any workstream dispatch — same protocol as the engine-correctness-remediation plan.
+**v1 semantics**: **Model A** — `shadow_return` freezes at `triggered_at_return` post-trigger; the schema implicitly captures the Model C counterfactual via `current_return` (Composer live). quant-risk-researcher's dissent (Model C is the literature gold standard per Kaminski & Lo 2014, Han et al. 2016) is documented in the panel verdict §6 — accepted for v1 because the schema records both values; can be revisited when V1's validation methodology is designed.
+
+**Companion DM workstream** (separate plan): Dashboard Market-Mode Rendering freezes dashboard visuals outside market hours, which sidesteps the post-trigger Composer-API ambiguity for M1F.7's `shadow_hwm` (no need for a runtime STALE_SHADOW_RETURN alert — the metric becomes "max Composer-reported value during the trading day," defensible under either Composer post-trigger behavior).
 
 ## Acceptance Criteria
 
 ### M1F.1 — Shadow-equity series schema + write path
-- **AC-M1F.1.1**: New `migrations/006_shadow_history.sql` (additive-first, NULLable + DEFAULT where applicable). Table:
+
+- **AC-M1F.1.1**: New `migrations/008_shadow_history.sql` (BC-1 — verified next migration number; `_MIGRATION_FILES` in `database.py:503` currently lists 004-007). Migration adds `_MIGRATION_FILES` entry alongside the DDL file. Additive-first. Table:
   ```sql
   CREATE TABLE IF NOT EXISTS shadow_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts_utc TEXT NOT NULL,
-    ts_et TEXT NOT NULL,
-    trading_day TEXT NOT NULL,
+    ts_et TEXT NOT NULL,                       -- hardcoded UTC-4 string per H1 pattern (PA-M1F-6; follow-up to zoneinfo across telemetry layer)
+    trading_day TEXT NOT NULL,                 -- 'YYYY-MM-DD'
     symphony_id TEXT NOT NULL,
-    account_id TEXT,
-    cycle_id TEXT,
-    current_return REAL NOT NULL,          -- live, Composer-reported
-    shadow_return REAL NOT NULL,           -- AlphaBot-hypothetical
+    account_id TEXT,                           -- NULLable (matches exit_triggers)
+    cycle_id TEXT,                             -- format 'YYYYMMDD_HHMM' (PA-M1F-4); NULLable
+    current_return REAL NOT NULL,              -- Composer's last_percent_change × 100; required at write time, no DEFAULT (PA-M1F-10)
+    shadow_return REAL NOT NULL,               -- Model A: current_return pre-trigger; frozen at triggered_at_return post-trigger
     is_post_trigger INTEGER NOT NULL DEFAULT 0,
-    trigger_id INTEGER                     -- FK to exit_triggers.id when post-trigger
+    trigger_id INTEGER                         -- ADVISORY soft reference to exit_triggers.id (BC-2 — NOT a FOREIGN KEY; SQLite FK enforcement off across this codebase)
   );
   CREATE INDEX IF NOT EXISTS idx_shadow_history_sym_day ON shadow_history (symphony_id, trading_day, ts_utc);
   CREATE INDEX IF NOT EXISTS idx_shadow_history_day ON shadow_history (trading_day, ts_utc);
+  CREATE INDEX IF NOT EXISTS idx_shadow_history_ts_utc ON shadow_history (ts_utc);  -- BC-6 — for prune DELETE at ~1.1M-row scale
   ```
-- **AC-M1F.1.2**: New `database.record_shadow_observation(symphony_id, account_id, cycle_id, ts_utc, ts_et, trading_day, current_return, shadow_return, is_post_trigger, trigger_id)` helper. Opens its OWN sqlite3 connection (does NOT join the cycle's state-write transaction). Try/except SWALLOWS failures with ERROR log; cycle MUST NOT fail on telemetry. Same pattern as H1's `record_exit_trigger`.
-- **AC-M1F.1.3**: New `database.prune_old_shadow_history(retention_days)` — batched DELETE LIMIT 1000 loop. `.env` configurable via `SHADOW_HISTORY_RETENTION_DAYS=180` (longer than H1's 90 since shadow history is the foundation of backtest reconciliation; default 180 = ~9 months).
-- **AC-M1F.1.4**: Rotation runs via the existing daily-scheduled prune task in `app.py` (the one H1 introduced); add `prune_old_shadow_history()` alongside `prune_old_triggers()`.
+- **AC-M1F.1.2**: New `database.record_shadow_observation(symphony_id, account_id, cycle_id, ts_utc, ts_et, trading_day, current_return, shadow_return, is_post_trigger, trigger_id)` helper. Uses literal `sqlite3.connect(DB_FILE, timeout=10.0)` (matches H1's `record_exit_trigger`, not `get_connection()`). Try/except SWALLOWS failures with ERROR log; cycle MUST NOT fail on telemetry. The cycle's `save_state` transaction is NOT joined. Write must supply both `current_return` and `shadow_return` (NOT NULL columns, no DEFAULT — intentional per PA-M1F-10) or raise.
+- **AC-M1F.1.3**: New `database.prune_old_shadow_history(retention_days)` — uses portable subquery pattern (PA-M1F-5): `DELETE FROM shadow_history WHERE id IN (SELECT id FROM shadow_history WHERE ts_utc < ? ORDER BY ts_utc LIMIT 1000)` looped until done. Avoids dependency on `SQLITE_ENABLE_UPDATE_DELETE_LIMIT`. `.env`: `SHADOW_HISTORY_RETENTION_DAYS=180` (rationale: 3× safety margin over Glasserman 2003's 60-120 day backtest-reconciliation window per PA-M1F-7; NOT a seasonal-pattern claim).
+- **AC-M1F.1.4**: Rotation runs in the existing background scheduler callback in `app.py` (NOT in any Flask route handler — BC-4). Add `prune_old_shadow_history()` alongside the existing `prune_old_triggers()` call in that callback. Daily cadence inherited from the scheduler.
 
 ### M1F.2 — Shadow-return computation per cycle
+
 - **AC-M1F.2.1**: In the data phase of `alpha_bot_execution.py`, for each symphony every cycle, compute `shadow_return` as follows:
-  - If symphony's `bot_state[symphony_id].triggered` is **False** for today: `shadow_return = current_return` (still holding; mirrors live).
-  - If symphony's `bot_state[symphony_id].triggered` is **True** for today: `shadow_return = bot_state[symphony_id].triggered_at_return` (frozen at trigger time; no further intraday movement).
+  - If `bot_state[symphony_id]["triggered"]` is **False** for today (dict notation per PA-M1F-3): `shadow_return = current_return` (still holding; mirrors live).
+  - If `bot_state[symphony_id]["triggered"]` is **True** for today: `shadow_return = bot_state[symphony_id]["triggered_at_return"]` (frozen at trigger time; Model A).
 - **AC-M1F.2.2**: Call `database.record_shadow_observation(...)` after computing `shadow_return`. Non-blocking (own connection, swallow failures).
 - **AC-M1F.2.3**: Reset semantics on new trading day — the day's first cycle records a baseline row; `triggered=True` from yesterday is wiped by the existing new-day reset, so today's `shadow_return = current_return` until a new trigger fires today.
-- **AC-M1F.2.4**: Daemon-restart resilience — on startup, the engine reads the latest `shadow_history` row per symphony for the current `trading_day` to resume from the right baseline (no re-init that would lose intra-day state).
+- **AC-M1F.2.4**: Daemon-restart resilience — on startup, `resume_shadow_baselines()` reads the latest `shadow_history` row per symphony for the current `trading_day` to resume from the right baseline. **`resume_shadow_baselines()` runs AFTER `wipe_transient_state()` completes for the current cycle** (PA-M1F-2) so yesterday's rows don't overwrite today's wiped state.
+- **AC-M1F.2.5**: **Composer fetch failure gate** (PA-M1F-15) — explicit A/C: shadow_observation write is gated on successful Composer data fetch for the symphony in that cycle. If fetch failed, no row is written for that symphony that cycle (consistent with the cycleat-fix preserve-prior-values pattern).
 
 ### M1F.3 — M1 helper consumer migration
-- **AC-M1F.3.1**: `analytics.py:get_symphony_today_change` — `dry_run` now reads the latest `shadow_history` row's `shadow_return` for the symphony's current `trading_day`. `if_held` continues to read `current_return` (Composer-reported). Genuinely distinct values.
-- **AC-M1F.3.2**: `analytics.py:get_symphony_cumulative_return` — `dry_run` reads the cumulative `shadow_return` trajectory (chain-link of daily shadow returns across the symphony's history, computed from `shadow_history`); `if_held` continues to read Composer's `simple_return * 100`. Genuinely distinct values.
-- **AC-M1F.3.3**: `analytics.py:get_symphony_max_drawdown` — `dry_run` reads the peak-to-trough drawdown of the cumulative shadow trajectory; `if_held` continues to read Composer's `max_drawdown * 100` (post-cycleat-fix scaling). Genuinely distinct values.
+
+- **AC-M1F.3.1**: `analytics.py:get_symphony_today_change` — `dry_run` reads the latest `shadow_history` row's `shadow_return` for the symphony's current `trading_day`. `if_held` continues to read `current_return` (Composer-reported). Genuinely distinct values.
+- **AC-M1F.3.2**: `analytics.py:get_symphony_cumulative_return` — `dry_run` reads the cumulative `shadow_return` trajectory. **Specifics (PA-M1F-16)**:
+  - **Day-row selection**: the LAST row per trading_day by `ts_utc` (EOD value) is the per-day shadow_return.
+  - **Chain-link formula**: `cumulative_dry_run = (∏(1 + r_i/100)) - 1` applied to per-day EOD shadow_return values, expressed as percent.
+  - **Missing-day handling**: if any historical trading day has no shadow_history rows, exclude that day from the chain; if the chain has fewer than 2 distinct days, `dry_run = None` (sentinel).
+  - **Caching**: results cached per (symphony_id, trading_day); invalidated when a new shadow_history row is recorded for that day.
+- **AC-M1F.3.3**: `analytics.py:get_symphony_max_drawdown` — `dry_run` reads peak-to-trough drawdown of the cumulative shadow trajectory. **Boundary (PA-M1F-16b)**: if fewer than 2 distinct trading days exist in shadow_history, `dry_run = None`.
 - **AC-M1F.3.4**: Portfolio helpers (`get_portfolio_*`) automatically benefit — they value-weight per-symphony values; once per-symphony differs, portfolio aggregates differ.
-- **AC-M1F.3.5**: When a symphony has zero rows in `shadow_history` (just-deployed, fresh DB), the helpers return `dry_run = None` (the no-data sentinel from the cycleat-fix work) — render as `—`. Do NOT silently fall back to `if_held` again.
-- **AC-M1F.3.6**: No-data sentinel handling for the portfolio aggregator: a symphony with `dry_run = None` is excluded from the value-weighted aggregation (consistent with the existing CR/MDD None-skip behavior).
+- **AC-M1F.3.5**: When a symphony has zero rows in `shadow_history` (just-deployed, fresh DB), the helpers return `dry_run = None`. NO silent fall-back to `if_held` (avoids the cycleat-fix-class regression).
+- **AC-M1F.3.6**: Portfolio aggregator excludes `None` contributors when value-weighting (consistent with existing cycleat-fix CR/MDD None-skip behavior).
 
 ### M1F.4 — Dashboard surfacing + column rename
-- **AC-M1F.4.1**: `templates/table_partial.html` — rename the existing "If Held (Shadow)" column to "Shadow Peak Return" (or similar — operator picks the exact label during plan review; this column shows `shadow_hwm` / `triggered_at_return` per `table_partial.html:187`, which is conceptually distinct from the M1 dry_run trajectory). The renaming clears the UX confusion where two unrelated "shadow" surfaces share a name.
-- **AC-M1F.4.2**: The portfolio strip + per-symphony CR/TC/MDD cells now show **genuinely different** dry_run vs if_held values whenever the shadow trajectory diverges from live (post-trigger fires, or accumulated daily exit gains).
-- **AC-M1F.4.3**: A new dashboard widget or tab — "Shadow Performance" — shows per-symphony `(live - shadow)` divergence today + cumulative since-deploy. Compact strip below the existing triggers strip; pill badges colored by sign (green = AlphaBot helped, red = AlphaBot cost). Operator-led discovery surface.
+
+- **AC-M1F.4.1**: Rename `<th>` element at **`templates/table_partial.html:62`** (PA-M1F-1 — flask-dashboard-specialist confirmed exact target line) from "If Held (Shadow)" → **"Held Return"** (operator-approved label). The column content (`shadow_str` block at lines 117, 122-129 — showing live return + Guard Alpha diff via `sym.current_return` / `sym.triggered_at_return`) is NOT changed; just the header label is updated to remove the misleading overload of "Held" + "Shadow."
+- **AC-M1F.4.2**: Portfolio strip + per-symphony CR/TC/MDD cells now show **genuinely different** dry_run vs if_held values whenever the shadow trajectory diverges from live.
+- **AC-M1F.4.3**: New **Shadow Performance** widget (PA-M1F-13):
+  - Compact horizontal strip below the H1 triggers strip; established dashboard stack: fleet banner (V3, when shipped) → portfolio strip → triggers strip → **shadow performance strip** → symphony table.
+  - Per-symphony pill badges showing the post-trigger divergence: `current_return - shadow_return WHERE is_post_trigger = 1`.
+  - **Sign convention (rendered as legend in widget)**: green when `current_return < shadow_return` post-trigger (AlphaBot exited before price dropped — engine helped); red when `current_return > shadow_return` post-trigger (AlphaBot exited before price recovered — engine cost).
+  - Max ~48px height single-row pill format to preserve viewport budget when multiple strips visible simultaneously.
+  - Empty state: strip HIDDEN entirely (not "0 events today" placeholder). Null guard (PA-M1F-new): widget JS uses the same `v == null → '—'` pattern as cycleat-fix's `pctColor` null guard; renders '—' for symphonies with no shadow_history rows; never NaN% or 0.00%.
+- **AC-M1F.4.4**: `/api/state` extension (PA-M1F-14): extend existing endpoint with a `shadow_divergence` key (Option A — no new endpoint). Structure: `{"by_symphony": {"<id>": {"today": float|null, "cumulative": float|null}}, "portfolio_today": float|null}`. Shadow_history read is one lightweight GROUP BY query per polling cycle; not on the execution path.
 
 ### M1F.5 — EOD post-mortem integration
-- **AC-M1F.5.1**: `alpha_bot_execution.py` EOD post-mortem branch computes a per-symphony `eod_divergence = current_return - shadow_return` from the day's `shadow_history` rows. Writes to the existing `post_mortem_<date>.json` alongside the existing post-mortem fields.
-- **AC-M1F.5.2**: Portfolio-level EOD divergence (value-weighted) also recorded.
-- **AC-M1F.5.3**: An ERROR-level log + dashboard banner fires if EOD post-mortem cannot compute divergence (e.g., no shadow_history rows for a symphony that traded today) — surfaces a coverage gap rather than silently emitting NaN.
 
-### M1F.6 — V1 calibration consumer (interface only)
-- **AC-M1F.6.1**: This plan does NOT change V1's sweep logic — that's V1's own workstream. M1F provides the **`shadow_history` table as a stable interface** that V1 will consume in its own cycle.
-- **AC-M1F.6.2**: Schema is queryable via SQL: `SELECT trading_day, AVG(current_return - shadow_return) FROM shadow_history WHERE symphony_id = ? GROUP BY trading_day` reconstructs the divergence time series.
-- **AC-M1F.6.3**: M1F's testing strategy includes a smoke test exercising this query shape to confirm the schema supports V1's intended consumption.
+- **AC-M1F.5.1**: `alpha_bot_execution.py` EOD post-mortem branch computes per-symphony `eod_divergence = current_return - shadow_return`. **Row selection (PA-M1F-5b)**: uses the LAST row for the day by `ts_utc DESC LIMIT 1`; explicitly documents that this may not be the market-close row if the engine was down for the session's final interval.
+- **AC-M1F.5.2**: Portfolio-level EOD divergence (value-weighted) also recorded in `post_mortem_<date>.json`.
+- **AC-M1F.5.3**: **Observational-only** (PA-M1F-9): divergence computation does NOT condition any live-order call (`place_order`, `submit_order`, `liquidate`, `cancel_order`). Plan must explicitly state this in the implementation docstring.
+- **AC-M1F.5.4**: ERROR-level log + dashboard banner fires if EOD cannot compute divergence (e.g., no shadow_history rows for a symphony that traded today) — surfaces coverage gaps rather than silently emitting NaN.
+
+### M1F.6 — V1 calibration consumer (validation interface)
+
+- **AC-M1F.6.1**: **V1's role clarification** (BC-5): V1's Optuna sweep uses `synthetic_history` (Alpaca tick data) as its simulation input. `shadow_history` is V1's **post-selection validation layer** — used after the sweep to compare predicted divergence patterns against real-world live divergences. These are distinct roles. V1's optimization input is NOT shadow_history.
+- **AC-M1F.6.2**: V1's primary validation query (the corrected example): `SELECT trading_day, AVG(current_return - shadow_return) AS avg_post_trigger_divergence FROM shadow_history WHERE symphony_id = ? AND is_post_trigger = 1 GROUP BY trading_day` — note the **`WHERE is_post_trigger = 1`** filter, without which the signal is diluted to noise by pre-trigger rows where divergence = 0 by construction (BC-5).
+- **AC-M1F.6.3**: Smoke test exercises **THREE** query shapes (BC-5):
+  1. Per-day post-trigger alpha-attribution: AC-M1F.6.2's query.
+  2. Per-cycle intraday trajectory: `SELECT ts_utc, current_return, shadow_return, is_post_trigger, trigger_id FROM shadow_history WHERE symphony_id = ? AND trading_day = ? ORDER BY ts_utc ASC` — for identifying where intraday divergence opens.
+  3. HWM reconstruction: `SELECT trading_day, MAX(current_return) AS shadow_hwm_counterfactual FROM shadow_history WHERE symphony_id = ? GROUP BY trading_day` — proves M1F.7's counterfactual HWM is recoverable from the schema.
+- **AC-M1F.6.4**: **V1 bootstrap period gate (PA-M1F-11)**: shadow_history accumulates from M1F deploy-day. V1 runs within the first 125 trading days will have a sparse or empty frozen-eval fold against shadow_history. V1's report implements a three-state check: `sample_size < 30` → "indeterminate"; `≥30 and no divergence` → "provisional_no_overfit"; `≥30 and divergence detected` → "overfit_confirmed". (N≥30 per Bailey/de-Prado 2014's interpretability threshold.)
+- **AC-M1F.6.5**: `math_mode` column on shadow_history (PA-M1F-8): `math_mode TEXT NOT NULL DEFAULT 'per_symphony'` — discriminator for the future port-level-math-mode workstream so V1's queries can filter by mode.
 
 ### M1F.7 — `shadow_hwm` consumption (closing I3)
-- **AC-M1F.7.1**: This plan addresses I3 (the shadow_hwm consumption audit) by making the field meaningful: `shadow_hwm = max(shadow_return)` for the symphony's current `trading_day`, computed from `shadow_history`. Updated in the data phase.
-- **AC-M1F.7.2**: `bot_state[symphony_id].shadow_hwm` continues to be persisted (for cross-cycle continuity and dashboard read), but its source-of-truth is the shadow_history table.
-- **AC-M1F.7.3**: When M1F merges, I3's investigation workstream is closed (its audit verdict becomes "consumed — by M1F").
+
+- **AC-M1F.7.1**: **`shadow_hwm = max(current_return)` over the day's shadow_history rows** (BC-3 — corrected from the v1 plan's incorrect `max(shadow_return)`). Computed by: `SELECT MAX(current_return) FROM shadow_history WHERE symphony_id = ? AND trading_day = ?`. Preserves the existing dashboard field's semantic (counterfactual HWM per math-engine-audit.md:228, 233: "post-trigger peak tracker... shows what HWM 'would have been' if the engine had not exited").
+  - **Composer-API behavior framing**: under either Composer post-trigger behavior (continues tracking OR freezes at trigger time), `max(current_return)` is a defensible "peak Composer-reported value during the trading day" metric. The DM workstream (Dashboard Market-Mode Rendering — separate plan) freezes dashboard visuals at market close, sidestepping any operator-confusion about post-close staleness. The Composer-API research (`docs/research/composer/last-percent-change-post-trigger-behavior.md`) concluded behavior is undocumented; the DM design makes empirical resolution unnecessary for v1.
+- **AC-M1F.7.2**: **Source-of-truth split (PA-M1F-new2)**: `bot_state[symphony_id]["shadow_hwm"]` continues to be persisted as an in-memory write-through cache; the `shadow_history` table is the canonical source. On daemon restart, `resume_shadow_baselines()` reconciles the in-memory cache against the table. If they diverge, the table wins.
+- **AC-M1F.7.3**: When M1F merges, I3's investigation workstream closes — verdict: shadow_hwm is now meaningfully consumed.
 
 ## Architecture
 
 | Surface | Files touched |
 |---------|---------------|
-| Engine write path | `alpha_bot_execution.py` data phase — call `record_shadow_observation` per symphony per cycle |
-| State helpers | `database.py` — new `record_shadow_observation`, `prune_old_shadow_history`, `load_latest_shadow_row(symphony_id, trading_day)`, daemon-startup `resume_shadow_baselines` |
-| Schema | `migrations/006_shadow_history.sql` (additive-first) |
-| Analytics consumer | `analytics.py` — `get_symphony_*` helpers query `shadow_history` for `dry_run` values |
-| Dashboard | `templates/table_partial.html` (column rename) + `templates/index.html` (new "Shadow Performance" widget) + `app.py /api/state` (surface divergence summary) |
-| EOD post-mortem | `alpha_bot_execution.py` post-mortem branch — write divergence fields to `post_mortem_<date>.json` |
-| Scheduled task | `app.py` — `prune_old_shadow_history()` added to existing daily prune scheduler |
+| Schema | `migrations/008_shadow_history.sql` (additive-first); `database.py:503` `_MIGRATION_FILES` list extended (BC-1) |
+| Engine write path | `alpha_bot_execution.py` data phase — call `record_shadow_observation` per symphony per cycle (M1F.2) |
+| Engine state helpers | `database.py` — `record_shadow_observation`, `prune_old_shadow_history`, `load_latest_shadow_row(symphony_id, trading_day)`, `resume_shadow_baselines` |
+| Analytics consumer | `analytics.py` — `get_symphony_*` helpers query `shadow_history` for `dry_run` (M1F.3) |
+| Dashboard | `templates/table_partial.html:62` (column rename), `templates/index.html` (new Shadow Performance widget), `app.py /api/state` extension (shadow_divergence key) |
+| EOD post-mortem | `alpha_bot_execution.py` post-mortem branch — write divergence fields to `post_mortem_<date>.json` (M1F.5) |
+| Scheduled task | `app.py` background scheduler callback — `prune_old_shadow_history()` added (BC-4 — explicitly NOT a Flask route handler) |
 | `.env` | `SHADOW_HISTORY_RETENTION_DAYS=180` |
 | Tests | `tests/shadow/test_shadow_history.py` + `tests/fixtures/shadow/*.json` (schema-derived; PA-18) |
 
-**Team composition**: Pent (5)
-- `quant-test-writer` (lead — golden fixtures critical for the per-cycle write semantics)
+**Team composition**: Pent
+- `quant-test-writer` (lead)
 - `risk-engine-specialist` (cycle write path + EOD divergence + shadow_hwm consumer)
-- `sqlite-specialist` (schema + migration 006 + retention rotation + index design)
-- `flask-dashboard-specialist` (column rename + new Shadow Performance widget + /api/state surface)
-- `quant-code-reviewer` (discipline gate + scope discipline + PA-18/PA-19 enforcement)
+- `sqlite-specialist` (schema + migration 008 + retention rotation + index design + `_MIGRATION_FILES` update)
+- `flask-dashboard-specialist` (column rename at `table_partial.html:62` + Shadow Performance widget + `/api/state` shadow_divergence key)
+- `quant-code-reviewer` (discipline gate + PA-18/PA-19 enforcement)
 
 ## Edge Cases
 
-- **Symphony first appears mid-cycle** (e.g., operator added a new symphony in Composer mid-day): the data phase's first observation creates the baseline row; `shadow_return = current_return` for the first row; subsequent rows accumulate normally.
-- **Trigger fires mid-cycle**: the post-trigger row records `shadow_return = triggered_at_return`, `is_post_trigger = 1`, `trigger_id = <exit_triggers.id>`. All subsequent rows for the symphony today carry the frozen value.
-- **Multiple triggers fire same day**: the SECOND trigger doesn't change shadow_return (it's already frozen from the first). H2's priority resolution handles the trigger semantics; M1F just records.
-- **New day reset**: existing engine wipe (post-E1) clears `triggered=False`; first row of new day records `shadow_return = current_return`.
-- **Position closes mid-day, new position opens later same day**: the new position resumes shadow tracking from current_return at its first observation; M1F doesn't currently distinguish position-1-shadow from position-2-shadow within a day (simpler v1 model). Flagged for v2 refinement if operator cares.
-- **Daemon restart mid-day**: startup queries `shadow_history` for the latest row per symphony for the current `trading_day`; resumes from there. No re-init that would lose intra-day baseline.
-- **Composer fetch failure on a cycle**: the data phase preserves prior `bot_state` (cycleat-fix pattern). M1F shadow write should skip that cycle for the affected symphony (don't write a row with stale `current_return`).
-- **Fresh DB / fresh deploy with no history**: `shadow_history` is empty; M1 helpers return `dry_run = None` sentinel (renders as `—`); the dashboard shows the no-data state explicitly, not the prior false-mirroring.
-- **Trigger fires THEN gets re-evaluated** (H2's priority resolution may change the chosen triggered_reason): shadow_history doesn't re-write old rows; the frozen value stays at the originally-recorded `triggered_at_return`. If H2 changes the priority order in a future cycle, that's a forward-looking change; historical shadow_history rows are immutable.
-- **Daylight-saving boundary**: `trading_day` and `ts_et` both use the `get_current_et` helper (which must use `zoneinfo`); cross-DST consistency is verified by a fixture.
+- **Symphony first appears mid-cycle**: data phase's first observation creates the baseline row; `shadow_return = current_return` for the first row.
+- **Trigger fires mid-cycle**: post-trigger row records `shadow_return = triggered_at_return`, `is_post_trigger = 1`, `trigger_id = <exit_triggers.id>` (advisory soft reference per BC-2).
+- **Multiple triggers fire same day**: the SECOND trigger doesn't change shadow_return (already frozen). H2's priority resolution handles trigger semantics.
+- **New day reset**: existing wipe clears `triggered=False`; first row of new day records `shadow_return = current_return`.
+- **Position closes mid-day, new position opens later same day**: new position resumes shadow tracking from current_return at its first observation. v2 may distinguish position-1 vs position-2; v1 model is per-symphony-per-day.
+- **Daemon restart mid-day**: `resume_shadow_baselines()` queries `shadow_history` for the latest row per symphony for the current `trading_day` — AFTER `wipe_transient_state` runs (PA-M1F-2).
+- **Composer fetch failure on a cycle**: data phase preserves prior `bot_state` (cycleat-fix pattern); M1F skips that cycle's shadow write for the affected symphony (PA-M1F-15).
+- **Fresh DB / no history**: `shadow_history` empty → M1 helpers return `dry_run = None` → dashboard shows '—'. No fall-back to live.
+- **DELETE LIMIT portability**: subquery form used (PA-M1F-5) — works on all SQLite builds regardless of `SQLITE_ENABLE_UPDATE_DELETE_LIMIT` compile flag.
+- **`ts_et` timezone**: hardcoded UTC-4 (matches H1) per PA-M1F-6; documented inconsistency with zoneinfo flagged as follow-up to unify the telemetry layer.
+- **Bootstrap period for V1**: less than 30 days of shadow_history → V1 report returns "indeterminate" per PA-M1F-11.
 
 ## Security Considerations
 
-- **No new external API surfaces** introduced. All shadow data is engine-internal.
-- **`record_shadow_observation` failure path**: ERROR log + swallow. Cycle continues. Same posture as H1's `record_exit_trigger`. No information leakage in error logs.
-- **`/api/state` surface for the divergence widget**: read-only. Returns aggregated per-symphony divergence numbers and per-port portfolio divergence. No PII (symphony IDs only). No new auth surface.
-- **No XSS surfaces** in the new "Shadow Performance" widget — all data-driven strings are numeric or come from controlled engine writes; Jinja autoescape applies.
-- **Retention boundary** — `shadow_history` is bounded at 180 days default; configurable via `.env`. Backstops disk growth.
-- **Composer/Alpaca auth boundary unchanged**.
+- No new external API surfaces.
+- `record_shadow_observation` failure path: ERROR log + swallow. Cycle continues. Same posture as H1's `record_exit_trigger`.
+- `/api/state` shadow_divergence extension: read-only; no PII; aggregated divergence numbers per symphony and portfolio.
+- Retention bounded at 180 days.
+- No new Composer/Alpaca/Anthropic auth surfaces.
 
 ## Testing Strategy
 
-- **TDD via real Pent Agent Team** — operator dispatches the Hex validation panel against this plan BEFORE dispatching the implementation team. Same protocol as the engine-correctness-remediation plan.
-- **Adversarial RED first** — quant-test-writer leads. Golden fixtures in `tests/fixtures/shadow/` cover: pre-trigger row sequence, post-trigger frozen row, new-day baseline, mid-cycle position open, daemon-restart baseline-resume, retention rotation. Each fixture has a provenance comment (PA-18).
-- **No inline literal assertions** — PA-18 strict. Reviewer BLOCKs on bare literals.
-- **ZERO live Composer/Alpaca/Anthropic calls** in the test tier — mock `fetch_symphony_stats` and `current_return` computation; use captured fixtures.
-- **Live verification mandatory after merge** — operator restarts daemon; PM verifies via `/api/triggers` (existing H1 endpoint) AND a new `/api/state` divergence field that (a) shadow_history starts accumulating, (b) M1 helpers produce genuinely different dry_run vs if_held values for symphonies that have post-trigger rows, (c) the dashboard "Shadow Performance" widget renders, (d) the renamed table column reads correctly, (e) prune task runs nightly without locking the cycle path. **Test pass ≠ live correctness** (M2-class lesson).
-- **Cross-workstream regression** — 1372 baseline at E2 completion; M1F adds tests; no existing tests should break.
-- **`shadow_hwm` regression coverage** — verify post-M1F that `bot_state.shadow_hwm` derives correctly from the shadow_history table; existing `shadow_hwm` consumers don't change behavior unexpectedly.
-- **Explicit PA-19 reviewer APPROVE message via SendMessage before merge** — not task-board status.
+- **TDD via real Pent Agent Team** (project hard requirement).
+- **Adversarial RED first** — quant-test-writer leads.
+- **PA-18 fixture provenance — strict**: golden fixtures in `tests/fixtures/shadow/` captured from synthetic per-symphony inputs; provenance comments documenting each fixture's purpose. Bare literals in assertions = reviewer BLOCK.
+- **Tests against the REAL bot_state shape** (M2-class lesson).
+- **ZERO live calls in test tier** — mock Composer/Alpaca; use captured fixtures.
+- **PA-19 explicit reviewer APPROVE message via SendMessage required before merge** — task-board status NOT sufficient.
+- **Multi-session pull-main discipline** — fetch + merge origin/main before each commit; include "branch at <SHA> merged with origin/main <main_SHA>" in handoffs.
+- **Live verification mandatory post-merge** — operator restarts daemon; PM verifies via `/api/state` + `/api/triggers` that (a) shadow_history accumulates, (b) M1 helpers produce genuinely distinct dry_run vs if_held values for symphonies with post-trigger rows, (c) Shadow Performance widget renders correctly with proper sign convention, (d) column rename appears, (e) prune task runs in scheduler without locking cycle path.
 
 ## Decisions
 
-| Decision | Rationale |
+| Decision | Resolution |
 |----------|-----------|
-| Sequenced AFTER E2, BEFORE V1 | E2 is small (~1 cycle) and shares `alpha_bot_execution.py`; merging it first avoids conflict. V1's calibration sweep needs the shadow_history interface to use real shadow trajectories; if V1 runs before M1F, the recommendations are partly garbage. |
-| Storage: separate `shadow_history` table (not JSON blob on bot_state) | Queryable, supports retention rotation, time-series friendly. Same pattern as H1's `exit_triggers`. JSON blob would be opaque to SQL. |
-| 180-day retention default | Shadow history is foundation for backtest-hygiene reconciliation; 90 days too short for seasonal pattern analysis. Operator can adjust via .env. |
-| Frozen-at-trigger semantics (no further movement post-trigger) | Simpler v1 model: AlphaBot's exit semantically equals "sell to cash at trigger price." Cash doesn't move. v2 could model post-exit cash-equivalent compounding if operator wants. |
-| Same `non-blocking, own-connection` posture as H1's record_exit_trigger | The cycle MUST NOT fail on telemetry; transactional isolation prevents that (H1's panel verdict PA-6 lesson). |
-| Column rename in `table_partial.html` (not deletion) | The existing "If Held (Shadow)" column is read by operator habit; rename clarifies; deletion would surprise. Operator picks the new label during plan review. |
-| `shadow_hwm` becomes consumed by M1F (closes I3) | I3 was scoped as a research investigation. M1F's existence resolves the open question — `shadow_hwm` becomes the daily peak of the shadow trajectory. |
-| No-data sentinel for symphonies with empty shadow_history | Same posture as the cycleat-fix None sentinel — `—` rendering, not silent fall-back-to-live. Operator can tell when data is missing. |
-| Operator dispatches Hex validation panel before workstream dispatch | Matches the engine-correctness-remediation plan flow. M1F is large enough to warrant the same scrutiny (real-money signal foundation). |
+| Migration number | **008** (BC-1; `_MIGRATION_FILES` currently 004-007) |
+| Column rename label | **"Held Return"** (panel-recommended; operator approved) |
+| Retention default | **180 days** (panel-corrected rationale: 3× safety margin over Glasserman 2003's 60-120 day backtest-reconciliation window) |
+| Model A vs Model C | **Model A for v1** (schema implicitly records both via `current_return`); quant-risk-researcher dissent documented in panel verdict §6 |
+| `shadow_hwm` formula | **`max(current_return)`** preserves Model C counterfactual semantic from math-engine-audit (BC-3) |
+| `trigger_id` constraint | **Advisory soft reference**, NOT FK (BC-2; SQLite FK enforcement off across codebase) |
+| Prune location | **Background scheduler callback** in `app.py`, NOT Flask route (BC-4) |
+| Composer-API ambiguity | **Resolved by companion DM workstream** — dashboard freeze-at-close removes operator concern about post-trigger Composer behavior; no runtime alert needed |
+| `ts_et` timezone | **Hardcoded UTC-4** (matches H1 pattern; follow-up task to unify telemetry layer to zoneinfo) |
 
 ## Scope Boundaries
 
 **IN:**
 - All seven AC groups (M1F.1 through M1F.7) above.
-- New `shadow_history` table + migration 006.
-- `record_shadow_observation` helper + retention rotation.
-- Engine data-phase write per symphony per cycle.
-- `analytics.py` helper migration to query shadow_history.
-- Dashboard column rename + new "Shadow Performance" widget.
-- EOD post-mortem divergence fields.
-- `shadow_hwm` consumption (closes I3).
+- 6 block-candidates resolved (BC-1 through BC-6).
+- 18 plan amendments (PA-M1F-2 through PA-M1F-16, PA-M1F-new, PA-M1F-new2, PA-M1F-1).
+- Closes I3 (shadow_hwm consumption).
 
 **OUT:**
-- V1 calibration sweep changes (M1F provides the interface; V1's workstream consumes it).
-- Position-1-vs-position-2 shadow distinction within a single day (v2 if operator wants).
-- Cash-equivalent post-exit compounding model (v2; current model freezes shadow at trigger price).
-- Cross-symphony shadow correlation analysis (separate workstream if needed).
-- Replacing the existing per-symphony "If Held (Shadow)" column with the M1F surface — that column is renamed for clarity but its underlying logic (showing `shadow_hwm` / `triggered_at_return`) stays separate from the M1 helpers' new shadow trajectory.
-- Port-level shadow aggregation (lives in the port-level-math-mode plan; orthogonal).
-- Backfilling shadow_history for historical days before deploy (operator can manually if needed; v1 starts accumulating from M1F deploy).
+- DM (Dashboard Market-Mode Rendering) — separate sibling plan; dispatch after M1F merges.
+- V1 calibration sweep changes (M1F provides the interface).
+- Position-1-vs-position-2 distinction within a single day (v2).
+- Cash-equivalent post-exit compounding model (v2).
+- Port-level shadow aggregation (port-level-math-mode plan).
+- Replacing the existing per-symphony "If Held (Shadow)" column logic — only the header label changes; underlying `shadow_str` content untouched.
+- Unifying H1's hardcoded UTC-4 and M1F's hardcoded UTC-4 with `zoneinfo` — follow-up task per PA-M1F-6.
 
 ## Dependencies
 
-- **E2 must merge first** (small surface, ~1 cycle).
-- **H1 telemetry must be live** (already merged) — M1F's post-trigger rows reference `exit_triggers.id` via `trigger_id`.
-- After M1F merges, the **I3 investigation workstream closes** (consumption verdict: "consumed by M1F").
-- **V1 calibration sweep** consumes shadow_history when its workstream runs.
-- The **port-level-math-mode plan** can extend M1F into port-level aggregation in its own cycle (no blocking dependency).
+- E2 already merged ✓
+- H1 already merged ✓ (M1F's post-trigger rows soft-reference `exit_triggers.id`)
+- After M1F merges, **I3 investigation workstream closes**.
+- V1 calibration sweep consumes shadow_history (validation interface only).
+- DM (separate plan) ships after M1F.
 
 ## Hand-off
 
-Plan saved. Next steps:
-1. Operator reviews this plan.
-2. Operator dispatches the Hex validation panel (`team: m1f-plan-validation`, 6 specialists: convener/risk-engine + quant-risk-researcher + sqlite-specialist + flask-dashboard-specialist + optuna-specialist + reviewer; back-and-forth debate to ONE consolidated verdict — same protocol as the engine-correctness-remediation plan validation).
-3. PM integrates the verdict's findings into this plan (v2).
-4. Operator approves v2.
-5. PM dispatches the M1F Pent implementation team after E2 merges.
+Plan v2 saved. Next: PM dispatches the M1F Pent implementation team. Multi-session discipline applies. PA-18 + PA-19 strict enforcement.
