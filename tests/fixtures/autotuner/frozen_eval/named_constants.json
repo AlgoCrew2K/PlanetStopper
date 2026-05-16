@@ -1,0 +1,12 @@
+{
+  "required_constants": [
+    {"name": "TRAIN_RATIO",       "expected_value": 0.60},
+    {"name": "VALIDATION_RATIO",  "expected_value": 0.20},
+    {"name": "FROZEN_EVAL_RATIO", "expected_value": 0.20}
+  ],
+  "sum_invariant": {
+    "expected_sum": 1.0,
+    "tolerance": 1e-9
+  },
+  "citation": "López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4"
+}

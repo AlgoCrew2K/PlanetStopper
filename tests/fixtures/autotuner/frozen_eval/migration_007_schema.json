@@ -1,0 +1,8 @@
+{
+  "migration_file": "007_autotune_runs_frozen_eval.sql",
+  "target_table": "autotune_runs",
+  "new_columns": [
+    {"name": "validation_sharpe",  "type": "REAL", "nullable": true, "default": null},
+    {"name": "frozen_eval_sharpe", "type": "REAL", "nullable": true, "default": null}
+  ]
+}

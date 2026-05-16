@@ -1,0 +1,15 @@
+{
+  "history_length": 125,
+  "tolerance_pct": 1.0,
+  "raw_fold_sizes": {
+    "train_days": 75,
+    "validation_days": 25,
+    "frozen_eval_days": 25
+  },
+  "split_ratios": {
+    "train": 0.60,
+    "validation": 0.20,
+    "frozen_eval": 0.20
+  },
+  "citation": "López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4"
+}

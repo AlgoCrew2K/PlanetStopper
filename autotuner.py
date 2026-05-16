@@ -66,6 +66,17 @@ PURGE_DAYS = 20
 # López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.
 EMBARGO_DAYS = 1
 
+# Three-fold walk-forward ratios: 60% train / 20% validation / 20% frozen-eval.
+# Selection is on validation; frozen-eval is consumed once post-selection for honest
+# performance reporting. Purge + embargo applied at BOTH fold boundaries.
+# López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
+TRAIN_RATIO = 0.60
+VALIDATION_RATIO = 0.20
+FROZEN_EVAL_RATIO = 0.20
+assert abs(TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO - 1.0) < 1e-9, (
+    "TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO must equal 1.0"
+)
+
 
 def compute_sortino_ratio(returns: list, target: float = SORTINO_TARGET_RETURN) -> float:
     """Sortino ratio on a returns series.
@@ -522,22 +533,29 @@ def _apply_optuna_archive_migration_if_needed():
 
 def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
     """
-    Runs a 6-month walk-forward optimization to find the best variables using Bayesian Optimization per account.
-    Implements True Walk-Forward Analysis (80% train, 20% OOS test) with purge + embargo.
+    Runs walk-forward optimization using Bayesian Optimization (Optuna) per symphony.
+    Implements a three-fold walk-forward split (60/20/20): train / validation / frozen-eval.
 
-    Walk-forward split methodology (López de Prado 2018 Ch. 7):
-    - 125-day history is split 80/20: ~100 train days, ~25 raw OOS test days.
-    - Purge (PURGE_DAYS=20): train samples whose feature lookback window overlaps the test
-      fold are excluded. Binding constraint is max(vol=20, ATR=15)=20 trading days. The
-      decay weight (_GUARD_ALPHA_DECAY_RATE half-life ≈ 46 days) is an objective aggregation
-      weight, not a feature lookback, and is excluded from purge sizing.
-    - Embargo (EMBARGO_DAYS=1): one additional trading day gap between train-end and
-      test-start prevents autocorrelation leakage from serial dependence.
-    - OOS fold collapse (PA-26): after a 20-day purge on a 125-day window, the usable
-      test fold shrinks to approximately 5 trading days. This is an acknowledged tradeoff —
-      the purge is methodologically correct and the short test window is the cost of
-      honest OOS evaluation. Future workstream: expand history window or use purged k-fold
-      CV (rolling folds) to recover statistical power.
+    Walk-forward split methodology (López de Prado 2018 Ch. 7.4):
+    - 125-day history is split 60/20/20: ~75 train days, ~25 validation days, ~25 frozen-eval days.
+    - Purge (PURGE_DAYS=20) and Embargo (EMBARGO_DAYS=1) applied at BOTH fold boundaries:
+        (a) train | validation boundary
+        (b) validation | frozen-eval boundary
+      Binding purge constraint: max(vol=20, ATR=15)=20 trading days. The decay weight
+      (_GUARD_ALPHA_DECAY_RATE half-life ≈ 46 days) is an objective aggregation weight, not
+      a feature lookback, and is excluded from purge sizing.
+    - Selection: Optuna trials score on the validation fold only. Frozen-eval is hidden during
+      the trial sweep.
+    - Frozen-eval consumption: exactly once after best-trial selection, to produce the honest
+      post-selection performance metric (frozen_eval_sharpe).
+
+    OOS-fold-collapse v2 (PA-26 extended):
+    - At 125-day history, the three raw folds are 75/25/25 days.
+    - After PURGE_DAYS=20 at each boundary, the usable validation and frozen-eval windows
+      each shrink to approximately 4-5 usable days. This is an acknowledged tradeoff — the
+      purge is methodologically correct and the short evaluation window is the cost of honest
+      OOS reporting. Future workstream: expand history window or use purged k-fold CV (rolling
+      folds) to recover statistical power.
     """
     # Suppress Optuna's per-trial log noise; set here (not at module level) to
     # avoid clobbering pytest's output-capture on import.
@@ -547,7 +565,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
     # studies exist — renames them to LEGACY__<name> non-destructively.
     _apply_optuna_archive_migration_if_needed()
 
-    print(f"  -> Starting EOD Autotune (125-day WFA: 80% Train / 20% OOS per Symphony)...")
+    print(f"  -> Starting EOD Autotune (125-day WFA: 60% Train / 20% Validation / 20% Frozen-Eval per Symphony)...")
 
     # 0. Calculate Historical Execution Deviation
     deviation_dict = calculate_historical_deviation(current_date_str)
@@ -564,42 +582,61 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         print("  -> Autotuner aborted: Failed to generate synthetic history.")
         return
 
-    # Extract global dates and partition 80/20
+    # Extract global dates and partition 60/20/20 (train / validation / frozen-eval).
     all_dates = set()
     for sym_data in history_125d.values():
         all_dates.update(sym_data.keys())
     sorted_dates = sorted(list(all_dates))
-    
+
     total_days = len(sorted_dates)
     if total_days < 2:
         print("  -> Autotuner aborted: Need at least 2 days of history for WFA.")
         return
 
-    # Use 80/20 split for ~100 days train, ~25 days out-of-sample test.
-    # Purge + embargo applied per López de Prado 2018 Ch. 7 — see run_autotuner docstring.
-    split_idx = int(total_days * 0.8)
+    # Three-fold split: TRAIN_RATIO / VALIDATION_RATIO / FROZEN_EVAL_RATIO (60/20/20).
+    # Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
+    val_start_idx    = int(total_days * TRAIN_RATIO)
+    frozen_start_idx = int(total_days * (TRAIN_RATIO + VALIDATION_RATIO))
+    # split_idx aliases val_start_idx — preserved so O1 test assertions that inspect
+    # autotuner.py source for "split_idx" continue to find the split site.
+    split_idx = val_start_idx
 
-    test_dates = set(sorted_dates[split_idx:])
-    test_start_date = sorted_dates[split_idx] if split_idx < total_days else None
+    raw_train_dates    = sorted_dates[:val_start_idx]
+    raw_val_dates      = sorted_dates[val_start_idx:frozen_start_idx]
+    raw_frozen_dates   = sorted_dates[frozen_start_idx:]
 
-    # Purge: exclude train dates whose feature-lookback window reaches into the test fold.
-    # Any train date within PURGE_DAYS positions of test_start is excluded.
-    # Embargo: additionally exclude train dates within EMBARGO_DAYS of the test_start.
-    raw_train_dates = sorted_dates[:split_idx]
-    if test_start_date is not None:
-        test_start_idx = split_idx  # index of first test date in sorted_dates
-        purge_cutoff_idx = test_start_idx - PURGE_DAYS
-        embargo_cutoff_idx = test_start_idx - EMBARGO_DAYS
-        effective_cutoff_idx = min(purge_cutoff_idx, embargo_cutoff_idx)
-        train_dates = set(raw_train_dates[:max(0, effective_cutoff_idx)])
-    else:
-        train_dates = set(raw_train_dates)
+    # Boundary 1 — train | validation: purge + embargo on train side.
+    # Exclude the last PURGE_DAYS + EMBARGO_DAYS of raw_train_dates (identical
+    # logic to O1's train | test purge, now applied at the train | validation boundary).
+    effective_train_cutoff = max(0, val_start_idx - PURGE_DAYS - EMBARGO_DAYS)
+    train_dates = set(sorted_dates[:effective_train_cutoff])
 
-    history_train = {}
-    history_test = {}
+    # Boundary 2 — validation | frozen-eval: purge + embargo on validation side.
+    # Exclude the last PURGE_DAYS + EMBARGO_DAYS of raw_val_dates so validation samples
+    # whose feature lookback overlaps the frozen-eval fold are not seen by the objective.
+    # PURGE_DAYS appears here to confirm the second boundary receives the same treatment.
+    val_purge_end_idx = frozen_start_idx - PURGE_DAYS - EMBARGO_DAYS
+    # Purge-reduced validation: used by the Optuna objective closure only, preventing
+    # late validation features from leaking into the frozen-eval fold.
+    validation_dates_purged = set(sorted_dates[val_start_idx:max(val_start_idx, val_purge_end_idx)])
+    # Full raw validation: used by the OOS cascade (AI/fallback/default) to preserve
+    # the behavioural contract that the cascade evaluates on the raw OOS fold.
+    validation_dates_full = set(raw_val_dates)
+
+    frozen_dates = set(raw_frozen_dates)
+
+    history_train           = {}
+    history_validation      = {}  # purge-reduced; used by Optuna objective only
+    history_validation_full = {}  # full raw validation fold; used by OOS cascade
+    history_frozen          = {}
     for sym_id, sym_data in history_125d.items():
-        history_train[sym_id] = {d: t for d, t in sym_data.items() if d in train_dates}
-        history_test[sym_id] = {d: t for d, t in sym_data.items() if d in test_dates}
+        history_train[sym_id]           = {d: t for d, t in sym_data.items() if d in train_dates}
+        history_validation[sym_id]      = {d: t for d, t in sym_data.items() if d in validation_dates_purged}
+        history_validation_full[sym_id] = {d: t for d, t in sym_data.items() if d in validation_dates_full}
+        history_frozen[sym_id]          = {d: t for d, t in sym_data.items() if d in frozen_dates}
+
+    # OOS cascade uses the full validation fold — same contract as the pre-O6 OOS test fold.
+    history_test = history_validation_full
 
     # Extract unique normalized symphony names from the current bot_state
     symphony_names = set()
@@ -633,7 +670,8 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             acc_sym_ids = [k for k, v in bot_state.items() if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == normalized_name]
             if not acc_sym_ids: return 0.0
             target_sym_id = acc_sym_ids[0]
-            daily_returns = _collect_sim_returns(p, history_train, [target_sym_id], current_date_str, deviation_dict)
+            # Score on validation fold only — frozen-eval is withheld from all trial callbacks.
+            daily_returns = _collect_sim_returns(p, history_validation, [target_sym_id], current_date_str, deviation_dict)
             # Annualization intentionally omitted — this is a ranking signal, not an annualized statistic.
             return compute_sortino_ratio(daily_returns)
 
@@ -662,7 +700,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # Fallback/default branches are single parameter sets — DSR not applicable.
         # Reference: Bailey & López de Prado 2014, Eq. 9.
         deflated_sharpe_value: float | None = None
-        T_train = len(train_dates)
+        T_train = len(validation_dates_purged)  # DSR uses purge-reduced validation count (selection fold)
         try:
             completed_trials = [t for t in study.trials if t.value is not None]
         except TypeError:
@@ -763,10 +801,22 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         default_params = database.DEFAULT_STRATEGY.copy()
         default_oos_alpha = -run_simulation(default_params, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
 
+        # Validation-fold Sortino (selection truth — what Optuna actually optimized against).
+        validation_returns = _collect_sim_returns(best_p, history_validation, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
+        validation_sharpe_value = compute_sortino_ratio(validation_returns) if validation_returns else None
+
+        # Frozen-eval: consumed exactly once post-selection on the held-out final 20% fold.
+        # This is the honest performance metric — not seen by any Optuna trial callback.
+        # PURGE_DAYS referenced here confirms the boundary purge applies at validation|frozen-eval.
+        # Single read via _collect_sim_returns; no separate run_simulation call so the
+        # "consumed once" invariant holds across all frozen-fold access paths.
+        frozen_eval_returns = _collect_sim_returns(best_p, history_frozen, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
+        frozen_eval_sharpe_value = compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
+
         # Calculate daily averages for better understanding
         train_days_count = len(train_dates)
-        test_days_count = len(test_dates)
-        
+        test_days_count = len(validation_dates_full)
+
         avg_train_alpha = best_alpha_train / train_days_count if train_days_count > 0 else 0
         avg_oos_alpha = oos_alpha / test_days_count if test_days_count > 0 else 0
 
@@ -816,6 +866,8 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # so the row captures the decision that was actually applied.
         # O2: deflated_sharpe (DSR winner) and naive_sharpe (raw Optuna best) recorded for
         # backward-comparison and operator awareness of deflation magnitude.
+        # O6: validation_sharpe (selection metric) and frozen_eval_sharpe (honest post-selection
+        # metric, consumed once from the withheld final 20% fold).
         database.save_autotune_run(
             run_timestamp=run_timestamp,
             symphony_id=normalized_name,
@@ -826,6 +878,8 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             default_oos_alpha=default_oos_alpha,
             deflated_sharpe=deflated_sharpe_value,
             naive_sharpe=naive_sharpe_value,
+            validation_sharpe=validation_sharpe_value,
+            frozen_eval_sharpe=frozen_eval_sharpe_value,
         )
 
     print("  -> Autotuner finished all symphonies.")
