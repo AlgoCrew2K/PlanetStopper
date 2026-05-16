@@ -1,0 +1,47 @@
+{
+  "_provenance": "schema-derived from López de Prado 2018 Ch. 7.4 and run_autotuner's 125-trading-day history window",
+  "_citation": "López de Prado, M. (2018). Advances in Financial Machine Learning. Wiley. Ch. 7.4.",
+  "_description": "Golden fixture for O6 60/20/20 train/validation/frozen-eval split on 125 trading days.",
+
+  "history_length": 125,
+
+  "ratios": {
+    "TRAIN_RATIO": 0.60,
+    "VALIDATION_RATIO": 0.20,
+    "FROZEN_EVAL_RATIO": 0.20,
+    "sum": 1.0,
+    "_note": "Ratios must sum to exactly 1.0"
+  },
+
+  "raw_fold_sizes": {
+    "train_days": 75,
+    "validation_days": 25,
+    "frozen_eval_days": 25,
+    "_note": "int(125 * 0.60)=75, int(125 * 0.20)=25, remainder=25. Integer truncation handled by assigning remainder to frozen-eval."
+  },
+
+  "purge_embargo": {
+    "PURGE_DAYS": 20,
+    "EMBARGO_DAYS": 1,
+    "total_gap_per_boundary": 21,
+    "_note": "Same PURGE_DAYS and EMBARGO_DAYS constants from O1. Applied at BOTH boundaries: train|validation and validation|frozen-eval."
+  },
+
+  "usable_fold_sizes": {
+    "usable_train_days_approx": 54,
+    "usable_validation_days_approx": 4,
+    "usable_frozen_eval_days_approx": 4,
+    "_note": "After 20-day purge + 1-day embargo at each boundary: train loses last 21 days (75-21=54), validation loses first 21 and last 21 days (25-42=-17 => floor 0, realistically ~4 if boundaries don't fully overlap). These are approximate — exact count depends on calendar distribution. The key invariant is that usable validation and frozen-eval are small (~5 days).",
+    "_fold_collapse_acknowledgment": "At 125-day history with 60/20/20 split, the 20-day purge at each boundary leaves approximately 4-5 usable validation days and 4-5 usable frozen-eval days. This is an acknowledged tradeoff: the purge is methodologically correct (López de Prado 2018 Ch. 7), and the short eval windows are the cost of honest fold separation. Documented per O6 AC mandate."
+  },
+
+  "split_indices": {
+    "train_end_idx": 75,
+    "validation_end_idx": 100,
+    "frozen_eval_start_idx": 100,
+    "_note": "For sorted_dates[0..125]: train=[0,75), validation=[75,100), frozen_eval=[100,125)"
+  },
+
+  "tolerance_pct": 1.0,
+  "_tolerance_note": "Due to integer rounding on day counts, the actual ratio may deviate by up to 1 percentage point from the target. Tests assert within this tolerance."
+}

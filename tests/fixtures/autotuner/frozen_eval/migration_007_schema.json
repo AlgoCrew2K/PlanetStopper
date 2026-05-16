@@ -1,0 +1,36 @@
+{
+  "_provenance": "schema-derived from O6 spec and existing autotune_runs migration pattern (006_autotune_runs_sharpe.sql)",
+  "_description": "Expected schema additions for migration 007: validation_sharpe and frozen_eval_sharpe columns in autotune_runs",
+
+  "migration_file": "007_autotune_runs_frozen_eval.sql",
+  "target_table": "autotune_runs",
+  "target_db": "alphabot_state.db",
+  "_not_target": "optuna_studies.db (that is Optuna's internal DB, separate from alphabot_state.db)",
+
+  "new_columns": [
+    {
+      "name": "validation_sharpe",
+      "type": "REAL",
+      "nullable": true,
+      "default": null,
+      "description": "Sortino ratio on the validation fold — the metric Optuna trial selection is scored against",
+      "_note": "Previously called oos_alpha but now semantically distinct: validation_sharpe is used for SELECTION, frozen_eval_sharpe is the honest reporting metric"
+    },
+    {
+      "name": "frozen_eval_sharpe",
+      "type": "REAL",
+      "nullable": true,
+      "default": null,
+      "description": "Sortino ratio on the frozen evaluation fold — evaluated ONCE after best trial selection, never consumed during the Optuna sweep",
+      "_note": "This is the honest OOS reporting metric that eliminates the reporting bias identified in the audit"
+    }
+  ],
+
+  "migration_constraints": {
+    "additive_only": true,
+    "preserves_existing_rows": true,
+    "idempotent": true,
+    "must_follow_migration_006": true,
+    "_note": "Follows project CLAUDE.md additive-first pattern: NULLable + DEFAULT NULL, no destructive changes"
+  }
+}
