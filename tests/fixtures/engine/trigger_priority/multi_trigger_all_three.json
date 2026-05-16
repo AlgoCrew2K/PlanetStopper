@@ -1,0 +1,43 @@
+{
+  "_provenance": "schema-derived from alpha_bot_execution.py:938-950 trigger-detection block and database.record_exit_trigger() signature. Trigger reason strings are named constants from the production if/elif ladder. Gate-state field names are the exact keys written at alpha_bot_execution.py:1069-1075.",
+  "_h2_note": "All three meaningful trigger flags are True simultaneously. Only VWAP Breakdown wins (highest priority). TP and Trailing Stop side-effects must NOT fire.",
+
+  "trigger_flags": {
+    "is_vwap_broken": true,
+    "is_vwap_bleed_broken": false,
+    "tp_triggered_now": true,
+    "is_trailing_stop_hit": true
+  },
+
+  "priority_order": [
+    "VWAP Breakdown",
+    "Take-Profit",
+    "VWAP Bleed Cut",
+    "Trailing Stop"
+  ],
+
+  "expected_winner": "VWAP Breakdown",
+
+  "also_true_candidates": ["Take-Profit", "Trailing Stop"],
+
+  "gate_state_shape": {
+    "high_water_mark": {"type": "float", "description": "safe_hwm at resolution moment"},
+    "vwap_ticks": {"type": "int", "min": 0},
+    "vwap_bleed_ticks": {"type": "int", "min": 0},
+    "mc_prob": {"type": "float", "min": 0.0, "max": 100.0},
+    "symphony_vol": {"type": "float", "min": 0.0}
+  },
+
+  "expected_telemetry": {
+    "triggered_reason": "VWAP Breakdown",
+    "also_true_reasons_contains": ["Take-Profit", "Trailing Stop"],
+    "also_true_field_in_gate_state_json": true
+  },
+
+  "side_effect_call_counts": {
+    "sell_to_cash_total_calls": 1,
+    "bot_state_triggered_set_to_true": 1,
+    "record_exit_trigger_calls": 1,
+    "log_symphony_event_trigger_calls": 1
+  }
+}
