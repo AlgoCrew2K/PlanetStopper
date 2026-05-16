@@ -587,6 +587,36 @@ def main():
             except OSError as exc:
                 logging.error("EOD post-mortem write failed: %s", exc)
 
+            # DM: capture EOD closing snapshot for dashboard frozen-state rendering.
+            # Written once per trading day (idempotent guard on trading_day key).
+            # portfolio_strip values are None at EOD — the live analytics path in app.py
+            # computes these; the engine captures structure only.
+            if bot_state.get("last_market_close_snapshot", {}).get("trading_day") != current_date_str:
+                _eod_accounts_map: dict = {}
+                for _s_id in symphony_keys_eod:
+                    _sym_data = bot_state.get(_s_id)
+                    if not isinstance(_sym_data, dict):
+                        continue
+                    _acc = _sym_data.get("account", "Unknown")
+                    if _acc not in _eod_accounts_map:
+                        _eod_accounts_map[_acc] = []
+                    _eod_accounts_map[_acc].append({"id": _s_id, **_sym_data})
+                bot_state["last_market_close_snapshot"] = {
+                    "trading_day": current_date_str,
+                    "captured_at_et": current_et.strftime("%H:%M:%S ET"),
+                    "data_as_of": current_et.strftime("%H:%M ET"),
+                    "portfolio_strip": {
+                        "today_change": None,
+                        "cumulative_return": None,
+                        "max_drawdown": None,
+                    },
+                    "shadow_divergence": {
+                        "by_symphony": eod_divergence_by_sym,
+                        "portfolio": portfolio_eod_div,
+                    },
+                    "accounts_map": _eod_accounts_map,
+                }
+
             # Save post_mortem flag immediately to prevent race conditions if execution is slow
             bot_state["post_mortem_run"] = current_date_str
             bot_state["last_successful_cycle_at"] = current_et.isoformat()
