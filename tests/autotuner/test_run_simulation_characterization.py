@@ -860,14 +860,13 @@ def test_run_simulation_single_day_single_tick_no_trigger_zero_alpha():
 def test_run_simulation_called_three_times_per_symphony_for_oos_evaluation():
     """
     CHARACTERIZATION INVARIANT — compute_vwap_breakdown_update must be invoked
-    exactly FIVE times per symphony with a 5-day, 1-tick-per-day fixture:
+    exactly FOUR times per symphony with a 5-day, 1-tick-per-day fixture:
       - 3 cascade evals (AI/fallback/default) on the validation fold (1 day x 1 tick each)
       - 1 _collect_sim_returns call on frozen-eval fold (1 day x 1 tick)
-      - 1 run_simulation call on frozen-eval fold (1 day x 1 tick)
     Training-loop invocation is suppressed (study.optimize is a no-op).
 
-    O6 extended the OOS block with two frozen-eval calls post-selection:
-    _collect_sim_returns (for Sortino) + run_simulation (for audit scalar).
+    O6 uses a single _collect_sim_returns read on the frozen fold (no separate
+    run_simulation call) so the "consumed once" invariant holds across all paths.
     """
     ai = _ai_full_params()
     fallback = _ai_full_params()
@@ -894,12 +893,11 @@ def test_run_simulation_called_three_times_per_symphony_for_oos_evaluation():
 
     # O6 (60/20/20 split on 5 dates): validation fold = 1 day, frozen-eval fold = 1 day.
     # 3 OOS cascade (AI/fallback/default) on validation (1 tick each) = 3 VWAP calls.
-    # 1 _collect_sim_returns + 1 run_simulation on frozen-eval (1 tick each) = 2 VWAP calls.
-    # Total = 5. Both frozen calls are post-selection and use the same held-out fold.
-    assert counter["calls"] == 5, (
-        f"Expected exactly 5 compute_vwap_breakdown_update invocations: "
+    # 1 _collect_sim_returns on frozen-eval (1 tick) = 1 VWAP call. Total = 4.
+    assert counter["calls"] == 4, (
+        f"Expected exactly 4 compute_vwap_breakdown_update invocations: "
         f"3 cascade (AI/fallback/default on validation) + 1 _collect_sim_returns "
-        f"on frozen + 1 run_simulation on frozen; got {counter['calls']}."
+        f"on frozen; got {counter['calls']}."
     )
 
 

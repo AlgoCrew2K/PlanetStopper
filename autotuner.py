@@ -808,12 +808,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # Frozen-eval: consumed exactly once post-selection on the held-out final 20% fold.
         # This is the honest performance metric — not seen by any Optuna trial callback.
         # PURGE_DAYS referenced here confirms the boundary purge applies at validation|frozen-eval.
-        # run_simulation is called exactly once for frozen-eval to satisfy the O6 "consumed once"
-        # audit invariant. frozen_eval_sharpe_value uses _collect_sim_returns for the Sortino
-        # computation; both calls access the same fold and are made post-selection.
+        # Single read via _collect_sim_returns; no separate run_simulation call so the
+        # "consumed once" invariant holds across all frozen-fold access paths.
         frozen_eval_returns = _collect_sim_returns(best_p, history_frozen, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
         frozen_eval_sharpe_value = compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
-        run_simulation(best_p, history_frozen, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
 
         # Calculate daily averages for better understanding
         train_days_count = len(train_dates)

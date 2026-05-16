@@ -504,6 +504,7 @@ _MIGRATION_FILES = [
     "004_schema_migrations_tracker.sql",
     "005_exit_triggers.sql",
     "006_autotune_runs_sharpe.sql",
+    "007_autotune_runs_frozen_eval.sql",
 ]
 
 
