@@ -1,0 +1,94 @@
+{
+  "_provenance": "schema-derived from R1 AC: trip, dismiss, re-trip, auto-clear, daemon-restart semantics. ISO timestamps use fixed wall-clock values matching existing fleet_correlation fixture convention. No producer-computed values.",
+  "description": "Lifecycle scenarios for fleet_alert_state table: initial trip, dismiss, re-trip, auto-clear",
+  "iso_timestamp_format": "YYYY-MM-DDTHH:MM:SS (ET timezone, no offset suffix)",
+  "cases": [
+    {
+      "label": "initial_trip_writes_to_fleet_alert_state",
+      "note": "Engine detects fleet event; write_fleet_alert() stores it with dismissed_at_et=NULL",
+      "write_payload": {
+        "tripped_at_et": "2026-05-17T10:33:00",
+        "triggered_reason": "Trailing Stop",
+        "tripped_count": 6,
+        "active_count": 10,
+        "dismissed_at_et": null
+      },
+      "expected_row_after_write": {
+        "id": 1,
+        "tripped_at_et": "2026-05-17T10:33:00",
+        "triggered_reason": "Trailing Stop",
+        "tripped_count": 6,
+        "active_count": 10,
+        "dismissed_at_et": null
+      }
+    },
+    {
+      "label": "dismiss_sets_dismissed_at_et_non_null",
+      "note": "Operator dismisses; dismissed_at_et is set to a non-NULL ISO string; other fields unchanged",
+      "pre_dismiss_row": {
+        "tripped_at_et": "2026-05-17T10:33:00",
+        "triggered_reason": "Trailing Stop",
+        "tripped_count": 6,
+        "active_count": 10,
+        "dismissed_at_et": null
+      },
+      "dismiss_time_et": "2026-05-17T10:45:00",
+      "expected_dismissed_at_et_is_non_null": true,
+      "expected_alert_visible_after_dismiss": false
+    },
+    {
+      "label": "re_trip_after_dismiss_nulls_dismissed_at_et",
+      "note": "New fleet event in same cycle after dismiss: write_fleet_alert() with new tripped_at_et and dismissed_at_et=NULL makes alert visible again",
+      "pre_trip_dismissed_row": {
+        "tripped_at_et": "2026-05-17T10:33:00",
+        "triggered_reason": "Trailing Stop",
+        "tripped_count": 6,
+        "active_count": 10,
+        "dismissed_at_et": "2026-05-17T10:45:00"
+      },
+      "new_trip_payload": {
+        "tripped_at_et": "2026-05-17T10:55:00",
+        "triggered_reason": "PARA-ARM",
+        "tripped_count": 7,
+        "active_count": 10,
+        "dismissed_at_et": null
+      },
+      "expected_row_after_re_trip": {
+        "tripped_at_et": "2026-05-17T10:55:00",
+        "triggered_reason": "PARA-ARM",
+        "dismissed_at_et": null
+      },
+      "expected_alert_visible": true
+    },
+    {
+      "label": "auto_clear_removes_row",
+      "note": "Auto-clear timer calls clear_fleet_alert(); row is deleted; read_fleet_alert() returns None",
+      "pre_clear_row": {
+        "tripped_at_et": "2026-05-17T10:33:00",
+        "triggered_reason": "Trailing Stop",
+        "tripped_count": 6,
+        "active_count": 10,
+        "dismissed_at_et": null
+      },
+      "expected_read_after_clear": null
+    },
+    {
+      "label": "daemon_restart_alert_persists",
+      "note": "Fleet alert written before restart; after daemon restart (new DB connection) read_fleet_alert() returns the same row",
+      "persisted_row": {
+        "tripped_at_et": "2026-05-17T10:33:00",
+        "triggered_reason": "Trailing Stop",
+        "tripped_count": 6,
+        "active_count": 10,
+        "dismissed_at_et": null
+      },
+      "expected_read_after_new_connection": {
+        "tripped_at_et": "2026-05-17T10:33:00",
+        "triggered_reason": "Trailing Stop",
+        "tripped_count": 6,
+        "active_count": 10,
+        "dismissed_at_et": null
+      }
+    }
+  ]
+}

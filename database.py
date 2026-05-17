@@ -506,6 +506,7 @@ _MIGRATION_FILES = [
     "006_autotune_runs_sharpe.sql",
     "007_autotune_runs_frozen_eval.sql",
     "008_shadow_history.sql",
+    "009_fleet_alert_state.sql",
 ]
 
 
@@ -547,6 +548,55 @@ def run_migrations() -> None:
             logging.error("run_migrations: failed to apply %s: %s", migration_name, exc)
 
     conn.close()
+
+
+# --- R1: Fleet Alert State Helpers ---
+
+
+def read_fleet_alert() -> "dict | None":
+    """Return the fleet_alert_state row as a dict, or None when the table is empty."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT id, tripped_at_et, triggered_reason, tripped_count, active_count, dismissed_at_et "
+            "FROM fleet_alert_state WHERE id = 1"
+        ).fetchone()
+    except Exception:
+        return None
+    if row is None:
+        return None
+    return dict(row)
+
+
+def write_fleet_alert(payload: dict) -> None:
+    """Upsert the fleet_alert_state singleton row (id=1).
+
+    Clears dismissed_at_et to NULL unless the caller explicitly includes it in payload.
+    Uses INSERT OR REPLACE so each call is idempotent.
+    """
+    dismissed_at_et = payload.get("dismissed_at_et", None)
+    conn = get_connection()
+    conn.execute(
+        "INSERT OR REPLACE INTO fleet_alert_state "
+        "(id, tripped_at_et, triggered_reason, tripped_count, active_count, dismissed_at_et) "
+        "VALUES (1, ?, ?, ?, ?, ?)",
+        (
+            payload["tripped_at_et"],
+            payload["triggered_reason"],
+            payload["tripped_count"],
+            payload["active_count"],
+            dismissed_at_et,
+        ),
+    )
+    conn.commit()
+
+
+def clear_fleet_alert() -> None:
+    """Delete the fleet_alert_state singleton row. Idempotent — safe when table is empty."""
+    conn = get_connection()
+    conn.execute("DELETE FROM fleet_alert_state WHERE id = 1")
+    conn.commit()
 
 
 # --- H1: Trigger Attribution Telemetry ---

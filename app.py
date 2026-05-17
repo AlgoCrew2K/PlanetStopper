@@ -229,6 +229,8 @@ def get_state():
                 sd = dict(snapshot.get("shadow_divergence") or {})
                 if "portfolio" in sd and "portfolio_today" not in sd:
                     sd["portfolio_today"] = sd.pop("portfolio")
+                _alert_row = database.read_fleet_alert()
+                _alert = _alert_row if (_alert_row is not None and _alert_row.get("dismissed_at_et") is None) else None
                 return jsonify({
                     "status": "active",
                     "market_state": market_state,
@@ -238,7 +240,7 @@ def get_state():
                     "portfolio_strip": snapshot.get("portfolio_strip"),
                     "shadow_divergence": sd,
                     "accounts_map": snapshot.get("accounts_map"),
-                    "fleet_correlation_alert": (state_data or {}).get("fleet_correlation_alert", None),
+                    "fleet_correlation_alert": _alert,
                 })
 
         # No live state — return waiting with market_state context and notice on fresh deploy.
@@ -249,13 +251,15 @@ def get_state():
                 shadow_divergence = database.get_shadow_divergence(today_str)
             except Exception:
                 shadow_divergence = {"by_symphony": {}, "portfolio_today": None}
+            _alert_row = database.read_fleet_alert()
+            _alert = _alert_row if (_alert_row is not None and _alert_row.get("dismissed_at_et") is None) else None
             waiting_resp = {
                 "status": "waiting",
                 "message": "Bot state initializing.",
                 "shadow_divergence": shadow_divergence,
                 "market_state": market_state,
                 "frozen_at": None,
-                "fleet_correlation_alert": None,
+                "fleet_correlation_alert": _alert,
             }
             # AC-DM.3.4: include notice on fresh deploy (no snapshot, market closed)
             if market_state in ("closed_frozen", "pre_market"):
@@ -394,6 +398,9 @@ def get_state():
         except Exception:
             shadow_divergence = {"by_symphony": {}, "portfolio_today": None}
 
+        _alert_row = database.read_fleet_alert()
+        _alert = _alert_row if (_alert_row is not None and _alert_row.get("dismissed_at_et") is None) else None
+
         return jsonify({
             "status": "active",
             "market_state": market_state,
@@ -407,7 +414,7 @@ def get_state():
             "data_as_of": data_as_of,
             "last_successful_cycle_at": state_data.get("last_successful_cycle_at"),
             "shadow_divergence": shadow_divergence,
-            "fleet_correlation_alert": state_data.get("fleet_correlation_alert", None),
+            "fleet_correlation_alert": _alert,
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -455,9 +462,12 @@ def api_triggers():
 @app.route("/api/fleet-alert/dismiss", methods=["POST"])
 def fleet_alert_dismiss():
     try:
-        state = database.load_state()
-        state.pop("fleet_correlation_alert", None)
-        database.save_state(state)
+        row = database.read_fleet_alert()
+        if row is not None:
+            now_et = datetime.now(_ET).strftime("%Y-%m-%dT%H:%M:%S")
+            payload = dict(row)
+            payload["dismissed_at_et"] = now_et
+            database.write_fleet_alert(payload)
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

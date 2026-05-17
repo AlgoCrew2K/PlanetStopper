@@ -1,0 +1,27 @@
+{
+  "_provenance": "schema-derived from R1 AC helpers spec. Function signatures and return shapes defined by acceptance criteria, not observed runtime output. No producer-computed values.",
+  "description": "Expected contract for database.py fleet_alert_state helpers",
+  "helpers": {
+    "read_fleet_alert": {
+      "signature": "read_fleet_alert() -> dict | None",
+      "returns_when_active":   "dict with keys: tripped_at_et, triggered_reason, tripped_count, active_count, dismissed_at_et",
+      "required_keys_when_active": ["tripped_at_et", "triggered_reason", "tripped_count", "active_count", "dismissed_at_et"],
+      "returns_when_empty":    "None — no row exists yet",
+      "dismissed_at_et_type":  "str | None — ISO ET string if dismissed, else None"
+    },
+    "write_fleet_alert": {
+      "signature": "write_fleet_alert(payload: dict) -> None",
+      "required_payload_keys": ["tripped_at_et", "triggered_reason", "tripped_count", "active_count"],
+      "optional_payload_keys": ["dismissed_at_et"],
+      "side_effects": "Upserts single row id=1 into fleet_alert_state. Sets dismissed_at_et=NULL unless provided.",
+      "idempotent": true
+    },
+    "clear_fleet_alert": {
+      "signature": "clear_fleet_alert() -> None",
+      "side_effects": "Deletes the id=1 row from fleet_alert_state (or no-ops if absent). Used by auto-clear timer.",
+      "idempotent": true
+    }
+  },
+  "connection_policy": "Each helper opens its own connection. Non-blocking. Never reuses a caller's connection.",
+  "non_bot_state": "These helpers NEVER read from or write to bot_state. Isolation is total."
+}

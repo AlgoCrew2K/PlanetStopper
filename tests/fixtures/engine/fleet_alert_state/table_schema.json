@@ -1,0 +1,15 @@
+{
+  "_provenance": "schema-derived from R1 acceptance criteria (task r1-fleet-dismiss-table). Single-row invariant enforced by CHECK(id=1). Matches migration 009 DDL spec. No producer-computed values.",
+  "description": "Expected DDL shape for the fleet_alert_state table: single-row, id=1 enforced by CHECK constraint",
+  "table_name": "fleet_alert_state",
+  "columns": {
+    "id":               "INTEGER PRIMARY KEY CHECK(id=1) — enforces exactly one row",
+    "tripped_at_et":    "TEXT NOT NULL — ISO format YYYY-MM-DDTHH:MM:SS (ET timezone, no offset suffix)",
+    "triggered_reason": "TEXT NOT NULL — same string as exit_triggers.triggered_reason that crossed threshold",
+    "tripped_count":    "INTEGER NOT NULL — number of distinct symphonies that fired same reason in window",
+    "active_count":     "INTEGER NOT NULL — total active symphonies at detection time",
+    "dismissed_at_et":  "TEXT NULL DEFAULT NULL — set on operator dismiss; nulled when alert re-trips"
+  },
+  "single_row_invariant": "Only id=1 row is ever present. INSERT OR REPLACE keeps it single-row. CHECK(id=1) rejects any other id at DB level.",
+  "absent_when_not_tripped": "table may be empty (no rows) when no alert has ever fired, OR the single row's dismissed_at_et is non-NULL indicating a dismissed alert"
+}
