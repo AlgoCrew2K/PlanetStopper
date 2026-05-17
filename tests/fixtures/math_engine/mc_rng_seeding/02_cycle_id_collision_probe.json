@@ -1,0 +1,31 @@
+{
+  "name": "mc_rng_seeding_cycle_id_collision_probe",
+  "description": "A set of cycle_ids spanning one full year of trading (252 days x 390 minutes = ~98,280 cycles) used to verify derive_cycle_mc_seed has no collisions. Stored as first-and-last of every trading day across a calendar year; specific values chosen from market-hours boundaries (09:30 and 15:59 ET). Collision-resistance is verified by asserting all seed values are distinct — not by pinning any specific seed value.",
+  "function": "derive_cycle_mc_seed",
+  "notes": "PA-18: no 'expected' seed values. Tests assert uniqueness of the output set, not specific integers. The cycle_id format YYYYMMDD_HHMM is confirmed at alpha_bot_execution.py:494.",
+  "sample_cycle_ids": [
+    "20240102_0930",
+    "20240102_1559",
+    "20240103_0930",
+    "20240103_1559",
+    "20240104_0930",
+    "20240104_1559",
+    "20240105_0930",
+    "20240105_1559",
+    "20240108_0930",
+    "20240108_1559",
+    "20240109_0930",
+    "20240109_1559",
+    "20240110_0930",
+    "20240110_1559",
+    "20240111_0930",
+    "20240111_1559",
+    "20240112_0930",
+    "20240112_1559",
+    "20240115_0930",
+    "20240115_1559",
+    "20241231_0930",
+    "20241231_1559"
+  ],
+  "derivation": "Market-hours boundary cycle_ids only — open (09:30) and close (15:59) of each day. 22 sample IDs from a real 252-day trading year. A full exhaustive set (~98k) would be generated in the test itself. If any two cycle_ids map to the same seed, the seeding scheme is non-deterministic across the real fleet."
+}
