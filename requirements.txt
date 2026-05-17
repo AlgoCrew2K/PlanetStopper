@@ -6,3 +6,4 @@ Flask
 schedule
 optuna
 joblib
+scipy

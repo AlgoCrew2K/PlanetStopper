@@ -738,12 +738,17 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             else:
                 gamma3, gamma4 = 0.0, 3.0  # normal-distribution fallback for degenerate spread
 
+            SR_0 = math_engine.compute_expected_max_sharpe(
+                sr_mean=mean_v,
+                sr_std=std_v,
+                n_trials=n_trials,
+            )
             best_dsr = float("-inf")
             best_trial_by_dsr = None
             for t in completed_trials:
                 dsr = compute_deflated_sharpe_ratio(
                     SR_obs=t.value,
-                    SR_0=0.0,
+                    SR_0=SR_0,
                     gamma3=gamma3,
                     gamma4=gamma4,
                     T=T_train,
@@ -764,7 +769,11 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             # receives a finite DSR signal rather than NULL.
             dsr_fallback = compute_deflated_sharpe_ratio(
                 SR_obs=naive_sharpe_value,
-                SR_0=0.0,
+                SR_0=math_engine.compute_expected_max_sharpe(
+                    sr_mean=naive_sharpe_value,
+                    sr_std=0.0,
+                    n_trials=1,
+                ),
                 gamma3=0.0,
                 gamma4=3.0,
                 T=T_train,
@@ -1017,12 +1026,17 @@ def run_calibration_sweep(
             else:
                 gamma3, gamma4 = 0.0, 3.0
 
+            SR_0 = math_engine.compute_expected_max_sharpe(
+                sr_mean=mean_v,
+                sr_std=std_v,
+                n_trials=n_tv,
+            )
             best_dsr = float("-inf")
             best_trial_by_dsr = None
             for t in completed_trials:
                 dsr = compute_deflated_sharpe_ratio(
                     SR_obs=t.value,
-                    SR_0=0.0,
+                    SR_0=SR_0,
                     gamma3=gamma3,
                     gamma4=gamma4,
                     T=T_val,
@@ -1039,7 +1053,11 @@ def run_calibration_sweep(
         if deflated_sharpe_value is None and naive_sharpe_value is not None:
             dsr_fallback = compute_deflated_sharpe_ratio(
                 SR_obs=naive_sharpe_value,
-                SR_0=0.0,
+                SR_0=math_engine.compute_expected_max_sharpe(
+                    sr_mean=naive_sharpe_value,
+                    sr_std=0.0,
+                    n_trials=1,
+                ),
                 gamma3=0.0,
                 gamma4=3.0,
                 T=T_val,
