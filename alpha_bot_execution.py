@@ -64,6 +64,12 @@ MAX_PARABOLIC_SQUEEZE = float(os.getenv("MAX_PARABOLIC_SQUEEZE", "0.50"))
 SIMULATION_PATHS = int(os.getenv("SIMULATION_PATHS", "5000"))
 NEIGHBOR_K = int(os.getenv("NEIGHBOR_K", "150"))
 
+# --- FLEET CORRELATION CIRCUIT BREAKER (V3, AC-V3.1) ---
+# Flag when >50% of active symphonies fire the same reason within 3 minutes.
+FLEET_CORRELATION_PCT = float(os.getenv("FLEET_CORRELATION_PCT", "0.50"))
+FLEET_CORRELATION_WINDOW_MINUTES = int(os.getenv("FLEET_CORRELATION_WINDOW_MINUTES", "3"))
+FLEET_CORRELATION_CLEAR_MINUTES = int(os.getenv("FLEET_CORRELATION_CLEAR_MINUTES", "30"))
+
 HISTORY_CACHE_FILE = "history_cache.json"
 
 COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
@@ -286,7 +292,126 @@ def get_current_et():
 
 
 # ==========================================
-# 6. MAIN EXECUTION LOOP
+# 6. FLEET CORRELATION DETECTION (V3, AC-V3.1-V3.4)
+# ==========================================
+
+def detect_fleet_correlation(
+    triggers_in_window: list,
+    active_symphonies: int,
+    pct_threshold: float,
+) -> tuple:
+    """Return (tripped, dominant_reason) for the fleet-correlation circuit breaker.
+
+    Pure function — no DB reads, no side effects. Receives pre-fetched triggers.
+    Threshold is strictly greater-than; exactly pct_threshold is not a trip.
+    Returns (False, None) when active_symphonies == 0 to guard division by zero.
+    The triggers_in_window list is not mutated.
+
+    AC-V3.2: calling this function never gates or alters trigger dispatch;
+    the caller invokes it AFTER all side effects complete for the cycle.
+    """
+    if active_symphonies == 0:
+        return (False, None)
+    counts: dict = {}
+    for t in triggers_in_window:
+        reason = t.get("triggered_reason", "")
+        counts[reason] = counts.get(reason, 0) + 1
+    for reason, count in counts.items():
+        if count / active_symphonies > pct_threshold:
+            return (True, reason)
+    return (False, None)
+
+
+def set_fleet_correlation_alert(
+    bot_state: dict,
+    tripped_at_et: str,
+    triggered_reason: str,
+    tripped_count: int,
+    active_count: int,
+) -> None:
+    """Write the fleet_correlation_alert dict into bot_state (AC-V3.1)."""
+    bot_state["fleet_correlation_alert"] = {
+        "tripped_at_et": tripped_at_et,
+        "triggered_reason": triggered_reason,
+        "tripped_count": tripped_count,
+        "active_count": active_count,
+    }
+
+
+def dismiss_fleet_correlation_alert(bot_state: dict) -> None:
+    """Remove fleet_correlation_alert from bot_state and persist (AC-V3.3).
+
+    Idempotent — safe to call when no alert is present.
+    The dismiss is a one-cycle operator ack; detection will re-trip if the
+    ratio exceeds the threshold again in a subsequent cycle.
+    """
+    bot_state.pop("fleet_correlation_alert", None)
+    database.save_state(bot_state)
+
+
+def check_fleet_correlation_and_update_state(
+    bot_state: dict,
+    active_symphony_count: int,
+    now_et=None,
+) -> None:
+    """Auto-clear stale alert then detect fresh fleet correlation; update bot_state.
+
+    Order: clear-then-detect so a cycle with fresh triggers re-trips even if
+    the prior alert just expired.
+
+    AC-V3.4: reads from H1 exit_triggers via database.get_triggers(since=...).
+    AC-V3.2: NEVER called inside the trigger-gating block; always called after
+    all trigger side effects complete for the current cycle.
+    """
+    if now_et is None:
+        now_et = get_current_et()
+
+    existing_alert = bot_state.get("fleet_correlation_alert")
+    if existing_alert:
+        tripped_str = existing_alert.get("tripped_at_et", "")
+        try:
+            tripped_dt = datetime.fromisoformat(tripped_str)
+            # tripped_at_et is stored tz-naive ET; strip tz from now_et for comparison.
+            now_naive = now_et.replace(tzinfo=None) if now_et.tzinfo is not None else now_et
+            elapsed_minutes = (now_naive - tripped_dt).total_seconds() / 60.0
+            if elapsed_minutes >= FLEET_CORRELATION_CLEAR_MINUTES:
+                bot_state.pop("fleet_correlation_alert", None)
+        except (ValueError, TypeError):
+            bot_state.pop("fleet_correlation_alert", None)
+
+    window_s = FLEET_CORRELATION_WINDOW_MINUTES * 60
+    cutoff_utc = (now_et - timedelta(seconds=window_s)).astimezone(timezone.utc)
+    since_iso = cutoff_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    try:
+        raw_triggers = database.get_triggers(since=since_iso)
+    except Exception:
+        return
+
+    # ts_et from DB is tz-naive ET string; strip tz from now_et for comparison.
+    now_et_naive = now_et.replace(tzinfo=None) if now_et.tzinfo is not None else now_et
+    triggers_in_window = [
+        t for t in raw_triggers
+        if (now_et_naive - datetime.fromisoformat(t["ts_et"])).total_seconds() < window_s
+    ]
+
+    tripped, reason = detect_fleet_correlation(
+        triggers_in_window, active_symphony_count, FLEET_CORRELATION_PCT
+    )
+    if tripped:
+        count = sum(1 for t in triggers_in_window if t.get("triggered_reason") == reason)
+        now_et_str = now_et.strftime("%Y-%m-%dT%H:%M:%S")
+        set_fleet_correlation_alert(
+            bot_state=bot_state,
+            tripped_at_et=now_et_str,
+            triggered_reason=reason,
+            tripped_count=count,
+            active_count=active_symphony_count,
+        )
+
+
+# ==========================================
+# 7. MAIN EXECUTION LOOP
 # ==========================================
 def main():
     if not database.acquire_lock():
@@ -1135,6 +1260,23 @@ def main():
 
         bot_state["last_successful_cycle_at"] = current_et.isoformat()
         database.save_state(bot_state)
+
+        # V3: fleet-correlation detection — observational only; runs after all side effects.
+        # AC-V3.2: never gates triggers; reads from H1 exit_triggers via database.get_triggers.
+        try:
+            _active_count = sum(
+                1 for v in bot_state.values()
+                if isinstance(v, dict) and not v.get("triggered")
+            )
+            check_fleet_correlation_and_update_state(
+                bot_state=bot_state,
+                active_symphony_count=_active_count,
+                now_et=current_et,
+            )
+            database.save_state(bot_state)
+        except Exception as _fleet_exc:
+            logging.error("[fleet-correlation] detection error: %s", _fleet_exc)
+
         database.save_chart_history(chart_history)
 
     finally:

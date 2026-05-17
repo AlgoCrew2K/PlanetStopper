@@ -405,6 +405,7 @@ def get_state():
             "data_as_of": data_as_of,
             "last_successful_cycle_at": state_data.get("last_successful_cycle_at"),
             "shadow_divergence": shadow_divergence,
+            "fleet_correlation_alert": state_data.get("fleet_correlation_alert", None),
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -447,6 +448,17 @@ def api_triggers():
         return jsonify(rows)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/fleet-alert/dismiss", methods=["POST"])
+def fleet_alert_dismiss():
+    try:
+        state = database.load_state()
+        state.pop("fleet_correlation_alert", None)
+        database.save_state(state)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/api/trigger", methods=["POST"])
