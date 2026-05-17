@@ -690,3 +690,135 @@ def test_compute_expected_max_sharpe_rejects_zero_trials():
         f"Expected ValueError/TypeError/ZeroDivisionError for n_trials=0; "
         f"got {exc_info.type.__name__}: {exc_info.value}"
     )
+
+
+# ---------------------------------------------------------------------------
+# R/G/R Gap — fallback DSR path must use SR_0=0.0, not compute_expected_max_sharpe
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_dsr_path_produces_nonzero_signal():
+    """
+    R/G/R gap found in GREEN review: the fallback DSR path (fewer than 2 completed
+    trials) must produce a meaningful non-zero DSR signal, not always 0.0.
+
+    The GREEN implementation incorrectly routes the fallback through
+    compute_expected_max_sharpe(sr_mean=naive_sharpe_value, sr_std=0.0, n_trials=1),
+    which returns sr_mean=naive_sharpe_value via the sr_std=0 guard. This makes
+    SR_0 = SR_obs, so DSR numerator = (SR_obs - SR_0) = 0.0 always.
+
+    Correct behavior: the fallback path has fewer than 2 trials, so there is no
+    cross-trial distribution to derive expected-max from. SR_0 must be 0.0 (PSR-style
+    null) — the same value used in the original O2 implementation. There is no
+    selection bias to correct for when only one trial ran.
+
+    This test asserts that for a naive_sharpe_value > 0, the fallback DSR is
+    strictly positive (not zero). It will FAIL on the current GREEN implementation
+    and PASS once the fallback site is corrected to use SR_0=0.0.
+
+    Verification: compute_deflated_sharpe_ratio(SR_obs=1.5, SR_0=0.0, gamma3=0, gamma4=3, T=252)
+    = 1.5 * sqrt(251) / sqrt(1.5) ≈ 16.30 — strictly positive, non-zero.
+    """
+    import contextlib
+    import io
+    from unittest.mock import MagicMock, patch
+
+    autotuner = _import_autotuner()
+
+    save_autotune_run_calls: list[dict] = []
+
+    def capturing_save_autotune_run(**kwargs):
+        save_autotune_run_calls.append(kwargs)
+
+    default_params = {
+        "TRIGGER_THRESHOLD_PCT": 15.0,
+        "TAKE_PROFIT_MC_PCT": 5.0,
+        "VWAP_CROSS_HWM_PCT": 1.0,
+        "VWAP_BLEED_MULTIPLIER": 1.5,
+        "VWAP_BLEED_TICKS": 10,
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+        "MAX_PARABOLIC_SQUEEZE": 0.5,
+    }
+
+    # Fewer than 2 completed trials forces the fallback DSR path
+    fake_study = MagicMock()
+    fake_study.best_params = default_params.copy()
+    fake_study.best_value = 1.5
+    fake_study.optimize = MagicMock(return_value=None)
+    # Only 1 completed trial — triggers fallback path (len(completed_trials) < 2)
+    single_trial = MagicMock()
+    single_trial.value = 1.5
+    single_trial.params = default_params.copy()
+    fake_study.trials = [single_trial]
+
+    bot_state = {"sym-A": {"name": "Fallback DSR Test", "account_uuid": "acc-1"}}
+    history = {
+        "sym-A": {
+            "2026-04-01": [{"return": 2.0, "mc_prob": 50.0, "vol": 1.0,
+                            "vwap_diff": -2.0, "base_atr_pct": 1.0,
+                            "valid_vwap_weight": 1.0}],
+            "2026-04-02": [{"return": 2.0, "mc_prob": 50.0, "vol": 1.0,
+                            "vwap_diff": -2.0, "base_atr_pct": 1.0,
+                            "valid_vwap_weight": 1.0}],
+        }
+    }
+
+    def vwap_always_triggers(**kwargs):
+        return (0, 0, True, False)
+
+    buf = io.StringIO()
+    with (
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history",
+              return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch("autotuner.database.get_symphony_strategy",
+              return_value={"params": default_params.copy(), "locked_vars": []}),
+        patch("autotuner.database.save_symphony_strategy"),
+        patch("autotuner.database.DEFAULT_STRATEGY", default_params),
+        patch("autotuner.database.save_autotune_run",
+              side_effect=capturing_save_autotune_run),
+        patch("autotuner.math_engine.compute_para_arm_decision",
+              side_effect=lambda **kw: (0.0, False)),
+        patch("autotuner.math_engine.compute_time_squeeze_decay",
+              side_effect=lambda tr: (1.5, 0.5)),
+        patch("autotuner.math_engine.compute_active_trailing_stop",
+              side_effect=lambda *a, **kw: 5.0),
+        patch("autotuner.math_engine.compute_breakeven_update",
+              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
+        patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+              side_effect=lambda *a, **kw: -10.0),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update",
+              side_effect=vwap_always_triggers),
+        contextlib.redirect_stdout(buf),
+    ):
+        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+
+    assert len(save_autotune_run_calls) == 1, (
+        f"Expected exactly one save_autotune_run call; got {len(save_autotune_run_calls)}"
+    )
+
+    deflated = save_autotune_run_calls[0].get("deflated_sharpe")
+
+    assert deflated is not None, (
+        "deflated_sharpe must not be NULL in the fallback path."
+    )
+    assert math.isfinite(deflated), (
+        f"deflated_sharpe must be finite in the fallback path; got {deflated!r}"
+    )
+    assert deflated != pytest.approx(0.0, abs=1e-9), (
+        f"FALLBACK DSR GAP: deflated_sharpe is 0.0 in the fallback path. "
+        f"This means SR_0 = SR_obs (the GREEN implementation routes fallback through "
+        f"compute_expected_max_sharpe(sr_mean=naive_sharpe_value, sr_std=0.0, n_trials=1) "
+        f"which returns sr_mean=naive_sharpe_value, collapsing the numerator to zero). "
+        f"Correct fix: fallback DSR path must use SR_0=0.0 directly — no selection bias "
+        f"correction for a single-trial study.\n"
+        f"  naive_sharpe_value=1.5, deflated_sharpe={deflated!r}"
+    )
+    # Also assert strictly positive for a positive naive SR
+    assert deflated > 0, (
+        f"Fallback DSR must be positive when naive_sharpe_value > 0 and SR_0=0.0. "
+        f"Got {deflated!r}. Expected ~16.3 (SR_obs=1.5, T≥2, gamma3=0, gamma4=3)."
+    )
