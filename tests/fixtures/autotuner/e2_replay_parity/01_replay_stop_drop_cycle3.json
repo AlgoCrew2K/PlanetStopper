@@ -1,0 +1,83 @@
+{
+  "name": "replay_stop_drop_cycle3",
+  "description": "3-cycle replay where the naive compute_breakeven_update return (no previously_persisted_stop_level) would lower stop_level on cycle 3 relative to cycle 2. The ratchet-threaded replay must hold cycle 2's stop level on cycle 3.",
+  "layer": "autotuner_replay_e2_ratchet",
+  "scenario": "stop_drop_cycle3",
+  "provenance": "schema-derived + hand-derived arithmetic. All expected values computed from math_engine.compute_breakeven_update invariants: locked_branch => max(base, 0.0); ratchet => max(prev_persisted, resolved). No producer output hardcoded.",
+  "math_engine_constants_used": {
+    "HWM_HOLD_TICKS_THRESHOLD": 5,
+    "BREAKEVEN_ACTIVATION_MIN": 0.4,
+    "BREAKEVEN_ACTIVATION_MAX": 3.0,
+    "BREAKEVEN_ACTIVATION_DEADBAND": 0.2,
+    "note": "dynamic_activation = clamp(vol, 0.4, 3.0); qualifying threshold = dynamic_activation - 0.2"
+  },
+  "cycles": [
+    {
+      "cycle_idx": 0,
+      "label": "lock_fires_at_or_before_this_cycle",
+      "inputs": {
+        "current_return": 2.0,
+        "symphony_vol": 1.0,
+        "base_stop_level": 1.5,
+        "current_hold_ticks": 4,
+        "currently_breakeven_locked": false,
+        "is_triggered": false,
+        "previously_persisted_stop_level": null
+      },
+      "derivation": "vol=1.0 => dynamic_activation=1.0; threshold=0.8. current_return=2.0 >= 0.8 => new_hold_ticks=5. 5 >= 5 => LOCK FIRES. locked_branch => stop=max(1.5, 0.0)=1.5.",
+      "expected": {
+        "new_hold_ticks": 5,
+        "new_breakeven_locked": true,
+        "stop_trigger_level_lower_bound": 1.5,
+        "stop_trigger_level_exact_naive": 1.5,
+        "note": "prev=None so ratchet is no-op; stop=1.5"
+      }
+    },
+    {
+      "cycle_idx": 1,
+      "label": "high_watermark_advance_raises_stop",
+      "inputs": {
+        "current_return": 2.5,
+        "symphony_vol": 1.0,
+        "base_stop_level": 2.0,
+        "current_hold_ticks": 5,
+        "currently_breakeven_locked": true,
+        "is_triggered": false,
+        "previously_persisted_stop_level_from_cycle_0": 1.5
+      },
+      "derivation": "locked=True. locked_branch => stop=max(2.0,0.0)=2.0. Ratchet: max(1.5, 2.0)=2.0. No drop.",
+      "expected": {
+        "stop_trigger_level_naive": 2.0,
+        "stop_trigger_level_ratcheted": 2.0,
+        "note": "Both agree: stop=2.0. Ratchet has no effect here (new stop > prev stop)."
+      }
+    },
+    {
+      "cycle_idx": 2,
+      "label": "retrace_would_lower_stop_without_ratchet",
+      "inputs": {
+        "current_return": 2.1,
+        "symphony_vol": 1.0,
+        "base_stop_level": 1.0,
+        "current_hold_ticks": 6,
+        "currently_breakeven_locked": true,
+        "is_triggered": false,
+        "previously_persisted_stop_level_from_cycle_1": 2.0
+      },
+      "derivation": "locked=True. locked_branch => stop=max(1.0,0.0)=1.0. WITHOUT ratchet: stop=1.0 < 2.0 (DROP — violation). WITH ratchet: max(2.0, 1.0)=2.0 (hold). This is the E2 invariant: replay must NOT drop below cycle-1 level.",
+      "expected": {
+        "stop_trigger_level_naive_no_ratchet": 1.0,
+        "stop_trigger_level_ratcheted": 2.0,
+        "invariant": "ratcheted >= naive_no_ratchet",
+        "invariant_strict": "ratcheted == previously_persisted (2.0) because naive (1.0) < prev (2.0)",
+        "note": "The replay simulator must thread prev_stop=2.0 into this call; the math layer then clamps to 2.0. If previously_persisted_stop_level is omitted (current bug), stop drops to 1.0."
+      }
+    }
+  ],
+  "assertion_contract": {
+    "cycle2_stop_must_not_drop": "stop_level[cycle_2] >= stop_level[cycle_1]",
+    "cycle2_ratcheted_value": "stop_level[cycle_2] == 2.0 (== previously_persisted from cycle_1)",
+    "monotonicity_across_all_cycles": "stop_level sequence [1.5, 2.0, 2.0] is non-decreasing",
+    "naive_would_violate": "stop_level sequence without ratchet [1.5, 2.0, 1.0] has drop at cycle_2"
+  }
+}

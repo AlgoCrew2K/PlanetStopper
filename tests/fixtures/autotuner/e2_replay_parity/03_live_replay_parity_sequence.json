@@ -1,0 +1,76 @@
+{
+  "name": "live_replay_parity_sequence",
+  "description": "Paired live-vs-replay fixture: a 7-tick sequence run through both the live math_engine.compute_breakeven_update (with previously_persisted_stop_level threaded) and through the autotuner replay path (which must also thread previously_persisted_stop_level after the fix). Both paths must produce bit-identical stop_trigger_level trajectories.",
+  "layer": "autotuner_replay_e2_ratchet",
+  "scenario": "live_replay_parity",
+  "provenance": "schema-derived + hand-derived arithmetic. All expected values computed from math_engine constants (HWM_HOLD_TICKS_THRESHOLD=5, BREAKEVEN_ACTIVATION_MIN=0.4, BREAKEVEN_ACTIVATION_MAX=3.0, BREAKEVEN_ACTIVATION_DEADBAND=0.2). No producer output hardcoded — expected values assert monotonicity and equality between live/replay paths.",
+  "params": {
+    "symphony_vol": 1.0,
+    "note": "vol=1.0 => dynamic_activation=clamp(1.0,0.4,3.0)=1.0; qualifying threshold=1.0-0.2=0.8"
+  },
+  "ticks": [
+    {
+      "tick_idx": 0,
+      "current_return": 1.5,
+      "base_stop_level": -0.5,
+      "is_triggered": false,
+      "derivation": "return=1.5>=0.8 => hold_ticks=1, locked=False. Not locked: stop=base=-0.5. prev=None => ratchet no-op. Both paths: stop=-0.5",
+      "expected_stop": -0.5
+    },
+    {
+      "tick_idx": 1,
+      "current_return": 1.6,
+      "base_stop_level": -0.3,
+      "is_triggered": false,
+      "derivation": "hold_ticks=2, locked=False. stop=base=-0.3. ratchet: max(-0.5, -0.3)=-0.3 (ratchet fires, new > prev). stop=-0.3",
+      "expected_stop": -0.3
+    },
+    {
+      "tick_idx": 2,
+      "current_return": 1.7,
+      "base_stop_level": -0.1,
+      "is_triggered": false,
+      "derivation": "hold_ticks=3, locked=False. stop=base=-0.1. ratchet: max(-0.3,-0.1)=-0.1. stop=-0.1",
+      "expected_stop": -0.1
+    },
+    {
+      "tick_idx": 3,
+      "current_return": 1.8,
+      "base_stop_level": 0.5,
+      "is_triggered": false,
+      "derivation": "hold_ticks=4, locked=False. stop=base=0.5. ratchet: max(-0.1, 0.5)=0.5. stop=0.5",
+      "expected_stop": 0.5
+    },
+    {
+      "tick_idx": 4,
+      "current_return": 1.9,
+      "base_stop_level": 1.0,
+      "is_triggered": false,
+      "derivation": "hold_ticks=5 => LOCK FIRES (5>=5). locked_branch: stop=max(1.0,0.0)=1.0. ratchet: max(0.5,1.0)=1.0. stop=1.0",
+      "expected_stop": 1.0
+    },
+    {
+      "tick_idx": 5,
+      "current_return": 2.5,
+      "base_stop_level": 2.0,
+      "is_triggered": false,
+      "derivation": "locked=True. locked_branch: stop=max(2.0,0.0)=2.0. ratchet: max(1.0,2.0)=2.0. stop=2.0",
+      "expected_stop": 2.0
+    },
+    {
+      "tick_idx": 6,
+      "current_return": 2.0,
+      "base_stop_level": 1.0,
+      "is_triggered": false,
+      "derivation": "locked=True (latched). locked_branch: stop=max(1.0,0.0)=1.0. WITHOUT ratchet: stop=1.0 (DROP from 2.0). WITH ratchet: max(2.0,1.0)=2.0 (holds). This is the divergence tick.",
+      "expected_stop_naive": 1.0,
+      "expected_stop_ratcheted": 2.0
+    }
+  ],
+  "assertion_contract": {
+    "parity": "live_path_stop_sequence == replay_path_stop_sequence at every tick",
+    "monotonicity": "stop sequence [−0.5, −0.3, −0.1, 0.5, 1.0, 2.0, 2.0] is non-decreasing",
+    "tick_6_critical": "Both live and replay return 2.0 at tick_6 (not 1.0). Divergence is the current bug.",
+    "note": "expected_stop values for ticks 0-5 assert exact equality (ratchet and naive agree). Tick 6 asserts ratcheted value only."
+  }
+}
