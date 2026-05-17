@@ -1,0 +1,16 @@
+{
+  "_provenance": "schema-derived from alpha_bot_execution.py:848-870 (TP arm/fire logic). TP fires when prob_beating >= acc_TAKE_PROFIT_MC_PCT AND above_tp_count >= 2 AND current_return > 0. These are state machine booleans and counts — not producer-computed percentages. The threshold comparison direction (prob_beating >= threshold causes TP fire after arming) is engine logic, not a tuned value. current_return > 0 is a sign check, not a magnitude assertion.",
+  "description": "TP trigger must fire inside the 15-min grace window (grace suppresses VWAP only, not TP or Trailing Stop)",
+  "execution_start_hhmm": "10:30",
+  "grace_minutes": 15,
+  "current_hhmm_in_grace": "10:35",
+  "initial_bot_state_relevant_fields": {
+    "tp_armed": true,
+    "above_tp_count": 2,
+    "triggered": false,
+    "current_return_is_positive": true
+  },
+  "mc_prob_relationship": "prob_beating >= acc_TAKE_PROFIT_MC_PCT so TP fire condition holds (above_tp_count increments to >=2)",
+  "expected_tp_triggered_now": true,
+  "note": "TP firing inside grace window is the expected PASS-through. Grace window is VWAP-only suppression."
+}

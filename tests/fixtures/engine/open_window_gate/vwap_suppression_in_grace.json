@@ -1,0 +1,24 @@
+{
+  "_provenance": "schema-derived from compute_vwap_breakdown_update signature (math_engine.py:363-374) and alpha_bot_execution.py:873-886 call site. VWAP inputs are chosen to make underlying conditions True (gate passes, System A fires) — suppression must come from the grace window, not the VWAP gate itself. No producer-computed floats — VWAP diff and HWM are named sentinel values (e.g. 'heavily negative' = -5.0 to ensure gate passes).",
+  "description": "VWAP-Breakdown and VWAP-Bleed-Cut must be suppressed inside the 15-min grace window even when their underlying conditions are True",
+  "execution_start_hhmm": "10:30",
+  "grace_minutes": 15,
+  "current_hhmm_in_grace": "10:35",
+  "vwap_inputs": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.9,
+    "weighted_vwap_diff": -5.0,
+    "safe_hwm": 3.0,
+    "current_return": 1.0,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": 2.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 10,
+    "current_vwap_bleed_ticks": 10
+  },
+  "note_on_inputs": "vwap_ticks=10 and vwap_bleed_ticks=10 both exceed their thresholds — without grace, both breakdown and bleed would fire. current_return < safe_hwm and current_return <= vwap_bleed_arm_pct, so System A and B conditions are met. Grace window must prevent both from firing.",
+  "expected_vwap_broken_suppressed": true,
+  "expected_vwap_bleed_suppressed": true,
+  "expected_trailing_stop_fires": "not suppressed by grace — tested separately",
+  "expected_tp_fires": "not suppressed by grace — tested separately"
+}

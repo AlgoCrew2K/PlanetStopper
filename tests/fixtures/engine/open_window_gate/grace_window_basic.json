@@ -1,0 +1,38 @@
+{
+  "_provenance": "schema-derived from math_engine.is_in_open_window_grace contract (V2 AC-V2.1). Fields match the pure helper signature. No producer-computed floats — inputs are named-constant times; expected output is a boolean property assertion.",
+  "description": "Basic grace window cases: inside grace, at boundary, past boundary",
+  "execution_start_hhmm": "10:30",
+  "grace_minutes": 15,
+  "cases": [
+    {
+      "label": "inside_grace_10_35",
+      "current_hhmm": "10:35",
+      "expected_in_grace": true,
+      "note": "10:35 is 5 min after 10:30 — well inside 15-min grace"
+    },
+    {
+      "label": "inside_grace_boundary_10_44_59",
+      "current_hhmm": "10:44:59",
+      "expected_in_grace": true,
+      "note": "1 second before grace ends — still suppressed"
+    },
+    {
+      "label": "at_grace_boundary_10_45",
+      "current_hhmm": "10:45",
+      "expected_in_grace": false,
+      "note": "Exactly EXECUTION_START_TIME + 15 min: grace has expired, VWAP may fire"
+    },
+    {
+      "label": "past_boundary_10_45_01",
+      "current_hhmm": "10:45:01",
+      "expected_in_grace": false,
+      "note": "1 second past grace end — VWAP fires normally"
+    },
+    {
+      "label": "well_past_grace_11_00",
+      "current_hhmm": "11:00",
+      "expected_in_grace": false,
+      "note": "Normal trading hour — no suppression"
+    }
+  ]
+}
