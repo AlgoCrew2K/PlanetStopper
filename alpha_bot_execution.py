@@ -22,6 +22,26 @@ import math_engine
 import reporting
 import autotuner
 
+
+def augment_optimization_results_with_dsr(optimization_results: dict) -> dict:
+    """Inject _dsr_data into each symphony's entry in optimization_results.
+
+    Calls database.get_latest_autotune_run per symphony and adds the three
+    Sharpe fields (naive, DSR, frozen-eval) so send_eod_discord_post can
+    render them. Handles missing DB rows gracefully — skips injection rather
+    than crashing on first-run symphonies.
+    """
+    for sym_id, sym_data in optimization_results.items():
+        run_row = database.get_latest_autotune_run(sym_id)
+        if run_row:
+            sym_data["_dsr_data"] = {
+                "naive_sharpe":       run_row.get("naive_sharpe"),
+                "deflated_sharpe":    run_row.get("deflated_sharpe"),
+                "frozen_eval_sharpe": run_row.get("frozen_eval_sharpe"),
+            }
+    return optimization_results
+
+
 # ==========================================
 # 1. CONFIGURATION & CREDENTIALS
 # ==========================================
@@ -763,14 +783,7 @@ def main():
                 print(f"  -> {'Weekend/Force' if current_et.weekday() >= 5 else 'Friday'} Detected. Starting autotune...")
                 autotuner_changes = autotuner.run_autotuner(bot_state, current_date_str, ACCOUNT_UUIDS, is_forced=force_run)
                 if autotuner_changes:
-                    for sym_id, sym_data in autotuner_changes.items():
-                        run_row = database.get_latest_autotune_run(sym_id)
-                        if run_row:
-                            sym_data["_dsr_data"] = {
-                                "naive_sharpe":       run_row.get("naive_sharpe"),
-                                "deflated_sharpe":    run_row.get("deflated_sharpe"),
-                                "frozen_eval_sharpe": run_row.get("frozen_eval_sharpe"),
-                            }
+                    autotuner_changes = augment_optimization_results_with_dsr(autotuner_changes)
             else:
                 print(f"  -> Day is {current_et.strftime('%A')}. Skipping weekly autotune.")
 
