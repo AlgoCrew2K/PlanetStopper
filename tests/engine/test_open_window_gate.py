@@ -575,3 +575,114 @@ class TestGraceWindowIntervalProperties:
             f"grace_minutes={grace_minutes}, start={start_hhmm}: "
             f"1 minute past boundary must be OUT of grace"
         )
+
+
+# ---------------------------------------------------------------------------
+# Section 8 — Revise-cycle: tick accumulation behavior during grace
+# ---------------------------------------------------------------------------
+
+
+class TestTickAccumulationDuringGrace:
+    """
+    Revise-cycle tests pinning the behavioral consequence that vwap_ticks
+    accumulate during grace (grace suppresses fire, not the state machine counter).
+
+    This is intentional: the grace gate in alpha_bot_execution.py gates the boolean
+    outcome (is_vwap_broken / is_vwap_bleed_broken) AFTER compute_vwap_breakdown_update
+    has already returned new tick counts. Those tick counts are written to bot_state.
+    A future implementer must not silently break this by resetting ticks during grace.
+
+    Fixture: tests/fixtures/engine/open_window_gate/tick_accumulation_during_grace.json
+    """
+
+    def test_vwap_ticks_advance_each_cycle_regardless_of_grace(self):
+        """
+        compute_vwap_breakdown_update advances vwap_ticks each call when conditions are True.
+        Starting from 0, after N calls ticks == N. Grace does not intercept this function.
+        """
+        import math_engine
+        fixture = _load("tick_accumulation_during_grace.json")
+        inp = fixture["vwap_inputs_conditions_always_true"]
+
+        ticks, bleed_ticks = 0, 0
+        for cycle in range(3):
+            ticks, bleed_ticks, _, _ = math_engine.compute_vwap_breakdown_update(
+                is_triggered=inp["is_triggered"],
+                valid_vwap_weight=inp["valid_vwap_weight"],
+                weighted_vwap_diff=inp["weighted_vwap_diff"],
+                safe_hwm=inp["safe_hwm"],
+                current_return=inp["current_return"],
+                vwap_cross_hwm_pct=inp["vwap_cross_hwm_pct"],
+                vwap_bleed_arm_pct=inp["vwap_bleed_arm_pct"],
+                vwap_bleed_ticks_threshold=inp["vwap_bleed_ticks_threshold"],
+                current_vwap_ticks=ticks,
+                current_vwap_bleed_ticks=bleed_ticks,
+            )
+
+        assert ticks == 3, (
+            f"After 3 cycles with VWAP conditions True, vwap_ticks must be 3. Got {ticks}. "
+            "Grace suppresses fire, not tick accumulation — ticks must not be reset."
+        )
+        assert bleed_ticks == 3, (
+            f"vwap_bleed_ticks must also be 3 after 3 cycles. Got {bleed_ticks}."
+        )
+
+    def test_vwap_fires_immediately_at_grace_expiry_when_ticks_at_threshold(self):
+        """
+        If vwap_ticks == VWAP_BREAK_CONFIRM_TICKS at grace expiry, VWAP fires on the
+        first post-grace cycle without needing additional confirmation ticks.
+        """
+        import math_engine
+        fixture = _load("tick_accumulation_during_grace.json")
+        inp = fixture["vwap_inputs_conditions_always_true"]
+
+        # Ticks at threshold (carried through grace accumulation)
+        carried_ticks = math_engine.VWAP_BREAK_CONFIRM_TICKS
+
+        _, _, is_broken, _ = math_engine.compute_vwap_breakdown_update(
+            is_triggered=inp["is_triggered"],
+            valid_vwap_weight=inp["valid_vwap_weight"],
+            weighted_vwap_diff=inp["weighted_vwap_diff"],
+            safe_hwm=inp["safe_hwm"],
+            current_return=inp["current_return"],
+            vwap_cross_hwm_pct=inp["vwap_cross_hwm_pct"],
+            vwap_bleed_arm_pct=inp["vwap_bleed_arm_pct"],
+            vwap_bleed_ticks_threshold=inp["vwap_bleed_ticks_threshold"],
+            current_vwap_ticks=carried_ticks,
+            current_vwap_bleed_ticks=carried_ticks,
+        )
+        assert is_broken is True, (
+            f"With vwap_ticks={carried_ticks} (== VWAP_BREAK_CONFIRM_TICKS) carried from grace, "
+            "VWAP fires immediately on the first post-grace cycle. "
+            "This is correct: grace suppresses fire, not state. "
+            "The tick counter must be preserved across the grace window."
+        )
+
+    def test_compute_vwap_breakdown_update_does_not_reset_ticks_on_grace_flag(self):
+        """
+        compute_vwap_breakdown_update has no grace parameter — it cannot reset ticks
+        based on grace. Starting from 0 with conditions True, new_vwap_ticks must be >= 1.
+        """
+        import math_engine
+        fixture = _load("tick_accumulation_during_grace.json")
+        inp = fixture["vwap_inputs_conditions_always_true"]
+
+        new_ticks, new_bleed, _, _ = math_engine.compute_vwap_breakdown_update(
+            is_triggered=inp["is_triggered"],
+            valid_vwap_weight=inp["valid_vwap_weight"],
+            weighted_vwap_diff=inp["weighted_vwap_diff"],
+            safe_hwm=inp["safe_hwm"],
+            current_return=inp["current_return"],
+            vwap_cross_hwm_pct=inp["vwap_cross_hwm_pct"],
+            vwap_bleed_arm_pct=inp["vwap_bleed_arm_pct"],
+            vwap_bleed_ticks_threshold=inp["vwap_bleed_ticks_threshold"],
+            current_vwap_ticks=0,
+            current_vwap_bleed_ticks=0,
+        )
+        assert new_ticks >= 1, (
+            f"compute_vwap_breakdown_update must advance new_vwap_ticks from 0 when conditions "
+            f"are True. Got {new_ticks}. The grace gate must not reach into the pure function."
+        )
+        assert new_bleed >= 1, (
+            f"new_vwap_bleed_ticks must advance from 0. Got {new_bleed}."
+        )

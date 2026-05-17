@@ -1,0 +1,20 @@
+{
+  "_provenance": "schema-derived from compute_vwap_breakdown_update return signature (math_engine.py:374) and alpha_bot_execution.py:888-889 (new_vwap_ticks written back before grace gate). Inputs chosen to make conditions True on every cycle. No producer-computed floats — tick counts are integers, threshold is a named constant (VWAP_BREAK_CONFIRM_TICKS).",
+  "description": "Pins that vwap_ticks accumulates during grace (grace suppresses fire, not accumulation). A symphony with VWAP conditions continuously True for N grace cycles will have N ticks built up and fire on the first post-grace cycle where ticks >= VWAP_BREAK_CONFIRM_TICKS.",
+  "execution_start_hhmm": "10:30",
+  "grace_minutes": 15,
+  "vwap_inputs_conditions_always_true": {
+    "is_triggered": false,
+    "valid_vwap_weight": 0.9,
+    "weighted_vwap_diff": -5.0,
+    "safe_hwm": 3.0,
+    "current_return": 1.0,
+    "vwap_cross_hwm_pct": 2.0,
+    "vwap_bleed_arm_pct": 2.0,
+    "vwap_bleed_ticks_threshold": 3,
+    "current_vwap_ticks": 0,
+    "current_vwap_bleed_ticks": 0
+  },
+  "expected_behavior": "after N in-grace cycles, vwap_ticks = N (not reset). At post-grace cycle N+1, is_vwap_broken=True (ticks >= VWAP_BREAK_CONFIRM_TICKS=3). This is intentional: grace suppresses fire, not the state machine tick counter.",
+  "note": "VWAP_BREAK_CONFIRM_TICKS=3 is a named constant in math_engine.py — do not hardcode 3 in the test assertion; read math_engine.VWAP_BREAK_CONFIRM_TICKS."
+}
