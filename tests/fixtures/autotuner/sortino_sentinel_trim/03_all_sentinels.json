@@ -1,0 +1,15 @@
+{
+  "description": "All 5 values are sentinels (1e6). After filtering: empty list. DSR computation must not crash — returns None (deflated_sharpe_value stays None and falls through to the fallback or remains None if naive_sharpe is also sentinel).",
+  "sentinel_value": 1000000.0,
+  "inputs": {
+    "all_sortinos": [1000000.0, 1000000.0, 1000000.0, 1000000.0, 1000000.0],
+    "valid_count": 0,
+    "sentinel_count": 5
+  },
+  "expected_filtered": [],
+  "expected_behavior": "empty_list",
+  "expected_dsr_from_filter": null,
+  "derivation": {
+    "note": "filter_sortino_sentinels([1e6, 1e6, 1e6, 1e6, 1e6]) must return []. The DSR re-ranking block requires len(filtered) >= 2 to proceed. With 0 valid values, the block is skipped. deflated_sharpe_value remains None. The function must not raise."
+  }
+}

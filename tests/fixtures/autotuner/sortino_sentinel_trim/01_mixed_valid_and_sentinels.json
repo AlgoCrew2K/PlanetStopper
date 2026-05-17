@@ -1,0 +1,43 @@
+{
+  "description": "10 valid Sortino values + 5 sentinel values (1e6). Sentinel is the project-specific value returned by compute_sortino_ratio when downside_deviation==0. Expected moments are computed on the 10 valid values only.",
+  "sentinel_value": 1000000.0,
+  "sentinel_source": "autotuner.py compute_sortino_ratio: returns 1e6 when downside_deviation==0 (line ~118). Not a failure — trial succeeded but all returns beat target. Pollutes cross-trial distribution as an extreme outlier.",
+  "inputs": {
+    "all_sortinos": [0.5, 0.8, 1.2, 0.3, 1.5, 0.9, 0.7, 1.1, 0.4, 0.6, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 1000000.0],
+    "valid_count": 10,
+    "sentinel_count": 5
+  },
+  "expected_filtered": [0.5, 0.8, 1.2, 0.3, 1.5, 0.9, 0.7, 1.1, 0.4, 0.6],
+  "valid_only_moments": {
+    "n": 10,
+    "mean": 0.8,
+    "std": 0.36055512754639896,
+    "gamma3": 0.4480270815665308,
+    "gamma4": 2.1999999999999993,
+    "SR_0_n10": 1.36772949137606
+  },
+  "polluted_moments": {
+    "n": 15,
+    "mean": 333333.86666666664,
+    "std": 471404.1436675069,
+    "gamma3": 0.7071067811853067,
+    "gamma4": 1.5000000000000004,
+    "SR_0_n15": 1168041.4450973056
+  },
+  "dsr_scenario": {
+    "T": 60,
+    "SR_obs": 1.5,
+    "dsr_valid_only_moments": 1.014489036,
+    "dsr_polluted_moments": -19102533.051508192,
+    "derivation": "autotuner.compute_deflated_sharpe_ratio(SR_obs=1.5, SR_0=SR_0, gamma3=gamma3, gamma4=gamma4, T=60). With valid-only: SR_0=1.368, gamma3=0.448, gamma4=2.2. With polluted: SR_0=1168041.45, gamma3=0.707, gamma4=1.5. Difference of 19M+ shows severity of sentinel pollution."
+  },
+  "derivation": {
+    "mean": "sum([0.5,0.8,1.2,0.3,1.5,0.9,0.7,1.1,0.4,0.6]) / 10 = 8.0 / 10 = 0.8",
+    "variance_population": "sum((v-0.8)^2 for v in valid) / 10 = 1.3 / 10 = 0.13",
+    "std": "sqrt(0.13) = 0.36055512754639896",
+    "gamma3": "sum((v-0.8)^3 for v in valid) / (10 * 0.36055^3) = 0.4480270815665308",
+    "gamma4": "sum((v-0.8)^4 for v in valid) / (10 * 0.36055^4) = 2.1999999999999993",
+    "SR_0": "math_engine.compute_expected_max_sharpe(sr_mean=0.8, sr_std=0.36055, n_trials=10) = 1.36772949137606",
+    "population_variance_divisor": "N (not N-1): consistent with autotuner.py line ~733"
+  }
+}
