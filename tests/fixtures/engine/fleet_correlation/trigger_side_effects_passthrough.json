@@ -1,0 +1,13 @@
+{
+  "_provenance": "schema-derived from alpha_bot_execution.py triggered=True side-effect block (lines 1072-1132) and AC-V3.2 observational-only requirement. No producer-computed floats. Reason strings match the trigger priority table in alpha_bot_execution.py:819-831.",
+  "description": "Fixture for AC-V3.2: when fleet_correlation_alert trips, all individual symphony trigger side-effects must still fire normally. The alert is observational — it must NOT gate or modify any trigger dispatch.",
+  "trigger_reasons": ["Trailing Stop", "VWAP Breakdown", "Take Profit", "VWAP Bleed Cut", "PARA-ARM"],
+  "side_effects_that_must_still_fire": [
+    "bot_state[sym_id]['triggered'] = True",
+    "bot_state[sym_id]['triggered_reason'] = reason",
+    "bot_state[sym_id]['triggered_at_return'] is set",
+    "database.record_exit_trigger is called",
+    "reporting.send_discord_alert is called"
+  ],
+  "invariant": "fleet_correlation_alert in bot_state does NOT appear in the condition chain that gates any of the above side-effects. The alert key is written AFTER side-effects complete, not before."
+}

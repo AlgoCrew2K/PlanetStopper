@@ -238,6 +238,7 @@ def get_state():
                     "portfolio_strip": snapshot.get("portfolio_strip"),
                     "shadow_divergence": sd,
                     "accounts_map": snapshot.get("accounts_map"),
+                    "fleet_correlation_alert": (state_data or {}).get("fleet_correlation_alert", None),
                 })
 
         # No live state — return waiting with market_state context and notice on fresh deploy.
@@ -254,6 +255,7 @@ def get_state():
                 "shadow_divergence": shadow_divergence,
                 "market_state": market_state,
                 "frozen_at": None,
+                "fleet_correlation_alert": None,
             }
             # AC-DM.3.4: include notice on fresh deploy (no snapshot, market closed)
             if market_state in ("closed_frozen", "pre_market"):
@@ -405,6 +407,7 @@ def get_state():
             "data_as_of": data_as_of,
             "last_successful_cycle_at": state_data.get("last_successful_cycle_at"),
             "shadow_divergence": shadow_divergence,
+            "fleet_correlation_alert": state_data.get("fleet_correlation_alert", None),
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -447,6 +450,17 @@ def api_triggers():
         return jsonify(rows)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/fleet-alert/dismiss", methods=["POST"])
+def fleet_alert_dismiss():
+    try:
+        state = database.load_state()
+        state.pop("fleet_correlation_alert", None)
+        database.save_state(state)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/api/trigger", methods=["POST"])

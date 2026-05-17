@@ -166,6 +166,17 @@
             </div>
         </header>
 
+        <!-- V3: Fleet-correlation circuit breaker banner — observational alert only, never gates trades.
+             Rendered above DM banner (highest priority). Hidden until fleet_correlation_alert fires. -->
+        <div id="fleet-correlation-banner"
+            class="hidden mb-4 px-4 py-2 rounded-xl text-sm font-bold uppercase tracking-widest text-center bg-red-900/60 text-red-200 border border-red-500/60 flex items-center justify-between gap-4">
+            <span id="fleet-correlation-banner-text"></span>
+            <button onclick="fetch('/api/fleet-alert/dismiss',{method:'POST'}).then(()=>{document.getElementById('fleet-correlation-banner').classList.add('hidden');})"
+                class="text-xs font-normal normal-case tracking-normal px-2 py-1 rounded bg-red-800/60 hover:bg-red-700/60 border border-red-500/40 cursor-pointer flex-shrink-0">
+                Dismiss
+            </button>
+        </div>
+
         <!-- DM: Market-state banner — updated by JS from /api/state market_state + frozen_at.
              Positioned above portfolio strip (AC-DM.4.2). Read-only, not interactive (AC-DM.4.3).
              Distinct from the per-cycle cycleat-fix staleness badge (which tracks cycle freshness). -->
@@ -856,6 +867,25 @@
                     banner.className = 'mb-4 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-center bg-slate-700/60 text-slate-400 border border-slate-600/40';
                     banner.setAttribute('data-market-state', 'closed_frozen');
                     banner.textContent = label;
+                }
+            })();
+
+            // V3: fleet-correlation circuit breaker banner (AC-V3.1, AC-V3.3)
+            (function() {
+                const fleetBanner = document.getElementById('fleet-correlation-banner');
+                if (!fleetBanner) return;
+                const alert = data.fleet_correlation_alert;
+                if (alert) {
+                    const pct = alert.active_count > 0
+                        ? Math.round((alert.tripped_count / alert.active_count) * 100)
+                        : 0;
+                    const textEl = document.getElementById('fleet-correlation-banner-text');
+                    if (textEl) {
+                        textEl.textContent = `Fleet Correlation Alert: ${alert.tripped_count}/${alert.active_count} symphonies (${pct}%) fired "${alert.triggered_reason}" — observational only`;
+                    }
+                    fleetBanner.classList.remove('hidden');
+                } else {
+                    fleetBanner.classList.add('hidden');
                 }
             })();
 

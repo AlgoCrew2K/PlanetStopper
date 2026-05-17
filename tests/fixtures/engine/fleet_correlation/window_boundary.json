@@ -1,0 +1,32 @@
+{
+  "_provenance": "schema-derived from exit_triggers DDL. Timestamps are fixed wall-clock values chosen to test 3-minute window boundary exactly. ET timestamps follow exit_triggers.ts_et format '%Y-%m-%dT%H:%M:%S'. Window = 3 minutes = 180 seconds.",
+  "window_minutes": 3,
+  "pct_threshold": 0.50,
+  "active_symphonies": 4,
+  "note": "3 of 4 = 75% > 50% — alert trips if all three timestamps fall inside window; does not trip if oldest is at or beyond 3 min boundary",
+  "base_et": "2026-05-16T10:33:00",
+  "cases": [
+    {
+      "label": "all_three_inside_window_trips",
+      "note": "Oldest at base-2:59 = 10:30:01 — inside [10:30:00, 10:33:00) window (now=10:33:00)",
+      "triggers": [
+        {"symphony_id": "s1", "triggered_reason": "PARA-ARM", "ts_et": "2026-05-16T10:30:01"},
+        {"symphony_id": "s2", "triggered_reason": "PARA-ARM", "ts_et": "2026-05-16T10:31:30"},
+        {"symphony_id": "s3", "triggered_reason": "PARA-ARM", "ts_et": "2026-05-16T10:32:45"}
+      ],
+      "expected_tripped": true
+    },
+    {
+      "label": "oldest_at_exactly_boundary_excluded",
+      "note": "Oldest at exactly now-3:00 = 10:30:00 — outside window (boundary is exclusive on left: window is (now - window_minutes, now])",
+      "triggers": [
+        {"symphony_id": "s1", "triggered_reason": "PARA-ARM", "ts_et": "2026-05-16T10:30:00"},
+        {"symphony_id": "s2", "triggered_reason": "PARA-ARM", "ts_et": "2026-05-16T10:31:30"},
+        {"symphony_id": "s3", "triggered_reason": "PARA-ARM", "ts_et": "2026-05-16T10:32:45"}
+      ],
+      "expected_tripped": false,
+      "expected_count_in_window": 2,
+      "note_on_boundary": "ts_et exactly at now - window_minutes is outside the window. Only 2 of 4 symphonies = 50% — strict > means no trip."
+    }
+  ]
+}
