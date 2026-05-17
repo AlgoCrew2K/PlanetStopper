@@ -445,6 +445,33 @@ def compute_vwap_breakdown_update(
     return new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken
 
 
+# Default grace window length — operational policy: suppress open-volatility VWAP signals
+# for the first 15 min after EXECUTION_START_TIME (V2, AC-V2.1).
+VWAP_OPEN_WINDOW_GRACE_MINUTES_DEFAULT = 15
+
+
+def is_in_open_window_grace(
+    current_et,
+    execution_start_hhmm: str,
+    grace_minutes: int,
+) -> bool:
+    """
+    Returns True iff current_et falls in [exec_start, exec_start + grace_minutes).
+
+    Pure function — no I/O, no state. Returns False before exec_start
+    (pre-action-gate territory handled by the existing action gate).
+    """
+    import datetime as _dt
+    h, m = map(int, execution_start_hhmm.split(":"))
+    exec_start = _dt.time(h, m)
+    exec_start_dt = current_et.replace(hour=h, minute=m, second=0, microsecond=0)
+    grace_end_dt = exec_start_dt + _dt.timedelta(minutes=grace_minutes)
+    current_time_naive = current_et.replace(tzinfo=None)
+    exec_start_naive = exec_start_dt.replace(tzinfo=None)
+    grace_end_naive = grace_end_dt.replace(tzinfo=None)
+    return exec_start_naive <= current_time_naive < grace_end_naive
+
+
 def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=MC_DEFAULT_SIMULATION_PATHS, neighbor_k=MC_DEFAULT_NEIGHBOR_K):
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.

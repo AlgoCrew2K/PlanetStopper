@@ -1,0 +1,9 @@
+{
+  "_provenance": "schema-derived from alpha_bot_execution.py:642 action phase gate. Before EXECUTION_START_TIME, action phase does not run at all. This fixture pins no-regression: the pre-EXECUTION_START_TIME suppression of all triggers is unrelated to V2's grace logic.",
+  "description": "Before EXECUTION_START_TIME (the action gate), no triggers fire — this is the pre-existing data-vs-action split, not V2 grace logic",
+  "execution_start_hhmm": "10:30",
+  "current_hhmm_before_gate": "10:15",
+  "note": "09:30-10:29 is the data phase only. No trigger evaluation occurs. All trigger functions should have zero call count.",
+  "expected_behavior": "action_phase_not_entered",
+  "expected_any_trigger_fires": false
+}

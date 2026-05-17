@@ -1,0 +1,38 @@
+{
+  "_provenance": "schema-derived — tests runtime change of EXECUTION_START_TIME per AC-V2.2. All time strings are named-constant labels, not producer-computed values.",
+  "description": "Grace window shifts when EXECUTION_START_TIME changes at runtime",
+  "cases": [
+    {
+      "label": "custom_start_10_00_inside_grace",
+      "execution_start_hhmm": "10:00",
+      "grace_minutes": 15,
+      "current_hhmm": "10:10",
+      "expected_in_grace": true,
+      "note": "10:10 is 10 min after 10:00 — inside shifted grace window"
+    },
+    {
+      "label": "custom_start_10_00_at_boundary",
+      "execution_start_hhmm": "10:00",
+      "grace_minutes": 15,
+      "current_hhmm": "10:15",
+      "expected_in_grace": false,
+      "note": "10:15 = 10:00 + 15 min exactly — grace expired"
+    },
+    {
+      "label": "custom_start_11_00_inside_grace",
+      "execution_start_hhmm": "11:00",
+      "grace_minutes": 15,
+      "current_hhmm": "11:05",
+      "expected_in_grace": true,
+      "note": "Late start — grace extends to 11:15"
+    },
+    {
+      "label": "default_start_at_exact_open",
+      "execution_start_hhmm": "10:30",
+      "grace_minutes": 15,
+      "current_hhmm": "10:30",
+      "expected_in_grace": true,
+      "note": "At EXECUTION_START_TIME itself — 0 min elapsed, inside grace"
+    }
+  ]
+}
