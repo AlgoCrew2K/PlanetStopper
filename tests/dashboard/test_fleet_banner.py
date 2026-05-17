@@ -82,7 +82,9 @@ class TestApiStateExposesFleetCorrelationAlert:
              patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
              patch("database.get_triggers", return_value=[]), \
              patch("market_calendar.get_market_state", return_value="open"), \
-             patch("analytics.build_portfolio_strip", return_value={}), \
+             patch("analytics.get_portfolio_today_change", return_value={}), \
+             patch("analytics.get_portfolio_cumulative_return", return_value={}), \
+             patch("analytics.get_portfolio_max_drawdown", return_value={}), \
              patch("app.render_template", return_value=""):
             resp = flask_client.get("/api/state")
 
@@ -108,13 +110,16 @@ class TestApiStateExposesFleetCorrelationAlert:
         When bot_state does NOT contain 'fleet_correlation_alert', /api/state must
         include the key with value None (not omit it entirely).
         """
-        active_state: dict = {}  # no fleet_correlation_alert key
+        # Non-empty state with no fleet_correlation_alert — triggers active path, not waiting path
+        active_state: dict = {"date": "2026-05-16"}
 
         with patch("database.load_state", return_value=active_state), \
              patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
              patch("database.get_triggers", return_value=[]), \
              patch("market_calendar.get_market_state", return_value="open"), \
-             patch("analytics.build_portfolio_strip", return_value={}), \
+             patch("analytics.get_portfolio_today_change", return_value={}), \
+             patch("analytics.get_portfolio_cumulative_return", return_value={}), \
+             patch("analytics.get_portfolio_max_drawdown", return_value={}), \
              patch("app.render_template", return_value=""):
             resp = flask_client.get("/api/state")
 
