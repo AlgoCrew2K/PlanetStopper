@@ -68,6 +68,30 @@
         <!-- Suggestions -->
         <div id="suggestions-container" class="space-y-4"></div>
 
+        <!-- Recent Autotune Runs -->
+        <div class="bg-slate-800 rounded-2xl border border-slate-700 p-6 mt-6">
+            <h2 class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-4">Recent Autotune Runs</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs text-slate-300">
+                    <thead>
+                        <tr class="border-b border-slate-700 text-[10px] uppercase tracking-widest text-slate-500">
+                            <th class="text-left pb-2 pr-4">Symphony</th>
+                            <th class="text-left pb-2 pr-4">Timestamp</th>
+                            <th class="text-left pb-2 pr-4">Decision</th>
+                            <th class="text-right pb-2 pr-4">Naive Sharpe</th>
+                            <th class="text-right pb-2 pr-4">DSR</th>
+                            <th class="text-right pb-2">Frozen-Eval</th>
+                        </tr>
+                    </thead>
+                    <tbody id="autotune-runs-tbody">
+                        <tr>
+                            <td colspan="6" class="text-slate-500 py-4 text-center">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
     </div>
 
     <script src="{{ url_for('static', filename='ai_advisor.js') }}"></script>

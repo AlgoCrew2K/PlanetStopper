@@ -1,0 +1,22 @@
+{
+  "provenance": "Schema-derived from autotune_runs table pre-migration-006 rows. Rows written before O2 merged (migrations/006_autotune_runs_sharpe.sql) have NULL for naive_sharpe and deflated_sharpe; rows written before O6 merged (migrations/007_autotune_runs_frozen_eval.sql) also have NULL for frozen_eval_sharpe. This fixture exercises the None-graceful path in all surfacing code.",
+  "description": "Legacy autotune run row (pre-O2 + pre-O6) where naive_sharpe, deflated_sharpe, and frozen_eval_sharpe are all NULL. The surfacing layer must render a placeholder string ('N/A' or '—') for each, never crash.",
+  "row": {
+    "run_timestamp": "2025-11-01T16:00:00",
+    "symphony_id": "legacy_symphony",
+    "oos_alpha": 0.55,
+    "train_alpha": 1.10,
+    "baseline_decision": "Reverted to Fallback",
+    "fallback_oos_alpha": 0.62,
+    "default_oos_alpha": -0.30,
+    "naive_sharpe": null,
+    "deflated_sharpe": null,
+    "validation_sharpe": null,
+    "frozen_eval_sharpe": null
+  },
+  "format_expectations": {
+    "null_placeholder_options": ["N/A", "—"],
+    "must_not_crash": true,
+    "must_not_render_none_literal": true
+  }
+}
