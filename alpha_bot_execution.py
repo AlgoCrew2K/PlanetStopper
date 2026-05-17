@@ -762,6 +762,15 @@ def main():
             if current_et.weekday() >= 4 or force_run: # 4=Fri, 5=Sat, 6=Sun
                 print(f"  -> {'Weekend/Force' if current_et.weekday() >= 5 else 'Friday'} Detected. Starting autotune...")
                 autotuner_changes = autotuner.run_autotuner(bot_state, current_date_str, ACCOUNT_UUIDS, is_forced=force_run)
+                if autotuner_changes:
+                    for sym_id, sym_data in autotuner_changes.items():
+                        run_row = database.get_latest_autotune_run(sym_id)
+                        if run_row:
+                            sym_data["_dsr_data"] = {
+                                "naive_sharpe":       run_row.get("naive_sharpe"),
+                                "deflated_sharpe":    run_row.get("deflated_sharpe"),
+                                "frozen_eval_sharpe": run_row.get("frozen_eval_sharpe"),
+                            }
             else:
                 print(f"  -> Day is {current_et.strftime('%A')}. Skipping weekly autotune.")
 
