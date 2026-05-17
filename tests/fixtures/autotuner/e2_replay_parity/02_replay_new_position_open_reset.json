@@ -1,0 +1,30 @@
+{
+  "name": "replay_new_position_open_reset",
+  "description": "Replay across a position-open boundary: when a new day's tick sequence starts (new position), prev_persisted_stop must be reset to None so the ratchet does not carry the prior day's stop level forward. Mirrors E2 AC-E2.5 (live path resets stop_trigger=None on position close).",
+  "layer": "autotuner_replay_e2_ratchet",
+  "scenario": "new_position_open_reset",
+  "provenance": "schema-derived. No producer output hardcoded. The key assertion is structural: prev_persisted_stop_level=None on tick_idx=0 of a new day's tick sequence.",
+  "days": [
+    {
+      "day": "A",
+      "description": "Day A runs to completion. The final stop level at day-end is some positive value (call it stop_day_A). The replay loop resets stop_state between days.",
+      "tick_sequence": "5 qualifying ticks -> lock fires -> stop reaches 1.8",
+      "end_of_day_stop_level": "derived from replay, call it S_A (> 0)",
+      "note": "S_A is a symbolic placeholder; the test asserts shape (is positive float), not value."
+    },
+    {
+      "day": "B",
+      "description": "Day B starts fresh: new position, prev_persisted_stop must reset to None for tick_idx=0. The ratchet must NOT carry S_A into Day B's stop calculations.",
+      "tick_0_expected": {
+        "previously_persisted_stop_level": null,
+        "note": "Each day in autotuner replay represents a fresh position (the loop re-initialises stop_level state per day). Day B tick 0 must receive None, not S_A."
+      },
+      "invariant": "Day B's tick-0 stop computation is unconstrained by Day A's stop level."
+    }
+  ],
+  "assertion_contract": {
+    "day_boundary_reset": "prev_persisted_stop passed to cycle-0 of Day B is None (not Day A's terminal stop level)",
+    "within_day_monotonicity": "stop levels within Day B form a non-decreasing sequence once ratchet is threaded",
+    "cross_day_independence": "Day B's stop sequence starts from zero-basis, not clamped by Day A"
+  }
+}
