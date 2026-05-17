@@ -323,30 +323,8 @@ def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
     conn.close()
 
 
-def get_latest_autotune_run(symphony_id) -> dict | None:
-    """Return the most-recent autotune_runs row for symphony_id as a dict.
-
-    Returns None if no rows exist for that symphony — callers (e.g. Claude
-    context-assembly) treat None as "Optuna has not yet run for this symphony".
-    """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT run_timestamp, symphony_id, oos_alpha, train_alpha,
-               baseline_decision, fallback_oos_alpha, default_oos_alpha,
-               deflated_sharpe, naive_sharpe
-        FROM autotune_runs
-        WHERE symphony_id = ?
-        ORDER BY run_timestamp DESC
-        LIMIT 1
-        """,
-        (symphony_id,),
-    )
-    row = cursor.fetchone()
-    conn.close()
-    if row is None:
-        return None
+def _autotune_run_row_to_dict(row) -> dict:
+    """Map a raw autotune_runs SELECT row (11 columns) to a dict."""
     return {
         "run_timestamp":      row[0],
         "symphony_id":        row[1],
@@ -357,7 +335,59 @@ def get_latest_autotune_run(symphony_id) -> dict | None:
         "default_oos_alpha":  row[6],
         "deflated_sharpe":    row[7],
         "naive_sharpe":       row[8],
+        "validation_sharpe":  row[9],
+        "frozen_eval_sharpe": row[10],
     }
+
+
+_AUTOTUNE_RUNS_SELECT = """
+    SELECT run_timestamp, symphony_id, oos_alpha, train_alpha,
+           baseline_decision, fallback_oos_alpha, default_oos_alpha,
+           deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe
+    FROM autotune_runs
+"""
+
+
+def get_latest_autotune_run(symphony_id) -> dict | None:
+    """Return the most-recent autotune_runs row for symphony_id as a dict.
+
+    Returns None if no rows exist for that symphony — callers (e.g. Claude
+    context-assembly) treat None as "Optuna has not yet run for this symphony".
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        _AUTOTUNE_RUNS_SELECT + """
+        WHERE symphony_id = ?
+        ORDER BY run_timestamp DESC
+        LIMIT 1
+        """,
+        (symphony_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return _autotune_run_row_to_dict(row)
+
+
+def get_all_autotune_runs(limit: int = 50) -> list[dict]:
+    """Return the most-recent autotune_runs rows across all symphonies.
+
+    Used by the /api/autotune-runs dashboard route to surface DSR metrics.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        _AUTOTUNE_RUNS_SELECT + """
+        ORDER BY run_timestamp DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_autotune_run_row_to_dict(r) for r in rows]
 
 
 # --- LLM Suggestions Audit Trail (P3) ---

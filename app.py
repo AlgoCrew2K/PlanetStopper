@@ -877,6 +877,13 @@ def ai_advisor_reject():
     return jsonify({"status": "rejected"})
 
 
+@app.route("/api/autotune-runs", methods=["GET"])
+def api_autotune_runs():
+    """Return recent autotune run rows including all three Sharpe metrics."""
+    rows = database.get_all_autotune_runs(limit=50)
+    return jsonify(rows)
+
+
 if __name__ == "__main__":
     # Reconfigure stdout to UTF-8 so emoji/non-Latin-1 chars don't crash on
     # Windows (cp1252 default).  Guarded to __main__ so pytest's capture is

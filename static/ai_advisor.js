@@ -135,3 +135,38 @@ function escHtml(str) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
+
+function fmtSharpe(val) {
+    if (val === null || val === undefined) return 'N/A';
+    return Number(val).toFixed(4);
+}
+
+async function loadRecentRuns() {
+    const tbody = document.getElementById('autotune-runs-tbody');
+    try {
+        const resp = await fetch('/api/autotune-runs');
+        const rows = await resp.json();
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-slate-500 py-4 text-center">No tuning runs recorded yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = rows.map(r => `
+            <tr class="border-b border-slate-700/50 hover:bg-slate-700/20">
+                <td class="py-2 pr-4 font-mono text-slate-300">${escHtml(r.symphony_id)}</td>
+                <td class="py-2 pr-4 text-slate-400">${escHtml(r.run_timestamp)}</td>
+                <td class="py-2 pr-4 text-slate-400">${escHtml(r.baseline_decision || '')}</td>
+                <td class="py-2 pr-4 text-right font-mono">${escHtml(fmtSharpe(r.naive_sharpe))}</td>
+                <td class="py-2 pr-4 text-right font-mono">${escHtml(fmtSharpe(r.deflated_sharpe))}</td>
+                <td class="py-2 text-right font-mono">${escHtml(fmtSharpe(r.frozen_eval_sharpe))}</td>
+            </tr>
+        `).join('');
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-rose-400 py-4 text-center">Failed to load runs: ${escHtml(err.message)}</td></tr>`;
+    }
+}
+
+// Auto-refresh floor: 15 s — engine runs on 1-minute cadence; polling faster than 15 s provides no benefit
+document.addEventListener('DOMContentLoaded', () => {
+    loadRecentRuns();
+    setInterval(loadRecentRuns, 15000);
+});
