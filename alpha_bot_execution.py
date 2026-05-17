@@ -385,7 +385,7 @@ def check_fleet_correlation_and_update_state(
 
     try:
         raw_triggers = database.get_triggers(since=since_iso)
-    except Exception:
+    except (OSError, RuntimeError, ValueError, TypeError):
         return
 
     # ts_et from DB is tz-naive ET string; strip tz from now_et for comparison.
@@ -1259,10 +1259,10 @@ def main():
                         print(f"     !!! EXECUTION FAILED FOR {item['symphony_name']}. Skipping state update !!!")
 
         bot_state["last_successful_cycle_at"] = current_et.isoformat()
-        database.save_state(bot_state)
 
         # V3: fleet-correlation detection — observational only; runs after all side effects.
         # AC-V3.2: never gates triggers; reads from H1 exit_triggers via database.get_triggers.
+        # Runs before save_state so the alert lands in the single atomic write.
         try:
             _active_count = sum(
                 1 for v in bot_state.values()
@@ -1273,9 +1273,10 @@ def main():
                 active_symphony_count=_active_count,
                 now_et=current_et,
             )
-            database.save_state(bot_state)
-        except Exception as _fleet_exc:
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError) as _fleet_exc:
             logging.error("[fleet-correlation] detection error: %s", _fleet_exc)
+
+        database.save_state(bot_state)
 
         database.save_chart_history(chart_history)
 
