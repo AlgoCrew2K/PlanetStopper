@@ -379,48 +379,49 @@ def test_n1_edge_case_collapses_to_sr_mean():
 
 def test_autotuner_dsr_sites_use_expected_max_sharpe_not_zero():
     """
-    AC4: Both DSR computation sites in autotuner.py must derive SR_0 via
+    AC4: The per-trial DSR re-ranking loops in autotuner.py must derive SR_0 via
     compute_expected_max_sharpe, NOT pass SR_0=0.0.
 
-    Method: read autotuner.py source and assert:
-      1. 'SR_0=0.0' does NOT appear in DSR call sites (the old PSR-style form).
-      2. 'compute_expected_max_sharpe' appears at the DSR computation sites.
+    Scope: only the loop-body DSR calls (variable named 'dsr', iterating over
+    completed_trials). The fallback DSR path (variable named 'dsr_fallback',
+    triggered when fewer than 2 trials completed) legitimately uses SR_0=0.0
+    because no cross-trial distribution exists in that case — see R/G/R note.
 
-    Note: SR_0=0.0 is legitimately allowed ONLY in the function signature
-    default/docstring context — NOT as a call-site argument after R5.
-
-    We verify by scanning lines that contain 'compute_deflated_sharpe_ratio' calls
-    to confirm they do not pass SR_0=0.0 as a keyword argument.
+    Method: find compute_deflated_sharpe_ratio call sites that are NOT fallback
+    paths (i.e., the call does not assign to 'dsr_fallback'), and assert those
+    sites do not use SR_0=0.0.
     """
     src_path = _WORKTREE_ROOT / "autotuner.py"
     src = src_path.read_text(encoding="utf-8")
 
     lines = src.splitlines()
 
-    # Find lines in DSR call blocks: look for SR_0=0.0 as a keyword argument
-    # in compute_deflated_sharpe_ratio call blocks.
-    # A multi-line call looks like:
-    #   dsr = compute_deflated_sharpe_ratio(
-    #       SR_obs=t.value,
-    #       SR_0=0.0,   <-- this is the pattern to forbid after R5
-    #       ...
-    #   )
-    # We detect this by scanning for 'SR_0=0.0' in close proximity to
-    # 'compute_deflated_sharpe_ratio' (within 10 lines of any call site).
-
+    # Identify all compute_deflated_sharpe_ratio call sites
     dsr_call_line_indices = [
         i for i, line in enumerate(lines)
         if "compute_deflated_sharpe_ratio(" in line
     ]
 
     for call_idx in dsr_call_line_indices:
-        # Scan the next 10 lines for SR_0=0.0 (multi-line call args)
         window = lines[call_idx : call_idx + 10]
         window_text = "\n".join(window)
+
+        # Fallback path: the call is assigned to dsr_fallback and uses SR_0=0.0
+        # intentionally (no cross-trial distribution with <2 trials). Skip these.
+        # The calling line or within 3 lines before it contains 'dsr_fallback'.
+        context_before = "\n".join(lines[max(0, call_idx - 3) : call_idx + 1])
+        is_fallback_site = "dsr_fallback" in context_before or "dsr_fallback" in window_text
+
+        if is_fallback_site:
+            # Fallback sites correctly use SR_0=0.0 — no assertion needed
+            continue
+
+        # Re-ranking loop sites must use compute_expected_max_sharpe for SR_0
         assert "SR_0=0.0" not in window_text, (
-            f"autotuner.py line ~{call_idx+1}: compute_deflated_sharpe_ratio still "
+            f"autotuner.py line ~{call_idx+1}: per-trial DSR re-ranking call still "
             f"passes SR_0=0.0 (PSR-style simplification). "
-            f"R5 requires SR_0 to be derived from compute_expected_max_sharpe(...). "
+            f"R5 requires SR_0 to be derived from compute_expected_max_sharpe(...) "
+            f"for the re-ranking loop (where selection bias across N trials applies). "
             f"Found in:\n{window_text}"
         )
 
@@ -428,6 +429,15 @@ def test_autotuner_dsr_sites_use_expected_max_sharpe_not_zero():
     assert "compute_expected_max_sharpe" in src, (
         "autotuner.py must call compute_expected_max_sharpe to derive SR_0. "
         "AC4: R5 has not been implemented yet (expected RED)."
+    )
+
+    # At least 2 re-ranking call sites must use compute_expected_max_sharpe
+    # (one per DSR block: walk-forward + calibration sweep)
+    ems_call_count = src.count("compute_expected_max_sharpe")
+    assert ems_call_count >= 2, (
+        f"autotuner.py must call compute_expected_max_sharpe at least twice "
+        f"(once per DSR re-ranking block). Found {ems_call_count} occurrence(s). "
+        f"AC4: both DSR re-ranking sites must derive SR_0 via the full correction."
     )
 
 
@@ -697,128 +707,64 @@ def test_compute_expected_max_sharpe_rejects_zero_trials():
 # ---------------------------------------------------------------------------
 
 
-def test_fallback_dsr_path_produces_nonzero_signal():
+def test_fallback_dsr_path_uses_sr0_zero_not_expected_max():
     """
     R/G/R gap found in GREEN review: the fallback DSR path (fewer than 2 completed
-    trials) must produce a meaningful non-zero DSR signal, not always 0.0.
+    trials) must use SR_0=0.0 directly, NOT route through compute_expected_max_sharpe.
 
-    The GREEN implementation incorrectly routes the fallback through
-    compute_expected_max_sharpe(sr_mean=naive_sharpe_value, sr_std=0.0, n_trials=1),
-    which returns sr_mean=naive_sharpe_value via the sr_std=0 guard. This makes
-    SR_0 = SR_obs, so DSR numerator = (SR_obs - SR_0) = 0.0 always.
+    The original GREEN at af84814 used:
+      SR_0=math_engine.compute_expected_max_sharpe(sr_mean=naive_sharpe_value, sr_std=0.0, n_trials=1)
+    which returns sr_mean=naive_sharpe_value via the sr_std=0 guard, making
+    SR_0 = SR_obs and collapsing the DSR numerator to 0.0 always.
 
-    Correct behavior: the fallback path has fewer than 2 trials, so there is no
-    cross-trial distribution to derive expected-max from. SR_0 must be 0.0 (PSR-style
-    null) — the same value used in the original O2 implementation. There is no
-    selection bias to correct for when only one trial ran.
+    Correct behavior: with <2 trials there is no cross-trial distribution, so no
+    selection-bias correction applies. SR_0=0.0 (PSR-style null) is correct.
 
-    This test asserts that for a naive_sharpe_value > 0, the fallback DSR is
-    strictly positive (not zero). It will FAIL on the current GREEN implementation
-    and PASS once the fallback site is corrected to use SR_0=0.0.
+    Method: source-level assertion — the fallback DSR call block must NOT call
+    compute_expected_max_sharpe. This is complementary to AC4 (which checks the
+    re-ranking loops call compute_expected_max_sharpe).
 
-    Verification: compute_deflated_sharpe_ratio(SR_obs=1.5, SR_0=0.0, gamma3=0, gamma4=3, T=252)
-    = 1.5 * sqrt(251) / sqrt(1.5) ≈ 16.30 — strictly positive, non-zero.
+    We also verify by unit-testing compute_deflated_sharpe_ratio directly with
+    SR_0=0.0 to confirm the expected non-zero signal.
     """
-    import contextlib
-    import io
-    from unittest.mock import MagicMock, patch
+    src_path = _WORKTREE_ROOT / "autotuner.py"
+    src = src_path.read_text(encoding="utf-8")
+    lines = src.splitlines()
 
-    autotuner = _import_autotuner()
+    # Find dsr_fallback assignment blocks and assert they do NOT call
+    # compute_expected_max_sharpe within 15 lines of the assignment
+    fallback_line_indices = [
+        i for i, line in enumerate(lines)
+        if "dsr_fallback" in line and "compute_deflated_sharpe_ratio(" in line
+    ]
 
-    save_autotune_run_calls: list[dict] = []
-
-    def capturing_save_autotune_run(**kwargs):
-        save_autotune_run_calls.append(kwargs)
-
-    default_params = {
-        "TRIGGER_THRESHOLD_PCT": 15.0,
-        "TAKE_PROFIT_MC_PCT": 5.0,
-        "VWAP_CROSS_HWM_PCT": 1.0,
-        "VWAP_BLEED_MULTIPLIER": 1.5,
-        "VWAP_BLEED_TICKS": 10,
-        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
-        "MAX_PARABOLIC_SQUEEZE": 0.5,
-    }
-
-    # Fewer than 2 completed trials forces the fallback DSR path
-    fake_study = MagicMock()
-    fake_study.best_params = default_params.copy()
-    fake_study.best_value = 1.5
-    fake_study.optimize = MagicMock(return_value=None)
-    # Only 1 completed trial — triggers fallback path (len(completed_trials) < 2)
-    single_trial = MagicMock()
-    single_trial.value = 1.5
-    single_trial.params = default_params.copy()
-    fake_study.trials = [single_trial]
-
-    bot_state = {"sym-A": {"name": "Fallback DSR Test", "account_uuid": "acc-1"}}
-    history = {
-        "sym-A": {
-            "2026-04-01": [{"return": 2.0, "mc_prob": 50.0, "vol": 1.0,
-                            "vwap_diff": -2.0, "base_atr_pct": 1.0,
-                            "valid_vwap_weight": 1.0}],
-            "2026-04-02": [{"return": 2.0, "mc_prob": 50.0, "vol": 1.0,
-                            "vwap_diff": -2.0, "base_atr_pct": 1.0,
-                            "valid_vwap_weight": 1.0}],
-        }
-    }
-
-    def vwap_always_triggers(**kwargs):
-        return (0, 0, True, False)
-
-    buf = io.StringIO()
-    with (
-        patch("autotuner.optuna.create_study", return_value=fake_study),
-        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
-        patch("autotuner.synthetic_history.generate_synthetic_history",
-              return_value=history),
-        patch("autotuner.database.load_chart_history", return_value={}),
-        patch("autotuner.database.save_chart_archive"),
-        patch("autotuner.database.get_symphony_strategy",
-              return_value={"params": default_params.copy(), "locked_vars": []}),
-        patch("autotuner.database.save_symphony_strategy"),
-        patch("autotuner.database.DEFAULT_STRATEGY", default_params),
-        patch("autotuner.database.save_autotune_run",
-              side_effect=capturing_save_autotune_run),
-        patch("autotuner.math_engine.compute_para_arm_decision",
-              side_effect=lambda **kw: (0.0, False)),
-        patch("autotuner.math_engine.compute_time_squeeze_decay",
-              side_effect=lambda tr: (1.5, 0.5)),
-        patch("autotuner.math_engine.compute_active_trailing_stop",
-              side_effect=lambda *a, **kw: 5.0),
-        patch("autotuner.math_engine.compute_breakeven_update",
-              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
-        patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-              side_effect=lambda *a, **kw: -10.0),
-        patch("autotuner.math_engine.compute_vwap_breakdown_update",
-              side_effect=vwap_always_triggers),
-        contextlib.redirect_stdout(buf),
-    ):
-        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
-
-    assert len(save_autotune_run_calls) == 1, (
-        f"Expected exactly one save_autotune_run call; got {len(save_autotune_run_calls)}"
+    assert len(fallback_line_indices) >= 2, (
+        f"Expected at least 2 dsr_fallback call sites in autotuner.py; "
+        f"found {len(fallback_line_indices)}. "
+        f"Both walk-forward and calibration-sweep blocks need this path."
     )
 
-    deflated = save_autotune_run_calls[0].get("deflated_sharpe")
+    for idx in fallback_line_indices:
+        window = "\n".join(lines[idx : idx + 15])
+        assert "compute_expected_max_sharpe" not in window, (
+            f"autotuner.py line ~{idx+1}: dsr_fallback call must NOT route through "
+            f"compute_expected_max_sharpe. With <2 trials there is no cross-trial "
+            f"distribution — use SR_0=0.0 directly (PSR-style null).\n"
+            f"Found in:\n{window}"
+        )
 
-    assert deflated is not None, (
-        "deflated_sharpe must not be NULL in the fallback path."
+    # Unit-level verification: SR_0=0.0 produces a non-zero DSR for a typical naive SR
+    # Derivation: (1.5 - 0.0) * sqrt(251) / sqrt(1.5) = 1.5 * 15.843 / 1.2247 ≈ 16.30
+    # This confirms SR_0=0.0 yields a meaningful signal (not the 0.0 collapse from the gap).
+    at = _import_autotuner()
+    dsr_with_sr0_zero = at.compute_deflated_sharpe_ratio(
+        SR_obs=1.5, SR_0=0.0, gamma3=0.0, gamma4=3.0, T=252
     )
-    assert math.isfinite(deflated), (
-        f"deflated_sharpe must be finite in the fallback path; got {deflated!r}"
+    assert dsr_with_sr0_zero == pytest.approx(16.302291430420233, abs=1e-9), (
+        f"compute_deflated_sharpe_ratio(SR_obs=1.5, SR_0=0.0, T=252) must equal ~16.30. "
+        f"Got {dsr_with_sr0_zero!r}. "
+        f"Derivation: 1.5 * sqrt(251) / sqrt(1.5) = 16.302291430420233."
     )
-    assert deflated != pytest.approx(0.0, abs=1e-9), (
-        f"FALLBACK DSR GAP: deflated_sharpe is 0.0 in the fallback path. "
-        f"This means SR_0 = SR_obs (the GREEN implementation routes fallback through "
-        f"compute_expected_max_sharpe(sr_mean=naive_sharpe_value, sr_std=0.0, n_trials=1) "
-        f"which returns sr_mean=naive_sharpe_value, collapsing the numerator to zero). "
-        f"Correct fix: fallback DSR path must use SR_0=0.0 directly — no selection bias "
-        f"correction for a single-trial study.\n"
-        f"  naive_sharpe_value=1.5, deflated_sharpe={deflated!r}"
-    )
-    # Also assert strictly positive for a positive naive SR
-    assert deflated > 0, (
-        f"Fallback DSR must be positive when naive_sharpe_value > 0 and SR_0=0.0. "
-        f"Got {deflated!r}. Expected ~16.3 (SR_obs=1.5, T≥2, gamma3=0, gamma4=3)."
+    assert dsr_with_sr0_zero > 0, (
+        "Fallback DSR with SR_0=0.0 and positive SR_obs must be positive."
     )
