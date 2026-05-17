@@ -245,6 +245,99 @@ def test_seed_kwarg_in_synthetic_history_is_not_literal_none(
 
 
 # ---------------------------------------------------------------------------
+# 2b. Static (AST): seed= expression must be a function call, not a constant
+# ---------------------------------------------------------------------------
+
+def test_seed_kwarg_in_synthetic_history_is_not_a_constant_integer(
+    synth_tree: ast.Module,
+) -> None:
+    """
+    A constant seed (e.g. seed=42) would pass the seed=None guard above but
+    is equally wrong: every (symphony_id, trading_day) pair would share the
+    same RNG state, making all cache entries numerically correlated.
+
+    The seed= expression must be a CALL (to a deterministic seed-derivation
+    helper), not a literal integer or any other constant.
+    """
+    calls = _find_run_monte_carlo_calls(synth_tree)
+    if not calls:
+        pytest.skip("No run_monte_carlo call found — covered by earlier test.")
+
+    constant_seed: list[int] = []
+    for call in calls:
+        for kw in call.keywords:
+            if kw.arg != "seed":
+                continue
+            if isinstance(kw.value, ast.Constant):
+                constant_seed.append(getattr(call, "lineno", -1))
+
+    assert not constant_seed, (
+        f"math_engine.run_monte_carlo call(s) at line(s) {constant_seed} in "
+        "synthetic_history.py pass a constant literal as `seed=`. "
+        "A constant seed makes all (symphony_id, trading_day) pairs share the same "
+        "RNG state — cache entries become numerically correlated across symphonies "
+        "and days. The seed must be a CALL to a deterministic helper that encodes "
+        "both symphony_id and trading_day."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2c. Static (AST): if derive_cache_mc_seed exists, it must be in math_engine
+#     and the call site must reference it
+# ---------------------------------------------------------------------------
+
+def test_derive_cache_mc_seed_signature_if_present() -> None:
+    """
+    The implementer may introduce `derive_cache_mc_seed(symphony_id, trading_day)`
+    as a dedicated cache-context seed helper (distinct from derive_cycle_mc_seed
+    which takes a YYYYMMDD_HHMM string). If added, it must:
+      - Live in math_engine (not synthetic_history or alpha_bot_execution)
+      - Accept exactly (symphony_id: str, trading_day: str) parameters
+      - Return int
+
+    If the function does NOT exist (implementer chose to reuse derive_cycle_mc_seed
+    with a composite key), this test passes trivially — either approach is valid.
+    """
+    if not hasattr(math_engine, "derive_cache_mc_seed"):
+        return  # Not added — implementer used composite-key approach; pass
+
+    import inspect
+    assert callable(math_engine.derive_cache_mc_seed), (
+        "math_engine.derive_cache_mc_seed exists but is not callable."
+    )
+    sig = inspect.signature(math_engine.derive_cache_mc_seed)
+    params = list(sig.parameters.keys())
+    assert params == ["symphony_id", "trading_day"], (
+        f"derive_cache_mc_seed signature mismatch. "
+        f"Expected ['symphony_id', 'trading_day'], got {params!r}. "
+        "The cache-context seed helper must accept exactly these two parameters "
+        "to make the key space explicit."
+    )
+    # Determinism check: same inputs → same output
+    seed_a = math_engine.derive_cache_mc_seed("sym-alpha-001", "2024-01-02")
+    seed_b = math_engine.derive_cache_mc_seed("sym-alpha-001", "2024-01-02")
+    assert seed_a == seed_b, (
+        f"derive_cache_mc_seed('sym-alpha-001', '2024-01-02') returned "
+        f"{seed_a!r} then {seed_b!r} — must be deterministic (pure function)."
+    )
+    assert isinstance(seed_a, int), (
+        f"derive_cache_mc_seed returned {type(seed_a)!r}, expected int."
+    )
+    # Differentiability: different trading_day → different seed
+    seed_other_day = math_engine.derive_cache_mc_seed("sym-alpha-001", "2024-01-03")
+    assert seed_a != seed_other_day, (
+        "derive_cache_mc_seed produces the same seed for the same symphony on "
+        "two different trading days — trading_day is not encoded in the seed."
+    )
+    # Differentiability: different symphony → different seed
+    seed_other_sym = math_engine.derive_cache_mc_seed("sym-beta-002", "2024-01-02")
+    assert seed_a != seed_other_sym, (
+        "derive_cache_mc_seed produces the same seed for the same trading_day "
+        "across two different symphonies — symphony_id is not encoded in the seed."
+    )
+
+
+# ---------------------------------------------------------------------------
 # 3. Seed derivation determinism: derive(symphony_id, trading_day) is pure
 # ---------------------------------------------------------------------------
 
