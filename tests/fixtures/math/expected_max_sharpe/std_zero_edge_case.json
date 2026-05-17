@@ -1,0 +1,14 @@
+{
+  "provenance": "Hand-computed against Bailey, D.H. & López de Prado, M. (2014). 'The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality.' Journal of Portfolio Management, 40(5), 94-107. DOI: 10.3905/jpm.2014.40.5.094. Degenerate case: sr_std=0.0 (all trials achieved identical Sharpe). The correction term is sr_std * bracket = 0.0 regardless of N, so E[max SR] = sr_mean.",
+  "description": "sr_std=0.0 degenerate case. All Optuna trials converged to identical Sharpe; no spread for selection-bias correction. Expected result: sr_mean=0.5.",
+  "inputs": {
+    "sr_mean": 0.5,
+    "sr_std": 0.0,
+    "n_trials": 100
+  },
+  "derivation": {
+    "note": "sigma=0 -> correction_term = sigma * bracket = 0.0 * anything = 0.0. Result = sr_mean + 0.0 = sr_mean.",
+    "result": "sr_mean = 0.5"
+  },
+  "expected_result": 0.5
+}
