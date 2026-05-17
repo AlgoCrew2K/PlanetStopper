@@ -136,6 +136,72 @@ class TestApiStateExposesFleetCorrelationAlert:
 
 
 # ---------------------------------------------------------------------------
+# Section 1b — /api/state frozen and waiting paths also expose fleet_correlation_alert
+# ---------------------------------------------------------------------------
+
+
+class TestApiStateAllPathsExposeFleetAlert:
+    """
+    flask-dashboard-specialist pre-read identified 3 response paths in /api/state:
+    active (lines 395-408), frozen snapshot (lines 232-241), waiting (lines 251-261).
+    AC-V3.1 requires fleet_correlation_alert in all three.
+    """
+
+    def test_frozen_snapshot_path_includes_fleet_correlation_alert(self, flask_client):
+        """
+        Frozen snapshot path (market closed + snapshot present) must include
+        fleet_correlation_alert at the top level.
+        """
+        fixture = _load("alert_state_shape.json")
+        alert_payload = fixture["example"]
+
+        snapshot_state = {
+            "fleet_correlation_alert": alert_payload,
+            "last_market_close_snapshot": {
+                "captured_at_et": "16:00",
+                "data_as_of": "2026-05-16",
+                "portfolio_strip": {},
+                "accounts_map": {},
+                "shadow_divergence": {"portfolio_today": None, "by_symphony": {}},
+            },
+        }
+
+        with patch("database.load_state", return_value=snapshot_state), \
+             patch("market_calendar.get_market_state", return_value="closed_frozen"):
+            resp = flask_client.get("/api/state")
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "fleet_correlation_alert" in data, (
+            "Frozen snapshot path must include 'fleet_correlation_alert' in response. "
+            "Add state_data.get('fleet_correlation_alert', None) to the frozen snapshot "
+            "return jsonify({...}) block in app.py (lines ~232-241)."
+        )
+
+    def test_waiting_path_includes_fleet_correlation_alert(self, flask_client):
+        """
+        Waiting path (no state_data) must include fleet_correlation_alert (None).
+        JS must be able to clear a banner that was visible before the daemon restarted.
+        """
+        with patch("database.load_state", return_value={}), \
+             patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
+             patch("market_calendar.get_market_state", return_value="open"):
+            resp = flask_client.get("/api/state")
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "fleet_correlation_alert" in data, (
+            "Waiting path must include 'fleet_correlation_alert' key (value None). "
+            "Add 'fleet_correlation_alert': None to the waiting_resp dict in app.py "
+            "(lines ~251-261)."
+        )
+        assert data["fleet_correlation_alert"] is None, (
+            "Waiting path fleet_correlation_alert must be None — no active alert "
+            f"when state is empty. Got: {data['fleet_correlation_alert']!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Section 2 — POST /api/fleet-alert/dismiss route
 # ---------------------------------------------------------------------------
 
