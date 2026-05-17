@@ -231,12 +231,17 @@ def get_state():
                     sd["portfolio_today"] = sd.pop("portfolio")
                 _alert_row = database.read_fleet_alert()
                 _alert = _alert_row if (_alert_row is not None and _alert_row.get("dismissed_at_et") is None) else None
+                _state: dict = {}
+                for _acc_entries in (snapshot.get("accounts_map") or {}).values():
+                    for _sym in (_acc_entries or []):
+                        if isinstance(_sym, dict) and "id" in _sym:
+                            _state[_sym["id"]] = _sym
                 return jsonify({
                     "status": "active",
                     "market_state": market_state,
                     "frozen_at": snapshot.get("captured_at_et"),
                     "data_as_of": snapshot.get("data_as_of"),
-                    "state": snapshot.get("data_as_of"),
+                    "state": _state,
                     "portfolio_strip": snapshot.get("portfolio_strip"),
                     "shadow_divergence": sd,
                     "accounts_map": snapshot.get("accounts_map"),
@@ -259,6 +264,7 @@ def get_state():
                 "shadow_divergence": shadow_divergence,
                 "market_state": market_state,
                 "frozen_at": None,
+                "state": {},
                 "fleet_correlation_alert": _alert,
             }
             # AC-DM.3.4: include notice on fresh deploy (no snapshot, market closed)
