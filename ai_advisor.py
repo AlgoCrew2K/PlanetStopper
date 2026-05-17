@@ -27,15 +27,17 @@ import symphony_logic
 
 logger = logging.getLogger(__name__)
 
-# The 7 Optuna search-space keys — the validation contract in autotuner.py.
+# The 6 Optuna search-space keys — the validation contract in autotuner.py.
 # Duplicated here as a frozenset literal (kept in sync with
-# _OPTUNA_SEARCH_SPACE_KEYS) rather than imported: importing
+# OPTUNA_SEARCH_SPACE_KEYS) rather than imported: importing
 # ``autotuner`` pulls in optuna + joblib, whose process-pool/resource-tracker
 # import side effects interact badly with the anthropic SDK import and pytest's
 # output capture. The set is small, stable, and asserted against the live
 # autotuner contract by the C1 test suite.
+# Vars in database.DEFAULT_LOCKED_VARS are excluded — they are never
+# suggested by Optuna and must not be adopted via the AI advisor.
 _OPTUNA_SEARCH_SPACE_KEYS = frozenset({
-    "TRIGGER_THRESHOLD_PCT", "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
+    "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
     "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS",
     "PARABOLIC_VELOCITY_THRESHOLD", "MAX_PARABOLIC_SQUEEZE",
 })

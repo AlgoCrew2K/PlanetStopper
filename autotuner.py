@@ -17,8 +17,10 @@ import json
 # Extra keys outside this set are tolerated for forward-compat.
 # Note: optuna.logging.set_verbosity is now called inside run_autotuner
 # (not module-level) so import does not trigger logging side effects.
+# Vars in database.DEFAULT_LOCKED_VARS are excluded from the search space —
+# they retain their current values and are never overwritten by trial suggestions.
 OPTUNA_SEARCH_SPACE_KEYS = frozenset({
-    "TRIGGER_THRESHOLD_PCT", "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
+    "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
     "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS",
     "PARABOLIC_VELOCITY_THRESHOLD", "MAX_PARABOLIC_SQUEEZE",
 })
@@ -667,7 +669,6 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
 
         def objective(trial):
             p = current_params.copy()
-            p["TRIGGER_THRESHOLD_PCT"] = trial.suggest_float("TRIGGER_THRESHOLD_PCT", _SS_TRIGGER_THRESHOLD_MIN, _SS_TRIGGER_THRESHOLD_MAX)
             p["TAKE_PROFIT_MC_PCT"] = trial.suggest_float("TAKE_PROFIT_MC_PCT", _SS_TAKE_PROFIT_MC_MIN, _SS_TAKE_PROFIT_MC_MAX)
             p["VWAP_CROSS_HWM_PCT"] = trial.suggest_float("VWAP_CROSS_HWM_PCT", _SS_VWAP_CROSS_HWM_MIN, _SS_VWAP_CROSS_HWM_MAX)
             p["VWAP_BLEED_MULTIPLIER"] = trial.suggest_float("VWAP_BLEED_MULTIPLIER", _SS_VWAP_BLEED_MULT_MIN, _SS_VWAP_BLEED_MULT_MAX)

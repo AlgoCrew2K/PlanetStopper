@@ -829,6 +829,11 @@ def ai_advisor_accept():
     if not oos_result["passed"]:
         return jsonify({"status": "rejected", "error": oos_result["detail"]}), 200
 
+    # C2 Gate 4: locked-var guard — defense-in-depth; enforce_suggestion_allowlist
+    # already rejects locked keys, but this gate survives any future allowlist drift.
+    if suggestion_obj.config_key in locked_vars:
+        return jsonify({"status": "rejected", "error": "locked var"}), 200
+
     # All gates passed — write the config change
     patched_params = dict(flat_params)
     patched_params[suggestion_obj.config_key] = suggestion_obj.suggested_value
