@@ -875,3 +875,180 @@ class TestDiscordEmbedNoRegression:
             f"All embed titles found: {[e.get('title', '') for e in captured_embeds]!r}. "
             "Regression: the implementer must not remove the main embed."
         )
+
+
+# ===========================================================================
+# PRODUCTION WIRING — alpha_bot_execution.py augmentation gap (R/G/R round 2)
+# ===========================================================================
+
+class TestProductionWiringAugmentsOptimizationResultsWithDSR:
+    """
+    Gap identified after initial GREEN: the tests in TestDiscordEmbedIncludesDSR
+    inject _dsr_data directly into optimization_results, so they pass. But
+    alpha_bot_execution.py:768 passes autotuner_changes straight from
+    run_autotuner() with no _dsr_data key — meaning the DSR line is silently
+    omitted from the Discord embed in production.
+
+    These RED tests exercise the production call path by simulating
+    optimization_results as returned by run_autotuner (no _dsr_data) and
+    asserting that alpha_bot_execution augments it with DB-fetched DSR data
+    before calling send_eod_discord_post.
+
+    Implementation required (alpha_bot_execution.py):
+      After autotuner_changes = autotuner.run_autotuner(...) and before
+      reporting.send_eod_discord_post(...), loop over autotuner_changes keys
+      and call database.get_latest_autotune_run(sym_id) for each symphony,
+      injecting the result as _dsr_data. Handle None (no run yet) gracefully.
+
+    Fixture provenance (PA-18):
+      tests/fixtures/autotuner/dsr_surfacing/autotune_run_full_values.json
+    """
+
+    def _make_minimal_eod_report(self, tmp_path) -> str:
+        report = {
+            "date": "2026-05-14",
+            "summary": {"total_monitored": 1, "total_triggered": 0, "positive_guard_alpha_count": 0},
+            "tomorrow_target_holdings": {},
+            "triggers": [],
+        }
+        path = tmp_path / "post_mortem_2026-05-14.json"
+        path.write_text(json.dumps(report), encoding="utf-8")
+        return str(path)
+
+    def test_production_wiring_discord_embed_contains_dsr_when_db_has_run(
+        self, full_run_fixture, isolated_db, tmp_path
+    ):
+        """
+        When alpha_bot_execution.py calls reporting.send_eod_discord_post with
+        optimization_results that have NO _dsr_data key (as returned by
+        run_autotuner), AND a matching autotune_runs row exists in the DB,
+        the Discord embed for that symphony must still contain the DSR line.
+
+        This tests the production augmentation path in alpha_bot_execution.py.
+
+        This test will FAIL (RED) until alpha_bot_execution.py is updated to
+        call database.get_latest_autotune_run() per symphony and inject _dsr_data
+        into optimization_results before calling send_eod_discord_post.
+
+        Approach: import and call the relevant section of alpha_bot_execution's
+        EOD path by directly testing the augmentation logic. Since
+        alpha_bot_execution.py is a script with side-effects, we test the
+        augmentation function directly if the implementer extracts it, OR we
+        verify via the send_eod_discord_post output when the production call
+        flow is simulated.
+        """
+        import database as db_module
+
+        row = full_run_fixture["row"]
+        fmt = full_run_fixture["format_expectations"]
+        sym_id = row["symphony_id"]
+
+        # Write a real autotune_runs row to the isolated DB
+        db_module.save_autotune_run(
+            run_timestamp=row["run_timestamp"],
+            symphony_id=sym_id,
+            oos_alpha=row["oos_alpha"],
+            train_alpha=row["train_alpha"],
+            baseline_decision=row["baseline_decision"],
+            fallback_oos_alpha=row["fallback_oos_alpha"],
+            default_oos_alpha=row["default_oos_alpha"],
+            deflated_sharpe=row["deflated_sharpe"],
+            naive_sharpe=row["naive_sharpe"],
+            validation_sharpe=row["validation_sharpe"],
+            frozen_eval_sharpe=row["frozen_eval_sharpe"],
+        )
+
+        # Simulate optimization_results as returned by run_autotuner —
+        # NO _dsr_data key, just the param-delta shape.
+        raw_autotuner_changes = {
+            sym_id: {
+                "_baseline_chosen": row["baseline_decision"],
+                # no _dsr_data — this is the production gap
+            }
+        }
+
+        # The production augmentation: alpha_bot_execution must call
+        # database.get_latest_autotune_run per symphony and inject _dsr_data.
+        # We test by importing the augmentation helper (if extracted) or by
+        # simulating the full EOD flow with the real database call in place.
+        import alpha_bot_execution
+
+        augmented = alpha_bot_execution.augment_optimization_results_with_dsr(
+            raw_autotuner_changes
+        )
+
+        assert sym_id in augmented, (
+            f"augment_optimization_results_with_dsr must return a dict keyed by symphony_id. "
+            f"Key '{sym_id}' not found."
+        )
+        assert "_dsr_data" in augmented[sym_id], (
+            f"augment_optimization_results_with_dsr must inject '_dsr_data' for "
+            f"symphony '{sym_id}' when an autotune_runs row exists. "
+            "alpha_bot_execution.py production wiring gap — implement "
+            "augment_optimization_results_with_dsr() and call it before send_eod_discord_post."
+        )
+
+        dsr = augmented[sym_id]["_dsr_data"]
+        assert dsr.get("naive_sharpe") is not None, (
+            "Injected _dsr_data must contain naive_sharpe from the DB row."
+        )
+        assert dsr.get("deflated_sharpe") is not None, (
+            "Injected _dsr_data must contain deflated_sharpe from the DB row."
+        )
+        assert dsr.get("frozen_eval_sharpe") is not None, (
+            "Injected _dsr_data must contain frozen_eval_sharpe from the DB row."
+        )
+
+        # Values must match the fixture row (float tolerance: see test class docstring)
+        assert dsr["naive_sharpe"] == pytest.approx(row["naive_sharpe"], rel=1e-6), (
+            f"Injected naive_sharpe={dsr['naive_sharpe']} does not match "
+            f"DB row value={row['naive_sharpe']} (rel tolerance 1e-6)."
+        )
+        assert dsr["deflated_sharpe"] == pytest.approx(row["deflated_sharpe"], rel=1e-6), (
+            f"Injected deflated_sharpe={dsr['deflated_sharpe']} does not match "
+            f"DB row value={row['deflated_sharpe']}."
+        )
+        assert dsr["frozen_eval_sharpe"] == pytest.approx(row["frozen_eval_sharpe"], rel=1e-6), (
+            f"Injected frozen_eval_sharpe={dsr['frozen_eval_sharpe']} does not match "
+            f"DB row value={row['frozen_eval_sharpe']}."
+        )
+
+    def test_production_wiring_handles_symphony_with_no_db_run(
+        self, isolated_db
+    ):
+        """
+        When no autotune_runs row exists for a symphony (first-run case),
+        augment_optimization_results_with_dsr must still return the symphony's
+        entry without crashing. _dsr_data should be present with all None values
+        (or the key may be absent — both are acceptable as long as the function
+        does not raise and send_eod_discord_post renders N/A gracefully).
+
+        This test will FAIL (RED) until augment_optimization_results_with_dsr
+        exists in alpha_bot_execution.py.
+        """
+        import alpha_bot_execution
+
+        raw = {
+            "no_run_symphony": {
+                "_baseline_chosen": "Adopted AI",
+            }
+        }
+
+        # Must not raise
+        try:
+            augmented = alpha_bot_execution.augment_optimization_results_with_dsr(raw)
+        except AttributeError:
+            pytest.fail(
+                "alpha_bot_execution.augment_optimization_results_with_dsr does not exist. "
+                "Add this function to alpha_bot_execution.py. Production wiring gap."
+            )
+        except Exception as exc:
+            pytest.fail(
+                f"augment_optimization_results_with_dsr raised unexpectedly for a "
+                f"symphony with no DB row: {exc}"
+            )
+
+        assert "no_run_symphony" in augmented, (
+            "augment_optimization_results_with_dsr must return all input symphonies "
+            "even when no DB row exists."
+        )
