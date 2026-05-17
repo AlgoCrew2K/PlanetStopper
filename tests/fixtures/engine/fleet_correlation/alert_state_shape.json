@@ -1,0 +1,18 @@
+{
+  "_provenance": "schema-derived from AC-V3.1 bot_state['fleet_correlation_alert'] shape spec. No producer-computed values. ISO timestamp format matches exit_triggers ts_et convention.",
+  "description": "Expected shape of bot_state['fleet_correlation_alert'] when tripped",
+  "required_keys": ["tripped_at_et", "triggered_reason", "tripped_count", "active_count"],
+  "key_types": {
+    "tripped_at_et": "str — ISO format YYYY-MM-DDTHH:MM:SS (ET timezone, no offset suffix)",
+    "triggered_reason": "str — same string as the exit_triggers.triggered_reason that crossed the threshold",
+    "tripped_count": "int — number of distinct symphonies that fired the same reason in the window",
+    "active_count": "int — total active symphonies at detection time"
+  },
+  "example": {
+    "tripped_at_et": "2026-05-16T10:33:00",
+    "triggered_reason": "Trailing Stop",
+    "tripped_count": 6,
+    "active_count": 10
+  },
+  "absent_when_not_tripped": "bot_state must NOT contain the key 'fleet_correlation_alert' when no alert is active — key absent (None at API layer)"
+}

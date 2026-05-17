@@ -1,0 +1,30 @@
+{
+  "_provenance": "schema-derived from AC-V3.3. Clear-minutes constant name matches .env convention FLEET_CORRELATION_CLEAR_MINUTES=30. Timestamps use fixed wall-clock values.",
+  "clear_minutes": 30,
+  "cases": [
+    {
+      "label": "alert_clears_after_30_min_no_new_events",
+      "note": "Last fleet event at 10:33:00 ET; check at 11:03:01 ET (30min+1s later with no new events) — alert must be absent",
+      "last_fleet_event_et": "2026-05-16T10:33:00",
+      "check_time_et": "2026-05-16T11:03:01",
+      "new_events_since_last": false,
+      "expected_alert_present": false
+    },
+    {
+      "label": "alert_persists_before_30_min_elapsed",
+      "note": "Last fleet event at 10:33:00 ET; check at 11:02:59 ET (29min59s later) — alert must still be present",
+      "last_fleet_event_et": "2026-05-16T10:33:00",
+      "check_time_et": "2026-05-16T11:02:59",
+      "new_events_since_last": false,
+      "expected_alert_present": true
+    },
+    {
+      "label": "alert_persists_when_new_fleet_events_keep_resetting_timer",
+      "note": "New fleet event at 10:50:00 ET resets the 30-min clock; check at 11:03:01 ET (13min after last event) — alert must persist",
+      "last_fleet_event_et": "2026-05-16T10:50:00",
+      "check_time_et": "2026-05-16T11:03:01",
+      "new_events_since_last": true,
+      "expected_alert_present": true
+    }
+  ]
+}

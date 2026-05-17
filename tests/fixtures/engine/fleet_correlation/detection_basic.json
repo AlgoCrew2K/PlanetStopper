@@ -1,0 +1,86 @@
+{
+  "_provenance": "schema-derived from exit_triggers DDL (migrations/005_exit_triggers.sql) + AC-V3.1 thresholds. Timestamps are fixed-wall-clock values chosen to test window boundary semantics. Trigger reasons are named constants matching alpha_bot_execution.py triggered_reason strings. No producer-computed floats.",
+  "_schema_ref": "exit_triggers: id, ts_utc, ts_et, symphony_id, account_id, triggered_reason, at_return, gate_state_json, cycle_id",
+  "window_minutes": 3,
+  "pct_threshold": 0.50,
+  "cases": [
+    {
+      "label": "majority_same_reason_trips_alert",
+      "note": "6 of 10 active symphonies fired 'Trailing Stop' within window: 60% > 50% threshold — alert trips",
+      "active_symphonies": 10,
+      "triggers_in_window": [
+        {"symphony_id": "s1", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:00"},
+        {"symphony_id": "s2", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:15"},
+        {"symphony_id": "s3", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:30"},
+        {"symphony_id": "s4", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:45"},
+        {"symphony_id": "s5", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:32:00"},
+        {"symphony_id": "s6", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:32:30"}
+      ],
+      "expected_tripped": true,
+      "expected_reason": "Trailing Stop"
+    },
+    {
+      "label": "exactly_fifty_pct_does_not_trip",
+      "note": "5 of 10 = exactly 50% — strict > threshold means 50% must NOT trip",
+      "active_symphonies": 10,
+      "triggers_in_window": [
+        {"symphony_id": "s1", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:00"},
+        {"symphony_id": "s2", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:15"},
+        {"symphony_id": "s3", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:30"},
+        {"symphony_id": "s4", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:45"},
+        {"symphony_id": "s5", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:32:00"}
+      ],
+      "expected_tripped": false,
+      "expected_reason": null
+    },
+    {
+      "label": "below_fifty_pct_no_trip",
+      "note": "3 of 10 = 30% — well below threshold",
+      "active_symphonies": 10,
+      "triggers_in_window": [
+        {"symphony_id": "s1", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:00"},
+        {"symphony_id": "s2", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:15"},
+        {"symphony_id": "s3", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:30"}
+      ],
+      "expected_tripped": false,
+      "expected_reason": null
+    },
+    {
+      "label": "different_reasons_all_above_threshold_individually_no_trip",
+      "note": "4 Trailing Stop + 4 VWAP Breakdown + 2 Take Profit = each reason is 40% of 10, none > 50%",
+      "active_symphonies": 10,
+      "triggers_in_window": [
+        {"symphony_id": "s1", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:00"},
+        {"symphony_id": "s2", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:10"},
+        {"symphony_id": "s3", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:20"},
+        {"symphony_id": "s4", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:30"},
+        {"symphony_id": "s5", "triggered_reason": "VWAP Breakdown", "ts_et": "2026-05-16T10:31:40"},
+        {"symphony_id": "s6", "triggered_reason": "VWAP Breakdown", "ts_et": "2026-05-16T10:31:50"},
+        {"symphony_id": "s7", "triggered_reason": "VWAP Breakdown", "ts_et": "2026-05-16T10:32:00"},
+        {"symphony_id": "s8", "triggered_reason": "VWAP Breakdown", "ts_et": "2026-05-16T10:32:10"},
+        {"symphony_id": "s9", "triggered_reason": "Take Profit", "ts_et": "2026-05-16T10:32:20"},
+        {"symphony_id": "s10", "triggered_reason": "Take Profit", "ts_et": "2026-05-16T10:32:30"}
+      ],
+      "expected_tripped": false,
+      "expected_reason": null
+    },
+    {
+      "label": "empty_window_no_trip",
+      "note": "No triggers in window — no alert",
+      "active_symphonies": 10,
+      "triggers_in_window": [],
+      "expected_tripped": false,
+      "expected_reason": null
+    },
+    {
+      "label": "all_same_reason_single_active_symphony_no_trip",
+      "note": "1 of 1 active symphony = 100% > 50% but single symphony trivially correlated — alert trips",
+      "active_symphonies": 1,
+      "triggers_in_window": [
+        {"symphony_id": "s1", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:00"}
+      ],
+      "expected_tripped": true,
+      "expected_reason": "Trailing Stop"
+    }
+  ]
+}

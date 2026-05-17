@@ -1,0 +1,31 @@
+{
+  "_provenance": "schema-derived from AC-V3.1 .env variable names FLEET_CORRELATION_PCT, FLEET_CORRELATION_WINDOW_MINUTES, FLEET_CORRELATION_CLEAR_MINUTES. Values chosen to verify non-default configs work. No producer-computed floats.",
+  "cases": [
+    {
+      "label": "custom_pct_threshold_0_75_not_tripped_at_70pct",
+      "note": "With FLEET_CORRELATION_PCT=0.75, 7 of 10 (70%) does NOT trip",
+      "pct_threshold": 0.75,
+      "window_minutes": 3,
+      "active_symphonies": 10,
+      "same_reason_count": 7,
+      "expected_tripped": false
+    },
+    {
+      "label": "custom_pct_threshold_0_75_trips_at_80pct",
+      "note": "With FLEET_CORRELATION_PCT=0.75, 8 of 10 (80%) > 75% — trips",
+      "pct_threshold": 0.75,
+      "window_minutes": 3,
+      "active_symphonies": 10,
+      "same_reason_count": 8,
+      "expected_tripped": true
+    },
+    {
+      "label": "custom_window_1_min_excludes_older_events",
+      "note": "With FLEET_CORRELATION_WINDOW_MINUTES=1, events from 2 minutes ago fall outside window",
+      "pct_threshold": 0.50,
+      "window_minutes": 1,
+      "active_symphonies": 4,
+      "note_detail": "3 events: oldest at now-2min (outside), 2 inside window. 2 of 4 = 50% — strict > means no trip"
+    }
+  ]
+}
