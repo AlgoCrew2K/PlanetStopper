@@ -42,6 +42,9 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 # --- EXECUTION MODE ---
 LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
 EXECUTION_START_TIME = os.getenv("EXECUTION_START_TIME", "09:30")
+# Suppress VWAP-Breakdown and VWAP-Bleed-Cut for this many minutes after EXECUTION_START_TIME
+# to avoid open-volatility false exits (V2, AC-V2.1). TP and Trailing Stop are unaffected.
+VWAP_OPEN_WINDOW_GRACE_MINUTES = int(os.getenv("VWAP_OPEN_WINDOW_GRACE_MINUTES", "15"))
 
 # --- STRATEGY PARAMETERS ---
 TRIGGER_THRESHOLD_PCT = float(os.getenv("TRIGGER_THRESHOLD_PCT", "15.0"))
@@ -884,6 +887,13 @@ def main():
                 )
                 bot_state[symphony_id]['vwap_ticks'] = new_vwap_ticks
                 bot_state[symphony_id]['vwap_bleed_ticks'] = new_vwap_bleed_ticks
+
+                _in_grace = math_engine.is_in_open_window_grace(
+                    current_et, EXECUTION_START_TIME, VWAP_OPEN_WINDOW_GRACE_MINUTES
+                )
+                if _in_grace:
+                    is_vwap_broken = False
+                    is_vwap_bleed_broken = False
 
                 if is_vwap_broken:
                     print(f'  📉 {symphony_name[:35]} Portfolio VWAP broken. Forcing exit to protect gains.')
