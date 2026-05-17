@@ -1,0 +1,19 @@
+{
+  "_provenance": "Derived from database.DEFAULT_LOCKED_VARS (database.py:25-27). These are the vars the AI advisor MUST NOT adopt and Optuna MUST NOT suggest. Single source of truth is database.DEFAULT_LOCKED_VARS — this fixture mirrors it for test parameterization and must be kept in sync by the implementer.",
+  "_schema_version": "1",
+  "source_module": "database",
+  "source_symbol": "DEFAULT_LOCKED_VARS",
+  "source_lines": "25-27",
+  "locked_vars": [
+    "TRIGGER_THRESHOLD_PCT"
+  ],
+  "non_locked_vars_sample": [
+    "TAKE_PROFIT_MC_PCT",
+    "VWAP_CROSS_HWM_PCT",
+    "VWAP_BLEED_MULTIPLIER",
+    "VWAP_BLEED_TICKS",
+    "PARABOLIC_VELOCITY_THRESHOLD",
+    "MAX_PARABOLIC_SQUEEZE"
+  ],
+  "_non_locked_provenance": "Derived from autotuner.OPTUNA_SEARCH_SPACE_KEYS (autotuner.py:20-24) minus locked_vars. These ARE expected to be suggested by Optuna (counter-test sanity check)."
+}

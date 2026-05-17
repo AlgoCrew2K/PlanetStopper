@@ -1,0 +1,29 @@
+{
+  "_provenance": "Schema-derived fixture. Shape mirrors ai_advisor.ConfigSuggestion Pydantic model (ai_advisor.py). Values for 'suggested_value' and 'current_value' are representative of the TRIGGER_THRESHOLD_PCT valid range documented in _PARAM_VALID_RANGES in ai_advisor.py — not producer-computed outputs. Purpose: feed into enforce_suggestion_allowlist and the locked-var filter under test.",
+  "_schema_version": "1",
+  "description": "A Claude response containing a suggestion for TRIGGER_THRESHOLD_PCT (a locked var). This MUST be rejected by the adoption filter.",
+  "suggestions_with_locked_var": [
+    {
+      "config_key": "TRIGGER_THRESHOLD_PCT",
+      "suggested_value_description": "a value within the valid range for this param — exact float irrelevant, key presence is what matters",
+      "suggested_value_example": 12.0,
+      "current_value_example": 15.0,
+      "risk_direction": "tightens",
+      "rationale": "MC triggered more often at lower threshold; tightens guard arm.",
+      "confidence": "medium",
+      "data_sufficiency": "sufficient"
+    }
+  ],
+  "suggestions_without_locked_var": [
+    {
+      "config_key": "TAKE_PROFIT_MC_PCT",
+      "suggested_value_example": 4.5,
+      "current_value_example": 5.0,
+      "risk_direction": "tightens",
+      "rationale": "Take-profit fires earlier under high volatility regime.",
+      "confidence": "medium",
+      "data_sufficiency": "sufficient"
+    }
+  ],
+  "_why_no_hardcoded_producer_values": "Test assertions check for KEY PRESENCE or KEY ABSENCE, never numeric equality on producer-computed floats. The 'example' values are illustrative only and are not asserted against."
+}
