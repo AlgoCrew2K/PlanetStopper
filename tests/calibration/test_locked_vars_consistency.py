@@ -587,3 +587,105 @@ class TestLockedVarFilterDeterminism:
         assert allowed_keys.isdisjoint(rejected_keys), (
             f"Partitions are not disjoint: {allowed_keys & rejected_keys} appear in both."
         )
+
+
+# ---------------------------------------------------------------------------
+# Class 5: app.py accept route — locked-var write path must be gated
+# ---------------------------------------------------------------------------
+
+class TestAppAcceptRouteRejectsLockedVars:
+    """
+    The /ai-advisor/accept route in app.py reads locked_vars from the DB
+    (line 822) but currently has NO check that prevents writing a locked var
+    (lines 834-835). The gate must exist at the route level — defense-in-depth
+    on top of enforce_suggestion_allowlist.
+
+    These are source-inspection tests (AST + regex) — no live Flask client
+    needed, no network calls.
+    """
+
+    APP_SRC = pathlib.Path(__file__).parent.parent.parent / "app.py"
+
+    def _app_source(self) -> str:
+        return self.APP_SRC.read_text(encoding="utf-8")
+
+    def test_accept_route_checks_locked_vars_before_write(self):
+        """
+        The ai_advisor_accept() function in app.py must check whether
+        suggestion_obj.config_key is in locked_vars BEFORE the database write.
+
+        Current bug: locked_vars is read at line 822 but never consulted;
+        the config write at line 834 fires unconditionally for any key that
+        passes enforce_suggestion_allowlist (which currently allows TRIGGER_THRESHOLD_PCT).
+
+        RED until a guard like:
+            if suggestion_obj.config_key in locked_vars:
+                return jsonify({"status": "rejected", "error": "locked var"}), 200
+        (or equivalent) is added between the locked_vars read and the write.
+        """
+        src = self._app_source()
+
+        # Find the ai_advisor_accept function body
+        fn_match = re.search(
+            r"def ai_advisor_accept\(\)(.*?)(?=\n@app\.route|\nclass |\Z)",
+            src,
+            re.DOTALL,
+        )
+        assert fn_match, "ai_advisor_accept function not found in app.py"
+
+        fn_body = fn_match.group(1)
+
+        # The function must contain a locked-var membership check before the write
+        has_locked_check = bool(
+            re.search(
+                r"config_key\s+in\s+locked_vars|locked_vars.*config_key",
+                fn_body,
+            )
+        )
+        assert has_locked_check, (
+            "app.py:ai_advisor_accept() reads locked_vars but never checks "
+            "suggestion_obj.config_key against it before writing to the DB. "
+            "A locked var that passes enforce_suggestion_allowlist (currently "
+            "TRIGGER_THRESHOLD_PCT does) can be written to live config with no gate. "
+            "Add: `if suggestion_obj.config_key in locked_vars: return rejected` "
+            "between the locked_vars read and the database write. "
+            "RED until the guard is present."
+        )
+
+    def test_accept_route_locked_var_guard_precedes_write(self):
+        """
+        The locked-var guard must appear BEFORE `patched_params[suggestion_obj.config_key]`
+        in the function body — ordering matters for defense-in-depth.
+        """
+        src = self._app_source()
+
+        fn_match = re.search(
+            r"def ai_advisor_accept\(\)(.*?)(?=\n@app\.route|\nclass |\Z)",
+            src,
+            re.DOTALL,
+        )
+        assert fn_match, "ai_advisor_accept function not found in app.py"
+
+        fn_body = fn_match.group(1)
+
+        guard_match = re.search(
+            r"config_key\s+in\s+locked_vars|locked_vars.*config_key",
+            fn_body,
+        )
+        write_match = re.search(
+            r"patched_params\[suggestion_obj\.config_key\]",
+            fn_body,
+        )
+
+        if guard_match is None:
+            pytest.fail(
+                "No locked-var guard found in ai_advisor_accept() — "
+                "see test_accept_route_checks_locked_vars_before_write."
+            )
+        if write_match is None:
+            pytest.skip("patched_params write not found — route may have been restructured")
+
+        assert guard_match.start() < write_match.start(), (
+            "Locked-var guard appears AFTER the config write in ai_advisor_accept(). "
+            "The guard must precede the write to prevent locked-var mutation."
+        )
