@@ -1,0 +1,31 @@
+{
+  "description": "R/G/R gap: sentinel trials must be excluded from the DSR SCORING loop, not just from moment computation. With corrected moments (SR_0=1.368), a sentinel trial still produces DSR=14.02 vs the best valid trial's DSR=1.014. The loop must skip t.value==sentinel when selecting best_trial_by_dsr.",
+  "sentinel_value": 1000000.0,
+  "inputs": {
+    "valid_sortinos": [0.5, 0.8, 1.2, 0.3, 1.5, 0.9, 0.7, 1.1, 0.4, 0.6],
+    "sentinel_count": 5
+  },
+  "valid_only_moments": {
+    "n": 10,
+    "mean": 0.8,
+    "std": 0.36055512754639896,
+    "gamma3": 0.4480270815665308,
+    "gamma4": 2.1999999999999993,
+    "SR_0": 1.36772949137606
+  },
+  "scoring_scenario": {
+    "T": 60,
+    "best_valid_SR_obs": 1.5,
+    "best_valid_DSR": 1.014489035756716,
+    "sentinel_DSR": 14.023780602927896,
+    "sentinel_wins_without_exclusion": true,
+    "derivation": "compute_deflated_sharpe_ratio(SR_obs=1e6, SR_0=1.36773, gamma3=0.44803, gamma4=2.2, T=60) = 14.024. compute_deflated_sharpe_ratio(SR_obs=1.5, SR_0=1.36773, gamma3=0.44803, gamma4=2.2, T=60) = 1.014. Sentinel trial wins ranking despite corrected moments because (1e6 - 1.37) is still enormous."
+  },
+  "expected_best_SR_obs_after_fix": 1.5,
+  "expected_best_DSR_after_fix": 1.014489035756716,
+  "derivation": {
+    "gap_description": "The DSR scoring loop iterates completed_trials (all t.value not None). Sentinel trials have t.value=1e6. Even with corrected moments, DSR(SR_obs=1e6) >> DSR(SR_obs=1.5), so a sentinel trial wins best_trial_by_dsr. Fix: skip trials with t.value == _SORTINO_SENTINEL in the scoring loop (or use the filtered trial list for scoring).",
+    "best_valid_DSR": "autotuner.compute_deflated_sharpe_ratio(SR_obs=1.5, SR_0=1.36772949137606, gamma3=0.4480270815665308, gamma4=2.2, T=60) = 1.014489035756716",
+    "sentinel_DSR": "autotuner.compute_deflated_sharpe_ratio(SR_obs=1e6, SR_0=1.36772949137606, gamma3=0.4480270815665308, gamma4=2.2, T=60) = 14.023780602927896"
+  }
+}

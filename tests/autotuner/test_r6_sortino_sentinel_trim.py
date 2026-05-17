@@ -620,3 +620,122 @@ def test_filter_source_comment_explains_why_sentinels_pollute():
             f"AC10: the WHY is non-obvious — 1e6 is a successful-trial artifact (not a failure), "
             f"but its magnitude dominates cross-trial mean/std/gamma3/gamma4."
         )
+
+
+# ---------------------------------------------------------------------------
+# R/G/R Gap — sentinel trials must be excluded from DSR SCORING loop too
+# ---------------------------------------------------------------------------
+
+
+def test_sentinel_trials_excluded_from_dsr_scoring_loop():
+    """
+    R/G/R gap found after GREEN: the DSR scoring loop (for t in completed_trials: dsr = ...)
+    still iterates ALL completed trials including sentinel-valued ones (t.value=1e6).
+
+    Even with corrected moments (mean/std/gamma3/gamma4 computed from filtered values),
+    a sentinel trial scores DSR=14.02 vs the best valid trial's DSR=1.01 — the sentinel
+    WINS the ranking and its params get selected as best_trial_by_dsr.
+
+    Root cause: the sentinel (1e6) is enormous relative to any real Sortino. Even divided
+    by a corrected SR_0, the numerator (SR_obs - SR_0) = 1e6 - 1.37 ≈ 1e6 still dominates.
+    Fixing only the moment computation does not prevent sentinel params from being selected.
+
+    Fix required: the scoring loop must skip trials where t.value == _SORTINO_SENTINEL.
+    Either filter the trial list before the loop, or add a guard inside the loop.
+
+    Fixture: 06_sentinel_excluded_from_scoring_loop.json
+    Tolerance on DSR: 1e-6 (cascaded through SR_0 via scipy PPF chain).
+
+    This will FAIL (RED) against the current GREEN (which only fixes moments, not scoring).
+    """
+    me = _import_math_engine()
+    at = _import_autotuner()
+    fixture = _load_fixture("06_sentinel_excluded_from_scoring_loop.json")
+
+    # Reconstruct the corrected moments (same as fixture 01 valid-only moments)
+    valid_sortinos = fixture["inputs"]["valid_sortinos"]
+    n = len(valid_sortinos)
+    mean_v = sum(valid_sortinos) / n
+    variance_v = sum((v - mean_v) ** 2 for v in valid_sortinos) / n
+    std_v = math.sqrt(variance_v)
+    gamma3 = sum((v - mean_v) ** 3 for v in valid_sortinos) / (n * std_v ** 3)
+    gamma4 = sum((v - mean_v) ** 4 for v in valid_sortinos) / (n * std_v ** 4)
+    SR_0 = me.compute_expected_max_sharpe(sr_mean=mean_v, sr_std=std_v, n_trials=n)
+
+    scoring = fixture["scoring_scenario"]
+    T = scoring["T"]
+
+    # Confirm sentinel DOES produce a higher raw DSR than best valid trial
+    dsr_sentinel = at.compute_deflated_sharpe_ratio(
+        SR_obs=_SENTINEL,
+        SR_0=SR_0,
+        gamma3=gamma3,
+        gamma4=gamma4,
+        T=T,
+    )
+    dsr_best_valid = at.compute_deflated_sharpe_ratio(
+        SR_obs=scoring["best_valid_SR_obs"],
+        SR_0=SR_0,
+        gamma3=gamma3,
+        gamma4=gamma4,
+        T=T,
+    )
+
+    # Confirm the gap is real — sentinel wins without exclusion
+    assert dsr_sentinel > dsr_best_valid, (
+        f"Fixture sanity: sentinel DSR must exceed best-valid DSR without exclusion. "
+        f"dsr_sentinel={dsr_sentinel!r}, dsr_best_valid={dsr_best_valid!r}. "
+        f"If this fails the sentinel value or moments have changed."
+    )
+    assert dsr_sentinel == pytest.approx(scoring["sentinel_DSR"], abs=1e-6), (
+        f"Sentinel DSR must match fixture. "
+        f"expected={scoring['sentinel_DSR']!r}, got={dsr_sentinel!r}."
+    )
+
+    # Now assert the SCORING LOOP in autotuner.py skips sentinel trials.
+    # Method: source-level — the loop body must exclude t.value == sentinel
+    # (or iterate a pre-filtered list). Either pattern is acceptable.
+    src_path = _WORKTREE_ROOT / "autotuner.py"
+    src = src_path.read_text(encoding="utf-8")
+    lines = src.splitlines()
+
+    # Find all DSR scoring loop sites (the 'for t in ...' that calls compute_deflated_sharpe_ratio)
+    scoring_loop_indices = [
+        i for i, line in enumerate(lines)
+        if "for t in" in line and "trial" in line.lower()
+        and i + 10 < len(lines)
+        and any("compute_deflated_sharpe_ratio" in lines[j] for j in range(i, min(i + 10, len(lines))))
+    ]
+
+    assert len(scoring_loop_indices) >= 2, (
+        f"Expected at least 2 DSR scoring loops in autotuner.py (walk-forward + calibration); "
+        f"found {len(scoring_loop_indices)}. Check loop detection pattern."
+    )
+
+    # Each scoring loop must guard against sentinel values
+    # Acceptable patterns: iterating a pre-filtered list, or an explicit skip/continue guard
+    sentinel_guard_patterns = [
+        "filter_sortino_sentinels",  # loop iterates pre-filtered list
+        "_SORTINO_SENTINEL",          # explicit guard references the constant
+        "!= 1e6",                     # acceptable inline but not preferred
+        "!= _SORTINO_SENTINEL",
+        "math_engine._SORTINO_SENTINEL",
+    ]
+
+    for loop_idx in scoring_loop_indices:
+        # Check window: the loop line + preceding 5 lines (pre-filtered list assignment)
+        # + following 15 lines (loop body with possible guard)
+        context_start = max(0, loop_idx - 5)
+        context_end = min(len(lines), loop_idx + 15)
+        context = "\n".join(lines[context_start:context_end])
+
+        has_sentinel_guard = any(pattern in context for pattern in sentinel_guard_patterns)
+        assert has_sentinel_guard, (
+            f"autotuner.py line ~{loop_idx+1}: DSR scoring loop does not guard against "
+            f"sentinel trials (t.value=1e6). Sentinel trials must be excluded from "
+            f"the ranking loop, not just from moment computation.\n"
+            f"Acceptable fix: iterate a pre-filtered list, or add an explicit skip guard.\n"
+            f"Context:\n{context}\n"
+            f"R/G/R gap: with corrected SR_0=1.37, sentinel DSR=14.02 still beats "
+            f"best valid DSR=1.01 because (1e6 - 1.37) dominates the numerator."
+        )
