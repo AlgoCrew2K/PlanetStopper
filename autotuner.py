@@ -233,6 +233,7 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
             below_stop_count = 0
             above_tp_count = 0
             mc_history = []
+            prev_persisted_stop: float | None = None
 
             triggered_return = None
             eod_return = ticks[-1]["return"]
@@ -281,8 +282,10 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
                 base_stop = safe_hwm - active_stop_dist
 
                 hwm_hold_ticks, breakeven_locked, stop_level = math_engine.compute_breakeven_update(
-                    ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, False
+                    ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, False,
+                    previously_persisted_stop_level=prev_persisted_stop,
                 )
+                prev_persisted_stop = stop_level
 
                 is_trailing_hit = False
                 if armed:
@@ -364,6 +367,7 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
             below_stop_count = 0
             above_tp_count = 0
             mc_history = []
+            prev_persisted_stop: float | None = None
 
             triggered_return = None
             eod_return = ticks[-1]["return"]
@@ -419,8 +423,10 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 # --- RISK GUARD LOGIC ---
                 # is_triggered=False: simulation loop breaks on trigger before re-entering
                 hwm_hold_ticks, breakeven_locked, stop_level = math_engine.compute_breakeven_update(
-                    ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, is_triggered=False
+                    ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, is_triggered=False,
+                    previously_persisted_stop_level=prev_persisted_stop,
                 )
+                prev_persisted_stop = stop_level
                 # ------------------------
 
                 is_trailing_hit = False
