@@ -70,15 +70,16 @@ class TestApiStateExposesFleetCorrelationAlert:
 
     def test_api_state_includes_fleet_correlation_alert_field_when_tripped(self, flask_client):
         """
-        When bot_state contains 'fleet_correlation_alert', /api/state must expose it
-        as a top-level field in the JSON response.
+        When read_fleet_alert() returns an active (non-dismissed) row, /api/state must
+        expose it as a non-null fleet_correlation_alert field. R1: alert state lives in
+        fleet_alert_state, not bot_state.
         """
         fixture = _load("alert_state_shape.json")
-        alert_payload = fixture["example"]
+        alert_payload = dict(fixture["example"])
+        alert_payload["dismissed_at_et"] = None  # active — not dismissed
 
-        active_state = {"fleet_correlation_alert": alert_payload}
-
-        with patch("database.load_state", return_value=active_state), \
+        with patch("database.load_state", return_value={"date": "2026-05-17"}), \
+             patch("database.read_fleet_alert", return_value=alert_payload), \
              patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
              patch("database.get_triggers", return_value=[]), \
              patch("market_calendar.get_market_state", return_value="open"), \
@@ -97,7 +98,8 @@ class TestApiStateExposesFleetCorrelationAlert:
         )
         alert = data["fleet_correlation_alert"]
         assert alert is not None, (
-            "fleet_correlation_alert must not be None when bot_state contains the alert dict."
+            "fleet_correlation_alert must not be None when read_fleet_alert() returns an "
+            "active (dismissed_at_et=None) row. R1: /api/state reads from fleet_alert_state."
         )
         for key in fixture["required_keys"]:
             assert key in alert, (
@@ -233,29 +235,30 @@ class TestFleetAlertDismissRoute:
         )
 
     def test_dismiss_route_clears_alert_in_state(self, flask_client):
-        """POST /api/fleet-alert/dismiss must remove fleet_correlation_alert and persist."""
-        alert_state = {
-            "fleet_correlation_alert": {
-                "tripped_at_et": "2026-05-16T10:33:00",
-                "triggered_reason": "Trailing Stop",
-                "tripped_count": 6,
-                "active_count": 10,
-            }
+        """
+        POST /api/fleet-alert/dismiss must set dismissed_at_et via write_fleet_alert().
+        R1: dismiss writes ONLY to fleet_alert_state — never calls load_state/save_state.
+        """
+        existing_row = {
+            "tripped_at_et": "2026-05-16T10:33:00",
+            "triggered_reason": "Trailing Stop",
+            "tripped_count": 6,
+            "active_count": 10,
+            "dismissed_at_et": None,
         }
 
-        with patch("database.load_state", return_value=alert_state), \
-             patch("database.save_state") as mock_save:
+        with patch("database.read_fleet_alert", return_value=existing_row), \
+             patch("database.write_fleet_alert") as mock_write:
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
         assert resp.status_code == 200
-        # Verify save_state was called with state that lacks fleet_correlation_alert
-        assert mock_save.called, (
-            "dismiss route must call database.save_state to persist the cleared alert."
+        assert mock_write.called, (
+            "dismiss route must call database.write_fleet_alert() to set dismissed_at_et. "
+            "R1: alert state is owned by fleet_alert_state, not bot_state."
         )
-        saved_state = mock_save.call_args[0][0]
-        assert "fleet_correlation_alert" not in saved_state, (
-            "dismiss route must remove 'fleet_correlation_alert' from state before saving. "
-            f"Key still present in saved state: {list(saved_state.keys())}"
+        written_payload = mock_write.call_args[0][0]
+        assert written_payload.get("dismissed_at_et") is not None, (
+            "write_fleet_alert payload must have dismissed_at_et set to a non-null timestamp."
         )
 
     def test_dismiss_route_response_json_has_status_ok(self, flask_client):
