@@ -1,0 +1,44 @@
+{
+  "_provenance": "schema-derived from AC2 of R3b acceptance criteria. Exhaustive pairwise priority order table. Each case has exactly two flags True; the higher-priority one must always win.",
+
+  "priority_order": ["VWAP Breakdown", "Take-Profit", "VWAP Bleed Cut", "Trailing Stop"],
+
+  "pairwise_cases": [
+    {
+      "id": "breakdown_beats_tp",
+      "flags": {"is_vwap_broken": true, "is_tp_hit": true, "is_vwap_bleed_broken": false, "is_trailing_stop_hit": false},
+      "expected_winner": "VWAP Breakdown",
+      "expected_loser_in_also_true": "Take-Profit"
+    },
+    {
+      "id": "breakdown_beats_bleed",
+      "flags": {"is_vwap_broken": true, "is_tp_hit": false, "is_vwap_bleed_broken": true, "is_trailing_stop_hit": false},
+      "expected_winner": "VWAP Breakdown",
+      "expected_loser_in_also_true": "VWAP Bleed Cut"
+    },
+    {
+      "id": "breakdown_beats_trailing",
+      "flags": {"is_vwap_broken": true, "is_tp_hit": false, "is_vwap_bleed_broken": false, "is_trailing_stop_hit": true},
+      "expected_winner": "VWAP Breakdown",
+      "expected_loser_in_also_true": "Trailing Stop"
+    },
+    {
+      "id": "tp_beats_bleed",
+      "flags": {"is_vwap_broken": false, "is_tp_hit": true, "is_vwap_bleed_broken": true, "is_trailing_stop_hit": false},
+      "expected_winner": "Take-Profit",
+      "expected_loser_in_also_true": "VWAP Bleed Cut"
+    },
+    {
+      "id": "tp_beats_trailing",
+      "flags": {"is_vwap_broken": false, "is_tp_hit": true, "is_vwap_bleed_broken": false, "is_trailing_stop_hit": true},
+      "expected_winner": "Take-Profit",
+      "expected_loser_in_also_true": "Trailing Stop"
+    },
+    {
+      "id": "bleed_beats_trailing",
+      "flags": {"is_vwap_broken": false, "is_tp_hit": false, "is_vwap_bleed_broken": true, "is_trailing_stop_hit": true},
+      "expected_winner": "VWAP Bleed Cut",
+      "expected_loser_in_also_true": "Trailing Stop"
+    }
+  ]
+}

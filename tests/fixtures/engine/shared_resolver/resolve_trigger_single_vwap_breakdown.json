@@ -1,0 +1,13 @@
+{
+  "_provenance": "schema-derived from AC8 of R3b. Only VWAP Breakdown fires — single-trigger path must return empty also_true.",
+
+  "input": {
+    "is_vwap_broken": true,
+    "is_tp_hit": false,
+    "is_vwap_bleed_broken": false,
+    "is_trailing_stop_hit": false
+  },
+
+  "expected_reason": "VWAP Breakdown",
+  "expected_also_true": []
+}

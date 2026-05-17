@@ -476,6 +476,42 @@ def is_in_open_window_grace(
     return exec_start_naive <= current_time_naive < grace_end_naive
 
 
+# Canonical priority order: VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop.
+# Order matches H2 acceptance criteria (alpha_bot_execution.py:1081 comment) and the math audit.
+_TRIGGER_PRIORITY_ORDER: list[str] = [
+    "VWAP Breakdown",
+    "Take-Profit",
+    "VWAP Bleed Cut",
+    "Trailing Stop",
+]
+
+
+def resolve_trigger_priority(
+    is_vwap_broken: bool,
+    is_tp_hit: bool,
+    is_vwap_bleed_broken: bool,
+    is_trailing_stop_hit: bool,
+) -> tuple[str | None, list[str]]:
+    """Resolve which trigger fired and which co-fired, in canonical priority order.
+
+    Returns (None, []) when no flag is True.
+    Returns (winner, []) for a single trigger.
+    Returns (winner, [co-fired, ...]) when multiple flags are True.
+
+    Pure function — no I/O, no side effects.
+    """
+    flag_map: dict[str, bool] = {
+        "VWAP Breakdown": is_vwap_broken,
+        "Take-Profit": is_tp_hit,
+        "VWAP Bleed Cut": is_vwap_bleed_broken,
+        "Trailing Stop": is_trailing_stop_hit,
+    }
+    fired = [name for name in _TRIGGER_PRIORITY_ORDER if flag_map[name]]
+    if not fired:
+        return None, []
+    return fired[0], fired[1:]
+
+
 def derive_cycle_mc_seed(cycle_id: str) -> int:
     """Deterministic seed for a given cycle_id (YYYYMMDD_HHMM format).
 

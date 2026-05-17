@@ -1,0 +1,20 @@
+{
+  "_provenance": "schema-derived from AC9 of R3b acceptance criteria. All four trigger flags True simultaneously. Priority order: VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop. VWAP Breakdown wins; the other three appear in also_true.",
+
+  "input": {
+    "is_vwap_broken": true,
+    "is_tp_hit": true,
+    "is_vwap_bleed_broken": true,
+    "is_trailing_stop_hit": true
+  },
+
+  "priority_order": [
+    "VWAP Breakdown",
+    "Take-Profit",
+    "VWAP Bleed Cut",
+    "Trailing Stop"
+  ],
+
+  "expected_reason": "VWAP Breakdown",
+  "expected_also_true": ["Take-Profit", "VWAP Bleed Cut", "Trailing Stop"]
+}

@@ -1,0 +1,13 @@
+{
+  "_provenance": "schema-derived from AC8 of R3b acceptance criteria. Only Trailing Stop is True — resolver must return (reason, []) with empty also_true.",
+
+  "input": {
+    "is_vwap_broken": false,
+    "is_tp_hit": false,
+    "is_vwap_bleed_broken": false,
+    "is_trailing_stop_hit": true
+  },
+
+  "expected_reason": "Trailing Stop",
+  "expected_also_true": []
+}

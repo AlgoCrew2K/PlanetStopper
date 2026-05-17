@@ -1078,24 +1078,21 @@ def main():
                 })
 
                 if is_trailing_stop_hit or tp_triggered_now or is_vwap_broken or is_vwap_bleed_broken:
-                    # H2: priority order is VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop.
-                    # Resolve winner before any side-effect executes (AC-H2.1, AC-H2.2).
-                    _TRIGGER_PRIORITY = [
-                        ("VWAP Breakdown", is_vwap_broken, safe_hwm),
-                        ("Take-Profit", tp_triggered_now, current_return),
-                        ("VWAP Bleed Cut", is_vwap_bleed_broken, acc_VWAP_BLEED_ARM_PCT),
-                        ("Trailing Stop", is_trailing_stop_hit, stop_trigger_level),
-                    ]
-                    reason, attempted_level = next(
-                        (name, level)
-                        for name, fired, level in _TRIGGER_PRIORITY
-                        if fired
+                    # R3b: shared resolver enforces canonical priority (VWAP Breakdown > Take-Profit >
+                    # VWAP Bleed Cut > Trailing Stop) at both live and replay call sites.
+                    reason, also_true = math_engine.resolve_trigger_priority(
+                        is_vwap_broken=is_vwap_broken,
+                        is_tp_hit=tp_triggered_now,
+                        is_vwap_bleed_broken=is_vwap_bleed_broken,
+                        is_trailing_stop_hit=is_trailing_stop_hit,
                     )
-                    also_true = [
-                        name
-                        for name, fired, _level in _TRIGGER_PRIORITY
-                        if fired and name != reason
-                    ]
+                    _level_map = {
+                        "VWAP Breakdown": safe_hwm,
+                        "Take-Profit": current_return,
+                        "VWAP Bleed Cut": acc_VWAP_BLEED_ARM_PCT,
+                        "Trailing Stop": stop_trigger_level,
+                    }
+                    attempted_level = _level_map[reason]
 
                     print(f"  🚨 {reason.upper()} HIT FOR {symphony_name} 🚨 - Queuing for Execution")
                     database.log_symphony_event(symphony_id, f"{reason.upper()} HIT FOR {symphony_name}. Level: {attempted_level:.2f}", "triggered")
