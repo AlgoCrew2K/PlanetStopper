@@ -146,14 +146,14 @@ def _fallback_params() -> dict:
 def _ai_best_params() -> dict:
     """
     AI-tuned best_params (what study.best_params returns). MUST include every
-    Optuna-suggested key the autotuner reads (TRIGGER_THRESHOLD_PCT,
-    TAKE_PROFIT_MC_PCT, VWAP_CROSS_HWM_PCT, VWAP_BLEED_MULTIPLIER,
-    VWAP_BLEED_TICKS, PARABOLIC_VELOCITY_THRESHOLD, MAX_PARABOLIC_SQUEEZE) so
-    that the rounding loop at autotuner.py:317 (``round(val, 2)``) does not
-    raise on a missing key.
+    Optuna-suggested key the autotuner reads (TAKE_PROFIT_MC_PCT,
+    VWAP_CROSS_HWM_PCT, VWAP_BLEED_MULTIPLIER, VWAP_BLEED_TICKS,
+    PARABOLIC_VELOCITY_THRESHOLD, MAX_PARABOLIC_SQUEEZE) so that the rounding
+    loop at autotuner.py:317 (``round(val, 2)``) does not raise on a missing key.
+    TRIGGER_THRESHOLD_PCT is locked (database.DEFAULT_LOCKED_VARS) and excluded
+    from the Optuna search space — it is not in study.best_params.
     """
     return {
-        "TRIGGER_THRESHOLD_PCT": 15.0,
         "TAKE_PROFIT_MC_PCT": 5.0,
         "VWAP_CROSS_HWM_PCT": AI_MARKER,
         "VWAP_BLEED_MULTIPLIER": 1.5,
@@ -696,14 +696,15 @@ def test_oos_ai_strictly_beats_both_baselines_persists_ai_params():
 # That hybrid was never evaluated OOS. Real-money risk: untested param
 # combinations get persisted to the strategy DB and drive the next cycle.
 #
-# The 7 keys Optuna searches (autotuner.py:285-291):
-#   TRIGGER_THRESHOLD_PCT, TAKE_PROFIT_MC_PCT, VWAP_CROSS_HWM_PCT,
+# The 6 keys Optuna searches (autotuner.py:285-291):
+#   TAKE_PROFIT_MC_PCT, VWAP_CROSS_HWM_PCT,
 #   VWAP_BLEED_MULTIPLIER, VWAP_BLEED_TICKS, PARABOLIC_VELOCITY_THRESHOLD,
 #   MAX_PARABOLIC_SQUEEZE.
+#   (TRIGGER_THRESHOLD_PCT is locked via database.DEFAULT_LOCKED_VARS — excluded.)
 #
 # Semantic decision (test-writer recommendation)
 # ----------------------------------------------
-# When ``best_params`` is missing ANY of the 7 Optuna-searched keys (or is
+# When ``best_params`` is missing ANY of the 6 Optuna-searched keys (or is
 # empty), the autotuner MUST treat the AI proposal as invalid and fall
 # through to the baseline cascade (fallback then default). Equivalent to
 # AI failing OOS validation. Specifically:
@@ -731,7 +732,6 @@ def test_oos_ai_strictly_beats_both_baselines_persists_ai_params():
 # search space is defined inline inside the ``objective`` closure and is not
 # externally importable — pinning the contract here is intentional.
 OPTUNA_SEARCH_SPACE_KEYS = {
-    "TRIGGER_THRESHOLD_PCT",
     "TAKE_PROFIT_MC_PCT",
     "VWAP_CROSS_HWM_PCT",
     "VWAP_BLEED_MULTIPLIER",
