@@ -1,0 +1,37 @@
+{
+  "_provenance": "schema-derived from R1 AC-5: /api/state must expose fleet_correlation_alert from read_fleet_alert(), not from bot_state. Active when dismissed_at_et is NULL; None when dismissed_at_et is set or row absent. No producer-computed values.",
+  "description": "Expected /api/state fleet_correlation_alert field behaviour after migration to dedicated table",
+  "cases": [
+    {
+      "label": "alert_visible_when_dismissed_at_et_is_null",
+      "note": "read_fleet_alert() returns row with dismissed_at_et=NULL → /api/state must return the alert object",
+      "read_fleet_alert_returns": {
+        "tripped_at_et": "2026-05-17T10:33:00",
+        "triggered_reason": "Trailing Stop",
+        "tripped_count": 6,
+        "active_count": 10,
+        "dismissed_at_et": null
+      },
+      "expected_fleet_correlation_alert_in_api_state": "non-null object",
+      "required_keys_in_response": ["tripped_at_et", "triggered_reason", "tripped_count", "active_count"]
+    },
+    {
+      "label": "alert_hidden_when_dismissed_at_et_is_set",
+      "note": "read_fleet_alert() returns row with dismissed_at_et non-NULL → /api/state must return None (dismissed)",
+      "read_fleet_alert_returns": {
+        "tripped_at_et": "2026-05-17T10:33:00",
+        "triggered_reason": "Trailing Stop",
+        "tripped_count": 6,
+        "active_count": 10,
+        "dismissed_at_et": "2026-05-17T10:45:00"
+      },
+      "expected_fleet_correlation_alert_in_api_state": null
+    },
+    {
+      "label": "alert_hidden_when_no_row",
+      "note": "read_fleet_alert() returns None (empty table) → /api/state must return None",
+      "read_fleet_alert_returns": null,
+      "expected_fleet_correlation_alert_in_api_state": null
+    }
+  ]
+}

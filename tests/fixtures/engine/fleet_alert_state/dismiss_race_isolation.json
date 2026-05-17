@@ -1,0 +1,32 @@
+{
+  "_provenance": "schema-derived from R1 AC-10 race condition requirement. Describes concurrent engine save_state + dashboard dismiss isolation invariants. No producer-computed values.",
+  "description": "Race isolation invariants: dismiss POST must NEVER touch bot_state; engine bot_state writes must be unaffected by concurrent dismisses",
+  "invariants": {
+    "dismiss_never_touches_bot_state": {
+      "description": "POST /api/fleet-alert/dismiss must ONLY write to fleet_alert_state. It must never call database.load_state() or database.save_state().",
+      "test_approach": "Patch database.load_state and database.save_state; assert they are NOT called during dismiss POST",
+      "expected_calls_to_load_state": 0,
+      "expected_calls_to_save_state": 0,
+      "expected_calls_to_write_fleet_alert_or_similar": 1
+    },
+    "engine_bot_state_unaffected": {
+      "description": "Engine's bot_state writes (save_state) proceed independently. A concurrent dismiss must not corrupt or revert engine-written bot_state values.",
+      "test_approach": "Write a known bot_state, then simulate dismiss POST, then verify bot_state unchanged",
+      "bot_state_keys_that_must_survive": ["high_water_mark", "armed", "triggered", "last_successful_cycle_at"]
+    }
+  },
+  "bot_state_fixture_for_race_test": {
+    "some_symphony": {
+      "high_water_mark": 0.05,
+      "armed": true,
+      "triggered": false,
+      "last_successful_cycle_at": "2026-05-17T10:32:00"
+    },
+    "fleet_correlation_alert": {
+      "tripped_at_et": "2026-05-17T10:33:00",
+      "triggered_reason": "Trailing Stop",
+      "tripped_count": 6,
+      "active_count": 10
+    }
+  }
+}
