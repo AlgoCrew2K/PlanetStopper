@@ -4,7 +4,11 @@
   "function": "run_monte_carlo",
   "inputs": {
     "holdings": [
-      {"ticker": "XYZ", "allocation": 1.0, "last_percent_change": 0.003}
+      {
+        "ticker": "XYZ",
+        "allocation": 1.0,
+        "last_percent_change": 0.003
+      }
     ],
     "historical_data_spec": {
       "kind": "spy_only",
@@ -16,6 +20,6 @@
     "neighbor_k": 150,
     "numpy_seed": 42
   },
-  "expected": 50.46000000000001,
-  "derivation": "XYZ absent from all days -> returns_matrix uses spy_ret (line 491). historical SPY returns are +-0.005 -> +-0.5 pct after scaling. current_symphony_return = 0.003 * 100 * 1.0 = 0.3. Seed=42 produces below_count ~= 2477/5000 -> prob = (5000-2477)/5000*100 = 50.46. Captured from production code."
+  "expected": 48.38,
+  "derivation": "XYZ absent from all days -> returns_matrix uses spy_ret (line 491). historical SPY returns are +-0.005 -> +-0.5 pct after scaling. current_symphony_return = 0.003 * 100 * 1.0 = 0.3. Recaptured with run_monte_carlo(..., seed=42) via numpy.random.default_rng(42) after H3 RNG isolation (default_rng produces different draws than legacy np.random.seed at 42)."
 }

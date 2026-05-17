@@ -151,7 +151,6 @@ def _run_from_fixture(fixture: dict[str, Any]) -> float:
     neighbor_k = inputs["neighbor_k"]
     seed = inputs["numpy_seed"]
 
-    np.random.seed(seed)
     return float(
         math_engine.run_monte_carlo(
             holdings,
@@ -159,6 +158,7 @@ def _run_from_fixture(fixture: dict[str, Any]) -> float:
             spy_today,
             simulation_paths=sim_paths,
             neighbor_k=neighbor_k,
+            seed=seed,
         )
     )
 

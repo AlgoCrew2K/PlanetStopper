@@ -1,3 +1,4 @@
+import hashlib
 import math
 
 import numpy as np
@@ -44,6 +45,9 @@ MC_MIN_HISTORY_DAYS = 20              # Minimum history rows for MC simulation t
 MC_VOL_WINDOW_DAYS = 20              # Rolling SPY vol window; arithmetic uses (DAYS - 1) for inclusive endpoint
 MC_DEFAULT_SIMULATION_PATHS = 5000   # Default MC path count — CLT stability vs runtime tradeoff
 MC_DEFAULT_NEIGHBOR_K = 150          # Default kNN regime locality — smaller=tighter regime match, larger=smoother estimate
+# Seed modulus maps SHA-256 digest to numpy Generator's safe int range [0, 2^31);
+# 2^31 gives ~98k distinct values/year with no collisions across YYYYMMDD_HHMM space.
+MC_SEED_MODULUS = 2**31
 
 # Time-squeeze decay constants (drives intraday tightening of trailing stops)
 DECAY_CURVE_SCALAR = 9       # log10(1 + 9*t) maps t in [0,1] to decay in [0,1]; produces the characteristic AlphaBot intraday decay curve
@@ -472,7 +476,16 @@ def is_in_open_window_grace(
     return exec_start_naive <= current_time_naive < grace_end_naive
 
 
-def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=MC_DEFAULT_SIMULATION_PATHS, neighbor_k=MC_DEFAULT_NEIGHBOR_K):
+def derive_cycle_mc_seed(cycle_id: str) -> int:
+    """Deterministic seed for a given cycle_id (YYYYMMDD_HHMM format).
+
+    Pure function — no I/O, no global state. Safe across daemon restarts.
+    Same cycle_id always produces the same seed (SHA-256 truncated to 31 bits).
+    """
+    return int(hashlib.sha256(cycle_id.encode()).hexdigest(), 16) % MC_SEED_MODULUS
+
+
+def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=MC_DEFAULT_SIMULATION_PATHS, neighbor_k=MC_DEFAULT_NEIGHBOR_K, seed: int | None = None):
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.
     """
@@ -541,7 +554,9 @@ def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_path
     nearest_day_returns = returns_matrix.dot(weights) * PCT_SCALAR
     
     # 6. Random selection & Cumulative Distribution
-    sim_results = np.random.choice(nearest_day_returns, size=simulation_paths)
+    # Isolated Generator — does NOT touch the numpy global RNG (AC-H3.1).
+    rng = np.random.default_rng(seed)
+    sim_results = rng.choice(nearest_day_returns, size=simulation_paths)
     
     sim_results.sort()
     below_count = np.searchsorted(sim_results, current_symphony_return)

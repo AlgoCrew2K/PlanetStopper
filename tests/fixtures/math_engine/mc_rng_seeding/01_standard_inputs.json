@@ -1,0 +1,26 @@
+{
+  "name": "mc_rng_seeding_standard_inputs",
+  "description": "Standard 50-day history used for all RNG seeding reproducibility tests. Holdings, history spec, and call params are fixed; mc_prob is NEVER hardcoded — tests assert two independent runs with the same seed agree with each other (not against a literal).",
+  "function": "run_monte_carlo",
+  "notes": "PA-18: expected field intentionally absent — reproducibility is asserted as run_a == run_b. Any field named 'expected' here would be a producer-computed literal and a PA-18 violation.",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 0.6, "last_percent_change": 0.0},
+      {"ticker": "BBB", "allocation": 0.4, "last_percent_change": 0.0}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating",
+      "num_days": 50,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.008,
+      "bbb_amplitude": 0.004
+    },
+    "spy_today_return": 0.0,
+    "simulation_paths": 2000,
+    "neighbor_k": 10,
+    "explicit_seed": 12345
+  },
+  "seed_a": 12345,
+  "seed_b": 99999,
+  "derivation": "50 days > MC_MIN_HISTORY_DAYS=20; full MC path runs. last_percent_change=0.0 for all holdings so current_symphony_return=0 (mid-distribution). spy_today_return=0.0 so kNN selects neutral-return days that split ~50% above and ~50% below csr=0, preventing saturation to 0.0 or 100.0. explicit_seed and seed_b are arbitrary — their values are not producer outputs. seed_b != seed_a to test that distinct seeds drive distinct random draws."
+}
