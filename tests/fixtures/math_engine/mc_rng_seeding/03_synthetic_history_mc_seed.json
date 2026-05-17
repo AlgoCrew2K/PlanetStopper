@@ -1,0 +1,88 @@
+{
+  "name": "mc_rng_seeding_synthetic_history_cache_rebuild",
+  "description": "Inputs for testing that synthetic_history.py passes a deterministic seed to run_monte_carlo. Two (symphony_id, trading_day) pairs exercise distinct key space; a third pair shares symphony_id with the first to confirm trading_day differentiates seeds. mc_prob is NEVER hardcoded — tests assert two independent cache-rebuild runs for the same inputs agree with each other (not against a literal). Historical rows are pre-computed with np.random.default_rng(2024) so the fixture is self-contained; these are deterministic daily return values, NOT producer outputs.",
+  "function": "synthetic_history.process_day -> math_engine.run_monte_carlo",
+  "notes": "PA-18: no 'expected_mc_prob' field. Byte-identity is asserted as run_a == run_b. Seed values in 'seed_cases' are named-constant derivation inputs (symphony_id + trading_day strings). Historical row daily_ret values are pre-generated constants (the RNG seed that generated them is recorded in history_rng_seed for reproducibility), not producer-computed floats.",
+  "historical_data_spec": {
+    "kind": "rows",
+    "history_rng_seed": 2024,
+    "note": "Generated via np.random.default_rng(2024): SPY~N(0,0.01), AAA~N(0.0002,0.015), BBB~N(0.0001,0.01). Heterogeneous (non-alternating) so mc_prob is mid-range [40,85] and seed-sensitive.",
+    "rows": [
+      {"date": "2024-01-01", "SPY": 0.01028857, "AAA": 0.01162593, "BBB": -0.00835211},
+      {"date": "2024-01-02", "SPY": 0.0164192, "AAA": -0.00372686, "BBB": 0.00401626},
+      {"date": "2024-01-03", "SPY": 0.0114672, "AAA": 0.00046197, "BBB": -0.02491407},
+      {"date": "2024-01-04", "SPY": -0.0097318, "AAA": 0.02022906, "BBB": -0.00039529},
+      {"date": "2024-01-05", "SPY": -0.013928, "AAA": 0.01918178, "BBB": -0.00320145},
+      {"date": "2024-01-06", "SPY": 0.00067196, "AAA": 0.01084967, "BBB": -0.00509413},
+      {"date": "2024-01-07", "SPY": 0.00861351, "AAA": -0.01279601, "BBB": 0.02330353},
+      {"date": "2024-01-08", "SPY": 0.00509187, "AAA": -0.00060513, "BBB": -0.02463539},
+      {"date": "2024-01-09", "SPY": 0.01810286, "AAA": 0.00924376, "BBB": -0.00012275},
+      {"date": "2024-01-10", "SPY": 0.00750843, "AAA": -0.00297799, "BBB": 0.00078979},
+      {"date": "2024-01-11", "SPY": 0.0063976, "AAA": -0.00895027, "BBB": 0.0047733},
+      {"date": "2024-01-12", "SPY": -0.00731323, "AAA": -0.01128083, "BBB": -0.01591701},
+      {"date": "2024-01-13", "SPY": -0.01107717, "AAA": -0.00928013, "BBB": -0.00456623},
+      {"date": "2024-01-14", "SPY": 0.01484406, "AAA": -0.00987407, "BBB": -0.01485448},
+      {"date": "2024-01-15", "SPY": 0.00048912, "AAA": -0.00656667, "BBB": -0.00117619},
+      {"date": "2024-01-16", "SPY": 0.0081152, "AAA": 0.01738516, "BBB": 0.00205919},
+      {"date": "2024-01-17", "SPY": -0.01376423, "AAA": -0.01180963, "BBB": 0.00174487},
+      {"date": "2024-01-18", "SPY": -0.00436371, "AAA": 0.01350353, "BBB": -0.0018801},
+      {"date": "2024-01-19", "SPY": -0.01291092, "AAA": 0.00646377, "BBB": 0.00195943},
+      {"date": "2024-01-20", "SPY": -0.00775679, "AAA": 0.00229625, "BBB": 0.00187362},
+      {"date": "2024-01-21", "SPY": 0.00903063, "AAA": -0.01221103, "BBB": 0.00415068},
+      {"date": "2024-01-22", "SPY": -0.01480581, "AAA": -0.00665041, "BBB": 0.00035225},
+      {"date": "2024-01-23", "SPY": -0.00534093, "AAA": 0.02980333, "BBB": -0.01772871},
+      {"date": "2024-01-24", "SPY": 0.00163789, "AAA": 0.00168602, "BBB": -0.00804707},
+      {"date": "2024-01-25", "SPY": -0.0066847, "AAA": 0.00827312, "BBB": 0.00355573},
+      {"date": "2024-01-26", "SPY": -0.0025229, "AAA": 0.01014547, "BBB": -0.0090033},
+      {"date": "2024-01-27", "SPY": -0.00221862, "AAA": 0.01603462, "BBB": -0.00788425},
+      {"date": "2024-01-28", "SPY": 0.00418139, "AAA": -0.00336275, "BBB": 0.00123356},
+      {"date": "2024-02-01", "SPY": -0.00431255, "AAA": -0.00895296, "BBB": -0.00035529},
+      {"date": "2024-02-02", "SPY": 0.00272261, "AAA": -0.00069421, "BBB": 0.00903807},
+      {"date": "2024-02-03", "SPY": 0.00056819, "AAA": -0.00371229, "BBB": 0.00521854},
+      {"date": "2024-02-04", "SPY": 0.00424569, "AAA": 0.01206015, "BBB": -0.00425134},
+      {"date": "2024-02-05", "SPY": 0.00224943, "AAA": 0.00304416, "BBB": 0.00124254},
+      {"date": "2024-02-06", "SPY": 0.01657684, "AAA": 0.00378906, "BBB": -0.02848853},
+      {"date": "2024-02-07", "SPY": -0.00663676, "AAA": 0.00237514, "BBB": -0.00787405},
+      {"date": "2024-02-08", "SPY": 0.01199187, "AAA": 0.01862552, "BBB": -0.00137432},
+      {"date": "2024-02-09", "SPY": -0.00402612, "AAA": -0.00793941, "BBB": -0.02377243},
+      {"date": "2024-02-10", "SPY": -0.00957926, "AAA": -0.00697534, "BBB": -0.00312443},
+      {"date": "2024-02-11", "SPY": 0.01211194, "AAA": 0.01347696, "BBB": 0.0026164},
+      {"date": "2024-02-12", "SPY": -0.00439506, "AAA": -0.00139615, "BBB": 0.0104495},
+      {"date": "2024-02-13", "SPY": -0.00387636, "AAA": 0.00561317, "BBB": 0.00412926},
+      {"date": "2024-02-14", "SPY": -0.01388684, "AAA": -0.01073482, "BBB": 0.0189426},
+      {"date": "2024-02-15", "SPY": -0.02098197, "AAA": 0.00054997, "BBB": 0.01537959},
+      {"date": "2024-02-16", "SPY": 0.00634301, "AAA": 0.00667751, "BBB": -0.01624361},
+      {"date": "2024-02-17", "SPY": -0.01165266, "AAA": -0.01971155, "BBB": -0.00216051},
+      {"date": "2024-02-18", "SPY": 0.00778273, "AAA": -0.01022401, "BBB": -0.0014618},
+      {"date": "2024-02-19", "SPY": 0.01848167, "AAA": 0.00654594, "BBB": 0.00101688},
+      {"date": "2024-02-20", "SPY": -0.00114798, "AAA": 0.03393212, "BBB": -0.00562729},
+      {"date": "2024-02-21", "SPY": -0.01126615, "AAA": 0.00713429, "BBB": 0.00620395},
+      {"date": "2024-02-22", "SPY": 0.00394199, "AAA": -0.00068379, "BBB": 0.00755029}
+    ]
+  },
+  "holdings": [
+    {"ticker": "AAA", "allocation": 0.6, "last_percent_change": 0.0},
+    {"ticker": "BBB", "allocation": 0.4, "last_percent_change": 0.0}
+  ],
+  "spy_today_return": 0.0,
+  "simulation_paths": 300,
+  "neighbor_k": 5,
+  "seed_cases": [
+    {
+      "label": "symphony_A_day_1",
+      "symphony_id": "sym-alpha-001",
+      "trading_day": "2024-01-02"
+    },
+    {
+      "label": "symphony_A_day_2",
+      "symphony_id": "sym-alpha-001",
+      "trading_day": "2024-01-03"
+    },
+    {
+      "label": "symphony_B_day_1",
+      "symphony_id": "sym-beta-002",
+      "trading_day": "2024-01-02"
+    }
+  ],
+  "derivation": "Three distinct (symphony_id, trading_day) pairs: two share symphony_id (proving trading_day differentiates seeds) and two share trading_day (proving symphony_id differentiates seeds). simulation_paths=300 and neighbor_k=5 match the actual synthetic_history.py call site. Heterogeneous history (Gaussian random walk, seed=2024) ensures mc_prob is mid-range (~57-65) and seed-sensitive. Alternating history was rejected because it saturates the KNN to 100.0 regardless of seed."
+}
