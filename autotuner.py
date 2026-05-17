@@ -738,12 +738,17 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             else:
                 gamma3, gamma4 = 0.0, 3.0  # normal-distribution fallback for degenerate spread
 
+            SR_0 = math_engine.compute_expected_max_sharpe(
+                sr_mean=mean_v,
+                sr_std=std_v,
+                n_trials=n_trials,
+            )
             best_dsr = float("-inf")
             best_trial_by_dsr = None
             for t in completed_trials:
                 dsr = compute_deflated_sharpe_ratio(
                     SR_obs=t.value,
-                    SR_0=0.0,
+                    SR_0=SR_0,
                     gamma3=gamma3,
                     gamma4=gamma4,
                     T=T_train,
@@ -759,12 +764,12 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             # If no valid DSR trial found, fall through with naive Optuna winner
 
         if deflated_sharpe_value is None and naive_sharpe_value is not None:
-            # Fewer than 2 completed trials — moments are undefined; use normal-distribution
-            # assumption (gamma3=0, gamma4=3) as a conservative fallback so operator still
-            # receives a finite DSR signal rather than NULL.
+            # Fewer than 2 completed trials — no cross-trial distribution exists,
+            # so no expected-max-SR correction applies. Use PSR-style null baseline.
+            fallback_SR_0 = 0.0
             dsr_fallback = compute_deflated_sharpe_ratio(
                 SR_obs=naive_sharpe_value,
-                SR_0=0.0,
+                SR_0=fallback_SR_0,
                 gamma3=0.0,
                 gamma4=3.0,
                 T=T_train,
@@ -1017,12 +1022,17 @@ def run_calibration_sweep(
             else:
                 gamma3, gamma4 = 0.0, 3.0
 
+            SR_0 = math_engine.compute_expected_max_sharpe(
+                sr_mean=mean_v,
+                sr_std=std_v,
+                n_trials=n_tv,
+            )
             best_dsr = float("-inf")
             best_trial_by_dsr = None
             for t in completed_trials:
                 dsr = compute_deflated_sharpe_ratio(
                     SR_obs=t.value,
-                    SR_0=0.0,
+                    SR_0=SR_0,
                     gamma3=gamma3,
                     gamma4=gamma4,
                     T=T_val,
@@ -1037,9 +1047,12 @@ def run_calibration_sweep(
                 deflated_sharpe_value = best_dsr
 
         if deflated_sharpe_value is None and naive_sharpe_value is not None:
+            # Fewer than 2 completed trials — no cross-trial distribution exists,
+            # so no expected-max-SR correction applies. Use PSR-style null baseline.
+            fallback_SR_0 = 0.0
             dsr_fallback = compute_deflated_sharpe_ratio(
                 SR_obs=naive_sharpe_value,
-                SR_0=0.0,
+                SR_0=fallback_SR_0,
                 gamma3=0.0,
                 gamma4=3.0,
                 T=T_val,

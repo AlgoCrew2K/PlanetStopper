@@ -2,6 +2,31 @@ import hashlib
 import math
 
 import numpy as np
+from scipy.stats import norm
+
+# Euler-Mascheroni constant (Bailey & López de Prado 2014, DOI: 10.3905/jpm.2014.40.5.094,
+# Eq. 9 expected-max-SR appendix). Used to derive SR_0 for selection-bias correction.
+_GAMMA_EULER_MASCHERONI = 0.5772156649015329
+
+
+def compute_expected_max_sharpe(sr_mean: float, sr_std: float, n_trials: int) -> float:
+    """Expected maximum Sharpe across N independent trials (Bailey & López de Prado 2014,
+    DOI: 10.3905/jpm.2014.40.5.094, Eq. 9 expected-max-SR appendix).
+
+    SR_0 = sr_mean + sr_std * ((1 - gamma_E) * Phi^-1(1 - 1/N) + gamma_E * Phi^-1(1 - 1/(N*e)))
+
+    Used as SR_0 in compute_deflated_sharpe_ratio to correct for selection bias
+    across N Optuna trials.
+    """
+    if n_trials <= 0:
+        raise ValueError(f"n_trials must be >= 1; got {n_trials}")
+    if sr_std < 0:
+        raise ValueError(f"sr_std must be >= 0; got {sr_std}")
+    if n_trials == 1 or sr_std == 0:
+        return float(sr_mean)
+    ppf1 = norm.ppf(1.0 - 1.0 / n_trials)
+    ppf2 = norm.ppf(1.0 - 1.0 / (n_trials * math.e))
+    return sr_mean + sr_std * ((1.0 - _GAMMA_EULER_MASCHERONI) * ppf1 + _GAMMA_EULER_MASCHERONI * ppf2)
 
 
 def _reject_non_finite(**kwargs):

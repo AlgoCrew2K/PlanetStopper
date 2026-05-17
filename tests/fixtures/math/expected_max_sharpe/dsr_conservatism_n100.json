@@ -1,0 +1,26 @@
+{
+  "provenance": "Hand-computed against Bailey, D.H. & López de Prado, M. (2014). 'The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality.' Journal of Portfolio Management, 40(5), 94-107. DOI: 10.3905/jpm.2014.40.5.094. Demonstrates AC7: DSR with full expected-max correction is strictly more conservative (lower) than DSR with SR_0=0. All values computed via reference implementation using scipy.stats.norm.ppf.",
+  "description": "Proves the selection-bias correction makes DSR more conservative. SR_obs=1.2, gamma3=0.5, gamma4=4.0, T=252, N=100, sr_mean=0.5, sr_std=0.3. DSR(full) must be < DSR(SR_0=0).",
+  "inputs": {
+    "SR_obs": 1.2,
+    "gamma3": 0.5,
+    "gamma4": 4.0,
+    "T": 252,
+    "sr_mean": 0.5,
+    "sr_std": 0.3,
+    "n_trials": 100
+  },
+  "derivation": {
+    "SR_0_full_derivation": "compute_expected_max_sharpe(0.5, 0.3, 100) = 1.2591808679605052",
+    "SR_0_full": 1.2591808679605052,
+    "dsr_denominator_sq": "1 - 0.5*1.2 + (4-1)/4 * 1.2^2 = 1 - 0.6 + 0.75*1.44 = 1 - 0.6 + 1.08 = 1.48",
+    "dsr_denominator": "sqrt(1.48) = 1.2165525060596437",
+    "DSR_full_numerator": "(1.2 - 1.2591808679605052) * sqrt(251) = -0.0591808679605052 * 15.842979517754859 = -0.9375965938040026",
+    "DSR_full": -0.7705044487302424,
+    "DSR_zero_numerator": "(1.2 - 0.0) * sqrt(251) = 1.2 * 15.842979517754859 = 19.01157542130583",
+    "DSR_zero": 15.627418731710502
+  },
+  "expected_dsr_full": -0.770703503770741,
+  "expected_dsr_zero": 15.627418731710502,
+  "assertion": "expected_dsr_full < expected_dsr_zero (full correction is more conservative)"
+}

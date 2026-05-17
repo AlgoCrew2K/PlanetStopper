@@ -1,0 +1,22 @@
+{
+  "provenance": "Hand-computed against Bailey, D.H. & López de Prado, M. (2014). 'The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality.' Journal of Portfolio Management, 40(5), 94-107. DOI: 10.3905/jpm.2014.40.5.094. Expected-maximum Sharpe formula (appendix): E[max SR] = mu + sigma * ((1 - gamma_E) * Phi^-1(1 - 1/N) + gamma_E * Phi^-1(1 - 1/(N*e))). All intermediate values independently verified in Python using scipy.stats.norm.ppf and math.e.",
+  "description": "N=100 trials, sr_mean=0.5, sr_std=0.3. Typical mid-size Optuna study. The expected-max correction materializes the selection-bias inflation: E[max SR]=1.259 exceeds mean=0.5 substantially.",
+  "inputs": {
+    "sr_mean": 0.5,
+    "sr_std": 0.3,
+    "n_trials": 100
+  },
+  "derivation": {
+    "GAMMA_EULER": 0.5772156649015329,
+    "ONE_MINUS_GAMMA_EULER": 0.4227843350984671,
+    "ppf_arg_term1": "1 - 1/100 = 0.99",
+    "ppf_value_term1": 2.3263478740408408,
+    "term1": "0.4227843350984671 * 2.3263478740408408 = 0.9835434391340887",
+    "ppf_arg_term2": "1 - 1/(100 * e) = 1 - 1/271.8281828 = 0.9963212",
+    "ppf_value_term2": 2.6802104449668884,
+    "term2": "0.5772156649015329 * 2.6802104449668884 = 1.5470594540675953",
+    "bracket": "0.9835434391340887 + 1.5470594540675953 = 2.530602893201684",
+    "result": "0.5 + 0.3 * 2.530602893201684 = 1.2591808679605052"
+  },
+  "expected_result": 1.2591808679605052
+}

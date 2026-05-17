@@ -1,0 +1,14 @@
+{
+  "provenance": "Hand-computed against Bailey, D.H. & López de Prado, M. (2014). 'The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality.' Journal of Portfolio Management, 40(5), 94-107. DOI: 10.3905/jpm.2014.40.5.094. Edge case: N=1. When n_trials=1, Phi^-1(1 - 1/1) = Phi^-1(0) = -inf, which is not economically meaningful. The implementation must guard this: for n_trials=1 there is no selection bias across trials, so SR_0 collapses to sr_mean (zero correction). This is the defined behavior per the guard clause.",
+  "description": "N=1 trial edge case. Phi^-1(0)=-inf; guard required. Expected result: sr_mean (no selection-bias correction with a single trial).",
+  "inputs": {
+    "sr_mean": 0.5,
+    "sr_std": 0.3,
+    "n_trials": 1
+  },
+  "derivation": {
+    "note": "Phi^-1(1-1/1) = Phi^-1(0) = -inf. Guard: for n_trials==1, return sr_mean directly to avoid -inf propagation. No selection bias exists with a single trial.",
+    "result": "sr_mean = 0.5"
+  },
+  "expected_result": 0.5
+}
