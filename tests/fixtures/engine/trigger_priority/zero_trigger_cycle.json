@@ -1,0 +1,19 @@
+{
+  "_provenance": "schema-derived from alpha_bot_execution.py:938. When no trigger flags are True, the execution_queue is never appended to and no side effects run.",
+
+  "trigger_flags": {
+    "is_vwap_broken": false,
+    "is_vwap_bleed_broken": false,
+    "tp_triggered_now": false,
+    "is_trailing_stop_hit": false
+  },
+
+  "expected_winner": null,
+  "also_true_candidates": [],
+
+  "side_effect_call_counts": {
+    "sell_to_cash_total_calls": 0,
+    "record_exit_trigger_calls": 0,
+    "log_symphony_event_trigger_calls": 0
+  }
+}

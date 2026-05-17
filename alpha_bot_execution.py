@@ -936,18 +936,24 @@ def main():
                 })
 
                 if is_trailing_stop_hit or tp_triggered_now or is_vwap_broken or is_vwap_bleed_broken:
-                    if tp_triggered_now:
-                        reason = "Take-Profit"
-                        attempted_level = current_return
-                    elif is_vwap_bleed_broken:
-                        reason = "VWAP Bleed Cut"
-                        attempted_level = acc_VWAP_BLEED_ARM_PCT
-                    elif is_vwap_broken:
-                        reason = "VWAP Breakdown"
-                        attempted_level = safe_hwm
-                    else:
-                        reason = "Trailing Stop"
-                        attempted_level = stop_trigger_level
+                    # H2: priority order is VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop.
+                    # Resolve winner before any side-effect executes (AC-H2.1, AC-H2.2).
+                    _TRIGGER_PRIORITY = [
+                        ("VWAP Breakdown", is_vwap_broken, safe_hwm),
+                        ("Take-Profit", tp_triggered_now, current_return),
+                        ("VWAP Bleed Cut", is_vwap_bleed_broken, acc_VWAP_BLEED_ARM_PCT),
+                        ("Trailing Stop", is_trailing_stop_hit, stop_trigger_level),
+                    ]
+                    reason, attempted_level = next(
+                        (name, level)
+                        for name, fired, level in _TRIGGER_PRIORITY
+                        if fired
+                    )
+                    also_true = [
+                        name
+                        for name, fired, _level in _TRIGGER_PRIORITY
+                        if fired and name != reason
+                    ]
 
                     print(f"  🚨 {reason.upper()} HIT FOR {symphony_name} 🚨 - Queuing for Execution")
                     database.log_symphony_event(symphony_id, f"{reason.upper()} HIT FOR {symphony_name}. Level: {attempted_level:.2f}", "triggered")
@@ -959,6 +965,7 @@ def main():
                         "symphony_name": symphony_name,
                         "reason": reason,
                         "attempted_level": attempted_level,
+                        "also_true": also_true,
                         "current_return": current_return,
                         "safe_hwm": safe_hwm,
                         "stop_trigger_level": stop_trigger_level,
@@ -1072,6 +1079,7 @@ def main():
                                 "vwap_bleed_ticks": bot_state[sym_id].get("vwap_bleed_ticks", 0),
                                 "mc_prob": item["prob_beating"],
                                 "symphony_vol": item["symphony_vol"],
+                                "also_true": item["also_true"],
                             },
                             cycle_id=bot_state.get("last_successful_cycle_at"),
                         )

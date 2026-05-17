@@ -1,0 +1,18 @@
+{
+  "_provenance": "schema-derived from alpha_bot_execution.py:938-950. Priority ladder: VWAP Breakdown (index 0) beats VWAP Bleed Cut (index 2).",
+
+  "trigger_flags": {
+    "is_vwap_broken": true,
+    "is_vwap_bleed_broken": true,
+    "tp_triggered_now": false,
+    "is_trailing_stop_hit": false
+  },
+
+  "expected_winner": "VWAP Breakdown",
+  "also_true_candidates": ["VWAP Bleed Cut"],
+
+  "side_effect_call_counts": {
+    "sell_to_cash_total_calls": 1,
+    "record_exit_trigger_calls": 1
+  }
+}
