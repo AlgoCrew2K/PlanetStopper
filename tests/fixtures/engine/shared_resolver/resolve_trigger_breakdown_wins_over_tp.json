@@ -1,0 +1,19 @@
+{
+  "_provenance": "schema-derived from AC5 of R3b acceptance criteria. TP and VWAP Breakdown both True — this is the paired live-vs-replay fixture that exposes the autotuner inversion bug. Live resolves to VWAP Breakdown; pre-fix autotuner resolves to Take-Profit. Both must resolve to VWAP Breakdown after the fix.",
+
+  "description": "TP + VWAP Breakdown both fire. VWAP Breakdown wins (priority 0 beats priority 1). This is the canonical parity regression case.",
+
+  "input": {
+    "is_vwap_broken": true,
+    "is_tp_hit": true,
+    "is_vwap_bleed_broken": false,
+    "is_trailing_stop_hit": false
+  },
+
+  "expected_reason": "VWAP Breakdown",
+  "expected_also_true": ["Take-Profit"],
+
+  "pre_fix_autotuner_reason": "Take-Profit",
+  "post_fix_reason": "VWAP Breakdown",
+  "parity_note": "This pair exposes the inversion: autotuner.py:476 checks is_tp_hit before is_vwap_broken, so pre-fix replay returns Take-Profit instead of VWAP Breakdown. After the shared resolver is introduced, both paths return VWAP Breakdown."
+}

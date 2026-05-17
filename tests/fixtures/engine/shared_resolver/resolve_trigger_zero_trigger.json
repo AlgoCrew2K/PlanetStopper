@@ -1,0 +1,13 @@
+{
+  "_provenance": "schema-derived from AC7 of R3b acceptance criteria. No candidate flag is True — resolver must return (None, []).",
+
+  "input": {
+    "is_vwap_broken": false,
+    "is_tp_hit": false,
+    "is_vwap_bleed_broken": false,
+    "is_trailing_stop_hit": false
+  },
+
+  "expected_reason": null,
+  "expected_also_true": []
+}
