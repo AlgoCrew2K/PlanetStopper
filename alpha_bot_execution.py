@@ -329,13 +329,17 @@ def set_fleet_correlation_alert(
     tripped_count: int,
     active_count: int,
 ) -> None:
-    """Write the fleet_correlation_alert dict into bot_state (AC-V3.1)."""
-    bot_state["fleet_correlation_alert"] = {
+    """Persist fleet_correlation_alert to fleet_alert_state table (R1 AC-3).
+
+    Writes to the dedicated fleet_alert_state table via database.write_fleet_alert().
+    Does NOT mutate bot_state — the alert state is owned by the DB table exclusively.
+    """
+    database.write_fleet_alert({
         "tripped_at_et": tripped_at_et,
         "triggered_reason": triggered_reason,
         "tripped_count": tripped_count,
         "active_count": active_count,
-    }
+    })
 
 
 def dismiss_fleet_correlation_alert(bot_state: dict) -> None:
@@ -366,8 +370,8 @@ def check_fleet_correlation_and_update_state(
     if now_et is None:
         now_et = get_current_et()
 
-    existing_alert = bot_state.get("fleet_correlation_alert")
-    if existing_alert:
+    existing_alert = database.read_fleet_alert()
+    if existing_alert and existing_alert.get("dismissed_at_et") is None:
         tripped_str = existing_alert.get("tripped_at_et", "")
         try:
             tripped_dt = datetime.fromisoformat(tripped_str)
@@ -375,9 +379,9 @@ def check_fleet_correlation_and_update_state(
             now_naive = now_et.replace(tzinfo=None) if now_et.tzinfo is not None else now_et
             elapsed_minutes = (now_naive - tripped_dt).total_seconds() / 60.0
             if elapsed_minutes >= FLEET_CORRELATION_CLEAR_MINUTES:
-                bot_state.pop("fleet_correlation_alert", None)
+                database.clear_fleet_alert()
         except (ValueError, TypeError):
-            bot_state.pop("fleet_correlation_alert", None)
+            database.clear_fleet_alert()
 
     window_s = FLEET_CORRELATION_WINDOW_MINUTES * 60
     cutoff_utc = (now_et - timedelta(seconds=window_s)).astimezone(timezone.utc)

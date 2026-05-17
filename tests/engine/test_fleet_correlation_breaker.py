@@ -386,12 +386,13 @@ class TestDetectFleetCorrelationWindowBoundary:
 
 class TestFleetAlertStateShape:
     """
-    AC-V3.1: When the alert trips, bot_state["fleet_correlation_alert"] must be
-    a dict with the exact required keys and correct value types.
+    AC-V3.1 (R1 updated): When the alert trips, set_fleet_correlation_alert must
+    persist the alert to fleet_alert_state via database.write_fleet_alert() with the
+    required keys and correct value types. bot_state is NOT mutated (R1 AC-3).
     """
 
     def _get_alert_setter(self):
-        """Resolve the function that sets bot_state['fleet_correlation_alert']."""
+        """Resolve the function that persists the fleet alert."""
         try:
             from alpha_bot_execution import set_fleet_correlation_alert
             return set_fleet_correlation_alert
@@ -399,78 +400,78 @@ class TestFleetAlertStateShape:
             return None
 
     def test_fleet_correlation_alert_key_shape_when_tripped(self):
-        """bot_state['fleet_correlation_alert'] must contain required keys with correct types."""
+        """set_fleet_correlation_alert must call write_fleet_alert with all required keys."""
         fixture = _load("alert_state_shape.json")
         required_keys = fixture["required_keys"]
 
-        # If a dedicated setter exists, use it; otherwise test the shape via a mock bot_state
         setter = self._get_alert_setter()
         if setter is None:
             pytest.fail(
-                "set_fleet_correlation_alert (or equivalent) not found in alpha_bot_execution. "
-                "Implement a function that writes the fleet_correlation_alert dict into bot_state "
-                "per AC-V3.1 shape: tripped_at_et, triggered_reason, tripped_count, active_count."
+                "set_fleet_correlation_alert not found in alpha_bot_execution. "
+                "Implement per R1 AC-3: persists alert to fleet_alert_state via "
+                "database.write_fleet_alert()."
             )
 
         bot_state: dict = {}
-        now_et_str = "2026-05-16T10:33:00"
-        setter(
-            bot_state=bot_state,
-            tripped_at_et=now_et_str,
-            triggered_reason="Trailing Stop",
-            tripped_count=6,
-            active_count=10,
-        )
+        with patch("database.write_fleet_alert") as mock_write:
+            setter(
+                bot_state=bot_state,
+                tripped_at_et="2026-05-16T10:33:00",
+                triggered_reason="Trailing Stop",
+                tripped_count=6,
+                active_count=10,
+            )
 
-        assert "fleet_correlation_alert" in bot_state, (
-            "set_fleet_correlation_alert must write 'fleet_correlation_alert' key into bot_state."
+        assert mock_write.called, (
+            "set_fleet_correlation_alert must call database.write_fleet_alert(). "
+            "R1 AC-3: alert state lives in fleet_alert_state, not bot_state."
         )
-        alert = bot_state["fleet_correlation_alert"]
-        assert isinstance(alert, dict), (
-            f"fleet_correlation_alert must be a dict, got {type(alert).__name__}"
+        payload = mock_write.call_args[0][0]
+        assert isinstance(payload, dict), (
+            f"write_fleet_alert must be called with a dict payload, got {type(payload).__name__}"
         )
         for key in required_keys:
-            assert key in alert, (
-                f"fleet_correlation_alert must contain key '{key}'. Present keys: {list(alert.keys())}"
+            assert key in payload, (
+                f"write_fleet_alert payload must contain key '{key}'. Present keys: {list(payload.keys())}"
             )
 
     def test_tripped_at_et_is_string(self):
-        """tripped_at_et must be a string (ISO ET timestamp)."""
+        """tripped_at_et in the write_fleet_alert payload must be a string."""
         setter = self._get_alert_setter()
         if setter is None:
-            pytest.fail("set_fleet_correlation_alert not found — implement per AC-V3.1.")
-        bot_state: dict = {}
-        setter(
-            bot_state=bot_state,
-            tripped_at_et="2026-05-16T10:33:00",
-            triggered_reason="PARA-ARM",
-            tripped_count=6,
-            active_count=10,
-        )
-        alert = bot_state["fleet_correlation_alert"]
-        assert isinstance(alert["tripped_at_et"], str), (
-            f"tripped_at_et must be a str, got {type(alert['tripped_at_et']).__name__}"
+            pytest.fail("set_fleet_correlation_alert not found — implement per R1 AC-3.")
+        with patch("database.write_fleet_alert") as mock_write:
+            setter(
+                bot_state={},
+                tripped_at_et="2026-05-16T10:33:00",
+                triggered_reason="PARA-ARM",
+                tripped_count=6,
+                active_count=10,
+            )
+        payload = mock_write.call_args[0][0]
+        assert isinstance(payload["tripped_at_et"], str), (
+            f"tripped_at_et must be a str, got {type(payload['tripped_at_et']).__name__}"
         )
 
     def test_tripped_count_and_active_count_are_ints(self):
-        """tripped_count and active_count must be int."""
+        """tripped_count and active_count in write_fleet_alert payload must be int."""
         setter = self._get_alert_setter()
         if setter is None:
-            pytest.fail("set_fleet_correlation_alert not found — implement per AC-V3.1.")
-        bot_state: dict = {}
-        setter(
-            bot_state=bot_state,
-            tripped_at_et="2026-05-16T10:33:00",
-            triggered_reason="PARA-ARM",
-            tripped_count=6,
-            active_count=10,
+            pytest.fail("set_fleet_correlation_alert not found.")
+        with patch("database.write_fleet_alert") as mock_write:
+            setter(
+                bot_state={},
+                tripped_at_et="2026-05-16T10:33:00",
+                triggered_reason="PARA-ARM",
+                tripped_count=6,
+                active_count=10,
+            )
+        payload = mock_write.call_args[0][0]
+        assert isinstance(payload["tripped_count"], int), (
+            f"tripped_count must be int, got {type(payload['tripped_count']).__name__}"
         )
-        alert = bot_state["fleet_correlation_alert"]
-        assert isinstance(alert["tripped_count"], int), (
-            f"tripped_count must be int, got {type(alert['tripped_count']).__name__}"
-        )
-        assert isinstance(alert["active_count"], int), (
-            f"active_count must be int, got {type(alert['active_count']).__name__}"
+        assert isinstance(payload["active_count"], int), (
+            f"active_count must be int, got {type(payload['active_count']).__name__}"
         )
 
     def test_fleet_correlation_alert_absent_when_not_tripped(self):
@@ -797,8 +798,9 @@ class TestFleetAlertAutoClear:
 
     def test_alert_clears_after_30_min_no_new_events(self):
         """
-        check_fleet_correlation_and_update_state clears the alert when last_fleet_event_et
-        is older than FLEET_CORRELATION_CLEAR_MINUTES and no new events detected.
+        check_fleet_correlation_and_update_state clears the alert when tripped_at_et
+        (read from fleet_alert_state) is older than FLEET_CORRELATION_CLEAR_MINUTES
+        and no new events detected. R1 AC-4: clear via database.clear_fleet_alert().
         """
         try:
             import alpha_bot_execution
@@ -813,19 +815,22 @@ class TestFleetAlertAutoClear:
         fixture = _load("auto_clear.json")
         case = next(c for c in fixture["cases"] if c["label"] == "alert_clears_after_30_min_no_new_events")
 
-        # Seed bot_state with an existing alert older than 30 min
-        bot_state: dict = {
-            "fleet_correlation_alert": {
-                "tripped_at_et": case["last_fleet_event_et"],
-                "triggered_reason": "Trailing Stop",
-                "tripped_count": 6,
-                "active_count": 10,
-            }
+        # R1: alert state lives in fleet_alert_state, not bot_state.
+        # Seed via read_fleet_alert mock (not bot_state).
+        stale_alert = {
+            "tripped_at_et": case["last_fleet_event_et"],
+            "triggered_reason": "Trailing Stop",
+            "tripped_count": 6,
+            "active_count": 10,
+            "dismissed_at_et": None,
         }
-
+        bot_state: dict = {}
         check_time = _et_at(case["check_time_et"])
 
-        with patch("database.get_triggers", return_value=[]):
+        with patch("database.get_triggers", return_value=[]), \
+             patch("database.read_fleet_alert", return_value=stale_alert), \
+             patch("database.clear_fleet_alert") as mock_clear, \
+             patch("database.write_fleet_alert"):
             with patch.object(alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", fixture["clear_minutes"]):
                 alpha_bot_execution.check_fleet_correlation_and_update_state(
                     bot_state=bot_state,
@@ -833,9 +838,9 @@ class TestFleetAlertAutoClear:
                     now_et=check_time,
                 )
 
-        assert "fleet_correlation_alert" not in bot_state, (
-            f"Case '{case['label']}': alert must be removed after {fixture['clear_minutes']} min "
-            f"with no new events. {case['note']}"
+        assert mock_clear.called, (
+            f"Case '{case['label']}': database.clear_fleet_alert() must be called after "
+            f"{fixture['clear_minutes']} min with no new events. {case['note']}"
         )
 
     def test_alert_persists_before_30_min_elapsed(self):

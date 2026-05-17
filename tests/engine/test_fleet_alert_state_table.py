@@ -272,11 +272,21 @@ class TestHelperRoundTrip:
 
     @pytest.fixture(autouse=True)
     def _patch_db_conn(self, monkeypatch):
-        """Redirect database.get_connection() to a fresh in-memory SQLite."""
-        self._conn = _make_in_memory_conn()
+        """Redirect database.get_connection() to a shared in-memory SQLite URI.
 
-        def _fake_connect():
-            return sqlite3.connect(":memory:")
+        Each call to get_connection() returns a NEW connection object that shares
+        the same in-memory database via file URI + shared cache. This lets helpers
+        call conn.close() (as they must) without destroying the database between calls.
+        """
+        import uuid
+        self._db_name = f"file:testdb_{uuid.uuid4().hex}?mode=memory&cache=shared"
+
+        def _make_shared_conn():
+            conn = sqlite3.connect(self._db_name, uri=True)
+            conn.row_factory = sqlite3.Row
+            return conn
+
+        self._make_conn = _make_shared_conn
 
         try:
             import database
@@ -284,14 +294,18 @@ class TestHelperRoundTrip:
         except ImportError:
             pytest.fail("database module not importable.")
 
-        # Patch get_connection to return our pre-seeded in-memory conn.
-        # Because helpers open their own connection, we replace the factory.
-        # The in-memory DB is shared via a module-level connection swap.
-        monkeypatch.setattr(self._db, "get_connection", lambda: self._conn)
+        monkeypatch.setattr(self._db, "get_connection", _make_shared_conn)
+
+        # Keep one long-lived reference connection open so the in-memory DB
+        # is not destroyed when helpers close their individual connections.
+        self._keeper = _make_shared_conn()
+        yield
+        self._keeper.close()
 
     def _seed_table(self):
-        """Ensure the table exists in the patched in-memory connection."""
-        self._conn.execute("""
+        """Ensure the fleet_alert_state table exists in the shared in-memory DB."""
+        conn = self._make_conn()
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS fleet_alert_state (
                 id               INTEGER PRIMARY KEY CHECK(id = 1),
                 tripped_at_et    TEXT NOT NULL,
@@ -301,7 +315,8 @@ class TestHelperRoundTrip:
                 dismissed_at_et  TEXT NULL DEFAULT NULL
             )
         """)
-        self._conn.commit()
+        conn.commit()
+        conn.close()
 
     def test_read_fleet_alert_returns_none_when_table_empty(self):
         """read_fleet_alert() returns None when fleet_alert_state has no rows."""
@@ -383,9 +398,11 @@ class TestHelperRoundTrip:
         }
         self._db.write_fleet_alert(payload_a)
         self._db.write_fleet_alert(payload_b)
-        row_count = self._conn.execute(
+        conn = self._make_conn()
+        row_count = conn.execute(
             "SELECT COUNT(*) FROM fleet_alert_state"
         ).fetchone()[0]
+        conn.close()
         assert row_count == 1, (
             f"write_fleet_alert must upsert to a single row. Got {row_count} rows."
         )
