@@ -375,20 +375,35 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
             for sym_name, changes in optimization_results.items():
                 sym_changes_text = ""
                 baseline_text = ""
+                dsr_data = None
                 if changes:
                     if "_baseline_chosen" in changes:
                         baseline_text = f"**Decision:** {changes['_baseline_chosen']}\n\n"
 
+                    if "_dsr_data" in changes:
+                        dsr_data = changes["_dsr_data"]
+
                     for var, vals in changes.items():
-                        if var == "_baseline_chosen":
+                        if var in ("_baseline_chosen", "_dsr_data"):
                             continue
                         # Delta-Only Filter: Only add to string if the value actually changed
                         if vals['old'] != vals['new']:
                             sym_changes_text += f"- `{var}`: {vals['old']} -> {vals['new']}\n"
-                
+
                 if not sym_changes_text:
                     sym_changes_text = "✅ Optimal parameters retained."
-                
+
+                if dsr_data is not None:
+                    def _fmt(v):
+                        return f"{v:.4f}" if v is not None else "N/A"
+                    dsr_line = (
+                        f"\nSharpe (naive / DSR / frozen-eval): "
+                        f"{_fmt(dsr_data.get('naive_sharpe'))} / "
+                        f"{_fmt(dsr_data.get('deflated_sharpe'))} / "
+                        f"{_fmt(dsr_data.get('frozen_eval_sharpe'))}"
+                    )
+                    sym_changes_text += dsr_line
+
                 embeds.append({
                     "title": f"⚙️ {sym_name.title()} Optimization",
                     "color": 10181046,
