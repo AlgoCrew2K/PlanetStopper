@@ -327,10 +327,12 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
                 )
 
                 if is_trailing_hit or is_tp_hit or is_vwap_broken or is_vwap_bleed_broken:
-                    reason_str = "Trailing Stop"
-                    if is_tp_hit: reason_str = "Take-Profit"
-                    elif is_vwap_broken: reason_str = "VWAP Breakdown"
-                    elif is_vwap_bleed_broken: reason_str = "VWAP Bleed Cut"
+                    reason_str, _ = math_engine.resolve_trigger_priority(
+                        is_vwap_broken=is_vwap_broken,
+                        is_tp_hit=is_tp_hit,
+                        is_vwap_bleed_broken=is_vwap_bleed_broken,
+                        is_trailing_stop_hit=is_trailing_hit,
+                    )
 
                     penalty = deviation_dict.get(reason_str, -0.20)
                     triggered_return = ret + penalty
@@ -472,10 +474,12 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 )
 
                 if is_trailing_hit or is_tp_hit or is_vwap_broken or is_vwap_bleed_broken:
-                    reason_str = "Trailing Stop"
-                    if is_tp_hit: reason_str = "Take-Profit"
-                    elif is_vwap_broken: reason_str = "VWAP Breakdown"
-                    elif is_vwap_bleed_broken: reason_str = "VWAP Bleed Cut"
+                    reason_str, _ = math_engine.resolve_trigger_priority(
+                        is_vwap_broken=is_vwap_broken,
+                        is_tp_hit=is_tp_hit,
+                        is_vwap_bleed_broken=is_vwap_bleed_broken,
+                        is_trailing_stop_hit=is_trailing_hit,
+                    )
 
                     penalty = deviation_dict.get(reason_str, -0.20)
                     triggered_return = ret + penalty
