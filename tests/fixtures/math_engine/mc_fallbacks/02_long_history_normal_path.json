@@ -4,7 +4,11 @@
   "function": "run_monte_carlo",
   "inputs": {
     "holdings": [
-      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}
+      {
+        "ticker": "AAA",
+        "allocation": 1.0,
+        "last_percent_change": 0.01
+      }
     ],
     "historical_data_spec": {
       "kind": "alternating",
@@ -17,6 +21,6 @@
     "neighbor_k": 150,
     "numpy_seed": 42
   },
-  "expected": 50.62,
-  "derivation": "50 >= MC_MIN_HISTORY_DAYS(20): guard passes, full MC runs. len(spy_returns)=50 >= 19: windowed vol if-branch taken (today_vol uses tail-19 slice + spy_today). Captured from production code with numpy.random.seed(42). Differs from the 15-day fixture (100.0) because different code paths produce different outputs."
+  "expected": 51.5,
+  "derivation": "50 >= MC_MIN_HISTORY_DAYS(20): guard passes, full MC runs. len(spy_returns)=50 >= 19: windowed vol if-branch taken (today_vol uses tail-19 slice + spy_today). Recaptured with run_monte_carlo(..., seed=42) via numpy.random.default_rng(42) after H3 RNG isolation (default_rng produces different draws than legacy np.random.seed). Differs from the 15-day fixture (100.0) because different code paths produce different outputs."
 }

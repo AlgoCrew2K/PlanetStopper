@@ -207,10 +207,10 @@ def test_run_monte_carlo_behavioral_equivalence_pin(
     seed = inputs["numpy_seed"]
     expected = fixture["expected"]
 
-    np.random.seed(seed)
     actual = math_engine.run_monte_carlo(
         holdings, history, spy_today,
         simulation_paths=sim_paths, neighbor_k=neighbor_k,
+        seed=seed,
     )
 
     # Zero-tolerance: a rename must not change a single ulp.

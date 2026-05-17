@@ -4,7 +4,11 @@
   "function": "run_monte_carlo",
   "inputs": {
     "holdings": [
-      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.01}
+      {
+        "ticker": "AAA",
+        "allocation": 1.0,
+        "last_percent_change": 0.01
+      }
     ],
     "historical_data_spec": {
       "kind": "alternating",
@@ -17,6 +21,6 @@
     "neighbor_k": 150,
     "numpy_seed": 42
   },
-  "expected": 51.339999999999996,
-  "derivation": "Captured behavioral pin under numpy.random.seed(42). This regime exercises the boundary case len(valid_dates) == MC_MIN_HISTORY_DAYS (not short-circuited) AND len(distances) <= neighbor_k (uses np.arange path, not argpartition). The expected value is the exact output of the present implementation; any constant-extraction must not perturb it (zero tolerance)."
+  "expected": 50.739999999999995,
+  "derivation": "Captured behavioral pin under numpy.random.default_rng(42) via seed=42 kwarg (H3 AC-H3.1). This regime exercises the boundary case len(valid_dates) == MC_MIN_HISTORY_DAYS (not short-circuited) AND len(distances) <= neighbor_k (uses np.arange path, not argpartition). The expected value is the exact output of the present implementation; any constant-extraction must not perturb it (zero tolerance)."
 }
