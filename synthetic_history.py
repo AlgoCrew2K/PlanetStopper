@@ -230,7 +230,8 @@ def generate_synthetic_history(bot_state, current_date_str):
                         valid_alloc += alloc
                         
                 # Reduce neighbor_k and paths for speed, 300 paths is fine for tuning approximation
-                mc_prob = math_engine.run_monte_carlo(holdings, hist_data_up_to_yesterday, spy_today, 300, 5)
+                # Seed is per-(symphony, day) so cache rebuilds produce bit-identical series.
+                mc_prob = math_engine.run_monte_carlo(holdings, hist_data_up_to_yesterday, spy_today, 300, 5, seed=math_engine.derive_cycle_mc_seed(f"{sym_id}_{date_str}"))
                 
                 ticks.append({
                     "time": ts[11:16],
