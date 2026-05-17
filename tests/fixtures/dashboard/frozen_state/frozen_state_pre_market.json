@@ -1,0 +1,38 @@
+{
+  "_provenance": "Hand-authored fixture. Represents a last_market_close_snapshot served during pre_market state. pre_market must behave identically to closed_frozen for the state field (both return real symphony object, not a string). PA-18: schema-derived from app.py:224 branch condition and AC-7 in the R2 team-lead brief.",
+  "scenario": "frozen_state_pre_market",
+  "snapshot_input": {
+    "trading_day": "2026-05-16",
+    "captured_at_et": "16:00:05 ET",
+    "data_as_of": "16:00 ET",
+    "portfolio_strip": {
+      "today_change": null,
+      "cumulative_return": null,
+      "max_drawdown": null
+    },
+    "shadow_divergence": {
+      "by_symphony": {},
+      "portfolio_today": null
+    },
+    "accounts_map": {
+      "ACC-INDIVIDUAL": [
+        {
+          "id": "sym-gamma",
+          "name": "Gamma Growth",
+          "account": "ACC-INDIVIDUAL",
+          "current_return": 2.8,
+          "armed": false,
+          "tp_armed": true,
+          "para_armed": false,
+          "triggered": false
+        }
+      ]
+    }
+  },
+  "expected": {
+    "market_state": "pre_market",
+    "state_is_object": true,
+    "state_keys_are_symphony_ids": ["sym-gamma"],
+    "frozen_at_is_nonnull": true
+  }
+}

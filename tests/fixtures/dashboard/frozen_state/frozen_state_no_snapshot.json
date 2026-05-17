@@ -1,0 +1,17 @@
+{
+  "_provenance": "Hand-authored fixture. Represents a bot_state with no last_market_close_snapshot (fresh deploy, first day before market ever closed). Used to verify /api/state.state returns empty object {} and notice is present. PA-18: schema-derived from app.py:248-267 waiting branch.",
+  "scenario": "frozen_state_no_snapshot",
+  "input": {
+    "bot_state": {},
+    "market_state": "closed_frozen"
+  },
+  "expected": {
+    "state": {},
+    "state_is_empty_object": true,
+    "state_is_not_null": true,
+    "state_is_not_string": true,
+    "market_state": "closed_frozen",
+    "frozen_at": null,
+    "notice_contains": "No closing snapshot"
+  }
+}
