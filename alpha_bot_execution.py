@@ -751,7 +751,10 @@ def main():
                 high_water_mark = bot_state[symphony_id]["high_water_mark"]
                 safe_hwm = high_water_mark if high_water_mark != -999.0 else current_return
 
-                prob_beating = math_engine.run_monte_carlo(holdings, historical_data, spy_today, SIMULATION_PATHS, NEIGHBOR_K)
+                prob_beating = math_engine.run_monte_carlo(
+                    holdings, historical_data, spy_today, SIMULATION_PATHS, NEIGHBOR_K,
+                    seed=math_engine.derive_cycle_mc_seed(current_et.strftime("%Y%m%d_%H%M")),
+                )
                 symphony_vol = math_engine.calculate_20d_vol(holdings, historical_data)
 
                 acc_VWAP_BLEED_ARM_PCT = math_engine.compute_vwap_bleed_arm_threshold(
