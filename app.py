@@ -236,14 +236,20 @@ def get_api_state_dict() -> dict:
     exit_authority = get_exit_authority()
 
     # Read lock status directly — no dedicated helper exists for read-only lock query
+    _ro = None
     try:
         _ro = database.get_ro_connection()
         _cur = _ro.execute("SELECT is_locked FROM execution_lock WHERE id = 1")
         _row = _cur.fetchone()
         is_locked = bool(_row[0]) if _row else False
-        _ro.close()
     except Exception:
         is_locked = False
+    finally:
+        if _ro is not None:
+            try:
+                _ro.close()
+            except Exception:
+                pass
 
     port_state: dict = {}
     if hasattr(database, "read_port_state"):
@@ -275,6 +281,14 @@ def get_state():
     try:
         _ro_conn = database.get_ro_connection()
         market_state = get_market_state(datetime.now(_ET))
+
+        # AC-P2.12.2: additive fields — computed once, merged into every response branch.
+        _api_state = get_api_state_dict()
+        _additive = {
+            "port_state": _api_state["port_state"],
+            "exit_authority": _api_state["exit_authority"],
+            "daemon_started_at": _DAEMON_STARTED_AT,
+        }
 
         state_data = database.load_state()
 
@@ -310,6 +324,7 @@ def get_state():
                     "shadow_divergence": sd,
                     "accounts_map": snapshot.get("accounts_map"),
                     "fleet_correlation_alert": _alert,
+                    **_additive,
                 })
 
         # No live state — return waiting with market_state context and notice on fresh deploy.
@@ -336,7 +351,7 @@ def get_state():
             # AC-DM.3.4: include notice on fresh deploy (no snapshot, market closed)
             if market_state in ("closed_frozen", "pre_market"):
                 waiting_resp["notice"] = "No closing snapshot yet — waiting for first market close at 16:00 ET."
-            return jsonify(waiting_resp)
+            return jsonify({**waiting_resp, **_additive})
 
         env_vars = dotenv_values(".env")
         live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
@@ -496,6 +511,7 @@ def get_state():
             "last_successful_cycle_at": state_data.get("last_successful_cycle_at"),
             "shadow_divergence": shadow_divergence,
             "fleet_correlation_alert": _alert,
+            **_additive,
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
