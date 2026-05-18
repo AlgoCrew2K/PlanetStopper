@@ -914,6 +914,7 @@ def get_settings():
     globals_data = {
         "LIVE_EXECUTION": env_vars.get("LIVE_EXECUTION", "False"),
         "EXECUTION_START_TIME": env_vars.get("EXECUTION_START_TIME", "09:30"),
+        "EXIT_AUTHORITY": env_vars.get("EXIT_AUTHORITY", "per_symphony"),
     }
     # _MASKED_SETTINGS_KEYS is the single driver — adding a key there masks it automatically.
     for key in _MASKED_SETTINGS_KEYS:
@@ -939,8 +940,15 @@ def save_settings():
 
     try:
         # Save Globals
-        for key, val in payload.get("globals", {}).items():
+        globals_payload = payload.get("globals", {})
+        for key, val in globals_payload.items():
             set_key(ENV_FILE_PATH, key, str(val))
+
+        # AC-P2.2.4: record timestamp when EXIT_AUTHORITY is changed so the sticky
+        # restart notice can compare against daemon_started_at (panel BC H7).
+        if "EXIT_AUTHORITY" in globals_payload:
+            _changed_at = datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+            set_key(ENV_FILE_PATH, "_exit_authority_changed_at", _changed_at)
 
         # Save Symphony Strategies
         for sym_name, strategy_data in payload.get("symphonies", {}).items():
