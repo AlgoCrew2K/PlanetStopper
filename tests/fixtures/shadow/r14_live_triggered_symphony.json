@@ -1,0 +1,148 @@
+{
+  "_provenance": "Captured from live alphabot_state.db on 2026-05-18 for symphony iaSOOUsmnCJHiZvbrWfs. Operator reported TC +1.66 (+1.66) on dashboard — both sides identical. These post-trigger rows demonstrate shadow_return is correctly frozen at 1.68 while current_return diverges freely. Used by test_r14_shadow_read_contract.py to assert AC-M1F.3.1 divergence.",
+  "_capture_query": "SELECT ts_et, current_return, shadow_return, is_post_trigger, trading_day FROM shadow_history WHERE symphony_id = 'iaSOOUsmnCJHiZvbrWfs' ORDER BY ts_utc DESC LIMIT 15",
+  "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+  "trading_day": "2026-05-18",
+  "rows": [
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:54:03",
+      "ts_utc": "2026-05-18T14:54:03Z",
+      "current_return": 1.63,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:53:03",
+      "ts_utc": "2026-05-18T14:53:03Z",
+      "current_return": 1.66,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:52:03",
+      "ts_utc": "2026-05-18T14:52:03Z",
+      "current_return": 1.92,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:51:03",
+      "ts_utc": "2026-05-18T14:51:03Z",
+      "current_return": 2.29,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:50:03",
+      "ts_utc": "2026-05-18T14:50:03Z",
+      "current_return": 2.1999999999999997,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:49:03",
+      "ts_utc": "2026-05-18T14:49:03Z",
+      "current_return": 2.1999999999999997,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:48:03",
+      "ts_utc": "2026-05-18T14:48:03Z",
+      "current_return": 1.8399999999999999,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:47:03",
+      "ts_utc": "2026-05-18T14:47:03Z",
+      "current_return": 1.92,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:46:03",
+      "ts_utc": "2026-05-18T14:46:03Z",
+      "current_return": 2.04,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:45:03",
+      "ts_utc": "2026-05-18T14:45:03Z",
+      "current_return": 1.59,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:44:03",
+      "ts_utc": "2026-05-18T14:44:03Z",
+      "current_return": 1.6500000000000001,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:43:03",
+      "ts_utc": "2026-05-18T14:43:03Z",
+      "current_return": 1.79,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:42:03",
+      "ts_utc": "2026-05-18T14:42:03Z",
+      "current_return": 1.8499999999999999,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:41:04",
+      "ts_utc": "2026-05-18T14:41:04Z",
+      "current_return": 1.6500000000000001,
+      "shadow_return": 1.68,
+      "is_post_trigger": 1,
+      "trading_day": "2026-05-18"
+    },
+    {
+      "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+      "ts_et": "2026-05-18T10:40:04",
+      "ts_utc": "2026-05-18T14:40:04Z",
+      "current_return": 1.68,
+      "shadow_return": 1.68,
+      "is_post_trigger": 0,
+      "trading_day": "2026-05-18"
+    }
+  ],
+  "expected": {
+    "latest_shadow_return": 1.68,
+    "latest_current_return": 1.63,
+    "comment": "Latest row (10:54) has shadow_return=1.68 (frozen at trigger), current_return=1.63. AC-M1F.3.1: dry_run must read shadow_return=1.68, NOT current_return=1.63."
+  }
+}
