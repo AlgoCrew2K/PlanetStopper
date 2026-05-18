@@ -29,10 +29,27 @@ DEFAULT_LOCKED_VARS = [
 def get_connection():
     return sqlite3.connect(DB_FILE, timeout=10.0)
 
+
+def get_ro_connection() -> sqlite3.Connection:
+    # Opens via SQLite URI with ?mode=ro — read-only enforced at driver level.
+    # Dashboard read handlers use this to prevent accidental writes while the
+    # engine holds a WAL write lock (concurrent Flask reads + single writer).
+    return sqlite3.connect(f"file:{DB_FILE}?mode=ro", uri=True, timeout=10.0)
+
+
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
-    
+
+    # Enable WAL journal_mode so Flask dashboard reads can proceed concurrently
+    # while the engine holds a write lock. WAL is idempotent — SQLite returns
+    # the current mode without error if already set. Verify round-trip to catch
+    # any environment that silently ignores the PRAGMA (e.g., read-only FS).
+    cursor.execute("PRAGMA journal_mode=WAL")
+    result = cursor.fetchone()
+    if result and result[0].lower() != "wal":
+        logging.warning("PRAGMA journal_mode=WAL did not take effect; current mode: %s", result[0])
+
     # Execution & State Tracking
     cursor.execute("CREATE TABLE IF NOT EXISTS bot_state (id INTEGER PRIMARY KEY, data TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS execution_lock (id INTEGER PRIMARY KEY, is_locked INTEGER, timestamp REAL)")
