@@ -54,6 +54,12 @@ app.jinja_env.auto_reload = True
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
+_daemon_log = logging.getLogger("alphabot")
+_daemon_log.setLevel(logging.DEBUG)
+_daemon_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+_daemon_fh.setLevel(logging.DEBUG)
+_daemon_log.addHandler(_daemon_fh)
+
 COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
 
 # ---------------------------------------------------------------------------
@@ -735,13 +741,43 @@ def perform_account_liquidation(account_id, key, secret, live_mode):
 
 @app.route("/api/sell_account", methods=["POST"])
 def sell_account():
-    data = request.json
+    data = request.json or {}
     account_id = data.get("account_id")
+    confirm_account_id = data.get("confirm_account_id")
+    confirm_phrase = data.get("confirm_phrase")
+
+    # Gate 1-4: confirmation validation before any env/credential check
+    if not confirm_account_id:
+        return jsonify({"status": "error", "message": "confirm_account_id is required"}), 400
+    if confirm_account_id != account_id:
+        return jsonify({"status": "error", "message": "confirm_account_id does not match account_id"}), 400
+    if not confirm_phrase:
+        return jsonify({"status": "error", "message": "confirm_phrase is required"}), 400
+    if confirm_phrase != "LIQUIDATE":
+        return jsonify({"status": "error", "message": "confirm_phrase must be exactly LIQUIDATE"}), 400
+
     env_vars = dotenv_values(".env")
     live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
 
     if not (account_id and env_vars.get("COMPOSER_KEY_ID")):
         return jsonify({"status": "error", "message": "Missing credentials or account ID."}), 400
+
+    ts_et = datetime.now(_ET).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Audit: Discord alert + ERROR log on every invocation regardless of live_mode
+    discord_url = env_vars.get("DISCORD_WEBHOOK_URL", "")
+    if discord_url:
+        try:
+            requests.post(discord_url, json={
+                "content": f"EMERGENCY LIQUIDATION TRIGGERED on {account_id} at {ts_et} ET (live={live_mode})"
+            }, timeout=5)
+        except Exception:
+            pass
+
+    _daemon_log.error(
+        "EMERGENCY LIQUIDATION TRIGGERED on %s at %s ET (live=%s)",
+        account_id, ts_et, live_mode,
+    )
 
     if not live_mode:
         # Real-money safety gate: never spawn the liquidation thread when
@@ -750,6 +786,7 @@ def sell_account():
         # execution.
         return jsonify({
             "status": "dry_run",
+            "dry_run": True,
             "message": "Panic-stop disabled in non-LIVE mode. Set LIVE_EXECUTION=True to arm.",
             "live_mode": False,
             "executed": False,
