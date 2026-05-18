@@ -224,6 +224,11 @@ class TestAnalyticsCalledWithSnapshotTradingDay:
             mock_analytics.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
             mock_analytics.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
             mock_analytics.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
+            # on-the-fly portfolio_strip recompute also calls portfolio-level helpers;
+            # stub them so jsonify doesn't 500 on MagicMock serialisation
+            mock_analytics.get_portfolio_today_change.return_value = {"if_held": None, "dry_run": None}
+            mock_analytics.get_portfolio_cumulative_return.return_value = {"if_held": None, "dry_run": None}
+            mock_analytics.get_portfolio_max_drawdown.return_value = {"if_held": None, "dry_run": None}
 
             monkeypatch.setattr(
                 app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
