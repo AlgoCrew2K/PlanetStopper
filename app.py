@@ -803,6 +803,8 @@ def sell_account():
 # --- 4. Tabbed Settings / Control Panel Routes ---
 
 # Keys whose values must never be echoed to the browser in GET /api/settings.
+# Includes API credentials, webhook URLs, and account UUIDs (Alpaca account
+# identifiers are sensitive — exposing them aids account enumeration attacks).
 _MASKED_SETTINGS_KEYS = frozenset({
     "ANTHROPIC_API_KEY",
     "COMPOSER_KEY_ID",
@@ -810,6 +812,9 @@ _MASKED_SETTINGS_KEYS = frozenset({
     "ALPACA_KEY",
     "ALPACA_SECRET",
     "DISCORD_WEBHOOK_URL",
+    "ACCOUNT_INDIVIDUAL",
+    "ACCOUNT_ROTH",
+    "ACCOUNT_TRAD",
 })
 
 
@@ -825,9 +830,6 @@ def get_settings():
     globals_data = {
         "LIVE_EXECUTION": env_vars.get("LIVE_EXECUTION", "False"),
         "EXECUTION_START_TIME": env_vars.get("EXECUTION_START_TIME", "09:30"),
-        "ACCOUNT_INDIVIDUAL": env_vars.get("ACCOUNT_INDIVIDUAL", ""),
-        "ACCOUNT_ROTH": env_vars.get("ACCOUNT_ROTH", ""),
-        "ACCOUNT_TRAD": env_vars.get("ACCOUNT_TRAD", ""),
     }
     # _MASKED_SETTINGS_KEYS is the single driver — adding a key there masks it automatically.
     for key in _MASKED_SETTINGS_KEYS:

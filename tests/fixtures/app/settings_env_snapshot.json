@@ -5,13 +5,13 @@
     "COMPOSER_SECRET": "test-composer-secret-placeholder",
     "ALPACA_KEY": "test-alpaca-key-placeholder",
     "ALPACA_SECRET": "test-alpaca-secret-placeholder",
-    "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/000000000000/test-placeholder-token"
-  },
-  "non_secrets": {
-    "LIVE_EXECUTION": "False",
-    "EXECUTION_START_TIME": "09:30",
+    "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/000000000000/test-placeholder-token",
     "ACCOUNT_INDIVIDUAL": "ACCT-001-INDIVIDUAL",
     "ACCOUNT_ROTH": "ACCT-002-ROTH",
     "ACCOUNT_TRAD": "ACCT-003-TRAD"
+  },
+  "non_secrets": {
+    "LIVE_EXECUTION": "False",
+    "EXECUTION_START_TIME": "09:30"
   }
 }
