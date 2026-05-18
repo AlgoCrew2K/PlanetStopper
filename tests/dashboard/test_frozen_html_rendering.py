@@ -405,3 +405,58 @@ class TestPreMarketIncludesHtmlKey:
         assert isinstance(body["html"], str) and body["html"], (
             f"pre_market html must be a non-empty string, got {body['html']!r}"
         )
+
+
+# ===========================================================================
+# AC-H9: symphonies missing shadow_hwm must not crash frozen render
+# ===========================================================================
+
+class TestFrozenRenderWithMissingShadowHwm:
+    """
+    AC-H9: A snapshot symphony with shadow_hwm absent must render without a
+    Jinja UndefinedError. Two guards must both be load-bearing:
+      1. app.py _FROZEN_SYM_DEFAULTS setdefault("shadow_hwm", 0.0) normalises the dict.
+      2. table_partial.html `| default(0)` prevents Undefined reaching | round(2).
+    This is the exact field whose absence caused the operator-reported blank-table
+    regression (commit 0092fa2). A test that passes with both guards removed is
+    worthless — this test pins the behaviour the fix introduced.
+    """
+
+    def test_symphony_missing_shadow_hwm_renders_without_crash(
+        self, flask_client, monkeypatch
+    ):
+        """AC-H9: snapshot with shadow_hwm absent → 200, html key, symphony row present."""
+        client, app_module = flask_client
+        fx = _load("frozen_html_missing_shadow_hwm")
+
+        bot_state = {
+            "date": "2026-05-16",
+            "last_market_close_snapshot": fx["snapshot_input"],
+        }
+
+        with patch.object(app_module, "database", _make_db_mock(bot_state)):
+            monkeypatch.setattr(
+                app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
+            )
+            resp = client.get("/api/state")
+
+        assert resp.status_code == 200, (
+            f"Frozen render with missing shadow_hwm must not 500. "
+            f"Got {resp.status_code}. "
+            "Likely cause: _FROZEN_SYM_DEFAULTS setdefault removed or | default(0) guard removed."
+        )
+        body = resp.get_json()
+        assert "html" in body, (
+            "html key must be present even when snapshot symphonies lack shadow_hwm. "
+            f"Keys: {list(body.keys())}"
+        )
+        html = body["html"]
+        assert isinstance(html, str) and html, (
+            f"html must be a non-empty string, got {html!r}"
+        )
+        for sym_id in fx["expected"]["symphony_ids_in_html"]:
+            assert f'data-symphony-id="{sym_id}"' in html, (
+                f"Rendered HTML must contain <tr data-symphony-id=\"{sym_id}\"> "
+                f"even when shadow_hwm is absent from the snapshot. "
+                f"HTML (first 500 chars): {html[:500]!r}"
+            )
