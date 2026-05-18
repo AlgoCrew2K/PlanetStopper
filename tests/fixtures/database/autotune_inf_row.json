@@ -1,0 +1,32 @@
+{
+  "_provenance": "PA-18: Hand-authored. Schema-derived from database.py _autotune_run_row_to_dict (14-column SELECT shape). Represents a real failure mode: Optuna trials that produced float('-inf') sentinel values in alpha/Sharpe fields (e.g. a walk-forward window with no valid trades). The Python json module emits literal -Infinity for float('-inf'), which JS JSON.parse rejects per RFC 8259. Confirmed from operator report: curl shows literal -Infinity at position ~999 in /api/autotune-runs response.",
+  "scenario": "autotune_row_with_neg_inf_fields",
+  "description": "A row where several numeric fields contain float sentinel values (-inf, +inf, nan) that Python json emits as non-JSON literals. Fix: _finite_or_none coercion in _autotune_run_row_to_dict.",
+  "raw_row": {
+    "run_timestamp": "2026-05-16T16:00:01",
+    "symphony_id": "sym-alpha",
+    "oos_alpha": "-inf",
+    "train_alpha": "-inf",
+    "baseline_decision": "HOLD",
+    "fallback_oos_alpha": "-inf",
+    "default_oos_alpha": 2.1,
+    "deflated_sharpe": "-inf",
+    "naive_sharpe": "nan",
+    "validation_sharpe": "inf",
+    "frozen_eval_sharpe": null,
+    "math_mode": "per_symphony",
+    "account_id": "ACC-INDIVIDUAL",
+    "sortino_sentinel_pct": null
+  },
+  "expected": {
+    "oos_alpha": null,
+    "train_alpha": null,
+    "fallback_oos_alpha": null,
+    "default_oos_alpha": 2.1,
+    "deflated_sharpe": null,
+    "naive_sharpe": null,
+    "validation_sharpe": null,
+    "frozen_eval_sharpe": null,
+    "json_serializable": true
+  }
+}

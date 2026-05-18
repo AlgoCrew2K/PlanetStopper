@@ -1,0 +1,56 @@
+{
+  "_provenance": "PA-18: Hand-authored. Schema-derived from database.py get_symphony_strategy return shape ({params: {...}, locked_vars: [...]}) and app.py get_settings route. Represents two test scenarios for the Edit Variables populated-indicator: (a) at least one symphony has non-empty locked_vars, (b) no symphony has any non-default params populated. Used to pin AC-VARS.1 (indicator present) and AC-VARS.2 (indicator absent).",
+  "scenario_populated": {
+    "description": "Two symphonies, one has locked_vars populated — indicator must appear",
+    "symphonies": {
+      "alpha-momentum": {
+        "params": {
+          "TRIGGER_THRESHOLD_PCT": 12.0,
+          "TAKE_PROFIT_MC_PCT": 5.0,
+          "MAX_SQUEEZE_FLOOR": 0.20,
+          "VWAP_CROSS_HWM_PCT": 1.0,
+          "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+          "MAX_PARABOLIC_SQUEEZE": 0.50,
+          "VWAP_BLEED_MULTIPLIER": 1.5,
+          "VWAP_BLEED_TICKS": 10
+        },
+        "locked_vars": ["TRIGGER_THRESHOLD_PCT", "TAKE_PROFIT_MC_PCT"]
+      },
+      "beta-defensive": {
+        "params": {
+          "TRIGGER_THRESHOLD_PCT": 15.0,
+          "TAKE_PROFIT_MC_PCT": 5.0,
+          "MAX_SQUEEZE_FLOOR": 0.20,
+          "VWAP_CROSS_HWM_PCT": 1.0,
+          "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+          "MAX_PARABOLIC_SQUEEZE": 0.50,
+          "VWAP_BLEED_MULTIPLIER": 1.5,
+          "VWAP_BLEED_TICKS": 10
+        },
+        "locked_vars": []
+      }
+    },
+    "expected_total_locked_count": 2,
+    "indicator_must_be_present": true
+  },
+  "scenario_empty": {
+    "description": "One symphony, locked_vars empty — no indicator",
+    "symphonies": {
+      "beta-defensive": {
+        "params": {
+          "TRIGGER_THRESHOLD_PCT": 15.0,
+          "TAKE_PROFIT_MC_PCT": 5.0,
+          "MAX_SQUEEZE_FLOOR": 0.20,
+          "VWAP_CROSS_HWM_PCT": 1.0,
+          "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+          "MAX_PARABOLIC_SQUEEZE": 0.50,
+          "VWAP_BLEED_MULTIPLIER": 1.5,
+          "VWAP_BLEED_TICKS": 10
+        },
+        "locked_vars": []
+      }
+    },
+    "expected_total_locked_count": 0,
+    "indicator_must_be_present": false
+  }
+}
