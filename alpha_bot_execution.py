@@ -1206,8 +1206,9 @@ def main():
                 )
                 if _current_hash != _prev_hash:
                     # Composition changed — rebase port_state (BC-3: stop_trigger reset)
+                    _current_port_value = sum(s["value"] for s in _sym_snapshots)
                     database.rebase_port_state_on_composition_change(
-                        _account, _current_hash
+                        _account, _current_hash, _current_port_value
                     )
                     _port_state = database.read_port_state(_account)
                     if _port_state is None:
@@ -1291,11 +1292,13 @@ def main():
                         triggered_reason="Port-Level",
                         at_return=bot_state[_selected_id].get("current_return", 0.0),
                         gate_state={
-                            "port_trigger_id": _port_trigger_id,
                             "port_total_reduction_usd": _port_signal.get("port_total_reduction_usd", 0.0),
-                            "math_mode": "port_level",
+                            "selected_symphony_id": _selected_id,
+                            "all_scores": _selection.get("all_scores", []),
                         },
                         cycle_id=cycle_id_str,
+                        math_mode="port_level",
+                        port_trigger_id=_port_trigger_id,
                     )
                     # Update composition hash in port_state
                     database.write_port_state(_account, {

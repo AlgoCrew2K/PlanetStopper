@@ -152,6 +152,34 @@ class TestCompositionChangeRebase:
 # Multi-cycle convergence: composition change fires after each exit (AC-P2.8.1)
 # ---------------------------------------------------------------------------
 
+class TestRebaseCallSignature:
+    """Regression guard: rebase call in alpha_bot_execution.py must pass current_port_value."""
+
+    def test_rebase_requires_three_args(self):
+        """
+        BLOCK 1 regression guard: rebase_port_state_on_composition_change requires
+        (account_id, new_composition_hash, current_port_value). A two-arg call raises
+        TypeError — this test confirms the signature is enforced.
+        """
+        import inspect
+        sig = inspect.signature(rebase_port_state_on_composition_change)
+        params = list(sig.parameters.keys())
+        assert "current_port_value" in params, (
+            "rebase_port_state_on_composition_change must accept current_port_value; "
+            "alpha_bot_execution.py port-level dispatch must pass it or this raises TypeError"
+        )
+
+    def test_rebase_without_current_port_value_raises(self, mem_db):
+        """
+        Calling rebase with only two positional args must raise TypeError,
+        not silently succeed with wrong HWM.
+        """
+        write_port_state("acct-sig", {"composition_hash": "old", "high_water_mark": 50000.0})
+        import pytest as _pytest
+        with _pytest.raises(TypeError):
+            rebase_port_state_on_composition_change("acct-sig", "new-hash")
+
+
 class TestCompositionChangeAfterExit:
 
     def test_composition_change_detected_when_symphony_exits(self):

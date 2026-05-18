@@ -173,6 +173,86 @@ class TestPortDrivenExitTelemetry:
         assert row[0] == "per_symphony"
 
 
+class TestPortTriggerIdAndMathModeAsTopLevelColumns:
+    """
+    BLOCK 2 regression guard: math_mode and port_trigger_id must be passed as
+    top-level kwargs to record_exit_trigger (mapping to dedicated columns), NOT
+    embedded inside the gate_state dict. Embedding them inside gate_state leaves
+    the dedicated columns NULL, breaking AC-P2.10.1, AC-P2.10.2, and the partial
+    index idx_exit_triggers_port_trigger_id.
+    """
+
+    def test_port_trigger_id_lands_in_dedicated_column(self, mem_db):
+        """
+        port_trigger_id passed as top-level kwarg must appear in the
+        port_trigger_id column, not only inside gate_state_json.
+        """
+        import database
+        tid = str(uuid.uuid4())
+        database.record_exit_trigger(
+            symphony_id="sym-col-check",
+            account_id="acct-col",
+            triggered_reason="Port-Level",
+            at_return=0.05,
+            gate_state={"port_total_reduction_usd": 10000.0},
+            cycle_id="cycle-col-001",
+            math_mode="port_level",
+            port_trigger_id=tid,
+        )
+        conn = database.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT port_trigger_id, math_mode FROM exit_triggers WHERE symphony_id = 'sym-col-check'"
+        )
+        row = cursor.fetchone()
+        conn.close()
+        assert row is not None
+        assert row[0] == tid, (
+            "BLOCK 2: port_trigger_id must land in the dedicated column, not buried in gate_state_json"
+        )
+        assert row[1] == "port_level", (
+            "BLOCK 2: math_mode must land in the dedicated column, not buried in gate_state_json"
+        )
+
+    def test_embedding_in_gate_state_only_leaves_column_null(self, mem_db):
+        """
+        Passing math_mode/port_trigger_id only inside gate_state dict (the bug)
+        leaves the dedicated columns NULL. This test confirms the bug behaviour
+        to pin that the fix must route them as top-level kwargs.
+        """
+        import database
+        tid = str(uuid.uuid4())
+        # Intentionally wrong: values inside gate_state only, not as top-level kwargs
+        database.record_exit_trigger(
+            symphony_id="sym-bug-repro",
+            account_id="acct-bug",
+            triggered_reason="Port-Level",
+            at_return=0.05,
+            gate_state={
+                "port_trigger_id": tid,
+                "math_mode": "port_level",
+                "port_total_reduction_usd": 5000.0,
+            },
+            cycle_id="cycle-bug-001",
+            # math_mode and port_trigger_id NOT passed as top-level kwargs
+        )
+        conn = database.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT port_trigger_id, math_mode FROM exit_triggers WHERE symphony_id = 'sym-bug-repro'"
+        )
+        row = cursor.fetchone()
+        conn.close()
+        assert row is not None
+        assert row[0] is None, (
+            "Embedding port_trigger_id inside gate_state only must leave the dedicated column NULL "
+            "(confirms the call-site bug — the fix must pass it as a top-level kwarg)"
+        )
+        assert row[1] is None, (
+            "Embedding math_mode inside gate_state only must leave the dedicated column NULL"
+        )
+
+
 class TestApiTrigersSurface:
     """AC-P2.10.4: /api/triggers surfaces math_mode, port_trigger_id, gate_state_json."""
 
