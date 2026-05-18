@@ -161,7 +161,7 @@
                         {% set tc_dr_color = 'text-emerald-400' if tc_dr is not none and tc_dr >= 0 else 'text-rose-400' %}
                         {% set tc_ih_color = 'text-emerald-400/60' if tc_ih is not none and tc_ih >= 0 else 'text-rose-400/60' %}
 
-                        <tr class="hover:bg-slate-800 transition-colors">
+                        <tr class="hover:bg-slate-800 transition-colors" data-symphony-id="{{ sym.id }}">
                             <td class="px-3 py-2.5 text-slate-200">
                                 <div class="flex items-center gap-2 max-w-[250px]">
                                     <button onclick="openLogModal('{{ sym.id }}', '{{ safe_name }}')" class="text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0" title="View Logs">

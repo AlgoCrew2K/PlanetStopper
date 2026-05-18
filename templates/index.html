@@ -28,6 +28,11 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #475569;
         }
+
+        .cross-highlighted {
+            background-color: rgba(245, 158, 11, 0.08);
+            outline: 1px solid rgba(245, 158, 11, 0.25);
+        }
     </style>
 </head>
 
@@ -970,6 +975,9 @@
             // M1F: Shadow Performance strip (AC-M1F.4.3)
             // Sign convention: green = current_return < shadow_return (engine helped — exited before drop)
             //                  red   = current_return > shadow_return (engine cost — exited before recovery)
+            function escapeHtml(s) {
+                return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
             if (data.shadow_divergence) {
                 const sd = data.shadow_divergence;
                 const strip = document.getElementById('shadow-performance-strip');
@@ -982,16 +990,43 @@
                     } else {
                         pills.innerHTML = entries.map(([symId, d]) => {
                             const v = d.today;
+                            const rawName = d.name || symId;
+                            const label = rawName.length > 24 ? rawName.slice(0, 24) + '...' : rawName;
+                            const safeTitle = escapeHtml(rawName);
+                            const safeLabel = escapeHtml(label);
                             // null guard: render '—' for null/undefined
-                            if (v == null) return `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-700 text-slate-400 border border-slate-600">${symId.slice(-8)} <span class="ml-1 opacity-60">—</span></span>`;
+                            if (v == null) return `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-700 text-slate-400 border border-slate-600" data-symphony-id="${symId}" title="${safeTitle}">${safeLabel} <span class="ml-1 opacity-60">—</span></span>`;
                             // green when engine helped (v < 0 means current < shadow, bot exited high)
                             const helped = v < 0;
                             const cls = helped
                                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                                 : 'bg-rose-500/10 text-rose-400 border-rose-500/20';
                             const sign = v >= 0 ? '+' : '';
-                            return `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${cls} border">${symId.slice(-8)} <span class="ml-1">${sign}${v.toFixed(2)}%</span></span>`;
+                            return `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${cls} border" data-symphony-id="${symId}" title="${safeTitle}">${safeLabel} <span class="ml-1">${sign}${v.toFixed(2)}%</span></span>`;
                         }).join('');
+                        // Wire hover-debounce handlers — 500ms before cross-highlight fires to avoid
+                        // flicker on incidental mouse-overs during poll-driven refreshes.
+                        pills.querySelectorAll('[data-symphony-id]').forEach(pill => {
+                            let timer = null;
+                            pill.addEventListener('mouseenter', () => {
+                                function applyHighlight() {
+                                    const symId = pill.dataset.symphonyId;
+                                    document.querySelectorAll(`tr[data-symphony-id="${symId}"]`).forEach(row => {
+                                        row.classList.add('cross-highlighted');
+                                    });
+                                    pill.classList.add('highlighted');
+                                }
+                                timer = setTimeout(applyHighlight, 500);
+                            });
+                            pill.addEventListener('mouseleave', () => {
+                                clearTimeout(timer);
+                                const symId = pill.dataset.symphonyId;
+                                document.querySelectorAll(`tr[data-symphony-id="${symId}"]`).forEach(row => {
+                                    row.classList.remove('cross-highlighted');
+                                });
+                                pill.classList.remove('highlighted');
+                            });
+                        });
                         strip.classList.remove('hidden');
                     }
                 }

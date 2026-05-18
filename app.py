@@ -243,6 +243,12 @@ def get_state():
                     for _sym in (_acc_entries or []):
                         if isinstance(_sym, dict) and "id" in _sym:
                             _state[_sym["id"]] = _sym
+                sd_by_sym = sd.get("by_symphony") or {}
+                for sym_id, entry in sd_by_sym.items():
+                    if isinstance(entry, dict) and "name" not in entry:
+                        entry = dict(entry)
+                        sd_by_sym[sym_id] = entry
+                        entry["name"] = (_state.get(sym_id) or {}).get("name") or sym_id
                 return jsonify({
                     "status": "active",
                     "market_state": market_state,
@@ -263,6 +269,8 @@ def get_state():
                 shadow_divergence = database.get_shadow_divergence(today_str)
             except Exception:
                 shadow_divergence = {"by_symphony": {}, "portfolio_today": None}
+            for sym_id, entry in shadow_divergence["by_symphony"].items():
+                entry["name"] = sym_id
             _alert_row = database.read_fleet_alert()
             _alert = _alert_row if (_alert_row is not None and _alert_row.get("dismissed_at_et") is None) else None
             waiting_resp = {
@@ -417,6 +425,8 @@ def get_state():
             shadow_divergence = database.get_shadow_divergence(today_str)
         except Exception:
             shadow_divergence = {"by_symphony": {}, "portfolio_today": None}
+        for sym_id, entry in shadow_divergence["by_symphony"].items():
+            entry["name"] = (state_data.get(sym_id) or {}).get("name") or sym_id
 
         _alert_row = database.read_fleet_alert()
         _alert = _alert_row if (_alert_row is not None and _alert_row.get("dismissed_at_et") is None) else None
