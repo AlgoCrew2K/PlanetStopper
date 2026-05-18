@@ -652,3 +652,261 @@ class TestNameTruncationLogic:
                 f"got {type(today).__name__!r}: {today!r}. "
                 "Global rule: never hardcode producer values as strings."
             )
+
+
+# ---------------------------------------------------------------------------
+# Reviewer BLOCK 1 — XSS: rawName raw-interpolated into innerHTML
+# (quant-code-reviewer BLOCK on fa1e306 review)
+# ---------------------------------------------------------------------------
+
+
+class TestXssEscapingOnShadowPerfPills:
+    """
+    The Shadow Perf pill JS uses innerHTML string assembly with rawName (from
+    d.name, a Composer API-sourced symphony name).  Interpolating an unescaped
+    external string into innerHTML is an XSS vector:
+
+      title="${rawName}"   — a name containing `"` breaks the attribute
+      >${label}            — a name containing `</span><img ...>` executes in DOM
+
+    Jinja autoescape does NOT apply to JS innerHTML assignments.
+
+    Fix: either use document.createElement + setAttribute/textContent instead of
+    innerHTML string assembly, or introduce an escapeHtml() helper and apply it
+    to both rawName and label before interpolation.
+
+    Reviewer BLOCK: quant-code-reviewer on fa1e306.
+    """
+
+    def _html(self) -> str:
+        return _INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_shadow_perf_pill_html_uses_escape_helper_or_dom_api(self):
+        """
+        The Shadow Perf pill rendering JS must NOT raw-interpolate rawName or
+        label directly into an innerHTML template literal without escaping.
+
+        Acceptable fixes:
+        (a) An escapeHtml() / htmlEscape() / sanitize() function applied to
+            rawName and label before interpolation, OR
+        (b) DOM API construction (createElement + setAttribute + textContent)
+            that never calls innerHTML with tainted data.
+
+        This test fails on the current implementation where rawName is used
+        verbatim in template literals assigned to innerHTML.
+        """
+        html = self._html()
+
+        shadow_pills_block_match = re.search(
+            r"shadow-pills[\s\S]{0,3000}\.join\(['\"]",
+            html,
+        )
+        assert shadow_pills_block_match, (
+            "shadow-pills innerHTML block not found in index.html"
+        )
+        block = shadow_pills_block_match.group(0)
+
+        # Option (a): an escape helper is defined and applied to rawName/label
+        has_escape_helper = re.search(
+            r"(?:escapeHtml|htmlEscape|escapeAttr|sanitize)\s*\([^)]*(?:rawName|label)",
+            block,
+        )
+
+        # Option (b): DOM API construction — no innerHTML with tainted data
+        # The block must NOT use innerHTML with rawName/label directly if DOM API is used.
+        # We detect DOM API by presence of createElement or textContent in the shadow block.
+        uses_dom_api = re.search(
+            r"createElement\s*\(|\.textContent\s*=|\.setAttribute\s*\(",
+            block,
+        )
+
+        # If neither fix is present, the test fails.
+        assert has_escape_helper or uses_dom_api, (
+            "Shadow Perf pill JS interpolates rawName/label (Composer API-sourced) "
+            "directly into innerHTML without HTML escaping. "
+            "A symphony name containing '\"' breaks attribute quoting; "
+            "one containing '</span><img src=x onerror=...>' executes in the DOM. "
+            "Fix: apply escapeHtml(rawName) and escapeHtml(label) before interpolation, "
+            "or build pill elements with createElement + setAttribute/textContent. "
+            "Reviewer BLOCK: quant-code-reviewer on fa1e306."
+        )
+
+    def test_escape_helper_covers_double_quote_in_name(self):
+        """
+        If an escapeHtml() helper is defined, it must convert '\"' to '&quot;'
+        (or '&#34;') so it cannot break out of a title= attribute.
+
+        This test locates the escapeHtml function definition and asserts it
+        handles the double-quote character.  If DOM API is used exclusively,
+        this test passes vacuously (no innerHTML with raw strings to escape).
+        """
+        html = self._html()
+
+        # If no escapeHtml function is defined, check that DOM API is used instead.
+        has_escape_fn = re.search(
+            r"function\s+(?:escapeHtml|htmlEscape|escapeAttr)\s*\(|"
+            r"const\s+(?:escapeHtml|htmlEscape|escapeAttr)\s*=",
+            html,
+        )
+        uses_dom_api = re.search(
+            r"createElement\s*\(|\.textContent\s*=",
+            html,
+        )
+
+        if not uses_dom_api:
+            assert has_escape_fn, (
+                "If innerHTML string assembly is used for Shadow Perf pills, "
+                "an escapeHtml (or equivalent) function must be defined to sanitize "
+                "Composer API-sourced symphony names before interpolation. "
+                "Alternatively, use DOM API (createElement + textContent) to avoid "
+                "innerHTML entirely."
+            )
+            # Verify the escape function handles double-quote
+            escape_fn_match = re.search(
+                r"function\s+(?:escapeHtml|htmlEscape|escapeAttr)\s*\([^)]*\)\s*\{[^}]+\}|"
+                r"const\s+(?:escapeHtml|htmlEscape|escapeAttr)\s*=[^;]+;",
+                html,
+                re.DOTALL,
+            )
+            if escape_fn_match:
+                fn_body = escape_fn_match.group(0)
+                handles_dquote = re.search(
+                    r'["\']"["\']|"&quot;"|"&#34;"|\\x22|\\u0022',
+                    fn_body,
+                )
+                assert handles_dquote, (
+                    "escapeHtml function must handle the double-quote character ('\"' → '&quot;'); "
+                    "a name containing '\"' breaks out of the title= attribute in innerHTML. "
+                    "Ensure the function replaces '\"' with '&quot;' or '&#34;'."
+                )
+
+
+# ---------------------------------------------------------------------------
+# Reviewer BLOCK 2 — Snapshot shallow-copy mutation
+# (quant-code-reviewer BLOCK on fa1e306 review)
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotNameInjectionIsolation:
+    """
+    app.py snapshot path (closed_frozen / pre_market):
+
+        sd = dict(snapshot.get("shadow_divergence") or {})   # shallow copy
+        sd_by_sym = sd.get("by_symphony") or {}
+        for sym_id, entry in sd_by_sym.items():
+            if isinstance(entry, dict) and "name" not in entry:
+                entry["name"] = ...   # mutates the original entry dict in-place
+
+    dict() is a shallow copy — sd["by_symphony"] still points to the original
+    nested dict, and entry dicts within it are shared references.  Mutating
+    entry["name"] in-place writes back to the snapshot cache, silently
+    annotating the stored object on first call.  On subsequent calls the guard
+    `"name" not in entry` would be False (since name was already written),
+    masking any stale-name bug from a re-served snapshot.
+
+    Fix: deep-copy the entry before mutation, or use a fresh dict:
+        entry = dict(entry)
+        sd_by_sym[sym_id] = entry
+    before assigning entry["name"].
+
+    Reviewer BLOCK: quant-code-reviewer on fa1e306.
+    """
+
+    def test_snapshot_path_name_injection_does_not_mutate_original_entry(
+        self, client, monkeypatch
+    ):
+        """
+        When /api/state serves from a closed_frozen snapshot, the name injection
+        must NOT mutate the original entry dicts inside the snapshot object.
+
+        We verify by:
+        1. Injecting a snapshot with a shadow_divergence entry that has no 'name'
+        2. Calling /api/state (which triggers the snapshot path)
+        3. Asserting the original snapshot entry dict was NOT modified in-place
+
+        If entry["name"] is written back to the shared ref, the original dict
+        will have grown a 'name' key after the call.
+        """
+        original_entry = {"today": -1.5, "cumulative": None}
+        snapshot_sd = {
+            "by_symphony": {"sym-snap-001": original_entry},
+            "portfolio_today": -1.5,
+        }
+        snapshot = {
+            "shadow_divergence": snapshot_sd,
+            "accounts_map": {"ACC1": [{"id": "sym-snap-001", "name": "Snapshot Symphony"}]},
+            "portfolio_strip": None,
+            "data_as_of": "15:00 ET",
+            "captured_at_et": "16:00 ET",
+        }
+
+        with patch.object(app_module, "database") as db_mock:
+            db_mock.load_state.return_value = {
+                "last_market_close_snapshot": snapshot
+            }
+            db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
+            db_mock.read_fleet_alert.return_value = None
+
+            monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+
+            # Freeze market state so snapshot path is taken
+            with patch.object(app_module, "get_market_state", return_value="closed_frozen"):
+                client.get("/api/state")
+
+        # The original entry dict must not have been mutated
+        assert "name" not in original_entry, (
+            "snapshot path name injection must NOT mutate the original entry dict "
+            "from the snapshot cache in-place; "
+            f"original_entry after /api/state call: {original_entry}. "
+            "Fix: copy entry before mutation — "
+            "`entry = dict(entry); sd_by_sym[sym_id] = entry` — "
+            "so the snapshot object is never modified by a read path. "
+            "Reviewer BLOCK: quant-code-reviewer on fa1e306."
+        )
+
+    def test_snapshot_path_name_appears_in_response_despite_isolation(
+        self, client, monkeypatch
+    ):
+        """
+        After fixing the mutation, the 'name' field must still appear in the
+        /api/state JSON response — the isolation fix must not suppress the enrichment.
+
+        This test pins the positive contract: name IS present in the response
+        even when the original entry is not mutated.
+        """
+        original_entry = {"today": -1.5, "cumulative": None}
+        snapshot_sd = {
+            "by_symphony": {"sym-snap-001": original_entry},
+            "portfolio_today": -1.5,
+        }
+        snapshot = {
+            "shadow_divergence": snapshot_sd,
+            "accounts_map": {"ACC1": [{"id": "sym-snap-001", "name": "Snapshot Symphony"}]},
+            "portfolio_strip": None,
+            "data_as_of": "15:00 ET",
+            "captured_at_et": "16:00 ET",
+        }
+
+        with patch.object(app_module, "database") as db_mock:
+            db_mock.load_state.return_value = {
+                "last_market_close_snapshot": snapshot
+            }
+            db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
+            db_mock.read_fleet_alert.return_value = None
+
+            monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+
+            with patch.object(app_module, "get_market_state", return_value="closed_frozen"):
+                resp = client.get("/api/state")
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        sd = body.get("shadow_divergence", {})
+        entry = sd.get("by_symphony", {}).get("sym-snap-001", {})
+
+        assert "name" in entry, (
+            "snapshot path must still include 'name' in the response entry "
+            "after isolation fix — enrichment must write to the response copy, "
+            "not be suppressed entirely; "
+            f"response entry: {entry}"
+        )
