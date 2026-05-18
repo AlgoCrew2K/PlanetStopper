@@ -397,9 +397,15 @@ def get_state():
                 s["_mdd"] = {"if_held": None, "dry_run": None}
 
         portfolio_strip = {
-            "today_change": analytics.get_portfolio_today_change(symphonies_list, state_data),
-            "cumulative_return": analytics.get_portfolio_cumulative_return(symphonies_list, state_data),
-            "max_drawdown": analytics.get_portfolio_max_drawdown(symphonies_list, state_data),
+            "today_change": analytics.get_portfolio_today_change(
+                symphonies_list, state_data, trading_day=_today_et
+            ),
+            "cumulative_return": analytics.get_portfolio_cumulative_return(
+                symphonies_list, state_data, trading_day=_today_et
+            ),
+            "max_drawdown": analytics.get_portfolio_max_drawdown(
+                symphonies_list, state_data, trading_day=_today_et
+            ),
         }
 
         data_as_of = datetime.now().strftime("%H:%M ET")
