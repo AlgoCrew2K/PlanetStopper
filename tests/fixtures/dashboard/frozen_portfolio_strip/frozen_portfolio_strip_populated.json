@@ -1,0 +1,72 @@
+{
+  "_provenance": "PA-18: Schema-derived from alpha_bot_execution.py EOD capture block (lines 755-769) and analytics.py _value_weighted_portfolio signature. snapshot_input.portfolio_strip values are what the FIXED EOD capture should store (analytics-computed, not hard-coded None). eod_symphonies_flat matches fetch_symphony_stats() return shape used at EOD post-mortem time with 'id', 'last_percent_change', 'value' keys. Captured 2026-05-18 against main @ d109926.",
+  "scenario": "frozen_portfolio_strip_populated",
+  "description": "Snapshot where portfolio_strip has been populated by analytics at EOD capture time (post-fix). today_change, cumulative_return, max_drawdown are real computed values.",
+  "snapshot_input": {
+    "trading_day": "2026-05-16",
+    "captured_at_et": "16:00:01 ET",
+    "data_as_of": "16:00 ET",
+    "portfolio_strip": {
+      "today_change": {"if_held": 1.5, "dry_run": 1.3},
+      "cumulative_return": {"if_held": 12.0, "dry_run": 11.5},
+      "max_drawdown": {"if_held": -5.2, "dry_run": -4.9}
+    },
+    "shadow_divergence": {
+      "by_symphony": {
+        "sym-alpha": 0.02,
+        "sym-beta": -0.01
+      },
+      "portfolio": 0.005
+    },
+    "accounts_map": {
+      "ACC-INDIVIDUAL": [
+        {
+          "id": "sym-alpha",
+          "name": "Alpha Momentum",
+          "account": "ACC-INDIVIDUAL",
+          "current_return": 4.2,
+          "current_value": 50000.0,
+          "armed": true,
+          "tp_armed": false,
+          "para_armed": false,
+          "triggered": false
+        }
+      ],
+      "ACC-ROTH": [
+        {
+          "id": "sym-beta",
+          "name": "Beta Defensive",
+          "account": "ACC-ROTH",
+          "current_return": 1.1,
+          "current_value": 30000.0,
+          "armed": false,
+          "tp_armed": false,
+          "para_armed": true,
+          "triggered": false
+        }
+      ]
+    }
+  },
+  "eod_symphonies_flat": [
+    {
+      "id": "sym-alpha",
+      "name": "Alpha Momentum",
+      "account": "ACC-INDIVIDUAL",
+      "last_percent_change": 0.042,
+      "value": 50000.0
+    },
+    {
+      "id": "sym-beta",
+      "name": "Beta Defensive",
+      "account": "ACC-ROTH",
+      "last_percent_change": 0.011,
+      "value": 30000.0
+    }
+  ],
+  "expected": {
+    "portfolio_strip_is_not_none": true,
+    "today_change_is_not_none": true,
+    "cumulative_return_is_not_none": true,
+    "max_drawdown_is_not_none": true
+  }
+}
