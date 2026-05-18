@@ -1,0 +1,30 @@
+{
+  "_provenance": "Schema fixture — derived from database.get_shadow_divergence() return shape (PA-18). Fields: symphony_id keys, each entry with today (float|null), cumulative (float|null). R15 adds 'name' (str). Backward-compat: legacy entries without 'name' fall back to truncated ID.",
+  "_captured_shape": "get_shadow_divergence returns {by_symphony: {<id>: {today, cumulative}}, portfolio_today}. R15 adds 'name' field.",
+  "by_symphony": {
+    "sym-abc-001": {
+      "name": "Global Macro Diversified",
+      "today": -1.23,
+      "cumulative": 4.56,
+      "max_drawdown": 0.08
+    },
+    "sym-def-002": {
+      "name": "Risk Parity All-Weather",
+      "today": 0.45,
+      "cumulative": 12.1,
+      "max_drawdown": 0.12
+    },
+    "sym-long-name-003": {
+      "name": "Ultra-Long Duration Bond Rotation Strategy (2023)",
+      "today": -0.77,
+      "cumulative": -3.2,
+      "max_drawdown": 0.19
+    },
+    "sym-no-name-004": {
+      "today": 0.11,
+      "cumulative": 1.5,
+      "max_drawdown": 0.05
+    }
+  },
+  "portfolio_today": -0.36
+}
