@@ -132,7 +132,7 @@ _PARAM_DEFINITIONS: dict[str, dict[str, str]] = {
 _PARAM_VALID_RANGES: dict[str, dict[str, float | str]] = {
     "TRIGGER_THRESHOLD_PCT": {"low": 5.0, "high": 25.0, "type": "float"},
     "TAKE_PROFIT_MC_PCT": {"low": 2.0, "high": 10.0, "type": "float"},
-    "VWAP_CROSS_HWM_PCT": {"low": 0.5, "high": 2.5, "type": "float"},
+    "VWAP_CROSS_HWM_PCT": {"low": 0.3, "high": 2.0, "type": "float"},  # V1 calibration bounds (autotuner.py _SS_VWAP_CROSS_HWM_V1_MIN/MAX)
     "VWAP_BLEED_MULTIPLIER": {"low": 0.5, "high": 3.0, "type": "float"},
     "VWAP_BLEED_TICKS": {"low": 3, "high": 30, "type": "int"},
     "PARABOLIC_VELOCITY_THRESHOLD": {"low": 1.0, "high": 4.0, "type": "float"},

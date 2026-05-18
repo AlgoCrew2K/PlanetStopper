@@ -27,8 +27,6 @@ OPTUNA_SEARCH_SPACE_KEYS = frozenset({
 
 # Optuna search space bounds — named so the search space is inspectable via
 # optuna-compare without re-parsing logs, and to satisfy the no-magic-numbers rule.
-_SS_TRIGGER_THRESHOLD_MIN = 5.0
-_SS_TRIGGER_THRESHOLD_MAX = 25.0
 _SS_TAKE_PROFIT_MC_MIN = 2.0
 _SS_TAKE_PROFIT_MC_MAX = 10.0
 _SS_VWAP_CROSS_HWM_MIN = 0.5

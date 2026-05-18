@@ -94,7 +94,6 @@ HISTORY_CACHE_FILE = "history_cache.json"
 
 COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
 ALPACA_BASE_URL = "https://data.alpaca.markets/v2"
-YAHOO_FINANCE_BASE_URL = "https://query2.finance.yahoo.com/v8/finance/chart"
 
 # ==========================================
 # 4. API CONNECTORS
@@ -585,7 +584,7 @@ def main():
                         bot_state[s_id] = {
                             "high_water_mark": current_return,
                             "shadow_hwm": current_return,
-                            "prev_return": current_return,
+                            "prev_return": None,
                             "armed": False,
                             "tp_armed": False,
                             "para_armed": False,
@@ -863,7 +862,7 @@ def main():
                     bot_state[symphony_id] = {
                         "high_water_mark": current_return,
                         "shadow_hwm": current_return,
-                        "prev_return": current_return,
+                        "prev_return": None,
                         "armed": False,
                         "tp_armed": False,
                         "para_armed": False,
@@ -1069,8 +1068,10 @@ def main():
                     bot_state[symphony_id]["current_holdings"] = [{"ticker": h.get("ticker"), "allocation": h.get("allocation", 0.0)} for h in holdings]
 
                 chart_event = None
-                if is_vwap_broken or is_vwap_bleed_broken:
-                    chart_event = "VWAP_Break"
+                if is_vwap_broken:
+                    chart_event = "VWAP_Breakdown"
+                elif is_vwap_bleed_broken:
+                    chart_event = "VWAP_Bleed_Cut"
                 elif is_trailing_stop_hit or tp_triggered_now:
                     chart_event = "Triggered"
                 elif bot_state[symphony_id].get("para_armed") and not prev_para_armed:

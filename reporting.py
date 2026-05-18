@@ -1,3 +1,4 @@
+import logging
 import os
 import json
 import time
@@ -256,8 +257,9 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                     timeout=10
                 )
                 chart_url = resp.json().get('url')
-            except Exception as e:
-                print(f"  -> QuickChart failed: {e}")
+            except (requests.RequestException, ValueError) as e:
+                # requests.post raises RequestException; resp.json() raises ValueError on bad JSON
+                logging.warning("send_eod_discord_post: QuickChart request failed, chart will be omitted: %s", e)
 
         # Multi-Timeframe Performance Stats (1d, 7d, 30d)
         windows = [1, 7, 30]
@@ -322,8 +324,9 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                                 rs["wins"] += 1
                 except (OSError, json.JSONDecodeError, ValueError):
                     continue
-        except Exception as e:
-            print(f"  -> Minor error calculating history: {e}")
+        except ValueError as e:
+            # datetime.strptime on current_date_str raises ValueError; inner per-file errors caught above
+            logging.warning("send_eod_discord_post: history stats parse error, stats will be zeroed: %s", e)
 
         # 1. Main Summary Embed
         desc_lines = [
@@ -436,8 +439,9 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
             
         print("  -> Discord Push Complete.")
         
-    except Exception as e:
-        print(f"Failed to send EOD Discord webhook: {e}")
+    except (OSError, ValueError, requests.RequestException, TypeError) as e:
+        # OSError: file I/O; ValueError: json.load/strptime/JSONDecodeError; RequestException: Discord POST; TypeError: json.dumps non-serializable
+        logging.error("send_eod_discord_post: failed to send EOD webhook: %s", e)
 
 def send_discord_alert(
     symphony_name, current_return, prob_beating, stop_trigger_level, high_water_mark, is_live, discord_webhook_url, exit_reason="Trailing Stop", vwap_bleed_arm_pct=None, vwap_bleed_ticks=None, vwap_diff=None, vwap_breakdown_ticks=None, tp_threshold=None, vwap_bleed_multiplier=None, symphony_vol=None

@@ -500,11 +500,6 @@ def compute_vwap_breakdown_update(
     return new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken
 
 
-# Default grace window length — operational policy: suppress open-volatility VWAP signals
-# for the first 15 min after EXECUTION_START_TIME (V2, AC-V2.1).
-VWAP_OPEN_WINDOW_GRACE_MINUTES_DEFAULT = 15
-
-
 def is_in_open_window_grace(
     current_et,
     execution_start_hhmm: str,
