@@ -167,6 +167,9 @@
                         </svg>
                         Edit Variables
                     </button>
+                    {% if vars_locked_count > 0 %}
+                    <span id="edit-vars-indicator" class="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-fuchsia-100 bg-fuchsia-700 rounded-full">{{ vars_locked_count }}</span>
+                    {% endif %}
                 </div>
             </div>
         </header>
