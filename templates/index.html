@@ -1978,7 +1978,8 @@
         initAccountLabels().then(() => {
             fetchState();
             fetchTriggerStrip();
-            setInterval(fetchState, 5000);
+            // poll floor: >=15s — avoids tripling /api/state load relative to the engine's 1-minute cadence
+            setInterval(fetchState, 15000);
             setInterval(fetchTriggerStrip, 30000);
         });
 
