@@ -4,7 +4,11 @@ import logging
 import os
 import sys
 import io
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if __name__ == "__main__":
+    # Reconfigure stdout to UTF-8 so emoji/non-Latin-1 chars don't crash on
+    # Windows (cp1252 default). Guarded to __main__ so pytest's capture is
+    # not affected when this module is imported by symphony_logic or other callers.
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 import time
 import json
 from datetime import datetime, timedelta, timezone, time as dt_time

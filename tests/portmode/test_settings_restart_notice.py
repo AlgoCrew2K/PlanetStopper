@@ -7,6 +7,10 @@ semantics, degraded-state badge.
 
 from __future__ import annotations
 
+import logging
+import os
+import tempfile
+
 import pytest
 
 
@@ -15,6 +19,35 @@ from engine.exit_authority import (  # noqa: F401
     build_restart_notice_context,
     write_exit_authority_to_env,
 )
+
+
+@pytest.fixture(scope="module")
+def api_state_db():
+    """Provide an isolated DB path for /api/state tests without using tmp_path.
+
+    Uses tempfile.mkstemp so the file is created (not a pending tmp_path) and
+    cleaned up via os.unlink after the module, bypassing the pytest-flaky /
+    tmp_path lifecycle conflict that corrupts pytest's capture buffer.
+    """
+    fd, path = tempfile.mkstemp(suffix=".db", prefix="test_apistate_")
+    os.close(fd)
+    orig = os.environ.get("DB_PATH")
+    os.environ["DB_PATH"] = path
+    import database
+    _old_level = logging.getLogger().level
+    logging.getLogger().setLevel(logging.CRITICAL)
+    try:
+        database.init_db()
+    finally:
+        logging.getLogger().setLevel(_old_level)
+    yield path
+    os.environ.pop("DB_PATH", None)
+    if orig is not None:
+        os.environ["DB_PATH"] = orig
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 class TestStickyRestartNotice:
@@ -68,48 +101,34 @@ class TestStickyRestartNotice:
 
 
 class TestApiStateAdditiveFields:
-    """AC-P2.12.2: /api/state adds three additive fields (no existing field renamed/removed)."""
+    """AC-P2.12.2: /api/state adds three additive fields (no existing field removed)."""
 
-    def test_api_state_includes_port_state_field(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("DB_PATH", str(tmp_path / "test_apistate.db"))
+    def test_api_state_includes_port_state_field(self, api_state_db, monkeypatch):
+        monkeypatch.setenv("DB_PATH", api_state_db)
         monkeypatch.setenv("EXIT_AUTHORITY", "per_symphony")
-        import database
-        database.init_db()
-
         from app import get_api_state_dict
         state = get_api_state_dict()
         assert "port_state" in state, "AC-P2.12.2: /api/state must include 'port_state' field"
 
-    def test_api_state_includes_exit_authority_field(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("DB_PATH", str(tmp_path / "test_apistate2.db"))
+    def test_api_state_includes_exit_authority_field(self, api_state_db, monkeypatch):
+        monkeypatch.setenv("DB_PATH", api_state_db)
         monkeypatch.setenv("EXIT_AUTHORITY", "per_symphony")
-        import database
-        database.init_db()
-
         from app import get_api_state_dict
         state = get_api_state_dict()
         assert "exit_authority" in state, "AC-P2.12.2: /api/state must include 'exit_authority' field"
 
-    def test_api_state_includes_daemon_started_at_field(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("DB_PATH", str(tmp_path / "test_apistate3.db"))
-        import database
-        database.init_db()
-
+    def test_api_state_includes_daemon_started_at_field(self, api_state_db, monkeypatch):
+        monkeypatch.setenv("DB_PATH", api_state_db)
         from app import get_api_state_dict
         state = get_api_state_dict()
         assert "daemon_started_at" in state, "AC-P2.12.2: /api/state must include 'daemon_started_at' field"
 
-    def test_api_state_preserves_existing_fields(self, tmp_path, monkeypatch):
+    def test_api_state_preserves_existing_fields(self, api_state_db, monkeypatch):
         """AC-P2.12.2: No existing field renamed or removed."""
-        monkeypatch.setenv("DB_PATH", str(tmp_path / "test_apistate4.db"))
-        import database
-        database.init_db()
-
+        monkeypatch.setenv("DB_PATH", api_state_db)
         from app import get_api_state_dict
         state = get_api_state_dict()
-        # These fields must still exist (backward compat)
-        existing_fields = ["bot_state", "is_locked"]
-        for field in existing_fields:
+        for field in ["bot_state", "is_locked"]:
             assert field in state, (
                 f"AC-P2.12.2: existing field '{field}' must not be removed from /api/state"
             )
