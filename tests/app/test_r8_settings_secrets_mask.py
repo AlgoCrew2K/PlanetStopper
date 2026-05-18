@@ -37,14 +37,14 @@ SECRET_KEYS = [
     "ALPACA_KEY",
     "ALPACA_SECRET",
     "DISCORD_WEBHOOK_URL",
+    "ACCOUNT_INDIVIDUAL",
+    "ACCOUNT_ROTH",
+    "ACCOUNT_TRAD",
 ]
 
 NON_SECRET_KEYS = [
     "LIVE_EXECUTION",
     "EXECUTION_START_TIME",
-    "ACCOUNT_INDIVIDUAL",
-    "ACCOUNT_ROTH",
-    "ACCOUNT_TRAD",
 ]
 
 
@@ -230,6 +230,9 @@ def test_post_settings_can_still_write_secret_keys(
             "ALPACA_KEY": "new-alpaca-key",
             "ALPACA_SECRET": "new-alpaca-secret",
             "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/111/new-placeholder",
+            "ACCOUNT_INDIVIDUAL": "new-acct-individual-placeholder",
+            "ACCOUNT_ROTH": "new-acct-roth-placeholder",
+            "ACCOUNT_TRAD": "new-acct-trad-placeholder",
         },
         "symphonies": {},
     }
