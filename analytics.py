@@ -416,20 +416,11 @@ def get_symphony_today_change(
     """
     if_held = float(sym_dict["last_percent_change"]) * 100.0
 
-    # Triggered symphonies: use bot_state current_return (pre-M1F and M1F both)
-    if bot_state_entry is not None and bot_state_entry.get("triggered"):
-        return {"if_held": if_held, "dry_run": float(bot_state_entry["current_return"])}
-
     symphony_id = sym_dict.get("id")
-    # Detect whether trading_day was explicitly supplied vs defaulted
-    _explicit_trading_day = trading_day or sym_dict.get("trading_day")
-    if _explicit_trading_day:
-        _trading_day = _explicit_trading_day
-        _trading_day_explicit = True
-    else:
+    _trading_day = trading_day or sym_dict.get("trading_day")
+    if not _trading_day:
         from datetime import datetime as _dt, timezone as _tz
         _trading_day = _dt.now(_tz.utc).strftime("%Y-%m-%d")
-        _trading_day_explicit = False
 
     dry_run: "float | None" = None
     if symphony_id:
@@ -437,12 +428,6 @@ def get_symphony_today_change(
         row = _load_latest_shadow_row_for_analytics(symphony_id, _trading_day, _db_file)
         if row is not None:
             dry_run = float(row["shadow_return"])
-        elif not _trading_day_explicit:
-            # Pre-M1F callers that don't inject trading_day: fall back to if_held
-            dry_run = if_held
-    else:
-        # No symphony_id: fall back to if_held
-        dry_run = if_held
 
     return {"if_held": if_held, "dry_run": dry_run}
 
@@ -557,7 +542,6 @@ def get_symphony_cumulative_return(
         if_held = simple_return * 100.0
 
     symphony_id = sym_dict.get("id")
-    _explicit_trading_day = trading_day or sym_dict.get("trading_day")
 
     dry_run: "float | None" = None
     if symphony_id:
@@ -568,11 +552,6 @@ def get_symphony_cumulative_return(
             for r in trajectory:
                 product *= 1.0 + r / 100.0
             dry_run = (product - 1.0) * 100.0
-        elif not _explicit_trading_day:
-            # Pre-M1F callers without trading_day: fall back to if_held
-            dry_run = if_held
-    else:
-        dry_run = if_held
 
     return {"if_held": if_held, "dry_run": dry_run}
 
@@ -600,7 +579,6 @@ def get_symphony_max_drawdown(
     if_held = float(sym_dict["max_drawdown"])
 
     symphony_id = sym_dict.get("id")
-    _explicit_trading_day = trading_day or sym_dict.get("trading_day")
 
     dry_run: "float | None" = None
     if symphony_id:
@@ -623,11 +601,6 @@ def get_symphony_max_drawdown(
                     if dd > max_dd:
                         max_dd = dd
                 dry_run = max_dd
-        elif not _explicit_trading_day:
-            # Pre-M1F callers without trading_day: fall back to if_held
-            dry_run = if_held
-    else:
-        dry_run = if_held
 
     return {"if_held": if_held, "dry_run": dry_run}
 
@@ -638,6 +611,7 @@ def _value_weighted_portfolio(
     per_sym_fn,
     *,
     none_on_empty: bool = False,
+    **kwargs,
 ) -> dict:
     """
     Value-weighted aggregate of a per-symphony helper across all symphonies.
@@ -669,7 +643,7 @@ def _value_weighted_portfolio(
             continue
 
         entry = bot_state.get(sym.get("id"))
-        per = per_sym_fn(sym, entry)
+        per = per_sym_fn(sym, entry, **kwargs)
         if per["if_held"] is None:
             continue
         if_held_wsum += per["if_held"] * w
@@ -693,22 +667,45 @@ def _value_weighted_portfolio(
     }
 
 
-def get_portfolio_today_change(symphonies: "list[dict]", bot_state: dict) -> dict:
+def get_portfolio_today_change(
+    symphonies: "list[dict]",
+    bot_state: dict,
+    *,
+    trading_day: "str | None" = None,
+    db_path: "str | None" = None,
+) -> dict:
     """Value-weighted portfolio Today's Change across all symphonies."""
-    return _value_weighted_portfolio(symphonies, bot_state, get_symphony_today_change)
-
-
-def get_portfolio_cumulative_return(symphonies: "list[dict]", bot_state: dict) -> dict:
-    """Value-weighted portfolio Cumulative Return across all symphonies."""
     return _value_weighted_portfolio(
-        symphonies, bot_state, get_symphony_cumulative_return, none_on_empty=True
+        symphonies, bot_state, get_symphony_today_change,
+        trading_day=trading_day, db_path=db_path,
     )
 
 
-def get_portfolio_max_drawdown(symphonies: "list[dict]", bot_state: dict) -> dict:
+def get_portfolio_cumulative_return(
+    symphonies: "list[dict]",
+    bot_state: dict,
+    *,
+    trading_day: "str | None" = None,
+    db_path: "str | None" = None,
+) -> dict:
+    """Value-weighted portfolio Cumulative Return across all symphonies."""
+    return _value_weighted_portfolio(
+        symphonies, bot_state, get_symphony_cumulative_return,
+        none_on_empty=True, trading_day=trading_day, db_path=db_path,
+    )
+
+
+def get_portfolio_max_drawdown(
+    symphonies: "list[dict]",
+    bot_state: dict,
+    *,
+    trading_day: "str | None" = None,
+    db_path: "str | None" = None,
+) -> dict:
     """Value-weighted portfolio Max Drawdown across all symphonies."""
     return _value_weighted_portfolio(
-        symphonies, bot_state, get_symphony_max_drawdown, none_on_empty=True
+        symphonies, bot_state, get_symphony_max_drawdown,
+        none_on_empty=True, trading_day=trading_day, db_path=db_path,
     )
 
 

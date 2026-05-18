@@ -379,19 +379,20 @@ def get_state():
             state_data[k]["last_trigger"] = last_trigger_by_sym.get(k)
 
         # Attach per-symphony TC/CR/MDD to each sym dict so the template can render them.
+        _today_et = datetime.now(_ET).strftime("%Y-%m-%d")
         for k in symphony_keys:
             s = state_data[k]
             sym_dict = next((d for d in symphonies_list if d["id"] == k), {})
             try:
-                s["_tc"] = analytics.get_symphony_today_change(sym_dict, s)
+                s["_tc"] = analytics.get_symphony_today_change(sym_dict, s, trading_day=_today_et)
             except (KeyError, TypeError, ValueError):
                 s["_tc"] = {"if_held": None, "dry_run": None}
             try:
-                s["_cr"] = analytics.get_symphony_cumulative_return(sym_dict, s)
+                s["_cr"] = analytics.get_symphony_cumulative_return(sym_dict, s, trading_day=_today_et)
             except (KeyError, TypeError, ValueError):
                 s["_cr"] = {"if_held": None, "dry_run": None}
             try:
-                s["_mdd"] = analytics.get_symphony_max_drawdown(sym_dict, s)
+                s["_mdd"] = analytics.get_symphony_max_drawdown(sym_dict, s, trading_day=_today_et)
             except (KeyError, TypeError, ValueError):
                 s["_mdd"] = {"if_held": None, "dry_run": None}
 
