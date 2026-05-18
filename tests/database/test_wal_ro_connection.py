@@ -118,28 +118,29 @@ def test_init_db_wal_pragma_source_commented():
 
 
 def test_wal_shm_files_created_after_first_connect(initialised_db):
-    """AC-11: WAL side-files (-wal, -shm) are present after first write, no crash.
+    """AC-11: WAL side-files (-wal, -shm) are present during an active write, no crash.
 
-    SQLite creates -wal and -shm lazily on first write in WAL mode.
-    We assert the engine doesn't raise on that first write.
+    SQLite creates -wal and -shm lazily on first write in WAL mode. On Windows,
+    SQLite auto-checkpoints (merges WAL back into main DB) when the last connection
+    closes, removing the side-files. The connection must be kept open during the
+    file-existence check to avoid racing the checkpoint.
     """
     base = pathlib.Path(initialised_db)
     wal_path = base.parent / (base.name + "-wal")
     shm_path = base.parent / (base.name + "-shm")
 
-    # Trigger a write so SQLite creates the WAL files.
+    # Keep connection open during the assert — closing it triggers auto-checkpoint
+    # on Windows which removes the side-files before we can observe them.
     conn = sqlite3.connect(initialised_db)
     try:
         conn.execute("INSERT OR IGNORE INTO execution_lock (id, is_locked, timestamp) VALUES (1, 0, 0)")
         conn.commit()
+        assert wal_path.exists() or shm_path.exists(), (
+            "Neither -wal nor -shm file was created after first write. "
+            "WAL mode may not be active — check init_db() PRAGMA."
+        )
     finally:
         conn.close()
-
-    # Both side-files must exist — if they don't, WAL was never activated.
-    assert wal_path.exists() or shm_path.exists(), (
-        "Neither -wal nor -shm file was created after first write. "
-        "WAL mode may not be active — check init_db() PRAGMA."
-    )
 
 
 # ---------------------------------------------------------------------------
