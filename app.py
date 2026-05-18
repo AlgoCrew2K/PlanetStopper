@@ -246,6 +246,8 @@ def get_state():
                 sd_by_sym = sd.get("by_symphony") or {}
                 for sym_id, entry in sd_by_sym.items():
                     if isinstance(entry, dict) and "name" not in entry:
+                        entry = dict(entry)
+                        sd_by_sym[sym_id] = entry
                         entry["name"] = (_state.get(sym_id) or {}).get("name") or sym_id
                 return jsonify({
                     "status": "active",
