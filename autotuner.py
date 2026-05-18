@@ -55,7 +55,7 @@ _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
 _GUARD_ALPHA_DECAY_RATE = 0.015
 
 # Target return for Sortino denominator: capital preservation baseline (0 = break-even).
-# Operator decision PA-5; Sortino & van der Meer 1994, J. Portfolio Management.
+# Operator decision PA-5; Sortino & van der Meer 1991, J. Portfolio Management.
 SORTINO_TARGET_RETURN = 0.0
 
 # Walk-forward purge window: training samples whose feature lookback window overlaps
@@ -79,7 +79,8 @@ EMBARGO_DAYS = 1
 # Three-fold walk-forward ratios: 60% train / 20% validation / 20% frozen-eval.
 # Selection is on validation; frozen-eval is consumed once post-selection for honest
 # performance reporting. Purge + embargo applied at BOTH fold boundaries.
-# López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
+# 60/20/20 split is an operator choice for AlphaBot's data scale (125 trading days);
+# the held-out frozen-eval invariant derives from LdP 2018 Ch. 7.4 (not the specific ratio).
 TRAIN_RATIO = 0.60
 VALIDATION_RATIO = 0.20
 FROZEN_EVAL_RATIO = 0.20
@@ -95,7 +96,7 @@ def compute_sortino_ratio(returns: list, target: float = SORTINO_TARGET_RETURN) 
     where downside_deviation = sqrt(mean(min(r - target, 0)^2))
     Population denominator: divide by N (all observations), not N_downside.
 
-    Reference: Sortino & van der Meer 1994, "Downside Risk",
+    Reference: Sortino & van der Meer 1991, "Downside Risk",
     Journal of Portfolio Management.
 
     Args:
@@ -132,7 +133,8 @@ def compute_deflated_sharpe_ratio(
 
     Reference: Bailey, D.H. & López de Prado, M. (2014). "The Deflated Sharpe Ratio:
     Correcting for Selection Bias, Backtest Overfitting, and Non-Normality."
-    Financial Analysts Journal, 70(5), 94-107. Equation 9.
+    Journal of Portfolio Management, 40(5), 94-107. DOI 10.3905/jpm.2014.40.5.094.
+    Equation 9.
 
     Args:
         SR_obs: Observed Sharpe/Sortino ratio of the candidate trial.
@@ -555,6 +557,8 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
     """
     Runs walk-forward optimization using Bayesian Optimization (Optuna) per symphony.
     Implements a three-fold walk-forward split (60/20/20): train / validation / frozen-eval.
+    The 60/20/20 ratio is an operator choice for AlphaBot's 125-day data scale; AFML Ch. 7.4
+    prescribes the held-out frozen-eval invariant (purge+embargo), not the specific ratio.
 
     Walk-forward split methodology (López de Prado 2018 Ch. 7.4):
     - 125-day history is split 60/20/20: ~75 train days, ~25 validation days, ~25 frozen-eval days.

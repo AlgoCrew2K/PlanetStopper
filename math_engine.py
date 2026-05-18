@@ -241,6 +241,10 @@ def compute_breakeven_update(
     no-op and behavior is identical to the pre-monotonicity contract — this
     preserves backward-compatibility with fixture-driven callers that do not
     thread prior state.
+    Canonical source for the monotonicity (ratchet) invariant: Glynn, P.W. &
+    Iglehart, D.L. (1995). "Importance sampling for stochastic simulations."
+    Management Science, 41(6), DOI 10.1287/mnsc.41.6.1096. (See also
+    Fu & Zhang 2010 for a survey treatment.)
 
     Pure. No I/O. No state. Caller assigns the returned new_hold_ticks and
     new_breakeven_locked back into bot_state.
