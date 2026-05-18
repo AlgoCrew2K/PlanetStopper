@@ -216,6 +216,7 @@ def dashboard():
 @app.route("/api/state")
 def get_state():
     try:
+        _ro_conn = database.get_ro_connection()
         market_state = get_market_state(datetime.now(_ET))
 
         state_data = database.load_state()
@@ -424,27 +425,39 @@ def get_state():
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        try:
+            _ro_conn.close()
+        except Exception:
+            pass
 
 @app.route("/api/logs/<symphony_id>")
 def api_symphony_logs(symphony_id):
+    _ro_conn = database.get_ro_connection()
     try:
         logs = database.get_symphony_logs(symphony_id)
         return jsonify(logs)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        _ro_conn.close()
 
 @app.route("/api/chart/<symphony_id>")
 def get_chart_data(symphony_id):
+    _ro_conn = database.get_ro_connection()
     try:
         chart_data = database.load_chart_history()
         symphony_data = chart_data.get("symphonies", {}).get(symphony_id, [])
         return jsonify({"status": "success", "data": symphony_data})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        _ro_conn.close()
 
 
 @app.route("/api/triggers")
 def api_triggers():
+    _ro_conn = database.get_ro_connection()
     try:
         since = request.args.get("since")
         symphony_id = request.args.get("symphony_id")
@@ -463,6 +476,8 @@ def api_triggers():
         return jsonify(rows)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        _ro_conn.close()
 
 
 @app.route("/api/fleet-alert/dismiss", methods=["POST"])
@@ -880,8 +895,12 @@ def ai_advisor_reject():
 @app.route("/api/autotune-runs", methods=["GET"])
 def api_autotune_runs():
     """Return recent autotune run rows including all three Sharpe metrics."""
-    rows = database.get_all_autotune_runs(limit=50)
-    return jsonify(rows)
+    _ro_conn = database.get_ro_connection()
+    try:
+        rows = database.get_all_autotune_runs(limit=50)
+        return jsonify(rows)
+    finally:
+        _ro_conn.close()
 
 
 if __name__ == "__main__":
