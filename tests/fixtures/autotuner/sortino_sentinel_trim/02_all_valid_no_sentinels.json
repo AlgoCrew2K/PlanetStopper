@@ -1,0 +1,27 @@
+{
+  "description": "10 valid Sortino values, no sentinels. Filter is a no-op. Backward-compat test: DSR with filter == DSR without filter.",
+  "sentinel_value": 1000000.0,
+  "inputs": {
+    "all_sortinos": [0.5, 0.8, 1.2, 0.3, 1.5, 0.9, 0.7, 1.1, 0.4, 0.6],
+    "valid_count": 10,
+    "sentinel_count": 0
+  },
+  "expected_filtered": [0.5, 0.8, 1.2, 0.3, 1.5, 0.9, 0.7, 1.1, 0.4, 0.6],
+  "moments": {
+    "n": 10,
+    "mean": 0.8,
+    "std": 0.36055512754639896,
+    "gamma3": 0.4480270815665308,
+    "gamma4": 2.1999999999999993,
+    "SR_0_n10": 1.36772949137606
+  },
+  "dsr_scenario": {
+    "T": 60,
+    "SR_obs": 1.5,
+    "expected_dsr": 1.014489036,
+    "derivation": "autotuner.compute_deflated_sharpe_ratio(SR_obs=1.5, SR_0=1.36773, gamma3=0.44803, gamma4=2.2, T=60) = 1.014489036. Identical before and after filter (no-op)."
+  },
+  "derivation": {
+    "note": "Same valid_sortinos as fixture 01 but without the 5 sentinels appended. Moments are identical to valid_only_moments in fixture 01."
+  }
+}

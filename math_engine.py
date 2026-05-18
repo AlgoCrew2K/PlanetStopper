@@ -8,6 +8,14 @@ from scipy.stats import norm
 # Eq. 9 expected-max-SR appendix). Used to derive SR_0 for selection-bias correction.
 _GAMMA_EULER_MASCHERONI = 0.5772156649015329
 
+# Sentinel returned by compute_sortino_ratio (autotuner.py) when downside_deviation==0
+# (all trial returns beat the target). The value is finite and looks like a valid trial
+# result to Optuna's TPE, but its magnitude (~1e6) dominates the cross-trial distribution
+# mean and std, distorting gamma3/gamma4 and SR_0 fed to compute_deflated_sharpe_ratio.
+# Filtering before moment computation prevents sentinel pollution of DSR Eq. 9.
+# Source: autotuner.py compute_sortino_ratio — returns 1e6 for zero downside_deviation.
+_SORTINO_SENTINEL = 1e6
+
 
 def compute_expected_max_sharpe(sr_mean: float, sr_std: float, n_trials: int) -> float:
     """Expected maximum Sharpe across N independent trials (Bailey & López de Prado 2014,
@@ -27,6 +35,20 @@ def compute_expected_max_sharpe(sr_mean: float, sr_std: float, n_trials: int) ->
     ppf1 = norm.ppf(1.0 - 1.0 / n_trials)
     ppf2 = norm.ppf(1.0 - 1.0 / (n_trials * math.e))
     return sr_mean + sr_std * ((1.0 - _GAMMA_EULER_MASCHERONI) * ppf1 + _GAMMA_EULER_MASCHERONI * ppf2)
+
+
+def filter_sortino_sentinels(sortino_values: list[float]) -> list[float]:
+    """Remove sentinel values from a Sortino trial series before DSR moment computation.
+
+    Returns a new list with all _SORTINO_SENTINEL (1e6) entries removed. The input
+    list is not mutated. Legitimate trial values — including negative Sortinos and 0.0
+    (empty-returns series) — are preserved unchanged.
+
+    Call this on trial_values BEFORE computing mean, std, gamma3, gamma4, or SR_0.
+    Sentinel values pollute moments: their ~1e6 magnitude dominates the cross-trial
+    distribution and distorts DSR Eq. 9 (Bailey & López de Prado 2014).
+    """
+    return [v for v in sortino_values if v != _SORTINO_SENTINEL]
 
 
 def _reject_non_finite(**kwargs):

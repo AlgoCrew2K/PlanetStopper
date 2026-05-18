@@ -149,7 +149,7 @@ def compute_deflated_sharpe_ratio(
     """
     if T <= 1:
         return 0.0
-    denom_sq = 1.0 - gamma3 * SR_obs + ((gamma4 - 1.0) / 4.0) * (SR_obs ** 2)
+    denom_sq = 1.0 - gamma3 * SR_obs + ((gamma4 - 1.0) / 4.0) * (SR_obs ** 2)  # compute_deflated_sharpe_ratio denominator (Bailey & López de Prado 2014 Eq. 9)
     if denom_sq <= 0.0:
         return float("-inf")
     return (SR_obs - SR_0) * math.sqrt(T - 1) / math.sqrt(denom_sq)
@@ -725,8 +725,13 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         except TypeError:
             completed_trials = []
 
-        if len(completed_trials) >= 2:
-            trial_values = [t.value for t in completed_trials]
+        # filter_sortino_sentinels removes math_engine._SORTINO_SENTINEL (1e6) values before
+        # moments AND scoring — sentinels pollute cross-trial distribution moments AND win the
+        # scoring loop because (1e6 - SR_0) dominates the DSR numerator even after moment fix.
+        trial_values = math_engine.filter_sortino_sentinels([t.value for t in completed_trials])
+        filtered_trials = [t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL]
+
+        if len(trial_values) >= 2:
             n_trials = len(trial_values)
             mean_v = statistics.mean(trial_values)
             # Population variance (divisor = N) for moment computation
@@ -745,7 +750,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             )
             best_dsr = float("-inf")
             best_trial_by_dsr = None
-            for t in completed_trials:
+            for t in filtered_trials:  # excludes math_engine._SORTINO_SENTINEL trials
                 dsr = compute_deflated_sharpe_ratio(
                     SR_obs=t.value,
                     SR_0=SR_0,
@@ -1010,8 +1015,13 @@ def run_calibration_sweep(
         T_val = len(validation_dates_purged)
         completed_trials = [t for t in study.trials if t.value is not None]
 
-        if len(completed_trials) >= 2:
-            trial_values = [t.value for t in completed_trials]
+        # filter_sortino_sentinels removes math_engine._SORTINO_SENTINEL (1e6) values before
+        # moments AND scoring — sentinels pollute cross-trial distribution moments AND win the
+        # scoring loop because (1e6 - SR_0) dominates the DSR numerator even after moment fix.
+        trial_values = math_engine.filter_sortino_sentinels([t.value for t in completed_trials])
+        filtered_trials = [t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL]
+
+        if len(trial_values) >= 2:
             n_tv = len(trial_values)
             mean_v = sum(trial_values) / n_tv
             variance_v = sum((v - mean_v) ** 2 for v in trial_values) / n_tv
@@ -1029,7 +1039,7 @@ def run_calibration_sweep(
             )
             best_dsr = float("-inf")
             best_trial_by_dsr = None
-            for t in completed_trials:
+            for t in filtered_trials:  # excludes math_engine._SORTINO_SENTINEL trials
                 dsr = compute_deflated_sharpe_ratio(
                     SR_obs=t.value,
                     SR_0=SR_0,

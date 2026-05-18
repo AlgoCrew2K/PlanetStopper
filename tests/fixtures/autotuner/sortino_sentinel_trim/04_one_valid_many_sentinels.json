@@ -1,0 +1,22 @@
+{
+  "description": "1 valid Sortino + 9 sentinels. After filtering: [1.5]. N=1 is degenerate: len(filtered) < 2, so DSR re-ranking block is skipped. The fallback path fires with SR_0=0.0, gamma3=0.0, gamma4=3.0 (normal-distribution fallback for single observation).",
+  "sentinel_value": 1000000.0,
+  "inputs": {
+    "all_sortinos": [1.5, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 1000000.0],
+    "valid_count": 1,
+    "sentinel_count": 9
+  },
+  "expected_filtered": [1.5],
+  "fallback_dsr_scenario": {
+    "SR_obs": 1.5,
+    "SR_0": 0.0,
+    "gamma3": 0.0,
+    "gamma4": 3.0,
+    "T": 60,
+    "expected_dsr": 7.903833768197185,
+    "derivation": "(1.5 - 0.0) * sqrt(60-1) / sqrt(1 - 0.0*1.5 + ((3.0-1.0)/4.0)*1.5^2) = 1.5*sqrt(59)/sqrt(2.125) = 7.903833768197185. Verified via autotuner.compute_deflated_sharpe_ratio directly."
+  },
+  "derivation": {
+    "note": "With 1 valid value after filter, len(filtered) < 2. DSR re-ranking block is skipped (same guard as pre-filter behavior). Fallback path uses SR_0=0.0, which is PSR-style for absence of cross-trial distribution. This is the N=1 edge case the mandate specifies."
+  }
+}
