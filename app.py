@@ -62,6 +62,10 @@ _daemon_log.addHandler(_daemon_fh)
 
 COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
 
+# Recorded at import time — used by /api/state daemon_started_at field (AC-P2.12.2)
+# and the sticky restart-notice comparison (AC-P2.2.4 BC H7).
+_DAEMON_STARTED_AT: str = datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 # ---------------------------------------------------------------------------
 # Daemon singleton — pidfile lifecycle
 # ---------------------------------------------------------------------------
@@ -218,6 +222,53 @@ def run_scheduler():
 @app.route("/")
 def dashboard():
     return render_template("index.html")
+
+
+def get_api_state_dict() -> dict:
+    """
+    Return the core state dict consumed by /api/state and testable without HTTP.
+
+    Additive fields (AC-P2.12.2): port_state, exit_authority, daemon_started_at.
+    No existing field is renamed or removed.
+    """
+    from engine.exit_authority import get_exit_authority
+    bot_state = database.load_state()
+    exit_authority = get_exit_authority()
+
+    # Read lock status directly — no dedicated helper exists for read-only lock query
+    try:
+        _ro = database.get_ro_connection()
+        _cur = _ro.execute("SELECT is_locked FROM execution_lock WHERE id = 1")
+        _row = _cur.fetchone()
+        is_locked = bool(_row[0]) if _row else False
+        _ro.close()
+    except Exception:
+        is_locked = False
+
+    port_state: dict = {}
+    if hasattr(database, "read_port_state"):
+        # sqlite-specialist migration 010 may not have landed in all environments yet
+        try:
+            accounts = {
+                v.get("account")
+                for v in bot_state.values()
+                if isinstance(v, dict) and v.get("account")
+            }
+            for acc_id in accounts:
+                row = database.read_port_state(acc_id)
+                if row is not None:
+                    port_state[acc_id] = row
+        except Exception:
+            pass
+
+    return {
+        "bot_state": bot_state,
+        "is_locked": is_locked,
+        "port_state": port_state,
+        "exit_authority": exit_authority,
+        "daemon_started_at": _DAEMON_STARTED_AT,
+    }
+
 
 @app.route("/api/state")
 def get_state():
