@@ -224,7 +224,7 @@ def dashboard():
     vars_locked_count = 0
     state = database.load_state()
     for sym_id, sym_data in state.items():
-        if sym_id == "date":
+        if not isinstance(sym_data, dict) or "name" not in sym_data:
             continue
         name = database.normalize_name(sym_data.get("name", ""))
         strategy = database.get_symphony_strategy(name)
