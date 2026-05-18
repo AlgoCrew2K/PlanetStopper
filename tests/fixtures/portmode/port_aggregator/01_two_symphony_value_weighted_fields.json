@@ -1,0 +1,49 @@
+{
+  "_provenance": "Schema-derived from AC-P2.4.2 per-field aggregation spec. Value-weightable fields (current_return, last_percent_change, last_dollar_change, value, cash) use allocation-weighted sum on common-denominator quantities. Net_deposits is arithmetically summed (flow quantity). Path-dependent fields (max_drawdown, simple_return, time_weighted_return) are NOT in this fixture — they require port-equity series and are covered in 03_path_dependent_fields.json.",
+  "description": "Two symphonies with known allocation weights. Asserts value-weightable fields aggregate correctly and net_deposits sums arithmetically.",
+  "function": "aggregate_to_port",
+  "inputs": {
+    "symphonies": [
+      {
+        "symphony_id": "sym-alpha",
+        "value": 100000.0,
+        "cash": 10000.0,
+        "current_return": 0.05,
+        "last_percent_change": 0.01,
+        "last_dollar_change": 500.0,
+        "net_deposits": 95000.0
+      },
+      {
+        "symphony_id": "sym-beta",
+        "value": 50000.0,
+        "cash": 5000.0,
+        "current_return": 0.10,
+        "last_percent_change": 0.02,
+        "last_dollar_change": 250.0,
+        "net_deposits": 45000.0
+      }
+    ],
+    "account_id": "acct-test-001",
+    "port_equity_series": []
+  },
+  "expected": {
+    "value": 150000.0,
+    "cash": 15000.0,
+    "net_deposits": 140000.0,
+    "current_return": 0.066666666666,
+    "last_percent_change": 0.013333333333,
+    "last_dollar_change": 750.0,
+    "sharpe_ratio": null,
+    "annualized_rate_of_return": null
+  },
+  "derivations": {
+    "value": "100000.0 + 50000.0 = 150000.0",
+    "cash": "10000.0 + 5000.0 = 15000.0",
+    "net_deposits": "95000.0 + 45000.0 = 140000.0 (arithmetical sum, flow quantity per AC-P2.4.2)",
+    "current_return": "allocation_weighted: sym-alpha weight=100000/150000=0.6667, sym-beta weight=50000/150000=0.3333. 0.6667*0.05 + 0.3333*0.10 = 0.03333 + 0.03333 = 0.06667",
+    "last_percent_change": "allocation_weighted: 0.6667*0.01 + 0.3333*0.02 = 0.006667 + 0.006667 = 0.01333",
+    "last_dollar_change": "500.0 + 250.0 = 750.0 (dollar quantity sums; equivalent to value-weighted pct * total_value)",
+    "sharpe_ratio": "Unavailable — cannot value-weight across symphonies with different return series histories (AC-P2.4.2 Unavailable/dropped). Returns null.",
+    "annualized_rate_of_return": "Unavailable — cannot value-weight chain-linked rates with different history lengths (AC-P2.4.2 Unavailable/dropped). Returns null."
+  }
+}

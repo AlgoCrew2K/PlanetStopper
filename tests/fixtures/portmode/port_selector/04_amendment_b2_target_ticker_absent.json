@@ -1,0 +1,39 @@
+{
+  "_provenance": "Schema-derived from amendment B2 (High). Edge case: over-shoot when target_ticker absent from any symphony. When target reduction names a ticker (e.g. 'NVDA') that no candidate symphony holds, all candidates have exposure_usd[NVDA]=0; undershoot penalty fires at full target amount for that ticker on every symphony. The symphony with the best coverage on OTHER tickers still wins; NVDA miss is equal across all candidates.",
+  "description": "Amendment B2 fixture: target names NVDA but no symphony holds NVDA. NVDA undershoot is equal for all; winner determined by other ticker coverage.",
+  "function": "select_symphony",
+  "inputs": {
+    "target_reduction": [
+      {"ticker": "NVDA", "amount_usd": 3000.0},
+      {"ticker": "SPY", "amount_usd": 5000.0}
+    ],
+    "candidates": [
+      {
+        "symphony_id": "sym-no-nvda-A",
+        "exposure_usd": {"SPY": 4800.0},
+        "total_value": 8000.0,
+        "position_open_date": "2024-03-01"
+      },
+      {
+        "symphony_id": "sym-no-nvda-B",
+        "exposure_usd": {"SPY": 5100.0},
+        "total_value": 7000.0,
+        "position_open_date": "2024-03-05"
+      }
+    ],
+    "over_shoot_penalty": 1.0
+  },
+  "expected": {
+    "selected_symphony_id": "sym-no-nvda-B",
+    "scores": {
+      "sym-no-nvda-A": 3200.0,
+      "sym-no-nvda-B": 3100.0
+    }
+  },
+  "derivations": {
+    "sym-no-nvda-A": "NVDA: max(0,3000-0)=3000 (undershoot) + max(0,0-3000)*1.0=0. SPY: max(0,5000-4800)=200 + max(0,4800-5000)*1.0=0. Total=3200.",
+    "sym-no-nvda-B": "NVDA: max(0,3000-0)=3000 (undershoot) + max(0,0-3000)*1.0=0. SPY: max(0,5000-5100)=0 + max(0,5100-5000)*1.0=100 (overshoot). Total=3100.",
+    "winner": "sym-no-nvda-B scores 3100 < sym-no-nvda-A scores 3200. sym-no-nvda-B wins due to better SPY coverage despite NVDA miss being equal. NOTE: recheck expected — sym-no-nvda-B should win.",
+    "corrected_expected": "selected_symphony_id should be sym-no-nvda-B (score 3100). Fixture corrected below."
+  }
+}

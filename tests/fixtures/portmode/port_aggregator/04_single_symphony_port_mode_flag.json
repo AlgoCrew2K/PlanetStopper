@@ -1,0 +1,36 @@
+{
+  "_provenance": "Schema-derived from AC-P2.4.4. Account with ONE symphony: port is mathematically equivalent to that symphony, but result must be flagged port_mode=True for telemetry consistency.",
+  "description": "Single symphony: aggregated values match symphony directly, but port_mode flag is True.",
+  "function": "aggregate_to_port",
+  "inputs": {
+    "symphonies": [
+      {
+        "symphony_id": "sym-only",
+        "value": 75000.0,
+        "cash": 5000.0,
+        "current_return": 0.08,
+        "last_percent_change": 0.015,
+        "last_dollar_change": 1125.0,
+        "net_deposits": 69000.0
+      }
+    ],
+    "account_id": "acct-single",
+    "port_equity_series": [
+      {"t": 0, "port_value": 69000.0},
+      {"t": 1, "port_value": 75000.0}
+    ]
+  },
+  "expected": {
+    "value": 75000.0,
+    "cash": 5000.0,
+    "net_deposits": 69000.0,
+    "current_return": 0.08,
+    "last_percent_change": 0.015,
+    "last_dollar_change": 1125.0,
+    "port_mode": true
+  },
+  "derivations": {
+    "all_fields": "Single-symphony: weight=1.0; all value-weighted fields pass through unchanged from the only symphony.",
+    "port_mode": "AC-P2.4.4: single-symphony port is flagged port-mode for downstream telemetry consistency, no behavior difference."
+  }
+}
