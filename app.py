@@ -367,6 +367,49 @@ def get_state():
                             for _field, _default in _FROZEN_SYM_DEFAULTS.items():
                                 _sym_n.setdefault(_field, _default)
 
+                # On-the-fly portfolio_strip recompute — authoritative, never pass-through.
+                # Recompute from accounts_map so stale/None captured values are never surfaced.
+                # R14: use snapshot.trading_day, not today's date.
+                _snap_symphonies_list = []
+                _snap_bot_state = {}
+                for _acc_syms_r in _snap_accounts_map.values():
+                    for _sym_r in (_acc_syms_r or []):
+                        if not isinstance(_sym_r, dict):
+                            continue
+                        _sid_r = _sym_r.get("id", "")
+                        _cr_r = _sym_r.get("current_return") or 0.0
+                        _val_r = _sym_r.get("current_value") or 0.0
+                        _snap_symphonies_list.append({
+                            "id": _sid_r,
+                            "value": _val_r,
+                            "last_percent_change": _cr_r / 100.0,
+                            "simple_return": _sym_r.get("simple_return"),
+                            "net_deposits": _sym_r.get("net_deposits"),
+                            "time_weighted_return": _sym_r.get("time_weighted_return"),
+                            "max_drawdown": _sym_r.get("max_drawdown"),
+                            "trading_day": _snap_trading_day,
+                        })
+                        _snap_bot_state[_sid_r] = {
+                            "current_value": _val_r,
+                            "current_return": _cr_r,
+                            "name": _sym_r.get("name"),
+                            "account": _sym_r.get("account"),
+                        }
+                try:
+                    _portfolio_strip = {
+                        "today_change": analytics.get_portfolio_today_change(
+                            _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
+                        ),
+                        "cumulative_return": analytics.get_portfolio_cumulative_return(
+                            _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
+                        ),
+                        "max_drawdown": analytics.get_portfolio_max_drawdown(
+                            _snap_symphonies_list, _snap_bot_state, trading_day=_snap_trading_day
+                        ),
+                    }
+                except Exception:
+                    _portfolio_strip = {"today_change": None, "cumulative_return": None, "max_drawdown": None}
+
                 try:
                     _frozen_html = render_template(
                         "table_partial.html",
@@ -385,7 +428,7 @@ def get_state():
                     "frozen_at": snapshot.get("captured_at_et"),
                     "data_as_of": snapshot.get("data_as_of"),
                     "state": _state,
-                    "portfolio_strip": snapshot.get("portfolio_strip"),
+                    "portfolio_strip": _portfolio_strip,
                     "shadow_divergence": sd,
                     "accounts_map": snapshot.get("accounts_map"),
                     "fleet_correlation_alert": _alert,

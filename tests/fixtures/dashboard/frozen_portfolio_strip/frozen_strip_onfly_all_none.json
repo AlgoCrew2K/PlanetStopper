@@ -1,0 +1,61 @@
+{
+  "_provenance": "PA-18: Hand-authored. Schema-derived from the live all-none fixture (frozen_portfolio_strip_all_none.json — captured from live alphabot_state.db on 2026-05-18). Represents the operator-visible buggy state: snapshot.portfolio_strip is all-None because EOD capture stored Nones, but accounts_map is populated with two symphonies having current_value > 0. Used to pin that /api/state frozen branch recomputes portfolio_strip on-the-fly from accounts_map instead of passing through captured Nones.",
+  "scenario": "frozen_strip_onfly_all_none",
+  "description": "Snapshot with portfolio_strip all-None AND accounts_map populated. Frozen path must recompute portfolio_strip via analytics, not pass through Nones.",
+  "snapshot_input": {
+    "trading_day": "2026-05-16",
+    "captured_at_et": "16:00:01 ET",
+    "data_as_of": "16:00 ET",
+    "portfolio_strip": {
+      "today_change": null,
+      "cumulative_return": null,
+      "max_drawdown": null
+    },
+    "shadow_divergence": {
+      "by_symphony": {},
+      "portfolio_today": null
+    },
+    "accounts_map": {
+      "ACC-INDIVIDUAL": [
+        {
+          "id": "sym-alpha",
+          "name": "Alpha Momentum",
+          "account": "ACC-INDIVIDUAL",
+          "current_return": 4.2,
+          "current_value": 50000.0,
+          "mc_prob": 72.5,
+          "armed": true,
+          "tp_armed": false,
+          "para_armed": false,
+          "triggered": false,
+          "stop_trigger": -3.5,
+          "shadow_hwm": 4.8,
+          "breakeven_locked": false
+        }
+      ],
+      "ACC-ROTH": [
+        {
+          "id": "sym-beta",
+          "name": "Beta Defensive",
+          "account": "ACC-ROTH",
+          "current_return": 1.1,
+          "current_value": 30000.0,
+          "mc_prob": 55.0,
+          "armed": false,
+          "tp_armed": false,
+          "para_armed": true,
+          "triggered": false,
+          "stop_trigger": -2.0,
+          "shadow_hwm": 1.5,
+          "breakeven_locked": false
+        }
+      ]
+    }
+  },
+  "expected": {
+    "portfolio_strip_must_be_recomputed": true,
+    "portfolio_strip_must_not_be_all_none": true,
+    "trading_day": "2026-05-16",
+    "analytics_trading_day_kwarg": "2026-05-16"
+  }
+}
