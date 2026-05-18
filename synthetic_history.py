@@ -1,3 +1,4 @@
+import logging
 import os
 import json
 import time
@@ -48,14 +49,16 @@ def fetch_bars(tickers_list, start_str, end_str, timeframe="1Day"):
                         print(f"      -> Rate limit hit (429). Sleeping for 15s... (Attempt {attempt+1}/10)")
                         time.sleep(15)
                     else:
-                        print(f"      -> API Error {response.status_code}: {response.text}")
+                        # Log status code only; omit response.text to avoid leaking payload in logs (cycle-#27 hardening)
+                        logging.warning("fetch_bars: HTTP %s for batch %d (attempt %d/10)", response.status_code, i // batch_size + 1, attempt + 1)
                         time.sleep(5)
-                except Exception as e:
-                    print(f"      -> Request Exception: {e}")
+                except requests.RequestException as e:
+                    # Narrow to transport/connection errors raised by requests; re-raise unexpected errors upstream
+                    logging.error("fetch_bars: request failed on attempt %d/10: %s", attempt + 1, e)
                     time.sleep(5)
 
             if not success:
-                print(f"      -> Failed to fetch batch {i // batch_size + 1} after 10 attempts. Aborting.")
+                logging.error("fetch_bars: batch %d failed after 10 attempts; aborting symbol fetch", i // batch_size + 1)
                 break
 
             data = response.json()
