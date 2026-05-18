@@ -1,0 +1,39 @@
+{
+  "_provenance": "Schema-derived from AC-P2.7.4. Tie-breaker order: (1) largest symphony by value, (2) oldest position, (3) lexicographic on symphony_id. Epsilon for tie detection: 1% of the smaller dollar amount per spec.",
+  "description": "Two symphonies with identical L1 scores (within epsilon). Tie broken by largest value.",
+  "function": "select_symphony",
+  "inputs": {
+    "target_reduction": [
+      {"ticker": "SPY", "amount_usd": 10000.0}
+    ],
+    "candidates": [
+      {
+        "symphony_id": "sym-X",
+        "exposure_usd": {"SPY": 10000.0},
+        "total_value": 15000.0,
+        "position_open_date": "2024-01-10"
+      },
+      {
+        "symphony_id": "sym-Y",
+        "exposure_usd": {"SPY": 10000.0},
+        "total_value": 25000.0,
+        "position_open_date": "2024-01-15"
+      }
+    ],
+    "over_shoot_penalty": 1.0
+  },
+  "expected": {
+    "selected_symphony_id": "sym-Y",
+    "tie_breaker_used": "largest_value",
+    "scores": {
+      "sym-X": 0.0,
+      "sym-Y": 0.0
+    }
+  },
+  "derivations": {
+    "sym-X_score": "SPY: max(0,10000-10000)=0 + max(0,10000-10000)*1.0=0. Total=0.",
+    "sym-Y_score": "SPY: max(0,10000-10000)=0 + max(0,10000-10000)*1.0=0. Total=0.",
+    "tie_detection": "abs(0.0 - 0.0) = 0.0 <= epsilon = 0.01 * min(0, 0) BUT scores are literally equal. Epsilon = 1% of smaller dollar amount. When both scores are 0.0, delta=0 which is <= any positive epsilon -> tie confirmed.",
+    "tie_breaker": "AC-P2.7.4 step 1: largest symphony by value. sym-Y.total_value=25000 > sym-X.total_value=15000. sym-Y wins."
+  }
+}

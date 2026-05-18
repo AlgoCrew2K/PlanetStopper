@@ -62,6 +62,10 @@ _daemon_log.addHandler(_daemon_fh)
 
 COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
 
+# Recorded at import time — used by /api/state daemon_started_at field (AC-P2.12.2)
+# and the sticky restart-notice comparison (AC-P2.2.4 BC H7).
+_DAEMON_STARTED_AT: str = datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 # ---------------------------------------------------------------------------
 # Daemon singleton — pidfile lifecycle
 # ---------------------------------------------------------------------------
@@ -219,11 +223,72 @@ def run_scheduler():
 def dashboard():
     return render_template("index.html")
 
+
+def get_api_state_dict() -> dict:
+    """
+    Return the core state dict consumed by /api/state and testable without HTTP.
+
+    Additive fields (AC-P2.12.2): port_state, exit_authority, daemon_started_at.
+    No existing field is renamed or removed.
+    """
+    from engine.exit_authority import get_exit_authority
+    bot_state = database.load_state()
+    exit_authority = get_exit_authority()
+
+    # Read lock status directly — no dedicated helper exists for read-only lock query
+    _ro = None
+    try:
+        _ro = database.get_ro_connection()
+        _cur = _ro.execute("SELECT is_locked FROM execution_lock WHERE id = 1")
+        _row = _cur.fetchone()
+        is_locked = bool(_row[0]) if _row else False
+    except Exception:
+        is_locked = False
+    finally:
+        if _ro is not None:
+            try:
+                _ro.close()
+            except Exception:
+                pass
+
+    port_state: dict = {}
+    if hasattr(database, "read_port_state"):
+        # sqlite-specialist migration 010 may not have landed in all environments yet
+        try:
+            accounts = {
+                v.get("account")
+                for v in bot_state.values()
+                if isinstance(v, dict) and v.get("account")
+            }
+            for acc_id in accounts:
+                row = database.read_port_state(acc_id)
+                if row is not None:
+                    port_state[acc_id] = row
+        except Exception:
+            pass
+
+    return {
+        "bot_state": bot_state,
+        "is_locked": is_locked,
+        "port_state": port_state,
+        "exit_authority": exit_authority,
+        "daemon_started_at": _DAEMON_STARTED_AT,
+    }
+
+
 @app.route("/api/state")
 def get_state():
     try:
         _ro_conn = database.get_ro_connection()
         market_state = get_market_state(datetime.now(_ET))
+
+        # AC-P2.12.2: additive fields — computed once, merged into every response branch.
+        _api_state = get_api_state_dict()
+        _additive = {
+            "port_state": _api_state["port_state"],
+            "exit_authority": _api_state["exit_authority"],
+            "daemon_started_at": _DAEMON_STARTED_AT,
+        }
 
         state_data = database.load_state()
 
@@ -433,6 +498,7 @@ def get_state():
                     "accounts_map": snapshot.get("accounts_map"),
                     "fleet_correlation_alert": _alert,
                     "html": _frozen_html,
+                    **_additive,
                 })
 
         # No live state — return waiting with market_state context and notice on fresh deploy.
@@ -459,7 +525,7 @@ def get_state():
             # AC-DM.3.4: include notice on fresh deploy (no snapshot, market closed)
             if market_state in ("closed_frozen", "pre_market"):
                 waiting_resp["notice"] = "No closing snapshot yet — waiting for first market close at 16:00 ET."
-            return jsonify(waiting_resp)
+            return jsonify({**waiting_resp, **_additive})
 
         env_vars = dotenv_values(".env")
         live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
@@ -619,6 +685,7 @@ def get_state():
             "last_successful_cycle_at": state_data.get("last_successful_cycle_at"),
             "shadow_divergence": shadow_divergence,
             "fleet_correlation_alert": _alert,
+            **_additive,
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -1021,6 +1088,7 @@ def get_settings():
     globals_data = {
         "LIVE_EXECUTION": env_vars.get("LIVE_EXECUTION", "False"),
         "EXECUTION_START_TIME": env_vars.get("EXECUTION_START_TIME", "09:30"),
+        "EXIT_AUTHORITY": env_vars.get("EXIT_AUTHORITY", "per_symphony"),
     }
     # _MASKED_SETTINGS_KEYS is the single driver — adding a key there masks it automatically.
     for key in _MASKED_SETTINGS_KEYS:
@@ -1046,8 +1114,15 @@ def save_settings():
 
     try:
         # Save Globals
-        for key, val in payload.get("globals", {}).items():
+        globals_payload = payload.get("globals", {})
+        for key, val in globals_payload.items():
             set_key(ENV_FILE_PATH, key, str(val))
+
+        # AC-P2.2.4: record timestamp when EXIT_AUTHORITY is changed so the sticky
+        # restart notice can compare against daemon_started_at (panel BC H7).
+        if "EXIT_AUTHORITY" in globals_payload:
+            _changed_at = datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+            set_key(ENV_FILE_PATH, "_exit_authority_changed_at", _changed_at)
 
         # Save Symphony Strategies
         for sym_name, strategy_data in payload.get("symphonies", {}).items():

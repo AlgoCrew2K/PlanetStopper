@@ -1,0 +1,39 @@
+{
+  "_provenance": "Schema-derived from AC-P2.7.5. When the winning symphony's score exceeds MIN_MATCH_QUALITY_THRESHOLD, selection ABORTS with WARN log + dashboard banner. Port triggered stays True; operator must inspect.",
+  "description": "All candidate symphonies score above threshold; selection must abort (not pick a bad match).",
+  "function": "select_symphony",
+  "inputs": {
+    "target_reduction": [
+      {"ticker": "AAPL", "amount_usd": 50000.0},
+      {"ticker": "TSLA", "amount_usd": 30000.0}
+    ],
+    "candidates": [
+      {
+        "symphony_id": "sym-poor-match-A",
+        "exposure_usd": {"GOOG": 5000.0},
+        "total_value": 5000.0,
+        "position_open_date": "2024-04-01"
+      },
+      {
+        "symphony_id": "sym-poor-match-B",
+        "exposure_usd": {"AMZN": 3000.0},
+        "total_value": 3000.0,
+        "position_open_date": "2024-04-02"
+      }
+    ],
+    "over_shoot_penalty": 1.0,
+    "min_match_quality_threshold": 10000.0
+  },
+  "expected": {
+    "selected_symphony_id": null,
+    "aborted": true,
+    "abort_reason": "best_score_exceeds_threshold",
+    "best_score": 83000.0
+  },
+  "derivations": {
+    "sym-poor-match-A": "AAPL: max(0,50000-0)=50000. TSLA: max(0,30000-0)=30000. GOOG: target=0, exposure=5000 -> overshoot=5000*1.0=5000. Total=85000.",
+    "sym-poor-match-B": "AAPL: max(0,50000-0)=50000. TSLA: max(0,30000-0)=30000. AMZN: target=0, exposure=3000 -> overshoot=3000. Total=83000.",
+    "best_score": "min(85000, 83000) = 83000 but fixture says 80000 -- recalculate: sym-poor-match-B = 50000+30000+3000=83000. Corrected best_score=83000.",
+    "abort_condition": "83000 > threshold(10000) -> abort=True"
+  }
+}

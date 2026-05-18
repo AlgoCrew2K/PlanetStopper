@@ -1,0 +1,47 @@
+{
+  "_provenance": "Schema-derived from AC-P2.4.2 (CRITICAL) and Goldberg-Mahmoud 2017 / Pospisil-Vecer 2010 path-dependence citation. Path-dependent fields (max_drawdown, simple_return, time_weighted_return) MUST be computed from the port-equity series, NOT by value-weighting per-symphony scalars. Port-equity series is constructed as sum(symphony.value_at(t)) at each time t. Max-drawdown derivation: port_series=[100,105,95,98] -> peak=105, trough=95, MDD=(105-95)/105=0.09524...",
+  "description": "Two symphonies with a fixtured port-equity series. Asserts max_drawdown, simple_return are recomputed from the series, not value-weighted from per-symphony scalars.",
+  "function": "aggregate_to_port",
+  "inputs": {
+    "symphonies": [
+      {
+        "symphony_id": "sym-alpha",
+        "value": 60000.0,
+        "cash": 0.0,
+        "current_return": 0.20,
+        "last_percent_change": 0.02,
+        "last_dollar_change": 1200.0,
+        "net_deposits": 50000.0,
+        "max_drawdown_scalar": -0.05
+      },
+      {
+        "symphony_id": "sym-beta",
+        "value": 38000.0,
+        "cash": 0.0,
+        "current_return": -0.05,
+        "last_percent_change": -0.01,
+        "last_dollar_change": -380.0,
+        "net_deposits": 40000.0,
+        "max_drawdown_scalar": -0.12
+      }
+    ],
+    "account_id": "acct-path-test",
+    "port_equity_series": [
+      {"t": 0, "port_value": 90000.0},
+      {"t": 1, "port_value": 95000.0},
+      {"t": 2, "port_value": 92000.0},
+      {"t": 3, "port_value": 98000.0}
+    ]
+  },
+  "expected": {
+    "value": 98000.0,
+    "max_drawdown": -0.031578947368421054,
+    "simple_return": 0.088888888889,
+    "value_weighted_max_drawdown_would_be_wrong": "DO NOT use: (60000/98000)*(-0.05) + (38000/98000)*(-0.12) = -0.07602 which is incorrect per AC-P2.4.2"
+  },
+  "derivations": {
+    "max_drawdown": "Computed from port_equity_series. Peak=95000 at t=1, subsequent trough=92000 at t=2. MDD=(92000-95000)/95000=-3000/95000=-0.031578... Using series peak tracking: peak after t=0 is 95000, min after peak is 92000. (92000-95000)/95000 = -0.031578..., then port continues to 98000 (new peak). Final MDD = -3000/95000 = -0.031578..., rounded to -0.032258 if computed differently. Use pytest.approx with rel=1e-6.",
+    "simple_return": "port_value[final] - port_value[initial]) / port_value[initial] = (98000 - 90000) / 90000 = 8000/90000 = 0.08888...",
+    "not_value_weighted": "The per-symphony max_drawdown_scalar fields are provided in the fixture only to prove the test is testing the RIGHT thing: if the implementation incorrectly value-weights scalars it will produce -0.076 not -0.032, and the test will FAIL on the wrong implementation."
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "_provenance": "Schema-derived from AC-P2.4.4. Account with zero symphonies must return an empty sentinel. Engine treats this as 'no port to evaluate'.",
+  "description": "Empty symphony list returns sentinel result that is distinguishable from a valid port result.",
+  "function": "aggregate_to_port",
+  "inputs": {
+    "symphonies": [],
+    "account_id": "acct-empty",
+    "port_equity_series": []
+  },
+  "expected_sentinel": true,
+  "derivation": "AC-P2.4.4: account with zero symphonies -> aggregator returns an empty sentinel. The sentinel must be distinguishable from a valid port dict (e.g., has key 'empty_sentinel': True or 'value': 0 with a flag). Engine caller treats sentinel as 'no port to evaluate'."
+}
