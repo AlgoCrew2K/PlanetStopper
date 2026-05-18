@@ -221,7 +221,16 @@ def run_scheduler():
 # --- 2. Web Dashboard Routes ---
 @app.route("/")
 def dashboard():
-    return render_template("index.html")
+    vars_locked_count = 0
+    state = database.load_state()
+    for sym_id, sym_data in state.items():
+        if sym_id == "date":
+            continue
+        name = database.normalize_name(sym_data.get("name", ""))
+        strategy = database.get_symphony_strategy(name)
+        if strategy:
+            vars_locked_count += len(strategy.get("locked_vars") or [])
+    return render_template("index.html", vars_locked_count=vars_locked_count)
 
 
 def get_api_state_dict() -> dict:

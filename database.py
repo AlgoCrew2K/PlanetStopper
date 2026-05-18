@@ -2,11 +2,22 @@
 
 import hashlib
 import logging
+import math
 import os
 import sqlite3
 import json
 import time
 from datetime import datetime, timezone
+
+def _finite_or_none(x):
+    """Coerce non-finite float sentinels to None for RFC 8259 JSON compliance."""
+    if x is None:
+        return None
+    try:
+        return x if math.isfinite(x) else None
+    except (TypeError, ValueError):
+        return None
+
 
 DB_FILE = os.environ.get("DB_PATH", "alphabot_state.db")
 
@@ -353,20 +364,20 @@ def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
 def _autotune_run_row_to_dict(row) -> dict:
     """Map a raw autotune_runs SELECT row (14 columns) to a dict."""
     return {
-        "run_timestamp":       row[0],
-        "symphony_id":         row[1],
-        "oos_alpha":           row[2],
-        "train_alpha":         row[3],
-        "baseline_decision":   row[4],
-        "fallback_oos_alpha":  row[5],
-        "default_oos_alpha":   row[6],
-        "deflated_sharpe":     row[7],
-        "naive_sharpe":        row[8],
-        "validation_sharpe":   row[9],
-        "frozen_eval_sharpe":  row[10],
-        "math_mode":           row[11],
-        "account_id":          row[12],
-        "sortino_sentinel_pct": row[13],
+        "run_timestamp":        row[0],
+        "symphony_id":          row[1],
+        "oos_alpha":            _finite_or_none(row[2]),
+        "train_alpha":          _finite_or_none(row[3]),
+        "baseline_decision":    row[4],
+        "fallback_oos_alpha":   _finite_or_none(row[5]),
+        "default_oos_alpha":    _finite_or_none(row[6]),
+        "deflated_sharpe":      _finite_or_none(row[7]),
+        "naive_sharpe":         _finite_or_none(row[8]),
+        "validation_sharpe":    _finite_or_none(row[9]),
+        "frozen_eval_sharpe":   _finite_or_none(row[10]),
+        "math_mode":            row[11],
+        "account_id":           row[12],
+        "sortino_sentinel_pct": _finite_or_none(row[13]),
     }
 
 
