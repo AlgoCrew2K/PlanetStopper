@@ -764,6 +764,23 @@ def sell_account():
     })
 
 # --- 4. Tabbed Settings / Control Panel Routes ---
+
+# Keys whose values must never be echoed to the browser in GET /api/settings.
+_MASKED_SETTINGS_KEYS = frozenset({
+    "ANTHROPIC_API_KEY",
+    "COMPOSER_KEY_ID",
+    "COMPOSER_SECRET",
+    "ALPACA_KEY",
+    "ALPACA_SECRET",
+    "DISCORD_WEBHOOK_URL",
+})
+
+
+def _mask_secret(value: str | None) -> str:
+    """Return '' for any secret key — raw values must never reach the browser."""
+    return ""
+
+
 @app.route("/api/settings", methods=["GET"])
 def get_settings():
     """Returns Globals from .env and Symphony Strategies from SQLite."""
@@ -771,16 +788,15 @@ def get_settings():
     globals_data = {
         "LIVE_EXECUTION": env_vars.get("LIVE_EXECUTION", "False"),
         "EXECUTION_START_TIME": env_vars.get("EXECUTION_START_TIME", "09:30"),
-        "COMPOSER_KEY_ID": env_vars.get("COMPOSER_KEY_ID", ""),
-        "COMPOSER_SECRET": env_vars.get("COMPOSER_SECRET", ""),
-        "ALPACA_KEY": env_vars.get("ALPACA_KEY", ""),
-        "ALPACA_SECRET": env_vars.get("ALPACA_SECRET", ""),
+        "COMPOSER_KEY_ID": _mask_secret(env_vars.get("COMPOSER_KEY_ID")),
+        "COMPOSER_SECRET": _mask_secret(env_vars.get("COMPOSER_SECRET")),
+        "ALPACA_KEY": _mask_secret(env_vars.get("ALPACA_KEY")),
+        "ALPACA_SECRET": _mask_secret(env_vars.get("ALPACA_SECRET")),
         "ACCOUNT_INDIVIDUAL": env_vars.get("ACCOUNT_INDIVIDUAL", ""),
         "ACCOUNT_ROTH": env_vars.get("ACCOUNT_ROTH", ""),
         "ACCOUNT_TRAD": env_vars.get("ACCOUNT_TRAD", ""),
-        "DISCORD_WEBHOOK_URL": env_vars.get("DISCORD_WEBHOOK_URL", ""),
-        # Never echo the raw key — return empty string regardless of whether set.
-        "ANTHROPIC_API_KEY": "",
+        "DISCORD_WEBHOOK_URL": _mask_secret(env_vars.get("DISCORD_WEBHOOK_URL")),
+        "ANTHROPIC_API_KEY": _mask_secret(env_vars.get("ANTHROPIC_API_KEY")),
     }
 
     # Fetch unique symphony names from the current bot_state
