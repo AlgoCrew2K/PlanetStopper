@@ -277,3 +277,51 @@ def test_get_settings_masking_is_uniform_not_per_secret_branches(
         f"{dict(zip(SECRET_KEYS, masked_values))}"
     )
     assert masked_values[0] == "", "Uniform masked value must be empty string"
+
+
+# ---------------------------------------------------------------------------
+# RED 8: _MASKED_SETTINGS_KEYS is the authoritative list — all its members
+#         must be masked in the GET response (frozenset drives the contract)
+# ---------------------------------------------------------------------------
+
+def test_every_key_in_masked_settings_frozenset_is_suppressed_in_response(
+    client, mock_database, monkeypatch
+):
+    """
+    Contract: every key declared in _MASKED_SETTINGS_KEYS that is present
+    in the env must be suppressed to "" in GET /api/settings globals.
+
+    This test iterates the frozenset itself — if a developer adds a new secret
+    to _MASKED_SETTINGS_KEYS but forgets to add the corresponding _mask_secret()
+    call in the get_settings() dict literal, this test will catch it.
+
+    Also guards the inverse: if _MASKED_SETTINGS_KEYS is empty or shrunken,
+    the test will fail on the coverage assertion.
+    """
+    # Build an env that has a non-empty placeholder value for every declared secret.
+    env = {key: f"test-placeholder-{key.lower()}" for key in app_module._MASKED_SETTINGS_KEYS}
+    env["LIVE_EXECUTION"] = "False"
+    monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: env)
+
+    resp = client.get("/api/settings")
+    assert resp.status_code == 200
+    globals_out = resp.get_json()["globals"]
+    body_text = resp.get_data(as_text=True)
+
+    # The frozenset must cover at least the 6 known secrets (5 + ANTHROPIC).
+    assert len(app_module._MASKED_SETTINGS_KEYS) >= 6, (
+        "_MASKED_SETTINGS_KEYS must declare at least 6 secrets; it may have been accidentally shrunk"
+    )
+
+    for key in app_module._MASKED_SETTINGS_KEYS:
+        # If the key surfaces in globals at all, it must be masked.
+        if key in globals_out:
+            assert globals_out[key] == "", (
+                f"{key} is in _MASKED_SETTINGS_KEYS but NOT masked in GET response — "
+                f"got: {globals_out[key]!r}. The frozenset must drive the masking, not be dead code."
+            )
+        # The raw placeholder value must never appear in the response body.
+        raw = env[key]
+        assert raw not in body_text, (
+            f"Raw value for {key} leaked into response body — masking failed for a declared secret key"
+        )
