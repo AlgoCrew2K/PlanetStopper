@@ -20,6 +20,8 @@ def _finite_or_none(x):
 
 
 DB_FILE = os.environ.get("DB_PATH", "alphabot_state.db")
+# Captured at import time — used by _db_file() to detect explicit test overrides.
+_DB_FILE_DEFAULT = DB_FILE
 
 # DEFAULT STRATEGY PARAMETERS (Used when a new account is detected)
 DEFAULT_STRATEGY = {
@@ -39,6 +41,10 @@ DEFAULT_LOCKED_VARS = [
 ]
 
 def _db_file() -> str:
+    # Explicit per-test patch.object(database, "DB_FILE", path) takes precedence.
+    # Ambient DB_PATH env var (set by autouse conftest isolation fixture) is the fallback.
+    if DB_FILE != _DB_FILE_DEFAULT:
+        return DB_FILE
     return os.environ.get("DB_PATH", DB_FILE)
 
 
