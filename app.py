@@ -249,6 +249,136 @@ def get_state():
                         entry = dict(entry)
                         sd_by_sym[sym_id] = entry
                         entry["name"] = (_state.get(sym_id) or {}).get("name") or sym_id
+
+                # Build accounts_map + account_labels for table rendering.
+                # Reuse snapshot.accounts_map directly (already per-account lists).
+                _snap_accounts_map = snapshot.get("accounts_map") or {}
+
+                # Sorting: honour sortCol / sortDir query params, same as live branch.
+                _sort_col = request.args.get("sortCol", "name")
+                _sort_dir = request.args.get("sortDir", "asc")
+                _is_desc = (_sort_dir == "desc")
+
+                def _frozen_status_rank(s: dict) -> int:
+                    if s.get("triggered"):
+                        if s.get("triggered_reason") == "VWAP Breakdown":
+                            return 5
+                        return 4
+                    if s.get("para_armed"):
+                        return 3
+                    if s.get("tp_armed"):
+                        return 2
+                    if s.get("armed"):
+                        return 1
+                    return 0
+
+                def _frozen_exit_ret(s: dict) -> float:
+                    if s.get("triggered"):
+                        r = s.get("triggered_at_return")
+                        return r if r is not None else (s.get("current_return") or -999.0)
+                    return s.get("current_return") if s.get("current_return") is not None else -999.0
+
+                for _acc_id in _snap_accounts_map:
+                    _syms = _snap_accounts_map[_acc_id]
+                    if _sort_col == "mc_prob":
+                        _syms.sort(key=lambda s: s.get("mc_prob") if s.get("mc_prob") is not None else -999.0, reverse=_is_desc)
+                    elif _sort_col == "status":
+                        _syms.sort(key=_frozen_status_rank, reverse=_is_desc)
+                    elif _sort_col == "stop_level":
+                        _syms.sort(key=lambda s: s.get("triggered_at_stop") if s.get("triggered") and s.get("triggered_at_stop") is not None else (s.get("stop_trigger") if s.get("stop_trigger") is not None else -999.0), reverse=_is_desc)
+                    elif _sort_col == "current_return":
+                        _syms.sort(key=_frozen_exit_ret, reverse=_is_desc)
+                    elif _sort_col == "shadow_hwm":
+                        _syms.sort(key=lambda s: s.get("shadow_hwm", -999.0), reverse=_is_desc)
+                    elif _sort_col == "shadow":
+                        _syms.sort(key=lambda s: s.get("current_return") if s.get("current_return") is not None else -999.0, reverse=_is_desc)
+                    else:  # name (default)
+                        _syms.sort(key=lambda s: (s.get("name") or s.get("id", "")).lower(), reverse=_is_desc)
+
+                # Enrich each snapshot symphony with TC/CR/MDD analytics, using
+                # snapshot["trading_day"] so analytics reads from shadow_history for
+                # that day (R14 contract — NOT today's date).
+                _snap_trading_day = snapshot.get("trading_day")
+                for _acc_syms in _snap_accounts_map.values():
+                    for _sym in (_acc_syms or []):
+                        if not isinstance(_sym, dict):
+                            continue
+                        _sym_id = _sym.get("id", "")
+                        _cr_val = _sym.get("current_return") or 0.0
+                        _val = _sym.get("current_value") or 0.0
+                        _sym_dict = {
+                            "id": _sym_id,
+                            "value": _val,
+                            "last_percent_change": _cr_val / 100.0,
+                            "simple_return": _sym.get("simple_return"),
+                            "net_deposits": _sym.get("net_deposits"),
+                            "time_weighted_return": _sym.get("time_weighted_return"),
+                            "max_drawdown": _sym.get("max_drawdown"),
+                            "trading_day": _snap_trading_day,
+                        }
+                        try:
+                            _sym["_tc"] = analytics.get_symphony_today_change(_sym_dict, _sym, trading_day=_snap_trading_day)
+                        except (KeyError, TypeError, ValueError):
+                            _sym["_tc"] = {"if_held": None, "dry_run": None}
+                        try:
+                            _sym["_cr"] = analytics.get_symphony_cumulative_return(_sym_dict, _sym, trading_day=_snap_trading_day)
+                        except (KeyError, TypeError, ValueError):
+                            _sym["_cr"] = {"if_held": None, "dry_run": None}
+                        try:
+                            _sym["_mdd"] = analytics.get_symphony_max_drawdown(_sym_dict, _sym, trading_day=_snap_trading_day)
+                        except (KeyError, TypeError, ValueError):
+                            _sym["_mdd"] = {"if_held": None, "dry_run": None}
+
+                # Account labels: read from env (same as live branch; scrub raw IDs from UI).
+                _env_vars_frozen = dotenv_values(ENV_FILE_PATH)
+                _account_labels_frozen: dict = {}
+                _acc_ind = _env_vars_frozen.get("ACCOUNT_INDIVIDUAL", "").strip()
+                _acc_roth = _env_vars_frozen.get("ACCOUNT_ROTH", "").strip()
+                _acc_trad = _env_vars_frozen.get("ACCOUNT_TRAD", "").strip()
+                if _acc_ind:
+                    _account_labels_frozen[_acc_ind] = "Individual"
+                if _acc_roth:
+                    _account_labels_frozen[_acc_roth] = "Roth IRA"
+                if _acc_trad:
+                    _account_labels_frozen[_acc_trad] = "Trad. IRA"
+
+                # Normalise snapshot symphony dicts to ensure the template's
+                # numeric filters (e.g. "%.1f"|format, |round) receive float or
+                # None, never Jinja Undefined (which would bypass the `is not none`
+                # guard and raise a format error on old/minimal snapshots).
+                _FROZEN_SYM_DEFAULTS: dict = {
+                    "mc_prob": None,
+                    "shadow_hwm": 0.0,
+                    "stop_trigger": None,
+                    "current_return": 0.0,
+                    "current_value": 0.0,
+                    "breakeven_locked": False,
+                    "armed": False,
+                    "tp_armed": False,
+                    "para_armed": False,
+                    "triggered": False,
+                    "above_tp_count": 0,
+                    "below_stop_count": 0,
+                    "last_trigger": None,
+                }
+                for _acc_syms_n in _snap_accounts_map.values():
+                    for _sym_n in (_acc_syms_n or []):
+                        if isinstance(_sym_n, dict):
+                            for _field, _default in _FROZEN_SYM_DEFAULTS.items():
+                                _sym_n.setdefault(_field, _default)
+
+                try:
+                    _frozen_html = render_template(
+                        "table_partial.html",
+                        accounts_map=_snap_accounts_map,
+                        account_labels=_account_labels_frozen,
+                        sort_col=_sort_col,
+                        sort_dir=_sort_dir,
+                        data_as_of=snapshot.get("data_as_of"),
+                    )
+                except Exception:
+                    _frozen_html = "<table><tbody></tbody></table>"
+
                 return jsonify({
                     "status": "active",
                     "market_state": market_state,
@@ -259,6 +389,7 @@ def get_state():
                     "shadow_divergence": sd,
                     "accounts_map": snapshot.get("accounts_map"),
                     "fleet_correlation_alert": _alert,
+                    "html": _frozen_html,
                 })
 
         # No live state — return waiting with market_state context and notice on fresh deploy.
