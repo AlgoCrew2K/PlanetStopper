@@ -162,6 +162,42 @@ class TestEditVarsIndicatorPresent:
             f"Found element but content was empty: {match.group(0)!r}"
         )
 
+    def test_indicator_count_matches_fixture_total(
+        self, flask_client, monkeypatch
+    ):
+        """AC-VARS.1: badge content must equal the fixture's expected_total_locked_count.
+
+        Pins that the count is correct, not just non-empty.  The fixture has 2 locked
+        vars in scenario_populated (alpha-momentum: TRIGGER_THRESHOLD_PCT,
+        TAKE_PROFIT_MC_PCT).  An implementation that always renders "1" or renders
+        sum(all_params) would fail this test.
+        """
+        client, app_module = flask_client
+        fx = _load_fixture()
+        symphonies = fx["scenario_populated"]["symphonies"]
+        expected_count = fx["scenario_populated"]["expected_total_locked_count"]
+
+        with patch.object(app_module, "database", _make_db_mock_with_strategies(symphonies)):
+            resp = client.get("/")
+
+        html = resp.get_data(as_text=True)
+
+        import re
+        indicator_pattern = re.compile(
+            r'(?:id|data-testid)="edit-vars-indicator"[^>]*>(.*?)<',
+            re.DOTALL,
+        )
+        match = indicator_pattern.search(html)
+        assert match is not None, (
+            "edit-vars-indicator element not found in HTML."
+        )
+        content = match.group(1).strip()
+        assert content == str(expected_count), (
+            f"edit-vars-indicator badge must show {expected_count} (fixture expected_total_locked_count). "
+            f"Got {content!r}. "
+            "Count must reflect only locked_vars entries, not params keys or any other measure."
+        )
+
 
 # ===========================================================================
 # AC-VARS.2: 0 locked vars → no indicator (empty state preserved)

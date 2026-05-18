@@ -209,6 +209,31 @@ class TestFiniteValuesUnchanged:
             f"0.0 is finite — must not be coerced to None. Got {result['deflated_sharpe']!r}."
         )
 
+    def test_string_fields_not_coerced(self):
+        """AC-INF.4: string fields (baseline_decision, math_mode, account_id) must be
+        returned verbatim — _finite_or_none must never be applied to non-numeric columns.
+        Guards against a too-broad application of the coercion helper that would turn
+        string sentinels like 'HOLD' or 'per_symphony' into None.
+        """
+        import database as db_module
+
+        row = _make_raw_row({
+            "baseline_decision": "HOLD",
+            "math_mode": "per_symphony",
+            "account_id": "ACC-INDIVIDUAL",
+        })
+        result = db_module._autotune_run_row_to_dict(row)
+
+        assert result["baseline_decision"] == "HOLD", (
+            f"String field baseline_decision must not be coerced. Got {result['baseline_decision']!r}."
+        )
+        assert result["math_mode"] == "per_symphony", (
+            f"String field math_mode must not be coerced. Got {result['math_mode']!r}."
+        )
+        assert result["account_id"] == "ACC-INDIVIDUAL", (
+            f"String field account_id must not be coerced. Got {result['account_id']!r}."
+        )
+
 
 # ===========================================================================
 # AC-INF.2: json.dumps succeeds without allow_nan
