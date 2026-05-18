@@ -1,0 +1,17 @@
+{
+  "_comment": "Captured env-var snapshot for /api/settings masking tests. Secrets are placeholder strings, not real credentials.",
+  "secrets": {
+    "COMPOSER_KEY_ID": "test-composer-key-id-placeholder",
+    "COMPOSER_SECRET": "test-composer-secret-placeholder",
+    "ALPACA_KEY": "test-alpaca-key-placeholder",
+    "ALPACA_SECRET": "test-alpaca-secret-placeholder",
+    "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/000000000000/test-placeholder-token"
+  },
+  "non_secrets": {
+    "LIVE_EXECUTION": "False",
+    "EXECUTION_START_TIME": "09:30",
+    "ACCOUNT_INDIVIDUAL": "ACCT-001-INDIVIDUAL",
+    "ACCOUNT_ROTH": "ACCT-002-ROTH",
+    "ACCOUNT_TRAD": "ACCT-003-TRAD"
+  }
+}
