@@ -788,16 +788,13 @@ def get_settings():
     globals_data = {
         "LIVE_EXECUTION": env_vars.get("LIVE_EXECUTION", "False"),
         "EXECUTION_START_TIME": env_vars.get("EXECUTION_START_TIME", "09:30"),
-        "COMPOSER_KEY_ID": _mask_secret(env_vars.get("COMPOSER_KEY_ID")),
-        "COMPOSER_SECRET": _mask_secret(env_vars.get("COMPOSER_SECRET")),
-        "ALPACA_KEY": _mask_secret(env_vars.get("ALPACA_KEY")),
-        "ALPACA_SECRET": _mask_secret(env_vars.get("ALPACA_SECRET")),
         "ACCOUNT_INDIVIDUAL": env_vars.get("ACCOUNT_INDIVIDUAL", ""),
         "ACCOUNT_ROTH": env_vars.get("ACCOUNT_ROTH", ""),
         "ACCOUNT_TRAD": env_vars.get("ACCOUNT_TRAD", ""),
-        "DISCORD_WEBHOOK_URL": _mask_secret(env_vars.get("DISCORD_WEBHOOK_URL")),
-        "ANTHROPIC_API_KEY": _mask_secret(env_vars.get("ANTHROPIC_API_KEY")),
     }
+    # _MASKED_SETTINGS_KEYS is the single driver — adding a key there masks it automatically.
+    for key in _MASKED_SETTINGS_KEYS:
+        globals_data[key] = _mask_secret(env_vars.get(key))
 
     # Fetch unique symphony names from the current bot_state
     state_data = database.load_state()
