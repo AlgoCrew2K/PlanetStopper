@@ -205,20 +205,25 @@ class TestFrozenPortfolioStripPopulated:
 
 
 # ===========================================================================
-# AC-PS.2: snapshot with portfolio_strip=None → response is None (no crash)
+# AC-PS.2 (revised): snapshot with portfolio_strip=None → recompute from
+#                    accounts_map; no crash; response is not all-None
 # ===========================================================================
 
-class TestFrozenPortfolioStripNullPassthrough:
+class TestFrozenPortfolioStripNullRecomputed:
     """
-    AC-PS.2: When snapshot exists but portfolio_strip is explicitly None
-    (legacy snapshot from before this fix), response.portfolio_strip is None —
-    no crash, no fabrication.
+    AC-PS.2 (revised for on-the-fly recompute design):
+    When snapshot.portfolio_strip is None (legacy snapshot captured under the
+    old all-None code), /api/state must still produce real values by recomputing
+    from accounts_map via analytics. The old "no fabrication" assertion was written
+    for the pass-through design; it is superseded by AC-OF.2 (recompute is
+    authoritative). No crash is still required.
     """
 
-    def test_frozen_portfolio_strip_none_in_snapshot_returns_none(
+    def test_frozen_portfolio_strip_none_in_snapshot_recomputes_from_accounts_map(
         self, flask_client, monkeypatch
     ):
-        """AC-PS.2: snapshot with portfolio_strip=None → response.portfolio_strip is None."""
+        """AC-PS.2: snapshot with portfolio_strip=None + accounts_map populated →
+        response.portfolio_strip is non-None (recomputed, not passed through)."""
         client, app_module = flask_client
         fx = _load("frozen_portfolio_strip_populated")
 
@@ -248,9 +253,13 @@ class TestFrozenPortfolioStripNullPassthrough:
         )
         body = resp.get_json()
         ps = body.get("portfolio_strip")
-        assert ps is None, (
-            f"When snapshot.portfolio_strip is None, response.portfolio_strip must be None "
-            f"(no fabrication). Got: {ps!r}"
+        assert ps is not None, (
+            f"When snapshot.portfolio_strip is None but accounts_map is populated, "
+            f"response.portfolio_strip must be recomputed (non-None). Got: {ps!r}. "
+            "Recompute is authoritative — captured None must not pass through."
+        )
+        assert isinstance(ps, dict), (
+            f"portfolio_strip must be a dict after recompute, got {type(ps).__name__!r}"
         )
 
 
