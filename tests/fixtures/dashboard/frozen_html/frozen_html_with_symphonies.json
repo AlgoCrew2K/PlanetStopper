@@ -1,0 +1,62 @@
+{
+  "_provenance": "Hand-authored. Schema-derived from alpha_bot_execution.py EOD capture block and the live /api/state response (app.py:421 rendered_html). Represents a last_market_close_snapshot with two symphonies across two accounts, used to verify that /api/state frozen path includes a rendered 'html' key with a symphony-row table. PA-18: fixture reviewed against alpha_bot_execution.py snapshot writer and app.py:300-421 live-path enrichment pattern.",
+  "scenario": "frozen_html_with_symphonies",
+  "snapshot_input": {
+    "trading_day": "2026-05-16",
+    "captured_at_et": "16:00:01 ET",
+    "data_as_of": "16:00 ET",
+    "portfolio_strip": {
+      "today_change": null,
+      "cumulative_return": null,
+      "max_drawdown": null
+    },
+    "shadow_divergence": {
+      "by_symphony": {},
+      "portfolio_today": null
+    },
+    "accounts_map": {
+      "ACC-INDIVIDUAL": [
+        {
+          "id": "sym-alpha",
+          "name": "Alpha Momentum",
+          "account": "ACC-INDIVIDUAL",
+          "current_return": 4.2,
+          "current_value": 50000.0,
+          "mc_prob": 72.5,
+          "armed": true,
+          "tp_armed": false,
+          "para_armed": false,
+          "triggered": false,
+          "stop_trigger": -3.5,
+          "shadow_hwm": 4.8,
+          "breakeven_locked": false
+        }
+      ],
+      "ACC-ROTH": [
+        {
+          "id": "sym-beta",
+          "name": "Beta Defensive",
+          "account": "ACC-ROTH",
+          "current_return": 1.1,
+          "current_value": 30000.0,
+          "mc_prob": 55.0,
+          "armed": false,
+          "tp_armed": false,
+          "para_armed": true,
+          "triggered": false,
+          "stop_trigger": -2.0,
+          "shadow_hwm": 1.5,
+          "breakeven_locked": false
+        }
+      ]
+    }
+  },
+  "expected": {
+    "html_key_present": true,
+    "html_is_nonempty_string": true,
+    "html_contains_tr_elements": true,
+    "symphony_ids_in_html": ["sym-alpha", "sym-beta"],
+    "trading_day": "2026-05-16",
+    "market_state": "closed_frozen"
+  }
+}

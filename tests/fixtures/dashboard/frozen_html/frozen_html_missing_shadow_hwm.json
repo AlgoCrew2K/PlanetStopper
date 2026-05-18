@@ -1,0 +1,37 @@
+{
+  "_provenance": "Hand-authored. Schema-derived from alpha_bot_execution.py EOD capture block. Represents a minimal snapshot where shadow_hwm is absent on all symphonies — the exact field whose absence caused the original Jinja UndefinedError crash (table_partial.html | round(2) on Undefined). Used to pin that both the _FROZEN_SYM_DEFAULTS setdefault guard in app.py and the | default(0) guard in table_partial.html are load-bearing.",
+  "scenario": "frozen_html_missing_shadow_hwm",
+  "snapshot_input": {
+    "trading_day": "2026-05-16",
+    "captured_at_et": "16:00:01 ET",
+    "data_as_of": "16:00 ET",
+    "portfolio_strip": {
+      "today_change": null,
+      "cumulative_return": null,
+      "max_drawdown": null
+    },
+    "shadow_divergence": {
+      "by_symphony": {},
+      "portfolio_today": null
+    },
+    "accounts_map": {
+      "ACC-INDIVIDUAL": [
+        {
+          "id": "sym-minimal",
+          "name": "Minimal Symphony",
+          "account": "ACC-INDIVIDUAL",
+          "current_return": 2.0,
+          "current_value": 20000.0
+        }
+      ]
+    }
+  },
+  "expected": {
+    "html_key_present": true,
+    "html_is_nonempty_string": true,
+    "symphony_ids_in_html": ["sym-minimal"],
+    "trading_day": "2026-05-16",
+    "market_state": "closed_frozen",
+    "note": "shadow_hwm intentionally absent — must not crash template render"
+  }
+}

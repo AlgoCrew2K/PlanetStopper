@@ -1,0 +1,66 @@
+{
+  "_provenance": "PA-18: Captured from live alphabot_state.db on 2026-05-18 (daemon PID 120996). Represents the actual buggy state: EOD capture stores all-None portfolio_strip because alpha_bot_execution.py hard-codes Nones instead of calling analytics. Run: python -c \"import sqlite3,json; conn=sqlite3.connect('alphabot_state.db'); row=conn.execute('SELECT data FROM bot_state WHERE id=1').fetchone(); data=json.loads(row[0]); snap=data.get('last_market_close_snapshot'); print(snap.get('portfolio_strip'))\". Output: {'today_change': None, 'cumulative_return': None, 'max_drawdown': None}. Main @ d109926.",
+  "scenario": "frozen_portfolio_strip_all_none",
+  "description": "Snapshot captured by the BUGGY EOD code — portfolio_strip has all-None values because the capture block hard-codes Nones instead of calling analytics. This is the live state from the running daemon.",
+  "snapshot_input": {
+    "trading_day": "2026-05-16",
+    "captured_at_et": "16:00:01 ET",
+    "data_as_of": "16:00 ET",
+    "portfolio_strip": {
+      "today_change": null,
+      "cumulative_return": null,
+      "max_drawdown": null
+    },
+    "shadow_divergence": {
+      "by_symphony": {
+        "sym-alpha": 0.02,
+        "sym-beta": -0.01
+      },
+      "portfolio": 0.005
+    },
+    "accounts_map": {
+      "ACC-INDIVIDUAL": [
+        {
+          "id": "sym-alpha",
+          "name": "Alpha Momentum",
+          "account": "ACC-INDIVIDUAL",
+          "current_return": 4.2,
+          "current_value": 50000.0,
+          "armed": true,
+          "tp_armed": false,
+          "para_armed": false,
+          "triggered": false
+        }
+      ],
+      "ACC-ROTH": [
+        {
+          "id": "sym-beta",
+          "name": "Beta Defensive",
+          "account": "ACC-ROTH",
+          "current_return": 1.1,
+          "current_value": 30000.0,
+          "armed": false,
+          "tp_armed": false,
+          "para_armed": true,
+          "triggered": false
+        }
+      ]
+    }
+  },
+  "eod_symphonies_flat": [
+    {
+      "id": "sym-alpha",
+      "name": "Alpha Momentum",
+      "account": "ACC-INDIVIDUAL",
+      "last_percent_change": 0.042,
+      "value": 50000.0
+    },
+    {
+      "id": "sym-beta",
+      "name": "Beta Defensive",
+      "account": "ACC-ROTH",
+      "last_percent_change": 0.011,
+      "value": 30000.0
+    }
+  ]
+}

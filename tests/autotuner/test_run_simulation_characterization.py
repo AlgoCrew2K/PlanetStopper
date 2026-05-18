@@ -173,7 +173,8 @@ def _stub_active_stop_const(vol, mult, min_stop, para_armed, breakeven_locked,
 
 
 def _stub_breakeven_no_lock(ret, vol, base_stop, hwm_hold_ticks,
-                             breakeven_locked, is_triggered):
+                             breakeven_locked, is_triggered,
+                             previously_persisted_stop_level=None):
     """compute_breakeven_update: keep hwm_hold_ticks at 0, never lock, pass
     base_stop through unmodified."""
     return (hwm_hold_ticks, breakeven_locked, base_stop)

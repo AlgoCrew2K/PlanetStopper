@@ -660,7 +660,16 @@ def run_migrations() -> None:
             )
             conn.commit()
         except Exception as exc:
-            logging.error("run_migrations: failed to apply %s: %s", migration_name, exc)
+            if "duplicate column name" in str(exc).lower():
+                # initialize_db() CREATE TABLE already includes these columns — safe to mark applied.
+                logging.info("run_migrations: %s columns already present, marking applied", migration_name)
+                conn.execute(
+                    "INSERT OR IGNORE INTO schema_migrations (migration_name) VALUES (?)",
+                    (migration_name,),
+                )
+                conn.commit()
+            else:
+                logging.error("run_migrations: failed to apply %s: %s", migration_name, exc)
 
     conn.close()
 

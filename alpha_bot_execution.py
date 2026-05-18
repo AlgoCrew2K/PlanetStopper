@@ -25,6 +25,7 @@ import database
 import math_engine
 import reporting
 import autotuner
+import analytics
 
 # Port-mode resolver (AC-P2.*)
 from engine.exit_authority import get_exit_authority, is_authoritative
@@ -750,8 +751,8 @@ def main():
 
             # DM: capture EOD closing snapshot for dashboard frozen-state rendering.
             # Written once per trading day (idempotent guard on trading_day key).
-            # portfolio_strip values are None at EOD — the live analytics path in app.py
-            # computes these; the engine captures structure only.
+            # R13: portfolio_strip is now computed via analytics at capture time so the
+            # frozen /api/state path can serve real values (not all-None) after market close.
             if bot_state.get("last_market_close_snapshot", {}).get("trading_day") != current_date_str:
                 _eod_accounts_map: dict = {}
                 for _s_id in symphony_keys_eod:
@@ -762,15 +763,38 @@ def main():
                     if _acc not in _eod_accounts_map:
                         _eod_accounts_map[_acc] = []
                     _eod_accounts_map[_acc].append({"id": _s_id, **_sym_data})
+                # Flatten symphony_data_cache for analytics portfolio functions.
+                # symphony_data_cache values are Composer response dicts with
+                # 'id', 'last_percent_change', 'value' (current_value) keys.
+                _eod_symphonies_flat = [
+                    sym
+                    for syms in symphony_data_cache.values()
+                    for sym in syms
+                ]
+                try:
+                    _eod_portfolio_strip = {
+                        "today_change": analytics.get_portfolio_today_change(
+                            _eod_symphonies_flat, bot_state, trading_day=current_date_str
+                        ),
+                        "cumulative_return": analytics.get_portfolio_cumulative_return(
+                            _eod_symphonies_flat, bot_state, trading_day=current_date_str
+                        ),
+                        "max_drawdown": analytics.get_portfolio_max_drawdown(
+                            _eod_symphonies_flat, bot_state, trading_day=current_date_str
+                        ),
+                    }
+                except (KeyError, TypeError, ValueError, AttributeError) as _ps_exc:
+                    logging.warning("EOD portfolio_strip analytics failed: %s", _ps_exc)
+                    _eod_portfolio_strip = {
+                        "today_change": None,
+                        "cumulative_return": None,
+                        "max_drawdown": None,
+                    }
                 bot_state["last_market_close_snapshot"] = {
                     "trading_day": current_date_str,
                     "captured_at_et": current_et.strftime("%H:%M:%S ET"),
                     "data_as_of": current_et.strftime("%H:%M ET"),
-                    "portfolio_strip": {
-                        "today_change": None,
-                        "cumulative_return": None,
-                        "max_drawdown": None,
-                    },
+                    "portfolio_strip": _eod_portfolio_strip,
                     "shadow_divergence": {
                         "by_symphony": eod_divergence_by_sym,
                         "portfolio": portfolio_eod_div,
