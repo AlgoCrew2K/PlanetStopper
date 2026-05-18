@@ -1,20 +1,26 @@
-# Feature: Material Design Restyling
+# Feature: Dashboard Restyling — composer.trade-inspired aesthetic
 Status: ready (queued behind portmode-dev merge)
 Created: 2026-05-18
 
 ## Summary
 
-Restyle the AlphaBot v3 dashboard to adopt the Material Design visual language — palette, typography, elevation, spacing, component patterns — WITHOUT changing the stack. The dashboard stays on Flask + Jinja + Tailwind; we use Tailwind utility classes to recreate Material's design tokens. No React, no MUI components shipped to production. Operator's complaint: current Tailwind defaults look like every other AI-built page; Material Design gives it a distinctive operator-grade look.
+Restyle the AlphaBot v3 dashboard to look **clean and professional, reminiscent of composer.trade's actual UI** — distinctive operator-grade fintech aesthetic, distinct from generic AI-built pages. WITHOUT changing the stack. The dashboard stays on Flask + Jinja + Tailwind; we use Tailwind utility classes to recreate the design tokens. No React, no MUI components shipped to production.
 
-The MUI MCP (configured operator-side) is consumed at design-time by the asset-sourcer to extract canonical Material tokens (colors, typography, elevation values, spacing rhythm, component patterns). Output is a tokens reference document; the Trio then Tailwind-ifies those tokens across every dashboard surface.
+**Aesthetic north star**: composer.trade. Doesn't need to be exact; needs to be materially better than today.
+
+**Implementation discipline**: the MUI MCP (operator-side) is consumed at design-time by the asset-sourcer to LEARN canonical component patterns + accessibility conventions + interaction primitives. Source-of-truth for visual tokens is composer.trade's design language, NOT vanilla Material 3 (which is too "Google product"-colorful for a fintech operator dashboard).
+
+**MUST-HAVE**: light/dark mode toggle. Operator works at varying times of day; both themes required.
 
 ## Acceptance Criteria
 
 ### MD.1 — Design tokens reference doc
-- **AC-MD.1.1**: asset-sourcer produces `docs/design/material-tokens.md` extracting from MUI MCP / public docs: Material 3 (or Material 2 — operator pick) color palette (primary, secondary, surface, error, warning, success, info), typography scale (display / headline / title / body / label, with weight + line-height), elevation system (0/1/2/3/4/6/8/12/16/24 dp), spacing scale (8dp grid), border-radius standards, motion/transition timings.
-- **AC-MD.1.2**: doc maps each token to a Tailwind utility class OR a CSS custom property defined in `static/styles.css`. Single source of truth.
-- **AC-MD.1.3**: dark-mode compatible palette if AlphaBot's current design is dark-mode (verify); else light-mode only.
-- **AC-MD.1.4**: doc commits to main on a branch + PR for operator review BEFORE the Trio applies it.
+- **AC-MD.1.1**: asset-sourcer produces `docs/design/material-tokens.md`. INPUTS:
+  - composer.trade live UI examined via WebFetch + browser screenshots (target: their portfolio view, symphony detail, trade execution panel). Extract: color palette (both themes if they have toggle), typography (font family + sizes + weights), data-density (table row heights, paddings), card patterns, accent colors, semantic colors (P&L green/red, alert states), elevation/border conventions.
+  - MUI MCP / Material 3 docs for component PATTERNS only (not visual style): button states, chip variants, dialog spec, snackbar spec, accessibility conventions, motion timings, focus rings.
+- **AC-MD.1.2**: doc maps each token to a Tailwind utility class OR a CSS custom property defined in `static/styles.css`. Single source of truth. Tokens defined PER THEME (light + dark) under CSS custom properties; Tailwind's `class="dark:..."` consumed via `darkMode: 'class'`.
+- **AC-MD.1.3**: BOTH light AND dark palettes defined (MD.2 + MD.9 toggle). Operator runs the daemon 24/7; both themes required.
+- **AC-MD.1.4**: doc commits to main on a branch + PR for operator review BEFORE the Trio applies it. Include side-by-side screenshots: composer.trade reference + AlphaBot current + AlphaBot proposed mock.
 
 ### MD.2 — Palette swap
 - **AC-MD.2.1**: All current `bg-slate-*`, `text-slate-*`, `bg-gray-*`, `text-gray-*`, `bg-amber-*`, `text-amber-*`, `bg-indigo-*`, `text-indigo-*`, etc. references audited + replaced with Material-token-mapped equivalents.
@@ -52,9 +58,17 @@ For each existing component, produce a Material-flavored equivalent:
 - **AC-MD.7.3**: Cross-reference against MUI docs — visual fidelity check against canonical Material component galleries.
 
 ### MD.8 — Accessibility
-- **AC-MD.8.1**: All color combinations meet WCAG AA contrast (4.5:1 for body, 3:1 for large text).
+- **AC-MD.8.1**: All color combinations meet WCAG AA contrast (4.5:1 for body, 3:1 for large text) in BOTH themes.
 - **AC-MD.8.2**: Focus states visible on all interactive elements.
 - **AC-MD.8.3**: Existing hover behaviors (R15 cross-highlight) preserved.
+
+### MD.9 — Light / dark mode toggle (MUST-HAVE)
+- **AC-MD.9.1**: Theme toggle visible in the dashboard header (icon button — sun ↔ moon). Single click switches theme; persists across reloads.
+- **AC-MD.9.2**: Tailwind `darkMode: 'class'` configured. `<html class="dark">` toggled via JS. CSS custom properties resolve to per-theme values.
+- **AC-MD.9.3**: Persistence via `localStorage` key (e.g., `alphabot-theme`); auto-detects `prefers-color-scheme` on first load if no stored preference.
+- **AC-MD.9.4**: No flash of incorrect theme on page load (FOIT-style flash) — apply theme class BEFORE first paint via blocking inline script in `<head>`.
+- **AC-MD.9.5**: All restyled surfaces (table, banners, modals, badges, charts) render correctly in BOTH themes. ux-expert Playwright sweep covers both at every viewport.
+- **AC-MD.9.6**: Semantic colors (P&L green/red, trigger reasons, OBSERVED-ONLY badge, fleet-correlation amber) tested in both themes for adequate contrast.
 
 ## Architecture
 
@@ -68,11 +82,11 @@ For each existing component, produce a Material-flavored equivalent:
 | Tests | `tests/dashboard/test_material_design.py` (structural assertions on token usage); Playwright e2e screenshot diff |
 | ux-expert sweep | Visual regression via Playwright MCP |
 
-**Team composition**: Quad
-- `asset-sourcer` (lead for MD.1) — extracts tokens via MUI MCP / WebFetch
-- `quant-test-writer` — structural RED tests (assert tokens consistently applied; no raw color literals)
-- `flask-dashboard-specialist` — implements the restyle across all templates
-- `ux-expert` — Playwright visual regression + cross-references MUI docs
+**Team composition**: Pent
+- `asset-sourcer` (lead for MD.1) — extracts tokens from composer.trade UI (primary source) + MUI MCP / WebFetch (component patterns)
+- `quant-test-writer` — structural RED tests (assert tokens consistently applied; no raw color literals; both themes covered)
+- `flask-dashboard-specialist` — implements the restyle across all templates + the theme toggle
+- `ux-expert` — Playwright visual regression in BOTH themes + cross-references composer.trade + MUI docs
 - `quant-code-reviewer` — discipline gate
 
 ## Edge Cases
@@ -103,20 +117,23 @@ For each existing component, produce a Material-flavored equivalent:
 | Decision | Rationale |
 |----------|-----------|
 | Sequenced AFTER portmode-dev merges | portmode-dev touches the same templates (settings modal, dashboard table). Parallel restyle would conflict massively. |
-| Tailwind tokens, NOT React+MUI | Operator's complaint is aesthetic (looks like every other Tailwind page), not architectural. Tailwind-ifying Material tokens preserves the existing Flask+Jinja stack with no rewrite cost. |
-| Material 3 (not Material 2) | Newer spec; cleaner palette + typography; better dark-mode support. Operator confirms at MD.1 PR review. |
+| Tailwind tokens, NOT React+MUI | Operator's complaint is aesthetic (looks like every other Tailwind page), not architectural. Tailwind-ifying tokens preserves the existing Flask+Jinja stack with no rewrite cost. |
+| composer.trade as aesthetic north star (NOT vanilla Material 3) | Operator explicitly: "clean, reminiscent of composer.trade's actual UI". Material 3 vanilla is too colorful/Google-product-y for a fintech operator dashboard. composer.trade's clean dense-data aesthetic is the target. MUI tokens used for component patterns + accessibility, not visual style. |
+| Light + dark mode toggle MANDATORY | Operator explicitly: "ABSOLUTELY have a light/darkmode toggle". Both themes required, no-flash on load, persists across reloads. |
 | Self-hosted fonts | Project's operator-LAN-only posture forbids CDN dependencies. |
-| ux-expert visual sweep mandatory | Real-money operator surface — must look professional + distinctive. Playwright diff is the acceptance criterion. |
-| Token PR review at MD.1 step | Operator approves the design language BEFORE the Trio applies it everywhere. Cheap to re-spec tokens; expensive to redo 50 templates. |
+| ux-expert visual sweep mandatory in BOTH themes | Real-money operator surface — must look professional + distinctive. Playwright diff in light AND dark is the acceptance criterion. |
+| Token PR review at MD.1 step | Operator approves the design language BEFORE the Pent applies it everywhere. Cheap to re-spec tokens; expensive to redo 50 templates. PR includes side-by-side: composer.trade reference + AlphaBot current + AlphaBot proposed. |
 
 ## Scope Boundaries
 
 **IN:**
-- All 8 AC groups above.
+- All 9 AC groups above (MD.1 - MD.9).
 - Every visible Jinja template restyled.
-- Tokens reference doc + Tailwind config + static/styles.css.
-- Self-hosted Roboto.
-- Playwright visual regression.
+- Tokens reference doc + Tailwind config + static/styles.css with per-theme CSS variables.
+- Self-hosted font (Inter or composer.trade's actual font if identifiable).
+- Light / dark mode toggle with no-flash + persistence.
+- Playwright visual regression in BOTH themes.
+- composer.trade reference screenshots in the tokens doc.
 
 **OUT:**
 - React migration (operator explicitly de-scoped).
@@ -124,7 +141,7 @@ For each existing component, produce a Material-flavored equivalent:
 - New features (the data + interactions stay the same).
 - Backend changes (`/api/state` schema unchanged).
 - Mobile-app layout (responsive within current breakpoints only).
-- Theming engine (single Material 3 dark theme, no operator theme picker).
+- Operator-customizable theme picker beyond light/dark (just the two themes; no accent-color picker).
 
 ## Dependencies
 
