@@ -611,3 +611,149 @@ class TestTradingDayInjection:
             f"app.py get_symphony_max_drawdown call must pass trading_day=<ET today>; "
             f"found call: {snippet!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TIER 5: Portfolio strip call sites — trading_day injection (reviewer BLOCK)
+# ---------------------------------------------------------------------------
+
+class TestPortfolioStripTradingDayInjection:
+    """
+    Reviewer BLOCK: app.py:400-402 portfolio_strip calls omit trading_day.
+    After 20:00 UTC the UTC date advances past ET trading_day, so the portfolio
+    aggregators query shadow_history with tomorrow's date and return dry_run=None.
+    Per-symphony strip (387/391/395) is correctly fixed; portfolio strip is not.
+    """
+
+    def test_app_py_portfolio_today_change_injects_trading_day(self):
+        """
+        app.py get_portfolio_today_change call must pass trading_day=_today_et.
+        Without it, the portfolio aggregates query with UTC date after 20:00 UTC.
+        """
+        analytics_path = Path(__file__).parent.parent.parent / "app.py"
+        source = analytics_path.read_text(encoding="utf-8")
+
+        call_idx = source.find("get_portfolio_today_change(")
+        assert call_idx != -1, "Could not find get_portfolio_today_change call in app.py"
+
+        # Multiline calls: find closing paren by counting depth
+        depth = 0
+        end_idx = call_idx
+        for i, ch in enumerate(source[call_idx:], start=call_idx):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    end_idx = i
+                    break
+        snippet = source[call_idx:end_idx + 1]
+
+        assert "trading_day" in snippet, (
+            f"app.py get_portfolio_today_change must pass trading_day=_today_et; "
+            f"found call: {snippet!r}"
+        )
+
+    def test_app_py_portfolio_cumulative_return_injects_trading_day(self):
+        """
+        app.py get_portfolio_cumulative_return call must pass trading_day=_today_et.
+        """
+        analytics_path = Path(__file__).parent.parent.parent / "app.py"
+        source = analytics_path.read_text(encoding="utf-8")
+
+        call_idx = source.find("get_portfolio_cumulative_return(")
+        assert call_idx != -1, "Could not find get_portfolio_cumulative_return call in app.py"
+
+        depth = 0
+        end_idx = call_idx
+        for i, ch in enumerate(source[call_idx:], start=call_idx):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    end_idx = i
+                    break
+        snippet = source[call_idx:end_idx + 1]
+
+        assert "trading_day" in snippet, (
+            f"app.py get_portfolio_cumulative_return must pass trading_day=_today_et; "
+            f"found call: {snippet!r}"
+        )
+
+    def test_app_py_portfolio_max_drawdown_injects_trading_day(self):
+        """
+        app.py get_portfolio_max_drawdown call must pass trading_day=_today_et.
+        """
+        analytics_path = Path(__file__).parent.parent.parent / "app.py"
+        source = analytics_path.read_text(encoding="utf-8")
+
+        call_idx = source.find("get_portfolio_max_drawdown(")
+        assert call_idx != -1, "Could not find get_portfolio_max_drawdown call in app.py"
+
+        depth = 0
+        end_idx = call_idx
+        for i, ch in enumerate(source[call_idx:], start=call_idx):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    end_idx = i
+                    break
+        snippet = source[call_idx:end_idx + 1]
+
+        assert "trading_day" in snippet, (
+            f"app.py get_portfolio_max_drawdown must pass trading_day=_today_et; "
+            f"found call: {snippet!r}"
+        )
+
+    def test_portfolio_kwargs_thread_through_to_per_symphony_helpers(self, tmp_path):
+        """
+        When trading_day is passed to get_portfolio_today_change, the per-symphony
+        helper receives it — confirming **kwargs threading works end-to-end.
+
+        With shadow_history rows for symphony_id on the given trading_day, the
+        portfolio dry_run must reflect shadow_return rather than being None.
+        """
+        from analytics import get_portfolio_today_change
+
+        sym_id = "SYM_PORTFOLIO_THREADING_TEST"
+        shadow_return_val = -4.44
+        rows = [
+            {
+                "symphony_id": sym_id,
+                "ts_utc": "2026-05-14T19:00:00Z",
+                "ts_et": "2026-05-14T15:00:00",
+                "trading_day": "2026-05-14",
+                "current_return": shadow_return_val,
+                "shadow_return": shadow_return_val,
+                "is_post_trigger": 0,
+                "trigger_id": None,
+            }
+        ]
+        db_file = _build_shadow_db(rows, tmp_path)
+
+        symphonies = [
+            {
+                "id": sym_id,
+                "last_percent_change": 0.01,
+                "simple_return": 0.05,
+                "net_deposits": 100.0,
+                "time_weighted_return": 0.05,
+                "max_drawdown": 0.05,
+                "value": 1000.0,
+            }
+        ]
+        bot_state = {sym_id: {"triggered": False, "current_return": shadow_return_val}}
+
+        result = get_portfolio_today_change(
+            symphonies, bot_state,
+            trading_day="2026-05-14", db_path=db_file,
+        )
+
+        # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
+        assert result["dry_run"] == pytest.approx(shadow_return_val, abs=1e-6), (
+            f"portfolio trading_day threading: dry_run must be shadow_return={shadow_return_val}; "
+            f"got {result['dry_run']} — kwargs not reaching per-symphony helper"
+        )
