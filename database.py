@@ -1,5 +1,6 @@
 """SQLite state management for AlphaBot with Account-Level Strategies."""
 
+import hashlib
 import logging
 import os
 import sqlite3
@@ -7,7 +8,7 @@ import json
 import time
 from datetime import datetime, timezone
 
-DB_FILE = "alphabot_state.db"
+DB_FILE = os.environ.get("DB_PATH", "alphabot_state.db")
 
 # DEFAULT STRATEGY PARAMETERS (Used when a new account is detected)
 DEFAULT_STRATEGY = {
@@ -26,15 +27,19 @@ DEFAULT_LOCKED_VARS = [
     "TRIGGER_THRESHOLD_PCT"
 ]
 
+def _db_file() -> str:
+    return os.environ.get("DB_PATH", DB_FILE)
+
+
 def get_connection():
-    return sqlite3.connect(DB_FILE, timeout=10.0)
+    return sqlite3.connect(_db_file(), timeout=10.0)
 
 
 def get_ro_connection() -> sqlite3.Connection:
     # Opens via SQLite URI with ?mode=ro — read-only enforced at driver level.
     # Dashboard read handlers use this to prevent accidental writes while the
     # engine holds a WAL write lock (concurrent Flask reads + single writer).
-    return sqlite3.connect(f"file:{DB_FILE}?mode=ro", uri=True, timeout=10.0)
+    return sqlite3.connect(f"file:{_db_file()}?mode=ro", uri=True, timeout=10.0)
 
 
 def init_db():
@@ -156,9 +161,14 @@ def save_state(state_dict):
     conn.commit()
     conn.close()
 
+_WIPE_RESERVED_KEYS = {"date", "last_execution_mode", "last_market_close_snapshot"}
+
+
 def wipe_transient_state(state_dict):
     """Wipes transient state keys for all symphonies to prevent bleeding across sessions."""
     for s_id, s_data in state_dict.items():
+        if s_id in _WIPE_RESERVED_KEYS:
+            continue
         if isinstance(s_data, dict):
             s_data["high_water_mark"] = -999.0
             s_data["shadow_hwm"] = -999.0
@@ -341,51 +351,106 @@ def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
 
 
 def _autotune_run_row_to_dict(row) -> dict:
-    """Map a raw autotune_runs SELECT row (11 columns) to a dict."""
+    """Map a raw autotune_runs SELECT row (14 columns) to a dict."""
     return {
-        "run_timestamp":      row[0],
-        "symphony_id":        row[1],
-        "oos_alpha":          row[2],
-        "train_alpha":        row[3],
-        "baseline_decision":  row[4],
-        "fallback_oos_alpha": row[5],
-        "default_oos_alpha":  row[6],
-        "deflated_sharpe":    row[7],
-        "naive_sharpe":       row[8],
-        "validation_sharpe":  row[9],
-        "frozen_eval_sharpe": row[10],
+        "run_timestamp":       row[0],
+        "symphony_id":         row[1],
+        "oos_alpha":           row[2],
+        "train_alpha":         row[3],
+        "baseline_decision":   row[4],
+        "fallback_oos_alpha":  row[5],
+        "default_oos_alpha":   row[6],
+        "deflated_sharpe":     row[7],
+        "naive_sharpe":        row[8],
+        "validation_sharpe":   row[9],
+        "frozen_eval_sharpe":  row[10],
+        "math_mode":           row[11],
+        "account_id":          row[12],
+        "sortino_sentinel_pct": row[13],
     }
 
 
 _AUTOTUNE_RUNS_SELECT = """
     SELECT run_timestamp, symphony_id, oos_alpha, train_alpha,
            baseline_decision, fallback_oos_alpha, default_oos_alpha,
-           deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe
+           deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
+           math_mode, account_id, sortino_sentinel_pct
     FROM autotune_runs
 """
 
 
-def get_latest_autotune_run(symphony_id) -> dict | None:
+def get_latest_autotune_run(
+    symphony_id: str,
+    account_id: "str | None" = None,
+    math_mode: "str | None" = "per_symphony",
+) -> "dict | None":
     """Return the most-recent autotune_runs row for symphony_id as a dict.
 
-    Returns None if no rows exist for that symphony — callers (e.g. Claude
-    context-assembly) treat None as "Optuna has not yet run for this symphony".
+    Returns None if no rows exist — callers treat None as "Optuna has not yet run".
+
+    N3+N4: account_id and math_mode filter to port-level runs when supplied.
+    Legacy callers that pass only symphony_id continue to work unchanged.
     """
     conn = get_connection()
     cursor = conn.cursor()
+    params: list = [symphony_id]
+    filters = "WHERE symphony_id = ?"
+    if account_id is not None:
+        filters += " AND account_id = ?"
+        params.append(account_id)
+    if math_mode is not None:
+        filters += " AND math_mode = ?"
+        params.append(math_mode)
     cursor.execute(
-        _AUTOTUNE_RUNS_SELECT + """
-        WHERE symphony_id = ?
-        ORDER BY run_timestamp DESC
-        LIMIT 1
-        """,
-        (symphony_id,),
+        _AUTOTUNE_RUNS_SELECT + filters + " ORDER BY run_timestamp DESC LIMIT 1",
+        params,
     )
     row = cursor.fetchone()
     conn.close()
     if row is None:
         return None
     return _autotune_run_row_to_dict(row)
+
+
+def record_autotune_run(
+    run_timestamp,
+    symphony_id,
+    math_mode="per_symphony",
+    oos_alpha=None,
+    train_alpha=None,
+    baseline_decision=None,
+    fallback_oos_alpha=None,
+    default_oos_alpha=None,
+    deflated_sharpe=None,
+    naive_sharpe=None,
+    validation_sharpe=None,
+    frozen_eval_sharpe=None,
+    account_id=None,
+    sortino_sentinel_pct=None,
+) -> None:
+    """Persist one autotune_runs row with port-mode fields.
+
+    Adds math_mode, account_id, sortino_sentinel_pct to the existing
+    save_autotune_run interface (AC-P2.11.1, F3, N3+N4).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO autotune_runs
+            (run_timestamp, symphony_id, oos_alpha, train_alpha,
+             baseline_decision, fallback_oos_alpha, default_oos_alpha,
+             deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
+             math_mode, account_id, sortino_sentinel_pct)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (run_timestamp, symphony_id, oos_alpha, train_alpha,
+         baseline_decision, fallback_oos_alpha, default_oos_alpha,
+         deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
+         math_mode, account_id, sortino_sentinel_pct),
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_all_autotune_runs(limit: int = 50) -> list[dict]:
@@ -554,6 +619,9 @@ _MIGRATION_FILES = [
     "007_autotune_runs_frozen_eval.sql",
     "008_shadow_history.sql",
     "009_fleet_alert_state.sql",
+    "010_port_state.sql",
+    "011_exit_triggers_port.sql",
+    "012_autotune_runs_portmode.sql",
 ]
 
 
@@ -646,38 +714,184 @@ def clear_fleet_alert() -> None:
     conn.commit()
 
 
+# --- AC-P2.5: Port-state helpers ---
+
+_PORT_STATE_COLUMNS = (
+    "account_id", "composition_hash", "high_water_mark", "safe_hwm", "shadow_hwm",
+    "vwap_ticks_json", "vwap_bleed_ticks_json", "mc_history_json", "mc_prob",
+    "armed", "para_armed", "port_breakeven_active", "triggered", "triggered_reason",
+    "prev_return", "current_return", "last_target_reduction_json",
+    "last_selected_symphony_id", "stop_trigger", "updated_at",
+)
+
+
+def read_port_state(account_id: str) -> "dict | None":
+    """Return the port_state row for account_id as a dict, or None when absent."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_PORT_STATE_COLUMNS) + " FROM port_state WHERE account_id = ?",
+            (account_id,),
+        ).fetchone()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def write_port_state(account_id: str, state_dict: dict) -> None:
+    """Upsert one port_state row for account_id.
+
+    Only columns present in state_dict are written; unspecified columns retain
+    their current values (via INSERT OR REPLACE read-modify-write on PK).
+    updated_at is always stamped to now UTC.
+    """
+    existing = read_port_state(account_id) or {}
+    existing.update(state_dict)
+    existing["account_id"] = account_id
+    existing["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    cols = [c for c in _PORT_STATE_COLUMNS if c in existing]
+    placeholders = ", ".join("?" * len(cols))
+    col_names = ", ".join(cols)
+    values = [existing[c] for c in cols]
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            f"INSERT OR REPLACE INTO port_state ({col_names}) VALUES ({placeholders})",
+            values,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_port_state(account_id: str) -> None:
+    """Delete the port_state row for account_id. Idempotent — safe when absent."""
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM port_state WHERE account_id = ?", (account_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_all_port_states() -> "list[dict]":
+    """Return all port_state rows as a list of dicts, ordered by account_id."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_PORT_STATE_COLUMNS) + " FROM port_state ORDER BY account_id"
+        ).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def new_day_reset_port_state(account_id: str) -> None:
+    """AC-P2.5.4: reset prev_return to None for the new trading day.
+
+    Sentinel value (None) causes cycle-1 velocity = 0, preventing PARA-ARM
+    from firing on the opening gap.
+    """
+    existing = read_port_state(account_id)
+    if existing is None:
+        return
+    write_port_state(account_id, {"prev_return": None})
+
+
+def rebase_port_state_on_composition_change(
+    account_id: str,
+    new_composition_hash: str,
+    current_port_value: float,
+) -> None:
+    """AC-P2.5.5 + Amendment BC-3: reset gate state when portfolio composition changes.
+
+    Resets all momentum-tracking fields to zero-velocity baseline so the new
+    composition starts clean. HWM is set to current_port_value (not the old HWM)
+    so the ratchet baseline is accurate for the new set of holdings.
+    stop_trigger is reset per BC-3 so the ratchet floor is not inherited.
+    """
+    write_port_state(account_id, {
+        "composition_hash": new_composition_hash,
+        "high_water_mark": current_port_value,
+        "prev_return": None,
+        "mc_history_json": "[]",
+        "vwap_ticks_json": "[]",
+        "vwap_bleed_ticks_json": "[]",
+        "armed": False,
+        "para_armed": False,
+        "port_breakeven_active": False,
+        "stop_trigger": None,
+    })
+
+
+def compute_composition_hash(symphony_ids: "list[str]") -> str:
+    """Return a stable O(1)-comparable hash of the current symphony set.
+
+    Order-independent: the list is sorted before hashing so callers need not
+    normalise order. Used by the mode resolver to detect composition changes
+    without deep-comparing full symphony objects (AC-P2.8.1).
+    """
+    canonical = ",".join(sorted(symphony_ids))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
 # --- H1: Trigger Attribution Telemetry ---
 
 
 def record_exit_trigger(
     *,
     symphony_id: str,
-    account_id: str | None,
+    account_id: "str | None" = None,
     triggered_reason: str,
-    at_return: float | None,
-    gate_state: dict | None,
-    cycle_id: str | None,
+    at_return: "float | None" = None,
+    gate_state: "dict | None" = None,
+    gate_state_json: "str | None" = None,
+    cycle_id: "str | None" = None,
+    ts_utc: "str | None" = None,
+    ts_et: "str | None" = None,
+    math_mode: "str | None" = None,
+    port_trigger_id: "str | None" = None,
 ) -> None:
     """Write one exit-trigger telemetry row.
 
     Opens its own connection — does NOT join the cycle's save_state transaction.
     A failure here must never fail the cycle; any exception is logged at ERROR
     and swallowed.  Called from alpha_bot_execution.py at the triggered=True set site.
+
+    AC-P2.10: math_mode and port_trigger_id support port-level exit attribution.
+    gate_state_json may be passed as a pre-serialised string (e.g. from tests)
+    or as a dict via gate_state; gate_state_json takes precedence.
+    ts_utc/ts_et may be supplied by callers (tests, replays); generated from
+    system clock when absent.
     """
     from datetime import timedelta
 
-    now_utc = datetime.now(timezone.utc)
-    ts_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
-    # ET offset approximation for display; EDT = UTC-4.
-    ts_et = (now_utc - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S")
-    gate_state_json = json.dumps(gate_state) if gate_state is not None else None
+    if ts_utc is None or ts_et is None:
+        now_utc = datetime.now(timezone.utc)
+        ts_utc = ts_utc or now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # ET offset approximation for display; EDT = UTC-4.
+        ts_et = ts_et or (now_utc - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    if gate_state_json is None and gate_state is not None:
+        gate_state_json = json.dumps(gate_state)
 
     try:
-        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.execute(
             "INSERT INTO exit_triggers "
-            "(ts_utc, ts_et, symphony_id, account_id, triggered_reason, at_return, gate_state_json, cycle_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(ts_utc, ts_et, symphony_id, account_id, triggered_reason, at_return, "
+            " gate_state_json, cycle_id, math_mode, port_trigger_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ts_utc,
                 ts_et,
@@ -687,12 +901,37 @@ def record_exit_trigger(
                 at_return,
                 gate_state_json,
                 cycle_id,
+                math_mode,
+                port_trigger_id,
             ),
         )
         conn.commit()
         conn.close()
     except Exception as exc:
         logging.error("record_exit_trigger failed for %s: %s", symphony_id, exc)
+
+
+def get_recent_exit_triggers(limit: int = 50) -> "list[dict]":
+    """Return the most-recent exit_triggers rows across all symphonies.
+
+    Used by /api/triggers dashboard route. Includes math_mode and port_trigger_id
+    columns (AC-P2.10.4). Returns an empty list on error.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT id, ts_utc, ts_et, symphony_id, account_id, triggered_reason, "
+            "at_return, gate_state_json, cycle_id, math_mode, port_trigger_id "
+            "FROM exit_triggers ORDER BY ts_utc DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    except Exception as exc:
+        logging.error("get_recent_exit_triggers failed: %s", exc)
+        return []
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
 
 
 # --- M1F: Shadow-equity history ---
@@ -727,7 +966,7 @@ def record_shadow_observation(
     for k in stale:
         del _shadow_cr_cache[k]
     try:
-        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.execute(
             "INSERT INTO shadow_history "
             "(ts_utc, ts_et, trading_day, symphony_id, account_id, cycle_id, "
@@ -765,7 +1004,7 @@ def prune_old_shadow_history(retention_days: int) -> int:
     )
     total_deleted = 0
     try:
-        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
         while True:
             cursor = conn.execute(
                 "DELETE FROM shadow_history WHERE id IN "
@@ -786,7 +1025,7 @@ def prune_old_shadow_history(retention_days: int) -> int:
 def load_latest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
     """Return the most-recent shadow_history row for a symphony+day, or None."""
     try:
-        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT * FROM shadow_history "
@@ -811,7 +1050,7 @@ def resume_shadow_baselines(bot_state: dict, trading_day: str) -> None:
     AC-M1F.2.4, AC-M1F.7.2: must be called AFTER wipe_transient_state for the day.
     """
     try:
-        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT symphony_id, current_return, shadow_return, is_post_trigger, trigger_id "
@@ -853,7 +1092,7 @@ def compute_shadow_hwm(symphony_id: str, trading_day: str) -> "float | None":
     Returns None when no rows exist for the given symphony+day.
     """
     try:
-        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
         row = conn.execute(
             "SELECT MAX(current_return) FROM shadow_history "
             "WHERE symphony_id = ? AND trading_day = ?",
@@ -874,7 +1113,7 @@ def get_shadow_divergence(trading_day: str) -> dict:
     Returns {"by_symphony": {<id>: {"today": float|None, "cumulative": float|None}}, "portfolio_today": float|None}.
     """
     try:
-        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT symphony_id, "
