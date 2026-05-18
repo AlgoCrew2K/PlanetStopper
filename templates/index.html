@@ -243,7 +243,7 @@
         </div>
     </div>
 
-    <!-- Confirm Liquidation Modal -->
+    <!-- Emergency Liquidate Modal (hardened) -->
     <div id="confirm-modal"
         class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300">
         <div class="bg-slate-800 rounded-2xl shadow-2xl border border-rose-500/50 w-full max-w-md overflow-hidden transform scale-95 transition-transform duration-300 p-6"
@@ -254,21 +254,30 @@
                         d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
                     </path>
                 </svg>
-                Confirm Liquidation
+                Emergency Liquidate
             </h3>
-            <p class="text-sm text-slate-300 mb-6">Are you sure you want to execute a <strong class="text-rose-400">Sell
-                    to Cash</strong> for ALL symphonies in the <span id="confirm-account-name"
-                    class="font-bold text-white border-b border-slate-500"></span> account?</p>
+            <p class="text-sm text-slate-300 mb-4">Select the account and type <strong class="text-rose-400">LIQUIDATE</strong> to confirm. This will sell ALL symphonies to cash.</p>
+            <div class="mb-4">
+                <label class="block text-xs text-slate-400 mb-1">Account</label>
+                <select id="panic-account"
+                    class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500">
+                </select>
+            </div>
+            <div class="mb-6">
+                <label class="block text-xs text-slate-400 mb-1">Type LIQUIDATE to confirm</label>
+                <input id="panic-phrase" type="text" autocomplete="off" placeholder="LIQUIDATE"
+                    class="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500" />
+            </div>
             <div class="flex justify-end gap-3">
                 <button onclick="closeConfirmModal()"
                     class="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white transition-colors">Cancel</button>
-                <button id="confirm-execute-btn"
-                    class="bg-rose-600 hover:bg-rose-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-all shadow-lg active:scale-95 flex items-center gap-2">
+                <button id="confirm-execute-btn" disabled
+                    class="bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg text-sm font-medium transition-all shadow-lg active:scale-95 flex items-center gap-2">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                     </svg>
-                    Liquidate Account
+                    Emergency Liquidate
                 </button>
             </div>
         </div>
@@ -1202,15 +1211,34 @@
             fetchState();
         }
 
-        // --- Go To Cash (Account Liquidation) Logic ---
+        // --- Emergency Liquidate (Account Liquidation) Logic ---
         function openConfirmModal(accId) {
-            pendingAccountId = accId;
-            const displayLabel = accountLabels[accId] || accId;
-            document.getElementById('confirm-account-name').textContent = displayLabel;
+            // Populate the account dropdown from accounts_map and pre-select accId
+            const dropdown = document.getElementById('panic-account');
+            dropdown.innerHTML = '';
+            const ids = Object.keys(accountLabels).length ? Object.keys(accountLabels) : (accId ? [accId] : []);
+            ids.forEach(id => {
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = accountLabels[id] || id;
+                if (id === accId) opt.selected = true;
+                dropdown.appendChild(opt);
+            });
+            if (!ids.length) {
+                const opt = document.createElement('option');
+                opt.value = accId || '';
+                opt.textContent = accountLabels[accId] || accId || '';
+                dropdown.appendChild(opt);
+            }
+
+            // Reset phrase input and confirm button
+            const phraseInput = document.getElementById('panic-phrase');
+            const confirmBtn = document.getElementById('confirm-execute-btn');
+            phraseInput.value = '';
+            confirmBtn.disabled = true;
 
             const modal = document.getElementById('confirm-modal');
             const content = document.getElementById('confirm-modal-content');
-
             modal.classList.remove('hidden');
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
@@ -1218,19 +1246,28 @@
             }, 10);
         }
 
+        // Alias so table_partial.html openConfirmModal calls still work
+        function openPanicModal() { openConfirmModal(null); }
+
         function closeConfirmModal() {
-            pendingAccountId = null;
             const modal = document.getElementById('confirm-modal');
             const content = document.getElementById('confirm-modal-content');
-
             modal.classList.add('opacity-0');
             content.classList.add('scale-95');
             setTimeout(() => { modal.classList.add('hidden'); }, 300);
         }
 
+        // Enable confirm button only when phrase equals "LIQUIDATE" exactly
+        document.getElementById('panic-phrase').addEventListener('input', () => {
+            const confirmBtn = document.getElementById('confirm-execute-btn');
+            confirmBtn.disabled = document.getElementById('panic-phrase').value !== 'LIQUIDATE';
+        });
+
         document.getElementById('confirm-execute-btn').addEventListener('click', async () => {
-            if (!pendingAccountId) return;
             const btn = document.getElementById('confirm-execute-btn');
+            const selectedAccountId = document.getElementById('panic-account').value;
+            const phraseInput = document.getElementById('panic-phrase');
+            if (!selectedAccountId || phraseInput.value !== 'LIQUIDATE') return;
 
             btn.disabled = true;
             btn.innerHTML = `<svg class="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Executing...`;
@@ -1239,20 +1276,24 @@
                 const response = await fetch('/api/sell_account', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ account_id: pendingAccountId })
+                    body: JSON.stringify({
+                        account_id: selectedAccountId,
+                        confirm_account_id: selectedAccountId,
+                        confirm_phrase: phraseInput.value
+                    })
                 });
                 const result = await response.json();
 
-                if (result.status === 'success') {
-                    showNotification("✅ " + result.message, "success");
+                if (result.status === 'success' || result.status === 'dry_run') {
+                    showNotification("Emergency liquidation: " + result.message, result.status === 'success' ? "success" : "error");
                 } else {
-                    showNotification("⚠️ " + result.message, "error");
+                    showNotification("Failed: " + result.message, "error");
                 }
             } catch (error) {
-                showNotification("⚠️ Failed to liquidate account.", "error");
+                showNotification("Failed to liquidate account.", "error");
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> Liquidate Account`;
+                btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> Emergency Liquidate`;
                 closeConfirmModal();
             }
         });

@@ -258,7 +258,11 @@ def test_sell_account_rejects_non_live_with_clear_signal(client, monkeypatch):
             )
 
     monkeypatch.setattr(app_module.threading, "Thread", FakeThread)
-    resp = client.post("/api/sell_account", json={"account_id": "ACC1"})
+    resp = client.post("/api/sell_account", json={
+        "account_id": "ACC1",
+        "confirm_account_id": "ACC1",
+        "confirm_phrase": "LIQUIDATE",
+    })
 
     body = resp.get_json()
 
@@ -297,7 +301,11 @@ def test_sell_account_live_mode_passes_true_to_liquidation(client, monkeypatch):
         return real_thread(target=lambda: None)
 
     monkeypatch.setattr(app_module.threading, "Thread", fake_thread)
-    resp = client.post("/api/sell_account", json={"account_id": "ACC2"})
+    resp = client.post("/api/sell_account", json={
+        "account_id": "ACC2",
+        "confirm_account_id": "ACC2",
+        "confirm_phrase": "LIQUIDATE",
+    })
     assert resp.status_code == 200
     target, args, _ = started[0]
     assert target is app_module.perform_account_liquidation
