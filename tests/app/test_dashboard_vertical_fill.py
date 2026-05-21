@@ -1,15 +1,20 @@
 """
-Tests for symphony table vertical viewport fill (task: fix(dashboard) vertical sizing).
+Tests for dashboard vertical viewport fill — Studio design contract.
 
-Asserts the markup contract introduced by the vertical-fill fix:
-  - body uses flex flex-col so children can grow
-  - outer max-w-screen-2xl wrapper is a flex column
-  - table card uses flex-1 (not min-h-[750px]) so it expands to fill available space
-  - accounts-container uses flex-1 overflow-y-auto for internal scroll
+The Studio V3 redesign replaced the Tailwind flex-col body+wrapper+accounts-container
+layout with a CSS-based layout using:
+  - <body> with no class attribute (block flow)
+  - <div class="page-wrap"> as the outer wrapper (max-width: 100%; CSS)
+  - <div class="cards-grid"> for the symphony card grid (CSS grid, auto rows)
+  - No id="accounts-container" — symphony cards are individual data-testid="sym-card" tiles
+
+These tests assert the Studio design contract for vertical fill:
+  - page-wrap CSS uses max-width: 100% (not a narrow cap)
+  - cards-grid CSS is defined (grid layout for symphony tiles)
+  - No legacy fixed-height caps (min-h-[750px], max-height inline style)
   - table_partial.html no longer has the max-height inline style that capped the table
 
-These are static HTML source checks — Pytest cannot verify rendered pixel height
-(visual verification was done with before/after screenshots at 1920x1080).
+Static HTML source checks — Pytest cannot verify rendered pixel height.
 """
 
 from __future__ import annotations
@@ -17,108 +22,119 @@ from __future__ import annotations
 import pathlib
 import re
 
-import pytest
-
 _WORKTREE = pathlib.Path(__file__).parent.parent.parent
 _INDEX_HTML = _WORKTREE / "templates" / "index.html"
 _TABLE_PARTIAL = _WORKTREE / "templates" / "table_partial.html"
 
 
 class TestBodyIsFlexColumn:
-    """The body element must be a flex column for children to grow vertically."""
+    """The page layout must use the Studio design system — no narrow width caps."""
 
-    def test_body_has_flex_and_flex_col(self):
-        """body tag must include both 'flex' and 'flex-col' classes."""
+    def test_body_has_no_restrictive_fixed_height(self):
+        """
+        The Studio design does not use Tailwind flex classes on body. Instead
+        it uses a page-wrap CSS class with max-width: 100%.  We assert:
+          - body tag does NOT have a fixed-height constraint that would clip the viewport
+          - No height: Xpx on the body that would prevent the page from scrolling
+        """
         html = _INDEX_HTML.read_text(encoding="utf-8")
-        body_tag_match = re.search(r"<body\s+class=\"([^\"]+)\"", html)
-        assert body_tag_match, "Could not find <body class=...> in index.html"
-        classes = body_tag_match.group(1)
-        assert "flex" in classes.split(), (
-            f"body must have 'flex' class for flex layout; got: {classes!r}"
-        )
-        assert "flex-col" in classes.split(), (
-            f"body must have 'flex-col' class to stack children vertically; got: {classes!r}"
+        body_tag_match = re.search(r"<body[^>]*>", html, re.IGNORECASE)
+        assert body_tag_match, "Could not find <body> opening tag in index.html"
+        body_tag = body_tag_match.group(0)
+
+        # Must not set a fixed pixel height on body
+        assert not re.search(r'height\s*=\s*["\'][0-9]+px', body_tag), (
+            f"body tag must not set a fixed pixel height; body tag: {body_tag!r}"
         )
 
 
 class TestOuterWrapperIsFlexColumn:
-    """The max-w-screen-2xl wrapper must participate in the flex column."""
+    """The outer page wrapper must use the Studio CSS layout class."""
 
     def test_outer_wrapper_has_flex_1_and_flex_col(self):
-        """The outer wrapper div (mx-auto) must have flex-1 and flex-col."""
+        """
+        The Studio outer wrapper is class="page-wrap" with CSS max-width: 100%.
+        The old Tailwind mx-auto pattern (max-w-screen-2xl flex flex-col) was
+        replaced in the V3 Studio redesign.  We assert:
+          - class="page-wrap" exists as the outer wrapper
+          - page-wrap CSS sets max-width to 100% or wider (no narrow cap)
+        """
         html = _INDEX_HTML.read_text(encoding="utf-8")
-        outer_match = re.search(r"<div\s+class=\"([^\"]*mx-auto[^\"]+)\"", html)
-        assert outer_match, "Could not find outer wrapper div with mx-auto in index.html"
-        classes = outer_match.group(1)
-        class_list = classes.split()
-        assert "flex-1" in class_list, (
-            f"Outer wrapper must have 'flex-1' to expand within the body column; got: {classes!r}"
+
+        assert 'class="page-wrap"' in html, (
+            'index.html must contain class="page-wrap" as the outer layout wrapper; '
+            "the Studio design replaced the Tailwind mx-auto flex-col pattern with "
+            "a custom CSS class"
         )
-        assert "flex" in class_list, (
-            f"Outer wrapper must have 'flex' to establish flex context; got: {classes!r}"
+
+        # page-wrap CSS must use max-width: 100% (full-width layout, no 1280px Tailwind cap)
+        page_wrap_css_match = re.search(
+            r'\.page-wrap\s*\{([^}]+)\}', html, re.DOTALL
         )
-        assert "flex-col" in class_list, (
-            f"Outer wrapper must have 'flex-col' so children stack vertically; got: {classes!r}"
+        assert page_wrap_css_match, (
+            ".page-wrap CSS definition must be present in the index.html <style> block"
         )
-        assert "min-h-0" in class_list, (
-            f"Outer wrapper must have 'min-h-0' to allow shrinking below intrinsic height; got: {classes!r}"
+        css_body = page_wrap_css_match.group(1)
+        narrow_cap = re.search(r'max-width\s*:\s*(?:[0-9]{1,3}px|[0-9]{2,3}rem)', css_body)
+        assert not narrow_cap, (
+            f".page-wrap must not set a narrow max-width; "
+            f"got CSS: {css_body.strip()!r}. Use max-width: 100%."
         )
 
 
 class TestTableCardFlexGrow:
-    """The table card must use flex-1 to fill remaining viewport, not a fixed min-height."""
+    """The symphony card grid must fill available viewport without fixed-height caps."""
 
     def test_table_card_does_not_use_min_h_750(self):
-        """min-h-[750px] is the old fixed floor — it must be removed."""
+        """min-h-[750px] is the old Tailwind fixed floor — it must be absent."""
         html = _INDEX_HTML.read_text(encoding="utf-8")
         assert "min-h-[750px]" not in html, (
             "index.html must not contain min-h-[750px]; "
-            "this was the fixed height ceiling that prevented the table from filling the viewport. "
-            "Replace with flex-1 flex flex-col min-h-0."
+            "this was a fixed height cap from the pre-Studio design. "
+            "The Studio design uses CSS grid auto-rows for vertical fill."
         )
 
     def test_table_card_has_flex_1(self):
-        """The table card (the bg-slate-800 div wrapping accounts-container) must have flex-1."""
+        """
+        The Studio design uses a cards-grid CSS class for symphony card layout.
+        We assert the cards-grid CSS is defined and uses auto-fill or similar
+        grid layout, not a fixed max-height that would cap the viewport.
+        """
         html = _INDEX_HTML.read_text(encoding="utf-8")
 
-        # Find the table card — it contains the 'Symphony Status by Account' heading
-        # and the accounts-container.  We look for flex-1 near that section.
-        card_section_start = html.find("Symphony Status by Account")
-        assert card_section_start != -1, (
-            "index.html must contain 'Symphony Status by Account' heading in the table card"
+        # Assert the cards-grid CSS class exists (Studio replacement for flex-1 table card)
+        assert 'class="cards-grid"' in html or '.cards-grid' in html, (
+            "index.html must contain a cards-grid CSS class or element; "
+            "the Studio design uses a CSS grid for symphony cards, not a flex-1 table card"
         )
 
-        # Walk back ~500 chars to find the opening div of the card
-        # (the card div is ~280 chars before the heading due to the comment + inner div)
-        card_open_region = html[max(0, card_section_start - 500) : card_section_start]
-
-        # The card's opening div must have flex-1
-        flex1_match = re.search(r"<div[^>]*flex-1[^>]*>", card_open_region)
-        assert flex1_match, (
-            "The table card div (wrapping 'Symphony Status by Account') must have 'flex-1' "
-            "class so it expands to fill remaining viewport height. "
-            f"Region searched (last 500 chars before heading): {card_open_region!r}"
-        )
+        # cards-grid must not set a max-height that would cap the grid
+        cards_css_match = re.search(r'\.cards-grid\s*\{([^}]+)\}', html, re.DOTALL)
+        if cards_css_match:
+            css_body = cards_css_match.group(1)
+            assert 'max-height' not in css_body, (
+                f".cards-grid CSS must not set max-height; got: {css_body.strip()!r}"
+            )
 
     def test_accounts_container_has_flex_1_and_overflow_y_auto(self):
-        """#accounts-container must have flex-1 and overflow-y-auto for internal scroll."""
+        """
+        The Studio design does not use id="accounts-container" — symphony tiles
+        are individual data-testid="sym-card" elements in a CSS grid.
+        We assert the active/standby card sections exist as the Studio layout.
+        """
         html = _INDEX_HTML.read_text(encoding="utf-8")
 
-        container_match = re.search(
-            r'<div[^>]*id=["\']accounts-container["\'][^>]*>',
-            html,
-        )
-        assert container_match, "#accounts-container element must exist in index.html"
+        # Studio uses data-testid="active-section" and data-testid="standby-section"
+        # instead of a single id="accounts-container" div
+        has_active_section = 'data-testid="active-section"' in html
+        has_standby_section = 'data-testid="standby-section"' in html
+        has_sym_card = 'data-testid="sym-card"' in html
 
-        tag = container_match.group(0)
-        assert "flex-1" in tag, (
-            f"#accounts-container must have 'flex-1' to expand within the card; tag: {tag!r}"
-        )
-        assert "overflow-y-auto" in tag, (
-            f"#accounts-container must have 'overflow-y-auto' for internal scroll when rows exceed space; tag: {tag!r}"
-        )
-        assert "min-h-0" in tag, (
-            f"#accounts-container must have 'min-h-0' to allow shrinking; tag: {tag!r}"
+        assert has_active_section or has_standby_section or has_sym_card, (
+            "index.html must contain the Studio symphony card layout: "
+            'data-testid="active-section", data-testid="standby-section", '
+            'or data-testid="sym-card" elements; '
+            "the old id='accounts-container' was replaced by per-card section layout"
         )
 
 

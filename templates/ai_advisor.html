@@ -1,97 +1,361 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Config Advisor — AlphaBot Dashboard v3</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #475569; }
-        [data-tooltip]:hover::after {
-            content: attr(data-tooltip);
+        ::-webkit-scrollbar-thumb {
+            background: var(--studio-scroll-thumb, var(--studio-ink-faint));
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--studio-scroll-thumb-hover, var(--studio-ink-dim));
+        }
+
+        body {
+            background: var(--studio-bg);
+            color: var(--studio-ink);
+            min-height: 100vh;
+            padding: 2rem;
+            font-family: var(--studio-sans, sans-serif);
+        }
+
+        .page-wrap {
+            width: 100%;
+        }
+
+        /* Header */
+        .adv-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            background: var(--studio-surface);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            border: 1px solid var(--studio-border);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .adv-header::before {
+            content: '';
             position: absolute;
-            bottom: 100%;
-            left: 50%;
-            transform: translateX(-50%);
-            background: #1e293b;
-            border: 1px solid #475569;
-            color: #cbd5e1;
-            font-size: 11px;
-            padding: 6px 10px;
-            border-radius: 6px;
-            white-space: pre-wrap;
-            max-width: 320px;
-            z-index: 50;
-            pointer-events: none;
+            top: 0; left: 0;
+            width: 100%; height: 3px;
+            background: linear-gradient(to right, var(--studio-accent), var(--studio-ink-dim));
+        }
+
+        .adv-title {
+            font-size: 2.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--studio-ink);
+        }
+
+        .adv-subtitle {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            margin-top: 0.375rem;
+        }
+
+        .back-link {
+            font-size: 0.625rem;
+            color: var(--studio-ink-dim);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            text-decoration: none;
+        }
+
+        .back-link:hover { color: var(--studio-ink); }
+
+        /* Controls */
+        .adv-controls {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: flex-end;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .ctrl-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .ctrl-label {
+            font-size: 0.625rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-muted);
+            font-weight: 700;
+        }
+
+        .ctrl-select {
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.4rem 0.75rem;
+            font-size: 0.875rem;
+            color: var(--studio-ink);
+            min-width: 16rem;
+        }
+
+        .ctrl-select:focus { outline: none; border-color: var(--studio-accent); }
+
+        .run-btn {
+            padding: 0.5rem 1.25rem;
+            background: var(--studio-accent);
+            color: var(--studio-white);
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 700;
+            cursor: pointer;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+
+        .run-btn:hover:not(:disabled) { opacity: 0.9; }
+        .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .adv-error {
+            font-size: 0.875rem;
+            color: var(--studio-neg);
+            margin-top: 0.5rem;
+            display: none;
+        }
+
+        /* Summary chips */
+        .summary-strip {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .summary-chip {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 2rem;
+            padding: 0.25rem 0.875rem;
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            font-weight: 600;
+        }
+
+        /* Two-column grid — design ratio ~1.6:1 (suggestions:rail).
+           Rail uses clamp so it scales from 18rem at narrow up to 38% at
+           ultrawide (2560+), never shrinking to a sliver or growing past 40rem. */
+        .adv-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.6fr) clamp(18rem, 38%, 40rem);
+            gap: 1.25rem;
+            align-items: start;
+        }
+
+        /* Stack to single column only below 1100px (V-21). */
+        @media (max-width: 1100px) {
+            .adv-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Suggestions column — auto-fill so cards reflow into multi-column on
+           ultrawide rather than stretching to absurd widths. */
+        .suggestions-col {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(28rem, 1fr));
+            gap: 0.75rem;
+            min-height: 8rem;
+            align-items: start;
+        }
+
+        .suggestions-placeholder {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 2rem 1.5rem;
+            color: var(--studio-ink-dim);
+            font-size: 0.875rem;
+            text-align: center;
+            grid-column: 1 / -1;
+        }
+
+        /* Autotune panel */
+        .autotune-panel {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 1.25rem 1.5rem;
+            min-width: 0;
+        }
+
+        .autotune-header {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+            margin-bottom: 1rem;
+        }
+
+        .autotune-run-card {
+            padding: 0.6875rem 1rem;
+            border-bottom: 1px solid var(--studio-border);
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .autotune-run-card:last-child { border-bottom: none; }
+
+        .autotune-run-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* V-23: symphony name normal weight, timestamp muted */
+        .autotune-run-name {
+            font-size: 0.75rem;
+            font-weight: 400;
+            color: var(--studio-ink);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .autotune-run-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.6563rem;
+            color: var(--studio-ink-dim);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* V-23: Sharpe/DSR bold mono */
+        .autotune-run-meta .mono-bold {
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            color: var(--studio-ink);
+        }
+
+        .autotune-run-verdict {
+            font-size: 0.625rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--studio-ink-dim);
+        }
+
+        /* B-13/V-25: decision pill with semantic color; FALLBACK uses warn
+           token for consistent saturation in both light and dark themes. */
+        .decision-pill {
+            display: inline-block;
+            padding: 0.125rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.625rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid;
+        }
+
+        /* V-23: FROZEN-EVAL as a colored pill */
+        .frozen-eval-pill {
+            display: inline-block;
+            padding: 0.1rem 0.4rem;
+            border-radius: 999px;
+            font-size: 0.5625rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid;
         }
     </style>
 </head>
 
-<body class="bg-slate-900 text-slate-100 min-h-screen p-8 font-sans">
-    <div class="max-w-screen-xl mx-auto">
+<body>
+    <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
+    {% include '_chrome.html' %}
+
+    <div class="page-wrap" data-testid="advisor-page">
 
         <!-- Header -->
-        <header class="flex justify-between items-center mb-8 bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700 relative overflow-hidden">
-            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-violet-500 to-blue-400"></div>
+        <header data-testid="advisor-header" class="adv-header">
             <div>
-                <h1 class="text-2xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-blue-400">
-                    AI Config Advisor
-                </h1>
-                <p class="text-[11px] text-slate-400 mt-1">Claude-powered suggestion engine — operator must accept each change</p>
+                <h1 class="adv-title">AI Advisor</h1>
+                <p class="adv-subtitle">
+                    Claude-powered suggestion engine — operator must approve each change through safety gates
+                </p>
             </div>
-            <a href="/" class="text-[10px] text-slate-400 hover:text-slate-200 font-bold uppercase tracking-widest transition-colors">
-                &larr; Dashboard
-            </a>
+            <a href="/" class="back-link">&larr; Dashboard</a>
         </header>
 
-        <!-- Controls -->
-        <div class="bg-slate-800 rounded-2xl border border-slate-700 p-6 mb-6">
-            <div class="flex items-end gap-4">
-                <div class="flex flex-col gap-1">
-                    <label class="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Symphony ID</label>
-                    <input id="symphony-id-input" type="text" placeholder="e.g. my_symphony"
-                        class="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-500 w-64">
+        <!-- Controls bar -->
+        <div data-testid="advisor-controls" class="adv-controls">
+            <div class="ctrl-group">
+                <label class="ctrl-label" for="symphony-id-select">Symphony</label>
+                <select id="symphony-id-input" data-testid="symphony-select" class="ctrl-select">
+                    <option value="">Select symphony…</option>
+                </select>
+            </div>
+            <button id="get-suggestions-btn" data-testid="run-advisor-btn" class="run-btn"
+                    onclick="getSuggestions()" disabled>
+                Run Claude advisor
+            </button>
+            <div id="advisor-error" class="adv-error"></div>
+        </div>
+
+        <!-- Summary strip -->
+        <div data-testid="advisor-summary-strip" class="summary-strip">
+            <div data-testid="chip-total-suggestions" class="summary-chip"
+                 id="chip-total">0 suggestions</div>
+            <div data-testid="chip-oos-passed" class="summary-chip"
+                 id="chip-passed">0 OOS passed</div>
+            <div data-testid="chip-oos-rejected" class="summary-chip"
+                 id="chip-rejected">0 OOS rejected</div>
+        </div>
+
+        <!-- Two-column grid -->
+        <div data-testid="advisor-grid" class="adv-grid">
+
+            <!-- Left: suggestions -->
+            <div data-testid="suggestions-column" class="suggestions-col" id="suggestions-container">
+                <div data-testid="suggestions-placeholder" class="suggestions-placeholder">
+                    Select a symphony and click Run Advisor to get suggestions.
                 </div>
-                <button id="get-suggestions-btn" onclick="getSuggestions()"
-                    class="px-5 py-2 bg-violet-600 hover:bg-violet-500 text-white font-bold text-sm rounded-lg transition-colors shadow-sm">
-                    Get Suggestions
-                </button>
             </div>
-            <div id="advisor-error" class="hidden mt-3 text-rose-400 text-sm"></div>
+
+            <!-- Right: autotune panel -->
+            <aside data-testid="autotune-panel" class="autotune-panel">
+                <div data-testid="autotune-panel-header" class="autotune-header">
+                    Recent Autotune Runs
+                </div>
+                <canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;margin-bottom:0.75rem;width:100%;height:60px;"></canvas>
+                <div id="autotune-runs-list" data-testid="autotune-runs-list">
+                    <div class="autotune-run-card" style="color:var(--studio-ink-dim);font-size:0.875rem;text-align:center;">
+                        Loading…
+                    </div>
+                </div>
+            </aside>
+
         </div>
-
-        <!-- Suggestions -->
-        <div id="suggestions-container" class="space-y-4"></div>
-
-        <!-- Recent Autotune Runs -->
-        <div class="bg-slate-800 rounded-2xl border border-slate-700 p-6 mt-6">
-            <h2 class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-4">Recent Autotune Runs</h2>
-            <div class="overflow-x-auto">
-                <table class="w-full text-xs text-slate-300">
-                    <thead>
-                        <tr class="border-b border-slate-700 text-[10px] uppercase tracking-widest text-slate-500">
-                            <th class="text-left pb-2 pr-4">Symphony</th>
-                            <th class="text-left pb-2 pr-4">Timestamp</th>
-                            <th class="text-left pb-2 pr-4">Decision</th>
-                            <th class="text-right pb-2 pr-4">Naive Sharpe</th>
-                            <th class="text-right pb-2 pr-4">DSR</th>
-                            <th class="text-right pb-2">Frozen-Eval</th>
-                        </tr>
-                    </thead>
-                    <tbody id="autotune-runs-tbody">
-                        <tr>
-                            <td colspan="6" class="text-slate-500 py-4 text-center">Loading...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
     </div>
 
     <script src="{{ url_for('static', filename='ai_advisor.js') }}"></script>

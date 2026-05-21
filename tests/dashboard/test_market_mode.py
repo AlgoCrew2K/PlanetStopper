@@ -37,8 +37,9 @@ import inspect
 import json
 import pathlib
 import textwrap
-from datetime import datetime, time as dt_time
-from unittest.mock import MagicMock, patch, call
+from datetime import datetime
+from datetime import time as dt_time
+from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -47,9 +48,7 @@ import pytest
 # Fixture loader
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "market_mode"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "market_mode"
 
 
 def _load(name: str) -> dict:
@@ -290,23 +289,33 @@ class TestEodSnapshotCapture:
         def fake_save_state(state):
             saved_state.update(state)
 
+        mock_analytics = MagicMock()
+        mock_analytics.get_portfolio_today_change.return_value = None
+        mock_analytics.get_portfolio_cumulative_return.return_value = None
+        mock_analytics.get_portfolio_max_drawdown.return_value = None
+
         with (
             patch.object(exe, "get_current_et", return_value=eod_time),
             patch.object(exe, "database") as mock_db,
             patch.object(exe, "reporting"),
             patch.object(exe, "autotuner"),
+            patch.object(exe, "analytics", mock_analytics),
             patch.object(exe, "fetch_symphony_stats", return_value=[]),
+            patch.object(exe, "fetch_alpaca_history", return_value={}),
             patch.object(exe, "fetch_intraday_vwaps", return_value={}),
             patch.object(exe, "LIVE_EXECUTION", False),
             patch.object(exe, "COMPOSER_KEY_ID", "fake-key"),
             patch.object(exe, "ALPACA_KEY", "fake-alpaca"),
             patch.object(exe, "ACCOUNT_UUIDS", ["ACC-1"]),
-            patch("builtins.open", create=True),
+            patch("os.path.exists", return_value=False),
         ):
             mock_db.load_state.return_value = dict(bot_state)
             mock_db.save_state.side_effect = fake_save_state
             mock_db.load_latest_shadow_row.return_value = None
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
 
             try:
                 exe.main()
@@ -315,18 +324,14 @@ class TestEodSnapshotCapture:
 
         # The snapshot must have been passed to save_state
         all_saved_states = [c.args[0] for c in mock_db.save_state.call_args_list if c.args]
-        snapshot_found = any(
-            "last_market_close_snapshot" in s for s in all_saved_states
-        )
+        snapshot_found = any("last_market_close_snapshot" in s for s in all_saved_states)
         assert snapshot_found, (
             "bot_state['last_market_close_snapshot'] was never passed to database.save_state "
             "during the EOD post-mortem branch. Implementer must populate it."
         )
 
         # Validate schema keys on whichever saved state had the snapshot
-        snapshot_state = next(
-            s for s in all_saved_states if "last_market_close_snapshot" in s
-        )
+        snapshot_state = next(s for s in all_saved_states if "last_market_close_snapshot" in s)
         snap = snapshot_state["last_market_close_snapshot"]
         required_keys = set(fx["expected_schema_keys"])
         missing = required_keys - set(snap.keys())
@@ -409,6 +414,7 @@ class TestEodSnapshotCapture:
         }
         # The field must survive a round-trip through JSON serialization (dict -> str -> dict)
         import json as _json
+
         round_tripped = _json.loads(_json.dumps(state))
         assert "last_market_close_snapshot" in round_tripped, (
             "last_market_close_snapshot did not survive JSON round-trip — "
@@ -436,7 +442,10 @@ def flask_client(monkeypatch):
         mock_analytics.get_portfolio_cumulative_return.return_value = None
         mock_analytics.get_portfolio_max_drawdown.return_value = None
         mock_analytics.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
-        mock_analytics.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
+        mock_analytics.get_symphony_cumulative_return.return_value = {
+            "if_held": None,
+            "dry_run": None,
+        }
         mock_analytics.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
         with app_module.app.test_client() as client:
             yield client, app_module
@@ -445,9 +454,7 @@ def flask_client(monkeypatch):
 class TestApiStateMarketStateField:
     """Tests 11–14 covering the /api/state conditional market_state behavior."""
 
-    def test_api_state_returns_market_state_field_at_top_level(
-        self, flask_client, monkeypatch
-    ):
+    def test_api_state_returns_market_state_field_at_top_level(self, flask_client, monkeypatch):
         """Mandatory test #11: /api/state JSON must include market_state at top level."""
         client, app_module = flask_client
         fx = _load("api_state_open")
@@ -460,17 +467,25 @@ class TestApiStateMarketStateField:
             patch.object(app_module, "render_template", return_value=""),
         ):
             mock_db.load_state.return_value = {"date": "2026-05-11"}
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
 
             # Patch get_market_state to return "open" for this time
             try:
                 import market_calendar as mc
+
                 monkeypatch.setattr(mc, "get_market_state", lambda dt: "open")
-                monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open", raising=False)
+                monkeypatch.setattr(
+                    app_module, "get_market_state", lambda dt: "open", raising=False
+                )
             except ImportError:
-                monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open", raising=False)
+                monkeypatch.setattr(
+                    app_module, "get_market_state", lambda dt: "open", raising=False
+                )
 
             resp = client.get("/api/state")
             assert resp.status_code == 200
@@ -480,9 +495,7 @@ class TestApiStateMarketStateField:
                 f"Keys present: {list(body.keys())}"
             )
 
-    def test_api_state_during_market_hours_returns_live_state(
-        self, flask_client, monkeypatch
-    ):
+    def test_api_state_during_market_hours_returns_live_state(self, flask_client, monkeypatch):
         """Mandatory test #12: market open -> /api/state returns live bot_state (not snapshot)."""
         client, app_module = flask_client
 
@@ -494,7 +507,11 @@ class TestApiStateMarketStateField:
             "trading_day": "2026-05-10",  # yesterday's snapshot
             "captured_at_et": "16:00:00 ET",
             "data_as_of": "16:00 ET",
-            "portfolio_strip": {"today_change": 0.1, "cumulative_return": 5.0, "max_drawdown": -1.0},
+            "portfolio_strip": {
+                "today_change": 0.1,
+                "cumulative_return": 5.0,
+                "max_drawdown": -1.0,
+            },
             "shadow_divergence": {"by_symphony": {"stale-sym": 0.01}, "portfolio_today": 0.01},
             "accounts_map": {},
         }
@@ -507,7 +524,10 @@ class TestApiStateMarketStateField:
             patch.object(app_module, "render_template", return_value=""),
         ):
             mock_db.load_state.return_value = full_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
 
@@ -518,9 +538,7 @@ class TestApiStateMarketStateField:
             body = resp.get_json()
             assert body.get("market_state") == "open"
             # Must reflect live state, not snapshot's stale symphony
-            assert body.get("frozen_at") is None, (
-                "frozen_at must be null when market is open"
-            )
+            assert body.get("frozen_at") is None, "frozen_at must be null when market is open"
 
     def test_api_state_during_closed_frozen_returns_snapshot_content(
         self, flask_client, monkeypatch
@@ -541,11 +559,16 @@ class TestApiStateMarketStateField:
             patch.object(app_module, "render_template", return_value=""),
         ):
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
 
-            monkeypatch.setattr(app_module, "get_market_state", lambda dt: "closed_frozen", raising=False)
+            monkeypatch.setattr(
+                app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
+            )
 
             resp = client.get("/api/state")
             assert resp.status_code == 200
@@ -564,9 +587,7 @@ class TestApiStateMarketStateField:
                 f"portfolio_strip must be a dict in frozen response. Got: {returned_strip!r}"
             )
 
-    def test_api_state_fresh_deploy_no_snapshot_returns_notice(
-        self, flask_client, monkeypatch
-    ):
+    def test_api_state_fresh_deploy_no_snapshot_returns_notice(self, flask_client, monkeypatch):
         """Mandatory test #14: no snapshot yet -> market_state=closed_frozen, frozen_at=null, notice present."""
         client, app_module = flask_client
         fx = _load("fresh_deploy_no_snapshot")
@@ -579,11 +600,16 @@ class TestApiStateMarketStateField:
             patch.object(app_module, "render_template", return_value=""),
         ):
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
 
-            monkeypatch.setattr(app_module, "get_market_state", lambda dt: "closed_frozen", raising=False)
+            monkeypatch.setattr(
+                app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
+            )
 
             resp = client.get("/api/state")
             assert resp.status_code == 200
@@ -624,7 +650,11 @@ class TestDashboardBannerRendering:
         monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open", raising=False)
 
         html = self._render_index_with_state(app_module, "open")
-        assert "market-state-banner" in html or "market_state_banner" in html or "data-market-state" in html, (
+        assert (
+            "market-state-banner" in html
+            or "market_state_banner" in html
+            or "data-market-state" in html
+        ), (
             "Dashboard HTML must contain a market-state banner element. "
             "Implementer should add id='market-state-banner' or data-market-state attribute."
         )
@@ -634,7 +664,9 @@ class TestDashboardBannerRendering:
         import app as app_module
 
         app_module.app.config["TESTING"] = True
-        monkeypatch.setattr(app_module, "get_market_state", lambda dt: "closed_frozen", raising=False)
+        monkeypatch.setattr(
+            app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
+        )
 
         html = self._render_index_with_state(app_module, "closed_frozen")
         # The banner element must exist in the static template HTML
@@ -642,7 +674,7 @@ class TestDashboardBannerRendering:
             "market-state-banner" in html
             or "market_state_banner" in html
             or "data-market-state" in html
-            or "id=\"market-state\"" in html
+            or 'id="market-state"' in html
         )
         assert has_banner_hook, (
             "Dashboard HTML must include a market-state banner element (RED: not yet implemented). "
@@ -659,8 +691,13 @@ class TestDashboardBannerRendering:
         html = self._render_index_with_state(app_module, "open")
 
         # Find positions of the banner anchor and the portfolio strip anchor
-        banner_markers = ["market-state-banner", "market_state_banner", "data-market-state", "id=\"market-state\""]
-        strip_markers = ["portfolio-strip", "portfolio_strip", "id=\"portfolio\""]
+        banner_markers = [
+            "market-state-banner",
+            "market_state_banner",
+            "data-market-state",
+            'id="market-state"',
+        ]
+        strip_markers = ["portfolio-strip", "portfolio_strip", 'id="portfolio"']
 
         banner_pos = min(
             (html.find(m) for m in banner_markers if html.find(m) != -1),
@@ -739,8 +776,9 @@ class TestEngineCyclesContinue24x7:
         We verify by checking that the data phase gate (the closed-market branch in main())
         does NOT contain any get_market_state call that could block shadow writes.
         """
-        import alpha_bot_execution as exe
         import inspect as _inspect
+
+        import alpha_bot_execution as exe
 
         src = _inspect.getsource(exe)
         # get_market_state must not appear in the closed-market early-return branch.
@@ -861,7 +899,10 @@ class TestReviseGaps:
             patch.object(app_module, "dotenv_values", return_value={}),
         ):
             mock_db.load_state.return_value = {}  # empty state → status=waiting
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             monkeypatch.setattr(
                 app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
             )
@@ -919,10 +960,14 @@ class TestReviseGaps:
                 "trading_day": "2026-05-11",
                 "captured_at_et": "16:00:00 ET",
                 "data_as_of": "16:00 ET",
-                "portfolio_strip": {"today_change": None, "cumulative_return": None, "max_drawdown": None},
+                "portfolio_strip": {
+                    "today_change": None,
+                    "cumulative_return": None,
+                    "max_drawdown": None,
+                },
                 "shadow_divergence": {
                     "by_symphony": {"sym-abc": 0.05},
-                    "portfolio": 0.03,        # engine key — should be 'portfolio_today'
+                    "portfolio": 0.03,  # engine key — should be 'portfolio_today'
                 },
                 "accounts_map": {},
             }
@@ -934,7 +979,10 @@ class TestReviseGaps:
                 patch.object(app_module, "render_template", return_value=""),
             ):
                 mock_db.load_state.return_value = bot_state
-                mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+                mock_db.get_shadow_divergence.return_value = {
+                    "by_symphony": {},
+                    "portfolio_today": None,
+                }
                 mock_db.get_triggers.return_value = []
                 mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
                 monkeypatch.setattr(

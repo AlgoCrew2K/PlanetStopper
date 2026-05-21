@@ -1,0 +1,191 @@
+/* Studio design-system CSS custom properties — light theme defaults.
+   All hex values are ONLY permitted as the RHS of a --studio-* variable declaration.
+   No bare hex in selectors or rule blocks outside this :root block. */
+
+:root {
+  /* Backgrounds */
+  --studio-bg: #f4efe2;
+  --studio-paper: #faf6ea;
+  --studio-paper-hi: #ffffff;
+
+  /* Typography */
+  --studio-ink: #15120c;
+  --studio-ink-dim: rgba(21, 18, 12, 0.62);
+  --studio-ink-faint: rgba(21, 18, 12, 0.36);
+
+  /* Rules / borders */
+  --studio-rule: rgba(20, 18, 12, 0.10);
+  --studio-rule-hi: rgba(20, 18, 12, 0.22);
+
+  /* Chips / surfaces */
+  --studio-chip-bg: rgba(21, 18, 12, 0.04);
+
+  /* Accent (default green) */
+  --studio-accent: #1f7a4d;
+  --studio-accent-tint: rgba(31, 122, 77, 0.06);
+  --studio-accent-border: rgba(31, 122, 77, 0.22);
+
+  /* Positive / negative */
+  --studio-pos: #1f7a4d;
+  --studio-pos-dim: rgba(31, 122, 77, 0.55);
+  --studio-neg: #b43a2a;
+  --studio-neg-dim: rgba(180, 58, 42, 0.55);
+  --studio-neg-tint: rgba(180, 58, 42, 0.07);
+  --studio-neg-border: rgba(180, 58, 42, 0.28);
+
+  /* Semantic extras */
+  --studio-warn: #b07419;
+  --studio-warn-tint: rgba(176, 116, 25, 0.07);
+  --studio-warn-border: rgba(176, 116, 25, 0.30);
+  --studio-plum: #6a3f8a;
+  --studio-cyan: #1a6e88;
+
+  /* Typography stack */
+  --studio-sans: Manrope, system-ui, -apple-system, sans-serif;
+
+  /* Accent swatch palette */
+  --studio-swatch-1: #1f7a4d;
+  --studio-swatch-2: #0b6cc4;
+  --studio-swatch-3: #b04420;
+  --studio-swatch-4: #6a3f8a;
+  --studio-swatch-5: #3a3a3a;
+
+  /* Utility */
+  --studio-white: #ffffff;
+  --studio-scrim: rgba(0, 0, 0, 0.72);
+
+  /* Toggle track OFF state (V-38) */
+  --studio-toggle-track-off: var(--studio-chip-bg);
+
+  /* Credential eye-button (V-39) */
+  --studio-cred-btn-border: var(--studio-rule);
+  --studio-cred-btn-color: var(--studio-ink-dim);
+
+  /* Aliases for templates that use alternate token names */
+  --studio-border: var(--studio-rule);
+  --studio-surface: var(--studio-paper);
+  --studio-surface-raised: var(--studio-paper-hi);
+  --studio-ink-muted: var(--studio-ink-dim);
+  --studio-scroll-thumb: var(--studio-ink-faint);
+  --studio-scroll-thumb-hover: var(--studio-ink-dim);
+}
+
+[data-theme="dark"] {
+  --studio-bg: #13100c;
+  --studio-paper: #19150f;
+  --studio-paper-hi: #1f1a13;
+  --studio-rule: rgba(238, 228, 206, 0.10);
+  --studio-rule-hi: rgba(238, 228, 206, 0.22);
+  --studio-ink: #eee4ce;
+  --studio-ink-dim: rgba(238, 228, 206, 0.66);
+  --studio-ink-faint: rgba(238, 228, 206, 0.40);
+  --studio-chip-bg: rgba(238, 228, 206, 0.05);
+  --studio-pos: #74c98a;
+  --studio-neg: #e07061;
+  --studio-pos-dim: rgba(116, 201, 138, 0.55);
+  --studio-neg-dim: rgba(224, 112, 97, 0.55);
+  --studio-neg-tint: rgba(224, 112, 97, 0.08);
+  --studio-neg-border: rgba(224, 112, 97, 0.30);
+  --studio-warn: #e3a64a;
+  --studio-warn-tint: rgba(227, 166, 74, 0.08);
+  --studio-warn-border: rgba(227, 166, 74, 0.32);
+  --studio-plum: #b58cc8;
+  --studio-cyan: #6fb6c8;
+
+  /* V-41: Force-run / accent needs to be readable on dark nav background.
+     Light accent #1f7a4d is too dark; use a lighter, saturated green. */
+  --studio-accent: #2ea566;
+  --studio-accent-tint: rgba(46, 165, 102, 0.10);
+  --studio-accent-border: rgba(46, 165, 102, 0.28);
+  --studio-scrim: rgba(0, 0, 0, 0.82);
+
+  /* V-38: Toggle track OFF state must be visible on dark paper.
+     chip-bg (0.05 alpha) is invisible; use a solid visible track. */
+  --studio-toggle-track-off: rgba(238, 228, 206, 0.18);
+
+  /* V-39: Credential eye-button needs an explicit border in dark mode. */
+  --studio-cred-btn-border: rgba(238, 228, 206, 0.22);
+  --studio-cred-btn-color: rgba(238, 228, 206, 0.80);
+
+  /* Aliases for templates that use alternate token names */
+  --studio-border: var(--studio-rule);
+  --studio-surface: var(--studio-paper);
+  --studio-surface-raised: var(--studio-paper-hi);
+  --studio-ink-muted: var(--studio-ink-dim);
+  --studio-scroll-thumb: var(--studio-ink-faint);
+  --studio-scroll-thumb-hover: var(--studio-ink-dim);
+}
+
+/* ── Density spacing tokens ────────────────────────────────────────────────
+   Set by tweaks.js via data-density="compact|balanced|roomy" on <html>.
+   Templates can use var(--studio-space-*) for density-aware spacing.       */
+:root {
+  --studio-space-xs: 0.375rem;
+  --studio-space-sm: 0.75rem;
+  --studio-space-md: 1.25rem;
+  --studio-space-lg: 2rem;
+  --studio-space-xl: 3rem;
+  --studio-card-gap: 1rem;
+  --studio-section-gap: 2rem;
+  --studio-page-pad: clamp(1rem, 2vw, 2.5rem);
+}
+
+[data-density="compact"] {
+  --studio-space-xs: 0.25rem;
+  --studio-space-sm: 0.5rem;
+  --studio-space-md: 0.875rem;
+  --studio-space-lg: 1.25rem;
+  --studio-space-xl: 2rem;
+  --studio-card-gap: 0.625rem;
+  --studio-section-gap: 1.25rem;
+  --studio-page-pad: clamp(0.75rem, 1.5vw, 1.5rem);
+}
+
+[data-density="roomy"] {
+  --studio-space-xs: 0.5rem;
+  --studio-space-sm: 1rem;
+  --studio-space-md: 1.75rem;
+  --studio-space-lg: 3rem;
+  --studio-space-xl: 4.5rem;
+  --studio-card-gap: 1.5rem;
+  --studio-section-gap: 3rem;
+  --studio-page-pad: clamp(1.5rem, 3vw, 4rem);
+}
+
+/* ── Shared fluid grid helper ──────────────────────────────────────────────
+   Use class="studio-fluid-grid" on any card container for auto-fill
+   columns that shrink below 320px at small viewports and stretch freely
+   at ultrawide. Cards never go below 280px wide.                            */
+.studio-fluid-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: var(--studio-card-gap, 1rem);
+}
+
+/* ── Responsive nav helpers ────────────────────────────────────────────────
+   .studio-nav-wide: hide at narrow viewports (<1400px) where the nav
+   right-rail would otherwise crowd. ET clock and workspace-switcher chip
+   use this class — they're non-essential at 1280.                           */
+@media (max-width: 1400px) {
+  .studio-nav-wide {
+    display: none !important;
+  }
+}
+
+/* Section label — Title Case, design spec ~18px weight 500 (FP-T5-04).
+   Overrides per-template uppercase definitions. */
+.section-label {
+  font-size: 18px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: var(--studio-ink);
+  margin-bottom: 10px;
+}
+
+/* Math overlays toggle (FP-T6-01):
+   When data-math-overlays="false" on <html>, hide MC dials and VWAP bands. */
+[data-math-overlays="false"] [data-testid="mc-dial"],
+[data-math-overlays="false"] [data-testid="vwap-band"] {
+  display: none !important;
+}

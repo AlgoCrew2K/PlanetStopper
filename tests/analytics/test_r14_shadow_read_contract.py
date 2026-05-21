@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -42,6 +41,7 @@ _SHADOW_HISTORY_FIXTURE = _FIXTURE_DIR / "shadow" / "analytics_shadow_history.js
 # ---------------------------------------------------------------------------
 # DB helpers: build an in-memory SQLite with shadow_history rows from fixture
 # ---------------------------------------------------------------------------
+
 
 def _build_shadow_db(rows: list[dict], tmp_path: Path) -> str:
     """Write shadow_history rows into a temp SQLite file. Returns the file path."""
@@ -62,9 +62,7 @@ def _build_shadow_db(rows: list[dict], tmp_path: Path) -> str:
             trigger_id INTEGER
         )
     """)
-    conn.execute(
-        "CREATE INDEX idx_sym_day ON shadow_history (symphony_id, trading_day, ts_utc)"
-    )
+    conn.execute("CREATE INDEX idx_sym_day ON shadow_history (symphony_id, trading_day, ts_utc)")
     for r in rows:
         conn.execute(
             """INSERT INTO shadow_history
@@ -89,6 +87,7 @@ def _build_shadow_db(rows: list[dict], tmp_path: Path) -> str:
 # ---------------------------------------------------------------------------
 # TIER 0: Structural invariant — no triggered early-return in analytics.py
 # ---------------------------------------------------------------------------
+
 
 class TestNoTriggeredEarlyReturn:
     """Regression guard: the structural bug from e95e02e must not re-appear."""
@@ -122,6 +121,7 @@ class TestNoTriggeredEarlyReturn:
 # TIER 1: Operator-reported scenario — exact live reproduction
 # ---------------------------------------------------------------------------
 
+
 class TestOperatorReportedScenario:
     """
     Reproduces the exact TC +1.66 (+1.66) bug the operator flagged on 2026-05-18.
@@ -132,7 +132,7 @@ class TestOperatorReportedScenario:
 
     @pytest.fixture(scope="class")
     def live_fixture(self):
-        with open(_LIVE_CAPTURE, "r", encoding="utf-8") as fh:
+        with open(_LIVE_CAPTURE, encoding="utf-8") as fh:
             return json.load(fh)
 
     def test_dry_run_reads_shadow_return_not_current_return_for_triggered(
@@ -174,9 +174,7 @@ class TestOperatorReportedScenario:
             f"not bot_state current_return or if_held; got {result['dry_run']}"
         )
 
-    def test_if_held_and_dry_run_diverge_for_triggered_symphony(
-        self, live_fixture, tmp_path
-    ):
+    def test_if_held_and_dry_run_diverge_for_triggered_symphony(self, live_fixture, tmp_path):
         """
         The operator-visible symptom: TC should show two different values.
         if_held derives from Composer last_percent_change. dry_run from shadow_history.
@@ -251,6 +249,7 @@ class TestOperatorReportedScenario:
 # TIER 2: AC-M1F.3.1 — triggered flag does NOT change read path
 # ---------------------------------------------------------------------------
 
+
 class TestTriggeredFlagDoesNotChangeShadowRead:
     """
     Per AC-M1F.3.1: shadow_history is ALWAYS the source for dry_run.
@@ -259,7 +258,7 @@ class TestTriggeredFlagDoesNotChangeShadowRead:
 
     @pytest.fixture(scope="class")
     def shadow_rows(self):
-        with open(_SHADOW_HISTORY_FIXTURE, "r", encoding="utf-8") as fh:
+        with open(_SHADOW_HISTORY_FIXTURE, encoding="utf-8") as fh:
             return json.load(fh)["rows"]
 
     def test_triggered_symphony_dry_run_reads_shadow_history(self, shadow_rows, tmp_path):
@@ -361,6 +360,7 @@ class TestTriggeredFlagDoesNotChangeShadowRead:
 # TIER 3: AC-M1F.3.5 — None sentinel when shadow_history empty (NO fallback)
 # ---------------------------------------------------------------------------
 
+
 class TestNoneSentinelWhenNoShadowRows:
     """
     Per AC-M1F.3.5: dry_run=None when shadow_history has no rows for symphony+trading_day.
@@ -422,10 +422,11 @@ class TestNoneSentinelWhenNoShadowRows:
             f"got {result['dry_run']}"
         )
 
-    def test_cumulative_return_dry_run_is_none_when_no_shadow_rows(self, tmp_path):
+    def test_cumulative_return_dry_run_equals_if_held_when_no_shadow_rows(self, tmp_path):
         """
-        get_symphony_cumulative_return: dry_run=None when no shadow trajectory exists
-        and trading_day is explicit. Per AC-M1F.3.5.
+        get_symphony_cumulative_return: dry_run == if_held when no shadow trajectory exists.
+        Anchored-shadow model: no shadow rows means the bot never diverged from the held
+        series — both series coincide at the if_held baseline.
         """
         from analytics import get_symphony_cumulative_return
 
@@ -445,10 +446,10 @@ class TestNoneSentinelWhenNoShadowRows:
             sym_dict, bot_state_entry=None, trading_day="2026-05-18", db_path=db_file
         )
 
-        # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
-        assert result["dry_run"] is None, (
-            f"no shadow trajectory: dry_run must be None (AC-M1F.3.5), "
-            f"not if_held={result['if_held']}; got {result['dry_run']}"
+        assert result["if_held"] is not None, "if_held must be set for this test to be meaningful"
+        assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-6), (
+            f"no shadow trajectory: dry_run must equal if_held (anchored model — no divergence); "
+            f"if_held={result['if_held']}, dry_run={result['dry_run']}"
         )
 
     def test_max_drawdown_dry_run_is_none_when_no_shadow_rows(self, tmp_path):
@@ -480,10 +481,11 @@ class TestNoneSentinelWhenNoShadowRows:
             f"not if_held={result['if_held']}; got {result['dry_run']}"
         )
 
-    def test_cumulative_return_dry_run_none_for_triggered_no_shadow(self, tmp_path):
+    def test_cumulative_return_dry_run_equals_if_held_for_triggered_no_shadow(self, tmp_path):
         """
-        Triggered symphony, no shadow trajectory: dry_run=None, NOT if_held.
-        Per AC-M1F.3.5 — triggered flag does not reintroduce if_held fallback.
+        Triggered symphony, no shadow trajectory: dry_run == if_held.
+        Anchored-shadow model: no shadow rows in the comparison window means the bot's
+        recorded divergence is zero — both series start and remain at the if_held baseline.
         """
         from analytics import get_symphony_cumulative_return
 
@@ -507,9 +509,10 @@ class TestNoneSentinelWhenNoShadowRows:
             sym_dict, bot_state_entry=bot_state_entry, trading_day="2026-05-18", db_path=db_file
         )
 
-        # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
-        assert result["dry_run"] is None, (
-            f"triggered+no shadow CR: dry_run must be None (AC-M1F.3.5); got {result['dry_run']}"
+        assert result["if_held"] is not None, "if_held must be set for this test to be meaningful"
+        assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-6), (
+            f"triggered+no shadow trajectory: dry_run must equal if_held (anchored model); "
+            f"if_held={result['if_held']}, dry_run={result['dry_run']}"
         )
 
     def test_max_drawdown_dry_run_none_for_triggered_no_shadow(self, tmp_path):
@@ -548,6 +551,7 @@ class TestNoneSentinelWhenNoShadowRows:
 # TIER 4: trading_day injection at app.py call sites
 # ---------------------------------------------------------------------------
 
+
 class TestTradingDayInjection:
     """
     app.py:386,390,394 do NOT pass trading_day. This means the second bug from
@@ -569,7 +573,7 @@ class TestTradingDayInjection:
 
         # Find the snippet around the call and assert trading_day= is present
         snippet_end = source.find(")", tc_call_idx)
-        snippet = source[tc_call_idx:snippet_end + 1]
+        snippet = source[tc_call_idx : snippet_end + 1]
 
         assert "trading_day" in snippet, (
             f"app.py get_symphony_today_change call must pass trading_day=<ET today>; "
@@ -587,7 +591,7 @@ class TestTradingDayInjection:
         assert cr_call_idx != -1, "Could not find get_symphony_cumulative_return call in app.py"
 
         snippet_end = source.find(")", cr_call_idx)
-        snippet = source[cr_call_idx:snippet_end + 1]
+        snippet = source[cr_call_idx : snippet_end + 1]
 
         assert "trading_day" in snippet, (
             f"app.py get_symphony_cumulative_return call must pass trading_day=<ET today>; "
@@ -605,7 +609,7 @@ class TestTradingDayInjection:
         assert mdd_call_idx != -1, "Could not find get_symphony_max_drawdown call in app.py"
 
         snippet_end = source.find(")", mdd_call_idx)
-        snippet = source[mdd_call_idx:snippet_end + 1]
+        snippet = source[mdd_call_idx : snippet_end + 1]
 
         assert "trading_day" in snippet, (
             f"app.py get_symphony_max_drawdown call must pass trading_day=<ET today>; "
@@ -616,6 +620,7 @@ class TestTradingDayInjection:
 # ---------------------------------------------------------------------------
 # TIER 5: Portfolio strip call sites — trading_day injection (reviewer BLOCK)
 # ---------------------------------------------------------------------------
+
 
 class TestPortfolioStripTradingDayInjection:
     """
@@ -647,7 +652,7 @@ class TestPortfolioStripTradingDayInjection:
                 if depth == 0:
                     end_idx = i
                     break
-        snippet = source[call_idx:end_idx + 1]
+        snippet = source[call_idx : end_idx + 1]
 
         assert "trading_day" in snippet, (
             f"app.py get_portfolio_today_change must pass trading_day=_today_et; "
@@ -674,7 +679,7 @@ class TestPortfolioStripTradingDayInjection:
                 if depth == 0:
                     end_idx = i
                     break
-        snippet = source[call_idx:end_idx + 1]
+        snippet = source[call_idx : end_idx + 1]
 
         assert "trading_day" in snippet, (
             f"app.py get_portfolio_cumulative_return must pass trading_day=_today_et; "
@@ -701,7 +706,7 @@ class TestPortfolioStripTradingDayInjection:
                 if depth == 0:
                     end_idx = i
                     break
-        snippet = source[call_idx:end_idx + 1]
+        snippet = source[call_idx : end_idx + 1]
 
         assert "trading_day" in snippet, (
             f"app.py get_portfolio_max_drawdown must pass trading_day=_today_et; "
@@ -748,8 +753,10 @@ class TestPortfolioStripTradingDayInjection:
         bot_state = {sym_id: {"triggered": False, "current_return": shadow_return_val}}
 
         result = get_portfolio_today_change(
-            symphonies, bot_state,
-            trading_day="2026-05-14", db_path=db_file,
+            symphonies,
+            bot_state,
+            trading_day="2026-05-14",
+            db_path=db_file,
         )
 
         # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.

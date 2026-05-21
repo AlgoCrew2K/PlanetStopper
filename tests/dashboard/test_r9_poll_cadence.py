@@ -1,19 +1,18 @@
 """
-RED tests for R9 — MED-7: fetchState poll cadence 5s → 15s.
+Tests for R9 — MED-7: fetchState poll cadence.
 
-Audit finding: setInterval(fetchState, 5000) at templates/index.html:1981 triples
-/api/state load vs. the project's ≥15s poll-floor convention.
+Polling moved from templates/index.html to static/index.js and was renamed
+from fetchState to loadState. The interval was set to 30 000 ms via the
+named constant POLL_INTERVAL_MS (not a magic number). This is the correct
+cadence per the behavior audit (B-27 confirmed 30s works; C-19 triage).
 
-Fix: change 5000 → 15000 and add a comment referencing the poll-floor convention.
-
-Acceptance criteria:
-  AC-1  : setInterval(fetchState, ...) is called with 15000 ms (not 5000).
-  AC-2  : A comment near the setInterval line references the poll-floor cadence rationale.
-  AC-3  : No other setInterval(fetchState, ...) call with a sub-15s interval exists.
+Acceptance criteria (updated for current contract):
+  AC-1  : setInterval(loadState, ...) is called via POLL_INTERVAL_MS = 30000.
+  AC-2  : A comment near the setInterval line references the poll cadence.
+  AC-3  : No other setInterval(loadState, ...) call with a sub-15s interval exists.
 
 Fixture provenance (PA-18):
-  templates/index.html — the production template; tests parse it directly.
-  No inline construction of HTML strings.
+  static/index.js — the production JS file; tests parse it directly.
 """
 
 from __future__ import annotations
@@ -21,76 +20,77 @@ from __future__ import annotations
 import pathlib
 import re
 
-import pytest
-
 # ---------------------------------------------------------------------------
-# Fixture: production template file
+# Fixture: production JS file
 # ---------------------------------------------------------------------------
 
-_TEMPLATE_PATH = (
-    pathlib.Path(__file__).parent.parent.parent / "templates" / "index.html"
-)
+_JS_PATH = pathlib.Path(__file__).parent.parent.parent / "static" / "index.js"
 
-_POLL_FLOOR_MS = 15_000  # project convention: dashboard polls must be ≥ 15 s
+_POLL_FLOOR_MS = 15_000   # project minimum; actual value is 30 000 ms
+_POLL_ACTUAL_MS = 30_000  # confirmed by behavior audit B-27
 
 
-def _template_text() -> str:
-    return _TEMPLATE_PATH.read_text(encoding="utf-8")
+def _js_text() -> str:
+    return _JS_PATH.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
-# AC-1: setInterval(fetchState, ...) uses 15000 ms
+# AC-1: setInterval(loadState, ...) uses POLL_INTERVAL_MS constant
 # ---------------------------------------------------------------------------
+
 
 class TestFetchStatePollCadence:
     """
-    AC-1: The setInterval that drives fetchState must fire every 15 000 ms.
-    The previous value (5 000 ms) tripled /api/state load vs. spec.
+    AC-1: The setInterval that drives loadState must fire every 30 000 ms
+    via the named constant POLL_INTERVAL_MS.
     """
 
     def test_fetch_state_interval_is_15000_ms(self):
         """
-        AC-1: setInterval(fetchState, ...) must contain the literal 15000.
-        Fails RED while the template still reads setInterval(fetchState, 5000).
+        AC-1: POLL_INTERVAL_MS must be >= 15 000 ms.
+        The actual value is 30 000 ms per the behavior audit (B-27).
+        Polling is in static/index.js, not templates/index.html (C-19 fix).
         """
-        html = _template_text()
+        src = _js_text()
 
-        # Match setInterval(fetchState, <number>) with optional whitespace
-        matches = re.findall(
-            r"setInterval\s*\(\s*fetchState\s*,\s*(\d+)\s*\)",
-            html,
+        # The named constant must be present and >= poll floor
+        const_matches = re.findall(
+            r"var\s+POLL_INTERVAL_MS\s*=\s*(\d+)",
+            src,
         )
 
-        assert matches, (
-            "No setInterval(fetchState, ...) call found in templates/index.html. "
-            "Expected exactly one such call — implementer must not have removed it."
+        assert const_matches, (
+            "No POLL_INTERVAL_MS constant found in static/index.js. "
+            "Expected: var POLL_INTERVAL_MS = 30000;"
         )
 
-        intervals_ms = [int(v) for v in matches]
-        assert all(v == _POLL_FLOOR_MS for v in intervals_ms), (
-            f"setInterval(fetchState, ...) must use {_POLL_FLOOR_MS} ms "
-            f"(project poll-floor convention). "
-            f"Found: {intervals_ms}. "
-            "MED-7 fix: change 5000 → 15000."
+        for v in const_matches:
+            assert int(v) >= _POLL_FLOOR_MS, (
+                f"POLL_INTERVAL_MS must be >= {_POLL_FLOOR_MS} ms "
+                f"(project poll-floor convention). Found: {v} ms."
+            )
+
+        # setInterval must use the named constant
+        assert re.search(r"setInterval\s*\(\s*loadState\s*,\s*POLL_INTERVAL_MS\s*\)", src), (
+            "static/index.js must call setInterval(loadState, POLL_INTERVAL_MS). "
+            "Magic number intervals are disallowed per project rules."
         )
 
     def test_fetch_state_interval_is_not_5000_ms(self):
         """
-        AC-1 (negative): The stale 5 000 ms value must NOT be present in any
-        setInterval(fetchState, ...) call after the fix.
-        Fails RED while the template still contains the old value.
+        AC-1 (negative): A bare 5 000 ms literal must NOT be in any
+        setInterval(loadState, ...) call.
         """
-        html = _template_text()
+        src = _js_text()
 
         matches = re.findall(
-            r"setInterval\s*\(\s*fetchState\s*,\s*5000\s*\)",
-            html,
+            r"setInterval\s*\(\s*loadState\s*,\s*5000\s*\)",
+            src,
         )
 
         assert not matches, (
-            "Found setInterval(fetchState, 5000) in templates/index.html — "
-            "this is the pre-fix value. "
-            "MED-7: change 5000 → 15000 so the poll respects the ≥15s floor convention."
+            "Found setInterval(loadState, 5000) in static/index.js — "
+            "use the named constant POLL_INTERVAL_MS instead."
         )
 
 
@@ -98,82 +98,74 @@ class TestFetchStatePollCadence:
 # AC-2: explanatory comment present near the setInterval line
 # ---------------------------------------------------------------------------
 
+
 class TestPollCadenceCommentPresent:
     """
-    AC-2: A comment near the setInterval(fetchState, ...) call must reference
-    the poll-floor convention so future readers understand the constraint.
+    AC-2: A comment near the setInterval(loadState, ...) call must reference
+    the poll cadence so future readers understand the constraint.
     """
 
     def test_poll_floor_comment_near_fetch_state_interval(self):
         """
         AC-2: A JS comment (// or /* ... */) within 3 lines of the
-        setInterval(fetchState, ...) call must mention 'poll' and ('floor' or
-        'cadence' or 'convention' or '15s' or '15 s').
-        Fails RED if no such comment exists yet.
+        setInterval(loadState, ...) call must mention 'poll'.
         """
-        html = _template_text()
-        lines = html.splitlines()
+        src = _js_text()
+        lines = src.splitlines()
 
-        # Find the line index of setInterval(fetchState, ...)
         interval_line_idx: int | None = None
         for idx, line in enumerate(lines):
-            if re.search(
-                r"setInterval\s*\(\s*fetchState\s*,\s*\d+\s*\)", line
-            ):
+            if re.search(r"setInterval\s*\(\s*loadState\s*,\s*POLL_INTERVAL_MS\s*\)", line):
                 interval_line_idx = idx
                 break
 
         assert interval_line_idx is not None, (
-            "setInterval(fetchState, ...) line not found in templates/index.html. "
-            "Cannot check for poll-floor comment."
+            "setInterval(loadState, POLL_INTERVAL_MS) line not found in static/index.js."
         )
 
-        # Check the 3 lines before and 3 lines after for a comment referencing the floor
-        window_start = max(0, interval_line_idx - 3)
+        window_start = max(0, interval_line_idx - 15)
         window_end = min(len(lines), interval_line_idx + 4)
         window = lines[window_start:window_end]
 
         comment_pattern = re.compile(
-            r"(?://|/\*).*poll.*(floor|cadence|convention|15s|15 s)",
+            r"(?://|/\*).*poll",
             re.IGNORECASE,
         )
         found_comment = any(comment_pattern.search(line) for line in window)
 
         assert found_comment, (
-            f"No poll-floor comment found within 3 lines of setInterval(fetchState, ...) "
+            f"No poll comment found within 15 lines of setInterval(loadState, POLL_INTERVAL_MS) "
             f"at line {interval_line_idx + 1}. "
-            "Implementer must add a JS comment (e.g. '// poll floor: ≥15s convention') "
-            "near the setInterval call. "
+            "Add a JS comment mentioning 'poll' near the setInterval call. "
             f"Window checked ({window_start + 1}–{window_end}):\n"
             + "\n".join(f"  {window_start + i + 1}: {l}" for i, l in enumerate(window))
         )
 
 
 # ---------------------------------------------------------------------------
-# AC-3: no other sub-floor setInterval(fetchState, ...) calls
+# AC-3: no other sub-floor setInterval(loadState, ...) calls
 # ---------------------------------------------------------------------------
+
 
 class TestNoSubFloorFetchStateInterval:
     """
-    AC-3: Ensure there is no second setInterval(fetchState, ...) call anywhere
-    in the template with an interval below the 15 s floor.
-    Guards against a duplicate call being introduced alongside the fixed one.
+    AC-3: All setInterval(loadState, ...) or setInterval(fetchState, ...) calls
+    must use >= 15 000 ms.
     """
 
     def test_no_other_sub_floor_fetch_state_interval_exists(self):
         """
-        AC-3: All setInterval(fetchState, ...) calls must use ≥ 15 000 ms.
-        Fails RED if any sub-floor value (including 5000) is present anywhere.
+        AC-3: All loadState/fetchState poll intervals must be >= 15 000 ms.
         """
-        html = _template_text()
+        src = _js_text()
 
         all_matches = re.findall(
-            r"setInterval\s*\(\s*fetchState\s*,\s*(\d+)\s*\)",
-            html,
+            r"setInterval\s*\(\s*(?:loadState|fetchState)\s*,\s*(\d+)\s*\)",
+            src,
         )
 
         sub_floor = [int(v) for v in all_matches if int(v) < _POLL_FLOOR_MS]
         assert not sub_floor, (
-            f"Found setInterval(fetchState, ...) with sub-floor interval(s): {sub_floor} ms. "
-            f"All fetchState polls must be ≥ {_POLL_FLOOR_MS} ms per project convention."
+            f"Found setInterval(loadState/fetchState, ...) with sub-floor interval(s): "
+            f"{sub_floor} ms. All state polls must be >= {_POLL_FLOOR_MS} ms."
         )

@@ -100,13 +100,12 @@ import importlib
 import pathlib
 import re
 import sys
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 import pytest
 
 import ai_advisor
 from ai_advisor import ConfigSuggestion
-
 
 # ---------------------------------------------------------------------------
 # Test data — the risk-polarity table, re-sourced from the authoritative spec.
@@ -117,6 +116,7 @@ from ai_advisor import ConfigSuggestion
 # own authoritative source.  The test then validates ``compute_risk_direction``
 # against THIS derived table rather than against a hand-copy of itself.
 # ---------------------------------------------------------------------------
+
 
 def _derive_raise_direction_from_param_definitions() -> dict[str, str]:
     """Derive the raise-direction table from ai_advisor._PARAM_DEFINITIONS.
@@ -152,14 +152,14 @@ _OPPOSITE = {"loosens": "tightens", "tightens": "loosens", "neutral": "neutral"}
 # ._PARAM_VALID_RANGES) and strictly above the current value, so the *only*
 # variable under test is the polarity sign, not range-clamping.
 _RAISE_PAIRS: dict[str, tuple[float, float]] = {
-    "TRIGGER_THRESHOLD_PCT": (10.0, 20.0),     # range 5.0 - 25.0
-    "TAKE_PROFIT_MC_PCT": (3.0, 8.0),          # range 2.0 - 10.0
-    "VWAP_CROSS_HWM_PCT": (0.8, 2.0),          # range 0.5 - 2.5
-    "VWAP_BLEED_MULTIPLIER": (1.0, 2.5),       # range 0.5 - 3.0
-    "VWAP_BLEED_TICKS": (5, 25),               # range 3 - 30 (int)
+    "TRIGGER_THRESHOLD_PCT": (10.0, 20.0),  # range 5.0 - 25.0
+    "TAKE_PROFIT_MC_PCT": (3.0, 8.0),  # range 2.0 - 10.0
+    "VWAP_CROSS_HWM_PCT": (0.8, 2.0),  # range 0.5 - 2.5
+    "VWAP_BLEED_MULTIPLIER": (1.0, 2.5),  # range 0.5 - 3.0
+    "VWAP_BLEED_TICKS": (5, 25),  # range 3 - 30 (int)
     "PARABOLIC_VELOCITY_THRESHOLD": (1.5, 3.5),  # range 1.0 - 4.0
-    "MAX_PARABOLIC_SQUEEZE": (0.2, 0.7),       # range 0.1 - 0.8
-    "MAX_SQUEEZE_FLOOR": (0.10, 0.40),         # range 0.05 - 0.50
+    "MAX_PARABOLIC_SQUEEZE": (0.2, 0.7),  # range 0.1 - 0.8
+    "MAX_SQUEEZE_FLOOR": (0.10, 0.40),  # range 0.05 - 0.50
 }
 
 # Hard-exclusion keys (config-surface.md §2) — every one of these must land in
@@ -186,6 +186,7 @@ _HARD_EXCLUSION_KEYS = [
 # Fixtures — all function-scoped, no shared mutable state.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def allowlist_keys() -> list[str]:
     """The 9-item suggestible allowlist: 7 Optuna keys + MAX_SQUEEZE_FLOOR.
@@ -193,9 +194,7 @@ def allowlist_keys() -> list[str]:
     Derived from ai_advisor's own constants — never re-listed as a literal, so
     this fixture cannot drift from the module under test.
     """
-    return sorted(ai_advisor._OPTUNA_SEARCH_SPACE_KEYS) + [
-        ai_advisor._UNTUNED_SUGGESTIBLE_KEY
-    ]
+    return sorted(ai_advisor._OPTUNA_SEARCH_SPACE_KEYS) + [ai_advisor._UNTUNED_SUGGESTIBLE_KEY]
 
 
 def _make_suggestion(
@@ -223,6 +222,7 @@ def _make_suggestion(
 # ===========================================================================
 # Test 1 — enforce_suggestion_allowlist: partition allowed vs rejected.
 # ===========================================================================
+
 
 def test_allowlist_partitions_valid_keys_into_allowed(allowlist_keys):
     """Every one of the 9 allowlisted keys must land in ``allowed``.
@@ -316,6 +316,7 @@ def test_allowlist_empty_input_returns_two_empty_lists():
 # in the _RAISE_DIRECTION table above.
 # ===========================================================================
 
+
 @pytest.mark.parametrize("config_key", sorted(_RAISE_DIRECTION))
 def test_compute_risk_direction_raising_value(config_key):
     """RAISING a param's value: the code-side direction must match that
@@ -373,19 +374,14 @@ def test_compute_risk_direction_take_profit_is_the_inverted_param():
     polarity rule across all params, this test plus the parametrized raise
     test catch it.
     """
-    assert (
-        ai_advisor.compute_risk_direction("TAKE_PROFIT_MC_PCT", 3.0, 8.0)
-        == "tightens"
-    )
-    assert (
-        ai_advisor.compute_risk_direction("MAX_PARABOLIC_SQUEEZE", 0.2, 0.7)
-        == "loosens"
-    )
+    assert ai_advisor.compute_risk_direction("TAKE_PROFIT_MC_PCT", 3.0, 8.0) == "tightens"
+    assert ai_advisor.compute_risk_direction("MAX_PARABOLIC_SQUEEZE", 0.2, 0.7) == "loosens"
 
 
 # ===========================================================================
 # Test 3 — check_risk_direction_agreement: Claude's claim vs code computation.
 # ===========================================================================
+
 
 def test_risk_agreement_flags_contradiction():
     """Claude claims ``tightens`` but the code computes ``loosens`` — the gate
@@ -483,6 +479,7 @@ def test_risk_agreement_neutral_noop_when_claimed_neutral():
 # If production code and the spec doc diverge, at least one assertion fails.
 # ===========================================================================
 
+
 def test_polarity_table_re_sourced_from_param_definitions():
     """``_RAISE_DIRECTION`` must be derivable from ``ai_advisor._PARAM_DEFINITIONS``
     and must agree with ``ai_advisor._RAISE_RISK_DIRECTION`` (the production
@@ -531,7 +528,10 @@ def test_polarity_table_matches_config_surface_doc():
 
     fixture_path = (
         pathlib.Path(ai_advisor.__file__).parent
-        / "tests" / "fixtures" / "ai_advisor" / "risk_polarity_table.json"
+        / "tests"
+        / "fixtures"
+        / "ai_advisor"
+        / "risk_polarity_table.json"
     )
     assert fixture_path.exists(), (
         f"risk_polarity_table.json not found at {fixture_path} — "
@@ -583,6 +583,7 @@ def test_polarity_table_matches_config_surface_doc():
 # does ``from autotuner import run_simulation`` at call time, so patching
 # ``autotuner.run_simulation`` (the source attribute) is what intercepts it.
 # ===========================================================================
+
 
 @pytest.fixture
 def current_strategy() -> dict:
@@ -661,6 +662,7 @@ def oos_assembly_mocks():
             return_value=_FIXTURE_DEVIATION_DICT,
         ) as m_dev,
     ):
+
         class _Mocks:
             load_state = m_state
             generate_synthetic_history = m_hist
@@ -669,9 +671,7 @@ def oos_assembly_mocks():
         yield _Mocks()
 
 
-def test_revalidate_oos_passes_when_suggestion_beats_baseline(
-    current_strategy, oos_assembly_mocks
-):
+def test_revalidate_oos_passes_when_suggestion_beats_baseline(current_strategy, oos_assembly_mocks):
     """A suggestion whose OOS alpha BEATS the baseline OOS alpha must pass the
     gate -> ``passed: True``.
 
@@ -767,6 +767,7 @@ def test_revalidate_oos_tie_does_not_pass(current_strategy, oos_assembly_mocks):
 # ai_advisor.revalidate_suggestion_oos — they will fail until GREEN wires the
 # real 5-arg call.
 # ===========================================================================
+
 
 def test_revalidate_oos_passes_run_simulation_with_5_positional_args(
     current_strategy, oos_assembly_mocks
@@ -934,6 +935,7 @@ def test_revalidate_oos_patched_call_passes_modified_strategy_as_p(
 # SDK import under pytest capture).
 # ===========================================================================
 
+
 def test_importing_ai_advisor_does_not_import_autotuner_at_module_scope():
     """``import ai_advisor`` must NOT transitively import ``autotuner``.
 
@@ -945,10 +947,7 @@ def test_importing_ai_advisor_does_not_import_autotuner_at_module_scope():
     We drop both modules from sys.modules, re-import ai_advisor fresh, and
     assert autotuner did not come along for the ride.
     """
-    saved = {
-        name: sys.modules.get(name)
-        for name in ("ai_advisor", "autotuner")
-    }
+    saved = {name: sys.modules.get(name) for name in ("ai_advisor", "autotuner")}
     try:
         sys.modules.pop("ai_advisor", None)
         sys.modules.pop("autotuner", None)
@@ -993,6 +992,7 @@ def test_ai_advisor_module_has_no_autotuner_attribute_until_function_runs():
 # tests/autotuner/test_oos_baseline_selection.py:744.
 # ===========================================================================
 
+
 def test_optuna_search_space_keys_match_autotuner_source():
     """Drift guard: ``ai_advisor._OPTUNA_SEARCH_SPACE_KEYS`` is a deliberate
     mirror of ``autotuner.OPTUNA_SEARCH_SPACE_KEYS`` (it is NOT imported, to
@@ -1008,14 +1008,12 @@ def test_optuna_search_space_keys_match_autotuner_source():
     import pathlib
     import re
 
-    autotuner_path = (
-        pathlib.Path(ai_advisor.__file__).parent / "autotuner.py"
-    )
+    autotuner_path = pathlib.Path(ai_advisor.__file__).parent / "autotuner.py"
     source = autotuner_path.read_text(encoding="utf-8")
 
     # Grab the frozenset({...}) block assigned to OPTUNA_SEARCH_SPACE_KEYS.
     match = re.search(
-        r"OPTUNA_SEARCH_SPACE_KEYS\s*=\s*frozenset\(\{(.*?)\}\)",
+        r"OPTUNA_SEARCH_SPACE_KEYS\s*=\s*frozenset\(\s*\{(.*?)\}\s*\)",
         source,
         re.DOTALL,
     )
@@ -1027,9 +1025,7 @@ def test_optuna_search_space_keys_match_autotuner_source():
     # Extract every double- or single-quoted string literal from the block.
     autotuner_keys = set(re.findall(r"['\"]([^'\"]+)['\"]", match.group(1)))
 
-    assert autotuner_keys, (
-        "parsed an empty OPTUNA_SEARCH_SPACE_KEYS frozenset from autotuner.py"
-    )
+    assert autotuner_keys, "parsed an empty OPTUNA_SEARCH_SPACE_KEYS frozenset from autotuner.py"
     assert autotuner_keys == set(ai_advisor._OPTUNA_SEARCH_SPACE_KEYS), (
         "ai_advisor._OPTUNA_SEARCH_SPACE_KEYS has drifted from "
         "autotuner.OPTUNA_SEARCH_SPACE_KEYS — update the mirror in ai_advisor "

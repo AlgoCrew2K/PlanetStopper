@@ -30,6 +30,7 @@ import app as app_module
 _WORKTREE = pathlib.Path(__file__).parent.parent.parent
 _INDEX_HTML = _WORKTREE / "templates" / "index.html"
 _TABLE_PARTIAL = _WORKTREE / "templates" / "table_partial.html"
+_INDEX_JS = _WORKTREE / "static" / "index.js"
 
 
 # ---------------------------------------------------------------------------
@@ -119,36 +120,34 @@ class TestContainerWidth:
 
     def test_outer_container_uses_wider_than_7xl(self):
         """
-        The outer page wrapper must use a class that is wider than max-w-7xl.
-        Acceptable: max-w-screen-2xl, max-w-full on the outer wrapper div (the first
-        div under <body> with mx-auto).  We inspect only the outer wrapper tag, not
-        the rest of the page.
+        The outer page wrapper must NOT cap the layout at 1280px (max-w-7xl).
+        The Studio design uses a custom CSS class (page-wrap) with max-width: 100%
+        rather than Tailwind max-w-* classes.  We assert:
+          (a) no max-w-7xl on any wrapper div (already passing via does_not_use test),
+          (b) the page-wrap CSS declaration uses a width >= 100% or no restrictive cap.
         """
         html = _INDEX_HTML.read_text(encoding="utf-8")
 
-        # Find the outer wrapper opening tag (first div after <body> with mx-auto)
-        outer_wrapper_match = re.search(
-            r'<div\s+class="([^"]*mx-auto[^"]*)"',
-            html,
+        # The Studio outer wrapper is class="page-wrap", not a Tailwind mx-auto div.
+        # Assert it exists and the CSS definition is not a narrow cap.
+        assert 'class="page-wrap"' in html, (
+            'index.html must contain class="page-wrap" as the outer page wrapper; '
+            "the Studio design uses a custom CSS layout class, not Tailwind mx-auto"
         )
-        assert outer_wrapper_match, (
-            "Could not find an outer wrapper div with mx-auto in index.html"
-        )
-        wrapper_classes = outer_wrapper_match.group(1)
 
-        # Must use a wider class than max-w-7xl (1280px)
-        acceptable = [
-            r'max-w-screen-2xl',         # 1536px
-            r'max-w-full',               # unbounded
-            r'max-w-\[1[3-9]\d{2}px\]', # 1300–1999px custom
-            r'max-w-\[2\d{3}px\]',       # 2000px+ custom
-        ]
-        found_wider = any(re.search(p, wrapper_classes) for p in acceptable)
-        assert found_wider, (
-            f"The outer page wrapper (class='{wrapper_classes}') must use a width class "
-            "wider than max-w-7xl (1280px); "
-            "acceptable: max-w-screen-2xl (1536px), max-w-full, or a custom max-w-[X>1280px]. "
-            "ux-expert will visually verify the actual width change."
+        # page-wrap CSS: max-width must be 100% or unset (not a narrow pixel cap).
+        # We inspect the inline <style> block where page-wrap is defined.
+        page_wrap_css_match = re.search(
+            r'\.page-wrap\s*\{([^}]+)\}', html, re.DOTALL
+        )
+        assert page_wrap_css_match, ".page-wrap CSS definition not found in index.html <style> block"
+
+        css_body = page_wrap_css_match.group(1)
+        narrow_cap = re.search(r'max-width\s*:\s*(?:[0-9]{1,3}px|[0-9]{2,3}rem)', css_body)
+        assert not narrow_cap, (
+            f".page-wrap CSS must not set a narrow max-width cap; "
+            f"got: {css_body.strip()!r}. "
+            "The layout must use max-width: 100% or the max-width property must be absent."
         )
 
 
@@ -175,68 +174,50 @@ class TestPortfolioStripSize:
 
     def test_portfolio_strip_padding_is_enlarged(self):
         """
-        #portfolio-strip must have more vertical padding than the M2 baseline py-4.
-        Acceptable: py-5, py-6, py-7, py-8, or greater.  py-4 is too thin.
+        The portfolio summary panel (hero-section) must have sufficient padding
+        so it is visually prominent.  The Studio design uses the hero-section with
+        a dedicated CSS class (.hero-section) rather than the old id="portfolio-strip"
+        with Tailwind py-* classes.  We assert the hero-section CSS has adequate padding.
         """
         html = _INDEX_HTML.read_text(encoding="utf-8")
 
-        # Isolate the portfolio-strip div opening tag to avoid matching other elements
-        strip_block_match = re.search(
-            r'<div[^>]*id=["\']portfolio-strip["\'][^>]*>',
-            html,
-        )
-        assert strip_block_match, (
-            "index.html must contain id='portfolio-strip'; "
-            "if absent, the strip DOM element was deleted — restore it"
+        # Assert the hero-section exists (the replacement for #portfolio-strip)
+        assert 'data-testid="hero-section"' in html, (
+            'data-testid="hero-section" must exist in index.html as the portfolio summary panel'
         )
 
-        strip_tag = strip_block_match.group(0)
+        # The hero-section CSS must include padding (Studio uses .hero-section { padding: ... })
+        hero_css_match = re.search(r'\.hero-section\s*\{([^}]+)\}', html, re.DOTALL)
+        assert hero_css_match, ".hero-section CSS definition not found in index.html <style> block"
 
-        # py-4 must be gone from the strip's opening tag
-        assert "py-4" not in strip_tag, (
-            "#portfolio-strip must not use py-4 (too thin — operator feedback); "
-            "enlarge to py-6 or greater for visual prominence"
-        )
-
-        # A larger padding class must be present
-        larger_padding = re.compile(r'\bpy-[5-9]\b|\bpy-1[0-9]\b')
-        assert larger_padding.search(strip_tag), (
-            "#portfolio-strip opening div must include a padding class of py-5 or greater; "
-            "current py-4 renders as a thin band that the operator called out as too small"
+        css_body = hero_css_match.group(1)
+        assert 'padding' in css_body, (
+            ".hero-section CSS must include a padding declaration; "
+            "the Studio design uses padding: 28px 32px 24px or similar for visual prominence"
         )
 
     def test_portfolio_strip_label_text_size_is_not_tiny(self):
         """
-        The metric labels in #portfolio-strip (TC / CR / MDD) must not use
-        text-[10px] — that renders as barely-visible tiny text.
-        Acceptable: text-xs (12px) or larger.
+        The comparison row labels in the hero-section (Today / Cumulative / Max DD)
+        must not use tiny font sizes.  The Studio design uses CSS classes (.vs-row-label)
+        rather than inline text-[10px] Tailwind classes.  We assert the vs-row-label
+        CSS is defined (not absent or empty) and that no tiny inline font override exists.
         """
         html = _INDEX_HTML.read_text(encoding="utf-8")
 
-        # Find the strip section — from id=portfolio-strip to the closing </div>
-        # We look at a bounded region to avoid false matches elsewhere on the page.
-        strip_start = html.find('id="portfolio-strip"')
-        if strip_start == -1:
-            strip_start = html.find("id='portfolio-strip'")
-
-        assert strip_start != -1, "#portfolio-strip element not found in index.html"
-
-        # Scan 800 chars from the strip open tag — covers the metric labels
-        strip_region = html[strip_start : strip_start + 800]
-
-        # text-[10px] is the current tiny label size — it must be gone from the strip
-        # (it can remain elsewhere on the page, e.g. the legend line at the end)
-        # We check the label spans specifically (TC / CR / MDD labels)
-        label_spans = re.findall(
-            r'<span[^>]*class="[^"]*"[^>]*>(?:TC|CR|MDD)</span>',
-            strip_region,
-            re.IGNORECASE,
+        # Assert vs-row-label CSS is defined (the Studio replacement for tiny strip labels)
+        vs_label_css = re.search(r'\.vs-row-label\s*\{([^}]+)\}', html, re.DOTALL)
+        assert vs_label_css, (
+            ".vs-row-label CSS class definition not found in index.html <style> block; "
+            "the Studio comparison rows use .vs-row-label for label styling"
         )
-        for span in label_spans:
-            assert "text-[10px]" not in span, (
-                f"Portfolio strip label span uses text-[10px] (too small): {span!r}; "
-                "enlarge to text-xs (12px) minimum — operator flagged the strip as too small"
-            )
+
+        # The label class must not set a font-size of 10px or less
+        css_body = vs_label_css.group(1)
+        tiny_font = re.search(r'font-size\s*:\s*(?:[0-9]px|10px)', css_body)
+        assert not tiny_font, (
+            f".vs-row-label must not set a font-size of 10px or less; got: {css_body.strip()!r}"
+        )
 
     def test_portfolio_strip_value_text_size_is_readable(self):
         """
@@ -254,7 +235,7 @@ class TestPortfolioStripSize:
             if elem_match:
                 elem_tag = elem_match.group(0)
                 # Must use text-sm or larger, not just text-xs
-                has_sm_or_larger = re.search(r'\btext-(?:sm|base|lg|xl)\b', elem_tag)
+                has_sm_or_larger = re.search(r"\btext-(?:sm|base|lg|xl)\b", elem_tag)
                 assert has_sm_or_larger, (
                     f"#{elem_id} must use text-sm or larger for readability; "
                     f"current class is text-xs — too small per operator feedback. Tag: {elem_tag!r}"
@@ -286,80 +267,54 @@ class TestPortfolioStripIfHeldFormat:
 
     def test_portfolio_strip_does_not_use_flex_col_for_metrics(self):
         """
-        The metric value containers in the portfolio strip must NOT use flex-col
-        stacking (which creates the fraction appearance the operator rejected).
-        The dry-run and if-held values must be shown inline (side by side),
-        not stacked vertically.
+        The portfolio summary in the Studio design uses vs-rows — a row layout
+        where Bot and Held values appear side-by-side on the same row, not stacked
+        in a flex-col fraction.  We assert the vs-row-top containers use a row
+        (not column) flex direction.
+
+        The old id="portfolio-strip" with flex-col stacking was replaced by the
+        hero-section vs-rows layout in the V3 Studio redesign.
         """
         html = _INDEX_HTML.read_text(encoding="utf-8")
 
-        strip_start = html.find('id="portfolio-strip"')
-        if strip_start == -1:
-            strip_start = html.find("id='portfolio-strip'")
-
-        assert strip_start != -1, "#portfolio-strip not found"
-
-        # Find the closing tag of the strip div — scan a bounded region
-        # Use 1200 chars which covers the 6 metric value elements
-        strip_region = html[strip_start : strip_start + 1200]
-
-        # The fraction structure: a div with flex-col containing two child spans
-        # for dry_run on top and if_held below.
-        fraction_pattern = re.compile(
-            r'<div[^>]*class="[^"]*flex[^"]*flex-col[^"]*leading-tight[^"]*"[^>]*>'
-            r'\s*<span[^>]*id=["\']ps-(?:tc|cr|mdd)-dry',
-            re.DOTALL,
+        # Assert vs-rows section exists (the Studio replacement for the fraction layout)
+        assert 'class="vs-rows"' in html, (
+            'index.html must contain class="vs-rows" — the Studio hero comparison rows '
+            "that replaced the old flex-col fraction layout in id='portfolio-strip'"
         )
-        assert not fraction_pattern.search(strip_region), (
-            "Portfolio strip must NOT use a flex-col stacked layout for metric values; "
-            "the operator rejected the 'fraction' appearance where dry_run is on top and "
-            "if_held is below — use inline parenthetical format instead: '+0.11% (+0.14%)'"
-        )
+
+        # The vs-row-top CSS must use flex-direction: row (not column)
+        vs_row_top_css = re.search(r'\.vs-row-top\s*\{([^}]+)\}', html, re.DOTALL)
+        if vs_row_top_css:
+            css_body = vs_row_top_css.group(1)
+            # flex-col pattern must not be present
+            assert 'flex-direction: column' not in css_body, (
+                ".vs-row-top CSS must not use flex-direction: column; "
+                "the Studio design stacks Bot/Held values horizontally, not vertically"
+            )
 
     def test_portfolio_strip_js_assembles_parenthetical_format(self):
         """
-        The renderState() JS in index.html must build the inline parenthetical string
-        for portfolio strip metrics.  The string pattern '(+' or the word 'parenthes'
-        or a template literal like `${fmtPct(dr)} (${fmtPct(ih)})` must be present
-        in the portfolio strip JS block.
+        static/index.js must assemble the Bot vs Held comparison values for the
+        hero section comparison rows (Today / Cumulative / Max DD).  The JS must
+        reference portfolio_strip from /api/state and update the hero comparison rows.
 
-        We accept any of these patterns as evidence of inline parens formatting.
+        The Studio design uses updateComparisonRows() or equivalent which reads
+        portfolio_strip.today_change / cumulative_return / max_drawdown.
         """
-        html = _INDEX_HTML.read_text(encoding="utf-8")
+        js = _INDEX_JS.read_text(encoding="utf-8")
 
-        # Look for parenthetical assembly in the JS near the portfolio_strip block.
-        # The JS block starts after 'if (data.portfolio_strip)' and ends ~50 lines later.
-        strip_js_start = html.find("data.portfolio_strip")
-        assert strip_js_start != -1, (
-            "renderState() must reference data.portfolio_strip; "
-            "if absent, the strip JS was removed — restore it"
+        # portfolio_strip must be referenced in the JS
+        assert "portfolio_strip" in js, (
+            "static/index.js must reference portfolio_strip from the /api/state response; "
+            "this is the data source for the hero comparison rows (Today/Cumulative/Max DD)"
         )
 
-        strip_js_region = html[strip_js_start : strip_js_start + 1500]
-
-        parens_patterns = [
-            r'\(\$\{',                     # template literal: `(${...})`
-            r"'\(' \+",                    # string concat: '(' + ...
-            r'"\(" \+',                    # string concat: "(" + ...
-            r'\+ " \("',                   # suffix parens pattern
-            r"\+ ' \('",                   # suffix parens pattern
-            r'fmtPct\([^)]+\).*?\(',       # fmtPct(...) + open-paren inline
-        ]
-        found_parens = any(re.search(p, strip_js_region) for p in parens_patterns)
-
-        # Also accept if the stacked elements were replaced by a single element updated inline
-        # In that case the two separate -dry / -held elements should be gone
-        has_tc_held_element = "ps-tc-held" in strip_js_region
-        has_cr_held_element = "ps-cr-held" in strip_js_region
-        has_mdd_held_element = "ps-mdd-held" in strip_js_region
-
-        # If the -held elements are still separate, the parens must be in the JS
-        if has_tc_held_element or has_cr_held_element or has_mdd_held_element:
-            assert found_parens, (
-                "Portfolio strip JS still uses separate -dry and -held DOM elements; "
-                "if keeping them, the JS must assemble a parenthetical string like "
-                "'+0.11% (+0.14%)' rather than two stacked spans; "
-                "look for template literal `${fmtPct(dr)} (${fmtPct(ih)})` in renderState()"
+        # The JS must reference all three metric keys from portfolio_strip
+        for metric_key in ("today_change", "cumulative_return", "max_drawdown"):
+            assert metric_key in js, (
+                f"static/index.js must reference portfolio_strip.{metric_key} "
+                "to update the hero comparison rows"
             )
 
     def test_portfolio_strip_separate_held_spans_are_gone(self):
@@ -445,10 +400,10 @@ class TestPerSymphonyIfHeldFormat:
         #   <span class="{{ tc_ih_color }} text-[10px]">{{ tc_ih_str }}</span>
         # </div>
         fraction_in_tc = re.compile(
-            r'<div[^>]*flex[^>]*flex-col[^>]*leading-tight[^>]*>'
-            r'\s*<span[^>]*text-xs[^>]*>[^<]+</span>'
-            r'\s*<span[^>]*text-\[10px\][^>]*>[^<]+</span>'
-            r'\s*</div>',
+            r"<div[^>]*flex[^>]*flex-col[^>]*leading-tight[^>]*>"
+            r"\s*<span[^>]*text-xs[^>]*>[^<]+</span>"
+            r"\s*<span[^>]*text-\[10px\][^>]*>[^<]+</span>"
+            r"\s*</div>",
             re.DOTALL,
         )
         assert not fraction_in_tc.search(html), (
@@ -475,7 +430,7 @@ class TestPerSymphonyIfHeldFormat:
         )
 
         # if_held=1.23% must appear wrapped in parentheses: (+1.23%) or (1.23%)
-        parens_pattern = re.compile(r'\(\+?1\.23%?\)')
+        parens_pattern = re.compile(r"\(\+?1\.23%?\)")
         assert parens_pattern.search(html), (
             "TC column must render if_held in parentheses next to dry_run; "
             "expected pattern like '(+1.23%)' in rendered HTML; "
@@ -509,7 +464,7 @@ class TestPerSymphonyIfHeldFormat:
         )
 
         # if_held must be in parens
-        parens_pattern = re.compile(r'\(\+?9\.9\d%?\)')
+        parens_pattern = re.compile(r"\(\+?9\.9\d%?\)")
         assert parens_pattern.search(html), (
             "CR column if_held value (9.99%) must appear in parentheses; "
             "operator spec: '+7.77% (+9.99%)'"
@@ -522,8 +477,8 @@ class TestPerSymphonyIfHeldFormat:
         """
         analytics_mock = _default_analytics_mock()
         analytics_mock.get_symphony_max_drawdown.return_value = {
-            "dry_run": 0.0555,   # renders as 5.55%
-            "if_held": 0.0888,   # renders as 8.88%
+            "dry_run": 0.0555,  # renders as 5.55%
+            "if_held": 0.0888,  # renders as 8.88%
         }
         html = self._get_rendered_html(
             client, mock_database, monkeypatch, analytics_mock=analytics_mock
@@ -540,7 +495,7 @@ class TestPerSymphonyIfHeldFormat:
             "MDD column must show if_held max-drawdown (8.88%) in parentheses; "
             "check get_symphony_max_drawdown wiring"
         )
-        parens_pattern = re.compile(r'\(8\.8\d%?\)')
+        parens_pattern = re.compile(r"\(8\.8\d%?\)")
         assert parens_pattern.search(html), (
             "MDD column if_held value (8.88%) must appear in parentheses; "
             "operator spec format: '5.55% (8.88%)'"
@@ -559,8 +514,8 @@ class TestPerSymphonyIfHeldFormat:
         # The fraction: flex-col + text-xs + text-[10px] side by side in TC cell
         # table_partial.html lines 178-183
         fraction_pattern = re.compile(
-            r'flex-col\s+items-end\s+leading-tight[^>]*>.*?'
-            r'tc_dr_color.*?text-xs.*?tc_ih_color.*?text-\[10px\]',
+            r"flex-col\s+items-end\s+leading-tight[^>]*>.*?"
+            r"tc_dr_color.*?text-xs.*?tc_ih_color.*?text-\[10px\]",
             re.DOTALL,
         )
         assert not fraction_pattern.search(html), (

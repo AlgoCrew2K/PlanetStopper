@@ -1,0 +1,204 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,500;8..60,600;8..60,700;8..60,800&family=Manrope:wght@300;400;500;600;700;800&family=Geist:wght@300;400;500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<div data-testid="top-bar" style="width:100%;box-sizing:border-box;"><nav data-testid="studio-nav" style="display:flex;align-items:center;gap:clamp(8px,1.2vw,20px);padding:14px clamp(16px,2vw,40px);border-bottom:1px solid var(--studio-rule);background:var(--studio-paper);font-family:var(--studio-sans,Manrope,sans-serif);width:100%;box-sizing:border-box;min-width:0;">
+
+  <!-- Wordmark -->
+  <div style="font-weight:700;font-size:18px;letter-spacing:-0.02em;color:var(--studio-ink);display:flex;align-items:baseline;gap:7px;">
+    AlphaBot
+    <span style="color:var(--studio-accent);font-weight:500;font-size:13px;font-style:italic;">guard</span>
+  </div>
+
+  <!-- Nav links (C-12: url_for() not hardcoded paths) -->
+  <div style="display:flex;gap:2px;margin-left:8px;flex-shrink:0;">
+    <a href="{{ url_for('dashboard') }}"
+       {% if active_route == 'dashboard' %}aria-current="page"{% endif %}
+       style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'dashboard' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'dashboard' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
+      Dashboard
+      {% if active_route == 'dashboard' %}<span style="position:absolute;left:8px;right:8px;bottom:-14px;height:2px;background:var(--studio-accent);"></span>{% endif %}
+    </a>
+    <a href="{{ url_for('performance_page') }}"
+       {% if active_route == 'performance' %}aria-current="page"{% endif %}
+       style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'performance' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'performance' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
+      Performance
+      {% if active_route == 'performance' %}<span style="position:absolute;left:8px;right:8px;bottom:-14px;height:2px;background:var(--studio-accent);"></span>{% endif %}
+    </a>
+    <a href="{{ url_for('ai_advisor_tab') }}"
+       {% if active_route == 'advisor' %}aria-current="page"{% endif %}
+       style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'advisor' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'advisor' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
+      Advisor
+      {% if active_route == 'advisor' %}<span style="position:absolute;left:8px;right:8px;bottom:-14px;height:2px;background:var(--studio-accent);"></span>{% endif %}
+    </a>
+    <a href="{{ url_for('history_page') }}"
+       {% if active_route == 'history' %}aria-current="page"{% endif %}
+       style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'history' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'history' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
+      History
+      {% if active_route == 'history' %}<span style="position:absolute;left:8px;right:8px;bottom:-14px;height:2px;background:var(--studio-accent);"></span>{% endif %}
+    </a>
+    <a href="{{ url_for('settings_page') }}"
+       {% if active_route == 'settings' %}aria-current="page"{% endif %}
+       style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'settings' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'settings' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
+      Settings
+      {% if active_route == 'settings' %}<span style="position:absolute;left:8px;right:8px;bottom:-14px;height:2px;background:var(--studio-accent);"></span>{% endif %}
+    </a>
+  </div>
+
+  <div style="flex:1;"></div>
+
+  <!-- Right-rail: status cluster (shrinks gracefully; ET clock hides at narrow widths) -->
+  <div style="display:flex;align-items:center;gap:clamp(6px,0.8vw,14px);flex-shrink:1;min-width:0;overflow:hidden;">
+    <!-- Single Live/Stale/Closed indicator — updated by chrome.js updateEngineStatus() on each poll -->
+    <span id="engine-status" data-testid="engine-status" style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;letter-spacing:0.04em;white-space:nowrap;flex-shrink:0;">
+      <span id="engine-status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{% if meta is defined and meta.system_online %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};flex-shrink:0;"></span>
+      <span id="engine-status-label" style="color:{% if meta is defined and meta.system_online %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};">{% if meta is defined and meta.system_online %}Live{% elif meta is defined %}Closed{% else %}Closed{% endif %}</span>
+    </span>
+    <span data-testid="et-clock" id="et-clock" class="studio-nav-wide" style="font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0.04em;color:var(--studio-ink-dim);white-space:nowrap;">--:--:--</span>
+    <!-- NEXT countdown — ticks every second via chrome.js; hidden when market closed -->
+    <span id="next-run-countdown" data-testid="next-run-countdown" style="font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0.04em;color:var(--studio-ink-dim);white-space:nowrap;flex-shrink:0;{% if not (meta is defined and meta.system_online) %}display:none;{% endif %}">{% if meta is defined and meta.system_online %}NEXT {{ meta.next_run }}{% endif %}</span>
+  </div>
+
+  <!-- Right-rail: workspace switcher chip (B-08: real dropdown on click) -->
+  <div id="ws-wrap" class="studio-nav-wide" style="position:relative;flex-shrink:0;">
+    <button data-testid="workspace-switcher" type="button"
+            onclick="toggleAccountDropdown(event)"
+            style="display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--studio-rule);border-radius:6px;background:var(--studio-chip-bg);color:var(--studio-ink);font-size:11.5px;cursor:pointer;">
+      <span id="ws-label">{% if meta is defined %}{{ meta.account.label }}{% else %}Account{% endif %}</span>
+      <span id="ws-uuid" style="color:var(--studio-ink-dim);font-size:10px;">{% if meta is defined %}{{ meta.account.uuid_short }}{% else %}--------{% endif %}</span>
+      <span>&#x25BE;</span>
+    </button>
+    <!-- Account dropdown (populated by chrome.js) -->
+    <div id="ws-dropdown" hidden
+         style="position:absolute;top:calc(100% + 6px);right:0;min-width:160px;
+                background:var(--studio-paper);border:1px solid var(--studio-rule-hi);
+                border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.14);
+                z-index:9999;overflow:hidden;">
+    </div>
+  </div>
+
+  <!-- Right-rail: mode pill -->
+  <div data-testid="mode-pill" data-live="{{ 'true' if meta is defined and meta.mode == 'LIVE' else 'false' }}" style="padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:0.06em;white-space:nowrap;flex-shrink:0;background:{% if meta is defined and meta.mode == 'LIVE' %}var(--studio-neg){% else %}var(--studio-chip-bg){% endif %};color:{% if meta is defined and meta.mode == 'LIVE' %}var(--studio-white){% else %}var(--studio-ink-dim){% endif %};">
+    {% if meta is defined %}{{ meta.mode }}{% else %}DRY RUN{% endif %}
+  </div>
+
+  <!-- Right-rail: force run now button (FP-T3-02, FP-T5-07) -->
+  <button data-testid="force-run-btn" type="button" style="padding:5px 14px;border-radius:6px;background:var(--studio-accent);color:var(--studio-white);font-size:12px;font-weight:600;cursor:pointer;border:none;white-space:nowrap;flex-shrink:0;">
+    Force run now
+  </button>
+
+  <!-- Right-rail: emergency liquidate (always one click away on every page) -->
+  <button id="emergency-liquidate" type="button" onclick="openPanicModal()"
+          style="padding:5px 14px;border-radius:6px;border:1px solid var(--studio-neg-border);background:transparent;color:var(--studio-neg);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;letter-spacing:0.03em;">
+    Emergency Liquidate
+  </button>
+
+</nav></div>
+
+<!-- ======================== PANIC MODAL (chrome — all pages) ======================== -->
+<style>
+  /* display:flex must NOT appear as an inline style — it overrides [hidden].
+     Gate display on the hidden attribute so setAttribute('hidden','') actually hides. */
+  #panic-modal { display:none; position:fixed; inset:0; z-index:99999; align-items:center; justify-content:center; background:var(--studio-scrim); }
+  #panic-modal:not([hidden]) { display:flex; }
+</style>
+<div id="panic-modal" hidden onclick="closePanicModal()">
+  <div onclick="event.stopPropagation()" style="background:var(--studio-paper);border:1px solid var(--studio-neg-border);border-radius:14px;padding:32px 36px;max-width:480px;width:92%;box-shadow:0 24px 64px rgba(0,0,0,0.32);">
+    <div style="font-size:14px;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;color:var(--studio-neg);margin-bottom:4px;">Emergency Liquidation</div>
+    <div style="font-size:12px;color:var(--studio-ink-dim);margin-bottom:20px;">This will liquidate all positions in the selected account. This action cannot be undone in LIVE mode.</div>
+
+    <div style="margin-bottom:14px;">
+      <label style="font-size:11px;font-weight:600;color:var(--studio-ink-dim);display:block;margin-bottom:4px;">Account</label>
+      <select id="panic-account" name="panic-account" style="width:100%;padding:7px 10px;border:1px solid var(--studio-rule-hi);border-radius:6px;background:var(--studio-bg);color:var(--studio-ink);font-size:12px;font-family:var(--studio-sans);">
+        <option value="">Loading accounts…</option>
+      </select>
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <label style="font-size:11px;font-weight:600;color:var(--studio-ink-dim);display:block;margin-bottom:4px;">Type <strong>LIQUIDATE</strong> to confirm</label>
+      <input id="panic-phrase" name="confirm_phrase" type="text" autocomplete="off" placeholder="LIQUIDATE"
+             oninput="document.getElementById('panic-confirm-btn').disabled=this.value!=='LIQUIDATE'"
+             style="width:100%;padding:7px 10px;border:1px solid var(--studio-rule-hi);border-radius:6px;background:var(--studio-bg);color:var(--studio-ink);font-size:13px;font-family:var(--studio-sans);letter-spacing:0.04em;">
+    </div>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button type="button" onclick="closePanicModal()"
+              style="padding:7px 18px;border:1px solid var(--studio-rule);border-radius:6px;background:transparent;color:var(--studio-ink-dim);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--studio-sans);">Cancel</button>
+      <button id="panic-confirm-btn" type="button" class="rose" disabled
+              onclick="submitPanicLiquidation()"
+              style="padding:7px 18px;border:none;border-radius:6px;background:var(--studio-neg);color:var(--studio-white);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--studio-sans);opacity:1;">Confirm Liquidate</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tweaks floating trigger (dev tool — not in design nav) -->
+<button data-testid="tweaks-btn" type="button" aria-label="Open tweaks panel"
+        onclick="document.getElementById('studio-tweaks-panel').removeAttribute('hidden')"
+        style="position:fixed;bottom:72px;right:16px;z-index:2147483645;width:32px;height:32px;border-radius:50%;background:var(--studio-paper);border:1px solid var(--studio-rule);color:var(--studio-ink-dim);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.12);">&#x2699;</button>
+
+<!-- Tweaks slide-over panel (hidden by default) -->
+<div id="studio-tweaks-panel" class="twk-panel" hidden>
+  <div class="twk-hd">
+    <b>Studio Tweaks</b>
+    <button class="twk-x" type="button" aria-label="Close tweaks" onclick="document.getElementById('studio-tweaks-panel').setAttribute('hidden','')">&#x2715;</button>
+  </div>
+  <div class="twk-body">
+    <div class="twk-sect">Appearance</div>
+    <div class="twk-row twk-row-h">
+      <div class="twk-lbl"><span>Theme</span></div>
+      <select class="twk-field" onchange="window.studioTweaks && studioTweaks.set('theme', this.value)">
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </div>
+    <div class="twk-row twk-row-h">
+      <div class="twk-lbl"><span>Density</span></div>
+      <select class="twk-field" onchange="window.studioTweaks && studioTweaks.set('density', this.value)">
+        <option value="compact">Compact</option>
+        <option value="balanced" selected>Balanced</option>
+        <option value="roomy">Roomy</option>
+      </select>
+    </div>
+    <div class="twk-sect">Accent</div>
+    <div class="twk-row" style="gap:8px;flex-wrap:wrap;">
+      <button data-testid="accent-swatch" data-swatch-var="--studio-swatch-1" type="button" aria-checked="true"
+              style="width:24px;height:24px;border-radius:50%;background:var(--studio-swatch-1);border:2px solid var(--studio-ink);cursor:pointer;"
+              onclick="var c=getComputedStyle(document.documentElement).getPropertyValue(this.dataset.swatchVar).trim();studioTweaks.set('accent',c);document.documentElement.style.setProperty('--studio-accent',c)"></button>
+      <button data-testid="accent-swatch" data-swatch-var="--studio-swatch-2" type="button" aria-checked="false"
+              style="width:24px;height:24px;border-radius:50%;background:var(--studio-swatch-2);border:2px solid transparent;cursor:pointer;"
+              onclick="var c=getComputedStyle(document.documentElement).getPropertyValue(this.dataset.swatchVar).trim();studioTweaks.set('accent',c);document.documentElement.style.setProperty('--studio-accent',c)"></button>
+      <button data-testid="accent-swatch" data-swatch-var="--studio-swatch-3" type="button" aria-checked="false"
+              style="width:24px;height:24px;border-radius:50%;background:var(--studio-swatch-3);border:2px solid transparent;cursor:pointer;"
+              onclick="var c=getComputedStyle(document.documentElement).getPropertyValue(this.dataset.swatchVar).trim();studioTweaks.set('accent',c);document.documentElement.style.setProperty('--studio-accent',c)"></button>
+      <button data-testid="accent-swatch" data-swatch-var="--studio-swatch-4" type="button" aria-checked="false"
+              style="width:24px;height:24px;border-radius:50%;background:var(--studio-swatch-4);border:2px solid transparent;cursor:pointer;"
+              onclick="var c=getComputedStyle(document.documentElement).getPropertyValue(this.dataset.swatchVar).trim();studioTweaks.set('accent',c);document.documentElement.style.setProperty('--studio-accent',c)"></button>
+      <button data-testid="accent-swatch" data-swatch-var="--studio-swatch-5" type="button" aria-checked="false"
+              style="width:24px;height:24px;border-radius:50%;background:var(--studio-swatch-5);border:2px solid transparent;cursor:pointer;"
+              onclick="var c=getComputedStyle(document.documentElement).getPropertyValue(this.dataset.swatchVar).trim();studioTweaks.set('accent',c);document.documentElement.style.setProperty('--studio-accent',c)"></button>
+    </div>
+    <div class="twk-sect">Typeface</div>
+    <div class="twk-row twk-row-h">
+      <select data-testid="typeface-select" class="twk-field"
+              onchange="studioTweaks.set('typeface',this.value);document.documentElement.style.setProperty('--studio-sans',this.value+', system-ui, sans-serif')">
+        <option value="Manrope">Manrope</option>
+        <option value="Geist">Geist</option>
+        <option value="DM Sans">DM Sans</option>
+        <option value="Plus Jakarta Sans">Plus Jakarta Sans</option>
+        <option value="IBM Plex Sans">IBM Plex Sans</option>
+      </select>
+    </div>
+    <div class="twk-sect">Display</div>
+    <div class="twk-row twk-row-h">
+      <div class="twk-lbl"><span>Math overlays</span></div>
+      <button type="button" class="twk-toggle" data-on="1" role="switch" aria-checked="true"
+              onclick="var on=this.dataset.on==='1';this.dataset.on=on?'0':'1';this.setAttribute('aria-checked',String(!on));window.studioTweaks&&studioTweaks.set('mathOverlays',!on)"><i></i></button>
+    </div>
+    <div class="twk-row twk-row-h">
+      <div class="twk-lbl"><span>Number format</span></div>
+      <select class="twk-field" onchange="window.studioTweaks && studioTweaks.set('numFormat', this.value)">
+        <option value="full" selected>Full</option>
+        <option value="compact">Compact</option>
+      </select>
+    </div>
+  </div>
+</div>
+<script src="/static/chrome.js"></script>

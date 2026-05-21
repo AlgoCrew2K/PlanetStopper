@@ -6,8 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Performance — AlphaBot Dashboard v3</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
     <style>
         ::-webkit-scrollbar {
             width: 6px;
@@ -19,124 +19,438 @@
         }
 
         ::-webkit-scrollbar-thumb {
-            background: #334155;
+            background: var(--studio-scroll-thumb, #334155);
             border-radius: 10px;
         }
 
         ::-webkit-scrollbar-thumb:hover {
-            background: #475569;
+            background: var(--studio-scroll-thumb-hover, #475569);
+        }
+
+        body {
+            background: var(--studio-bg);
+            color: var(--studio-ink);
+            min-height: 100vh;
+            /* fluid side padding: 1rem at 1280 → 3rem at 3840+ */
+            padding: clamp(1rem, 2vw, 3rem);
+            font-family: var(--studio-sans, sans-serif);
+        }
+
+        /* Full-width page wrap — no max-width cap so content fills ultrawide */
+        .page-wrap {
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        /* Page header: title+subtitle left, controls right — one unified card */
+        .perf-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: clamp(0.75rem, 1.5vw, 1.5rem);
+            margin-bottom: 1.5rem;
+            background: var(--studio-surface);
+            padding: clamp(1rem, 1.5vw, 1.75rem) clamp(1.25rem, 2vw, 2.5rem);
+            border-radius: 1rem;
+            border: 1px solid var(--studio-border);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .perf-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(to right, var(--studio-pos), var(--studio-accent));
+        }
+
+        .perf-header-left {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .perf-title {
+            font-size: clamp(1.75rem, 3vw, 3.5rem);
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            color: var(--studio-ink);
+            line-height: 1.05;
+        }
+
+        .perf-subtitle {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            font-weight: 500;
+        }
+
+        /* Controls: scope toggle + optional symphony picker + window toggle — right-aligned row */
+        .perf-controls {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: clamp(0.5rem, 0.8vw, 1rem);
+        }
+
+        .seg-control {
+            display: flex;
+            gap: 2px;
+            background: var(--studio-chip-bg);
+            border: 1px solid var(--studio-rule);
+            border-radius: 8px;
+            padding: 3px;
+        }
+
+        .seg-control button {
+            padding: clamp(3px, 0.3vw, 6px) clamp(8px, 0.8vw, 14px);
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--studio-ink-dim);
+            font-size: clamp(11px, 0.75vw, 14px);
+            font-weight: 600;
+            cursor: pointer;
+            font-family: var(--studio-sans);
+            white-space: nowrap;
+        }
+
+        .seg-control button.active {
+            background: var(--studio-paper-hi);
+            color: var(--studio-ink);
+            box-shadow: 0 1px 3px var(--studio-rule);
+        }
+
+        .control-select {
+            background: var(--studio-bg);
+            color: var(--studio-ink);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.25rem;
+            padding: 0.375rem 0.75rem;
+            font-size: 0.875rem;
+        }
+
+        .control-select:focus {
+            outline: none;
+            border-color: var(--studio-accent);
+        }
+
+        /* Headline strip — 4-column row; min-width:0 prevents wrap at 1280 */
+        .headline-strip {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: clamp(0.5rem, 0.75vw, 1.25rem);
+            margin-bottom: 1.5rem;
+        }
+
+        .headline-stat {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.75rem;
+            padding: clamp(0.75rem, 1.25vw, 1.5rem) clamp(0.875rem, 1.5vw, 1.75rem);
+            min-width: 0;
+        }
+
+        .headline-stat-label {
+            font-size: clamp(0.5625rem, 0.55vw, 0.75rem);
+            color: var(--studio-ink-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 600;
+            margin-bottom: 0.375rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .headline-stat-value {
+            font-size: clamp(1.125rem, 1.8vw, 2.25rem);
+            font-weight: 800;
+            color: var(--studio-ink);
+            line-height: 1;
+        }
+
+        /* Chart block */
+        .chart-block {
+            margin-bottom: 1.5rem;
+            background: var(--studio-surface);
+            padding: clamp(1rem, 1.5vw, 2rem);
+            border-radius: 1rem;
+            border: 1px solid var(--studio-border);
+        }
+
+        /* Chart heading + legend inline on same row */
+        .chart-block-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .chart-block-title {
+            font-size: clamp(0.9375rem, 1.1vw, 1.25rem);
+            font-weight: 500;
+            color: var(--studio-ink);
+            letter-spacing: -0.01em;
+            margin: 0;
+        }
+
+        /* Legend inline — right of heading */
+        .perf-chart-legend {
+            display: flex;
+            gap: 1.25rem;
+            align-items: center;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+        }
+
+        .legend-swatch {
+            width: 1.5rem;
+            height: 2px;
+            background: var(--studio-accent);
+            border-radius: 1px;
+        }
+
+        .legend-swatch-dashed {
+            width: 1.5rem;
+            height: 2px;
+            border-top: 2px dashed var(--studio-ink-dim);
+        }
+
+        .chart-canvas-wrap {
+            position: relative;
+            /* fluid chart height: 320px at 1280 → 560px at 3840, cap at 620px */
+            height: clamp(320px, 15vw, 620px);
+        }
+
+        /* Metrics table */
+        .metrics-section {
+            background: var(--studio-surface);
+            padding: clamp(1rem, 1.5vw, 2rem);
+            border-radius: 1rem;
+            border: 1px solid var(--studio-border);
+        }
+
+        .metrics-title {
+            font-size: clamp(0.9375rem, 1.1vw, 1.25rem);
+            font-weight: 700;
+            color: var(--studio-ink);
+            letter-spacing: -0.01em;
+            margin-bottom: 1rem;
+        }
+
+        .metrics-overflow {
+            overflow-x: auto;
+        }
+
+        .metrics-tbl {
+            width: 100%;
+            font-size: clamp(0.8125rem, 0.9vw, 1rem);
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        /* Fluid column widths: label ~40%, three value columns share the rest */
+        .metrics-tbl th:first-child,
+        .metrics-tbl td:first-child {
+            width: 40%;
+        }
+
+        .metrics-tbl thead tr {
+            text-align: left;
+            color: var(--studio-ink-muted);
+            font-size: clamp(0.625rem, 0.65vw, 0.75rem);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            border-bottom: 1px solid var(--studio-border);
+        }
+
+        .metrics-tbl th {
+            padding: clamp(0.375rem, 0.5vw, 0.625rem) clamp(0.5rem, 0.75vw, 1rem);
+        }
+
+        .metrics-tbl tbody {
+            font-family: monospace;
+            color: var(--studio-ink);
+        }
+
+        .metrics-tbl tbody tr {
+            border-bottom: 1px solid var(--studio-border-dim, var(--studio-border));
+        }
+
+        /* Bold primary rows: larger font + extra vertical padding */
+        .metrics-tbl tbody tr[data-primary="true"] td {
+            font-size: clamp(0.875rem, 1vw, 1.125rem);
+            font-weight: 700;
+            padding-top: 0.625rem;
+            padding-bottom: 0.625rem;
+        }
+
+        /* Dark theme: boost primary row background so bold rows are distinct */
+        [data-theme="dark"] .metrics-tbl tbody tr[data-primary="true"] {
+            background: var(--studio-surface-raised, rgba(255,255,255,0.04));
+        }
+
+        .metrics-tbl td {
+            padding: clamp(0.375rem, 0.5vw, 0.625rem) clamp(0.5rem, 0.75vw, 1rem);
+        }
+
+        .metrics-tbl td.delta {
+            text-align: right;
+            font-weight: 600;
+        }
+
+        /* Insufficient banner */
+        .insufficient-banner {
+            margin-bottom: 1.5rem;
+            background: color-mix(in srgb, var(--studio-warn) 15%, transparent);
+            border: 1px solid color-mix(in srgb, var(--studio-warn) 40%, transparent);
+            color: var(--studio-ink);
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
         }
     </style>
 </head>
 
-<body class="bg-slate-900 text-slate-100 min-h-screen p-8 font-sans">
+<body>
+    <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
+    {% include '_chrome.html' %}
 
-    <div class="max-w-7xl mx-auto">
-        <header
-            class="flex justify-between items-start mb-8 bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700 relative overflow-hidden">
-            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-500 to-emerald-400"></div>
-
-            <div class="flex flex-col gap-2">
-                <div class="flex items-center gap-3">
-                    <h1
-                        class="text-2xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-emerald-400">
-                        Performance
-                    </h1>
-                    <span
-                        class="px-2.5 py-0.5 bg-slate-700 text-slate-400 border border-slate-600 rounded text-[10px] font-bold tracking-widest">
-                        LIVE vs ALPHABOT-EXITED
-                    </span>
-                </div>
-                <p class="text-[11px] text-slate-400 font-medium">
-                    Read-only operator surface. All metrics derived from post-mortem snapshots.
+    <div class="page-wrap" data-testid="performance-page">
+        <!-- Page header: title + controls in one unified row (V-13) -->
+        <header class="perf-header">
+            <div class="perf-header-left">
+                <h1 class="perf-title">Performance</h1>
+                <p class="perf-subtitle">
+                    Live (if held) vs AlphaBot-exited (shadow) · post-mortem snapshots
                 </p>
             </div>
-
-            <div class="flex items-center gap-4">
-                <a href="/"
-                    class="text-[10px] text-blue-400 hover:text-blue-300 font-bold uppercase tracking-widest transition-colors flex items-center gap-1">
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-                    </svg>
-                    Back to Dashboard
-                </a>
+            <!-- Scope + window controls right-aligned in the header (V-13) -->
+            <div class="perf-controls">
+                <div class="seg-control" data-testid="scope-control" id="scope-toggle" role="group" aria-label="Scope">
+                    <button type="button" data-value="aggregate" data-testid="scope-btn-aggregate" class="active" aria-pressed="true">Aggregate</button>
+                    <button type="button" data-value="symphony" data-testid="scope-btn-symphony" aria-pressed="false">Per-symphony</button>
+                </div>
+                <div id="symphony-picker-wrapper" style="display:none">
+                    <label for="symphony-picker" class="sr-only">Symphony</label>
+                    <select id="symphony-picker" data-testid="symphony-picker" class="control-select" style="min-width:14rem;">
+                        <option value="" disabled selected>Loading...</option>
+                    </select>
+                </div>
+                <div class="seg-control" data-testid="window-control" id="days-picker" role="group" aria-label="Window">
+                    <button type="button" data-value="30" data-testid="window-btn-30">30d</button>
+                    <button type="button" data-value="60" data-testid="window-btn-60" class="active" aria-pressed="true">60d</button>
+                    <button type="button" data-value="90" data-testid="window-btn-90">90d</button>
+                    <button type="button" data-value="125" data-testid="window-btn-125">125d</button>
+                    <button type="button" data-value="ytd" data-testid="window-btn-ytd">YTD</button>
+                    <button type="button" data-value="252" data-testid="window-btn-1y">1Y</button>
+                    <button type="button" data-value="1260" data-testid="window-btn-5y">5Y</button>
+                </div>
             </div>
         </header>
 
-        <!-- Scope toggle + symphony selector -->
-        <section
-            class="mb-6 bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700 flex flex-wrap items-center gap-6">
-            <div class="flex flex-col gap-1">
-                <label for="scope-toggle"
-                    class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Scope</label>
-                <select id="scope-toggle"
-                    class="bg-slate-900 text-slate-100 border border-slate-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-amber-500">
-                    <option value="aggregate" selected>Aggregate (portfolio)</option>
-                    <option value="symphony">Per-symphony</option>
-                </select>
-            </div>
-            <div class="flex flex-col gap-1" id="symphony-picker-wrapper" style="display:none">
-                <label for="symphony-picker"
-                    class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Symphony</label>
-                <select id="symphony-picker"
-                    class="bg-slate-900 text-slate-100 border border-slate-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-amber-500 min-w-[16rem]">
-                    <option value="" disabled selected>Loading...</option>
-                </select>
-            </div>
-            <div class="flex flex-col gap-1">
-                <label for="days-picker"
-                    class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Window</label>
-                <select id="days-picker"
-                    class="bg-slate-900 text-slate-100 border border-slate-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-amber-500">
-                    <option value="30">30 days</option>
-                    <option value="60" selected>60 days</option>
-                    <option value="90">90 days</option>
-                    <option value="125">125 days</option>
-                </select>
-            </div>
-            <div class="ml-auto text-right">
-                <p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-1">Observations</p>
-                <p class="text-xl font-bold text-slate-100 leading-none" id="observation-count">--</p>
-            </div>
-        </section>
-
         <!-- Insufficient-history banner -->
-        <div id="insufficient-banner"
-            class="mb-6 bg-amber-900/30 border border-amber-700/50 text-amber-200 px-4 py-3 rounded-lg text-sm hidden">
+        <div id="insufficient-banner" data-testid="insufficient-banner"
+            class="insufficient-banner" style="display:none">
             <strong>Insufficient history.</strong> At least {{ min_history_days }} days of post-mortem snapshots are needed for stable
             quantstats metrics. Showing what's available so far.
         </div>
 
-        <!-- Chart -->
-        <section class="mb-6 bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700">
-            <h2 class="text-sm uppercase tracking-widest text-slate-400 font-bold mb-4">Cumulative Returns</h2>
-            <div class="relative" style="height: 380px;">
+        <!-- Headline strip — 4 equal columns, never wraps to 2×2 (V-14) -->
+        <div data-testid="headline-strip" class="headline-strip">
+            <div data-testid="guard-alpha-stat" class="headline-stat">
+                <div class="headline-stat-label">Cumulative guard &alpha;</div>
+                <div class="headline-stat-value" id="guard-alpha-value">--</div>
+            </div>
+            <div data-testid="bot-return-stat" class="headline-stat">
+                <div class="headline-stat-label">Bot total return</div>
+                <div class="headline-stat-value" id="bot-return-value">--</div>
+            </div>
+            <div data-testid="held-return-stat" class="headline-stat">
+                <div class="headline-stat-label">If-held total return</div>
+                <div class="headline-stat-value" id="held-return-value">--</div>
+            </div>
+            <div data-testid="observations-stat" class="headline-stat">
+                <div class="headline-stat-label">Observations</div>
+                <div class="headline-stat-value" id="observation-count">--</div>
+            </div>
+        </div>
+
+        <!-- Chart block -->
+        <section data-testid="perf-chart-block" class="chart-block">
+            <!-- Heading + legend inline on same row (V-16) -->
+            <div class="chart-block-header">
+                <h2 class="chart-block-title">Cumulative returns</h2>
+                <div data-testid="perf-chart-legend" class="perf-chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-swatch"></div>
+                        <span>AlphaBot-exited (shadow)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-swatch-dashed"></div>
+                        <span>Live (if held)</span>
+                    </div>
+                </div>
+            </div>
+            <div class="chart-canvas-wrap">
                 <canvas id="returns-chart"></canvas>
             </div>
         </section>
 
-        <!-- Metrics tables -->
-        <section class="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700">
-            <h2 class="text-sm uppercase tracking-widest text-slate-400 font-bold mb-4">Risk Metrics</h2>
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm">
+        <!-- Metrics table -->
+        <section data-testid="metrics-table" class="metrics-section">
+            <h2 class="metrics-title">Risk Metrics</h2>
+            <div class="metrics-overflow">
+                <table class="metrics-tbl">
                     <thead>
-                        <tr class="text-left text-slate-500 text-[11px] uppercase tracking-widest border-b border-slate-700">
-                            <th class="py-2 px-3">Metric</th>
-                            <th class="py-2 px-3 text-right">Live (held)</th>
-                            <th class="py-2 px-3 text-right">AlphaBot-Exited (shadow)</th>
-                            <th class="py-2 px-3 text-right">Delta</th>
+                        <tr>
+                            <th>Metric</th>
+                            <th style="text-align:right">Live · if held</th>
+                            <th style="text-align:right">Bot · AlphaBot-exited</th>
+                            <th style="text-align:right">Delta</th>
                         </tr>
                     </thead>
-                    <tbody id="metrics-tbody" class="font-mono text-slate-200">
-                        <!-- rows injected by performance.js -->
+                    <tbody id="metrics-tbody">
+                        <tr data-testid="metric-row" data-primary="true">
+                            <td>Total return</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row">
+                            <td>Annualized return</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row" data-primary="true">
+                            <td>Sharpe</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row">
+                            <td>Sortino</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row" data-primary="true">
+                            <td>Max drawdown</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-neg)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row">
+                            <td>Calmar</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row">
+                            <td>Win rate</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
         </section>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="{{ url_for('static', filename='performance.js') }}"></script>
 </body>
 

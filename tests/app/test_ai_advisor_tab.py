@@ -45,19 +45,18 @@ Mocking strategy:
 
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
 
-import app as app_module
 import ai_advisor
+import app as app_module
 from ai_advisor import ConfigSuggestion, ConfigSuggestionsResponse
-
 
 # ---------------------------------------------------------------------------
 # Helpers — fixture suggestion factories
 # ---------------------------------------------------------------------------
+
 
 def _make_suggestion(
     config_key: str = "MAX_SQUEEZE_FLOOR",
@@ -85,6 +84,7 @@ def _make_suggestions_response(suggestions=None) -> ConfigSuggestionsResponse:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def client():
@@ -120,21 +120,38 @@ def mock_database(monkeypatch):
 @pytest.fixture
 def mock_advisor(monkeypatch):
     """Mock ai_advisor functions called by the route — ZERO live Anthropic calls."""
+    # DEV_ADVISOR_FIXTURE in .env bypasses the mocked route; clear it for isolation.
+    monkeypatch.delenv("DEV_ADVISOR_FIXTURE", raising=False)
     suggestion = _make_suggestion()
     response = _make_suggestions_response([suggestion])
 
     with (
-        patch.object(ai_advisor, "assemble_advisor_context", return_value={"scope": "symphony"}) as mock_ctx,
+        patch.object(
+            ai_advisor, "assemble_advisor_context", return_value={"scope": "symphony"}
+        ) as mock_ctx,
         patch.object(ai_advisor, "request_suggestions", return_value=(response, None)) as mock_req,
-        patch.object(ai_advisor, "enforce_suggestion_allowlist", wraps=ai_advisor.enforce_suggestion_allowlist) as mock_allowlist,
-        patch.object(ai_advisor, "check_risk_direction_agreement", wraps=ai_advisor.check_risk_direction_agreement) as mock_risk,
-        patch.object(ai_advisor, "revalidate_suggestion_oos", return_value={
-            "passed": True,
-            "oos_alpha": 2.0,
-            "baseline_oos_alpha": 1.0,
-            "detail": "OOS re-validation PASSED",
-        }) as mock_oos,
+        patch.object(
+            ai_advisor,
+            "enforce_suggestion_allowlist",
+            wraps=ai_advisor.enforce_suggestion_allowlist,
+        ) as mock_allowlist,
+        patch.object(
+            ai_advisor,
+            "check_risk_direction_agreement",
+            wraps=ai_advisor.check_risk_direction_agreement,
+        ) as mock_risk,
+        patch.object(
+            ai_advisor,
+            "revalidate_suggestion_oos",
+            return_value={
+                "passed": True,
+                "oos_alpha": 2.0,
+                "baseline_oos_alpha": 1.0,
+                "detail": "OOS re-validation PASSED",
+            },
+        ) as mock_oos,
     ):
+
         class _Mocks:
             assemble_advisor_context = mock_ctx
             request_suggestions = mock_req
@@ -157,6 +174,7 @@ def isolated_env_file(tmp_path, monkeypatch):
 # ===========================================================================
 # A. /ai-advisor route — render + suggest
 # ===========================================================================
+
 
 def test_get_ai_advisor_returns_200(client, monkeypatch):
     """GET /ai-advisor must render a 200 response.
@@ -264,6 +282,7 @@ def test_post_suggest_failed_request_suggestions_returns_error_payload(
     This is the graceful-degradation contract: a Claude API failure is
     'no suggestion this click', not a 500 that breaks the dashboard.
     """
+    monkeypatch.delenv("DEV_ADVISOR_FIXTURE", raising=False)
     monkeypatch.setattr(app_module, "render_template", lambda *_a, **_kw: "")
     with (
         patch.object(ai_advisor, "assemble_advisor_context", return_value={}),
@@ -298,6 +317,7 @@ def test_post_suggest_failed_request_suggestions_returns_error_payload(
 # real-money risk.
 # ===========================================================================
 
+
 def test_accept_calls_enforce_suggestion_allowlist_before_writing(
     client, mock_database, mock_advisor
 ):
@@ -327,9 +347,12 @@ def test_accept_calls_enforce_suggestion_allowlist_before_writing(
     )
 
     assert resp.status_code == 200
-    mock_advisor.enforce_suggestion_allowlist.assert_called(), (
-        "enforce_suggestion_allowlist must be called on every accept action — "
-        "it is the structural allowlist gate, not an optional optimisation"
+    (
+        mock_advisor.enforce_suggestion_allowlist.assert_called(),
+        (
+            "enforce_suggestion_allowlist must be called on every accept action — "
+            "it is the structural allowlist gate, not an optional optimisation"
+        ),
     )
 
 
@@ -361,15 +384,16 @@ def test_accept_calls_check_risk_direction_agreement_before_writing(
     )
 
     assert resp.status_code == 200
-    mock_advisor.check_risk_direction_agreement.assert_called(), (
-        "check_risk_direction_agreement must be called on every accept action — "
-        "a real-money system never trusts Claude's self-classified risk_direction"
+    (
+        mock_advisor.check_risk_direction_agreement.assert_called(),
+        (
+            "check_risk_direction_agreement must be called on every accept action — "
+            "a real-money system never trusts Claude's self-classified risk_direction"
+        ),
     )
 
 
-def test_accept_calls_revalidate_suggestion_oos_before_writing(
-    client, mock_database, mock_advisor
-):
+def test_accept_calls_revalidate_suggestion_oos_before_writing(client, mock_database, mock_advisor):
     """Accepting a suggestion MUST invoke revalidate_suggestion_oos.
 
     This is the most important C2 gate: a Claude suggestion is an unvalidated
@@ -396,10 +420,13 @@ def test_accept_calls_revalidate_suggestion_oos_before_writing(
     )
 
     assert resp.status_code == 200
-    mock_advisor.revalidate_suggestion_oos.assert_called(), (
-        "revalidate_suggestion_oos must be called on every accept action — "
-        "a Claude suggestion is an unvalidated hypothesis; it must pass the "
-        "same OOS gate Optuna's output faces before reaching live config"
+    (
+        mock_advisor.revalidate_suggestion_oos.assert_called(),
+        (
+            "revalidate_suggestion_oos must be called on every accept action — "
+            "a Claude suggestion is an unvalidated hypothesis; it must pass the "
+            "same OOS gate Optuna's output faces before reaching live config"
+        ),
     )
 
 
@@ -434,9 +461,12 @@ def test_accept_writes_strategy_when_all_c2_gates_pass(client, mock_database, mo
     )
 
     assert resp.status_code == 200
-    mock_database.save_symphony_strategy.assert_called(), (
-        "save_symphony_strategy must be called when all C2 gates pass — "
-        "the accepted suggestion must reach the config store"
+    (
+        mock_database.save_symphony_strategy.assert_called(),
+        (
+            "save_symphony_strategy must be called when all C2 gates pass — "
+            "the accepted suggestion must reach the config store"
+        ),
     )
 
     # The written params must include the suggested value, not the original
@@ -486,9 +516,12 @@ def test_accept_blocked_by_allowlist_does_not_write_strategy(client, mock_databa
         )
 
     # The critical invariant: no write must have occurred
-    mock_database.save_symphony_strategy.assert_not_called(), (
-        "save_symphony_strategy must NEVER be called when the allowlist gate "
-        "rejects the config_key — LIVE_EXECUTION must not reach the strategy store"
+    (
+        mock_database.save_symphony_strategy.assert_not_called(),
+        (
+            "save_symphony_strategy must NEVER be called when the allowlist gate "
+            "rejects the config_key — LIVE_EXECUTION must not reach the strategy store"
+        ),
     )
 
 
@@ -533,9 +566,12 @@ def test_accept_blocked_by_oos_gate_does_not_write_strategy(client, mock_databas
             "An OOS-gate failure must not return a success status"
         )
 
-    mock_database.save_symphony_strategy.assert_not_called(), (
-        "save_symphony_strategy must NOT be called when the OOS gate fails — "
-        "a suggestion that degrades walk-forward performance must not reach live config"
+    (
+        mock_database.save_symphony_strategy.assert_not_called(),
+        (
+            "save_symphony_strategy must NOT be called when the OOS gate fails — "
+            "a suggestion that degrades walk-forward performance must not reach live config"
+        ),
     )
 
 
@@ -565,9 +601,12 @@ def test_reject_does_not_write_strategy(client, mock_database, monkeypatch):
     )
 
     assert resp.status_code == 200
-    mock_database.save_symphony_strategy.assert_not_called(), (
-        "A rejected suggestion must NOT call save_symphony_strategy — "
-        "the reject path is a deliberate no-op and must never write config"
+    (
+        mock_database.save_symphony_strategy.assert_not_called(),
+        (
+            "A rejected suggestion must NOT call save_symphony_strategy — "
+            "the reject path is a deliberate no-op and must never write config"
+        ),
     )
 
 
@@ -606,6 +645,7 @@ def test_reject_returns_success_status(client, mock_database, monkeypatch):
 # ===========================================================================
 # C. ANTHROPIC_API_KEY settings field
 # ===========================================================================
+
 
 def test_get_settings_includes_anthropic_api_key(client, mock_database, monkeypatch):
     """GET /api/settings must include ANTHROPIC_API_KEY in the globals dict.
@@ -683,9 +723,7 @@ def test_post_settings_with_anthropic_api_key_calls_set_key(
     )
 
 
-def test_get_settings_anthropic_key_is_not_echoed_in_plaintext(
-    client, mock_database, monkeypatch
-):
+def test_get_settings_anthropic_key_is_not_echoed_in_plaintext(client, mock_database, monkeypatch):
     """GET /api/settings must NOT echo ANTHROPIC_API_KEY value back in plaintext
     if it has been set.
 
@@ -736,89 +774,80 @@ def test_get_settings_anthropic_key_is_not_echoed_in_plaintext(
 #   3. saveSettings includes ANTHROPIC_API_KEY in the globals object it POSTs.
 # ===========================================================================
 
+
 def test_settings_modal_has_anthropic_api_key_password_input(client, monkeypatch):
-    """GET / must render an <input type="password"> for ANTHROPIC_API_KEY in
-    the settings modal.
+    """GET /settings must render an <input type="password"> for ANTHROPIC_API_KEY.
 
-    The field must be type="password" (masked) — displaying an API key as
-    plain text in the settings modal is a credential-exposure risk. The field
-    must be present so the operator can configure the Claude advisor key
-    without editing .env manually.
+    The Studio V3 redesign moved credentials from a modal in index.html to a
+    dedicated /settings page (templates/settings.html).  The field must be
+    type="password" (masked) — displaying an API key as plain text is a
+    credential-exposure risk.
 
-    Assertion: the rendered HTML of GET / contains both 'ANTHROPIC_API_KEY'
-    (or 'anthropic' case-insensitively) AND 'type="password"' on the same
-    input element — i.e., the template was updated with the new field.
+    Assertion: GET /settings renders HTML containing 'anthropic' (case-insensitive)
+    indicating the ANTHROPIC_API_KEY credential field is present on the settings page.
     """
-    resp = client.get("/")
+    resp = client.get("/settings")
     assert resp.status_code == 200
     html = resp.data.decode("utf-8", errors="replace").lower()
 
     assert "anthropic" in html, (
-        "GET / (index.html) must contain an ANTHROPIC_API_KEY settings field — "
+        "GET /settings (settings.html) must contain an ANTHROPIC_API_KEY field — "
         "'anthropic' not found anywhere in the rendered HTML. "
-        "Add an <input type=\"password\" id=\"env-anthropic-key\"> to the "
-        "API Credentials section of the settings modal in index.html."
+        "The Studio V3 design places ANTHROPIC_API_KEY in the Credentials section "
+        "of the /settings page, not in a modal on index.html."
     )
 
 
 def test_settings_modal_anthropic_key_input_is_password_type(client, monkeypatch):
-    """The ANTHROPIC_API_KEY input in the settings modal must be type="password".
+    """The ANTHROPIC_API_KEY input in settings.html must be type="password".
 
-    An API key rendered as type="text" is visible in plaintext to anyone
-    looking at the operator's screen. type="password" masks it consistently
-    with how Composer Secret and Alpaca Secret are handled in the same modal.
+    An API key rendered as type="text" is visible in plaintext.  type="password"
+    masks it consistently with how Composer Secret and Alpaca Secret are handled
+    in the same Credentials section.
+
+    The Studio V3 design places this on GET /settings, not in a modal on index.html.
     """
-    resp = client.get("/")
+    resp = client.get("/settings")
     assert resp.status_code == 200
     html = resp.data.decode("utf-8", errors="replace")
 
     import re
-    # Find all <input ...> elements whose id or surrounding context references
-    # anthropic, and assert at least one is type="password".
-    # We look for an input tag that contains both "anthropic" and type="password"
-    # within the same tag (case-insensitive).
-    input_tags = re.findall(r'<input[^>]+>', html, re.IGNORECASE)
+
+    input_tags = re.findall(r"<input[^>]+>", html, re.IGNORECASE)
     anthropic_inputs = [tag for tag in input_tags if "anthropic" in tag.lower()]
 
     assert anthropic_inputs, (
-        "No <input> element referencing 'anthropic' found in GET / HTML. "
-        "Add <input type=\"password\" id=\"env-anthropic-key\"> to index.html."
+        "No <input> element referencing 'anthropic' found in GET /settings HTML. "
+        "The settings.html Credentials section must contain an ANTHROPIC_API_KEY input."
     )
 
     password_inputs = [
-        tag for tag in anthropic_inputs
+        tag
+        for tag in anthropic_inputs
         if 'type="password"' in tag.lower() or "type='password'" in tag.lower()
     ]
     assert password_inputs, (
-        f"Found anthropic input(s) but none are type=\"password\": "
+        f'Found anthropic input(s) but none are type="password": '
         f"{anthropic_inputs}. "
-        "The ANTHROPIC_API_KEY field must be type=\"password\" to mask the key, "
-        "consistent with Composer Secret and Alpaca Secret fields."
+        'The ANTHROPIC_API_KEY field must be type="password" to mask the key.'
     )
 
 
 def test_settings_modal_js_saves_anthropic_api_key(client, monkeypatch):
-    """The saveSettings JS function in index.html must include ANTHROPIC_API_KEY
-    in the globals object it POSTs to /api/settings.
+    """GET /settings HTML must include ANTHROPIC_API_KEY in the settings JS
+    so the value is included in the POST to /api/settings.
 
-    If saveSettings omits ANTHROPIC_API_KEY, the operator can see the input
-    field but saving settings will silently discard whatever they typed — the
-    key never reaches the .env file.
-
-    Assertion: the rendered HTML contains 'ANTHROPIC_API_KEY' in a JS context
-    that maps it to a DOM element value (the saveSettings globals object).
+    The Studio V3 design places this on the /settings page (settings.html),
+    not in a modal JS block in index.html.
     """
-    resp = client.get("/")
+    resp = client.get("/settings")
     assert resp.status_code == 200
     html = resp.data.decode("utf-8", errors="replace")
 
-    # The saveSettings function builds a globals dict. Assert that the string
-    # 'ANTHROPIC_API_KEY' appears in the JS section of the template (not just
-    # in a comment) and is associated with a getElementById call.
     assert "ANTHROPIC_API_KEY" in html, (
-        "index.html must contain 'ANTHROPIC_API_KEY' in the saveSettings JS "
-        "globals object so the value is included in the POST to /api/settings. "
-        "Without this, the operator's input is silently discarded on save."
+        "GET /settings (settings.html) must contain 'ANTHROPIC_API_KEY' so the "
+        "settings JS includes it in the POST to /api/settings. "
+        "The Studio V3 design moved credentials to the /settings route."
     )
 
 
@@ -833,6 +862,7 @@ def test_settings_modal_js_saves_anthropic_api_key(client, monkeypatch):
 # wrapper structure (keys "params"/"locked_vars") instead of the real param
 # values — silently wrong OOS result.
 # ===========================================================================
+
 
 def test_accept_passes_flat_params_to_revalidate_suggestion_oos(client, mock_database):
     """The accept route must unwrap database.get_symphony_strategy()'s nested
@@ -851,12 +881,14 @@ def test_accept_passes_flat_params_to_revalidate_suggestion_oos(client, mock_dat
     oos_calls = []
 
     def capturing_oos(symphony_id, config_key, suggested_value, current_strategy):
-        oos_calls.append({
-            "symphony_id": symphony_id,
-            "config_key": config_key,
-            "suggested_value": suggested_value,
-            "current_strategy": current_strategy,
-        })
+        oos_calls.append(
+            {
+                "symphony_id": symphony_id,
+                "config_key": config_key,
+                "suggested_value": suggested_value,
+                "current_strategy": current_strategy,
+            }
+        )
         return {"passed": True, "oos_alpha": 2.0, "baseline_oos_alpha": 1.0, "detail": "PASSED"}
 
     with patch.object(ai_advisor, "revalidate_suggestion_oos", side_effect=capturing_oos):
@@ -895,9 +927,14 @@ def test_accept_passes_flat_params_to_revalidate_suggestion_oos(client, mock_dat
     )
     # The flat dict must contain at least one real param key
     known_param_keys = {
-        "TRIGGER_THRESHOLD_PCT", "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
-        "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS", "PARABOLIC_VELOCITY_THRESHOLD",
-        "MAX_PARABOLIC_SQUEEZE", "MAX_SQUEEZE_FLOOR",
+        "TRIGGER_THRESHOLD_PCT",
+        "TAKE_PROFIT_MC_PCT",
+        "VWAP_CROSS_HWM_PCT",
+        "VWAP_BLEED_MULTIPLIER",
+        "VWAP_BLEED_TICKS",
+        "PARABOLIC_VELOCITY_THRESHOLD",
+        "MAX_PARABOLIC_SQUEEZE",
+        "MAX_SQUEEZE_FLOOR",
     }
     assert any(k in current_strategy_arg for k in known_param_keys), (
         f"current_strategy passed to revalidate_suggestion_oos has no known param "

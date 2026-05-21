@@ -34,7 +34,9 @@ def compute_expected_max_sharpe(sr_mean: float, sr_std: float, n_trials: int) ->
         return float(sr_mean)
     ppf1 = norm.ppf(1.0 - 1.0 / n_trials)
     ppf2 = norm.ppf(1.0 - 1.0 / (n_trials * math.e))
-    return sr_mean + sr_std * ((1.0 - _GAMMA_EULER_MASCHERONI) * ppf1 + _GAMMA_EULER_MASCHERONI * ppf2)
+    return sr_mean + sr_std * (
+        (1.0 - _GAMMA_EULER_MASCHERONI) * ppf1 + _GAMMA_EULER_MASCHERONI * ppf2
+    )
 
 
 def filter_sortino_sentinels(sortino_values: list[float]) -> list[float]:
@@ -87,29 +89,43 @@ ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 pri
 PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
 
 # Monte Carlo gating constants (run_monte_carlo)
-MC_INSUFFICIENT_HISTORY_PROB = 100.0  # Sentinel probability when MC history insufficient — emits 100% to skip MC exit gate
-MC_MIN_HISTORY_DAYS = 20              # Minimum history rows for MC simulation to run; below this we short-circuit
-MC_VOL_WINDOW_DAYS = 20              # Rolling SPY vol window; arithmetic uses (DAYS - 1) for inclusive endpoint
-MC_DEFAULT_SIMULATION_PATHS = 5000   # Default MC path count — CLT stability vs runtime tradeoff
-MC_DEFAULT_NEIGHBOR_K = 150          # Default kNN regime locality — smaller=tighter regime match, larger=smoother estimate
+MC_INSUFFICIENT_HISTORY_PROB = (
+    100.0  # Sentinel probability when MC history insufficient — emits 100% to skip MC exit gate
+)
+MC_MIN_HISTORY_DAYS = (
+    20  # Minimum history rows for MC simulation to run; below this we short-circuit
+)
+MC_VOL_WINDOW_DAYS = 20  # Rolling SPY vol window; arithmetic uses (DAYS - 1) for inclusive endpoint
+MC_DEFAULT_SIMULATION_PATHS = 5000  # Default MC path count — CLT stability vs runtime tradeoff
+MC_DEFAULT_NEIGHBOR_K = (
+    150  # Default kNN regime locality — smaller=tighter regime match, larger=smoother estimate
+)
 # Seed modulus maps SHA-256 digest to numpy Generator's safe int range [0, 2^31);
 # 2^31 gives ~98k distinct values/year with no collisions across YYYYMMDD_HHMM space.
 MC_SEED_MODULUS = 2**31
 
 # Time-squeeze decay constants (drives intraday tightening of trailing stops)
-DECAY_CURVE_SCALAR = 9       # log10(1 + 9*t) maps t in [0,1] to decay in [0,1]; produces the characteristic AlphaBot intraday decay curve
-MULT_OPEN = 1.5              # dynamic_multiplier at market open (loosest stop)
-MULT_CLOSE = 0.5             # dynamic_multiplier at market close (tightest)
-MIN_STOP_OPEN = 0.3          # min stop floor at market open, in percentage points
-MIN_STOP_CLOSE = 0.15        # min stop floor at market close, in percentage points
-VOL_FALLBACK = 1.0           # neutral fallback for safe_vol when symphony_vol <= 0 (preserves vol-scale arithmetic in the degenerate-vol case)
+DECAY_CURVE_SCALAR = 9  # log10(1 + 9*t) maps t in [0,1] to decay in [0,1]; produces the characteristic AlphaBot intraday decay curve
+MULT_OPEN = 1.5  # dynamic_multiplier at market open (loosest stop)
+MULT_CLOSE = 0.5  # dynamic_multiplier at market close (tightest)
+MIN_STOP_OPEN = 0.3  # min stop floor at market open, in percentage points
+MIN_STOP_CLOSE = 0.15  # min stop floor at market close, in percentage points
+VOL_FALLBACK = 1.0  # neutral fallback for safe_vol when symphony_vol <= 0 (preserves vol-scale arithmetic in the degenerate-vol case)
 
 # Breakeven-lock constants (drives HWM-hold-based stop tightening)
-BREAKEVEN_ACTIVATION_MIN = 0.4         # lower clamp for dynamic activation threshold (in percentage points)
-BREAKEVEN_ACTIVATION_MAX = 3.0         # upper clamp for dynamic activation threshold
-BREAKEVEN_ACTIVATION_DEADBAND = 0.2    # current_return must be within this distance below dynamic_activation to count a tick
-HWM_HOLD_TICKS_THRESHOLD = 5          # consecutive qualifying ticks needed to lock breakeven (transition is one-way)
-TRIGGERED_OVERRIDE_LEVEL = -999.0      # sentinel stop level when position is already triggered (suppresses re-exit)
+BREAKEVEN_ACTIVATION_MIN = (
+    0.4  # lower clamp for dynamic activation threshold (in percentage points)
+)
+BREAKEVEN_ACTIVATION_MAX = 3.0  # upper clamp for dynamic activation threshold
+BREAKEVEN_ACTIVATION_DEADBAND = (
+    0.2  # current_return must be within this distance below dynamic_activation to count a tick
+)
+HWM_HOLD_TICKS_THRESHOLD = (
+    5  # consecutive qualifying ticks needed to lock breakeven (transition is one-way)
+)
+TRIGGERED_OVERRIDE_LEVEL = (
+    -999.0
+)  # sentinel stop level when position is already triggered (suppresses re-exit)
 
 
 def compute_para_arm_decision(
@@ -130,7 +146,9 @@ def compute_para_arm_decision(
     Extracted from alpha_bot_execution.py:559-569 to comply with the project
     file-map rule that math layers live in math_engine.py.
     """
-    _reject_non_finite(current_return=current_return, prev_return=prev_return, para_threshold=para_threshold)
+    _reject_non_finite(
+        current_return=current_return, prev_return=prev_return, para_threshold=para_threshold
+    )
     velocity = float(current_return) - float(prev_return)
     should_arm = bool((velocity >= para_threshold) and (not currently_armed))
     return velocity, should_arm
@@ -259,7 +277,9 @@ def compute_breakeven_update(
         new_hold_ticks = current_hold_ticks + 1
     else:
         new_hold_ticks = 0
-    new_breakeven_locked = bool(currently_breakeven_locked or (new_hold_ticks >= HWM_HOLD_TICKS_THRESHOLD))
+    new_breakeven_locked = bool(
+        currently_breakeven_locked or (new_hold_ticks >= HWM_HOLD_TICKS_THRESHOLD)
+    )
     if new_breakeven_locked:
         stop_trigger_level = max(base_stop_level, 0.0)
     else:
@@ -274,9 +294,9 @@ def compute_breakeven_update(
 
 
 # Exit-confirmation constants (gates trailing-stop trigger)
-MAGNITUDE_FLOOR_PCT = 0.10       # return must drop at least this far BELOW stop_trigger_level to count toward exit confirmation
-MC_SANITY_THRESHOLD = 60.0       # MC probability >= this value blocks exit ("if we still think we beat the benchmark, don't capitulate")
-EXIT_CONFIRM_TICKS = 3           # consecutive qualifying ticks needed to flip is_trailing_stop_hit
+MAGNITUDE_FLOOR_PCT = 0.10  # return must drop at least this far BELOW stop_trigger_level to count toward exit confirmation
+MC_SANITY_THRESHOLD = 60.0  # MC probability >= this value blocks exit ("if we still think we beat the benchmark, don't capitulate")
+EXIT_CONFIRM_TICKS = 3  # consecutive qualifying ticks needed to flip is_trailing_stop_hit
 
 
 def compute_exit_confirmation(
@@ -320,9 +340,9 @@ def compute_exit_confirmation(
     if (not armed) or is_triggered:
         return int(current_below_stop_count), False
 
-    below_stop_condition = (
-        current_return <= (stop_trigger_level - MAGNITUDE_FLOOR_PCT)
-    ) and (prob_beating < MC_SANITY_THRESHOLD)
+    below_stop_condition = (current_return <= (stop_trigger_level - MAGNITUDE_FLOOR_PCT)) and (
+        prob_beating < MC_SANITY_THRESHOLD
+    )
 
     if below_stop_condition:
         new_count = int(current_below_stop_count) + 1
@@ -358,9 +378,11 @@ def compute_vwap_signals(
     _reject_non_finite_in_records(holdings, "allocation")
     for ticker in live_vwaps:
         entry = live_vwaps[ticker]
-        _reject_non_finite(
-            **{k: entry[k] for k in ("last_price", "vwap") if k in entry}
-        )
+        _reject_non_finite(**{k: entry[k] for k in ("last_price", "vwap") if k in entry})
+    # Zero-volume tickers have no economically meaningful VWAP and must be
+    # excluded from BOTH accumulators. NO_VOLUME is the structural threshold:
+    # a session volume at or below it means the ticker did not trade.
+    NO_VOLUME = 0
     weighted_vwap_diff = 0.0
     valid_vwap_weight = 0.0
     for h in holdings:
@@ -368,17 +390,26 @@ def compute_vwap_signals(
         allocation = h.get("allocation", 0.0)
         if ticker in live_vwaps:
             entry = live_vwaps[ticker]
+            # Volume is optional in live data (fetch_intraday_vwaps only emits
+            # entries with cumulative volume > 0, and omits the key). A MISSING
+            # volume key therefore qualifies; only an explicitly present
+            # non-positive volume skips the entry.
+            volume = entry.get("volume")
+            if volume is not None and volume <= NO_VOLUME:
+                continue
             p = entry["last_price"]
             v = entry["vwap"]
             if v > 0:
-                weighted_vwap_diff += allocation * ((p - v) / v)  # (p-v)/v first: preserves inline's IEEE-754 evaluation order
+                weighted_vwap_diff += allocation * (
+                    (p - v) / v
+                )  # (p-v)/v first: preserves inline's IEEE-754 evaluation order
                 valid_vwap_weight += allocation
     return float(weighted_vwap_diff), float(valid_vwap_weight)
 
 
 # VWAP bleed-arm constants (dynamic exit threshold for VWAP-bleed system; always negative)
-VWAP_BLEED_ARM_MIN = -3.0    # most-negative clamp; deepest bleed threshold allowed (further drops do not arm any sooner)
-VWAP_BLEED_ARM_MAX = -0.5    # least-negative clamp; arm threshold must be at least this deep (shallower drops never arm)
+VWAP_BLEED_ARM_MIN = -3.0  # most-negative clamp; deepest bleed threshold allowed (further drops do not arm any sooner)
+VWAP_BLEED_ARM_MAX = -0.5  # least-negative clamp; arm threshold must be at least this deep (shallower drops never arm)
 
 
 def compute_vwap_bleed_arm_threshold(
@@ -411,8 +442,8 @@ def compute_vwap_bleed_arm_threshold(
 
 
 # VWAP breakdown constants (gates the VWAP exit state machine)
-VWAP_WEIGHT_THRESHOLD = 0.5         # minimum allocation coverage to evaluate VWAP signals; below this, the weighted diff is too unreliable
-VWAP_BREAK_CONFIRM_TICKS = 3        # consecutive qualifying ticks for System A (profit-protection break) to flip is_vwap_broken
+VWAP_WEIGHT_THRESHOLD = 0.5  # minimum allocation coverage to evaluate VWAP signals; below this, the weighted diff is too unreliable
+VWAP_BREAK_CONFIRM_TICKS = 3  # consecutive qualifying ticks for System A (profit-protection break) to flip is_vwap_broken
 
 
 def compute_vwap_breakdown_update(
@@ -512,6 +543,7 @@ def is_in_open_window_grace(
     (pre-action-gate territory handled by the existing action gate).
     """
     import datetime as _dt
+
     h, m = map(int, execution_start_hhmm.split(":"))
     exec_start = _dt.time(h, m)
     exec_start_dt = current_et.replace(hour=h, minute=m, second=0, microsecond=0)
@@ -567,7 +599,14 @@ def derive_cycle_mc_seed(cycle_id: str) -> int:
     return int(hashlib.sha256(cycle_id.encode()).hexdigest(), 16) % MC_SEED_MODULUS
 
 
-def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_paths=MC_DEFAULT_SIMULATION_PATHS, neighbor_k=MC_DEFAULT_NEIGHBOR_K, seed: int | None = None):
+def run_monte_carlo(
+    holdings,
+    historical_data,
+    spy_today_return,
+    simulation_paths=MC_DEFAULT_SIMULATION_PATHS,
+    neighbor_k=MC_DEFAULT_NEIGHBOR_K,
+    seed: int | None = None,
+):
     """
     Vectorized Monte Carlo simulation using Nearest Neighbors matching.
     """
@@ -582,47 +621,50 @@ def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_path
         )
     current_symphony_return = sum(
         (h.get("last_percent_change", 0.0) * PCT_SCALAR) * h.get("allocation", 0.0)
-        for h in holdings if h.get("last_percent_change") is not None
+        for h in holdings
+        if h.get("last_percent_change") is not None
     )
     valid_dates = sorted(list(historical_data.keys()))
     if len(valid_dates) < MC_MIN_HISTORY_DAYS:
         return MC_INSUFFICIENT_HISTORY_PROB
 
     # 1. Calculate distances based on SPY return and rolling 20-day volatility
-    spy_returns = np.array([historical_data[date].get("SPY", {}).get("daily_ret", 0.0) for date in valid_dates])
-    
+    spy_returns = np.array(
+        [historical_data[date].get("SPY", {}).get("daily_ret", 0.0) for date in valid_dates]
+    )
+
     spy_vols = np.zeros_like(spy_returns)
     for i in range(len(spy_returns)):
         start_idx = max(0, i - (MC_VOL_WINDOW_DAYS - 1))
         if i > 0:
-            spy_vols[i] = np.std(spy_returns[start_idx:i+1])
+            spy_vols[i] = np.std(spy_returns[start_idx : i + 1])
         else:
             spy_vols[i] = 0.0
-            
+
     spy_today_ret_dec = spy_today_return / PCT_SCALAR
     # Invariant: len(spy_returns) >= MC_VOL_WINDOW_DAYS - 1 because the guard at line ~445 returns
     # early when len(valid_dates) < MC_MIN_HISTORY_DAYS, and MC_MIN_HISTORY_DAYS >= MC_VOL_WINDOW_DAYS.
-    today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1):], spy_today_ret_dec))
+    today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1) :], spy_today_ret_dec))
 
     # Euclidean distance across 2 dimensions
-    distances = np.sqrt((spy_returns - spy_today_ret_dec)**2 + (spy_vols - today_vol)**2)
-    
+    distances = np.sqrt((spy_returns - spy_today_ret_dec) ** 2 + (spy_vols - today_vol) ** 2)
+
     # 2. Get top K indices
     if len(distances) <= neighbor_k:
         nearest_indices = np.arange(len(distances))
     else:
         # argpartition is faster than full sort
         nearest_indices = np.argpartition(distances, neighbor_k)[:neighbor_k]
-    
+
     nearest_days = [valid_dates[i] for i in nearest_indices]
-    
+
     # 3. Weights and Tickers
     tickers = [h["ticker"] for h in holdings]
     weights = np.array([h.get("allocation", 0.0) for h in holdings])
-    
+
     # 4. Build Returns Matrix (K days x N tickers)
     returns_matrix = np.zeros((len(nearest_days), len(tickers)))
-    
+
     for i, date in enumerate(nearest_days):
         day_data = historical_data[date]
         spy_ret = day_data.get("SPY", {}).get("daily_ret", 0.0)
@@ -631,18 +673,19 @@ def run_monte_carlo(holdings, historical_data, spy_today_return, simulation_path
                 returns_matrix[i, j] = day_data[ticker].get("daily_ret", 0.0)
             else:
                 returns_matrix[i, j] = spy_ret
-                
+
     # 5. Calculate path returns (dot product is highly optimized in numpy)
     nearest_day_returns = returns_matrix.dot(weights) * PCT_SCALAR
-    
+
     # 6. Random selection & Cumulative Distribution
     # Isolated Generator — does NOT touch the numpy global RNG (AC-H3.1).
     rng = np.random.default_rng(seed)
     sim_results = rng.choice(nearest_day_returns, size=simulation_paths)
-    
+
     sim_results.sort()
     below_count = np.searchsorted(sim_results, current_symphony_return)
     return ((simulation_paths - below_count) / simulation_paths) * PCT_SCALAR
+
 
 def calculate_20d_vol(holdings, historical_data):
     """
@@ -678,6 +721,7 @@ def calculate_20d_vol(holdings, historical_data):
 
     return float(np.std(daily_returns))
 
+
 def calculate_14d_atr_pct(holdings, historical_data):
     """
     Calculates the 14-day Volatility-Adjusted (ATR) percentage for the holdings.
@@ -693,38 +737,43 @@ def calculate_14d_atr_pct(holdings, historical_data):
 
     tickers = [h.get("ticker") for h in holdings]
     weights = np.array([h.get("allocation", 0.0) for h in holdings])
-    
+
     atr_pct_array = np.zeros(len(tickers))
-    
+
     for j, ticker in enumerate(tickers):
         tr_list = []
         last_close = None
         has_missing_data = False
-        
+
         for date in valid_dates:
             day_data = historical_data[date].get(ticker)
-            if not day_data or "high" not in day_data or "low" not in day_data or "close" not in day_data:
+            if (
+                not day_data
+                or "high" not in day_data
+                or "low" not in day_data
+                or "close" not in day_data
+            ):
                 has_missing_data = True
                 break
-                
+
             high = day_data["high"]
             low = day_data["low"]
             close = day_data["close"]
-            
+
             if last_close is not None:
                 tr = max(high - low, abs(high - last_close), abs(low - last_close))
                 tr_list.append(tr)
             last_close = close
-            
+
         if has_missing_data or len(tr_list) == 0:
             return calculate_20d_vol(holdings, historical_data)
-            
+
         avg_tr = np.mean(tr_list)
         recent_close = last_close
         if recent_close and recent_close > 0:
             atr_pct_array[j] = (avg_tr / recent_close) * PCT_SCALAR
         else:
             return calculate_20d_vol(holdings, historical_data)
-            
+
     portfolio_atr_pct = atr_pct_array.dot(weights)
     return float(portfolio_atr_pct)

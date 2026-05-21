@@ -1,0 +1,19 @@
+{
+  "pending_deploys_cash": 0,
+  "total_cash": 233.02,
+  "time_weighted_return": 0.7515018689993396,
+  "total_unallocated_cash": 20.97,
+  "portfolio_value": 12945.18,
+  "net_deposits": 7617.12,
+  "pending_net_deposits": 0.0,
+  "todays_percent_change": -0.016293406301324167,
+  "simple_return": 0.6994857549779971,
+  "todays_dollar_change": -214.414736785,
+  "metrics": {
+    "annualized_rate_of_return": 0.354,
+    "max_drawdown": 0.2447,
+    "sharpe_ratio": 1.0837,
+    "standard_deviation": 0.3284
+  },
+  "pending_withdrawals": 0.0
+}

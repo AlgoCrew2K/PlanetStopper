@@ -101,7 +101,7 @@ _GUARD_ALPHA_CASES = [
 
 @pytest.mark.parametrize("f_ret,live_ret,expected_sign", _GUARD_ALPHA_CASES)
 def test_guard_alpha_calculation_sign_matches_scenario(
-    f_ret, live_ret, expected_sign, tmp_path
+    f_ret, live_ret, expected_sign, tmp_path, monkeypatch
 ):
     """Stage 1: saved_pct = f_ret - live_ret is computed and written to the
     snapshot.  We assert the sign (positive/negative/zero) and that the key
@@ -136,20 +136,18 @@ def test_guard_alpha_calculation_sign_matches_scenario(
 
     patch_norm, patch_strat = _db_stubs()
 
+    # Point reporting at tmp_path so the file is isolated from the project root.
+    # reporting.py now uses _POST_MORTEMS_DIR (absolute path), not CWD.
+    monkeypatch.setattr(reporting, "_POST_MORTEMS_DIR", str(tmp_path))
+
     with patch_norm, patch_strat:
-        # Redirect CWD so the function writes to tmp_path
-        original_cwd = os.getcwd()
-        os.chdir(tmp_path)
-        try:
-            reporting.generate_eod_snapshot(
-                bot_state,
-                date_str,
-                is_post_rebalance=False,
-                discord_webhook_url=None,
-                live_prices=None,
-            )
-        finally:
-            os.chdir(original_cwd)
+        reporting.generate_eod_snapshot(
+            bot_state,
+            date_str,
+            is_post_rebalance=False,
+            discord_webhook_url=None,
+            live_prices=None,
+        )
 
     assert report_file.exists(), "Stage 1 snapshot file was not created"
     with open(report_file, "r", encoding="utf-8") as fh:
@@ -188,7 +186,7 @@ def test_guard_alpha_calculation_sign_matches_scenario(
 #    the FROZEN value and must appear as exit_return in the snapshot.
 # ===========================================================================
 
-def test_shadow_return_uses_frozen_triggered_at_return_not_current(tmp_path):
+def test_shadow_return_uses_frozen_triggered_at_return_not_current(tmp_path, monkeypatch):
     """When a symphony has triggered=True and live_prices are provided, the
     Stage 1 snapshot must use triggered_at_return as the exit_return — the
     value frozen at the moment of trigger — NOT current_return.
@@ -230,19 +228,17 @@ def test_shadow_return_uses_frozen_triggered_at_return_not_current(tmp_path):
 
     patch_norm, patch_strat = _db_stubs()
 
+    # Point reporting at tmp_path so the file is isolated from the project root.
+    monkeypatch.setattr(reporting, "_POST_MORTEMS_DIR", str(tmp_path))
+
     with patch_norm, patch_strat:
-        original_cwd = os.getcwd()
-        os.chdir(tmp_path)
-        try:
-            reporting.generate_eod_snapshot(
-                bot_state,
-                date_str,
-                is_post_rebalance=False,
-                discord_webhook_url=None,
-                live_prices=live_prices,
-            )
-        finally:
-            os.chdir(original_cwd)
+        reporting.generate_eod_snapshot(
+            bot_state,
+            date_str,
+            is_post_rebalance=False,
+            discord_webhook_url=None,
+            live_prices=live_prices,
+        )
 
     assert report_file.exists()
     with open(report_file, "r", encoding="utf-8") as fh:

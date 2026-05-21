@@ -40,11 +40,9 @@ Floats compared with pytest.approx + documented tolerance rationale.
 from __future__ import annotations
 
 import json
-import pathlib
-import sqlite3
-from unittest.mock import MagicMock, patch, call
-import tempfile
 import os
+import pathlib
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -53,11 +51,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _FIXTURE_DIR = (
-    pathlib.Path(__file__).parents[2]
-    / "tests"
-    / "fixtures"
-    / "autotuner"
-    / "dsr_surfacing"
+    pathlib.Path(__file__).parents[2] / "tests" / "fixtures" / "autotuner" / "dsr_surfacing"
 )
 
 
@@ -87,6 +81,7 @@ def legacy_run_fixture() -> dict:
 # Isolated DB fixture (re-used by API route tests)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def isolated_db(tmp_path, monkeypatch):
     """Redirect database.DB_FILE to tmp_path and initialise schema."""
@@ -103,6 +98,7 @@ def isolated_db(tmp_path, monkeypatch):
 # shape it so send_eod_discord_post can include it.
 # ---------------------------------------------------------------------------
 
+
 def _dsr_data_from_fixture(fixture_row: dict) -> dict:
     """
     Build the dsr_data dict from a fixture row.  This mirrors what
@@ -118,8 +114,8 @@ def _dsr_data_from_fixture(fixture_row: dict) -> dict:
     """
     row = fixture_row["row"]
     return {
-        "naive_sharpe":       row["naive_sharpe"],
-        "deflated_sharpe":    row["deflated_sharpe"],
+        "naive_sharpe": row["naive_sharpe"],
+        "deflated_sharpe": row["deflated_sharpe"],
         "frozen_eval_sharpe": row["frozen_eval_sharpe"],
     }
 
@@ -127,6 +123,7 @@ def _dsr_data_from_fixture(fixture_row: dict) -> dict:
 # ===========================================================================
 # SURFACE 1 — Discord EOD embed
 # ===========================================================================
+
 
 class TestDiscordEmbedIncludesDSR:
     """
@@ -144,7 +141,11 @@ class TestDiscordEmbedIncludesDSR:
         """Write a minimal post-mortem JSON to tmp_path and return its path."""
         report = {
             "date": "2026-05-14",
-            "summary": {"total_monitored": 1, "total_triggered": 0, "positive_guard_alpha_count": 0},
+            "summary": {
+                "total_monitored": 1,
+                "total_triggered": 0,
+                "positive_guard_alpha_count": 0,
+            },
             "tomorrow_target_holdings": {},
             "triggers": [],
         }
@@ -169,9 +170,7 @@ class TestDiscordEmbedIncludesDSR:
             }
         }
 
-    def test_discord_embed_contains_naive_sharpe_when_present(
-        self, full_run_fixture, tmp_path
-    ):
+    def test_discord_embed_contains_naive_sharpe_when_present(self, full_run_fixture, tmp_path):
         """
         AC-1 + AC-5: When naive_sharpe is non-None, the Discord embed string
         for that symphony must contain the formatted naive_sharpe value to 4
@@ -193,7 +192,9 @@ class TestDiscordEmbedIncludesDSR:
         captured_embeds = []
 
         def capture_post(url, **kwargs):
-            body = kwargs.get("json") or json.loads(kwargs.get("data", {}).get("payload_json", "{}"))
+            body = kwargs.get("json") or json.loads(
+                kwargs.get("data", {}).get("payload_json", "{}")
+            )
             captured_embeds.extend(body.get("embeds", []))
             mock_resp = MagicMock()
             mock_resp.json.return_value = {}
@@ -202,19 +203,28 @@ class TestDiscordEmbedIncludesDSR:
         orig_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path))
-            with patch("reporting.requests.post", side_effect=capture_post), \
-                 patch("reporting.glob.glob", return_value=[str(report_path)]), \
-                 patch("reporting.database.normalize_name", side_effect=lambda n: n), \
-                 patch("reporting.database.get_symphony_strategy", return_value={"params": {}, "locked_vars": {}}):
+            with (
+                patch("reporting.requests.post", side_effect=capture_post),
+                patch("reporting.glob.glob", return_value=[str(report_path)]),
+                patch("reporting.database.normalize_name", side_effect=lambda n: n),
+                patch(
+                    "reporting.database.get_symphony_strategy",
+                    return_value={"params": {}, "locked_vars": {}},
+                ),
+            ):
                 reporting.send_eod_discord_post(
-                    "2026-05-14", str(report_path), opt_results, "https://discord.example.invalid/SENTINEL"
+                    "2026-05-14",
+                    str(report_path),
+                    opt_results,
+                    "https://discord.example.invalid/SENTINEL",
                 )
         finally:
             os.chdir(orig_cwd)
 
         # Find the per-symphony optimization embed
         sym_embeds = [
-            e for e in captured_embeds
+            e
+            for e in captured_embeds
             if sym_id.replace("_", " ") in e.get("title", "").lower()
             or sym_id in e.get("title", "").lower()
             or sym_id in e.get("description", "").lower()
@@ -226,10 +236,7 @@ class TestDiscordEmbedIncludesDSR:
         )
 
         # The combined text of all symphony embeds must contain the formatted naive_sharpe.
-        all_text = " ".join(
-            e.get("description", "") + e.get("title", "")
-            for e in sym_embeds
-        )
+        all_text = " ".join(e.get("description", "") + e.get("title", "") for e in sym_embeds)
 
         expected_naive = fmt["naive_sharpe_formatted"]  # "1.8432" — from fixture
         assert expected_naive in all_text, (
@@ -239,9 +246,7 @@ class TestDiscordEmbedIncludesDSR:
             "AC-1 + AC-5 violation."
         )
 
-    def test_discord_embed_contains_deflated_sharpe_when_present(
-        self, full_run_fixture, tmp_path
-    ):
+    def test_discord_embed_contains_deflated_sharpe_when_present(self, full_run_fixture, tmp_path):
         """
         AC-1: Discord embed must contain the deflated_sharpe (DSR) value with a
         human-readable label. The label must NOT be the raw DB column name
@@ -260,7 +265,9 @@ class TestDiscordEmbedIncludesDSR:
         captured_embeds = []
 
         def capture_post(url, **kwargs):
-            body = kwargs.get("json") or json.loads(kwargs.get("data", {}).get("payload_json", "{}"))
+            body = kwargs.get("json") or json.loads(
+                kwargs.get("data", {}).get("payload_json", "{}")
+            )
             captured_embeds.extend(body.get("embeds", []))
             mock_resp = MagicMock()
             mock_resp.json.return_value = {}
@@ -269,18 +276,27 @@ class TestDiscordEmbedIncludesDSR:
         orig_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path))
-            with patch("reporting.requests.post", side_effect=capture_post), \
-                 patch("reporting.glob.glob", return_value=[str(report_path)]), \
-                 patch("reporting.database.normalize_name", side_effect=lambda n: n), \
-                 patch("reporting.database.get_symphony_strategy", return_value={"params": {}, "locked_vars": {}}):
+            with (
+                patch("reporting.requests.post", side_effect=capture_post),
+                patch("reporting.glob.glob", return_value=[str(report_path)]),
+                patch("reporting.database.normalize_name", side_effect=lambda n: n),
+                patch(
+                    "reporting.database.get_symphony_strategy",
+                    return_value={"params": {}, "locked_vars": {}},
+                ),
+            ):
                 reporting.send_eod_discord_post(
-                    "2026-05-14", str(report_path), opt_results, "https://discord.example.invalid/SENTINEL"
+                    "2026-05-14",
+                    str(report_path),
+                    opt_results,
+                    "https://discord.example.invalid/SENTINEL",
                 )
         finally:
             os.chdir(orig_cwd)
 
         sym_embeds = [
-            e for e in captured_embeds
+            e
+            for e in captured_embeds
             if sym_id.replace("_", " ") in e.get("title", "").lower()
             or sym_id in e.get("title", "").lower()
             or sym_id in e.get("description", "").lower()
@@ -290,10 +306,7 @@ class TestDiscordEmbedIncludesDSR:
             "send_eod_discord_post must produce a per-symphony embed."
         )
 
-        all_text = " ".join(
-            e.get("description", "") + e.get("title", "")
-            for e in sym_embeds
-        )
+        all_text = " ".join(e.get("description", "") + e.get("title", "") for e in sym_embeds)
 
         expected_dsr = fmt["deflated_sharpe_formatted"]  # "0.9217" — from fixture
         assert expected_dsr in all_text, (
@@ -327,7 +340,9 @@ class TestDiscordEmbedIncludesDSR:
         captured_embeds = []
 
         def capture_post(url, **kwargs):
-            body = kwargs.get("json") or json.loads(kwargs.get("data", {}).get("payload_json", "{}"))
+            body = kwargs.get("json") or json.loads(
+                kwargs.get("data", {}).get("payload_json", "{}")
+            )
             captured_embeds.extend(body.get("embeds", []))
             mock_resp = MagicMock()
             mock_resp.json.return_value = {}
@@ -336,28 +351,34 @@ class TestDiscordEmbedIncludesDSR:
         orig_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path))
-            with patch("reporting.requests.post", side_effect=capture_post), \
-                 patch("reporting.glob.glob", return_value=[str(report_path)]), \
-                 patch("reporting.database.normalize_name", side_effect=lambda n: n), \
-                 patch("reporting.database.get_symphony_strategy", return_value={"params": {}, "locked_vars": {}}):
+            with (
+                patch("reporting.requests.post", side_effect=capture_post),
+                patch("reporting.glob.glob", return_value=[str(report_path)]),
+                patch("reporting.database.normalize_name", side_effect=lambda n: n),
+                patch(
+                    "reporting.database.get_symphony_strategy",
+                    return_value={"params": {}, "locked_vars": {}},
+                ),
+            ):
                 reporting.send_eod_discord_post(
-                    "2026-05-14", str(report_path), opt_results, "https://discord.example.invalid/SENTINEL"
+                    "2026-05-14",
+                    str(report_path),
+                    opt_results,
+                    "https://discord.example.invalid/SENTINEL",
                 )
         finally:
             os.chdir(orig_cwd)
 
         sym_embeds = [
-            e for e in captured_embeds
+            e
+            for e in captured_embeds
             if sym_id.replace("_", " ") in e.get("title", "").lower()
             or sym_id in e.get("title", "").lower()
             or sym_id in e.get("description", "").lower()
         ]
         assert sym_embeds, f"No Discord embed found for symphony '{sym_id}'."
 
-        all_text = " ".join(
-            e.get("description", "") + e.get("title", "")
-            for e in sym_embeds
-        )
+        all_text = " ".join(e.get("description", "") + e.get("title", "") for e in sym_embeds)
 
         expected_frozen = fmt["frozen_eval_sharpe_formatted"]  # "0.7643" — from fixture
         assert expected_frozen in all_text, (
@@ -389,7 +410,9 @@ class TestDiscordEmbedIncludesDSR:
         captured_embeds = []
 
         def capture_post(url, **kwargs):
-            body = kwargs.get("json") or json.loads(kwargs.get("data", {}).get("payload_json", "{}"))
+            body = kwargs.get("json") or json.loads(
+                kwargs.get("data", {}).get("payload_json", "{}")
+            )
             captured_embeds.extend(body.get("embeds", []))
             mock_resp = MagicMock()
             mock_resp.json.return_value = {}
@@ -398,20 +421,27 @@ class TestDiscordEmbedIncludesDSR:
         orig_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path))
-            with patch("reporting.requests.post", side_effect=capture_post), \
-                 patch("reporting.glob.glob", return_value=[str(report_path)]), \
-                 patch("reporting.database.normalize_name", side_effect=lambda n: n), \
-                 patch("reporting.database.get_symphony_strategy", return_value={"params": {}, "locked_vars": {}}):
+            with (
+                patch("reporting.requests.post", side_effect=capture_post),
+                patch("reporting.glob.glob", return_value=[str(report_path)]),
+                patch("reporting.database.normalize_name", side_effect=lambda n: n),
+                patch(
+                    "reporting.database.get_symphony_strategy",
+                    return_value={"params": {}, "locked_vars": {}},
+                ),
+            ):
                 reporting.send_eod_discord_post(
-                    "2026-05-14", str(report_path), opt_results, "https://discord.example.invalid/SENTINEL"
+                    "2026-05-14",
+                    str(report_path),
+                    opt_results,
+                    "https://discord.example.invalid/SENTINEL",
                 )
         finally:
             os.chdir(orig_cwd)
 
         # Should not raise — test reaching here means no crash
         all_embed_text = " ".join(
-            e.get("description", "") + e.get("title", "")
-            for e in captured_embeds
+            e.get("description", "") + e.get("title", "") for e in captured_embeds
         )
 
         assert "None" not in all_embed_text, (
@@ -432,6 +462,7 @@ class TestDiscordEmbedIncludesDSR:
 # SURFACE 2 — /api/autotune-runs route
 # ===========================================================================
 
+
 class TestAutotuneRunsApiRoute:
     """
     AC-3: /api/autotune-runs route must return naive_sharpe, deflated_sharpe,
@@ -449,6 +480,7 @@ class TestAutotuneRunsApiRoute:
     def app_client(self, isolated_db):
         """Flask test client with DB redirected to isolated tmp DB."""
         import app as flask_app
+
         flask_app.app.config["TESTING"] = True
         with flask_app.app.test_client() as client:
             yield client
@@ -488,8 +520,7 @@ class TestAutotuneRunsApiRoute:
             "AC-3 violation."
         )
         assert len(data) == 0, (
-            f"With no rows in autotune_runs the response must be an empty list; "
-            f"got {data!r}."
+            f"With no rows in autotune_runs the response must be an empty list; got {data!r}."
         )
 
     def test_api_autotune_runs_row_with_all_three_sharpe_fields_present(
@@ -556,15 +587,11 @@ class TestAutotuneRunsApiRoute:
         # SQLite REAL is IEEE-754 double; round-trip through JSON serialization
         # may introduce sub-epsilon drift (~1e-15). 1e-6 is a safe quant-meaningful
         # floor (Sharpe precision rarely matters below 1e-4).
-        assert api_row["naive_sharpe"] == pytest.approx(
-            row["naive_sharpe"], rel=1e-6
-        ), (
+        assert api_row["naive_sharpe"] == pytest.approx(row["naive_sharpe"], rel=1e-6), (
             f"naive_sharpe mismatch: fixture={row['naive_sharpe']}, "
             f"api={api_row['naive_sharpe']}. Float drift > 1e-6 relative."
         )
-        assert api_row["deflated_sharpe"] == pytest.approx(
-            row["deflated_sharpe"], rel=1e-6
-        ), (
+        assert api_row["deflated_sharpe"] == pytest.approx(row["deflated_sharpe"], rel=1e-6), (
             f"deflated_sharpe mismatch: fixture={row['deflated_sharpe']}, "
             f"api={api_row['deflated_sharpe']}."
         )
@@ -593,10 +620,10 @@ class TestAutotuneRunsApiRoute:
             baseline_decision=row["baseline_decision"],
             fallback_oos_alpha=row["fallback_oos_alpha"],
             default_oos_alpha=row["default_oos_alpha"],
-            deflated_sharpe=row["deflated_sharpe"],      # None
-            naive_sharpe=row["naive_sharpe"],            # None
+            deflated_sharpe=row["deflated_sharpe"],  # None
+            naive_sharpe=row["naive_sharpe"],  # None
             validation_sharpe=row["validation_sharpe"],  # None
-            frozen_eval_sharpe=row["frozen_eval_sharpe"], # None
+            frozen_eval_sharpe=row["frozen_eval_sharpe"],  # None
         )
 
         resp = app_client.get("/api/autotune-runs")
@@ -627,6 +654,7 @@ class TestAutotuneRunsApiRoute:
 # SURFACE 3 — /ai-advisor recent-runs panel (template rendering)
 # ===========================================================================
 
+
 class TestAiAdvisorRecentRunsPanel:
     """
     AC-4: /ai-advisor recent-runs dashboard view must render the three values
@@ -639,6 +667,7 @@ class TestAiAdvisorRecentRunsPanel:
     @pytest.fixture()
     def app_client(self, isolated_db):
         import app as flask_app
+
         flask_app.app.config["TESTING"] = True
         with flask_app.app.test_client() as client:
             yield client
@@ -691,18 +720,18 @@ class TestAiAdvisorRecentRunsPanel:
 
     def test_ai_advisor_page_has_naive_sharpe_column_header(self, app_client):
         """
-        AC-4: The recent-runs panel HTML must contain a column header for naive Sharpe.
-        Acceptable: 'Naive', 'Naive Sharpe', 'naive sharpe' (case-insensitive).
+        AC-4: The recent-runs panel must surface naive Sharpe values.
+        The panel migrated from a static <table> (with <th>Naive Sharpe</th>)
+        to a JS-rendered card list (C-16). The correct contract is that
+        ai_advisor.js references the naive_sharpe field when building each card.
         """
-        resp = app_client.get("/ai-advisor")
-        assert resp.status_code == 200
-        html = resp.data.decode("utf-8").lower()
+        js_path = pathlib.Path(__file__).parents[2] / "static" / "ai_advisor.js"
+        assert js_path.exists(), "static/ai_advisor.js must exist"
+        js_src = js_path.read_text(encoding="utf-8")
 
-        naive_headers = ["naive", "naive sharpe"]
-        has_naive_col = any(h in html for h in naive_headers)
-        assert has_naive_col, (
-            f"GET /ai-advisor HTML must contain a Naive Sharpe column header "
-            f"(one of: {naive_headers}). AC-4 violation."
+        assert "naive_sharpe" in js_src, (
+            "static/ai_advisor.js must reference 'naive_sharpe' to render it in "
+            "autotune run cards. AC-4 violation: naive Sharpe metric not surfaced."
         )
 
     def test_ai_advisor_page_has_frozen_eval_column_header(self, app_client):
@@ -779,6 +808,7 @@ class TestAiAdvisorRecentRunsPanel:
 # SURFACE 1 — Regression guard: existing EOD embed is not broken by DSR changes
 # ===========================================================================
 
+
 class TestDiscordEmbedNoRegression:
     """
     AC-7: The existing EOD embed fields (Guard Alpha, triggers summary, chart)
@@ -790,7 +820,11 @@ class TestDiscordEmbedNoRegression:
     def _make_eod_report_with_trigger(self, tmp_path) -> str:
         report = {
             "date": "2026-05-14",
-            "summary": {"total_monitored": 2, "total_triggered": 1, "positive_guard_alpha_count": 1},
+            "summary": {
+                "total_monitored": 2,
+                "total_triggered": 1,
+                "positive_guard_alpha_count": 1,
+            },
             "tomorrow_target_holdings": {"SPY": 0.6, "AGG": 0.4},
             "triggers": [
                 {
@@ -844,7 +878,9 @@ class TestDiscordEmbedNoRegression:
         captured_embeds = []
 
         def capture_post(url, **kwargs):
-            body = kwargs.get("json") or json.loads(kwargs.get("data", {}).get("payload_json", "{}"))
+            body = kwargs.get("json") or json.loads(
+                kwargs.get("data", {}).get("payload_json", "{}")
+            )
             captured_embeds.extend(body.get("embeds", []))
             mock_resp = MagicMock()
             mock_resp.json.return_value = {}
@@ -853,12 +889,20 @@ class TestDiscordEmbedNoRegression:
         orig_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path))
-            with patch("reporting.requests.post", side_effect=capture_post), \
-                 patch("reporting.glob.glob", return_value=[str(report_path)]), \
-                 patch("reporting.database.normalize_name", side_effect=lambda n: n), \
-                 patch("reporting.database.get_symphony_strategy", return_value={"params": {}, "locked_vars": {}}):
+            with (
+                patch("reporting.requests.post", side_effect=capture_post),
+                patch("reporting.glob.glob", return_value=[str(report_path)]),
+                patch("reporting.database.normalize_name", side_effect=lambda n: n),
+                patch(
+                    "reporting.database.get_symphony_strategy",
+                    return_value={"params": {}, "locked_vars": {}},
+                ),
+            ):
                 reporting.send_eod_discord_post(
-                    "2026-05-14", str(report_path), opt_with_dsr, "https://discord.example.invalid/SENTINEL"
+                    "2026-05-14",
+                    str(report_path),
+                    opt_with_dsr,
+                    "https://discord.example.invalid/SENTINEL",
                 )
         finally:
             os.chdir(orig_cwd)
@@ -880,6 +924,7 @@ class TestDiscordEmbedNoRegression:
 # ===========================================================================
 # PRODUCTION WIRING — alpha_bot_execution.py augmentation gap (R/G/R round 2)
 # ===========================================================================
+
 
 class TestProductionWiringAugmentsOptimizationResultsWithDSR:
     """
@@ -905,7 +950,11 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
     def _make_minimal_eod_report(self, tmp_path) -> str:
         report = {
             "date": "2026-05-14",
-            "summary": {"total_monitored": 1, "total_triggered": 0, "positive_guard_alpha_count": 0},
+            "summary": {
+                "total_monitored": 1,
+                "total_triggered": 0,
+                "positive_guard_alpha_count": 0,
+            },
             "tomorrow_target_holdings": {},
             "triggers": [],
         }
@@ -970,14 +1019,15 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
 
         # Values from fixture — rel tolerance 1e-6 (SQLite REAL round-trip)
         assert run_row["naive_sharpe"] == pytest.approx(row["naive_sharpe"], rel=1e-6), (
-            f"naive_sharpe round-trip: wrote {row['naive_sharpe']}, "
-            f"read {run_row['naive_sharpe']}."
+            f"naive_sharpe round-trip: wrote {row['naive_sharpe']}, read {run_row['naive_sharpe']}."
         )
         assert run_row["deflated_sharpe"] == pytest.approx(row["deflated_sharpe"], rel=1e-6), (
             f"deflated_sharpe round-trip: wrote {row['deflated_sharpe']}, "
             f"read {run_row['deflated_sharpe']}."
         )
-        assert run_row["frozen_eval_sharpe"] == pytest.approx(row["frozen_eval_sharpe"], rel=1e-6), (
+        assert run_row["frozen_eval_sharpe"] == pytest.approx(
+            row["frozen_eval_sharpe"], rel=1e-6
+        ), (
             f"frozen_eval_sharpe round-trip: wrote {row['frozen_eval_sharpe']}, "
             f"read {run_row['frozen_eval_sharpe']}."
         )
@@ -1025,17 +1075,15 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
         )
 
         # Raw optimization_results — no _dsr_data (what run_autotuner returns)
-        raw_changes = {
-            sym_id: {"_baseline_chosen": row["baseline_decision"]}
-        }
+        raw_changes = {sym_id: {"_baseline_chosen": row["baseline_decision"]}}
 
         # Inline augmentation — mirrors alpha_bot_execution.py:765-773
         for sid, sym_data in raw_changes.items():
             run_row = db_module.get_latest_autotune_run(sid)
             if run_row:
                 sym_data["_dsr_data"] = {
-                    "naive_sharpe":       run_row.get("naive_sharpe"),
-                    "deflated_sharpe":    run_row.get("deflated_sharpe"),
+                    "naive_sharpe": run_row.get("naive_sharpe"),
+                    "deflated_sharpe": run_row.get("deflated_sharpe"),
                     "frozen_eval_sharpe": run_row.get("frozen_eval_sharpe"),
                 }
 
@@ -1065,27 +1113,30 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
         orig_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path))
-            with patch("reporting.requests.post", side_effect=capture_post), \
-                 patch("reporting.glob.glob", return_value=[str(report_path)]), \
-                 patch("reporting.database.normalize_name", side_effect=lambda n: n), \
-                 patch("reporting.database.get_symphony_strategy",
-                       return_value={"params": {}, "locked_vars": {}}):
+            with (
+                patch("reporting.requests.post", side_effect=capture_post),
+                patch("reporting.glob.glob", return_value=[str(report_path)]),
+                patch("reporting.database.normalize_name", side_effect=lambda n: n),
+                patch(
+                    "reporting.database.get_symphony_strategy",
+                    return_value={"params": {}, "locked_vars": {}},
+                ),
+            ):
                 reporting.send_eod_discord_post(
-                    "2026-05-14", str(report_path), raw_changes,
-                    "https://discord.example.invalid/SENTINEL"
+                    "2026-05-14",
+                    str(report_path),
+                    raw_changes,
+                    "https://discord.example.invalid/SENTINEL",
                 )
         finally:
             os.chdir(orig_cwd)
 
-        all_text = " ".join(
-            e.get("description", "") + e.get("title", "")
-            for e in captured_embeds
-        )
+        all_text = " ".join(e.get("description", "") + e.get("title", "") for e in captured_embeds)
 
         # All three formatted values must appear in the embed
         for key, expected_str in [
-            ("naive_sharpe",       fmt["naive_sharpe_formatted"]),
-            ("deflated_sharpe",    fmt["deflated_sharpe_formatted"]),
+            ("naive_sharpe", fmt["naive_sharpe_formatted"]),
+            ("deflated_sharpe", fmt["deflated_sharpe_formatted"]),
             ("frozen_eval_sharpe", fmt["frozen_eval_sharpe_formatted"]),
         ]:
             assert expected_str in all_text, (
@@ -1094,9 +1145,7 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
                 f"Embed text: {all_text!r}"
             )
 
-    def test_production_wiring_no_crash_when_symphony_has_no_db_run(
-        self, isolated_db, tmp_path
-    ):
+    def test_production_wiring_no_crash_when_symphony_has_no_db_run(self, isolated_db, tmp_path):
         """
         When no autotune_runs row exists for a symphony, the augmentation loop
         must not crash — it must skip _dsr_data injection gracefully, and
@@ -1106,17 +1155,15 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
         import reporting
 
         # No DB row written — symphony has never been autotuned
-        raw_changes = {
-            "no_run_symphony": {"_baseline_chosen": "Adopted AI"}
-        }
+        raw_changes = {"no_run_symphony": {"_baseline_chosen": "Adopted AI"}}
 
         # Inline augmentation — mirrors alpha_bot_execution.py:765-773
         for sid, sym_data in raw_changes.items():
             run_row = db_module.get_latest_autotune_run(sid)
             if run_row:
                 sym_data["_dsr_data"] = {
-                    "naive_sharpe":       run_row.get("naive_sharpe"),
-                    "deflated_sharpe":    run_row.get("deflated_sharpe"),
+                    "naive_sharpe": run_row.get("naive_sharpe"),
+                    "deflated_sharpe": run_row.get("deflated_sharpe"),
                     "frozen_eval_sharpe": run_row.get("frozen_eval_sharpe"),
                 }
         # _dsr_data must NOT have been injected (no DB row)
@@ -1140,14 +1187,20 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
         orig_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path))
-            with patch("reporting.requests.post", side_effect=capture_post), \
-                 patch("reporting.glob.glob", return_value=[str(report_path)]), \
-                 patch("reporting.database.normalize_name", side_effect=lambda n: n), \
-                 patch("reporting.database.get_symphony_strategy",
-                       return_value={"params": {}, "locked_vars": {}}):
+            with (
+                patch("reporting.requests.post", side_effect=capture_post),
+                patch("reporting.glob.glob", return_value=[str(report_path)]),
+                patch("reporting.database.normalize_name", side_effect=lambda n: n),
+                patch(
+                    "reporting.database.get_symphony_strategy",
+                    return_value={"params": {}, "locked_vars": {}},
+                ),
+            ):
                 reporting.send_eod_discord_post(
-                    "2026-05-14", str(report_path), raw_changes,
-                    "https://discord.example.invalid/SENTINEL"
+                    "2026-05-14",
+                    str(report_path),
+                    raw_changes,
+                    "https://discord.example.invalid/SENTINEL",
                 )
         finally:
             os.chdir(orig_cwd)

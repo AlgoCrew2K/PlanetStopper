@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guard Alpha History — AlphaBot Dashboard v3</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: var(--studio-scroll-thumb, #334155);
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--studio-scroll-thumb-hover, #475569);
+        }
+
+        body {
+            background: var(--studio-bg);
+            color: var(--studio-ink);
+            min-height: 100vh;
+            padding: 2rem;
+            font-family: var(--studio-sans, sans-serif);
+        }
+
+        /* V-32: full-width fluid layout up to a sensible max so ultrawide
+           doesn't strand content in a narrow center column. */
+        .page-wrap {
+            width: 100%;
+            max-width: 2400px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .hist-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            background: var(--studio-surface);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            border: 1px solid var(--studio-border);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hist-header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 3px;
+            background: linear-gradient(to right, var(--studio-pos), var(--studio-accent));
+        }
+
+        .hist-title {
+            font-size: 3rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            color: var(--studio-ink);
+            line-height: 1.05;
+        }
+
+        .hist-subtitle {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            margin-top: 0.25rem;
+        }
+
+        .back-link {
+            font-size: 0.625rem;
+            color: var(--studio-ink-dim);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            text-decoration: none;
+        }
+
+        .back-link:hover { color: var(--studio-ink); }
+
+        /* Controls bar */
+        .controls-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .ctrl-label {
+            font-size: 0.625rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-muted);
+            font-weight: 700;
+        }
+
+        .window-selector {
+            display: flex;
+            gap: 2px;
+            background: var(--studio-chip-bg);
+            border: 1px solid var(--studio-rule);
+            border-radius: 8px;
+            padding: 3px;
+            align-self: flex-start;
+        }
+
+        .window-selector button {
+            padding: 4px 10px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--studio-ink-dim);
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: var(--studio-sans);
+        }
+
+        .window-selector button.active {
+            background: var(--studio-paper-hi);
+            color: var(--studio-ink);
+            box-shadow: 0 1px 3px var(--studio-rule);
+        }
+
+        /* Hero stat strip */
+        .history-hero {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .hero-stat {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.75rem;
+            padding: 1rem 1.25rem;
+        }
+
+        .hero-stat-label {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 600;
+            margin-bottom: 0.375rem;
+        }
+
+        .hero-stat-value {
+            font-size: 1.625rem;
+            font-weight: 800;
+            color: var(--studio-ink);
+            line-height: 1;
+        }
+
+        /* Section card */
+        .section-card {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .section-title {
+            font-size: 1.125rem;
+            font-weight: 500;
+            text-transform: none;
+            letter-spacing: -0.01em;
+            color: var(--studio-ink);
+            margin-bottom: 1rem;
+        }
+
+        /* Daily strip chart — fixed 100 px tall, full width (V-30).
+           preserveAspectRatio="none" on the SVG scales bars horizontally
+           without distorting bar height at any viewport width. */
+        .daily-chart-wrap {
+            width: 100%;
+            height: 100px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .chart-legend {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.625rem;
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+        }
+
+        .legend-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.25rem;
+            vertical-align: middle;
+        }
+
+        /* Reason cards grid — 4 cards per design spec (V-28).
+           cap at 4 columns; never exceeds design's 4-card layout. */
+        .reason-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+        }
+
+        @media (max-width: 1200px) {
+            .reason-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (max-width: 640px) {
+            .reason-grid { grid-template-columns: 1fr; }
+        }
+
+        /* .reason-card-inner is kept for fallback but dynamic cards use inline styles (V-28/V-29/V-33). */
+        .reason-card-inner {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.75rem;
+            overflow: hidden;
+            position: relative;
+            padding: 1rem;
+        }
+
+        .reason-name {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--studio-ink);
+            margin-bottom: 0.5rem;
+        }
+
+        .reason-stat {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.6;
+        }
+
+        /* Triggers table */
+        .triggers-tbl {
+            width: 100%;
+            font-size: 0.8125rem;
+            border-collapse: collapse;
+        }
+
+        .triggers-tbl thead tr {
+            border-bottom: 1px solid var(--studio-border);
+            color: var(--studio-ink-muted);
+            font-size: 0.625rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .triggers-tbl th { padding: 0.375rem 0.75rem; text-align: left; }
+        .triggers-tbl td { padding: 0.375rem 0.75rem; color: var(--studio-ink-dim); }
+        .triggers-tbl tbody tr { border-bottom: 1px solid var(--studio-border-dim, var(--studio-border)); }
+    </style>
+</head>
+
+<body>
+    <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
+    {% include '_chrome.html' %}
+
+    <div class="page-wrap" data-testid="history-page">
+
+        <!-- Header -->
+        <header data-testid="history-header" class="hist-header">
+            <div>
+                <h1 class="hist-title">Guard alpha history</h1>
+                <p class="hist-subtitle">
+                    Rollup of post-mortem snapshots · how the bot's exits actually scored vs the if-held series
+                </p>
+            </div>
+            <a href="/" class="back-link">&larr; Dashboard</a>
+        </header>
+
+        <!-- Window selector -->
+        <div class="controls-row">
+            <div data-testid="window-selector" class="window-selector" id="window-picker">
+                <button data-window="30" onclick="historySelectWindow(this, '30')">30d</button>
+                <button data-window="60" onclick="historySelectWindow(this, '60')">60d</button>
+                <button data-window="90" value="90" class="active" onclick="historySelectWindow(this, '90')">90d</button>
+                <button data-window="125" onclick="historySelectWindow(this, '125')">125d</button>
+                <button data-window="ytd" onclick="historySelectWindow(this, 'ytd')">YTD</button>
+                <button data-window="252" onclick="historySelectWindow(this, '252')">1Y</button>
+                <button data-window="1260" onclick="historySelectWindow(this, '1260')">5Y</button>
+            </div>
+        </div>
+
+        <!-- Hero stats -->
+        <div data-testid="history-hero" class="history-hero">
+            <div data-testid="stat-total-alpha" class="hero-stat">
+                <div class="hero-stat-label">Total guard &alpha;</div>
+                <div class="hero-stat-value" id="val-total-alpha">--</div>
+            </div>
+            <div data-testid="stat-total-saved" class="hero-stat">
+                <div class="hero-stat-label">$ Saved</div>
+                <div class="hero-stat-value" id="val-total-saved">--</div>
+            </div>
+            <div data-testid="stat-trigger-count" class="hero-stat">
+                <div class="hero-stat-label">Triggers</div>
+                <div class="hero-stat-value" id="val-trigger-count">--</div>
+            </div>
+            <div data-testid="stat-win-rate" class="hero-stat">
+                <div class="hero-stat-label">Win rate</div>
+                <div class="hero-stat-value" id="val-win-rate">--</div>
+            </div>
+        </div>
+
+        <!-- Empty state (shown when no data for window) -->
+        <div data-testid="history-empty-state" id="history-empty-state"
+             style="display:none;padding:3rem;text-align:center;background:var(--studio-surface);
+                    border:1px solid var(--studio-border);border-radius:1rem;margin-bottom:1.25rem;">
+            <div style="font-size:1.5rem;font-weight:700;color:var(--studio-ink-dim);margin-bottom:0.5rem;">
+                No guard alpha data
+            </div>
+            <div style="font-size:0.875rem;color:var(--studio-ink-dim);">
+                No exits recorded for this window. Try a shorter range or check back after market hours.
+            </div>
+        </div>
+
+        <!-- Daily alpha strip chart -->
+        <div data-testid="daily-strip" class="section-card">
+            <div data-testid="daily-strip-header" class="section-title">Daily Guard &alpha;</div>
+            <div class="daily-chart-wrap">
+                <svg id="daily-chart-svg" width="100%" height="100" preserveAspectRatio="none"></svg>
+            </div>
+            <div class="chart-legend">
+                <span>
+                    <span class="legend-dot" id="legend-pos-dot" style="background:var(--studio-pos);"></span>
+                    Positive &alpha;
+                </span>
+                <span>
+                    <span class="legend-dot" id="legend-neg-dot" style="background:var(--studio-neg);"></span>
+                    Negative &alpha;
+                </span>
+            </div>
+        </div>
+
+        <!-- By-reason breakdown -->
+        <div data-testid="by-reason-section" class="section-card">
+            <div data-testid="by-reason-header" class="section-title">By Exit Reason</div>
+            <div class="reason-grid" id="reason-cards">
+                <!-- Server-rendered placeholders ensure data-testid="reason-card" and
+                     reason-bar SVGs are present in the HTML before JS fires (B-13). -->
+                <div data-testid="reason-card" class="reason-card-inner">
+                    <div class="reason-name">Take-Profit</div>
+                    <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-plum)"></rect></svg>
+                    <div class="reason-stat">--</div>
+                </div>
+                <div data-testid="reason-card" class="reason-card-inner">
+                    <div class="reason-name">Trailing Stop</div>
+                    <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-neg)"></rect></svg>
+                    <div class="reason-stat">--</div>
+                </div>
+                <div data-testid="reason-card" class="reason-card-inner">
+                    <div class="reason-name">VWAP Breakdown</div>
+                    <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-cyan)"></rect></svg>
+                    <div class="reason-stat">--</div>
+                </div>
+                <div data-testid="reason-card" class="reason-card-inner">
+                    <div class="reason-name">VWAP Bleed Cut</div>
+                    <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-warn)"></rect></svg>
+                    <div class="reason-stat">--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent triggers -->
+        <div data-testid="recent-triggers" class="section-card">
+            <div class="section-title" id="todays-exits-heading">Today's exits</div>
+            <div style="overflow-x:auto;">
+                <table class="triggers-tbl">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Symphony</th>
+                            <th>Reason</th>
+                            <th>Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody id="triggers-tbody">
+                        <tr>
+                            <td colspan="4" style="text-align:center;padding:1rem;color:var(--studio-ink-dim);">
+                                Loading…
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="{{ url_for('static', filename='history.js') }}"></script>
+</body>
+</html>

@@ -1,13 +1,14 @@
 """SQLite state management for AlphaBot with Account-Level Strategies."""
 
 import hashlib
+import json
 import logging
 import math
 import os
 import sqlite3
-import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 
 def _finite_or_none(x):
     """Coerce non-finite float sentinels to None for RFC 8259 JSON compliance."""
@@ -32,13 +33,12 @@ DEFAULT_STRATEGY = {
     "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
     "MAX_PARABOLIC_SQUEEZE": 0.50,
     "VWAP_BLEED_MULTIPLIER": 1.5,
-    "VWAP_BLEED_TICKS": 10
+    "VWAP_BLEED_TICKS": 10,
 }
 
 # By default, we lock the non-user-specified variables so BO only tunes the requested
-DEFAULT_LOCKED_VARS = [
-    "TRIGGER_THRESHOLD_PCT"
-]
+DEFAULT_LOCKED_VARS = ["TRIGGER_THRESHOLD_PCT"]
+
 
 def _db_file() -> str:
     # Explicit per-test patch.object(database, "DB_FILE", path) takes precedence.
@@ -74,10 +74,14 @@ def init_db():
 
     # Execution & State Tracking
     cursor.execute("CREATE TABLE IF NOT EXISTS bot_state (id INTEGER PRIMARY KEY, data TEXT)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS execution_lock (id INTEGER PRIMARY KEY, is_locked INTEGER, timestamp REAL)")
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS execution_lock (id INTEGER PRIMARY KEY, is_locked INTEGER, timestamp REAL)"
+    )
     cursor.execute("CREATE TABLE IF NOT EXISTS chart_history (id INTEGER PRIMARY KEY, data TEXT)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS chart_archive (date TEXT, symphony_id TEXT, data TEXT, UNIQUE(date, symphony_id))")
-    
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS chart_archive (date TEXT, symphony_id TEXT, data TEXT, UNIQUE(date, symphony_id))"
+    )
+
     # NEW: Symphony-Level Strategy Storage
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS symphony_strategies (
@@ -128,7 +132,9 @@ def init_db():
         )
     """)
 
-    cursor.execute("INSERT OR IGNORE INTO execution_lock (id, is_locked, timestamp) VALUES (1, 0, 0)")
+    cursor.execute(
+        "INSERT OR IGNORE INTO execution_lock (id, is_locked, timestamp) VALUES (1, 0, 0)"
+    )
     cursor.execute("INSERT OR IGNORE INTO bot_state (id, data) VALUES (1, '{}')")
     cursor.execute("INSERT OR IGNORE INTO chart_history (id, data) VALUES (1, '{}')")
 
@@ -147,10 +153,13 @@ def acquire_lock():
     if row[0] == 1 and (current_time - row[1] < 60):
         conn.close()
         return False
-    cursor.execute("UPDATE execution_lock SET is_locked = 1, timestamp = ? WHERE id = 1", (current_time,))
+    cursor.execute(
+        "UPDATE execution_lock SET is_locked = 1, timestamp = ? WHERE id = 1", (current_time,)
+    )
     conn.commit()
     conn.close()
     return True
+
 
 def release_lock():
     conn = get_connection()
@@ -162,6 +171,7 @@ def release_lock():
     conn.commit()
     conn.close()
 
+
 # --- State Management ---
 def load_state():
     conn = get_connection()
@@ -171,12 +181,14 @@ def load_state():
     conn.close()
     return json.loads(row[0]) if row else {}
 
+
 def save_state(state_dict):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE bot_state SET data = ? WHERE id = 1", (json.dumps(state_dict),))
     conn.commit()
     conn.close()
+
 
 _WIPE_RESERVED_KEYS = {"date", "last_execution_mode", "last_market_close_snapshot"}
 
@@ -189,27 +201,38 @@ def wipe_transient_state(state_dict):
         if isinstance(s_data, dict):
             s_data["high_water_mark"] = -999.0
             s_data["shadow_hwm"] = -999.0
-            s_data["prev_return"] = None  # sentinel: cycle-1 velocity = 0 (prevents false PARA-ARM on opening gap)
+            s_data["prev_return"] = (
+                None  # sentinel: cycle-1 velocity = 0 (prevents false PARA-ARM on opening gap)
+            )
             s_data["armed"] = False
             s_data["tp_armed"] = False
             s_data["para_armed"] = False
             s_data["triggered"] = False
             s_data["breakeven_locked"] = False
-            s_data["stop_trigger"] = None  # AC-E2.5: new position must not inherit prior position's stop floor
+            s_data["stop_trigger"] = (
+                None  # AC-E2.5: new position must not inherit prior position's stop floor
+            )
             s_data["below_stop_count"] = 0
             s_data["above_tp_count"] = 0
             s_data["vwap_ticks"] = 0
             s_data["vwap_bleed_ticks"] = 0
             s_data["hwm_hold_ticks"] = 0
             s_data["mc_history"] = []
-            
+
             # Remove any trigger-related snapshot data
-            for k in ["triggered_reason", "triggered_at_return", "triggered_at_hwm", 
-                      "triggered_at_stop", "triggered_at_time", "trigger_prices", 
-                      "triggered_basket_snapshot"]:
+            for k in [
+                "triggered_reason",
+                "triggered_at_return",
+                "triggered_at_hwm",
+                "triggered_at_stop",
+                "triggered_at_time",
+                "trigger_prices",
+                "triggered_basket_snapshot",
+            ]:
                 if k in s_data:
                     del s_data[k]
     return state_dict
+
 
 # --- Chart History & Archive ---
 def load_chart_history():
@@ -220,6 +243,7 @@ def load_chart_history():
     conn.close()
     return json.loads(row[0]) if row else {}
 
+
 def save_chart_history(chart_dict):
     conn = get_connection()
     cursor = conn.cursor()
@@ -227,12 +251,17 @@ def save_chart_history(chart_dict):
     conn.commit()
     conn.close()
 
+
 def save_chart_archive(date_str, symphony_id, data):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO chart_archive (date, symphony_id, data) VALUES (?, ?, ?)", (date_str, symphony_id, json.dumps(data)))
+    cursor.execute(
+        "INSERT OR REPLACE INTO chart_archive (date, symphony_id, data) VALUES (?, ?, ?)",
+        (date_str, symphony_id, json.dumps(data)),
+    )
     conn.commit()
     conn.close()
+
 
 def get_rolling_60day_chart(current_date_str):
     conn = get_connection()
@@ -243,7 +272,9 @@ def get_rolling_60day_chart(current_date_str):
         conn.close()
         return {}
     placeholders = ",".join("?" * len(dates))
-    cursor.execute(f"SELECT date, symphony_id, data FROM chart_archive WHERE date IN ({placeholders})", dates)
+    cursor.execute(
+        f"SELECT date, symphony_id, data FROM chart_archive WHERE date IN ({placeholders})", dates
+    )
     history_60d = {}
     for row in cursor.fetchall():
         date, sym_id, data_json = row[0], row[1], row[2]
@@ -254,24 +285,28 @@ def get_rolling_60day_chart(current_date_str):
     return history_60d
 
 
-
 def normalize_name(name):
     return name.strip().lower()
+
 
 # --- Symphony Strategy Management (NEW) ---
 def get_symphony_strategy(symphony_name):
     symphony_name = normalize_name(symphony_name)
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT parameters, locked_vars FROM symphony_strategies WHERE symphony_name = ?", (symphony_name,))
+    cursor.execute(
+        "SELECT parameters, locked_vars FROM symphony_strategies WHERE symphony_name = ?",
+        (symphony_name,),
+    )
     row = cursor.fetchone()
     conn.close()
     if row:
         return {"params": json.loads(row[0]), "locked_vars": json.loads(row[1])}
-    
+
     # Initialize with defaults if not found
     save_symphony_strategy(symphony_name, DEFAULT_STRATEGY, DEFAULT_LOCKED_VARS)
     return {"params": DEFAULT_STRATEGY.copy(), "locked_vars": DEFAULT_LOCKED_VARS.copy()}
+
 
 def save_symphony_strategy(symphony_name, params, locked_vars):
     symphony_name = normalize_name(symphony_name)
@@ -279,45 +314,45 @@ def save_symphony_strategy(symphony_name, params, locked_vars):
     cursor = conn.cursor()
     cursor.execute(
         "INSERT OR REPLACE INTO symphony_strategies (symphony_name, parameters, locked_vars) VALUES (?, ?, ?)",
-        (symphony_name, json.dumps(params), json.dumps(locked_vars))
+        (symphony_name, json.dumps(params), json.dumps(locked_vars)),
     )
     conn.commit()
     conn.close()
 
+
 # --- Symphony Logging (NEW) ---
 SYMPHONY_LOGS_FILE = "symphony_logs.json"
 
+
 def get_symphony_logs(symphony_id):
     try:
-        with open(SYMPHONY_LOGS_FILE, "r", encoding="utf-8") as f:
+        with open(SYMPHONY_LOGS_FILE, encoding="utf-8") as f:
             logs = json.load(f)
             return logs.get(symphony_id, [])
     except (FileNotFoundError, json.JSONDecodeError):
         return []
 
+
 def log_symphony_event(symphony_id, message, event_type="info"):
     logs = {}
     try:
-        with open(SYMPHONY_LOGS_FILE, "r", encoding="utf-8") as f:
+        with open(SYMPHONY_LOGS_FILE, encoding="utf-8") as f:
             logs = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         pass
-        
+
     if symphony_id not in logs:
         logs[symphony_id] = []
-        
-    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    logs[symphony_id].append({
-        "timestamp": timestamp,
-        "event_type": event_type,
-        "message": message
-    })
-    
+
+    timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    logs[symphony_id].append({"timestamp": timestamp, "event_type": event_type, "message": message})
+
     try:
         with open(SYMPHONY_LOGS_FILE, "w", encoding="utf-8") as f:
             json.dump(logs, f)
     except Exception as e:
         print(f"Error saving symphony logs: {e}")
+
 
 def clear_symphony_logs():
     try:
@@ -326,12 +361,23 @@ def clear_symphony_logs():
     except Exception as e:
         print(f"Error clearing symphony logs: {e}")
 
+
 # --- Autotune Run Persistence (P1) ---
 
-def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
-                      baseline_decision, fallback_oos_alpha, default_oos_alpha,
-                      deflated_sharpe=None, naive_sharpe=None,
-                      validation_sharpe=None, frozen_eval_sharpe=None) -> None:
+
+def save_autotune_run(
+    run_timestamp,
+    symphony_id,
+    oos_alpha,
+    train_alpha,
+    baseline_decision,
+    fallback_oos_alpha,
+    default_oos_alpha,
+    deflated_sharpe=None,
+    naive_sharpe=None,
+    validation_sharpe=None,
+    frozen_eval_sharpe=None,
+) -> None:
     """Persist one row of per-run Optuna validation metrics to autotune_runs.
 
     Called once per symphony per run_autotuner() invocation, after baseline_decision
@@ -359,9 +405,19 @@ def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
              deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (run_timestamp, symphony_id, oos_alpha, train_alpha,
-         baseline_decision, fallback_oos_alpha, default_oos_alpha,
-         deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe),
+        (
+            run_timestamp,
+            symphony_id,
+            oos_alpha,
+            train_alpha,
+            baseline_decision,
+            fallback_oos_alpha,
+            default_oos_alpha,
+            deflated_sharpe,
+            naive_sharpe,
+            validation_sharpe,
+            frozen_eval_sharpe,
+        ),
     )
     conn.commit()
     conn.close()
@@ -370,19 +426,19 @@ def save_autotune_run(run_timestamp, symphony_id, oos_alpha, train_alpha,
 def _autotune_run_row_to_dict(row) -> dict:
     """Map a raw autotune_runs SELECT row (14 columns) to a dict."""
     return {
-        "run_timestamp":        row[0],
-        "symphony_id":          row[1],
-        "oos_alpha":            _finite_or_none(row[2]),
-        "train_alpha":          _finite_or_none(row[3]),
-        "baseline_decision":    row[4],
-        "fallback_oos_alpha":   _finite_or_none(row[5]),
-        "default_oos_alpha":    _finite_or_none(row[6]),
-        "deflated_sharpe":      _finite_or_none(row[7]),
-        "naive_sharpe":         _finite_or_none(row[8]),
-        "validation_sharpe":    _finite_or_none(row[9]),
-        "frozen_eval_sharpe":   _finite_or_none(row[10]),
-        "math_mode":            row[11],
-        "account_id":           row[12],
+        "run_timestamp": row[0],
+        "symphony_id": row[1],
+        "oos_alpha": _finite_or_none(row[2]),
+        "train_alpha": _finite_or_none(row[3]),
+        "baseline_decision": row[4],
+        "fallback_oos_alpha": _finite_or_none(row[5]),
+        "default_oos_alpha": _finite_or_none(row[6]),
+        "deflated_sharpe": _finite_or_none(row[7]),
+        "naive_sharpe": _finite_or_none(row[8]),
+        "validation_sharpe": _finite_or_none(row[9]),
+        "frozen_eval_sharpe": _finite_or_none(row[10]),
+        "math_mode": row[11],
+        "account_id": row[12],
         "sortino_sentinel_pct": _finite_or_none(row[13]),
     }
 
@@ -461,10 +517,22 @@ def record_autotune_run(
              math_mode, account_id, sortino_sentinel_pct)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (run_timestamp, symphony_id, oos_alpha, train_alpha,
-         baseline_decision, fallback_oos_alpha, default_oos_alpha,
-         deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
-         math_mode, account_id, sortino_sentinel_pct),
+        (
+            run_timestamp,
+            symphony_id,
+            oos_alpha,
+            train_alpha,
+            baseline_decision,
+            fallback_oos_alpha,
+            default_oos_alpha,
+            deflated_sharpe,
+            naive_sharpe,
+            validation_sharpe,
+            frozen_eval_sharpe,
+            math_mode,
+            account_id,
+            sortino_sentinel_pct,
+        ),
     )
     conn.commit()
     conn.close()
@@ -478,7 +546,8 @@ def get_all_autotune_runs(limit: int = 50) -> list[dict]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        _AUTOTUNE_RUNS_SELECT + """
+        _AUTOTUNE_RUNS_SELECT
+        + """
         ORDER BY run_timestamp DESC
         LIMIT ?
         """,
@@ -490,6 +559,7 @@ def get_all_autotune_runs(limit: int = 50) -> list[dict]:
 
 
 # --- LLM Suggestions Audit Trail (P3) ---
+
 
 def record_llm_suggestion(
     *,
@@ -580,10 +650,23 @@ def _parse_llm_suggestion_row(row: tuple, columns: list[str]) -> dict:
 
 
 _LLM_SUGGESTION_COLUMNS = [
-    "id", "session_id", "created_at", "symphony_name", "operator_identity",
-    "prompt_inputs", "model_id", "generation_settings", "raw_response",
-    "validation_results", "param_name", "operator_decision", "decision_at",
-    "operator_note", "before_value", "after_value", "oos_revalidation",
+    "id",
+    "session_id",
+    "created_at",
+    "symphony_name",
+    "operator_identity",
+    "prompt_inputs",
+    "model_id",
+    "generation_settings",
+    "raw_response",
+    "validation_results",
+    "param_name",
+    "operator_decision",
+    "decision_at",
+    "operator_note",
+    "before_value",
+    "after_value",
+    "oos_revalidation",
 ]
 
 
@@ -596,8 +679,9 @@ def get_suggestions_for_symphony(symphony_name: str) -> list[dict]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT " + ", ".join(_LLM_SUGGESTION_COLUMNS) +
-        " FROM llm_suggestions WHERE symphony_name = ? ORDER BY id ASC",
+        "SELECT "
+        + ", ".join(_LLM_SUGGESTION_COLUMNS)
+        + " FROM llm_suggestions WHERE symphony_name = ? ORDER BY id ASC",
         (symphony_name,),
     )
     rows = cursor.fetchall()
@@ -614,8 +698,9 @@ def get_suggestions_for_session(session_id: str) -> list[dict]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT " + ", ".join(_LLM_SUGGESTION_COLUMNS) +
-        " FROM llm_suggestions WHERE session_id = ? ORDER BY id ASC",
+        "SELECT "
+        + ", ".join(_LLM_SUGGESTION_COLUMNS)
+        + " FROM llm_suggestions WHERE session_id = ? ORDER BY id ASC",
         (session_id,),
     )
     rows = cursor.fetchall()
@@ -639,6 +724,7 @@ _MIGRATION_FILES = [
     "010_port_state.sql",
     "011_exit_triggers_port.sql",
     "012_autotune_runs_portmode.sql",
+    "013_fleet_alert_tripped_symphonies.sql",
 ]
 
 
@@ -668,7 +754,7 @@ def run_migrations() -> None:
 
         migration_path = os.path.join(_MIGRATIONS_DIR, migration_name)
         try:
-            with open(migration_path, "r", encoding="utf-8") as fh:
+            with open(migration_path, encoding="utf-8") as fh:
                 sql = fh.read()
             conn.executescript(sql)
             conn.execute(
@@ -679,7 +765,9 @@ def run_migrations() -> None:
         except Exception as exc:
             if "duplicate column name" in str(exc).lower():
                 # initialize_db() CREATE TABLE already includes these columns — safe to mark applied.
-                logging.info("run_migrations: %s columns already present, marking applied", migration_name)
+                logging.info(
+                    "run_migrations: %s columns already present, marking applied", migration_name
+                )
                 conn.execute(
                     "INSERT OR IGNORE INTO schema_migrations (migration_name) VALUES (?)",
                     (migration_name,),
@@ -695,41 +783,86 @@ def run_migrations() -> None:
 
 
 def read_fleet_alert() -> "dict | None":
-    """Return the fleet_alert_state row as a dict, or None when the table is empty."""
+    """Return the fleet_alert_state row as a dict, or None when the table is empty.
+
+    tripped_symphonies is returned as a parsed list ([] when the column is NULL or
+    absent on pre-migration rows).
+    """
+    import json as _json
+
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
-            "SELECT id, tripped_at_et, triggered_reason, tripped_count, active_count, dismissed_at_et "
+            "SELECT id, tripped_at_et, triggered_reason, tripped_count, active_count, "
+            "dismissed_at_et, tripped_symphonies "
             "FROM fleet_alert_state WHERE id = 1"
         ).fetchone()
+    except sqlite3.OperationalError:
+        # Pre-migration 013: tripped_symphonies column not yet present.
+        try:
+            row = conn.execute(
+                "SELECT id, tripped_at_et, triggered_reason, tripped_count, active_count, "
+                "dismissed_at_et "
+                "FROM fleet_alert_state WHERE id = 1"
+            ).fetchone()
+        except Exception:
+            return None
     except Exception:
         return None
     if row is None:
         return None
-    return dict(row)
+    result = dict(row)
+    raw = result.get("tripped_symphonies")
+    try:
+        result["tripped_symphonies"] = _json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        result["tripped_symphonies"] = []
+    return result
 
 
 def write_fleet_alert(payload: dict) -> None:
     """Upsert the fleet_alert_state singleton row (id=1).
 
     Clears dismissed_at_et to NULL unless the caller explicitly includes it in payload.
+    tripped_symphonies accepts a list of display names; stored as a JSON array.
     Uses INSERT OR REPLACE so each call is idempotent.
     """
-    dismissed_at_et = payload.get("dismissed_at_et", None)
+    import json as _json
+
+    dismissed_at_et = payload.get("dismissed_at_et")
+    names = payload.get("tripped_symphonies") or []
+    tripped_symphonies_json = _json.dumps(names) if names else None
     conn = get_connection()
-    conn.execute(
-        "INSERT OR REPLACE INTO fleet_alert_state "
-        "(id, tripped_at_et, triggered_reason, tripped_count, active_count, dismissed_at_et) "
-        "VALUES (1, ?, ?, ?, ?, ?)",
-        (
-            payload["tripped_at_et"],
-            payload["triggered_reason"],
-            payload["tripped_count"],
-            payload["active_count"],
-            dismissed_at_et,
-        ),
-    )
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO fleet_alert_state "
+            "(id, tripped_at_et, triggered_reason, tripped_count, active_count, "
+            "dismissed_at_et, tripped_symphonies) "
+            "VALUES (1, ?, ?, ?, ?, ?, ?)",
+            (
+                payload["tripped_at_et"],
+                payload["triggered_reason"],
+                payload["tripped_count"],
+                payload["active_count"],
+                dismissed_at_et,
+                tripped_symphonies_json,
+            ),
+        )
+    except sqlite3.OperationalError:
+        # Pre-migration 013: tripped_symphonies column not yet present — use legacy schema.
+        conn.execute(
+            "INSERT OR REPLACE INTO fleet_alert_state "
+            "(id, tripped_at_et, triggered_reason, tripped_count, active_count, dismissed_at_et) "
+            "VALUES (1, ?, ?, ?, ?, ?)",
+            (
+                payload["tripped_at_et"],
+                payload["triggered_reason"],
+                payload["tripped_count"],
+                payload["active_count"],
+                dismissed_at_et,
+            ),
+        )
     conn.commit()
 
 
@@ -743,11 +876,26 @@ def clear_fleet_alert() -> None:
 # --- AC-P2.5: Port-state helpers ---
 
 _PORT_STATE_COLUMNS = (
-    "account_id", "composition_hash", "high_water_mark", "safe_hwm", "shadow_hwm",
-    "vwap_ticks_json", "vwap_bleed_ticks_json", "mc_history_json", "mc_prob",
-    "armed", "para_armed", "port_breakeven_active", "triggered", "triggered_reason",
-    "prev_return", "current_return", "last_target_reduction_json",
-    "last_selected_symphony_id", "stop_trigger", "updated_at",
+    "account_id",
+    "composition_hash",
+    "high_water_mark",
+    "safe_hwm",
+    "shadow_hwm",
+    "vwap_ticks_json",
+    "vwap_bleed_ticks_json",
+    "mc_history_json",
+    "mc_prob",
+    "armed",
+    "para_armed",
+    "port_breakeven_active",
+    "triggered",
+    "triggered_reason",
+    "prev_return",
+    "current_return",
+    "last_target_reduction_json",
+    "last_selected_symphony_id",
+    "stop_trigger",
+    "updated_at",
 )
 
 
@@ -779,7 +927,7 @@ def write_port_state(account_id: str, state_dict: dict) -> None:
     existing = read_port_state(account_id) or {}
     existing.update(state_dict)
     existing["account_id"] = account_id
-    existing["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    existing["updated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     cols = [c for c in _PORT_STATE_COLUMNS if c in existing]
     placeholders = ", ".join("?" * len(cols))
@@ -846,18 +994,21 @@ def rebase_port_state_on_composition_change(
     so the ratchet baseline is accurate for the new set of holdings.
     stop_trigger is reset per BC-3 so the ratchet floor is not inherited.
     """
-    write_port_state(account_id, {
-        "composition_hash": new_composition_hash,
-        "high_water_mark": current_port_value,
-        "prev_return": None,
-        "mc_history_json": "[]",
-        "vwap_ticks_json": "[]",
-        "vwap_bleed_ticks_json": "[]",
-        "armed": False,
-        "para_armed": False,
-        "port_breakeven_active": False,
-        "stop_trigger": None,
-    })
+    write_port_state(
+        account_id,
+        {
+            "composition_hash": new_composition_hash,
+            "high_water_mark": current_port_value,
+            "prev_return": None,
+            "mc_history_json": "[]",
+            "vwap_ticks_json": "[]",
+            "vwap_bleed_ticks_json": "[]",
+            "armed": False,
+            "para_armed": False,
+            "port_breakeven_active": False,
+            "stop_trigger": None,
+        },
+    )
 
 
 def compute_composition_hash(symphony_ids: "list[str]") -> str:
@@ -903,7 +1054,7 @@ def record_exit_trigger(
     from datetime import timedelta
 
     if ts_utc is None or ts_et is None:
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
         ts_utc = ts_utc or now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         # ET offset approximation for display; EDT = UTC-4.
         ts_et = ts_et or (now_utc - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -1025,7 +1176,7 @@ def prune_old_shadow_history(retention_days: int) -> int:
     """
     from datetime import timedelta
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).strftime(
+    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     total_deleted = 0
@@ -1207,6 +1358,40 @@ def get_triggers(
     return [dict(r) for r in rows]
 
 
+def get_guard_alpha_by_symphony(symphony_ids: list[str] | None = None) -> dict[str, float]:
+    """Return most-recent at_return per symphony from exit_triggers (read-only).
+
+    Used by /api/state to surface guard_alpha on triggered symphony cards.
+    at_return is the best proxy available in the DB for guard alpha saved.
+    Returns {symphony_id: at_return} for all triggered symphonies, or filtered
+    to the requested ids when symphony_ids is provided.
+    """
+    conn = get_ro_connection()
+    try:
+        if symphony_ids:
+            placeholders = ",".join("?" * len(symphony_ids))
+            rows = conn.execute(
+                f"SELECT symphony_id, at_return FROM exit_triggers "
+                f"WHERE symphony_id IN ({placeholders}) "
+                f"ORDER BY ts_utc DESC",
+                symphony_ids,
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT symphony_id, at_return FROM exit_triggers ORDER BY ts_utc DESC"
+            ).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    result: dict[str, float] = {}
+    for row in rows:
+        sid = row[0]
+        if sid not in result:
+            result[sid] = float(row[1]) if row[1] is not None else 0.0
+    return result
+
+
 def prune_old_triggers(retention_days: int) -> int:
     """Delete exit_triggers rows older than retention_days, in batches of 1000.
 
@@ -1216,7 +1401,7 @@ def prune_old_triggers(retention_days: int) -> int:
     """
     from datetime import timedelta
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).strftime(
+    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     _PRUNE_BATCH_SIZE = 1000

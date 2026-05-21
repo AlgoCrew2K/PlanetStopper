@@ -1,0 +1,15 @@
+{
+  "name": "vwap_overlay_basic",
+  "layer": "vwap_overlay",
+  "description": "Golden fixture for the NEW derived VWAP chart-overlay quantity emitted into chart_history rows by alpha_bot_execution.main(). The overlay re-bases the allocation-weighted VWAP deviation onto the chart's entry-relative return axis.",
+  "inputs": {
+    "last_percent_change": 0.05,
+    "last_price": 510.0,
+    "vwap": 500.0,
+    "allocation": 1.0
+  },
+  "expected": {
+    "vwap_overlay": 3.0
+  },
+  "derivation": "current_return = last_percent_change * 100 = 0.05 * 100 = 5.0. weighted_vwap_diff = sum(alloc * (p - v) / v) = 1.0 * (510.0 - 500.0) / 500.0 = 10.0/500.0 = 0.02. vwap_overlay = current_return - weighted_vwap_diff * 100 = 5.0 - (0.02 * 100) = 5.0 - 2.0 = 3.0. Because last_price > vwap the overlay sits below current_return (5.0)."
+}

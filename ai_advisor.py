@@ -36,11 +36,16 @@ logger = logging.getLogger(__name__)
 # autotuner contract by the C1 test suite.
 # Vars in database.DEFAULT_LOCKED_VARS are excluded — they are never
 # suggested by Optuna and must not be adopted via the AI advisor.
-_OPTUNA_SEARCH_SPACE_KEYS = frozenset({
-    "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
-    "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS",
-    "PARABOLIC_VELOCITY_THRESHOLD", "MAX_PARABOLIC_SQUEEZE",
-})
+_OPTUNA_SEARCH_SPACE_KEYS = frozenset(
+    {
+        "TAKE_PROFIT_MC_PCT",
+        "VWAP_CROSS_HWM_PCT",
+        "VWAP_BLEED_MULTIPLIER",
+        "VWAP_BLEED_TICKS",
+        "PARABOLIC_VELOCITY_THRESHOLD",
+        "MAX_PARABOLIC_SQUEEZE",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Model + SDK configuration.
@@ -77,23 +82,16 @@ _PARAM_DEFINITIONS: dict[str, dict[str, str]] = {
     },
     "TAKE_PROFIT_MC_PCT": {
         "definition": (
-            "MC-probability floor below which take-profit arming triggers "
-            "(exceptional-gain exit)."
+            "MC-probability floor below which take-profit arming triggers (exceptional-gain exit)."
         ),
         "risk_polarity": "raising tightens risk",
     },
     "VWAP_CROSS_HWM_PCT": {
-        "definition": (
-            "High-water-mark-relative band for the VWAP-breakdown state "
-            "machine."
-        ),
+        "definition": ("High-water-mark-relative band for the VWAP-breakdown state machine."),
         "risk_polarity": "raising loosens risk",
     },
     "VWAP_BLEED_MULTIPLIER": {
-        "definition": (
-            "Multiplier on 20-day volatility setting the VWAP-bleed arming "
-            "threshold."
-        ),
+        "definition": ("Multiplier on 20-day volatility setting the VWAP-bleed arming threshold."),
         "risk_polarity": "raising loosens risk",
     },
     "VWAP_BLEED_TICKS": {
@@ -104,9 +102,7 @@ _PARAM_DEFINITIONS: dict[str, dict[str, str]] = {
         "risk_polarity": "raising loosens risk",
     },
     "PARABOLIC_VELOCITY_THRESHOLD": {
-        "definition": (
-            "Return-velocity threshold that arms the parabolic squeeze."
-        ),
+        "definition": ("Return-velocity threshold that arms the parabolic squeeze."),
         "risk_polarity": "raising loosens risk",
     },
     "MAX_PARABOLIC_SQUEEZE": {
@@ -132,7 +128,11 @@ _PARAM_DEFINITIONS: dict[str, dict[str, str]] = {
 _PARAM_VALID_RANGES: dict[str, dict[str, float | str]] = {
     "TRIGGER_THRESHOLD_PCT": {"low": 5.0, "high": 25.0, "type": "float"},
     "TAKE_PROFIT_MC_PCT": {"low": 2.0, "high": 10.0, "type": "float"},
-    "VWAP_CROSS_HWM_PCT": {"low": 0.3, "high": 2.0, "type": "float"},  # V1 calibration bounds (autotuner.py _SS_VWAP_CROSS_HWM_V1_MIN/MAX)
+    "VWAP_CROSS_HWM_PCT": {
+        "low": 0.3,
+        "high": 2.0,
+        "type": "float",
+    },  # V1 calibration bounds (autotuner.py _SS_VWAP_CROSS_HWM_V1_MIN/MAX)
     "VWAP_BLEED_MULTIPLIER": {"low": 0.5, "high": 3.0, "type": "float"},
     "VWAP_BLEED_TICKS": {"low": 3, "high": 30, "type": "int"},
     "PARABOLIC_VELOCITY_THRESHOLD": {"low": 1.0, "high": 4.0, "type": "float"},
@@ -178,6 +178,7 @@ _ROLE_FRAMING = (
 # Pydantic schemas — the structured-output contract.
 # ---------------------------------------------------------------------------
 
+
 class ConfigSuggestion(BaseModel):
     """One proposed config edit with its rationale and self-classified risk."""
 
@@ -188,6 +189,9 @@ class ConfigSuggestion(BaseModel):
     risk_direction: str  # "loosens" | "tightens" | "neutral"
     confidence: str
     data_sufficiency: str
+    oos_status: str = "pending"  # "passed" | "rejected" | "pending"
+    oos_reason: str | None = None
+    impact: dict = {"metric": "sharpe", "delta": 0.0}
 
 
 class ConfigSuggestionsResponse(BaseModel):
@@ -203,6 +207,7 @@ class ConfigSuggestionsResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Context assembly.
 # ---------------------------------------------------------------------------
+
 
 def _build_volatility_regime(autotune_run: dict | None) -> dict:
     """Volatility regime context — element 6.
@@ -223,9 +228,7 @@ def _build_volatility_regime(autotune_run: dict | None) -> dict:
         regime["vol_20d"] = autotune_run.get("symphony_vol")
         regime["vol_20d_window_range"] = autotune_run.get("vol_window_range")
         regime["atr_pct_14d"] = autotune_run.get("atr_pct_14d")
-        regime["atr_pct_14d_window_range"] = autotune_run.get(
-            "atr_pct_window_range"
-        )
+        regime["atr_pct_14d_window_range"] = autotune_run.get("atr_pct_window_range")
     return regime
 
 
@@ -256,9 +259,7 @@ def _build_optuna_section(autotune_run: dict | None) -> dict:
         "run_timestamp": autotune_run.get("run_timestamp"),
         "train_alpha": autotune_run.get("train_alpha"),
         "oos_alpha": autotune_run.get("oos_alpha"),
-        "oos_train_gap": _safe_gap(
-            autotune_run.get("oos_alpha"), autotune_run.get("train_alpha")
-        ),
+        "oos_train_gap": _safe_gap(autotune_run.get("oos_alpha"), autotune_run.get("train_alpha")),
         "fallback_oos_alpha": autotune_run.get("fallback_oos_alpha"),
         "default_oos_alpha": autotune_run.get("default_oos_alpha"),
         "baseline_decision": autotune_run.get("baseline_decision"),
@@ -283,9 +284,7 @@ def _build_suggestible_surface(symphony_id: str | None) -> list[dict]:
     """
     current_params, locked_vars = _read_current_strategy(symphony_id)
 
-    allowlist_keys = sorted(_OPTUNA_SEARCH_SPACE_KEYS) + [
-        _UNTUNED_SUGGESTIBLE_KEY
-    ]
+    allowlist_keys = sorted(_OPTUNA_SEARCH_SPACE_KEYS) + [_UNTUNED_SUGGESTIBLE_KEY]
 
     surface: list[dict] = []
     for key in allowlist_keys:
@@ -341,9 +340,7 @@ def _read_current_strategy(
     return merged, list(locked)
 
 
-def assemble_advisor_context(
-    scope: str, symphony_id: str | None = None
-) -> dict:
+def assemble_advisor_context(scope: str, symphony_id: str | None = None) -> dict:
     """Assemble the prompt-ready context blob for the Claude config advisor.
 
     Carries all 8 must-have prompt elements plus role framing
@@ -377,8 +374,7 @@ def assemble_advisor_context(
     """
     if scope == "symphony" and symphony_id is None:
         raise ValueError(
-            "scope='symphony' requires a symphony_id — refusing to assemble a "
-            "contextless prompt."
+            "scope='symphony' requires a symphony_id — refusing to assemble a contextless prompt."
         )
 
     autotune_run: dict | None = None
@@ -415,6 +411,7 @@ def assemble_advisor_context(
 # Claude client + structured-output request.
 # ---------------------------------------------------------------------------
 
+
 def _build_client():
     """Construct the anthropic SDK client.
 
@@ -435,9 +432,7 @@ def _build_client():
     try:
         import anthropic
     except ImportError as exc:  # pragma: no cover - SDK is a declared dep
-        raise RuntimeError(
-            f"the anthropic SDK is not installed: {exc}"
-        ) from exc
+        raise RuntimeError(f"the anthropic SDK is not installed: {exc}") from exc
     return anthropic.Anthropic(api_key=api_key)
 
 
@@ -454,8 +449,7 @@ def _build_messages(context: dict) -> list[dict]:
                 "supplied numbers in its rationale. Stay strictly within the "
                 "stated valid ranges. Never emit a suggested value for a "
                 "locked param. If no edit is well-supported, return an empty "
-                "suggestions list.\n\n"
-                + json.dumps(context, default=str, indent=2)
+                "suggestions list.\n\n" + json.dumps(context, default=str, indent=2)
             ),
         }
     ]
@@ -530,15 +524,12 @@ def request_suggestions(
     # bare string) fails validation gracefully rather than raising upstream.
     try:
         if isinstance(parsed, BaseModel):
-            response = ConfigSuggestionsResponse.model_validate(
-                parsed.model_dump()
-            )
+            response = ConfigSuggestionsResponse.model_validate(parsed.model_dump())
         elif isinstance(parsed, dict):
             response = ConfigSuggestionsResponse.model_validate(parsed)
         else:
             raise TypeError(
-                f"parsed output is {type(parsed).__name__}, not a "
-                "ConfigSuggestionsResponse"
+                f"parsed output is {type(parsed).__name__}, not a ConfigSuggestionsResponse"
             )
     except Exception as exc:  # noqa: BLE001 - graceful degradation contract
         msg = (
@@ -569,9 +560,7 @@ def request_suggestions(
 # The 9-item suggestible allowlist: the 7 Optuna search-space keys plus the one
 # untuned hand-set key. Derived from the C1 constants so it cannot drift.
 # (config-surface.md §1 — an allowlist, not a denylist.)
-_SUGGESTIBLE_ALLOWLIST = frozenset(_OPTUNA_SEARCH_SPACE_KEYS) | {
-    _UNTUNED_SUGGESTIBLE_KEY
-}
+_SUGGESTIBLE_ALLOWLIST = frozenset(_OPTUNA_SEARCH_SPACE_KEYS) | {_UNTUNED_SUGGESTIBLE_KEY}
 
 # Risk-direction outcomes.
 _LOOSENS = "loosens"
@@ -584,11 +573,7 @@ _NEUTRAL = "neutral"
 # EXCEPT TAKE_PROFIT_MC_PCT, the lone inverted param ("raising tightens risk").
 # Built from _PARAM_DEFINITIONS rather than re-listed so it cannot drift.
 _RAISE_RISK_DIRECTION: dict[str, str] = {
-    key: (
-        _TIGHTENS
-        if definition.get("risk_polarity") == "raising tightens risk"
-        else _LOOSENS
-    )
+    key: (_TIGHTENS if definition.get("risk_polarity") == "raising tightens risk" else _LOOSENS)
     for key, definition in _PARAM_DEFINITIONS.items()
 }
 
@@ -629,9 +614,7 @@ def enforce_suggestion_allowlist(
     return allowed, rejected
 
 
-def compute_risk_direction(
-    config_key: str, current_value, suggested_value
-) -> str:
+def compute_risk_direction(config_key: str, current_value, suggested_value) -> str:
     """Compute, code-side, whether a suggestion loosens or tightens risk.
 
     The engine never trusts Claude's self-reported ``risk_direction``; it
@@ -732,12 +715,13 @@ def revalidate_suggestion_oos(
     # Lazy imports — deferred past the anthropic-SDK / optuna import-collision
     # window. Module-scope imports of autotuner or synthetic_history would break
     # the C2 import-guard tests; keep them inside the function body.
-    from autotuner import run_simulation, calculate_historical_deviation
-    import synthetic_history as _synthetic_history
-
     # current_date_str: today in YYYY-MM-DD, the format autotuner.run_simulation
     # expects (it calls datetime.strptime(current_date_str, "%Y-%m-%d")).
     from datetime import datetime as _datetime
+
+    import synthetic_history as _synthetic_history
+    from autotuner import calculate_historical_deviation, run_simulation
+
     current_date_str = _datetime.now().strftime("%Y-%m-%d")
 
     # bot_state: the live engine state from the state DB. Used to build history
@@ -748,9 +732,9 @@ def revalidate_suggestion_oos(
     # symphony_id. Mirrors the derivation in autotuner.run_autotuner's objective
     # closure (autotuner.py line 314).
     acc_sym_ids = [
-        k for k, v in bot_state.items()
-        if isinstance(v, dict)
-        and database.normalize_name(v.get("name", "")) == symphony_id
+        k
+        for k, v in bot_state.items()
+        if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == symphony_id
     ]
 
     # history_data: 125-day synthetic replay history. This call is on the
@@ -759,9 +743,7 @@ def revalidate_suggestion_oos(
     # date+holdings-keyed file cache; the autotuner fills this cache each cycle
     # before market open, so the cold-fetch case (no cache) only occurs when
     # the autotuner has not yet run — already a degraded-data situation.
-    history_data = _synthetic_history.generate_synthetic_history(
-        bot_state, current_date_str
-    )
+    history_data = _synthetic_history.generate_synthetic_history(bot_state, current_date_str)
 
     # deviation_dict: 45-day trailing execution-deviation penalties by exit reason.
     deviation_dict = calculate_historical_deviation(current_date_str)

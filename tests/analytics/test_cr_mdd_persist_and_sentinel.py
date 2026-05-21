@@ -23,10 +23,8 @@ Fixture: tests/fixtures/composer/symphony_stats_meta.json (captured-from-produce
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -138,7 +136,6 @@ def _bot_state_entry_with_composer_fields(
 
 
 class TestEnginePersistsComposerFieldsIntoBotState:
-
     def test_simple_return_written_to_bot_state_after_engine_processes_symphony(
         self, composer_symphony_with_nonzero_fields
     ):
@@ -191,9 +188,7 @@ class TestEnginePersistsComposerFieldsIntoBotState:
             f"got {bot_state[symphony_id].get('net_deposits')}"
         )
 
-    def test_time_weighted_return_written_to_bot_state(
-        self, composer_symphony_with_nonzero_fields
-    ):
+    def test_time_weighted_return_written_to_bot_state(self, composer_symphony_with_nonzero_fields):
         """bot_state[symphony_id]['time_weighted_return'] must match Composer TWR."""
         import alpha_bot_execution
 
@@ -227,9 +222,7 @@ class TestEnginePersistsComposerFieldsIntoBotState:
             sym["max_drawdown"], abs=1e-9
         )
 
-    def test_all_four_fields_persisted_for_all_fixture_symphonies(
-        self, all_composer_symphonies
-    ):
+    def test_all_four_fields_persisted_for_all_fixture_symphonies(self, all_composer_symphonies):
         """
         For each of the 11 fixture symphonies, all four Composer fields must be
         written into bot_state. No symphony is skipped.
@@ -240,9 +233,7 @@ class TestEnginePersistsComposerFieldsIntoBotState:
             symphony_id = sym["id"]
             bot_state = {symphony_id: _minimal_bot_state_entry(symphony_id)}
 
-            alpha_bot_execution._persist_composer_fields_to_bot_state(
-                bot_state, symphony_id, sym
-            )
+            alpha_bot_execution._persist_composer_fields_to_bot_state(bot_state, symphony_id, sym)
 
             for field in _FOUR_FIELDS:
                 assert field in bot_state[symphony_id], (
@@ -315,7 +306,6 @@ class TestEnginePersistsComposerFieldsIntoBotState:
 
 
 class TestApiStateWiringProducesNonZeroCRMDD:
-
     def test_symphonies_list_built_from_bot_state_with_composer_fields_has_nonzero_cr_inputs(
         self, composer_symphony_with_nonzero_fields
     ):
@@ -403,15 +393,17 @@ class TestApiStateWiringProducesNonZeroCRMDD:
             entry = _bot_state_entry_with_composer_fields(symphony_id, sym)
             bot_state[symphony_id] = entry
 
-            symphonies_list.append({
-                "id": symphony_id,
-                "value": entry.get("current_value") or 0.0,
-                "last_percent_change": (entry.get("current_return") or 0.0) / 100.0,
-                "simple_return": entry.get("simple_return", 0.0),
-                "net_deposits": entry.get("net_deposits", 0.0),
-                "time_weighted_return": entry.get("time_weighted_return", 0.0),
-                "max_drawdown": entry.get("max_drawdown", 0.0),
-            })
+            symphonies_list.append(
+                {
+                    "id": symphony_id,
+                    "value": entry.get("current_value") or 0.0,
+                    "last_percent_change": (entry.get("current_return") or 0.0) / 100.0,
+                    "simple_return": entry.get("simple_return", 0.0),
+                    "net_deposits": entry.get("net_deposits", 0.0),
+                    "time_weighted_return": entry.get("time_weighted_return", 0.0),
+                    "max_drawdown": entry.get("max_drawdown", 0.0),
+                }
+            )
 
         result = get_portfolio_cumulative_return(symphonies_list, bot_state)
 
@@ -438,15 +430,17 @@ class TestApiStateWiringProducesNonZeroCRMDD:
             entry = _bot_state_entry_with_composer_fields(symphony_id, sym)
             bot_state[symphony_id] = entry
 
-            symphonies_list.append({
-                "id": symphony_id,
-                "value": entry.get("current_value") or 0.0,
-                "last_percent_change": (entry.get("current_return") or 0.0) / 100.0,
-                "simple_return": entry.get("simple_return", 0.0),
-                "net_deposits": entry.get("net_deposits", 0.0),
-                "time_weighted_return": entry.get("time_weighted_return", 0.0),
-                "max_drawdown": entry.get("max_drawdown", 0.0),
-            })
+            symphonies_list.append(
+                {
+                    "id": symphony_id,
+                    "value": entry.get("current_value") or 0.0,
+                    "last_percent_change": (entry.get("current_return") or 0.0) / 100.0,
+                    "simple_return": entry.get("simple_return", 0.0),
+                    "net_deposits": entry.get("net_deposits", 0.0),
+                    "time_weighted_return": entry.get("time_weighted_return", 0.0),
+                    "max_drawdown": entry.get("max_drawdown", 0.0),
+                }
+            )
 
         result = get_portfolio_max_drawdown(symphonies_list, bot_state)
 
@@ -471,7 +465,6 @@ class TestApiStateWiringProducesNonZeroCRMDD:
 
 
 class TestNoneSentinelDistinguishesMissingFromRealZero:
-
     def test_symphonies_list_uses_none_sentinel_when_simple_return_absent_from_bot_state(self):
         """
         app.py:162 must use None as the default for missing Composer fields,
@@ -492,10 +485,10 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
             "id": symphony_id,
             "value": bot_state_entry.get("current_value") or 0.0,
             "last_percent_change": (bot_state_entry.get("current_return") or 0.0) / 100.0,
-            "simple_return": bot_state_entry.get("simple_return"),          # None default
-            "net_deposits": bot_state_entry.get("net_deposits"),            # None default
+            "simple_return": bot_state_entry.get("simple_return"),  # None default
+            "net_deposits": bot_state_entry.get("net_deposits"),  # None default
             "time_weighted_return": bot_state_entry.get("time_weighted_return"),  # None
-            "max_drawdown": bot_state_entry.get("max_drawdown"),            # None default
+            "max_drawdown": bot_state_entry.get("max_drawdown"),  # None default
         }
 
         assert symphonies_list_entry["simple_return"] is None, (
@@ -518,7 +511,7 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
 
         sym_missing = {
             "id": "test-sym",
-            "simple_return": None,          # sentinel: field absent from bot_state
+            "simple_return": None,  # sentinel: field absent from bot_state
             "net_deposits": None,
             "time_weighted_return": None,
             "last_percent_change": -0.02,
@@ -606,7 +599,7 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
         )
         # And must equal the valid symphony's CR (the only contributor)
         assert result["if_held"] == pytest.approx(valid_sym["simple_return"] * 100.0, abs=1e-4), (
-            f"with one valid symphony (CR={valid_sym['simple_return']*100.0}) and one "
+            f"with one valid symphony (CR={valid_sym['simple_return'] * 100.0}) and one "
             f"None-sentinel, portfolio CR must equal the valid symphony's CR*100; "
             f"got {result['if_held']}"
         )
@@ -642,9 +635,9 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
         assert result["if_held"] is not None, (
             "portfolio MDD must not produce None when at least one valid symphony exists"
         )
-        assert result["if_held"] == pytest.approx(valid_sym["max_drawdown"], abs=1e-6), (
-            f"with one valid (MDD={valid_sym['max_drawdown']}) and one None-sentinel, "
-            f"portfolio MDD must equal the valid symphony's MDD; got {result['if_held']}"
+        assert result["if_held"] == pytest.approx(valid_sym["max_drawdown"] * 100.0, abs=1e-6), (
+            f"with one valid (MDD={valid_sym['max_drawdown'] * 100.0:.2f}%) and one None-sentinel, "
+            f"portfolio MDD must equal the valid symphony's MDD in percentage-scale; got {result['if_held']}"
         )
 
     def test_real_zero_simple_return_still_produces_zero_cr_not_none(self):
@@ -658,8 +651,8 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
 
         sym_real_zero = {
             "id": "test-sym-zero",
-            "simple_return": 0.0,       # genuinely zero
-            "net_deposits": 500.0,      # non-zero — so it IS simple_return=0, not missing
+            "simple_return": 0.0,  # genuinely zero
+            "net_deposits": 500.0,  # non-zero — so it IS simple_return=0, not missing
             "time_weighted_return": 99.0,  # sentinel: must NOT be used
             "last_percent_change": 0.0,
             "max_drawdown": 0.05,
@@ -689,7 +682,7 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
             "net_deposits": 100.0,
             "time_weighted_return": 0.5,
             "last_percent_change": 0.01,
-            "max_drawdown": 0.0,        # genuine zero MDD
+            "max_drawdown": 0.0,  # genuine zero MDD
             "value": 1000.0,
         }
 
@@ -733,8 +726,7 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
             f"app.py except-block must then set _cr = {{'if_held': None, 'dry_run': None}}."
         )
         assert mdd_result["if_held"] is None, (
-            f"MDD helper with None inputs must return if_held=None; "
-            f"got {mdd_result['if_held']}"
+            f"MDD helper with None inputs must return if_held=None; got {mdd_result['if_held']}"
         )
 
 
@@ -749,7 +741,6 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
 
 
 class TestPortfolioReturnsNoneSentinelWhenAllSymphoniesMissing:
-
     def test_portfolio_cr_returns_none_when_all_symphonies_have_none_simple_return(self):
         """
         get_portfolio_cumulative_return must return {"if_held": None, "dry_run": None}
@@ -784,7 +775,7 @@ class TestPortfolioReturnsNoneSentinelWhenAllSymphoniesMissing:
             f"portfolio CR must return None when all symphonies have None CR inputs; "
             f"got {result['if_held']}. "
             f"0.0 here is indistinguishable from a real zero and re-introduces the bug. "
-            f"Fix: analytics.py:491-492 — return {{\"if_held\": None, \"dry_run\": None}} "
+            f'Fix: analytics.py:491-492 — return {{"if_held": None, "dry_run": None}} '
             f"when total_weight == 0.0."
         )
         assert result["dry_run"] is None, (
@@ -817,7 +808,7 @@ class TestPortfolioReturnsNoneSentinelWhenAllSymphoniesMissing:
         assert result["if_held"] is None, (
             f"portfolio MDD must return None when all symphonies have None max_drawdown; "
             f"got {result['if_held']}. "
-            f"Fix: analytics.py:491-492 — return {{\"if_held\": None, \"dry_run\": None}} "
+            f'Fix: analytics.py:491-492 — return {{"if_held": None, "dry_run": None}} '
             f"when total_weight == 0.0."
         )
         assert result["dry_run"] is None, (
@@ -922,7 +913,6 @@ class TestPortfolioReturnsNoneSentinelWhenAllSymphoniesMissing:
 
 
 class TestPctColorNullGuardInIndexHtml:
-
     def test_pct_color_function_contains_null_guard(self):
         """
         The pctColor JS function in templates/index.html must contain a null guard
@@ -937,9 +927,7 @@ class TestPctColorNullGuardInIndexHtml:
 
         This test asserts the fix is present by checking the template source text.
         """
-        template_path = (
-            Path(__file__).parent.parent.parent / "templates" / "index.html"
-        )
+        template_path = Path(__file__).parent.parent.parent / "templates" / "index.html"
         source = template_path.read_text(encoding="utf-8")
 
         # Find the pctColor function body
@@ -947,7 +935,7 @@ class TestPctColorNullGuardInIndexHtml:
         assert pct_color_idx != -1, "pctColor function must exist in index.html"
 
         # Extract up to 300 chars after the function declaration to cover the body
-        pct_color_body = source[pct_color_idx: pct_color_idx + 300]
+        pct_color_body = source[pct_color_idx : pct_color_idx + 300]
 
         # The null guard must appear before any comparison
         has_null_guard = (
@@ -971,15 +959,13 @@ class TestPctColorNullGuardInIndexHtml:
         Guards against a fix that adds the null check but returns the wrong class
         (e.g. accidentally returning 'text-emerald-400' for null).
         """
-        template_path = (
-            Path(__file__).parent.parent.parent / "templates" / "index.html"
-        )
+        template_path = Path(__file__).parent.parent.parent / "templates" / "index.html"
         source = template_path.read_text(encoding="utf-8")
 
         pct_color_idx = source.find("function pctColor(")
         assert pct_color_idx != -1
 
-        pct_color_body = source[pct_color_idx: pct_color_idx + 300]
+        pct_color_body = source[pct_color_idx : pct_color_idx + 300]
 
         has_slate = "text-slate-" in pct_color_body
         assert has_slate, (

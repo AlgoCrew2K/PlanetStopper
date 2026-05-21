@@ -7,9 +7,13 @@ import database
 import glob
 from datetime import datetime, timedelta
 
+# Canonical post-mortem directory — anchored to project root regardless of CWD.
+_POST_MORTEMS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "post_mortems")
+
 def generate_eod_snapshot(bot_state, current_date_str, is_post_rebalance=False, discord_webhook_url=None, live_prices=None):
     """Generates a two-stage daily post-mortem JSON snapshot and handles Discord alerts."""
-    report_file = f"post_mortem_{current_date_str}.json"
+    os.makedirs(_POST_MORTEMS_DIR, exist_ok=True)
+    report_file = os.path.join(_POST_MORTEMS_DIR, f"post_mortem_{current_date_str}.json")
 
     if not is_post_rebalance:
         # STAGE 1 (15:54 ET): Freeze Math & Shadow Returns
@@ -171,7 +175,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
         saved_list = []
         win_rate_list = []
         
-        all_pm_files = sorted(glob.glob("post_mortem_*.json"))
+        all_pm_files = sorted(glob.glob(os.path.join(_POST_MORTEMS_DIR, "post_mortem_*.json")))
         # Limit to last 45 days if the list is getting too long
         chart_files = all_pm_files[-45:] if len(all_pm_files) > 45 else all_pm_files
             
@@ -278,7 +282,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
         
         try:
             end_date = datetime.strptime(current_date_str, "%Y-%m-%d")
-            files = glob.glob("post_mortem_*.json")
+            files = glob.glob(os.path.join(_POST_MORTEMS_DIR, "post_mortem_*.json"))
 
             for f_path in files:
                 try:

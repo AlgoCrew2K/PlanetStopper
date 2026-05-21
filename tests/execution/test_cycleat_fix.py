@@ -30,14 +30,14 @@ from __future__ import annotations
 
 import copy
 import json
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch, call
+import pathlib
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
 import alpha_bot_execution
 import app as app_module
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures / helpers
@@ -45,6 +45,7 @@ import app as app_module
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 
     def _et(hour: int, minute: int, weekday_date: str = "2025-05-14") -> datetime:
@@ -52,10 +53,10 @@ try:
         return datetime(y, mo, d, hour, minute, 0, tzinfo=_ET)
 
 except Exception:  # pragma: no cover
+
     def _et(hour: int, minute: int, weekday_date: str = "2025-05-14") -> datetime:
         y, mo, d = map(int, weekday_date.split("-"))
-        return datetime(y, mo, d, hour, minute, 0,
-                        tzinfo=timezone(timedelta(hours=-4)))
+        return datetime(y, mo, d, hour, minute, 0, tzinfo=timezone(timedelta(hours=-4)))
 
 
 # EOD post-mortem window: 16:01 ET on a weekday
@@ -120,26 +121,29 @@ def _run_eod_patched(initial_bot_state: dict | None = None) -> dict:
     captured: list[dict] = []
     date_str = _EOD_16_01.strftime("%Y-%m-%d")
 
-    with patch.object(alpha_bot_execution, "database") as mock_db, \
-         patch.object(alpha_bot_execution, "reporting"), \
-         patch.object(alpha_bot_execution, "autotuner") as mock_autotuner, \
-         patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                      return_value=_MINIMAL_SYM_LIST), \
-         patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                      return_value=_MOCK_ALPACA_HISTORY), \
-         patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                      return_value={"SPY": {"vwap": 520.0, "last_price": 521.0}}), \
-         patch.object(alpha_bot_execution, "get_current_et",
-                      return_value=_EOD_16_01), \
-         patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-         patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "fake-key"), \
-         patch.object(alpha_bot_execution, "ALPACA_KEY", "fake-alpaca-key"), \
-         patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-         patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:30"), \
-         patch.object(alpha_bot_execution.time, "sleep"), \
-         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]), \
-         patch.object(alpha_bot_execution, "math_engine") as mock_math:
-
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting"),
+        patch.object(alpha_bot_execution, "autotuner") as mock_autotuner,
+        patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=_MINIMAL_SYM_LIST),
+        patch.object(
+            alpha_bot_execution, "fetch_alpaca_history", return_value=_MOCK_ALPACA_HISTORY
+        ),
+        patch.object(
+            alpha_bot_execution,
+            "fetch_intraday_vwaps",
+            return_value={"SPY": {"vwap": 520.0, "last_price": 521.0}},
+        ),
+        patch.object(alpha_bot_execution, "get_current_et", return_value=_EOD_16_01),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "fake-key"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "fake-alpaca-key"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:30"),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        patch.object(alpha_bot_execution, "math_engine") as mock_math,
+    ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = copy.deepcopy(initial_bot_state)
         mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
@@ -171,6 +175,7 @@ def _run_eod_patched(initial_bot_state: dict | None = None) -> dict:
 # BLOCK 1 — /api/state must surface last_successful_cycle_at at the top level
 # ===========================================================================
 
+
 class TestApiStateTopLevelSurface:
     """
     /api/state JSON must include last_successful_cycle_at as a TOP-LEVEL key,
@@ -195,14 +200,15 @@ class TestApiStateTopLevelSurface:
             "last_successful_cycle_at": timestamp,
         }
 
-        with app_module.app.test_client() as client, \
-             patch.object(app_module.database, "load_state",
-                          return_value=mock_state), \
-             patch.object(app_module, "schedule") as mock_schedule, \
-             patch.object(app_module.database, "normalize_name",
-                          side_effect=lambda n: n.strip().lower()), \
-             patch.dict("os.environ", {"LIVE_EXECUTION": "False"}, clear=False):
-
+        with (
+            app_module.app.test_client() as client,
+            patch.object(app_module.database, "load_state", return_value=mock_state),
+            patch.object(app_module, "schedule") as mock_schedule,
+            patch.object(
+                app_module.database, "normalize_name", side_effect=lambda n: n.strip().lower()
+            ),
+            patch.dict("os.environ", {"LIVE_EXECUTION": "False"}, clear=False),
+        ):
             mock_schedule.get_jobs.return_value = []
             resp = client.get("/api/state")
 
@@ -233,14 +239,15 @@ class TestApiStateTopLevelSurface:
             "last_successful_cycle_at": timestamp,
         }
 
-        with app_module.app.test_client() as client, \
-             patch.object(app_module.database, "load_state",
-                          return_value=mock_state), \
-             patch.object(app_module, "schedule") as mock_schedule, \
-             patch.object(app_module.database, "normalize_name",
-                          side_effect=lambda n: n.strip().lower()), \
-             patch.dict("os.environ", {"LIVE_EXECUTION": "False"}, clear=False):
-
+        with (
+            app_module.app.test_client() as client,
+            patch.object(app_module.database, "load_state", return_value=mock_state),
+            patch.object(app_module, "schedule") as mock_schedule,
+            patch.object(
+                app_module.database, "normalize_name", side_effect=lambda n: n.strip().lower()
+            ),
+            patch.dict("os.environ", {"LIVE_EXECUTION": "False"}, clear=False),
+        ):
             mock_schedule.get_jobs.return_value = []
             resp = client.get("/api/state")
 
@@ -273,14 +280,15 @@ class TestApiStateTopLevelSurface:
             "last_execution_mode": False,
         }
 
-        with app_module.app.test_client() as client, \
-             patch.object(app_module.database, "load_state",
-                          return_value=mock_state), \
-             patch.object(app_module, "schedule") as mock_schedule, \
-             patch.object(app_module.database, "normalize_name",
-                          side_effect=lambda n: n.strip().lower()), \
-             patch.dict("os.environ", {"LIVE_EXECUTION": "False"}, clear=False):
-
+        with (
+            app_module.app.test_client() as client,
+            patch.object(app_module.database, "load_state", return_value=mock_state),
+            patch.object(app_module, "schedule") as mock_schedule,
+            patch.object(
+                app_module.database, "normalize_name", side_effect=lambda n: n.strip().lower()
+            ),
+            patch.dict("os.environ", {"LIVE_EXECUTION": "False"}, clear=False),
+        ):
             mock_schedule.get_jobs.return_value = []
             resp = client.get("/api/state")
 
@@ -300,6 +308,7 @@ class TestApiStateTopLevelSurface:
 # ===========================================================================
 # BLOCK 2 — EOD post-mortem path must set last_successful_cycle_at
 # ===========================================================================
+
 
 class TestEodPostMortemSetsLastSuccessfulCycleAt:
     """
@@ -390,118 +399,101 @@ class TestEodPostMortemSetsLastSuccessfulCycleAt:
 # BLOCK 3 — index.html must contain the staleness badge element
 # ===========================================================================
 
+
 class TestStalenessBadgeMarkupInIndexHtml:
     """
-    The dashboard's index.html must contain a staleness badge element with
-    id='cycle-staleness-badge'.  pytest cannot verify visual rendering, but
-    it can assert the DOM anchor is present in the rendered HTML.
+    The chrome (included on all routes) must contain the Live/Stale/Closed
+    engine-status indicator that replaced the old #cycle-staleness-badge.
     """
 
-    def test_index_html_renders_cycle_staleness_badge_element(self):
+    def test_index_html_renders_engine_status_element(self):
         """
-        GET / (the dashboard root) must return HTML that contains an element
-        with id="cycle-staleness-badge".  This is the DOM anchor the JS uses
-        to show/hide the stale-data warning.
-
-        RED: no such element exists in index.html today.
+        GET / must return HTML containing the #engine-status wrapper and its
+        #engine-status-label child.  These are the DOM anchors that
+        updateEngineStatus() in chrome.js targets to display Live/Stale/Closed.
         """
         with app_module.app.test_client() as client:
             resp = client.get("/")
 
         assert resp.status_code == 200
         html = resp.data.decode("utf-8")
-        assert 'id="cycle-staleness-badge"' in html, (
-            'index.html must contain an element with id="cycle-staleness-badge" '
-            "in the header banner area.  The JS staleness logic targets this id. "
-            "RED: the element does not exist in the current template. "
-            "Fix: add a <span id=\"cycle-staleness-badge\" ...> element to the "
-            "header section of templates/index.html (e.g. near the status "
-            "indicator or the exec-start-display span)."
+        assert 'id="engine-status"' in html, (
+            'Rendered HTML must contain id="engine-status" (the Live/Stale/Closed '
+            "wrapper in templates/_chrome.html)."
+        )
+        assert 'id="engine-status-label"' in html, (
+            'Rendered HTML must contain id="engine-status-label" (the text child '
+            "whose textContent is set to Live / Stale / Closed by chrome.js)."
         )
 
-    def test_staleness_badge_starts_hidden(self):
+    def test_engine_status_label_initial_state_is_live_or_closed(self):
         """
-        The badge must start hidden (no alarming state on fresh load).
-        Convention: the element must have the 'hidden' CSS class or a
-        data-hidden attribute when the template is rendered without JS.
+        On a fresh server-side render the #engine-status-label must contain
+        either 'Live' or 'Closed' — never a blank or arbitrary value.
+        The Jinja template sets the initial text from meta.system_online:
+        truthy → 'Live', falsy/absent → 'Closed'.
+        """
+        import re
 
-        RED: element doesn't exist yet.
-        """
         with app_module.app.test_client() as client:
             resp = client.get("/")
 
         html = resp.data.decode("utf-8")
-        # Find the badge snippet; it must include 'hidden' in the same tag
-        import re
         match = re.search(
-            r'<[^>]*id="cycle-staleness-badge"[^>]*>',
-            html
+            r'id="engine-status-label"[^>]*>([^<]*)<', html
         )
         assert match is not None, (
-            'id="cycle-staleness-badge" element not found in rendered HTML. '
-            "Must be present before checking its initial state."
+            'id="engine-status-label" element not found in rendered HTML.'
         )
-        tag_text = match.group(0)
-        assert "hidden" in tag_text, (
-            f"The staleness badge element must be initially hidden (contain "
-            f"the 'hidden' CSS class or data-hidden attribute) so it does not "
-            f"alarm operators on a fresh page load before the JS has evaluated "
-            f"the cycle timestamp. Tag found: {tag_text!r}"
+        label_text = match.group(1).strip()
+        assert label_text in ("Live", "Stale", "Closed"), (
+            f"#engine-status-label initial text must be Live, Stale, or Closed; "
+            f"got {label_text!r}"
         )
 
 
 # ===========================================================================
-# BLOCK 4 — JS must reference last_successful_cycle_at from the API response
+# BLOCK 4 — JS must reference last_successful_cycle_at and market_state
 # ===========================================================================
+
 
 class TestStalenessBadgeJsWiring:
     """
-    The JS in index.html must read data.last_successful_cycle_at from the
-    /api/state response and use it to drive the staleness badge.
-
-    pytest cannot execute JS — this test asserts source-code wiring: that the
-    JS block in index.html references the field name.
+    chrome.js must read last_successful_cycle_at and market_state from the
+    /api/state response to drive the Live/Stale/Closed engine-status indicator.
+    pytest cannot execute JS — these tests assert source-code wiring.
     """
 
     def test_js_references_last_successful_cycle_at_field(self):
         """
-        The rendered index.html must contain a JS reference to
-        'last_successful_cycle_at' — either reading it from the API response
-        (data.last_successful_cycle_at) or from a data-attribute set by the
-        route.
-
-        RED: no such JS reference exists in index.html today.
+        static/chrome.js must reference 'last_successful_cycle_at' to compute
+        the stale threshold (> 2 min since last cycle → Stale state).
         """
-        with app_module.app.test_client() as client:
-            resp = client.get("/")
-
-        html = resp.data.decode("utf-8")
-        assert "last_successful_cycle_at" in html, (
-            "index.html must contain a JS reference to 'last_successful_cycle_at' "
-            "(e.g. 'data.last_successful_cycle_at' in renderState()) to drive the "
-            "staleness badge visibility.  "
-            "RED: the field name does not appear anywhere in the template. "
-            "Fix: in the renderState() function (or a helper it calls), read "
-            "data.last_successful_cycle_at and toggle the "
-            "cycle-staleness-badge element's visibility based on age."
+        chrome_js = (
+            pathlib.Path(__file__).parent.parent.parent / "static" / "chrome.js"
+        )
+        content = chrome_js.read_text(encoding="utf-8")
+        assert "last_successful_cycle_at" in content, (
+            "static/chrome.js must reference 'last_successful_cycle_at' in "
+            "updateEngineStatus() to compute the Live/Stale threshold."
         )
 
-    def test_js_references_cycle_staleness_badge_id(self):
+    def test_js_references_engine_status_label_id(self):
         """
-        The JS block must reference the badge by its id='cycle-staleness-badge'
-        so that the DOM update lands on the right element.
-
-        RED: badge element and JS reference both absent today.
+        static/chrome.js must reference 'engine-status-label' — the element
+        whose textContent is set to Live / Stale / Closed.
         """
-        with app_module.app.test_client() as client:
-            resp = client.get("/")
-
-        html = resp.data.decode("utf-8")
-        assert "cycle-staleness-badge" in html, (
-            "index.html must reference 'cycle-staleness-badge' in its JS block "
-            "(e.g. document.getElementById('cycle-staleness-badge')) AND in the "
-            "HTML markup (as id=\"cycle-staleness-badge\"). "
-            "Both are absent today."
+        chrome_js = (
+            pathlib.Path(__file__).parent.parent.parent / "static" / "chrome.js"
+        )
+        content = chrome_js.read_text(encoding="utf-8")
+        assert "engine-status-label" in content, (
+            "static/chrome.js must reference 'engine-status-label' to update "
+            "the Live/Stale/Closed display in updateEngineStatus()."
+        )
+        assert "market_state" in content, (
+            "static/chrome.js must reference 'market_state' to determine "
+            "whether the market is open (prerequisite for Live/Stale vs Closed)."
         )
 
 
@@ -509,6 +501,7 @@ class TestStalenessBadgeJsWiring:
 # BLOCK 5 — CR 100x unit error: get_symphony_cumulative_return must return
 #           PERCENT-scaled value, not raw Composer decimal
 # ===========================================================================
+
 
 class TestCumulativeReturnPercentScaling:
     """
@@ -529,16 +522,33 @@ class TestCumulativeReturnPercentScaling:
 
     # Load fixture at class level to avoid repeated file I/O
     _FIXTURE_PATH = (
-        "C:/Users/paulm/Documents/Projects/POC/AlphaBotPM"
-        "/.claude/worktrees/cycleat-team/tests/fixtures/composer/symphony_stats_meta.json"
+        pathlib.Path(__file__).parent.parent.parent
+        / "tests" / "fixtures" / "composer" / "symphony_stats_meta.json"
     )
 
     @pytest.fixture(scope="class")
     def fixture_symphonies(self):
-        import json
-        with open(self._FIXTURE_PATH, "r", encoding="utf-8") as fh:
+
+        with open(self._FIXTURE_PATH, encoding="utf-8") as fh:
             payload = json.load(fh)
         return payload.get("symphonies", [])
+
+    @pytest.fixture(scope="class")
+    def empty_db(self, tmp_path_factory):
+        """Empty SQLite DB so _get_shadow_cumulative_trajectory finds no rows.
+
+        Isolates these tests from the real alphabot_state.db — without this the
+        live DB has shadow rows for fixture symphony IDs, making dry_run diverge
+        from if_held and causing false failures.
+        """
+        import sqlite3
+        db_file = tmp_path_factory.mktemp("cr_scaling") / "empty_state.db"
+        with sqlite3.connect(str(db_file)) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS bot_state "
+                "(id INTEGER PRIMARY KEY, data TEXT)"
+            )
+        return str(db_file)
 
     @pytest.fixture(scope="class")
     def normal_symphony(self, fixture_symphonies):
@@ -550,7 +560,7 @@ class TestCumulativeReturnPercentScaling:
         """symphony[0]: simple_return=0.0, net_deposits=0.0, TWR fallback."""
         return fixture_symphonies[0]
 
-    def test_cr_if_held_is_percent_not_decimal_for_normal_symphony(self, normal_symphony):
+    def test_cr_if_held_is_percent_not_decimal_for_normal_symphony(self, normal_symphony, empty_db):
         """
         get_symphony_cumulative_return must return simple_return * 100.
 
@@ -561,11 +571,11 @@ class TestCumulativeReturnPercentScaling:
         """
         from analytics import get_symphony_cumulative_return
 
-        result = get_symphony_cumulative_return(normal_symphony, bot_state_entry=None)
+        result = get_symphony_cumulative_return(normal_symphony, bot_state_entry=None, db_path=empty_db)
 
-        raw = normal_symphony["simple_return"]       # 0.65976
-        expected_pct = raw * 100                     # 65.976
-        raw_threshold = 5.0                          # no real CR is < 5% of the expected pct
+        raw = normal_symphony["simple_return"]  # 0.65976
+        expected_pct = raw * 100  # 65.976
+        raw_threshold = 5.0  # no real CR is < 5% of the expected pct
 
         assert result["if_held"] == pytest.approx(expected_pct, rel=1e-6), (
             f"get_symphony_cumulative_return.if_held must be simple_return * 100 = {expected_pct}; "
@@ -574,15 +584,18 @@ class TestCumulativeReturnPercentScaling:
             f"it must multiply by 100 like get_symphony_today_change does for last_percent_change."
         )
 
-    def test_cr_dry_run_is_percent_not_decimal_for_normal_symphony(self, normal_symphony):
+    def test_cr_dry_run_is_percent_not_decimal_for_normal_symphony(self, normal_symphony, empty_db):
         """
         dry_run CR must also be percent-scaled (equals if_held for non-triggered).
+
+        empty_db ensures _get_shadow_cumulative_trajectory returns None so
+        dry_run naturally falls back to if_held (no live-DB contamination).
 
         RED: same root cause as if_held.
         """
         from analytics import get_symphony_cumulative_return
 
-        result = get_symphony_cumulative_return(normal_symphony, bot_state_entry=None)
+        result = get_symphony_cumulative_return(normal_symphony, bot_state_entry=None, db_path=empty_db)
 
         raw = normal_symphony["simple_return"]
         expected_pct = raw * 100
@@ -592,7 +605,7 @@ class TestCumulativeReturnPercentScaling:
             f"got {result['dry_run']!r}."
         )
 
-    def test_twr_fallback_cr_is_percent_not_decimal(self, twr_symphony):
+    def test_twr_fallback_cr_is_percent_not_decimal(self, twr_symphony, empty_db):
         """
         TWR fallback: if_held CR must be time_weighted_return * 100.
 
@@ -610,10 +623,10 @@ class TestCumulativeReturnPercentScaling:
             "fixture assumption violated: twr_symphony.net_deposits must be 0.0"
         )
 
-        result = get_symphony_cumulative_return(twr_symphony, bot_state_entry=None)
+        result = get_symphony_cumulative_return(twr_symphony, bot_state_entry=None, db_path=empty_db)
 
-        raw_twr = twr_symphony["time_weighted_return"]   # 3.13212
-        expected_pct = raw_twr * 100                      # 313.212
+        raw_twr = twr_symphony["time_weighted_return"]  # 3.13212
+        expected_pct = raw_twr * 100  # 313.212
 
         assert result["if_held"] == pytest.approx(expected_pct, rel=1e-6), (
             f"TWR fallback: if_held CR must be time_weighted_return * 100 = {expected_pct}; "
@@ -621,7 +634,7 @@ class TestCumulativeReturnPercentScaling:
             f"The TWR field is also a Composer decimal — it must be scaled by 100."
         )
 
-    def test_cr_magnitude_is_operator_readable_percent(self, fixture_symphonies):
+    def test_cr_magnitude_is_operator_readable_percent(self, fixture_symphonies, empty_db):
         """
         Property test: for any non-None CR result from the fixture, the value
         must be in a plausible percent range for a real portfolio.
@@ -640,7 +653,7 @@ class TestCumulativeReturnPercentScaling:
 
         has_nonzero = False
         for sym in fixture_symphonies:
-            result = get_symphony_cumulative_return(sym, bot_state_entry=None)
+            result = get_symphony_cumulative_return(sym, bot_state_entry=None, db_path=empty_db)
             if result["if_held"] is None:
                 continue
             v = result["if_held"]
@@ -668,11 +681,10 @@ class TestCumulativeReturnPercentScaling:
                 has_nonzero = True
 
         assert has_nonzero, (
-            "All 11 fixture symphonies returned None or zero-CR — "
-            "fixture may be invalid."
+            "All 11 fixture symphonies returned None or zero-CR — fixture may be invalid."
         )
 
-    def test_portfolio_cr_is_percent_not_decimal(self, fixture_symphonies):
+    def test_portfolio_cr_is_percent_not_decimal(self, fixture_symphonies, empty_db):
         """
         get_portfolio_cumulative_return must also return a percent-scaled value,
         since it delegates to get_symphony_cumulative_return.
@@ -687,22 +699,24 @@ class TestCumulativeReturnPercentScaling:
         symphonies = []
         for sym in fixture_symphonies:
             if sym.get("simple_return") is not None and sym.get("simple_return") != 0.0:
-                symphonies.append({
-                    "id": sym.get("id", ""),
-                    "value": 10000.0,  # equal weight for simplicity
-                    "last_percent_change": sym.get("last_percent_change", 0.0),
-                    "simple_return": sym.get("simple_return"),
-                    "net_deposits": sym.get("net_deposits", 1.0),
-                    "time_weighted_return": sym.get("time_weighted_return"),
-                    "max_drawdown": sym.get("max_drawdown"),
-                })
+                symphonies.append(
+                    {
+                        "id": sym.get("id", ""),
+                        "value": 10000.0,  # equal weight for simplicity
+                        "last_percent_change": sym.get("last_percent_change", 0.0),
+                        "simple_return": sym.get("simple_return"),
+                        "net_deposits": sym.get("net_deposits", 1.0),
+                        "time_weighted_return": sym.get("time_weighted_return"),
+                        "max_drawdown": sym.get("max_drawdown"),
+                    }
+                )
 
         assert len(symphonies) >= 2, (
             f"Need at least 2 non-TWR-fallback symphonies from fixture; got {len(symphonies)}"
         )
 
         # bot_state has no entries for these symphonies (non-triggered)
-        result = get_portfolio_cumulative_return(symphonies, bot_state={})
+        result = get_portfolio_cumulative_return(symphonies, bot_state={}, db_path=empty_db)
 
         assert result["if_held"] is not None, (
             "Portfolio CR must not be None when symphonies have valid simple_return."

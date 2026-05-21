@@ -35,11 +35,8 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import sqlite3
-import tempfile
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -54,7 +51,7 @@ _SYMPHONY_STATS_META_FIXTURE = _FIXTURE_DIR / "symphony_stats_meta.json"
 @pytest.fixture(scope="module")
 def symphony_stats_meta():
     """Load the pre-placed captured-from-producer fixture (11 symphonies)."""
-    with open(_SYMPHONY_STATS_META_FIXTURE, "r", encoding="utf-8") as fh:
+    with open(_SYMPHONY_STATS_META_FIXTURE, encoding="utf-8") as fh:
         payload = json.load(fh)
     return payload.get("symphonies", [])
 
@@ -81,11 +78,12 @@ def normal_symphony(symphony_stats_meta):
 # Helper: minimal bot_state entry for a triggered symphony
 # ---------------------------------------------------------------------------
 
+
 def _triggered_bot_state_entry(current_return: float = -5.0) -> dict:
     """Minimal triggered bot_state entry from the engine's persisted shape."""
     return {
         "triggered": True,
-        "current_return": current_return,   # engine stores pct already *100
+        "current_return": current_return,  # engine stores pct already *100
         "high_water_mark": 10.0,
         "shadow_hwm": 12.0,
     }
@@ -132,9 +130,7 @@ def _build_shadow_db_for_sym(
             trigger_id INTEGER
         )
     """)
-    conn.execute(
-        "CREATE INDEX idx_sym_day ON shadow_history (symphony_id, trading_day, ts_utc)"
-    )
+    conn.execute("CREATE INDEX idx_sym_day ON shadow_history (symphony_id, trading_day, ts_utc)")
     conn.execute(
         """INSERT INTO shadow_history
            (symphony_id, ts_utc, ts_et, trading_day, current_return, shadow_return, is_post_trigger)
@@ -179,8 +175,8 @@ def _build_empty_shadow_db(tmp_path: Path, suffix: str = "") -> str:
 # TIER 1 — Per-symphony helpers: get_symphony_today_change
 # ---------------------------------------------------------------------------
 
-class TestGetSymphonyTodayChange:
 
+class TestGetSymphonyTodayChange:
     def test_if_held_equals_last_percent_change_times_100(self, normal_symphony):
         """
         if_held today's change must be last_percent_change * 100.
@@ -217,8 +213,11 @@ class TestGetSymphonyTodayChange:
         # from if_held proves the read source is shadow_history, not the Composer fallback.
         expected_shadow_return = -3.33
         db_file = _build_shadow_db_for_sym(
-            sym_id, shadow_return=expected_shadow_return, current_return=expected_shadow_return,
-            is_post_trigger=0, tmp_path=tmp_path,
+            sym_id,
+            shadow_return=expected_shadow_return,
+            current_return=expected_shadow_return,
+            is_post_trigger=0,
+            tmp_path=tmp_path,
         )
 
         result = get_symphony_today_change(
@@ -299,7 +298,9 @@ class TestGetSymphonyTodayChange:
             f"triggered: if_held must still derive from last_percent_change; got {result['if_held']}"
         )
 
-    def test_if_held_is_finite_float_for_all_fixture_symphonies(self, symphony_stats_meta, tmp_path):
+    def test_if_held_is_finite_float_for_all_fixture_symphonies(
+        self, symphony_stats_meta, tmp_path
+    ):
         """
         All 11 fixture symphonies must produce a finite float for if_held.
         dry_run may be None when no shadow rows exist (AC-M1F.3.5) — that is correct.
@@ -311,16 +312,16 @@ class TestGetSymphonyTodayChange:
         db_file = _build_empty_shadow_db(tmp_path, suffix="_all_syms_tc")
         for sym in symphony_stats_meta:
             result = get_symphony_today_change(
-                sym, bot_state_entry=None,
-                trading_day=_SHADOW_TEST_TRADING_DAY, db_path=db_file,
+                sym,
+                bot_state_entry=None,
+                trading_day=_SHADOW_TEST_TRADING_DAY,
+                db_path=db_file,
             )
             v = result["if_held"]
             assert isinstance(v, float), (
                 f"symphony {sym.get('id')}: if_held must be float; got {type(v)}"
             )
-            assert math.isfinite(v), (
-                f"symphony {sym.get('id')}: if_held must be finite; got {v}"
-            )
+            assert math.isfinite(v), f"symphony {sym.get('id')}: if_held must be finite; got {v}"
             # dry_run=None is correct when shadow_history empty (AC-M1F.3.5)
             assert result["dry_run"] is None, (
                 # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
@@ -333,8 +334,8 @@ class TestGetSymphonyTodayChange:
 # TIER 1 — Per-symphony helpers: get_symphony_cumulative_return
 # ---------------------------------------------------------------------------
 
-class TestGetSymphonyCumulativeReturn:
 
+class TestGetSymphonyCumulativeReturn:
     def test_twr_fallback_when_simple_return_zero_and_net_deposits_zero(self, first_symphony):
         """
         TWR fallback contract: when simple_return==0.0 AND net_deposits==0.0,
@@ -385,16 +386,16 @@ class TestGetSymphonyCumulativeReturn:
 
         expected = normal_symphony["simple_return"] * 100.0  # 0.65976 -> 65.976
         assert result["if_held"] == pytest.approx(expected, abs=1e-6), (
-            f"normal CR: if_held must equal simple_return*100={expected}; "
-            f"got {result['if_held']}"
+            f"normal CR: if_held must equal simple_return*100={expected}; got {result['if_held']}"
         )
 
-    def test_dry_run_is_none_when_no_shadow_rows_not_triggered(self, normal_symphony, tmp_path):
+    def test_dry_run_equals_if_held_when_no_shadow_rows_not_triggered(
+        self, normal_symphony, tmp_path
+    ):
         """
-        Non-triggered, trading_day explicit, no shadow trajectory: dry_run=None.
-        Per AC-M1F.3.5: no fallback to if_held.
-
-        Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
+        Non-triggered, trading_day explicit, no shadow trajectory: dry_run == if_held.
+        Anchored-shadow model: when the bot never diverged (no shadow rows), the series
+        coincides exactly with if_held — both start and stay at the same baseline.
         """
         from analytics import get_symphony_cumulative_return
 
@@ -406,17 +407,18 @@ class TestGetSymphonyCumulativeReturn:
             db_path=db_file,
         )
 
-        # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
-        assert result["dry_run"] is None, (
-            f"non-triggered, no shadow trajectory: dry_run must be None (AC-M1F.3.5); "
-            f"got {result['dry_run']}"
+        assert result["if_held"] is not None, "if_held must be set for this test to be meaningful"
+        assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-6), (
+            f"no shadow rows: dry_run must equal if_held (anchored model — bot coincided with hold); "
+            f"if_held={result['if_held']}, dry_run={result['dry_run']}"
         )
 
-    def test_dry_run_is_none_when_no_shadow_rows_no_bot_state(self, normal_symphony, tmp_path):
+    def test_dry_run_equals_if_held_when_no_shadow_rows_no_bot_state(
+        self, normal_symphony, tmp_path
+    ):
         """
-        No bot_state entry, trading_day explicit, no shadow trajectory: dry_run=None.
-
-        Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
+        No bot_state entry, trading_day explicit, no shadow trajectory: dry_run == if_held.
+        Anchored-shadow model: no shadow rows means no divergence; series coincides with if_held.
         """
         from analytics import get_symphony_cumulative_return
 
@@ -428,18 +430,19 @@ class TestGetSymphonyCumulativeReturn:
             db_path=db_file,
         )
 
-        # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
-        assert result["dry_run"] is None, (
-            f"no bot_state, no shadow trajectory: dry_run must be None (AC-M1F.3.5); "
-            f"got {result['dry_run']}"
+        assert result["if_held"] is not None, "if_held must be set for this test to be meaningful"
+        assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-6), (
+            f"no bot_state, no shadow rows: dry_run must equal if_held (anchored model); "
+            f"if_held={result['if_held']}, dry_run={result['dry_run']}"
         )
 
-    def test_dry_run_is_none_when_triggered_no_shadow_trajectory(self, normal_symphony, tmp_path):
+    def test_dry_run_equals_if_held_when_triggered_no_shadow_trajectory(
+        self, normal_symphony, tmp_path
+    ):
         """
-        Triggered symphony, no shadow trajectory: dry_run=None.
-        Per AC-M1F.3.5: triggered flag does NOT enable bot_state or if_held fallback.
-
-        Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
+        Triggered symphony, no shadow trajectory: dry_run == if_held.
+        Anchored-shadow model: no recorded divergence means the series coincides with if_held.
+        The bot's guard never fired in the window, so both series are identical at baseline.
         """
         from analytics import get_symphony_cumulative_return
 
@@ -452,51 +455,54 @@ class TestGetSymphonyCumulativeReturn:
             db_path=db_file,
         )
 
-        # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
-        assert result["dry_run"] is None, (
-            f"triggered, no shadow trajectory: dry_run must be None (AC-M1F.3.5); "
-            f"got {result['dry_run']} — must NOT fall back to if_held"
+        assert result["if_held"] is not None, "if_held must be set for this test to be meaningful"
+        assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-6), (
+            f"triggered, no shadow trajectory: dry_run must equal if_held (anchored model); "
+            f"if_held={result['if_held']}, dry_run={result['dry_run']}"
         )
 
-    def test_twr_fallback_symphony_dry_run_is_none_when_no_shadow(self, first_symphony, tmp_path):
+    def test_twr_fallback_symphony_dry_run_equals_if_held_when_no_shadow(
+        self, first_symphony, tmp_path
+    ):
         """
-        TWR-fallback symphony, no shadow trajectory: dry_run=None.
-        if_held uses TWR; dry_run reads shadow_history (None when empty).
-
-        Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
+        TWR-fallback symphony, no shadow trajectory: dry_run == if_held.
+        if_held uses TWR; no shadow rows means no divergence — anchored series coincides.
         """
         from analytics import get_symphony_cumulative_return
 
         db_file = _build_empty_shadow_db(tmp_path, suffix="_cr_twr")
         result = get_symphony_cumulative_return(
-            first_symphony, bot_state_entry=None,
-            trading_day=_SHADOW_TEST_TRADING_DAY, db_path=db_file,
+            first_symphony,
+            bot_state_entry=None,
+            trading_day=_SHADOW_TEST_TRADING_DAY,
+            db_path=db_file,
         )
 
         expected_twr = first_symphony["time_weighted_return"] * 100.0
         assert result["if_held"] == pytest.approx(expected_twr, abs=1e-6), (
             f"TWR fallback: if_held must equal TWR*100={expected_twr}; got {result['if_held']}"
         )
-        # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
-        assert result["dry_run"] is None, (
-            f"TWR fallback, no shadow trajectory: dry_run must be None; got {result['dry_run']}"
+        assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-6), (
+            f"TWR fallback, no shadow trajectory: dry_run must equal if_held (anchored model); "
+            f"if_held={result['if_held']}, dry_run={result['dry_run']}"
         )
 
-    def test_all_fixture_symphonies_if_held_finite_dry_run_none_when_no_shadow(
+    def test_all_fixture_symphonies_if_held_finite_dry_run_equals_if_held_when_no_shadow(
         self, symphony_stats_meta, tmp_path
     ):
         """
-        All 11 fixture symphonies: if_held is finite float; dry_run=None when no shadow rows.
-
-        Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
+        All 11 fixture symphonies: if_held is finite float; dry_run == if_held when no
+        shadow rows (anchored model — no divergence means the series coincide).
         """
         from analytics import get_symphony_cumulative_return
 
         db_file = _build_empty_shadow_db(tmp_path, suffix="_cr_all")
         for sym in symphony_stats_meta:
             result = get_symphony_cumulative_return(
-                sym, bot_state_entry=None,
-                trading_day=_SHADOW_TEST_TRADING_DAY, db_path=db_file,
+                sym,
+                bot_state_entry=None,
+                trading_day=_SHADOW_TEST_TRADING_DAY,
+                db_path=db_file,
             )
             if result["if_held"] is not None:
                 assert isinstance(result["if_held"], float), (
@@ -505,23 +511,25 @@ class TestGetSymphonyCumulativeReturn:
                 assert math.isfinite(result["if_held"]), (
                     f"symphony {sym.get('id')}: CR if_held must be finite; got {result['if_held']}"
                 )
-            # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
-            assert result["dry_run"] is None, (
-                f"symphony {sym.get('id')}: dry_run must be None when no shadow rows "
-                f"(AC-M1F.3.5); got {result['dry_run']}"
-            )
+                # Anchored model: no shadow rows → no divergence → dry_run coincides with if_held.
+                assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-6), (
+                    f"symphony {sym.get('id')}: no shadow rows → dry_run must equal if_held "
+                    f"(anchored model); if_held={result['if_held']}, dry_run={result['dry_run']}"
+                )
 
 
 # ---------------------------------------------------------------------------
 # TIER 1 — Per-symphony helpers: get_symphony_max_drawdown
 # ---------------------------------------------------------------------------
 
-class TestGetSymphonyMaxDrawdown:
 
+class TestGetSymphonyMaxDrawdown:
     def test_if_held_equals_max_drawdown_from_composer(self, normal_symphony):
         """
-        if_held MDD must equal max_drawdown from Composer (positive float, convention: [0,1]).
-        Fixture: normal_symphony.max_drawdown = 0.1495
+        if_held MDD must equal max_drawdown * 100 (percentage scale, consistent with CR/TC).
+        Composer returns max_drawdown as a fraction (e.g. 0.1495); the helper must multiply
+        by 100 before returning so all three metrics share the same percentage scale.
+        Fixture: normal_symphony.max_drawdown = 0.1495 → expected if_held = 14.95
         """
         from analytics import get_symphony_max_drawdown
 
@@ -534,10 +542,10 @@ class TestGetSymphonyMaxDrawdown:
             f"result must have 'if_held' and 'dry_run'; got {list(result.keys())}"
         )
 
-        expected = normal_symphony["max_drawdown"]
-        assert result["if_held"] == pytest.approx(expected, abs=1e-9), (
-            f"if_held MDD must equal Composer max_drawdown={expected}; "
-            f"got {result['if_held']}"
+        expected = normal_symphony["max_drawdown"] * 100.0
+        assert result["if_held"] == pytest.approx(expected, abs=1e-6), (
+            f"if_held MDD must equal Composer max_drawdown * 100 = {expected}%; "
+            f"got {result['if_held']} — check analytics.py:585 for the ×100 multiply."
         )
 
     def test_if_held_mdd_is_non_negative(self, symphony_stats_meta):
@@ -615,8 +623,10 @@ class TestGetSymphonyMaxDrawdown:
         db_file = _build_empty_shadow_db(tmp_path, suffix="_mdd_all")
         for sym in symphony_stats_meta:
             result = get_symphony_max_drawdown(
-                sym, bot_state_entry=None,
-                trading_day=_SHADOW_TEST_TRADING_DAY, db_path=db_file,
+                sym,
+                bot_state_entry=None,
+                trading_day=_SHADOW_TEST_TRADING_DAY,
+                db_path=db_file,
             )
             if result["if_held"] is not None:
                 assert isinstance(result["if_held"], float), (
@@ -636,8 +646,8 @@ class TestGetSymphonyMaxDrawdown:
 # TIER 1 — Portfolio-level helpers: get_portfolio_today_change
 # ---------------------------------------------------------------------------
 
-class TestGetPortfolioTodayChange:
 
+class TestGetPortfolioTodayChange:
     def test_returns_dict_with_if_held_and_dry_run(self, symphony_stats_meta):
         """Portfolio today-change must return a dict with 'if_held' and 'dry_run'."""
         from analytics import get_portfolio_today_change
@@ -689,12 +699,8 @@ class TestGetPortfolioTodayChange:
         result = get_portfolio_today_change(symphony_stats_meta, bot_state={})
 
         v = result["if_held"]
-        assert isinstance(v, float), (
-            f"portfolio today-change if_held must be float; got {type(v)}"
-        )
-        assert math.isfinite(v), (
-            f"portfolio today-change if_held must be finite; got {v}"
-        )
+        assert isinstance(v, float), f"portfolio today-change if_held must be float; got {type(v)}"
+        assert math.isfinite(v), f"portfolio today-change if_held must be finite; got {v}"
 
     def test_empty_symphonies_returns_zeros(self):
         """Empty input must not raise; returns 0.0 for both sides."""
@@ -723,18 +729,21 @@ class TestGetPortfolioTodayChange:
         from analytics import get_portfolio_today_change
 
         db_file = _build_empty_shadow_db(tmp_path, suffix="_ptc_untriggered")
-        bot_state = {
-            sym["id"]: _untriggered_bot_state_entry() for sym in symphony_stats_meta
-        }
+        bot_state = {sym["id"]: _untriggered_bot_state_entry() for sym in symphony_stats_meta}
         result = get_portfolio_today_change(
-            symphony_stats_meta, bot_state=bot_state,
-            trading_day=_SHADOW_TEST_TRADING_DAY, db_path=db_file,
+            symphony_stats_meta,
+            bot_state=bot_state,
+            trading_day=_SHADOW_TEST_TRADING_DAY,
+            db_path=db_file,
         )
 
         # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
         # With all shadow rows absent, portfolio dry_run should reflect that (None or 0.0
         # depending on aggregation strategy), but must NOT silently equal if_held via fallback.
-        assert result["dry_run"] != pytest.approx(result["if_held"], abs=0.001) or result["dry_run"] is None, (
+        assert (
+            result["dry_run"] != pytest.approx(result["if_held"], abs=0.001)
+            or result["dry_run"] is None
+        ), (
             f"all-untriggered+no shadow rows: portfolio dry_run must not equal if_held via fallback; "
             f"if_held={result['if_held']}, dry_run={result['dry_run']}"
         )
@@ -753,7 +762,7 @@ class TestGetPortfolioTodayChange:
         triggered_symphony = symphony_stats_meta[0]
         triggered_id = triggered_symphony["id"]
         frozen_shadow_return = -50.0  # extreme sentinel to detect which source is used
-        bot_state_current = 100.0      # different sentinel
+        bot_state_current = 100.0  # different sentinel
 
         db_file = _build_shadow_db_for_sym(
             triggered_id,
@@ -770,8 +779,10 @@ class TestGetPortfolioTodayChange:
             }
         }
         result = get_portfolio_today_change(
-            symphony_stats_meta, bot_state=bot_state,
-            trading_day=_SHADOW_TEST_TRADING_DAY, db_path=db_file,
+            symphony_stats_meta,
+            bot_state=bot_state,
+            trading_day=_SHADOW_TEST_TRADING_DAY,
+            db_path=db_file,
         )
 
         # If dry_run used bot_state current_return=100.0, portfolio would be pulled up.
@@ -788,8 +799,8 @@ class TestGetPortfolioTodayChange:
 # TIER 1 — Portfolio-level helpers: get_portfolio_cumulative_return
 # ---------------------------------------------------------------------------
 
-class TestGetPortfolioCumulativeReturn:
 
+class TestGetPortfolioCumulativeReturn:
     def test_returns_dict_with_if_held_and_dry_run(self, symphony_stats_meta):
         """Portfolio CR must return a dict with 'if_held' and 'dry_run'."""
         from analytics import get_portfolio_cumulative_return
@@ -851,12 +862,8 @@ class TestGetPortfolioCumulativeReturn:
 
         v = result["if_held"]
         if v is not None:
-            assert isinstance(v, float), (
-                f"portfolio CR if_held must be float; got {type(v)}"
-            )
-            assert math.isfinite(v), (
-                f"portfolio CR if_held must be finite; got {v}"
-            )
+            assert isinstance(v, float), f"portfolio CR if_held must be float; got {type(v)}"
+            assert math.isfinite(v), f"portfolio CR if_held must be finite; got {v}"
 
     def test_empty_symphonies_returns_none(self):
         """Empty input must not raise; returns None sentinel for both sides (no data)."""
@@ -871,40 +878,40 @@ class TestGetPortfolioCumulativeReturn:
             f"empty symphonies: CR dry_run must be None; got {result['dry_run']}"
         )
 
-    def test_portfolio_cr_dry_run_is_none_when_no_shadow_rows(
+    def test_portfolio_cr_dry_run_equals_if_held_when_no_shadow_rows(
         self, symphony_stats_meta, tmp_path
     ):
         """
-        All-untriggered, no shadow trajectory: portfolio CR dry_run=None.
-        Per AC-M1F.3.5: no per-symphony shadow rows → per-symphony dry_run=None →
-        portfolio aggregator excludes them → dry_run=None.
-
-        Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
+        All-untriggered, no shadow trajectory: portfolio CR dry_run == portfolio CR if_held.
+        Anchored-shadow model: each per-symphony CR returns if_held when no shadow rows exist
+        (no divergence recorded), so the portfolio aggregate of dry_run equals that of if_held.
         """
         from analytics import get_portfolio_cumulative_return
 
         db_file = _build_empty_shadow_db(tmp_path, suffix="_pcr_untriggered")
-        bot_state = {
-            sym["id"]: _untriggered_bot_state_entry() for sym in symphony_stats_meta
-        }
+        bot_state = {sym["id"]: _untriggered_bot_state_entry() for sym in symphony_stats_meta}
         result = get_portfolio_cumulative_return(
-            symphony_stats_meta, bot_state=bot_state,
-            trading_day=_SHADOW_TEST_TRADING_DAY, db_path=db_file,
+            symphony_stats_meta,
+            bot_state=bot_state,
+            trading_day=_SHADOW_TEST_TRADING_DAY,
+            db_path=db_file,
         )
 
-        # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
-        assert result["dry_run"] is None, (
-            f"all-untriggered+no shadow trajectory: portfolio CR dry_run must be None; "
-            f"got {result['dry_run']}"
-        )
+        # Anchored model: per-symphony dry_run == if_held when no shadow rows →
+        # portfolio aggregation of both sides uses the same values → dry_run == if_held.
+        if result["if_held"] is not None:
+            assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-6), (
+                f"no shadow trajectory: portfolio CR dry_run must equal if_held (anchored model); "
+                f"if_held={result['if_held']}, dry_run={result['dry_run']}"
+            )
 
 
 # ---------------------------------------------------------------------------
 # TIER 1 — Portfolio-level helpers: get_portfolio_max_drawdown
 # ---------------------------------------------------------------------------
 
-class TestGetPortfolioMaxDrawdown:
 
+class TestGetPortfolioMaxDrawdown:
     def test_returns_dict_with_if_held_and_dry_run(self, symphony_stats_meta):
         """Portfolio MDD must return a dict with 'if_held' and 'dry_run'."""
         from analytics import get_portfolio_max_drawdown
@@ -919,8 +926,9 @@ class TestGetPortfolioMaxDrawdown:
 
     def test_if_held_is_value_weighted_average_of_max_drawdown(self, symphony_stats_meta):
         """
-        Portfolio if_held MDD must be value-weighted mean of symphony.max_drawdown.
-        Composer max_drawdown is a positive float (convention: magnitude, not signed).
+        Portfolio if_held MDD must be value-weighted mean of (symphony.max_drawdown * 100).
+        Per-symphony MDD is now percentage-scale (max_drawdown fraction × 100), consistent
+        with CR and TC. Portfolio aggregation value-weights those percentage values.
         """
         from analytics import get_portfolio_max_drawdown
 
@@ -931,14 +939,14 @@ class TestGetPortfolioMaxDrawdown:
         for sym in symphony_stats_meta:
             w = float(sym.get("value", 0.0))
             if w > 0:
-                weighted_sum += sym["max_drawdown"] * w
+                weighted_sum += sym["max_drawdown"] * 100.0 * w
                 total_weight += w
 
         if total_weight > 0:
             expected = weighted_sum / total_weight
             assert result["if_held"] == pytest.approx(expected, abs=1e-6), (
-                f"portfolio if_held MDD must be value-weighted avg; "
-                f"expected {expected:.6f}, got {result['if_held']:.6f}"
+                f"portfolio if_held MDD must be value-weighted avg of (max_drawdown*100); "
+                f"expected {expected:.6f}%, got {result['if_held']:.6f}%"
             )
 
     def test_if_held_mdd_is_non_negative(self, symphony_stats_meta):
@@ -965,12 +973,8 @@ class TestGetPortfolioMaxDrawdown:
 
         v = result["if_held"]
         if v is not None:
-            assert isinstance(v, float), (
-                f"portfolio MDD if_held must be float; got {type(v)}"
-            )
-            assert math.isfinite(v), (
-                f"portfolio MDD if_held must be finite; got {v}"
-            )
+            assert isinstance(v, float), f"portfolio MDD if_held must be float; got {type(v)}"
+            assert math.isfinite(v), f"portfolio MDD if_held must be finite; got {v}"
 
     def test_empty_symphonies_returns_none(self):
         """Empty input must not raise; returns None sentinel for both sides (no data)."""
@@ -985,9 +989,7 @@ class TestGetPortfolioMaxDrawdown:
             f"empty symphonies: MDD dry_run must be None; got {result['dry_run']}"
         )
 
-    def test_portfolio_mdd_dry_run_is_none_when_no_shadow_rows(
-        self, symphony_stats_meta, tmp_path
-    ):
+    def test_portfolio_mdd_dry_run_is_none_when_no_shadow_rows(self, symphony_stats_meta, tmp_path):
         """
         All-untriggered, no shadow trajectory: portfolio MDD dry_run=None.
         Per AC-M1F.3.5: no per-symphony shadow rows → per-symphony dry_run=None →
@@ -998,12 +1000,12 @@ class TestGetPortfolioMaxDrawdown:
         from analytics import get_portfolio_max_drawdown
 
         db_file = _build_empty_shadow_db(tmp_path, suffix="_pmdd_untriggered")
-        bot_state = {
-            sym["id"]: _untriggered_bot_state_entry() for sym in symphony_stats_meta
-        }
+        bot_state = {sym["id"]: _untriggered_bot_state_entry() for sym in symphony_stats_meta}
         result = get_portfolio_max_drawdown(
-            symphony_stats_meta, bot_state=bot_state,
-            trading_day=_SHADOW_TEST_TRADING_DAY, db_path=db_file,
+            symphony_stats_meta,
+            bot_state=bot_state,
+            trading_day=_SHADOW_TEST_TRADING_DAY,
+            db_path=db_file,
         )
 
         # Per M1F AC-M1F.3.1: dry_run reads shadow_history, never falls back to if_held.
@@ -1017,8 +1019,8 @@ class TestGetPortfolioMaxDrawdown:
 # TIER 1 — Property invariant: TWR fallback only triggers on BOTH conditions
 # ---------------------------------------------------------------------------
 
-class TestTwrFallbackConditions:
 
+class TestTwrFallbackConditions:
     def test_fallback_not_triggered_when_only_net_deposits_is_zero(self):
         """
         If simple_return != 0.0 but net_deposits == 0.0 — NOT a fallback case.
@@ -1028,8 +1030,8 @@ class TestTwrFallbackConditions:
 
         sym = {
             "id": "test-sym",
-            "simple_return": 0.5,       # non-zero
-            "net_deposits": 0.0,        # zero (only one condition)
+            "simple_return": 0.5,  # non-zero
+            "net_deposits": 0.0,  # zero (only one condition)
             "time_weighted_return": 99.0,  # sentinel — must NOT be used
             "last_percent_change": 0.01,
             "max_drawdown": 0.1,
@@ -1051,8 +1053,8 @@ class TestTwrFallbackConditions:
 
         sym = {
             "id": "test-sym",
-            "simple_return": 0.0,       # zero
-            "net_deposits": 500.0,      # non-zero (only one condition)
+            "simple_return": 0.0,  # zero
+            "net_deposits": 500.0,  # non-zero (only one condition)
             "time_weighted_return": 99.0,  # sentinel — must NOT be used
             "last_percent_change": 0.01,
             "max_drawdown": 0.1,
@@ -1098,8 +1100,8 @@ class TestTwrFallbackConditions:
 # updated deliberately — they must not silently pass on both behaviors.
 # ---------------------------------------------------------------------------
 
-class TestMissingFieldContract:
 
+class TestMissingFieldContract:
     def test_today_change_raises_on_missing_last_percent_change(self):
         """
         get_symphony_today_change raises KeyError when last_percent_change is absent.
@@ -1215,7 +1217,7 @@ class TestMissingFieldContract:
             },
             {
                 "id": "sym-no-value",
-                "last_percent_change": 0.99,   # sentinel — must not contribute
+                "last_percent_change": 0.99,  # sentinel — must not contribute
                 "simple_return": 0.9,
                 "net_deposits": 100.0,
                 "time_weighted_return": 0.9,

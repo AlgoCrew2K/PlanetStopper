@@ -15,9 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -388,44 +387,45 @@ def test_sell_account_logs_error_level_entry_on_paper_invocation(client, monkeyp
 # ---------------------------------------------------------------------------
 
 
+_CHROME_HTML = Path(__file__).parent.parent.parent / "templates" / "_chrome.html"
+_CHROME_JS = Path(__file__).parent.parent.parent / "static" / "chrome.js"
+
+
 def test_template_contains_emergency_liquidate_button(tmp_path):
     """
-    The index.html template must contain an 'Emergency Liquidate' button
-    (trigger for the new hardened modal).
+    The _chrome.html template (included on all routes) must contain an
+    'Emergency Liquidate' button trigger.  The button lives in the chrome so
+    it is one-click-away regardless of which page the operator is on.
     """
-    template_path = (
-        Path(__file__).parent.parent.parent / "templates" / "index.html"
-    )
-    content = template_path.read_text(encoding="utf-8")
-    # The button text or id must surface the emergency liquidation concept.
+    content = _CHROME_HTML.read_text(encoding="utf-8")
     assert (
         "Emergency Liquidate" in content
         or "emergency-liquidate" in content
         or "emergency_liquidate" in content
-    ), (
-        "templates/index.html must contain an Emergency Liquidate button trigger"
-    )
+    ), "templates/_chrome.html must contain an Emergency Liquidate button trigger"
 
 
 def test_template_contains_panic_modal_with_required_elements():
     """
     The panic-confirm modal must include:
-      - an account dropdown (select element or equivalent sourced from accounts_map)
+      - an account selector (select/combobox or JS-populated list)
       - a text input for the confirm phrase
-      - a confirm button (red / rose class)
+      - a confirm button with a destructive visual treatment (Studio: --studio-neg)
       - a cancel button
-    """
-    template_path = (
-        Path(__file__).parent.parent.parent / "templates" / "index.html"
-    )
-    content = template_path.read_text(encoding="utf-8")
 
-    # Account dropdown — must have a select or combobox targeting account IDs
+    The modal lives in _chrome.html so it is available on all routes.
+    """
+    content = _CHROME_HTML.read_text(encoding="utf-8")
+
+    # Account selector — select element, or id referencing account/liquidate concept,
+    # or JS-populated via accounts_map / /api/accounts
     assert (
         "panic-account" in content
         or "liquidate-account" in content
         or "accounts_map" in content
-    ), "modal must have an account selector sourced from accounts_map"
+        or "api/accounts" in content
+        or "panicAccount" in content
+    ), "modal must have an account selector (select, combobox, or JS-populated from accounts)"
 
     # Confirm-phrase text input
     assert (
@@ -433,12 +433,16 @@ def test_template_contains_panic_modal_with_required_elements():
         or "liquidate-phrase" in content
         or "confirm-phrase" in content
         or "confirm_phrase" in content
+        or "panicPhrase" in content
     ), "modal must contain a confirm-phrase text input"
 
-    # Confirm button with a red/rose visual treatment
-    assert "rose" in content or "bg-red" in content, (
-        "confirm button must have a red/rose CSS class for operator safety signaling"
-    )
+    # Confirm button — Studio design uses --studio-neg for destructive actions (not Tailwind bg-red)
+    assert (
+        "studio-neg" in content
+        or "rose" in content
+        or "bg-red" in content
+        or "danger" in content
+    ), "confirm button must have a destructive visual treatment (studio-neg / red / rose / danger)"
 
     # Cancel button
     assert "Cancel" in content, "modal must contain a Cancel button"
@@ -451,22 +455,21 @@ def test_template_contains_panic_modal_with_required_elements():
 
 def test_template_js_disables_confirm_until_liquidate_typed():
     """
-    The JS in index.html must enforce that the confirm button stays disabled
-    until the text input value equals 'LIQUIDATE'.  We check the template
-    source for the pattern — this is a static analysis of the client contract.
+    The JS in static/chrome.js must enforce that the confirm button stays
+    disabled until the text input value equals 'LIQUIDATE'.
+
+    The JS moved from index.html to chrome.js so it loads on all routes
+    (chrome is included everywhere).
     """
-    template_path = (
-        Path(__file__).parent.parent.parent / "templates" / "index.html"
-    )
-    content = template_path.read_text(encoding="utf-8")
+    content = _CHROME_JS.read_text(encoding="utf-8")
 
     # The JS must compare the input value to the exact string "LIQUIDATE"
     assert '"LIQUIDATE"' in content or "'LIQUIDATE'" in content, (
-        "JS must compare confirm-phrase input to the exact string LIQUIDATE"
+        "chrome.js must compare confirm-phrase input to the exact string LIQUIDATE"
     )
 
     # The confirm button must be conditioned on .disabled
-    assert "disabled" in content, "JS must set .disabled on the confirm button"
+    assert "disabled" in content, "chrome.js must set .disabled on the confirm button"
 
 
 # ---------------------------------------------------------------------------

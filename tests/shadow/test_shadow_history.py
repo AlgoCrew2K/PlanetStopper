@@ -14,15 +14,13 @@ ZERO live calls — all DB interactions use tmp_path SQLite. No mock of math eng
 from __future__ import annotations
 
 import ast
-import importlib
 import inspect
 import json
 import logging
 import pathlib
 import re
 import sqlite3
-from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -71,14 +69,10 @@ _IDX_SYM_DAY = (
 )
 
 _IDX_DAY = (
-    "CREATE INDEX IF NOT EXISTS idx_shadow_history_day "
-    "ON shadow_history (trading_day, ts_utc)"
+    "CREATE INDEX IF NOT EXISTS idx_shadow_history_day ON shadow_history (trading_day, ts_utc)"
 )
 
-_IDX_TS_UTC = (
-    "CREATE INDEX IF NOT EXISTS idx_shadow_history_ts_utc "
-    "ON shadow_history (ts_utc)"
-)
+_IDX_TS_UTC = "CREATE INDEX IF NOT EXISTS idx_shadow_history_ts_utc ON shadow_history (ts_utc)"
 
 
 def _create_shadow_schema(conn: sqlite3.Connection) -> None:
@@ -125,9 +119,7 @@ def test_migration_008_file_exists():
     migrations/008_shadow_history.sql must exist in the project migrations dir.
     BC-1: next migration number is 008 (_MIGRATION_FILES currently lists 004-007).
     """
-    migrations_dir = (
-        pathlib.Path(__file__).parent.parent.parent / "migrations"
-    )
+    migrations_dir = pathlib.Path(__file__).parent.parent.parent / "migrations"
     migration_file = migrations_dir / "008_shadow_history.sql"
     assert migration_file.exists(), (
         f"migrations/008_shadow_history.sql does not exist at {migration_file}. "
@@ -250,8 +242,10 @@ def test_record_shadow_observation_opens_own_connection(tmp_path):
 
     fixture_top = _load("pre_trigger_cycle.json")
 
-    with patch.object(database, "DB_FILE", str(db_path)), \
-         patch("sqlite3.connect", side_effect=spy_connect):
+    with (
+        patch.object(database, "DB_FILE", str(db_path)),
+        patch("sqlite3.connect", side_effect=spy_connect),
+    ):
         database.record_shadow_observation(
             symphony_id=inp["symphony_id"],
             account_id=inp["account_id"],
@@ -289,8 +283,7 @@ def test_record_shadow_observation_swallows_failure_and_logs_error(tmp_path, cap
     fixture = _load("pre_trigger_cycle.json")
     inp = fixture["input"]
 
-    with patch.object(database, "DB_FILE", str(db_path)), \
-         caplog.at_level(logging.ERROR):
+    with patch.object(database, "DB_FILE", str(db_path)), caplog.at_level(logging.ERROR):
         database.record_shadow_observation(
             symphony_id=inp["symphony_id"],
             account_id=inp["account_id"],
@@ -415,8 +408,7 @@ def test_shadow_return_frozen_at_triggered_at_return_when_triggered(tmp_path):
     assert ipt == 1, f"post-trigger: is_post_trigger must be 1; got {ipt}"
     # trigger_id is advisory soft ref — just a nullable int, not a FK
     assert tid == inp["trigger_id"], (
-        f"trigger_id must be written as-is (advisory); "
-        f"expected {inp['trigger_id']}, got {tid}"
+        f"trigger_id must be written as-is (advisory); expected {inp['trigger_id']}, got {tid}"
     )
 
 
@@ -540,8 +532,7 @@ def test_prune_old_shadow_history_uses_subquery_delete_limit(tmp_path):
         "PA-M1F-5: bare DELETE ... LIMIT is not portable across SQLite builds."
     )
     assert "DELETE FROM shadow_history WHERE id IN" in source, (
-        "prune_old_shadow_history must DELETE via 'WHERE id IN (subquery)' pattern. "
-        "PA-M1F-5."
+        "prune_old_shadow_history must DELETE via 'WHERE id IN (subquery)' pattern. PA-M1F-5."
     )
 
 
@@ -551,8 +542,9 @@ def test_prune_old_shadow_history_deletes_old_rows_keeps_recent(tmp_path):
     leave rows within the window intact.
     Counts derived from retention_rotation fixture.
     """
-    import database
     import datetime
+
+    import database
 
     db_path = tmp_path / "state.db"
     conn = sqlite3.connect(str(db_path))
@@ -566,9 +558,7 @@ def test_prune_old_shadow_history_deletes_old_rows_keeps_recent(tmp_path):
     retention_days = setup["retention_days"]
 
     for i in range(setup["rows_older_than_retention_days"]):
-        ts = (now - datetime.timedelta(days=retention_days + i + 1)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        ts = (now - datetime.timedelta(days=retention_days + i + 1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         conn.execute(
             "INSERT INTO shadow_history "
             "(ts_utc, ts_et, trading_day, symphony_id, current_return, shadow_return) "
@@ -613,9 +603,7 @@ def test_prune_shadow_history_called_from_scheduler_callback_not_flask_route():
     BC-4: scheduler invocation prevents lock contention with live cycle path.
     Verified by AST: searching for the call site in app.py.
     """
-    app_source_path = (
-        pathlib.Path(__file__).parent.parent.parent / "app.py"
-    )
+    app_source_path = pathlib.Path(__file__).parent.parent.parent / "app.py"
     source = app_source_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
@@ -669,7 +657,9 @@ def test_get_symphony_today_change_returns_distinct_dry_run_from_shadow_history(
     all_rows = fixture["rows"]
 
     # Seed only SYM_ALPHA day 2 rows (trading_day=2026-05-15)
-    day2_rows = [r for r in all_rows if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-15"]
+    day2_rows = [
+        r for r in all_rows if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-15"
+    ]
     _seed_rows(conn, day2_rows)
     conn.close()
 
@@ -686,6 +676,7 @@ def test_get_symphony_today_change_returns_distinct_dry_run_from_shadow_history(
     }
 
     import database as _database_mod
+
     with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_symphony_today_change(
             sym_dict,
@@ -731,6 +722,7 @@ def test_get_symphony_today_change_returns_none_when_shadow_history_empty(tmp_pa
     }
 
     import database as _database_mod
+
     with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_symphony_today_change(
             sym_dict,
@@ -748,10 +740,16 @@ def test_get_symphony_today_change_returns_none_when_shadow_history_empty(tmp_pa
 # ---------------------------------------------------------------------------
 
 
-def test_get_symphony_cumulative_return_uses_chain_link_of_last_row_per_day(tmp_path):
+def test_get_symphony_cumulative_return_uses_anchored_chain_link_of_last_row_per_day(tmp_path):
     """
-    dry_run CR must be the chain-link product of EOD shadow_return per trading_day.
-    Day-row selection: last row per day by ts_utc DESC LIMIT 1.
+    dry_run CR must be the chain-link product of EOD shadow_return per trading_day,
+    ANCHORED so the bot series starts at the same baseline as if_held.
+
+    Anchored formula: dry_run = if_held + raw_chain_link_percent
+    where raw_chain_link_percent = (∏(1 + r_i/100) - 1) * 100.
+
+    This makes both series start at the same Day-0 value; divergence equals the
+    guard effect. Day-row selection: last row per day by ts_utc DESC LIMIT 1.
     PA-M1F-16 / AC-M1F.3.2.
     """
     import analytics
@@ -768,7 +766,7 @@ def test_get_symphony_cumulative_return_uses_chain_link_of_last_row_per_day(tmp_
     expected = fixture["expected"]["SYM_ALPHA"]
     r1 = expected["chain_link_cr_day1_r"]
     r2 = expected["chain_link_cr_day2_r"]
-    expected_cumulative = ((1 + r1 / 100.0) * (1 + r2 / 100.0) - 1) * 100.0
+    raw_chain_link = ((1 + r1 / 100.0) * (1 + r2 / 100.0) - 1) * 100.0
 
     sym_dict = {
         "id": "SYM_ALPHA",
@@ -780,26 +778,34 @@ def test_get_symphony_cumulative_return_uses_chain_link_of_last_row_per_day(tmp_
         "max_drawdown": 0.10,
         "value": 10000.0,
     }
+    # if_held = simple_return * 100 = 0.05 * 100 = 5.0
+    if_held = sym_dict["simple_return"] * 100.0
+    expected_anchored = if_held + raw_chain_link
 
     import database as _database_mod
+
     with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_symphony_cumulative_return(
             sym_dict,
             bot_state_entry=None,
         )
 
-    # Tolerance 1e-6: floating-point chain-link arithmetic; fixture comment explains derivation
-    assert result["dry_run"] == pytest.approx(expected_cumulative, abs=1e-6), (
-        f"dry_run CR must be chain-link product of EOD shadow_return per day. "
-        f"Expected {expected_cumulative:.6f}%, got {result['dry_run']}. "
-        f"PA-M1F-16: last row per day by ts_utc, chain-link formula."
+    # Tolerance 1e-6: floating-point chain-link arithmetic; fixture explains derivation.
+    # Anchored: dry_run = if_held + raw_chain_link so both series share the same Day-0 baseline.
+    assert result["dry_run"] == pytest.approx(expected_anchored, abs=1e-6), (
+        f"dry_run CR must be anchored chain-link (if_held + raw_chain_link). "
+        f"if_held={if_held:.6f}, raw_chain_link={raw_chain_link:.6f}, "
+        f"expected_anchored={expected_anchored:.6f}, got {result['dry_run']}. "
+        f"PA-M1F-16 anchored-shadow model."
     )
 
 
-def test_get_symphony_cumulative_return_returns_none_when_fewer_than_2_days(tmp_path):
+def test_get_symphony_cumulative_return_equals_if_held_when_fewer_than_2_days(tmp_path):
     """
-    dry_run CR must be None when fewer than 2 distinct trading days exist in shadow_history.
-    AC-M1F.3.2: chain-link requires >= 2 days; sentinel prevents misleading single-day return.
+    dry_run CR must equal if_held when fewer than 2 distinct trading days exist in
+    shadow_history. Anchored-shadow model: insufficient history to compute a divergence;
+    the bot series coincides with if_held (no guard effect measurable yet).
+    AC-M1F.3.2 (anchored variant).
     """
     import analytics
 
@@ -810,7 +816,8 @@ def test_get_symphony_cumulative_return_returns_none_when_fewer_than_2_days(tmp_
     # Seed only 1 trading day
     fixture = _load("analytics_shadow_history.json")
     one_day = [
-        r for r in fixture["rows"]
+        r
+        for r in fixture["rows"]
         if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-14"
     ]
     _seed_rows(conn, one_day)
@@ -828,15 +835,17 @@ def test_get_symphony_cumulative_return_returns_none_when_fewer_than_2_days(tmp_
     }
 
     import database as _database_mod
+
     with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_symphony_cumulative_return(
             sym_dict,
             bot_state_entry=None,
         )
 
-    assert result["dry_run"] is None, (
-        f"Fewer than 2 distinct days: dry_run CR must be None. "
-        f"Got {result['dry_run']}. AC-M1F.3.2."
+    assert result["if_held"] is not None, "if_held must be set for this test to be meaningful"
+    assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-6), (
+        f"Fewer than 2 distinct days: dry_run CR must equal if_held (anchored model). "
+        f"if_held={result['if_held']}, got dry_run={result['dry_run']}. AC-M1F.3.2."
     )
 
 
@@ -858,7 +867,8 @@ def test_get_symphony_max_drawdown_returns_none_when_fewer_than_2_days(tmp_path)
 
     fixture = _load("analytics_shadow_history.json")
     one_day = [
-        r for r in fixture["rows"]
+        r
+        for r in fixture["rows"]
         if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-14"
     ]
     _seed_rows(conn, one_day)
@@ -876,6 +886,7 @@ def test_get_symphony_max_drawdown_returns_none_when_fewer_than_2_days(tmp_path)
     }
 
     import database as _database_mod
+
     with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_symphony_max_drawdown(
             sym_dict,
@@ -893,10 +904,10 @@ def test_get_symphony_max_drawdown_returns_none_when_fewer_than_2_days(tmp_path)
 # ---------------------------------------------------------------------------
 
 
-def test_helpers_return_none_not_if_held_fallback_when_shadow_history_empty(tmp_path):
+def test_today_change_and_mdd_return_none_when_shadow_history_empty(tmp_path):
     """
-    All three per-symphony helpers must return dry_run=None when shadow_history
-    has no rows for the symphony. NO fall-back to if_held values.
+    today_change and max_drawdown helpers return dry_run=None when shadow_history has no rows.
+    These two helpers have no anchor baseline — they read intraday shadow data directly.
     AC-M1F.3.5: avoids cycleat-fix-class regression.
     """
     import analytics
@@ -918,16 +929,52 @@ def test_helpers_return_none_not_if_held_fallback_when_shadow_history_empty(tmp_
     }
 
     import database as _database_mod
+
     with patch.object(_database_mod, "DB_FILE", str(db_path)):
         tc = analytics.get_symphony_today_change(sym_dict, bot_state_entry=None)
-        cr = analytics.get_symphony_cumulative_return(sym_dict, bot_state_entry=None)
         mdd = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None)
 
-    for helper_name, result in [("today_change", tc), ("cumulative_return", cr), ("max_drawdown", mdd)]:
+    for helper_name, result in [("today_change", tc), ("max_drawdown", mdd)]:
         assert result["dry_run"] is None, (
             f"{helper_name}: empty shadow_history must yield dry_run=None, "
             f"not fall back to if_held={result.get('if_held')}. AC-M1F.3.5."
         )
+
+
+def test_cumulative_return_equals_if_held_when_shadow_history_empty(tmp_path):
+    """
+    cumulative_return returns dry_run == if_held when shadow_history has no rows.
+    Anchored-shadow model: no recorded divergence means the bot series coincides
+    with the if_held baseline. AC-M1F.3.5 (anchored variant for CR).
+    """
+    import analytics
+
+    db_path = tmp_path / "state.db"
+    conn = sqlite3.connect(str(db_path))
+    _create_shadow_schema(conn)
+    conn.close()
+
+    sym_dict = {
+        "id": "SYM_EMPTY",
+        "trading_day": "2026-05-16",
+        "last_percent_change": 0.05,
+        "simple_return": 0.10,
+        "net_deposits": 1000.0,
+        "time_weighted_return": 0.10,
+        "max_drawdown": 0.08,
+        "value": 8000.0,
+    }
+
+    import database as _database_mod
+
+    with patch.object(_database_mod, "DB_FILE", str(db_path)):
+        cr = analytics.get_symphony_cumulative_return(sym_dict, bot_state_entry=None)
+
+    assert cr["if_held"] is not None, "if_held must be set for this test to be meaningful"
+    assert cr["dry_run"] == pytest.approx(cr["if_held"], abs=1e-6), (
+        f"cumulative_return: empty shadow_history must yield dry_run == if_held (anchored model). "
+        f"if_held={cr['if_held']}, dry_run={cr['dry_run']}."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -951,7 +998,8 @@ def test_portfolio_aggregator_excludes_none_dry_run_contributors(tmp_path):
     # SYM_GOOD has shadow_history; SYM_NONE has no rows → dry_run=None
     fixture = _load("analytics_shadow_history.json")
     sym_alpha_day2 = [
-        r for r in fixture["rows"]
+        r
+        for r in fixture["rows"]
         if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-15"
     ]
     with sqlite3.connect(str(db_path)) as c:
@@ -981,11 +1029,15 @@ def test_portfolio_aggregator_excludes_none_dry_run_contributors(tmp_path):
     ]
 
     import database as _database_mod
+
     with patch.object(_database_mod, "DB_FILE", str(db_path)):
         result = analytics.get_portfolio_today_change(symphonies, bot_state={})
 
-    assert result["dry_run"] is not None, "Portfolio dry_run must not be None when one symphony has data"
+    assert result["dry_run"] is not None, (
+        "Portfolio dry_run must not be None when one symphony has data"
+    )
     import math
+
     assert math.isfinite(result["dry_run"]), (
         f"Portfolio dry_run must be finite after excluding None contributors; "
         f"got {result['dry_run']}. AC-M1F.3.6."
@@ -1014,7 +1066,8 @@ def test_shadow_hwm_is_max_current_return_not_max_shadow_return(tmp_path):
 
     fixture = _load("analytics_shadow_history.json")
     alpha_rows_day1 = [
-        r for r in fixture["rows"]
+        r
+        for r in fixture["rows"]
         if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-14"
     ]
     _seed_rows(conn, alpha_rows_day1)
@@ -1046,9 +1099,7 @@ def test_column_header_at_line_62_reads_held_return():
     PA-M1F-1 / AC-M1F.4.1: rename from 'If Held (Shadow)' → 'Held Return'.
     The column content (shadow_str block) is NOT changed — only the header label.
     """
-    template_path = (
-        pathlib.Path(__file__).parent.parent.parent / "templates" / "table_partial.html"
-    )
+    template_path = pathlib.Path(__file__).parent.parent.parent / "templates" / "table_partial.html"
     lines = template_path.read_text(encoding="utf-8").splitlines()
     # Line 62 is 1-indexed → index 61
     line_62 = lines[61]
@@ -1059,8 +1110,7 @@ def test_column_header_at_line_62_reads_held_return():
         f"Found: {line_62!r}"
     )
     assert "If Held (Shadow)" not in line_62, (
-        f"Old label 'If Held (Shadow)' must not appear at line 62 after rename. "
-        f"Found: {line_62!r}"
+        f"Old label 'If Held (Shadow)' must not appear at line 62 after rename. Found: {line_62!r}"
     )
 
 
@@ -1082,16 +1132,17 @@ def test_shadow_performance_widget_renders_dash_for_no_shadow_history_rows(tmp_p
     _minimal_state = {"date": "2026-05-16", "last_successful_cycle_at": "2026-05-16T14:00:00"}
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.load_state = MagicMock(return_value=_minimal_state)
-            db_mock.normalize_name = MagicMock(return_value="")
-            db_mock.get_triggers = MagicMock(return_value=[])
-            db_mock.get_shadow_divergence = MagicMock(return_value={
+    with app_module.app.test_client() as c, patch.object(app_module, "database") as db_mock:
+        db_mock.load_state = MagicMock(return_value=_minimal_state)
+        db_mock.normalize_name = MagicMock(return_value="")
+        db_mock.get_triggers = MagicMock(return_value=[])
+        db_mock.get_shadow_divergence = MagicMock(
+            return_value={
                 "by_symphony": {"SYM_ALPHA": {"today": None, "cumulative": None}},
                 "portfolio_today": None,
-            })
-            resp = c.get("/api/state")
+            }
+        )
+        resp = c.get("/api/state")
 
     assert resp.status_code == 200, (
         f"/api/state returned {resp.status_code}; must be 200. "
@@ -1150,16 +1201,17 @@ def test_api_state_includes_shadow_divergence_key():
     _minimal_state = {"date": "2026-05-16", "last_successful_cycle_at": "2026-05-16T14:00:00"}
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        with patch.object(app_module, "database") as db_mock:
-            db_mock.load_state = MagicMock(return_value=_minimal_state)
-            db_mock.normalize_name = MagicMock(return_value="")
-            db_mock.get_triggers = MagicMock(return_value=[])
-            db_mock.get_shadow_divergence = MagicMock(return_value={
+    with app_module.app.test_client() as c, patch.object(app_module, "database") as db_mock:
+        db_mock.load_state = MagicMock(return_value=_minimal_state)
+        db_mock.normalize_name = MagicMock(return_value="")
+        db_mock.get_triggers = MagicMock(return_value=[])
+        db_mock.get_shadow_divergence = MagicMock(
+            return_value={
                 "by_symphony": {},
                 "portfolio_today": None,
-            })
-            resp = c.get("/api/state")
+            }
+        )
+        resp = c.get("/api/state")
 
     assert resp.status_code == 200, (
         f"/api/state returned {resp.status_code}. "
@@ -1197,7 +1249,8 @@ def test_eod_divergence_computed_from_last_row_per_ts_utc_desc(tmp_path):
 
     fixture = _load("analytics_shadow_history.json")
     alpha_rows_day1 = [
-        r for r in fixture["rows"]
+        r
+        for r in fixture["rows"]
         if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-14"
     ]
     _seed_rows(conn, alpha_rows_day1)
@@ -1233,9 +1286,7 @@ def test_eod_divergence_code_path_does_not_call_order_functions():
     PA-M1F-9 / AC-M1F.5.3: divergence is observational-only.
     Verified by AST walk of alpha_bot_execution.py post-mortem branch.
     """
-    source_path = (
-        pathlib.Path(__file__).parent.parent.parent / "alpha_bot_execution.py"
-    )
+    source_path = pathlib.Path(__file__).parent.parent.parent / "alpha_bot_execution.py"
     source = source_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
@@ -1280,7 +1331,8 @@ def test_v1_query_shape_1_post_trigger_alpha_attribution(tmp_path):
 
     fixture = _load("analytics_shadow_history.json")
     alpha_rows_day1 = [
-        r for r in fixture["rows"]
+        r
+        for r in fixture["rows"]
         if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-14"
     ]
     _seed_rows(conn, alpha_rows_day1)
@@ -1322,7 +1374,8 @@ def test_v1_query_shape_2_intraday_trajectory_columns(tmp_path):
 
     fixture = _load("analytics_shadow_history.json")
     alpha_rows_day1 = [
-        r for r in fixture["rows"]
+        r
+        for r in fixture["rows"]
         if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-14"
     ]
     _seed_rows(conn, alpha_rows_day1)
@@ -1340,8 +1393,7 @@ def test_v1_query_shape_2_intraday_trajectory_columns(tmp_path):
     expected_cols = set(expected_q2["expected_column_names"])
 
     assert set(col_names) == expected_cols, (
-        f"V1 query 2 column mismatch. Expected {expected_cols}, got {set(col_names)}. "
-        f"AC-M1F.6.3."
+        f"V1 query 2 column mismatch. Expected {expected_cols}, got {set(col_names)}. AC-M1F.6.3."
     )
     assert len(rows) == expected_q2["expected_row_count"], (
         f"V1 query 2: expected {expected_q2['expected_row_count']} rows, got {len(rows)}."
@@ -1359,7 +1411,8 @@ def test_v1_query_shape_3_hwm_reconstruction(tmp_path):
 
     fixture = _load("analytics_shadow_history.json")
     alpha_rows_day1 = [
-        r for r in fixture["rows"]
+        r
+        for r in fixture["rows"]
         if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-14"
     ]
     _seed_rows(conn, alpha_rows_day1)
@@ -1424,9 +1477,7 @@ def test_resume_shadow_baselines_invoked_after_wipe_transient_state():
     PA-M1F-2: inverted order would overwrite today's wiped state with stale rows.
     Verified by inspecting alpha_bot_execution.py call order via AST.
     """
-    source_path = (
-        pathlib.Path(__file__).parent.parent.parent / "alpha_bot_execution.py"
-    )
+    source_path = pathlib.Path(__file__).parent.parent.parent / "alpha_bot_execution.py"
     source = source_path.read_text(encoding="utf-8")
 
     wipe_pos = source.find("wipe_transient_state")
@@ -1496,6 +1547,5 @@ def test_cycle_id_format_matches_yyyymmdd_hhmm_pattern(tmp_path):
 
     assert row is not None, "No row written"
     assert pattern.match(row[0]), (
-        f"cycle_id in DB {row[0]!r} does not match {shape['cycle_id']['regex']}. "
-        f"PA-M1F-4."
+        f"cycle_id in DB {row[0]!r} does not match {shape['cycle_id']['regex']}. PA-M1F-4."
     )

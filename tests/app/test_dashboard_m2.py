@@ -26,7 +26,6 @@ import pytest
 
 import app as app_module
 
-
 # ---------------------------------------------------------------------------
 # Shared test fixtures
 # ---------------------------------------------------------------------------
@@ -96,9 +95,7 @@ class TestPortfolioStripJson:
     populate the strip without re-computing analytics.
     """
 
-    def test_api_state_includes_portfolio_strip_key(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_api_state_includes_portfolio_strip_key(self, client, mock_database, monkeypatch):
         """Response JSON must contain a 'portfolio_strip' key when state is active."""
         mock_database.load_state.return_value = _make_state_with_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
@@ -113,9 +110,7 @@ class TestPortfolioStripJson:
             f"got keys: {list(body.keys())}"
         )
 
-    def test_portfolio_strip_has_today_change(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_portfolio_strip_has_today_change(self, client, mock_database, monkeypatch):
         """portfolio_strip must contain today_change with if_held and dry_run keys."""
         mock_database.load_state.return_value = _make_state_with_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
@@ -127,22 +122,15 @@ class TestPortfolioStripJson:
         strip = resp.get_json()["portfolio_strip"]
 
         assert "today_change" in strip, (
-            "portfolio_strip must have 'today_change'; "
-            f"got keys: {list(strip.keys())}"
+            f"portfolio_strip must have 'today_change'; got keys: {list(strip.keys())}"
         )
         tc = strip["today_change"]
         assert "if_held" in tc, "today_change must have 'if_held' key"
         assert "dry_run" in tc, "today_change must have 'dry_run' key"
-        assert isinstance(tc["if_held"], (int, float)), (
-            "today_change.if_held must be numeric"
-        )
-        assert isinstance(tc["dry_run"], (int, float)), (
-            "today_change.dry_run must be numeric"
-        )
+        assert isinstance(tc["if_held"], (int, float)), "today_change.if_held must be numeric"
+        assert isinstance(tc["dry_run"], (int, float)), "today_change.dry_run must be numeric"
 
-    def test_portfolio_strip_has_cumulative_return(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_portfolio_strip_has_cumulative_return(self, client, mock_database, monkeypatch):
         """portfolio_strip must contain cumulative_return with if_held and dry_run keys."""
         mock_database.load_state.return_value = _make_state_with_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
@@ -153,15 +141,12 @@ class TestPortfolioStripJson:
         strip = resp.get_json()["portfolio_strip"]
 
         assert "cumulative_return" in strip, (
-            "portfolio_strip must have 'cumulative_return'; "
-            f"got keys: {list(strip.keys())}"
+            f"portfolio_strip must have 'cumulative_return'; got keys: {list(strip.keys())}"
         )
         cr = strip["cumulative_return"]
         assert "if_held" in cr and "dry_run" in cr
 
-    def test_portfolio_strip_has_max_drawdown(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_portfolio_strip_has_max_drawdown(self, client, mock_database, monkeypatch):
         """portfolio_strip must contain max_drawdown with if_held and dry_run keys."""
         mock_database.load_state.return_value = _make_state_with_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
@@ -172,8 +157,7 @@ class TestPortfolioStripJson:
         strip = resp.get_json()["portfolio_strip"]
 
         assert "max_drawdown" in strip, (
-            "portfolio_strip must have 'max_drawdown'; "
-            f"got keys: {list(strip.keys())}"
+            f"portfolio_strip must have 'max_drawdown'; got keys: {list(strip.keys())}"
         )
         mdd = strip["max_drawdown"]
         assert "if_held" in mdd and "dry_run" in mdd
@@ -193,7 +177,10 @@ class TestPortfolioStripJson:
 
         analytics_mock = _default_analytics_mock()
         analytics_mock.get_portfolio_today_change.return_value = {"if_held": 7.77, "dry_run": 6.66}
-        analytics_mock.get_portfolio_cumulative_return.return_value = {"if_held": 55.5, "dry_run": 54.4}
+        analytics_mock.get_portfolio_cumulative_return.return_value = {
+            "if_held": 55.5,
+            "dry_run": 54.4,
+        }
         analytics_mock.get_portfolio_max_drawdown.return_value = {"if_held": 0.33, "dry_run": 0.33}
         monkeypatch.setattr(app_module, "analytics", analytics_mock)
 
@@ -210,9 +197,7 @@ class TestPortfolioStripJson:
         assert strip["cumulative_return"]["if_held"] == pytest.approx(55.5, abs=1e-9)
         assert strip["max_drawdown"]["if_held"] == pytest.approx(0.33, abs=1e-9)
 
-    def test_portfolio_strip_absent_when_state_empty(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_portfolio_strip_absent_when_state_empty(self, client, mock_database, monkeypatch):
         """
         When bot_state is empty the route returns 'waiting' — strip is not relevant.
         This test pins the absence of an erroneous 'portfolio_strip' in a waiting response.
@@ -224,9 +209,7 @@ class TestPortfolioStripJson:
         body = resp.get_json()
         assert body["status"] == "waiting"
         # strip must not appear in a non-active response
-        assert "portfolio_strip" not in body, (
-            "waiting response must not include portfolio_strip"
-        )
+        assert "portfolio_strip" not in body, "waiting response must not include portfolio_strip"
 
     def test_portfolio_m1_helpers_called_with_symphonies_list(
         self, client, mock_database, monkeypatch
@@ -280,7 +263,9 @@ class TestPerSymphonyMetricColumns:
     must thread through the template context.
     """
 
-    def _get_rendered_html(self, client, mock_database, monkeypatch, state=None, analytics_mock=None):
+    def _get_rendered_html(
+        self, client, mock_database, monkeypatch, state=None, analytics_mock=None
+    ):
         if state is None:
             state = _make_state_with_one_symphony()
         mock_database.load_state.return_value = state
@@ -292,9 +277,7 @@ class TestPerSymphonyMetricColumns:
         assert resp.status_code == 200
         return resp.get_json().get("html", "")
 
-    def test_rendered_html_contains_tc_dry_run_value(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_rendered_html_contains_tc_dry_run_value(self, client, mock_database, monkeypatch):
         """
         The per-symphony Today's Change dry-run value must appear in the rendered
         table row.  We inject a sentinel value via the analytics mock and assert
@@ -312,9 +295,7 @@ class TestPerSymphonyMetricColumns:
             "check that get_symphony_today_change output reaches table_partial.html"
         )
 
-    def test_rendered_html_contains_tc_if_held_value(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_rendered_html_contains_tc_if_held_value(self, client, mock_database, monkeypatch):
         """Per-symphony TC if-held must also appear in the rendered table row."""
         analytics_mock = _default_analytics_mock()
         analytics_mock.get_symphony_today_change.return_value = {"if_held": 9.81, "dry_run": 0.0}
@@ -326,12 +307,13 @@ class TestPerSymphonyMetricColumns:
             "check that get_symphony_today_change if_held reaches table_partial.html"
         )
 
-    def test_rendered_html_contains_cr_column_values(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_rendered_html_contains_cr_column_values(self, client, mock_database, monkeypatch):
         """Per-symphony cumulative return (both sides) must appear in rendered HTML."""
         analytics_mock = _default_analytics_mock()
-        analytics_mock.get_symphony_cumulative_return.return_value = {"if_held": 42.42, "dry_run": 42.42}
+        analytics_mock.get_symphony_cumulative_return.return_value = {
+            "if_held": 42.42,
+            "dry_run": 42.42,
+        }
         html = self._get_rendered_html(
             client, mock_database, monkeypatch, analytics_mock=analytics_mock
         )
@@ -340,12 +322,13 @@ class TestPerSymphonyMetricColumns:
             "check get_symphony_cumulative_return wiring to table_partial.html"
         )
 
-    def test_rendered_html_contains_mdd_column_values(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_rendered_html_contains_mdd_column_values(self, client, mock_database, monkeypatch):
         """Per-symphony MDD (both sides) must appear in rendered HTML."""
         analytics_mock = _default_analytics_mock()
-        analytics_mock.get_symphony_max_drawdown.return_value = {"if_held": 0.1234, "dry_run": 0.1234}
+        analytics_mock.get_symphony_max_drawdown.return_value = {
+            "if_held": 0.1234,
+            "dry_run": 0.1234,
+        }
         html = self._get_rendered_html(
             client, mock_database, monkeypatch, analytics_mock=analytics_mock
         )
@@ -445,11 +428,15 @@ class TestColumnClarityPass:
         html = self._get_html(client, mock_database, monkeypatch)
         # The header <th> for MC Prob (or Beat-SPY Prob) must include title=
         # We look for the column heading area containing either label + title attribute.
-        pattern = re.compile(r'<th[^>]*title=["\'][^"\']+["\'][^>]*>[^<]*(MC Prob|Beat.SPY Prob)', re.IGNORECASE)
-        alt_pattern = re.compile(r'(MC Prob|Beat.SPY Prob)[^<]*<', re.IGNORECASE)
+        pattern = re.compile(
+            r'<th[^>]*title=["\'][^"\']+["\'][^>]*>[^<]*(MC Prob|Beat.SPY Prob)', re.IGNORECASE
+        )
+        alt_pattern = re.compile(r"(MC Prob|Beat.SPY Prob)[^<]*<", re.IGNORECASE)
         # At minimum, the heading text must be accompanied by a title somewhere nearby.
         # Check that the word "Monte Carlo" or "SPY" appears in a title attribute in the vicinity.
-        title_with_mc = re.compile(r'title=["\'][^"\']*(?:Monte Carlo|SPY|beat)[^"\']*["\']', re.IGNORECASE)
+        title_with_mc = re.compile(
+            r'title=["\'][^"\']*(?:Monte Carlo|SPY|beat)[^"\']*["\']', re.IGNORECASE
+        )
         assert title_with_mc.search(html), (
             "MC Prob column must have a title tooltip containing 'Monte Carlo', 'SPY', or 'beat'; "
             "the audit found this column has no tooltip — add a <th title='...'> that explains the metric"
@@ -468,9 +455,7 @@ class TestColumnClarityPass:
         # 'Stop Level' bare (without trailing stop) should be absent or accompanied by rename
         # We allow "Stop Level" only inside a title/tooltip attribute, not as a standalone header label.
         # Find standalone header <th> text that is just 'Stop Level'
-        standalone_stop_level = re.compile(
-            r'<th[^>]*>[^<]*Stop Level[^<]*</th>', re.IGNORECASE
-        )
+        standalone_stop_level = re.compile(r"<th[^>]*>[^<]*Stop Level[^<]*</th>", re.IGNORECASE)
         assert not standalone_stop_level.search(html), (
             "'Stop Level' must not remain as a standalone column header label; "
             "it must be renamed to 'Trailing Stop'"
@@ -494,8 +479,7 @@ class TestColumnClarityPass:
         """
         html = self._get_html(client, mock_database, monkeypatch)
         assert "If Held" in html, (
-            "column header must contain 'If Held'; "
-            "check that 'If Held (Shadow)' was updated"
+            "column header must contain 'If Held'; check that 'If Held (Shadow)' was updated"
         )
         # The parenthetical '(Shadow)' must be removed or replaced
         assert "(Shadow)" not in html, (
@@ -576,14 +560,14 @@ class TestHwmBugFix:
             "but sorting used the wrong field"
         )
         # The old broken key must be absent as a sort trigger
-        assert "setSort('high_water_mark')" not in html and 'setSort("high_water_mark")' not in html, (
+        assert (
+            "setSort('high_water_mark')" not in html and 'setSort("high_water_mark")' not in html
+        ), (
             "'high_water_mark' must not be the sort key for the Shadow Peak column "
             "after the HWM bug fix"
         )
 
-    def test_hwm_column_renders_shadow_hwm_value(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_hwm_column_renders_shadow_hwm_value(self, client, mock_database, monkeypatch):
         """
         The rendered HWM cell must display shadow_hwm, not high_water_mark.
         These differ in our test fixture: shadow_hwm=7.77, high_water_mark=5.55.
@@ -605,9 +589,7 @@ class TestHwmBugFix:
             "if 7.77 is absent, the cell is not rendering shadow_hwm"
         )
 
-    def test_app_sort_by_shadow_hwm_uses_shadow_hwm_field(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_app_sort_by_shadow_hwm_uses_shadow_hwm_field(self, client, mock_database, monkeypatch):
         """
         GET /api/state?sortCol=shadow_hwm must sort by shadow_hwm (the correct
         post-fix key), not by the old high_water_mark key.  We verify by injecting
@@ -669,9 +651,7 @@ class TestHwmBugFix:
         accounts_map = captured_render_args.get("accounts_map", {})
         acc_syms = list(accounts_map.values())[0] if accounts_map else []
 
-        assert len(acc_syms) == 2, (
-            f"expected 2 symphonies in accounts_map; got {len(acc_syms)}"
-        )
+        assert len(acc_syms) == 2, f"expected 2 symphonies in accounts_map; got {len(acc_syms)}"
         # After desc sort by shadow_hwm: Alpha (10) before Beta (1)
         first_name = acc_syms[0].get("name")
         assert first_name == "Alpha", (
@@ -699,9 +679,7 @@ class TestFreshnessTimestamp:
     - The rendered HTML also contains the freshness indicator
     """
 
-    def test_api_state_includes_data_as_of_key(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_api_state_includes_data_as_of_key(self, client, mock_database, monkeypatch):
         """Active /api/state response must include 'data_as_of' key."""
         mock_database.load_state.return_value = _make_state_with_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
@@ -716,9 +694,7 @@ class TestFreshnessTimestamp:
             "MANDATORY — a prior staleness incident had stale values reading as live"
         )
 
-    def test_data_as_of_is_hhmm_string(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_data_as_of_is_hhmm_string(self, client, mock_database, monkeypatch):
         """
         data_as_of must be a string in HH:MM format (wall clock, ET implied).
         We assert format only — not an exact value (wall clock is non-deterministic).
@@ -731,9 +707,7 @@ class TestFreshnessTimestamp:
         resp = client.get("/api/state")
         data_as_of = resp.get_json()["data_as_of"]
 
-        assert isinstance(data_as_of, str), (
-            f"data_as_of must be a string; got {type(data_as_of)}"
-        )
+        assert isinstance(data_as_of, str), f"data_as_of must be a string; got {type(data_as_of)}"
         # Accept HH:MM or H:MM with optional seconds and/or 'ET' suffix
         hhmm_pattern = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?(\s*ET)?$")
         assert hhmm_pattern.match(data_as_of.strip()), (
@@ -741,9 +715,7 @@ class TestFreshnessTimestamp:
             "format should read like '09:45 ET' or '14:32'"
         )
 
-    def test_data_as_of_reflects_current_time(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_data_as_of_reflects_current_time(self, client, mock_database, monkeypatch):
         """
         data_as_of must be close to the current wall-clock time.
         We verify the hour matches (within a 1-minute window boundary tolerance).
@@ -773,9 +745,7 @@ class TestFreshnessTimestamp:
             "the timestamp must be generated fresh per request — not a stale cached value"
         )
 
-    def test_rendered_html_contains_freshness_indicator(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_rendered_html_contains_freshness_indicator(self, client, mock_database, monkeypatch):
         """
         The rendered table_partial.html or index.html must contain a visible
         freshness indicator — the 'data as of HH:MM ET' text must appear so the
@@ -799,9 +769,7 @@ class TestFreshnessTimestamp:
             "MANDATORY — prior staleness incident: operator must always see data freshness"
         )
 
-    def test_data_as_of_absent_when_state_waiting(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_data_as_of_absent_when_state_waiting(self, client, mock_database, monkeypatch):
         """
         When the route returns 'waiting' (empty state), data_as_of need not be
         present — or if present, it must not be a stale/wrong value.
@@ -832,9 +800,7 @@ class TestReadOnlyContract:
     response must not write back to bot_state or the database.
     """
 
-    def test_api_state_does_not_call_database_save(
-        self, client, mock_database, monkeypatch
-    ):
+    def test_api_state_does_not_call_database_save(self, client, mock_database, monkeypatch):
         """
         GET /api/state must not call any database write methods.
         Dashboard is read-only per architecture constraints.
@@ -847,9 +813,9 @@ class TestReadOnlyContract:
         client.get("/api/state")
 
         # No write method should have been called
-        assert not mock_database.save_state.called if hasattr(mock_database, "save_state") else True, (
-            "GET /api/state must not call database.save_state"
-        )
+        assert (
+            not mock_database.save_state.called if hasattr(mock_database, "save_state") else True
+        ), "GET /api/state must not call database.save_state"
         # save_symphony_strategy is a settings route concern, not dashboard
         assert not mock_database.save_symphony_strategy.called, (
             "GET /api/state must not call database.save_symphony_strategy"
@@ -862,124 +828,103 @@ class TestReadOnlyContract:
 # ---------------------------------------------------------------------------
 
 _INDEX_HTML_PATH = (
-    __import__("pathlib").Path(__file__).parent.parent.parent
-    / "templates"
-    / "index.html"
+    __import__("pathlib").Path(__file__).parent.parent.parent / "templates" / "index.html"
+)
+_INDEX_JS_PATH = (
+    __import__("pathlib").Path(__file__).parent.parent.parent / "static" / "index.js"
 )
 
 
 class TestPortfolioStripUiWiring:
     """
-    index.html must contain:
-      (a) a DOM element that is the render target for the portfolio strip
-      (b) JS in renderState() that reads data.portfolio_strip and populates it
+    Studio design contract: portfolio summary is rendered as the hero-section
+    (data-testid="hero-section") with vs-rows for Today / Cumulative / Max DD.
+    The portfolio_strip JSON from /api/state is consumed by static/index.js
+    (not inline JS in index.html — the Studio design moved JS to static files).
 
-    Without both, portfolio_strip is dead JSON — computed and returned by
-    /api/state but never shown to the operator.
-
-    These are static analysis tests against the template file — no Flask
-    test_client needed.  They will RED immediately against the current
-    index.html which has no portfolio strip DOM or JS consumer.
+    These tests assert the Studio design contract, not the old Tailwind
+    portfolio-strip DOM element that was replaced in the V3 redesign.
     """
 
-    def test_index_html_has_portfolio_strip_dom_element(self):
+    def test_index_html_has_hero_section_as_portfolio_summary(self):
         """
-        index.html must contain a DOM element that serves as the render target
-        for the portfolio strip.  Acceptable identifiers: id='portfolio-strip',
-        id='portfolioStrip', or a class containing 'portfolio-strip'.
-        """
-        html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
-
-        has_dom_target = (
-            "portfolio-strip" in html
-            or "portfolioStrip" in html
-            or "portfolio_strip" in html
-        )
-        assert has_dom_target, (
-            "index.html must contain a DOM render target for the portfolio strip "
-            "(e.g. id='portfolio-strip'); "
-            "reviewer BLOCK: /api/state returns portfolio_strip JSON but renderState() "
-            "never reads it — the 6-metric band is invisible to the operator"
-        )
-
-    def test_index_html_render_state_reads_portfolio_strip(self):
-        """
-        The renderState() function in index.html must reference data.portfolio_strip
-        (or equivalent) to populate the strip DOM element on each poll cycle.
-
-        Without this the strip element, even if present in the HTML, will always
-        show its initial empty/placeholder state.
+        index.html must contain data-testid="hero-section" — the Studio portfolio
+        summary panel that replaced the old id="portfolio-strip" element.
         """
         html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
 
-        # renderState must contain a reference to portfolio_strip from the API response
-        assert "portfolio_strip" in html, (
-            "renderState() in index.html must read data.portfolio_strip from the "
-            "/api/state response and populate the strip DOM element; "
-            "currently the key is returned but never consumed — strip is dead JSON"
+        assert 'data-testid="hero-section"' in html, (
+            'index.html must contain data-testid="hero-section" — the Studio hero '
+            "panel is the portfolio summary surface; the old id='portfolio-strip' "
+            "was replaced by the hero comparison section in the V3 Studio redesign"
         )
 
-    def test_index_html_strip_shows_today_change(self):
+    def test_index_js_renders_portfolio_strip_data(self):
         """
-        The portfolio strip JS must reference today_change (TC) from portfolio_strip.
-        All three metrics (TC/CR/MDD) must be individually consumed.
+        static/index.js must reference portfolio_strip from the /api/state response
+        to populate the hero comparison rows on each poll cycle.
+        The Studio design moved JS from inline <script> in index.html to static/index.js.
+        """
+        js = _INDEX_JS_PATH.read_text(encoding="utf-8")
+
+        assert "portfolio_strip" in js, (
+            "static/index.js must read data.portfolio_strip from the /api/state response "
+            "and use it to update the hero comparison rows; "
+            "reviewer BLOCK: /api/state returns portfolio_strip JSON and the hero section "
+            "must consume it on each poll"
+        )
+
+    def test_index_js_strip_reads_today_change(self):
+        """
+        static/index.js must reference today_change from portfolio_strip to update
+        the Today comparison row in the hero section.
+        """
+        js = _INDEX_JS_PATH.read_text(encoding="utf-8")
+
+        assert "today_change" in js, (
+            "static/index.js must reference portfolio_strip.today_change to update "
+            "the Today row in the hero comparison panel"
+        )
+
+    def test_index_js_strip_reads_cumulative_return(self):
+        """static/index.js must reference cumulative_return from portfolio_strip."""
+        js = _INDEX_JS_PATH.read_text(encoding="utf-8")
+
+        assert "cumulative_return" in js, (
+            "static/index.js must reference portfolio_strip.cumulative_return; "
+            "check the updateComparisonRows / renderState function"
+        )
+
+    def test_index_js_strip_reads_max_drawdown(self):
+        """static/index.js must reference max_drawdown from portfolio_strip."""
+        js = _INDEX_JS_PATH.read_text(encoding="utf-8")
+
+        assert "max_drawdown" in js, (
+            "static/index.js must reference portfolio_strip.max_drawdown; "
+            "check the updateComparisonRows / renderState function"
+        )
+
+    def test_index_html_hero_section_positioned_after_header(self):
+        """
+        Per A/C: the portfolio summary (hero-section) must appear after the
+        page header chrome in the DOM.  The Studio design includes the chrome
+        via {% include '_chrome.html' %} and then renders the hero-section.
+        We assert hero-section appears after the chrome include directive.
         """
         html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
 
-        assert "today_change" in html, (
-            "index.html must reference portfolio_strip.today_change to render the "
-            "Today's Change metric in the portfolio strip; "
-            "check renderState() or the strip DOM element's population logic"
+        chrome_include_pos = html.find("_chrome.html")
+        hero_pos = html.find('data-testid="hero-section"')
+
+        assert hero_pos != -1, (
+            'data-testid="hero-section" not found in index.html'
         )
-
-    def test_index_html_strip_shows_cumulative_return(self):
-        """The portfolio strip JS must reference cumulative_return from portfolio_strip."""
-        html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
-
-        assert "cumulative_return" in html, (
-            "index.html must reference portfolio_strip.cumulative_return; "
-            "check renderState() strip population"
+        assert chrome_include_pos != -1, (
+            "index.html must include '_chrome.html' for the page navigation chrome"
         )
-
-    def test_index_html_strip_shows_max_drawdown(self):
-        """The portfolio strip JS must reference max_drawdown from portfolio_strip."""
-        html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
-
-        assert "max_drawdown" in html, (
-            "index.html must reference portfolio_strip.max_drawdown; "
-            "check renderState() strip population"
-        )
-
-    def test_index_html_strip_dom_positioned_between_header_and_table(self):
-        """
-        Per A/C: the strip must appear between the header banner and the symphony
-        table (not inside either).  We assert the DOM target appears after </header>
-        and before the accounts-container div.
-        """
-        html = _INDEX_HTML_PATH.read_text(encoding="utf-8")
-
-        header_end = html.find("</header>")
-        accounts_start = html.find('id="accounts-container"')
-
-        # Find any portfolio strip DOM anchor in the document
-        strip_pos = -1
-        for candidate in ("portfolio-strip", "portfolioStrip", "portfolio_strip"):
-            pos = html.find(candidate)
-            if pos != -1:
-                strip_pos = pos
-                break
-
-        assert strip_pos != -1, (
-            "index.html must contain a portfolio strip DOM element; "
-            "none of 'portfolio-strip', 'portfolioStrip', 'portfolio_strip' found"
-        )
-        assert header_end != -1 and accounts_start != -1, (
-            "index.html structure unexpected: </header> or accounts-container not found"
-        )
-        assert header_end < strip_pos < accounts_start, (
-            f"portfolio strip DOM element (pos={strip_pos}) must appear after "
-            f"</header> (pos={header_end}) and before accounts-container "
-            f"(pos={accounts_start}); A/C requires the strip between header and table"
+        assert chrome_include_pos < hero_pos, (
+            f"hero-section (pos={hero_pos}) must appear after chrome include (pos={chrome_include_pos}); "
+            "the portfolio summary belongs in the page body, after the navigation chrome"
         )
 
 
@@ -1062,9 +1007,7 @@ class TestZeroMetricFallbackIsolation:
         assert len(syms) == 2, f"expected 2 syms in accounts_map; got {len(syms)}"
 
         tc_dicts = [s["_tc"] for s in syms if "_tc" in s]
-        assert len(tc_dicts) == 2, (
-            f"both syms must have _tc set via fallback; got {len(tc_dicts)}"
-        )
+        assert len(tc_dicts) == 2, f"both syms must have _tc set via fallback; got {len(tc_dicts)}"
         # The two fallback dicts must be independent objects, not the same reference.
         assert tc_dicts[0] is not tc_dicts[1], (
             "_tc fallback dicts for sym1 and sym2 must be distinct objects; "

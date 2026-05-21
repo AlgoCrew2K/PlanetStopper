@@ -1,0 +1,188 @@
+/* Studio tweaks slide-over panel styles */
+
+.twk-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483646;
+  width: 280px;
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  background: var(--studio-paper);
+  color: var(--studio-ink, #15120c);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  border: 0.5px solid var(--studio-rule);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  font: 11.5px/1.4 var(--studio-sans, Manrope, system-ui, sans-serif);
+  overflow: hidden;
+}
+
+.twk-panel[hidden] {
+  display: none;
+}
+
+.twk-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px 10px 14px;
+  cursor: move;
+  user-select: none;
+  border-bottom: 1px solid var(--studio-rule, rgba(20, 18, 12, 0.10));
+}
+
+.twk-hd b {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.twk-x {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--studio-ink-dim, rgba(21, 18, 12, 0.55));
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.twk-x:hover {
+  background: var(--studio-rule);
+  color: var(--studio-ink, #15120c);
+}
+
+.twk-body {
+  padding: 2px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+.twk-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.twk-row-h {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.twk-lbl {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  color: var(--studio-ink-dim, rgba(21, 18, 12, 0.62));
+  font-size: 11px;
+}
+
+.twk-lbl > span:first-child {
+  font-weight: 500;
+}
+
+.twk-sect {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--studio-ink-faint, rgba(21, 18, 12, 0.36));
+  padding: 10px 0 0;
+}
+
+.twk-sect:first-child {
+  padding-top: 0;
+}
+
+.twk-field {
+  appearance: none;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 0.5px solid var(--studio-rule);
+  border-radius: 7px;
+  background: var(--studio-paper-hi);
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+
+.twk-field:focus {
+  border-color: var(--studio-rule-hi);
+  background: var(--studio-paper-hi);
+}
+
+.twk-toggle {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--studio-rule-hi);
+  transition: background 0.15s;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.twk-toggle[data-on="1"] {
+  background: var(--studio-pos, #1f7a4d);
+}
+
+.twk-toggle i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--studio-white);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s;
+  font-style: normal;
+  display: block;
+}
+
+.twk-toggle[data-on="1"] i {
+  transform: translateX(14px);
+}
+
+/* Light-theme-only inset highlight (white highlight looks wrong on dark surfaces) */
+:root .twk-panel {
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+
+/* Tweaks trigger button in top nav */
+.studio-tweaks-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background: var(--studio-chip-bg, rgba(21, 18, 12, 0.04));
+  border: 1px solid var(--studio-rule, rgba(20, 18, 12, 0.10));
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--studio-sans, Manrope, sans-serif);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--studio-ink, #15120c);
+  letter-spacing: 0.04em;
+}
+
+.studio-tweaks-btn:hover {
+  background: var(--studio-rule, rgba(20, 18, 12, 0.10));
+}

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AlphaBotPM — Studio dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,500;8..60,600;8..60,700;8..60,800&family=Manrope:wght@300;400;500;600;700;800&family=Geist:wght@300;400;500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap"
+  rel="stylesheet"
+/>
+<style>
+  html, body { margin: 0; background: #f0eee9; }
+  body { font-family: 'Manrope', ui-sans-serif, system-ui, sans-serif; color: #1a1a1a; }
+  #root { width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="mock-data.js"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+
+<script type="text/babel" src="chrome.jsx"></script>
+<script type="text/babel" src="studio.jsx"></script>
+<script type="text/babel" src="detail-panel.jsx"></script>
+<script type="text/babel" src="performance.jsx"></script>
+<script type="text/babel" src="advisor.jsx"></script>
+<script type="text/babel" src="history.jsx"></script>
+<script type="text/babel" src="settings.jsx"></script>
+
+<script type="text/babel">
+  const { useState, useEffect } = React;
+  const { DesignCanvas, DCSection, DCArtboard } = window;
+  const { TweaksPanel, useTweaks, TweakSection, TweakRadio, TweakToggle, TweakColor } = window;
+  const { Studio, DetailPanel, studioPalette } = window;
+  const { Performance } = window;
+  const { Advisor } = window;
+  const { History } = window;
+  const { Settings } = window;
+
+  const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "theme": "light",
+    "density": "balanced",
+    "accent": "#1f7a4d",
+    "typeface": "Manrope",
+    "mathOverlays": true,
+    "numFormat": "full"
+  }/*EDITMODE-END*/;
+
+  const ACCENTS = ['#1f7a4d', '#0b6cc4', '#b04420', '#6a3f8a', '#3a3a3a'];
+  const TYPEFACES = ['Manrope', 'Geist', 'DM Sans', 'Plus Jakarta Sans', 'IBM Plex Sans'];
+
+  // The artboard hosting Studio also owns the detail-panel open state. Two
+  // entry points showcase both views: the dashboard with the panel closed,
+  // and the dashboard with the Paragons take-profit detail open.
+  function DashboardFrame({ t, initialOpen }) {
+    const data = window.ALPHABOT_DATA;
+    const [openSym, setOpenSym] = useState(initialOpen ? data.symphonies.find(s => s.id === 'sym_paragons') : null);
+    const p = studioPalette(t.theme, t.accent);
+
+    useEffect(() => {
+      const onKey = (e) => { if (e.key === 'Escape') setOpenSym(null); };
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+    }, []);
+
+    return (
+      <div style={{
+        position: 'relative', width: '100%', height: '100%', overflow: 'hidden',
+        // Drives every `var(--studio-sans, Manrope)` reference in Studio + DetailPanel.
+        '--studio-sans': `'${t.typeface}'`,
+      }}>
+        <Studio data={data} t={t} onOpenDetail={setOpenSym} />
+        {openSym && (
+          <DetailPanel sym={openSym} data={data} t={t} p={p} onClose={() => setOpenSym(null)} />
+        )}
+      </div>
+    );
+  }
+
+  function App() {
+    const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+    return (
+      <React.Fragment>
+        <DesignCanvas>
+          <DCSection
+            id="studio"
+            title="AlphaBotPM · Studio"
+            subtitle="A · Bureau (calm, editorial) × C · Cockpit (card grid, viz-led). Hero headlines Guard Alpha with Bot-vs-If-Held breakdowns. Click any symphony card to open the detail slide-over. Tweaks (top-right) drive theme, accent, density, math overlays, number formatting."
+          >
+            <DCArtboard id="dash-closed" label="Dashboard" width={1440} height={1024}>
+              <DashboardFrame t={t} initialOpen={false} />
+            </DCArtboard>
+            <DCArtboard id="dash-detail" label="Dashboard + symphony detail (click any card)" width={1440} height={1024}>
+              <DashboardFrame t={t} initialOpen={true} />
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection
+            id="performance"
+            title="Performance"
+            subtitle="/performance route — Live (if held) vs AlphaBot-exited (shadow) cumulative returns + QuantStats risk metrics. Toggle Aggregate/Per-symphony and window (30d → 5Y including YTD)."
+          >
+            <DCArtboard id="perf-agg" label="Performance · Aggregate" width={1440} height={1024}>
+              <div style={{
+                width: '100%', height: '100%',
+                '--studio-sans': `'${t.typeface}'`,
+              }}>
+                <Performance data={window.ALPHABOT_DATA} t={t} />
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection
+            id="advisor"
+            title="AI advisor"
+            subtitle="/ai-advisor route — Claude proposes parameter tweaks, four gates (allowlist / risk-direction / OOS / locked-vars) decide what reaches production."
+          >
+            <DCArtboard id="advisor-paragons" label="AI advisor · Paragons symphony" width={1440} height={1024}>
+              <div style={{
+                width: '100%', height: '100%',
+                '--studio-sans': `'${t.typeface}'`,
+              }}>
+                <Advisor data={window.ALPHABOT_DATA} t={t} />
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection
+            id="history"
+            title="History"
+            subtitle="Rollup of every post-mortem the bot has produced. Total α, $ saved, by-reason breakdown, daily α strip. Same 30d → 5Y window control."
+          >
+            <DCArtboard id="history-90" label="History · 90d window" width={1440} height={1024}>
+              <div style={{
+                width: '100%', height: '100%',
+                '--studio-sans': `'${t.typeface}'`,
+              }}>
+                <History data={window.ALPHABOT_DATA} t={t} />
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection
+            id="settings"
+            title="Settings"
+            subtitle="LIVE_EXECUTION kill switch, .env algorithm globals, credentials (write-only), per-symphony overrides with lock-from-autotuner."
+          >
+            <DCArtboard id="settings-master" label="Settings · Master controls" width={1440} height={1024}>
+              <div style={{
+                width: '100%', height: '100%',
+                '--studio-sans': `'${t.typeface}'`,
+              }}>
+                <Settings data={window.ALPHABOT_DATA} t={t} />
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection
+            id="archive"
+            title="Reference — v1 three-direction exploration"
+            subtitle="Bureau / Console / Cockpit, the originals you saw first. Kept on disk as 'Dashboard v1 — Three directions.html'."
+          >
+            <DCArtboard id="v1-link" label="Open v1 reference" width={420} height={200}>
+              <a href="Dashboard v1 — Three directions.html" style={{
+                display: 'flex', width: '100%', height: '100%',
+                alignItems: 'center', justifyContent: 'center',
+                background: '#faf6ea', textDecoration: 'none',
+                fontFamily: 'Source Serif 4, Georgia, serif', fontSize: 18, color: '#1a1a1a',
+                flexDirection: 'column', gap: 8,
+              }}>
+                <span>v1 · Three directions ↗</span>
+                <span style={{ fontFamily: 'Geist', fontSize: 11, color: 'rgba(0,0,0,0.5)' }}>
+                  Bureau, Console, Cockpit
+                </span>
+              </a>
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+
+        <TweaksPanel>
+          <TweakSection label="Theme" />
+          <TweakRadio
+            label="Mode"
+            value={t.theme}
+            options={['light', 'dark']}
+            onChange={(v) => setTweak('theme', v)}
+          />
+          <TweakColor
+            label="Accent"
+            value={t.accent}
+            options={ACCENTS}
+            onChange={(v) => setTweak('accent', v)}
+          />
+          <TweakSection label="Type" />
+          <TweakSelect
+            label="Body typeface"
+            value={t.typeface}
+            options={TYPEFACES}
+            onChange={(v) => setTweak('typeface', v)}
+          />
+          <TweakSection label="Layout" />
+          <TweakRadio
+            label="Density"
+            value={t.density}
+            options={['compact', 'balanced', 'roomy']}
+            onChange={(v) => setTweak('density', v)}
+          />
+          <TweakSection label="Data display" />
+          <TweakToggle
+            label="Math overlays (MC, VWAP)"
+            value={t.mathOverlays}
+            onChange={(v) => setTweak('mathOverlays', v)}
+          />
+          <TweakRadio
+            label="Numbers"
+            value={t.numFormat}
+            options={['full', 'compact']}
+            onChange={(v) => setTweak('numFormat', v)}
+          />
+        </TweaksPanel>
+      </React.Fragment>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+</body>
+</html>

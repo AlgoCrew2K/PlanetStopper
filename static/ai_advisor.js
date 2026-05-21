@@ -1,172 +1,512 @@
-async function getSuggestions() {
-    const symphonyId = document.getElementById('symphony-id-input').value.trim();
-    const errorEl = document.getElementById('advisor-error');
-    const container = document.getElementById('suggestions-container');
-    const btn = document.getElementById('get-suggestions-btn');
+/**
+ * ai_advisor.js — Studio AI Advisor client logic.
+ *
+ * All colors use CSS custom properties (--studio-*) resolved at runtime so
+ * theme/accent changes propagate without a reload.
+ * No Tailwind class names in this file.
+ */
+(function () {
+    'use strict';
 
-    errorEl.classList.add('hidden');
-    errorEl.textContent = '';
-    container.innerHTML = '<p class="text-slate-400 text-sm">Loading suggestions...</p>';
-    btn.disabled = true;
-    btn.textContent = 'Loading...';
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
 
-    try {
-        const resp = await fetch('/ai-advisor/suggest', {
+    function escHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function cssVar(name) {
+        return 'var(' + name + ')';
+    }
+
+    function fmtSharpe(val) {
+        if (val === null || val === undefined) return 'N/A';
+        return Number(val).toFixed(4);
+    }
+
+    function fmtDelta(delta) {
+        if (delta === null || delta === undefined || isNaN(delta)) return '';
+        var sign = delta >= 0 ? '+' : '';
+        return sign + Number(delta).toFixed(3);
+    }
+
+    // Module-level suggestion state — survives any poll cycle.
+    var _activeSuggestions = null;
+    var _activeSymphonyId = null;
+
+    // ---------------------------------------------------------------------------
+    // Summary chips
+    // ---------------------------------------------------------------------------
+
+    function updateChips(suggestions) {
+        var total = suggestions.length;
+        var passed = suggestions.filter(function (s) { return s.oos_status === 'passed'; }).length;
+        var rejected = suggestions.filter(function (s) { return s.oos_status === 'rejected'; }).length;
+        var chipTotal = document.getElementById('chip-total');
+        var chipPassed = document.getElementById('chip-passed');
+        var chipRejected = document.getElementById('chip-rejected');
+        if (chipTotal) chipTotal.textContent = total + ' suggestion' + (total !== 1 ? 's' : '');
+        if (chipPassed) chipPassed.textContent = passed + ' OOS passed';
+        if (chipRejected) chipRejected.textContent = rejected + ' OOS rejected';
+    }
+
+    // ---------------------------------------------------------------------------
+    // Render suggestion cards
+    // ---------------------------------------------------------------------------
+
+    function oosStatusColor(status) {
+        if (status === 'passed') return cssVar('--studio-pos');
+        if (status === 'rejected') return cssVar('--studio-neg');
+        return cssVar('--studio-ink-dim');
+    }
+
+    function confidenceBadgeStyle(confidence) {
+        if (confidence === 'high') return 'color:' + cssVar('--studio-pos') + ';font-weight:700;';
+        if (confidence === 'low') return 'color:' + cssVar('--studio-ink-dim') + ';';
+        return 'color:' + cssVar('--studio-ink') + ';';
+    }
+
+    function renderSuggestions(suggestions, symphonyId) {
+        var container = document.getElementById('suggestions-container');
+        updateChips(suggestions);
+
+        if (suggestions.length === 0) {
+            container.innerHTML =
+                '<div style="background:' + cssVar('--studio-surface') + ';' +
+                'border:1px solid ' + cssVar('--studio-border') + ';' +
+                'border-radius:1rem;padding:1.5rem;' +
+                'color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;grid-column:1/-1;">' +
+                'No suggestions — the current config looks sound.</div>';
+            return;
+        }
+
+        container.innerHTML = suggestions.map(function (s, i) {
+            var impactBefore = s.impact && typeof s.impact.before === 'number' ? s.impact.before : null;
+            var impactAfter = s.impact && typeof s.impact.after === 'number' ? s.impact.after : null;
+            var impactDelta = s.impact && typeof s.impact.delta === 'number'
+                ? s.impact.delta
+                : (impactBefore !== null && impactAfter !== null ? impactAfter - impactBefore : null);
+            var impactMetric = s.impact && s.impact.metric ? s.impact.metric : 'sharpe';
+            var impactText = impactDelta !== null
+                ? impactMetric + ' ' + fmtDelta(impactDelta)
+                : '';
+            var isOosRejected = s.oos_status === 'rejected';
+            var oosColor = oosStatusColor(s.oos_status || 'pending');
+            var oosLabel = escHtml(s.oos_status || 'pending');
+            if (s.oos_reason) oosLabel += ' — ' + escHtml(s.oos_reason);
+            var suffBadge = (s.data_sufficiency && s.data_sufficiency !== 'sufficient')
+                ? '<span style="font-size:0.6875rem;color:' + cssVar('--studio-warn') + ';margin-left:0.25rem;">' +
+                  escHtml(s.data_sufficiency) + ' data</span>'
+                : '';
+
+            // Confidence ring SVG arc (circumference ~56.5 for r=9)
+            var CIRC = 56.5;
+            var confPct = s.confidence === 'high' ? 1.0 : s.confidence === 'medium' ? 0.6 : 0.3;
+            var dashLen = (confPct * CIRC).toFixed(1);
+            var ringColor = s.confidence === 'high' ? cssVar('--studio-pos')
+                : s.confidence === 'low' ? cssVar('--studio-neg') : cssVar('--studio-accent');
+            var confidenceRing =
+                '<svg data-testid="confidence-ring" viewBox="0 0 20 20" width="36" height="36" style="flex-shrink:0;">' +
+                '<circle cx="10" cy="10" r="9" fill="none" stroke="' + cssVar('--studio-border') + '" stroke-width="2"></circle>' +
+                '<circle cx="10" cy="10" r="9" fill="none" stroke="' + ringColor + '" stroke-width="2"' +
+                ' stroke-dasharray="' + dashLen + ' ' + CIRC + '"' +
+                ' stroke-dashoffset="' + (CIRC * 0.25).toFixed(1) + '"' +
+                ' transform="rotate(-90 10 10)"></circle>' +
+                '</svg>';
+
+            // Projected-impact bar
+            var impactBarW = impactDelta !== null ? Math.min(Math.abs(impactDelta) * 20, 100).toFixed(1) : '0';
+            var impactFill = impactDelta !== null && impactDelta >= 0 ? cssVar('--studio-pos') : cssVar('--studio-neg');
+            var projectedImpactBar =
+                '<div data-testid="projected-impact-bar" style="margin-bottom:0.5rem;">' +
+                (impactBefore !== null
+                    ? '<span style="font-size:0.625rem;color:' + cssVar('--studio-ink-dim') + ';">' +
+                      escHtml(impactMetric) + ': ' + impactBefore.toFixed(3) + ' → ' +
+                      (impactAfter !== null ? impactAfter.toFixed(3) : '?') + '</span><br>'
+                    : '') +
+                '<svg viewBox="0 0 100 6" preserveAspectRatio="none" width="120" height="6">' +
+                '<rect x="0" y="1" width="' + impactBarW + '" height="4" rx="2" fill="' + impactFill + '"></rect>' +
+                '</svg>' +
+                '</div>';
+
+            // Four-gates verdict badges
+            var gates = s.four_gates_verdict || {};
+            var GATE_LABELS = ['allowlist', 'risk_direction', 'oos_frozen_eval', 'locked_vars'];
+            var gateBadges = GATE_LABELS.map(function (gk) {
+                var raw = gates[gk];
+                var gc = raw === true || raw === 'pass' ? cssVar('--studio-pos')
+                    : raw === false || raw === 'fail' ? cssVar('--studio-neg') : cssVar('--studio-warn');
+                var label = raw === true ? 'pass' : raw === false ? 'fail' : (raw != null ? String(raw) : 'unknown');
+                return '<span data-testid="gate-badge" style="font-size:0.5625rem;font-weight:700;' +
+                    'text-transform:uppercase;letter-spacing:0.06em;padding:0.1rem 0.3rem;' +
+                    'border-radius:0.25rem;border:1px solid ' + gc + ';color:' + gc + ';margin-right:0.25rem;">' +
+                    escHtml(gk.replace(/_/g, ' ')) + ': ' + escHtml(label) + '</span>';
+            }).join('');
+            var gatesRow = '<div style="margin-bottom:0.5rem;">' + gateBadges + '</div>';
+
+            return (
+                '<div id="card-' + i + '" style="' +
+                'background:' + cssVar('--studio-surface') + ';' +
+                'border:1px solid ' + (isOosRejected ? cssVar('--studio-neg') : cssVar('--studio-border')) + ';' +
+                'border-radius:1rem;padding:1.25rem 1.5rem;' +
+                (isOosRejected ? 'opacity:0.7;' : '') + '">' +
+
+                '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;">' +
+
+                '<div style="flex:1;">' +
+                '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">' +
+                confidenceRing +
+                '<span style="font-size:0.625rem;font-weight:700;text-transform:uppercase;' +
+                'letter-spacing:0.1em;color:' + cssVar('--studio-accent') + ';">' +
+                escHtml(s.config_key) + '</span>' +
+                '<span style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';">' +
+                escHtml(s.risk_direction) + '</span>' +
+                '<span style="font-size:0.6875rem;' + confidenceBadgeStyle(s.confidence) + '">' +
+                escHtml(s.confidence) + ' confidence</span>' +
+                suffBadge +
+                '</div>' +
+
+                gatesRow +
+                projectedImpactBar +
+
+                '<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.625rem;">' +
+                '<span style="font-size:0.875rem;color:' + cssVar('--studio-ink-dim') + ';">Current: ' +
+                '<code style="color:' + cssVar('--studio-ink') + ';">' + escHtml(String(s.current_value)) + '</code></span>' +
+                '<span style="color:' + cssVar('--studio-ink-muted') + ';">&rarr;</span>' +
+                '<span style="font-size:0.875rem;color:' + cssVar('--studio-ink-dim') + ';">Suggested: ' +
+                '<code style="color:' + cssVar('--studio-pos') + ';">' + escHtml(String(s.suggested_value)) + '</code></span>' +
+                (impactText ? '<span style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';margin-left:0.5rem;">' + escHtml(impactText) + '</span>' : '') +
+                '</div>' +
+
+                '<p style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';margin-bottom:0.375rem;">' +
+                escHtml(s.rationale.substring(0, 160)) + (s.rationale.length > 160 ? '&hellip;' : '') + '</p>' +
+
+                '<span style="font-size:0.6875rem;color:' + oosColor + ';">OOS: ' + oosLabel + '</span>' +
+                '</div>' +
+
+                '<div style="display:flex;flex-direction:column;gap:0.5rem;flex-shrink:0;">' +
+                (isOosRejected
+                    ? '<button disabled ' +
+                      'style="padding:0.375rem 1rem;background:' + cssVar('--studio-chip-bg') + ';' +
+                      'color:' + cssVar('--studio-ink-dim') + ';border:none;border-radius:0.5rem;' +
+                      'font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:not-allowed;">' +
+                      'Blocked by OOS gate</button>'
+                    : '<button onclick="acceptSuggestion(' + i + ',\'' + escHtml(symphonyId) + '\')" ' +
+                      'style="padding:0.375rem 1rem;background:' + cssVar('--studio-pos') + ';' +
+                      'color:' + cssVar('--studio-white') + ';border:none;border-radius:0.5rem;' +
+                      'font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;">' +
+                      'Apply suggestion</button>'
+                ) +
+                '<button onclick="rejectSuggestion(' + i + ',\'' + escHtml(symphonyId) + '\')" ' +
+                'style="padding:0.375rem 1rem;background:' + cssVar('--studio-surface-raised') + ';' +
+                'color:' + cssVar('--studio-ink-dim') + ';border:1px solid ' + cssVar('--studio-border') + ';' +
+                'border-radius:0.5rem;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;">' +
+                'Dismiss</button>' +
+                '</div>' +
+
+                '</div>' +
+                '</div>'
+            );
+        }).join('');
+
+        container._suggestions = suggestions;
+        container._symphonyId = symphonyId;
+        _activeSuggestions = suggestions;
+        _activeSymphonyId = symphonyId;
+    }
+
+    // ---------------------------------------------------------------------------
+    // getSuggestions
+    // ---------------------------------------------------------------------------
+
+    window.getSuggestions = function getSuggestions() {
+        var selectEl = document.getElementById('symphony-id-input');
+        var symphonyId = selectEl ? selectEl.value.trim() : '';
+        var errorEl = document.getElementById('advisor-error');
+        var container = document.getElementById('suggestions-container');
+        var btn = document.getElementById('get-suggestions-btn');
+
+        errorEl.style.display = 'none';
+        errorEl.textContent = '';
+        container.innerHTML =
+            '<p style="color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;grid-column:1/-1;">Loading suggestions…</p>';
+        btn.disabled = true;
+        btn.textContent = 'Loading…';
+
+        fetch('/ai-advisor/suggest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ symphony_id: symphonyId }),
-        });
-        const body = await resp.json();
+        })
+            .then(function (resp) { return resp.json(); })
+            .then(function (body) {
+                if (body.error) {
+                    container.innerHTML = '';
+                    errorEl.style.display = 'block';
+                    errorEl.textContent = 'Advisor unavailable: ' + body.error;
+                    return;
+                }
+                renderSuggestions(body.suggestions || [], symphonyId);
+            })
+            .catch(function (err) {
+                container.innerHTML = '';
+                errorEl.style.display = 'block';
+                errorEl.textContent = 'Request failed: ' + err.message;
+            })
+            .finally(function () {
+                // B-14: only re-enable if a symphony is still selected.
+                var sel = document.getElementById('symphony-id-input');
+                btn.disabled = !(sel && sel.value);
+                btn.textContent = 'Run Claude advisor';
+            });
+    };
 
-        if (body.error) {
-            container.innerHTML = '';
-            errorEl.textContent = 'Advisor unavailable: ' + body.error;
-            errorEl.classList.remove('hidden');
-            return;
-        }
+    // ---------------------------------------------------------------------------
+    // Accept / Reject
+    // ---------------------------------------------------------------------------
 
-        renderSuggestions(body.suggestions || [], symphonyId);
-    } catch (err) {
-        container.innerHTML = '';
-        errorEl.textContent = 'Request failed: ' + err.message;
-        errorEl.classList.remove('hidden');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Get Suggestions';
-    }
-}
+    window.acceptSuggestion = function acceptSuggestion(index, symphonyId) {
+        var container = document.getElementById('suggestions-container');
+        var suggestion = container._suggestions[index];
+        var card = document.getElementById('card-' + index);
 
-function renderSuggestions(suggestions, symphonyId) {
-    const container = document.getElementById('suggestions-container');
-    if (suggestions.length === 0) {
-        container.innerHTML = '<p class="text-slate-400 text-sm bg-slate-800 rounded-xl border border-slate-700 p-6">No suggestions — the current config looks sound.</p>';
-        return;
-    }
-
-    container.innerHTML = suggestions.map((s, i) => `
-        <div id="card-${i}" class="bg-slate-800 rounded-2xl border border-slate-700 p-6">
-            <div class="flex items-start justify-between gap-4">
-                <div class="flex-1">
-                    <div class="flex items-center gap-3 mb-2">
-                        <span class="text-[10px] font-bold uppercase tracking-widest text-violet-400">${escHtml(s.config_key)}</span>
-                        <span class="text-[10px] text-slate-500">${escHtml(s.risk_direction)} &middot; ${escHtml(s.confidence)} confidence</span>
-                    </div>
-                    <div class="flex items-center gap-3 mb-3">
-                        <span class="text-slate-400 text-sm">Current: <span class="font-mono text-slate-200">${escHtml(String(s.current_value))}</span></span>
-                        <span class="text-slate-600">&rarr;</span>
-                        <span class="text-slate-400 text-sm">Suggested: <span class="font-mono text-emerald-400">${escHtml(String(s.suggested_value))}</span></span>
-                    </div>
-                    <div class="relative inline-block">
-                        <span class="text-[11px] text-slate-400 underline decoration-dotted cursor-help"
-                            title="${escHtml(s.rationale)}">
-                            Hover for rationale
-                        </span>
-                        <p class="text-[11px] text-slate-500 mt-1">${escHtml(s.rationale.substring(0, 120))}${s.rationale.length > 120 ? '…' : ''}</p>
-                    </div>
-                </div>
-                <div class="flex flex-col gap-2">
-                    <button onclick="acceptSuggestion(${i}, '${escHtml(symphonyId)}')"
-                        class="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-bold uppercase tracking-widest rounded-lg transition-colors">
-                        Accept
-                    </button>
-                    <button onclick="rejectSuggestion(${i}, '${escHtml(symphonyId)}')"
-                        class="px-4 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[11px] font-bold uppercase tracking-widest rounded-lg transition-colors">
-                        Reject
-                    </button>
-                </div>
-            </div>
-        </div>
-    `).join('');
-
-    // Store suggestions on the container for accept/reject handlers
-    container._suggestions = suggestions;
-    container._symphonyId = symphonyId;
-}
-
-async function acceptSuggestion(index, symphonyId) {
-    const container = document.getElementById('suggestions-container');
-    const suggestion = container._suggestions[index];
-    const card = document.getElementById('card-' + index);
-
-    card.classList.add('opacity-50');
-    try {
-        const resp = await fetch('/ai-advisor/accept', {
+        card.style.opacity = '0.5';
+        fetch('/ai-advisor/accept', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ symphony_id: symphonyId, suggestion }),
-        });
-        const body = await resp.json();
-        if (body.status === 'accepted') {
-            card.innerHTML = '<p class="text-emerald-400 text-sm font-bold">Accepted — config updated.</p>';
-        } else {
-            card.classList.remove('opacity-50');
-            alert('Rejected by C2 gate: ' + (body.error || body.status));
-        }
-    } catch (err) {
-        card.classList.remove('opacity-50');
-        alert('Request failed: ' + err.message);
-    }
-}
+            body: JSON.stringify({ symphony_id: symphonyId, suggestion: suggestion }),
+        })
+            .then(function (resp) { return resp.json(); })
+            .then(function (body) {
+                if (body.status === 'accepted') {
+                    card.innerHTML =
+                        '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:700;">' +
+                        'Accepted — config updated.</p>';
+                } else {
+                    card.style.opacity = '1';
+                    alert('Rejected by C2 gate: ' + (body.error || body.status));
+                }
+            })
+            .catch(function (err) {
+                card.style.opacity = '1';
+                alert('Request failed: ' + err.message);
+            });
+    };
 
-async function rejectSuggestion(index, symphonyId) {
-    const container = document.getElementById('suggestions-container');
-    const suggestion = container._suggestions[index];
-    const card = document.getElementById('card-' + index);
+    window.rejectSuggestion = function rejectSuggestion(index, symphonyId) {
+        var container = document.getElementById('suggestions-container');
+        var suggestion = container._suggestions[index];
+        var card = document.getElementById('card-' + index);
 
-    card.classList.add('opacity-50');
-    try {
-        await fetch('/ai-advisor/reject', {
+        card.style.opacity = '0.5';
+        fetch('/ai-advisor/reject', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ symphony_id: symphonyId, suggestion }),
-        });
-        card.innerHTML = '<p class="text-slate-500 text-sm">Rejected.</p>';
-    } catch (err) {
-        card.classList.remove('opacity-50');
-        alert('Request failed: ' + err.message);
-    }
-}
+            body: JSON.stringify({ symphony_id: symphonyId, suggestion: suggestion }),
+        })
+            .then(function () {
+                card.innerHTML =
+                    '<p style="color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;">Rejected.</p>';
+            })
+            .catch(function (err) {
+                card.style.opacity = '1';
+                alert('Request failed: ' + err.message);
+            });
+    };
 
-function escHtml(str) {
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+    // ---------------------------------------------------------------------------
+    // Autotune sparkline
+    // ---------------------------------------------------------------------------
 
-function fmtSharpe(val) {
-    if (val === null || val === undefined) return 'N/A';
-    return Number(val).toFixed(4);
-}
+    var _sparkChart = null;
 
-async function loadRecentRuns() {
-    const tbody = document.getElementById('autotune-runs-tbody');
-    try {
-        const resp = await fetch('/api/autotune-runs');
-        const rows = await resp.json();
-        if (!rows.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-slate-500 py-4 text-center">No tuning runs recorded yet.</td></tr>';
-            return;
+    function renderAutotuneSparkline(rows) {
+        var canvas = document.getElementById('autotune-sparkline-canvas');
+        if (!canvas || typeof Chart === 'undefined') return;
+
+        var sharpeValues = rows
+            .slice()
+            .reverse()
+            .map(function (r) { return r.naive_sharpe !== null && r.naive_sharpe !== undefined ? Number(r.naive_sharpe) : null; })
+            .filter(function (v) { return v !== null; });
+
+        if (!sharpeValues.length) return;
+
+        var cs = getComputedStyle(document.documentElement);
+        // C-15: fall back to neutral token values — no bare hex.
+        var accentColor = cs.getPropertyValue('--studio-accent').trim() || cs.getPropertyValue('--studio-swatch-1').trim();
+        var borderColor = cs.getPropertyValue('--studio-rule').trim() || cs.getPropertyValue('--studio-border').trim();
+
+        if (_sparkChart) {
+            _sparkChart.destroy();
+            _sparkChart = null;
         }
-        tbody.innerHTML = rows.map(r => `
-            <tr class="border-b border-slate-700/50 hover:bg-slate-700/20">
-                <td class="py-2 pr-4 font-mono text-slate-300">${escHtml(r.symphony_id)}</td>
-                <td class="py-2 pr-4 text-slate-400">${escHtml(r.run_timestamp)}</td>
-                <td class="py-2 pr-4 text-slate-400">${escHtml(r.baseline_decision || '')}</td>
-                <td class="py-2 pr-4 text-right font-mono">${escHtml(fmtSharpe(r.naive_sharpe))}</td>
-                <td class="py-2 pr-4 text-right font-mono">${escHtml(fmtSharpe(r.deflated_sharpe))}</td>
-                <td class="py-2 text-right font-mono">${escHtml(fmtSharpe(r.frozen_eval_sharpe))}</td>
-            </tr>
-        `).join('');
-    } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="6" class="text-rose-400 py-4 text-center">Failed to load runs: ${escHtml(err.message)}</td></tr>`;
-    }
-}
 
-// Auto-refresh floor: 15 s — engine runs on 1-minute cadence; polling faster than 15 s provides no benefit
-document.addEventListener('DOMContentLoaded', () => {
-    loadRecentRuns();
-    setInterval(loadRecentRuns, 15000);
-});
+        _sparkChart = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: sharpeValues.map(function (_, i) { return i + 1; }),
+                datasets: [{
+                    data: sharpeValues,
+                    borderColor: accentColor,
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    tension: 0.3,
+                    fill: false,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                scales: {
+                    x: { display: false },
+                    y: {
+                        display: true,
+                        grid: { color: borderColor, lineWidth: 0.5 },
+                        ticks: { font: { size: 8 }, color: borderColor, maxTicksLimit: 3 },
+                        border: { display: false },
+                    },
+                },
+            },
+        });
+    }
+
+    // ---------------------------------------------------------------------------
+    // Autotune runs
+    // ---------------------------------------------------------------------------
+
+    // B-13: map raw enum values to human-readable labels.
+    var DECISION_LABELS = {
+        'apply':    'Apply',
+        'reject':   'Reject',
+        'fallback': 'Fallback',
+        'hold':     'Hold',
+        'skip':     'Skip',
+        'pending':  'Pending',
+    };
+
+    function decisionLabel(decision) {
+        return DECISION_LABELS[decision] || decision;
+    }
+
+    function decisionPillColor(decision) {
+        if (decision === 'apply') return cssVar('--studio-pos');
+        if (decision === 'reject') return cssVar('--studio-neg');
+        // V-25: fallback/hold/pending/unknown all use --studio-warn token
+        // so saturation stays consistent in light + dark themes.
+        return cssVar('--studio-warn');
+    }
+
+    function frozenEvalColor(verdict) {
+        if (verdict === 'passed') return cssVar('--studio-pos');
+        if (verdict === 'failed') return cssVar('--studio-neg');
+        return cssVar('--studio-warn');
+    }
+
+    function loadRecentRuns() {
+        var list = document.getElementById('autotune-runs-list');
+        fetch('/api/autotune-runs')
+            .then(function (resp) { return resp.json(); })
+            .then(function (rows) {
+                if (!rows.length) {
+                    list.innerHTML =
+                        '<div style="text-align:center;padding:1rem;' +
+                        'color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;">No tuning runs recorded yet.</div>';
+                    return;
+                }
+                renderAutotuneSparkline(rows);
+                // C-16: render card list with all per-run fields per advisor.jsx.
+                list.innerHTML = rows.map(function (r) {
+                    var decision = r.baseline_decision || '';
+                    var pillColor = decisionPillColor(decision);
+                    // B-13: human-readable label instead of raw enum.
+                    var pillLabel = decisionLabel(decision);
+                    var frozenVerdict = r.frozen_eval_verdict || '';
+                    var frozenColor = frozenEvalColor(frozenVerdict);
+                    var symLabel = escHtml(r.symphony_name || r.symphony_id || '');
+                    // V-23: timestamp muted, Sharpe/DSR bold mono.
+                    var dsrVal = r.dsr !== undefined ? r.dsr : r.deflated_sharpe;
+                    return (
+                        '<div class="autotune-run-card" data-testid="autotune-run-row">' +
+                        '<div class="autotune-run-top">' +
+                        '<span class="autotune-run-name" title="' + symLabel + '">' + symLabel + '</span>' +
+                        '<span class="decision-pill" style="color:' + pillColor + ';border-color:' + pillColor + ';background:' + pillColor + '14;">' +
+                        escHtml(pillLabel) + '</span>' +
+                        '</div>' +
+                        '<div class="autotune-run-meta">' +
+                        '<span style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(r.run_timestamp || '') + '</span>' +
+                        '<span>Sharpe <span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span>' +
+                        ' · DSR <span class="mono-bold">' + escHtml(fmtSharpe(dsrVal)) + '</span>' +
+                        '</span>' +
+                        '</div>' +
+                        // V-23: FROZEN-EVAL as colored pill.
+                        '<div class="autotune-run-verdict">Frozen-eval ' +
+                        '<span class="frozen-eval-pill" style="color:' + frozenColor + ';border-color:' + frozenColor + ';background:' + frozenColor + '14;">' +
+                        escHtml(frozenVerdict) + '</span></div>' +
+                        '</div>'
+                    );
+                }).join('');
+            })
+            .catch(function (err) {
+                list.innerHTML =
+                    '<div style="text-align:center;padding:1rem;' +
+                    'color:' + cssVar('--studio-neg') + ';">Failed to load runs: ' + escHtml(err.message) + '</div>';
+            });
+    }
+
+    // ---------------------------------------------------------------------------
+    // Symphony select population
+    // ---------------------------------------------------------------------------
+
+    function loadSymphonies() {
+        var selectEl = document.getElementById('symphony-id-input');
+        if (!selectEl) return;
+        fetch('/api/performance/symphonies')
+            .then(function (resp) { return resp.json(); })
+            .then(function (body) {
+                var syms = (body && body.symphonies) || [];
+                var prevVal = selectEl.value;
+                selectEl.innerHTML = '<option value="">Select symphony…</option>';
+                syms.forEach(function (sym) {
+                    var opt = document.createElement('option');
+                    opt.value = sym;
+                    opt.textContent = sym;
+                    selectEl.appendChild(opt);
+                });
+                if (prevVal) selectEl.value = prevVal;
+            })
+            .catch(function () {});
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        loadRecentRuns();
+        loadSymphonies();
+        // 15 s floor — faster than the engine's minute cadence makes no sense.
+        setInterval(loadRecentRuns, 15000);
+
+        var selectEl = document.getElementById('symphony-id-input');
+        var runBtn = document.getElementById('get-suggestions-btn');
+        if (selectEl && runBtn) {
+            // B-14: enable Run button only when a symphony is selected.
+            function syncRunBtn() {
+                runBtn.disabled = !selectEl.value;
+            }
+            // C-11: wire change event so suggestions auto-fetch on pick.
+            selectEl.addEventListener('change', function () {
+                syncRunBtn();
+                if (selectEl.value) {
+                    getSuggestions();
+                }
+            });
+            syncRunBtn();
+        }
+    });
+})();
