@@ -85,7 +85,10 @@ _daily_return = st.floats(
     spy_today=st.floats(
         min_value=-15.0, max_value=15.0, allow_nan=False, allow_infinity=False
     ),
-    seed=st.integers(min_value=0, max_value=2**31),
+    # Seed range spans the full post-AC-3 64-bit space so the property also
+    # exercises seeds > 2**31 (the pre-fix modulus) — the widened seed must not
+    # break run_monte_carlo's RNG path.
+    seed=st.integers(min_value=0, max_value=2**64 - 1),
 )
 def test_run_monte_carlo_output_is_bounded_probability_or_sentinel(
     spy_returns: list[float],
@@ -94,15 +97,18 @@ def test_run_monte_carlo_output_is_bounded_probability_or_sentinel(
     seed: int,
 ) -> None:
     """
-    AC-1 invariant: for any sufficient history (>= MC_MIN_HISTORY_DAYS), with
-    any standardization applied, run_monte_carlo returns either:
+    AC-1 + AC-3 invariant: for any sufficient history (>= MC_MIN_HISTORY_DAYS),
+    with any standardization applied and any 64-bit seed, run_monte_carlo
+    returns either:
       * a finite float in [0, 100] (a real probability), or
       * the AC-2 out-of-band insufficient sentinel (None).
     It must never return NaN, Inf, or a number outside [0, 100].
 
     The holding return is derived from the SPY return plus a fixed offset so the
     feature standardization is exercised across correlated and degenerate
-    (near-zero-variance) inputs.
+    (near-zero-variance) inputs. The seed strategy spans the full post-AC-3
+    64-bit space so a widened seed that overflows or is mishandled would surface
+    here.
     """
     assume(len(spy_returns) >= math_engine.MC_MIN_HISTORY_DAYS)
     holding_returns = [r + holding_offset for r in spy_returns]
