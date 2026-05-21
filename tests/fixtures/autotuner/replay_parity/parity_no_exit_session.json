@@ -1,0 +1,24 @@
+{
+  "_description": "AC-6 parity fixture: a quiet full session that produces NO exit on either path. Small positive returns, mc held neutral (50 — outside the arm band [5,15) and below the MC sanity threshold but with no stop breach), no VWAP signal (valid_vwap_weight 0). Both the production exit path and the replay must traverse every tick with exit_reason None. This fixture catches a fix that introduces a spurious exit — e.g. an off-by-one in confirm-counting or a mis-wired grace gate that fires an exit where none should occur.",
+  "_provenance": "Hand-derived input sequence. Schema = synthetic_history tick dict. The parity test asserts the production harness and the replay produce an identical all-None exit-decision sequence.",
+  "grace_minutes": 15,
+  "params": {
+    "TRIGGER_THRESHOLD_PCT": 15.0,
+    "TAKE_PROFIT_MC_PCT": 5.0,
+    "VWAP_CROSS_HWM_PCT": 1.0,
+    "VWAP_BLEED_MULTIPLIER": 1.5,
+    "VWAP_BLEED_TICKS": 10,
+    "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+    "MAX_PARABOLIC_SQUEEZE": 0.5
+  },
+  "ticks": [
+    {"time": "09:30", "return": 0.4, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:31", "return": 0.5, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:32", "return": 0.6, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:33", "return": 0.7, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:34", "return": 0.6, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:35", "return": 0.7, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:36", "return": 0.8, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:37", "return": 0.7, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0}
+  ]
+}

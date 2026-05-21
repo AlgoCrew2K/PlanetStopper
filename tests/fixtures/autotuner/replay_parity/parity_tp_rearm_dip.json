@@ -1,0 +1,20 @@
+{
+  "_description": "AC-3 / AC-6 parity fixture: the take-profit re-arm divergence on an MC-UNAVAILABLE tick mid-position. With TAKE_PROFIT_MC_PCT=5: tick 0 mc=2 tp-arms (above_tp_count=0); tick 1 mc=8 above-threshold (above_tp_count -> 1); tick 2 mc_prob=null is MC-UNAVAILABLE (run_monte_carlo's None sentinel) — production hits the `elif tp_armed` branch whose inner `else` RESETS above_tp_count to 0 because MC is absent; tick 3 mc=8 above-threshold again -> above_tp_count reaches only 1. Production: NO TP exit. The pre-fix replay substitutes 22.5 for the null tick (>= TAKE_PROFIT_MC_PCT), increments above_tp_count instead of resetting, and fires a PHANTOM Take-Profit exit on tick 2 (or tick 3). All ticks return > 0 so the return-sign disarm is not the variable. VWAP inert (VWAP_CROSS_HWM_PCT=99, valid_vwap_weight=0); vol low / returns flat so the trailing stop never fires.",
+  "_provenance": "Hand-derived input sequence. Schema = synthetic_history tick dict; mc_prob=null encodes run_monte_carlo's MC_INSUFFICIENT_HISTORY_SENTINEL (None). NOTE re audit finding 9: a verified tick-by-tick trace showed production and the pre-fix replay behave IDENTICALLY on a sub-threshold MC DIP (mc back below TAKE_PROFIT_MC_PCT while available) — there is no divergence there. The real divergence is the MC-UNAVAILABLE case, coupled to AC-5. This fixture targets the real divergence. The parity test asserts production and the corrected replay both produce NO TP exit; pre-fix the replay diverges by firing one.",
+  "grace_minutes": 0,
+  "params": {
+    "TRIGGER_THRESHOLD_PCT": 15.0,
+    "TAKE_PROFIT_MC_PCT": 5.0,
+    "VWAP_CROSS_HWM_PCT": 99.0,
+    "VWAP_BLEED_MULTIPLIER": 1.5,
+    "VWAP_BLEED_TICKS": 999,
+    "PARABOLIC_VELOCITY_THRESHOLD": 99.0,
+    "MAX_PARABOLIC_SQUEEZE": 0.5
+  },
+  "ticks": [
+    {"time": "09:30", "return": 3.0, "mc_prob": 2.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:31", "return": 3.0, "mc_prob": 8.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:32", "return": 3.0, "mc_prob": null, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:33", "return": 3.0, "mc_prob": 8.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0}
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "_description": "AC-6 parity fixture (MC sanity veto control): the position arms on tick 0 (mc=10 in [5,15)), then the return drops deep below the HWM-anchored stop for many ticks — BUT mc is held at 70, at/above MC_SANITY_THRESHOLD (60). compute_exit_confirmation's MC sanity gate vetoes the trailing-stop exit ('if we still think we beat the benchmark, don't capitulate'), so NO exit fires on either path. This is a control fixture: it confirms the production harness and the replay agree on the veto, and that the replay honours the MC sanity gate. The open-coded pre-fix replay used the same literal 60.0, so it also vetoes — this fixture must stay parity-green pre AND post fix, proving the parity harness does not emit false REDs.",
+  "_provenance": "Hand-derived input sequence. Schema = synthetic_history tick dict. The parity test asserts production and the replay produce an identical all-None exit-decision sequence (the veto holds for the whole session).",
+  "grace_minutes": 0,
+  "params": {
+    "TRIGGER_THRESHOLD_PCT": 15.0,
+    "TAKE_PROFIT_MC_PCT": 5.0,
+    "VWAP_CROSS_HWM_PCT": 99.0,
+    "VWAP_BLEED_MULTIPLIER": 1.5,
+    "VWAP_BLEED_TICKS": 999,
+    "PARABOLIC_VELOCITY_THRESHOLD": 99.0,
+    "MAX_PARABOLIC_SQUEEZE": 0.5
+  },
+  "ticks": [
+    {"time": "09:30", "return": 6.0, "mc_prob": 10.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:31", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:32", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:33", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:34", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:35", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0}
+  ]
+}

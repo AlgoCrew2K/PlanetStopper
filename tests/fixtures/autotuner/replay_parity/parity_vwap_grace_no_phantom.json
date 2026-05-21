@@ -1,0 +1,24 @@
+{
+  "_description": "AC-2 / AC-6 parity fixture: an early-session VWAP breakdown whose confirming ticks ALL fall inside the open-window grace period (grace_minutes = 15, breakdown confirms within ticks 0-5). Production suppresses both VWAP signals in the grace window, so it produces NO exit. The pre-fix replay has no grace gate and fires a phantom VWAP Breakdown. Each tick: return below the HWM but with safe_hwm >= VWAP_CROSS_HWM_PCT so System A (profit-protection break) arms; negative vwap_diff with full weight so the VWAP gate passes. MC held neutral (50) so the trailing stop / TP do not interfere.",
+  "_provenance": "Hand-derived input sequence. Schema = synthetic_history tick dict. The parity test asserts the production harness (with grace) and the corrected replay (with grace) both produce NO early-session exit; a companion test runs the same ticks with grace_minutes=0 and asserts the VWAP exit then DOES fire (the gate is a time-bounded suppression, not a disable).",
+  "grace_minutes": 15,
+  "params": {
+    "TRIGGER_THRESHOLD_PCT": 15.0,
+    "TAKE_PROFIT_MC_PCT": 5.0,
+    "VWAP_CROSS_HWM_PCT": 1.0,
+    "VWAP_BLEED_MULTIPLIER": 1.5,
+    "VWAP_BLEED_TICKS": 3,
+    "PARABOLIC_VELOCITY_THRESHOLD": 99.0,
+    "MAX_PARABOLIC_SQUEEZE": 0.5
+  },
+  "ticks": [
+    {"time": "09:30", "return": 5.0, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+    {"time": "09:31", "return": 2.0, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+    {"time": "09:32", "return": 2.0, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+    {"time": "09:33", "return": 2.0, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+    {"time": "09:34", "return": 2.0, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+    {"time": "09:35", "return": 2.0, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+    {"time": "09:36", "return": 2.0, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+    {"time": "09:37", "return": 2.0, "mc_prob": 50.0, "vol": 0.5, "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0}
+  ]
+}
