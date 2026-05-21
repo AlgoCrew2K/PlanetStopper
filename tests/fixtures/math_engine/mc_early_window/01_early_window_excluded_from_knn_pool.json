@@ -1,0 +1,39 @@
+{
+  "name": "mc_early_window_excluded_from_knn_pool",
+  "description": "AC-4 proof fixture (audit MEDIUM). A 70-day SPY history. The first MC_VOL_WINDOW_DAYS - 1 days (the early-window days) have their rolling 20-day volatility computed on FEWER than 20 observations -- a short sample. np.std with ddof=0 is a downward-biased estimator of the true sigma and the bias grows sharply as the sample shrinks (n=2 -> ~20% low, n=5 -> ~6% low), and spy_vols[0] is hard-set to 0.0. today's query point always uses a full 20-observation window, so the bias is one-sided: early-window days look artificially calmer than reality. In this fixture the early-window days (indices 0..MC_VOL_WINDOW_DAYS-2) have SPY returns tightly hugging today's return, so a kNN that still admits them as candidates selects them; the later, full-window days have SPY returns farther from today's. The holding ticker AAA GAINS on the early-window days (daily_ret +0.10) and LOSES on every full-window day (daily_ret -0.10). AC-4 excludes the first MC_VOL_WINDOW_DAYS - 1 short-sample days from the kNN candidate pool. With them excluded the only candidates are full-window loss days -- the bootstrap distribution flips sign and prob_beating moves from the structural value 100.0 (early-window days in the pool, holding gains) to the structural value 0.0 (early-window days excluded, holding loses).",
+  "function": "run_monte_carlo",
+  "provenance": "Schema-derived synthetic history. The early-window day count is derived from math_engine.MC_VOL_WINDOW_DAYS at test time, not hardcoded. The regime selection is observable through prob_beating because the holding's early-vs-late returns have opposite sign.",
+  "inputs": {
+    "historical_data_spec": {
+      "kind": "early_window_bias",
+      "num_days": 70,
+      "today_return_decimal": 0.010,
+      "early_window_spy_dispersion": 0.0010,
+      "full_window_spy_dispersion": 0.020,
+      "early_window_holding_daily_ret": 0.10,
+      "full_window_holding_daily_ret": -0.10
+    },
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}
+    ],
+    "spy_today_return": 1.0,
+    "simulation_paths": 2000,
+    "neighbor_k": 8,
+    "numpy_seed": 42
+  },
+  "regime_selection": {
+    "early_window_in_pool": {
+      "meaning": "kNN admitted the short-sample early-window days; holding gains there; bootstrap all +10.0%",
+      "structural_prob": 100.0,
+      "structural_prob_reason": "current_symphony_return 0.0 is strictly below every bootstrapped path (+10.0%); searchsorted below_count=0; prob = 100.0. A deterministic boundary result, not a random draw."
+    },
+    "early_window_excluded": {
+      "meaning": "kNN candidate pool excludes the first MC_VOL_WINDOW_DAYS-1 days; only full-window loss days remain; bootstrap all -10.0%",
+      "structural_prob": 0.0,
+      "structural_prob_reason": "current_symphony_return 0.0 is strictly above every bootstrapped path (-10.0%); searchsorted below_count=paths; prob = 0.0. A deterministic boundary result, not a random draw."
+    }
+  },
+  "pre_fix_expected_regime": "early_window_in_pool",
+  "post_fix_expected_regime": "early_window_excluded",
+  "derivation": "Verified by replicating run_monte_carlo's internal kNN. Pre-fix (early-window days admitted) the 8 nearest days are entirely indices < MC_VOL_WINDOW_DAYS-1 for k in {5,8,12} (their returns hug today's). Post-fix (first MC_VOL_WINDOW_DAYS-1 days dropped from the candidate pool) the 8 nearest days are entirely full-window indices, regardless of whether the distance is standardized. The holding's opposite-sign per-region returns turn that into an observable prob_beating: pre-fix 100.0, post-fix 0.0."
+}

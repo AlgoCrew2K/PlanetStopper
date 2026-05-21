@@ -1,0 +1,40 @@
+{
+  "name": "mc_knn_standardization_equal_return_opposite_vol_regime",
+  "description": "AC-1 proof fixture (audit CRITICAL C-1). A 60-day SPY history split into two 30-day regime blocks. The CALM block (days 0-29) has SPY daily returns tightly clustered around today's return (+0.006 decimal, dispersion +/-0.0015) so its rolling 20-day vol is ~0.0015. The CRASH block (days 30-59) has SPY returns widely spread (+0.006 +/- 0.045) so its rolling vol is ~0.045. Today's query point has SPY return == +0.006 (identical to the calm cluster center) AND a genuinely high realized volatility (today_vol ~0.044, a CRASH-regime point because today_vol is computed from the crash-block tail). The holding ticker AAA gains in the calm block (daily_ret +0.020) and loses in the crash block (daily_ret -0.020). An UNSCALED kNN (the pre-fix bug) is return-dominated: it fills its neighbours with calm-block days, the bootstrap distribution is entirely +2.0%, and current_symphony_return (0.0) sits below all of it -> prob_beating snaps to the structural value 100.0. A STANDARDIZED kNN gives the volatility feature a fair share of the distance, correctly recognises today as a crash-regime point, fills its neighbours with crash-block days, the bootstrap distribution is entirely -2.0%, current_symphony_return (0.0) sits above all of it -> prob_beating snaps to the structural value 0.0.",
+  "function": "run_monte_carlo",
+  "provenance": "Schema-derived synthetic history (run_monte_carlo's documented {date:{ticker:{daily_ret}}} contract). The regime selection is observable through prob_beating's terminal value because the holding's per-regime returns have opposite sign. Construction independently verified: see derivation.",
+  "inputs": {
+    "historical_data_spec": {
+      "kind": "two_regime",
+      "num_days": 60,
+      "calm_block_days": 30,
+      "today_return_decimal": 0.006,
+      "calm_spy_dispersion": 0.0015,
+      "crash_spy_dispersion": 0.045,
+      "calm_holding_daily_ret": 0.020,
+      "crash_holding_daily_ret": -0.020
+    },
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}
+    ],
+    "spy_today_return": 0.6,
+    "simulation_paths": 2000,
+    "neighbor_k": 8,
+    "numpy_seed": 42
+  },
+  "regime_selection": {
+    "calm": {
+      "meaning": "kNN selected calm-regime neighbours (holding gains, bootstrap all +2.0%)",
+      "structural_prob": 100.0,
+      "structural_prob_reason": "current_symphony_return 0.0 is strictly below every bootstrapped path (+2.0%); searchsorted below_count=0; (paths-0)/paths*100 = 100.0. Not a random MC draw -- a deterministic boundary result."
+    },
+    "crash": {
+      "meaning": "kNN selected crash-regime neighbours (holding loses, bootstrap all -2.0%)",
+      "structural_prob": 0.0,
+      "structural_prob_reason": "current_symphony_return 0.0 is strictly above every bootstrapped path (-2.0%); searchsorted below_count=paths; (paths-paths)/paths*100 = 0.0. Not a random MC draw -- a deterministic boundary result."
+    }
+  },
+  "pre_fix_expected_regime": "calm",
+  "post_fix_expected_regime": "crash",
+  "derivation": "Verified by replicating run_monte_carlo's internal kNN: with the unscaled Euclidean distance sqrt((ret-ret_today)^2 + (vol-vol_today)^2) the 8 nearest days are 100% calm-block days for every k in {5,8,10,15} (calm returns hug today's return, the ~33x-weaker vol feature cannot overcome it). With the standardized distance (z-score both features by window-fitted mean/std) the 8 nearest days are 100% crash-block days. The holding's opposite-sign per-regime returns turn that selection into an observable prob_beating: pre-fix 100.0, post-fix 0.0."
+}

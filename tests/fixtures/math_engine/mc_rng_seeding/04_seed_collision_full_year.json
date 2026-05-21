@@ -1,0 +1,21 @@
+{
+  "name": "mc_rng_seeding_seed_collision_full_year",
+  "description": "AC-3 collision-safety fixture (audit HIGH). The cycle_id set for run_monte_carlo's seed is one full trading year at production cadence: 252 trading days x 390 market minutes = ~98,280 cycles. derive_cycle_mc_seed maps each YYYYMMDD_HHMM cycle_id (SHA-256 digest mod MC_SEED_MODULUS) to a numpy Generator seed. With the pre-fix MC_SEED_MODULUS = 2**31 the seed space is far too small for ~98k draws: the birthday bound predicts ~2.2 collisions/year and the 2024 trading-year cycle_id set produces a measured, deterministic collision. AC-3 widens the seed space to at least 2**64 (or the full SHA-256 digest via numpy SeedSequence), eliminating birthday-bound collisions. The test generates the cycle_id set programmatically (parameters below) so it is deterministic and RED-verifiable against pre-fix code.",
+  "function": "derive_cycle_mc_seed",
+  "provenance": "The cycle_id format YYYYMMDD_HHMM and the production cadence (every market minute, 09:30-15:59 ET) are the daemon's real seeding inputs (alpha_bot_execution.py constructs the cycle_id as current_et.strftime('%Y%m%d_%H%M')). No producer-computed value is stored -- the test asserts the SIZE of the seed space and the absence of collisions, both derivable.",
+  "cycle_id_generation": {
+    "calendar_year_start": "2024-01-02",
+    "num_trading_days": 252,
+    "weekday_filter": "Monday-Friday only (weekday() < 5)",
+    "market_minutes": "09:30 through 15:59 inclusive, every minute (390 minutes/day)",
+    "expected_cycle_count": 98280,
+    "cycle_id_format": "YYYYMMDD_HHMM"
+  },
+  "contract": {
+    "collision_free_at_scale": "derive_cycle_mc_seed must map all ~98,280 cycle_ids of a trading year to DISTINCT seeds -- zero collisions.",
+    "seed_space_width": "MC_SEED_MODULUS (or the effective seed space) must be at least 2**64. 2**31 is too small (birthday bound: ~2.2 collisions/year at 98k cycles). The test asserts the modulus is >= 2**64 rather than == 2**64, so a full-digest / SeedSequence implementation that exposes an even larger space also passes.",
+    "determinism_preserved": "derive_cycle_mc_seed remains a pure deterministic function -- same cycle_id -> same seed across calls.",
+    "comment_corrected": "The MC_SEED_MODULUS comment must no longer claim '~98k distinct values/year with no collisions' for a 2**31 space -- that birthday-bound claim is false."
+  },
+  "derivation": "Birthday bound: expected collisions for n draws into M buckets ~= n^2 / (2M). n=98280, M=2**31 -> ~2.25 collisions/year (measured: 1 collision in the 2024 set). M=2**64 -> ~2.6e-10 collisions/year (effectively zero). The pre-fix RED marker asserts the measured >=1 collision exists at 2**31; the post-fix assertion is zero collisions plus a seed space >= 2**64."
+}

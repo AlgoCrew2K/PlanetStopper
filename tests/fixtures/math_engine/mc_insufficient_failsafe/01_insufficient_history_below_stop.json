@@ -1,0 +1,34 @@
+{
+  "name": "mc_insufficient_failsafe_insufficient_history_below_stop",
+  "description": "AC-2 fail-safe proof (audit HIGH). A 15-day history is below MC_MIN_HISTORY_DAYS (20), so run_monte_carlo cannot compute a real Monte Carlo probability. The position is also deeply below its protective trailing stop. The two facts together are the dangerous case: the protective stop MUST still fire even though the MC second opinion is uncomputable. Pre-fix, run_monte_carlo emits the in-band value 100.0 ('definitely beats benchmark'), compute_exit_confirmation's MC sanity gate (prob_beating < 60.0) is therefore False, below_stop_condition is permanently False, and the trailing-stop exit can NEVER confirm while MC history is insufficient -- insufficient data DISABLES the protective stop (fail-dangerous). Post-fix, run_monte_carlo signals 'insufficient' via a distinct out-of-band sentinel (None) and compute_exit_confirmation treats it as 'MC confirmation unavailable' -- the stop fires on the ticks-below-stop condition alone.",
+  "function": "run_monte_carlo + compute_exit_confirmation",
+  "provenance": "Schema-derived synthetic history (15 days, below the 20-day MC minimum). The exit-confirmation inputs are named scalars, not producer-computed floats.",
+  "run_monte_carlo_inputs": {
+    "historical_data_spec": {
+      "kind": "constant_return",
+      "num_days": 15,
+      "spy_daily_ret": 0.001,
+      "holding_daily_ret": 0.001
+    },
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}
+    ],
+    "spy_today_return": 0.1,
+    "simulation_paths": 2000,
+    "neighbor_k": 8,
+    "numpy_seed": 42
+  },
+  "exit_confirmation_scenario": {
+    "description": "Position deeply below the protective stop, armed, not triggered. Driven for EXIT_CONFIRM_TICKS consecutive ticks while MC history is insufficient. The protective exit must confirm.",
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -5.0,
+    "stop_trigger_level": -1.0,
+    "starting_below_stop_count": 0
+  },
+  "contract": {
+    "run_monte_carlo": "Returns a DISTINCT out-of-band insufficient-history sentinel (None) -- NOT the in-band 100.0. The test asserts the return is None / not a probability in [0,100].",
+    "compute_exit_confirmation": "When prob_beating is the insufficient sentinel, the MC sanity gate is treated as 'unavailable' and does NOT veto the exit. With current_return deeply below stop_trigger_level - MAGNITUDE_FLOOR_PCT for EXIT_CONFIRM_TICKS consecutive ticks, is_trailing_stop_hit becomes True."
+  },
+  "derivation": "MAGNITUDE_FLOOR_PCT and EXIT_CONFIRM_TICKS are module constants read from math_engine at test time -- not hardcoded. The magnitude condition (current_return -5.0 <= stop_trigger_level -1.0 minus MAGNITUDE_FLOOR_PCT) is satisfied; with the MC gate not vetoing, the count increments each tick and the stop fires on the EXIT_CONFIRM_TICKS-th tick. Insufficient MC data must fail toward PROTECTING the position."
+}

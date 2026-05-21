@@ -1,0 +1,23 @@
+{
+  "name": "mc_knn_standardization_zero_variance_feature",
+  "description": "AC-1 edge case: a feature with zero variance over the window. Every SPY day in the 40-day history has the IDENTICAL daily return, so the return feature has zero spread and (because the returns are constant) the rolling-volatility feature is also constant -- both features have zero variance. A z-score standardization divides by the feature's standard deviation; with zero variance that is a division by zero. The fix must guard this degenerate case (e.g. fall back to a zero-centred feature, or skip standardization for the zero-variance dimension) and must NOT emit NaN or Inf or raise. run_monte_carlo must still return a finite probability in [0, 100].",
+  "function": "run_monte_carlo",
+  "provenance": "Schema-derived synthetic history; the constant-return construction deliberately produces the zero-variance degenerate case.",
+  "inputs": {
+    "historical_data_spec": {
+      "kind": "constant_return",
+      "num_days": 40,
+      "spy_daily_ret": 0.003,
+      "holding_daily_ret": 0.003
+    },
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}
+    ],
+    "spy_today_return": 0.3,
+    "simulation_paths": 2000,
+    "neighbor_k": 8,
+    "numpy_seed": 42
+  },
+  "contract": "run_monte_carlo returns a finite float in [0, 100]; no NaN, no Inf, no exception. The expected value is asserted as a shape/range invariant, not pinned -- the test does not hardcode a producer-computed probability.",
+  "derivation": "All SPY daily returns are 0.003 -> rolling vol is constant -> both kNN features have zero variance. A naive (feature - mean)/std produces 0/0 = NaN, which would propagate into the distance and corrupt neighbour selection. The fix must keep the output finite and bounded."
+}

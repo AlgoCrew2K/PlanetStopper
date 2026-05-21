@@ -1,0 +1,31 @@
+{
+  "name": "mc_knn_standardization_vol_feature_load_bearing",
+  "description": "AC-1 property fixture. Two histories that are IDENTICAL except for the volatility of the second 30-day block, which controls today's realized volatility (today_vol is computed from the history tail). H_low has a low-volatility tail; H_high has a high-volatility tail. In BOTH histories the SPY returns of every day cluster around the same value (+0.006 decimal) so the RETURN feature alone cannot distinguish the two blocks. The first block's holding gains (AAA daily_ret +0.020); the second block's holding loses (AAA daily_ret -0.020). Under a standardized kNN the volatility feature must be load-bearing: H_low's low today_vol selects the first (calm) block and H_high's high today_vol selects the second (crash) block, so the two histories MUST produce a different prob_beating. Under the unscaled pre-fix kNN the vol feature is dominated and both histories collapse to the same regime selection (same prob_beating) -- the bug. This is the property assertion: 'neither feature dominates'; here it is checked as 'the vol feature is not silently dominated -- changing only the vol feature changes the selected regime.'",
+  "function": "run_monte_carlo",
+  "provenance": "Schema-derived synthetic history. The two histories differ only in the crash-block SPY dispersion; the holding returns and the calm block are identical.",
+  "inputs": {
+    "shared": {
+      "num_days": 60,
+      "first_block_days": 30,
+      "today_return_decimal": 0.006,
+      "calm_spy_dispersion": 0.0015,
+      "first_block_holding_daily_ret": 0.020,
+      "second_block_holding_daily_ret": -0.020,
+      "holdings": [
+        {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}
+      ],
+      "spy_today_return": 0.6,
+      "simulation_paths": 2000,
+      "neighbor_k": 8,
+      "numpy_seed": 42
+    },
+    "history_low_tail": {
+      "second_block_spy_dispersion": 0.0015
+    },
+    "history_high_tail": {
+      "second_block_spy_dispersion": 0.045
+    }
+  },
+  "property": "prob_beating(H_low) != prob_beating(H_high). The only difference between the two histories is the second block's volatility; if the standardized vol feature is load-bearing the differing today_vol selects different regimes and the holding's opposite-sign returns make prob_beating differ. A unit-dominated (unscaled) feature vector ignores the vol difference and yields equal prob_beating.",
+  "derivation": "Verified: pre-fix both histories return prob_beating 100.0 (vol feature dominated -- the calm block wins both because its returns hug today's return). Post-fix the two must diverge. No producer float is pinned; the assertion is the inequality."
+}

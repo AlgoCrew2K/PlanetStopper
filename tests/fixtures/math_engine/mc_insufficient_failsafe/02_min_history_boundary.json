@@ -1,0 +1,25 @@
+{
+  "name": "mc_insufficient_failsafe_min_history_boundary",
+  "description": "AC-2 boundary case. MC history at EXACTLY MC_MIN_HISTORY_DAYS days must run the real Monte Carlo path and return a genuine probability (NOT the insufficient sentinel). One day fewer must return the insufficient sentinel. This pins the inclusive/exclusive boundary of the sufficiency guard so the fix does not move it.",
+  "function": "run_monte_carlo",
+  "provenance": "Schema-derived synthetic history; day counts taken from math_engine.MC_MIN_HISTORY_DAYS at test time, not hardcoded.",
+  "inputs": {
+    "historical_data_spec": {
+      "kind": "alternating",
+      "spy_amplitude": 0.010,
+      "holding_amplitude": 0.008
+    },
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}
+    ],
+    "spy_today_return": 0.2,
+    "simulation_paths": 2000,
+    "neighbor_k": 8,
+    "numpy_seed": 42
+  },
+  "contract": {
+    "at_min_history": "num_days == MC_MIN_HISTORY_DAYS -> run_monte_carlo returns a real probability: a finite float in [0, 100], NOT the insufficient sentinel.",
+    "below_min_history": "num_days == MC_MIN_HISTORY_DAYS - 1 -> run_monte_carlo returns the distinct insufficient sentinel."
+  },
+  "derivation": "The day count is read from math_engine.MC_MIN_HISTORY_DAYS in the test. No producer probability is pinned -- the at-boundary case asserts only shape/range and 'is not the sentinel'; the below-boundary case asserts 'is the sentinel'."
+}
