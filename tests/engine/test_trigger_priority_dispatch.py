@@ -167,6 +167,21 @@ def patched_env():
         patch.object(alpha_bot_execution, "LIVE_EXECUTION", True),
         patch.object(alpha_bot_execution.time, "sleep"),
         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        # These priority-dispatch tests isolate the if/elif winner-resolution
+        # ladder from the underlying math. They already surgically patch
+        # compute_exit_confirmation and compute_vwap_breakdown_update to control
+        # the Trailing-Stop / VWAP trigger booleans; run_monte_carlo is patched
+        # here for the same reason — to give a real, in-band prob_beating that
+        # the TP-confirm gate can act on. The single-day _make_minimal_history
+        # fixture is below MC_MIN_HISTORY_DAYS, so the real run_monte_carlo would
+        # return the insufficient sentinel (None) and the TP path could never
+        # fire (Cluster 2 AC-2 fail-safe). A fixed 50.0 is >= TAKE_PROFIT_MC_PCT
+        # (TP-confirm fires for a pre-armed symphony) and >= TRIGGER_THRESHOLD_PCT
+        # (so it does not also re-trip the arm gate). This is NOT a math test —
+        # the MC math itself is covered by tests/math_engine/.
+        patch.object(
+            alpha_bot_execution.math_engine, "run_monte_carlo", return_value=50.0
+        ),
     ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = _seed_state()
