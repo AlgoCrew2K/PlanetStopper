@@ -234,55 +234,158 @@ def test_replay_tp_disarm_on_above_threshold_with_nonpositive_return() -> None:
 
 
 # ===========================================================================
-# AC-3 — D-C3a: IF the team extracts the shared compute_tp_confirmation,
-# assert it is wired into BOTH production and the replay.
+# AC-3 — D-C3a: the shared compute_tp_confirmation extraction is REQUIRED.
 #
-# Skips if the team chooses fix-in-place (the plan permits either) — it does
-# not fail the fix-in-place route. When the shared function exists it enforces
-# that both consumers actually call it (no orphan helper).
+# team-lead ruling (2026-05-21): "KEEP the shared compute_tp_confirmation
+# extraction (D-C3a) — the confirm-count literal `2` still needs a single
+# source of truth, and AC-6's parity test guards it. That part of AC-3
+# stands." So extraction is no longer optional — these tests hard-require it.
 # ===========================================================================
 
 
-def test_shared_tp_confirmation_if_extracted_is_called_by_both_consumers() -> None:
-    """AC-3 / D-C3a: if math_engine.compute_tp_confirmation is extracted, it
-    must be CALLED by both alpha_bot_execution.py (production) and
-    autotuner.py (replay) — a shared function nothing calls is dead code
-    advertising a contract.
+import ast as _ast  # noqa: E402  (module-level import kept local to this section)
 
-    Skips cleanly if the team chooses the fix-in-place route (no shared
-    function) — the plan permits that since the AC-6 parity test guards the
-    behaviour either way.
+
+def _calls_compute_tp(module_path: pathlib.Path) -> bool:
+    tree = _ast.parse(module_path.read_text(encoding="utf-8"))
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Call):
+            f = node.func
+            if (isinstance(f, _ast.Attribute) and f.attr == "compute_tp_confirmation") \
+                    or (isinstance(f, _ast.Name) and f.id == "compute_tp_confirmation"):
+                return True
+    return False
+
+
+def test_shared_tp_confirmation_function_is_extracted() -> None:
+    """AC-3 / D-C3a (team-lead ruling — REQUIRED): the take-profit
+    confirmation logic must be extracted into a pure
+    `math_engine.compute_tp_confirmation`. Both production and the replay
+    must call it so the confirm-count literal `2` has a single source of
+    truth.
+
+    RED: pre-fix math_engine has no compute_tp_confirmation.
     """
     import math_engine
 
-    if not hasattr(math_engine, "compute_tp_confirmation"):
-        pytest.skip(
-            "compute_tp_confirmation not extracted — team chose fix-in-place "
-            "(permitted by plan D-C3a). AC-6 parity test guards the behaviour."
-        )
+    assert hasattr(math_engine, "compute_tp_confirmation"), (
+        "math_engine.compute_tp_confirmation does not exist. team-lead ruled "
+        "the shared extraction (D-C3a) is REQUIRED, not optional — the "
+        "take-profit confirm machine must be a single pure function both "
+        "production and the replay call, so the confirm-count constant is "
+        "not duplicated."
+    )
+    assert callable(math_engine.compute_tp_confirmation), (
+        "math_engine.compute_tp_confirmation must be a callable function."
+    )
 
-    import ast as _ast
 
-    def _calls_compute_tp(module_path: pathlib.Path) -> bool:
-        tree = _ast.parse(module_path.read_text(encoding="utf-8"))
-        for node in _ast.walk(tree):
-            if isinstance(node, _ast.Call):
-                f = node.func
-                if (isinstance(f, _ast.Attribute) and f.attr == "compute_tp_confirmation") \
-                        or (isinstance(f, _ast.Name) and f.id == "compute_tp_confirmation"):
-                    return True
-        return False
+def test_shared_tp_confirmation_is_called_by_both_consumers() -> None:
+    """AC-3 / D-C3a (REQUIRED): math_engine.compute_tp_confirmation must be
+    CALLED by both alpha_bot_execution.py (production) and autotuner.py
+    (replay) — a shared function nothing calls is dead code advertising a
+    contract, and a consumer that does NOT call it keeps a divergent copy.
 
+    RED: pre-fix neither module calls compute_tp_confirmation (it does not
+    exist).
+    """
     autotuner_path = pathlib.Path(autotuner.__file__)
     repo_root = autotuner_path.parent
     production_path = repo_root / "alpha_bot_execution.py"
 
     assert _calls_compute_tp(autotuner_path), (
-        "compute_tp_confirmation exists but autotuner.py never calls it — "
-        "the replay must use the shared TP function."
+        "autotuner.py never calls compute_tp_confirmation — the replay must "
+        "use the shared TP function (D-C3a)."
     )
     assert _calls_compute_tp(production_path), (
-        "compute_tp_confirmation exists but alpha_bot_execution.py never "
-        "calls it — production must use the shared TP function too, else "
-        "extraction created a divergence surface instead of removing one."
+        "alpha_bot_execution.py never calls compute_tp_confirmation — "
+        "production must use the shared TP function too, else extraction "
+        "created a divergence surface instead of removing one."
+    )
+
+
+def test_tp_confirm_count_is_a_named_constant_not_a_literal() -> None:
+    """AC-3 / D-C3a (REQUIRED, no-magic-number rule): the take-profit
+    confirm-count (currently the bare literal `2` in both the replay and
+    production) must become a NAMED constant in math_engine with a source
+    comment — math_engine.py's project rule forbids magic numbers.
+
+    Asserts math_engine exposes a confirm-count constant whose name signals
+    take-profit confirmation (contains 'TP' or 'TAKE_PROFIT' and 'CONFIRM'),
+    and that its value is a positive int.
+
+    RED: pre-fix the confirm count `2` is a bare literal in both
+    alpha_bot_execution.py (~line 1289) and autotuner.py (~line 383); no
+    named TP-confirm constant exists in math_engine.
+    """
+    import math_engine
+
+    candidates = [
+        name
+        for name in dir(math_engine)
+        if name.isupper()
+        and ("TP" in name or "TAKE_PROFIT" in name)
+        and "CONFIRM" in name
+    ]
+    assert candidates, (
+        "math_engine exposes no named take-profit confirm-count constant "
+        "(an uppercase name containing TP/TAKE_PROFIT and CONFIRM). The "
+        "confirm count `2` must be a named constant with a source comment — "
+        "math_engine's no-magic-number rule — shared by production and the "
+        "replay via compute_tp_confirmation."
+    )
+    for name in candidates:
+        value = getattr(math_engine, name)
+        assert isinstance(value, int) and not isinstance(value, bool) and value > 0, (
+            f"math_engine.{name} must be a positive int confirm-count; "
+            f"got {value!r}."
+        )
+
+
+def test_autotuner_has_no_open_coded_tp_confirm_literal() -> None:
+    """AC-3 / D-C3a (REQUIRED): once the replay calls the shared
+    compute_tp_confirmation, the bare confirm-count literal `2` must be gone
+    from the TP block of both replay functions — they delegate the count to
+    the shared function.
+
+    Detects a bare `2` compared against an `above_tp`-named variable inside
+    either replay function (the `above_tp_count >= 2` open-coded check).
+
+    RED: pre-fix both _collect_sim_returns and run_simulation contain
+    `above_tp_count >= 2`.
+    """
+    autotuner_tree = _ast.parse(
+        pathlib.Path(autotuner.__file__).read_text(encoding="utf-8")
+    )
+
+    def _function_node(name: str):
+        for node in _ast.walk(autotuner_tree):
+            if isinstance(node, _ast.FunctionDef) and node.name == name:
+                return node
+        raise AssertionError(f"function {name!r} not found in autotuner.py")
+
+    offenders: list[str] = []
+    for func_name in ("_collect_sim_returns", "run_simulation"):
+        func = _function_node(func_name)
+        for node in _ast.walk(func):
+            if isinstance(node, _ast.Compare):
+                # left operand an above_tp* name, a comparator the literal 2
+                left = node.left
+                names = [left] + list(node.comparators)
+                has_above_tp = any(
+                    isinstance(n, _ast.Name) and "above_tp" in n.id
+                    for n in names
+                )
+                has_literal_2 = any(
+                    isinstance(n, _ast.Constant) and n.value == 2
+                    for n in node.comparators
+                )
+                if has_above_tp and has_literal_2:
+                    offenders.append(f"{func_name}:line {node.lineno}")
+
+    assert not offenders, (
+        f"autotuner.py still open-codes the TP confirm count at {offenders} "
+        f"(`above_tp_count >= 2`). The replay must delegate take-profit "
+        f"confirmation to the shared math_engine.compute_tp_confirmation; "
+        f"the literal 2 must not survive in the replay."
     )
