@@ -234,6 +234,62 @@ def wipe_transient_state(state_dict):
     return state_dict
 
 
+def reset_symphony_position_state(sym_state):
+    """Reset one symphony's per-position transient exit-guard state on a new
+    position open (C-2 fix).
+
+    AlphaBot rotates symphonies — a symphony_id is re-allocated capital and a
+    NEW position re-enters under the SAME symphony_id. Without this reset the
+    new position inherits the prior position's stale ``triggered``/
+    ``stop_trigger``, leaving it with no trailing-stop protection (or a
+    spurious immediate exit).
+
+    Clears the six per-position transient fields — ``triggered``,
+    ``breakeven_locked``, ``hwm_hold_ticks``, ``below_stop_count``,
+    ``vwap_ticks``, ``vwap_bleed_ticks`` — and DELETES the ``stop_trigger``
+    key so the next compute_breakeven_update inherits no stale floor.
+    ``triggered_reason`` and the trigger-snapshot keys are dropped too. Pure:
+    mutates ``sym_state`` in place and returns it; no DB I/O. Identity /
+    accounting fields (name, account, mc_history, current_holdings) are left
+    untouched. The single-symphony analogue of wipe_transient_state.
+    """
+    sym_state["triggered"] = False
+    sym_state["breakeven_locked"] = False
+    sym_state["hwm_hold_ticks"] = 0
+    sym_state["below_stop_count"] = 0
+    sym_state["vwap_ticks"] = 0
+    sym_state["vwap_bleed_ticks"] = 0
+    for k in (
+        "stop_trigger",
+        "triggered_reason",
+        "triggered_at_return",
+        "triggered_at_hwm",
+        "triggered_at_stop",
+        "triggered_at_time",
+        "trigger_prices",
+        "triggered_basket_snapshot",
+    ):
+        if k in sym_state:
+            del sym_state[k]
+    return sym_state
+
+
+def is_new_position_open(prev_identity, current_identity) -> bool:
+    """Return True iff a symphony has opened a NEW position since the last cycle.
+
+    Position identity is a stable string keyed on position_open_date /
+    composition identity. A change in identity marks a new position open — the
+    exact event that must trigger reset_symphony_position_state. An unchanged
+    identity (or a None previous identity, i.e. first observation) is NOT a new
+    open, so the reset never fires mid-position.
+
+    Pure — no I/O, no state.
+    """
+    if prev_identity is None:
+        return False
+    return prev_identity != current_identity
+
+
 # --- Chart History & Archive ---
 def load_chart_history():
     conn = get_connection()
@@ -971,15 +1027,32 @@ def get_all_port_states() -> "list[dict]":
 
 
 def new_day_reset_port_state(account_id: str) -> None:
-    """AC-P2.5.4: reset prev_return to None for the new trading day.
+    """AC-P2.5.4 + AC-11: reset port_state transient fields for the new trading day.
 
-    Sentinel value (None) causes cycle-1 velocity = 0, preventing PARA-ARM
-    from firing on the opening gap.
+    Resets ``prev_return`` to None (sentinel -> cycle-1 velocity = 0, preventing
+    PARA-ARM on the opening gap) and wipes the transient exit-guard fields —
+    ``triggered``, ``triggered_reason``, ``armed``, ``para_armed``,
+    ``port_breakeven_active`` — so a port_state that ended yesterday triggered
+    or armed cannot carry that stale guard into the new day and fire a spurious
+    port-wide exit on the first cycle. The port_state analogue of
+    wipe_transient_state.
+
+    No-op when the account has no port_state row (a reset, not an upsert).
     """
     existing = read_port_state(account_id)
     if existing is None:
         return
-    write_port_state(account_id, {"prev_return": None})
+    write_port_state(
+        account_id,
+        {
+            "prev_return": None,
+            "triggered": False,
+            "triggered_reason": None,
+            "armed": False,
+            "para_armed": False,
+            "port_breakeven_active": False,
+        },
+    )
 
 
 def rebase_port_state_on_composition_change(
@@ -993,6 +1066,9 @@ def rebase_port_state_on_composition_change(
     composition starts clean. HWM is set to current_port_value (not the old HWM)
     so the ratchet baseline is accurate for the new set of holdings.
     stop_trigger is reset per BC-3 so the ratchet floor is not inherited.
+    triggered / triggered_reason are reset (AC-10) so a stale triggered=True
+    from the prior composition cannot make build_port_signal emit a spurious
+    port-wide exit on the first cycle of the new composition.
     """
     write_port_state(
         account_id,
@@ -1007,6 +1083,8 @@ def rebase_port_state_on_composition_change(
             "para_armed": False,
             "port_breakeven_active": False,
             "stop_trigger": None,
+            "triggered": False,
+            "triggered_reason": None,
         },
     )
 
