@@ -277,11 +277,13 @@ def reset_symphony_position_state(sym_state):
 def is_new_position_open(prev_identity, current_identity) -> bool:
     """Return True iff a symphony has opened a NEW position since the last cycle.
 
-    Position identity is a stable string keyed on position_open_date /
-    composition identity. A change in identity marks a new position open — the
-    exact event that must trigger reset_symphony_position_state. An unchanged
-    identity (or a None previous identity, i.e. first observation) is NOT a new
-    open, so the reset never fires mid-position.
+    Position identity is a stable string keyed on the composition identity (the
+    symphony's set of holding tickers). A change in identity marks a new
+    position open — the exact event that must trigger
+    reset_symphony_position_state. An unchanged identity (or a None previous
+    identity, i.e. first observation) is NOT a new open, so the reset never
+    fires mid-position. The cross-day re-open boundary is covered separately by
+    wipe_transient_state at the new-day reset.
 
     Pure — no I/O, no state.
     """
