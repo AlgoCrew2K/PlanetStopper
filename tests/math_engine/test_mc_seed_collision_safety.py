@@ -28,6 +28,9 @@ WHAT THESE TESTS ASSERT
 4. ``derive_cycle_mc_seed`` remains deterministic (same cycle_id -> same seed).
 5. The inaccurate "~98k distinct values/year with no collisions" comment is
    corrected.
+6. Regression guard: the 64-bit seed is consumed only via
+   ``np.random.default_rng`` — never a legacy ``RandomState`` / ``np.random.seed``
+   (which cap at 2**32-1 and would raise on the widened seed).
 
 RED-VERIFICATION
 ----------------
@@ -45,6 +48,7 @@ specific producer integer.
 
 from __future__ import annotations
 
+import ast
 import datetime
 import json
 import pathlib
@@ -239,4 +243,68 @@ def test_seed_modulus_comment_no_longer_claims_no_collisions_at_2_31() -> None:
         "seed modulus. The audit flagged the '~98k distinct values/year with no "
         "collisions' comment as a birthday-bound error. AC-3 requires the "
         "comment be corrected to reflect the widened (>= 2**64) seed space."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. Regression guard — the 64-bit seed must only be consumed via default_rng
+# ---------------------------------------------------------------------------
+
+def test_mc_seed_is_consumed_only_via_default_rng_not_legacy_rng() -> None:
+    """
+    AC-3 regression guard. The widened 64-bit seed is safe ONLY because
+    numpy.random.default_rng (and SeedSequence) accept the full [0, 2**64)
+    unsigned space. The legacy numpy RNG entry points — np.random.RandomState
+    and np.random.seed — cap at 2**32 - 1 and RAISE a ValueError on a seed
+    above that. If a future change ever routes the MC seed through one of those
+    legacy APIs, the 64-bit seed would crash run_monte_carlo at fleet scale.
+
+    This static-AST guard asserts math_engine.py uses np.random.default_rng and
+    contains NO call to RandomState or np.random.seed. It is not a tautology:
+    it fails the moment a legacy RNG entry point is reintroduced into the module.
+
+    Flagged as optional by quant-code-reviewer; encoded because it directly
+    protects the AC-3 widening — a 64-bit seed through a legacy RNG is a hard
+    crash, not a silent degradation.
+    """
+    tree = ast.parse(
+        pathlib.Path(math_engine.__file__).read_text(encoding="utf-8")
+    )
+
+    default_rng_calls = 0
+    legacy_rng_calls: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        # numpy attribute-chain calls: np.random.default_rng / .RandomState /
+        # .seed (and the np.random.RandomState two-hop form).
+        attr = func.attr
+        if attr == "default_rng":
+            default_rng_calls += 1
+        elif attr in ("RandomState", "seed"):
+            # Confirm it is a numpy.random.* call, not an unrelated .seed().
+            chain = func.value
+            chain_names: list[str] = []
+            while isinstance(chain, ast.Attribute):
+                chain_names.append(chain.attr)
+                chain = chain.value
+            if isinstance(chain, ast.Name):
+                chain_names.append(chain.id)
+            if "random" in chain_names or "np" in chain_names:
+                legacy_rng_calls.append(f"{attr} (line {node.lineno})")
+
+    assert not legacy_rng_calls, (
+        f"math_engine.py uses a legacy numpy RNG entry point: {legacy_rng_calls}. "
+        f"np.random.RandomState / np.random.seed cap the seed at 2**32 - 1 and "
+        f"raise on the AC-3 64-bit MC seed. The MC seed must be consumed only "
+        f"via np.random.default_rng (or SeedSequence), which accept the full "
+        f"[0, 2**64) space."
+    )
+    assert default_rng_calls >= 1, (
+        "math_engine.py no longer calls np.random.default_rng. The MC seed "
+        "(derive_cycle_mc_seed) must be consumed via default_rng so the widened "
+        "64-bit seed space (AC-3) is honoured."
     )
