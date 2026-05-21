@@ -52,7 +52,12 @@ structural, not producer outputs.
 
 from __future__ import annotations
 
+from datetime import datetime
+from unittest.mock import patch
+
 import pytest
+
+import database
 
 
 # ---------------------------------------------------------------------------
@@ -491,4 +496,180 @@ class TestPositionOpenDetectionFiresExactlyOnce:
             )
         assert position_2_state.get("stop_trigger") is None, (
             "position 2 inherited position 1's stop_trigger floor"
+        )
+
+
+# ===========================================================================
+# AC-1 / AC-2 — the SAME-COMPOSITION re-open (the gap a composition-hash-only
+# detector misses; surfaced in sufficiency review of the GREEN diff).
+#
+# The audit's CRITICAL C-2 scenario is: a symphony_id triggers (exits), and is
+# later re-allocated a NEW position WITH THE SAME HOLDINGS. A position-open
+# detector keyed purely on (position_open_date, composition-hash) cannot see
+# this: the holdings are identical so the composition hash is unchanged, and
+# if position_open_date is not advanced the identity string is unchanged too —
+# so the reset never fires and the new position inherits triggered=True.
+#
+# The reliable signal that a position CLOSED is `triggered` itself: after an
+# exit the engine sets bot_state[symphony_id]['triggered']=True and the
+# symphony persists in bot_state. When that same symphony_id is next processed
+# as a LIVE (non-frozen) position, that is the re-open — regardless of whether
+# the holdings changed. The detector / engine wiring must treat a
+# previously-triggered symphony re-appearing as a live position as a new open.
+# ===========================================================================
+
+
+class TestSameCompositionReopenIsDetected:
+    """
+    AC-1/AC-2: a triggered symphony that re-opens with IDENTICAL holdings must
+    still be detected as a new position and reset by the LIVE ENGINE. A
+    position-open detector keyed only on (position_open_date, composition
+    hash) misses this — the most common rotation case — because identical
+    holdings leave the hash unchanged.
+
+    These tests drive the real engine main() so they exercise the actual
+    detection wiring, not a model of it.
+    """
+
+    def test_triggered_symphony_reopened_same_holdings_is_reset_by_engine(self):
+        """
+        AC-1/AC-2 (the same-composition re-open gap): drive main() for ONE
+        symphony_id whose persisted bot_state ended a prior position
+        triggered=True (with a stale stop_trigger and dirty counters). On the
+        next cycle the SAME symphony_id is fetched again as a live position
+        with the IDENTICAL holdings.
+
+        The engine MUST detect this as a new position open and reset the
+        per-position transient state before the new position's first tick —
+        even though the composition hash is unchanged.
+
+        RED on a composition-hash-only detector: identical holdings leave the
+        composition component of the position identity unchanged; if
+        position_open_date is also unchanged the identity string is identical
+        and is_new_position_open returns False — the reset is skipped and the
+        new position keeps triggered=True.
+
+        Assertion: after the cycle, the persisted bot_state for the symphony
+        has triggered=False and no stale stop_trigger — i.e. the engine reset
+        the re-opened position.
+        """
+        import alpha_bot_execution
+
+        symphony_id = "sym-same-comp-reopen-001"
+        account_id = "acct-same-comp-reopen-001"
+        ticker = "SPY"
+
+        # Persisted state: the prior position under this symphony_id exited
+        # (triggered=True) and the dict still carries the dirty transient
+        # fields + a stale stop_trigger. This is exactly what the engine
+        # leaves in bot_state after a trigger fires.
+        prior_state = {
+            "name": "Same-Comp Reopen Symphony",
+            "account": account_id,
+            "high_water_mark": -999.0,
+            "shadow_hwm": 4.0,
+            "prev_return": 2.0,
+            "armed": False,
+            "tp_armed": False,
+            "para_armed": False,
+            "triggered": True,                  # prior position exited
+            "triggered_reason": "Trailing Stop",
+            "breakeven_locked": True,
+            "hwm_hold_ticks": 7,
+            "below_stop_count": 2,
+            "vwap_ticks": 3,
+            "vwap_bleed_ticks": 1,
+            "stop_trigger": 2.5,                # stale floor
+            "mc_history": [],
+            # The prior position had THESE holdings; the re-opened position
+            # (fetched fresh below) has the IDENTICAL holding set.
+            "current_holdings": [{"ticker": ticker, "allocation": 1.0}],
+        }
+        bot_state = {
+            "date": "2026-05-21",
+            "last_execution_mode": False,
+            symphony_id: prior_state,
+        }
+
+        symphony_payload = {
+            "id": symphony_id,
+            "name": "Same-Comp Reopen Symphony",
+            "last_percent_change": 0.005,   # +0.5% — a fresh live position
+            "current_value": 10000.0,
+            "holdings": [{"ticker": ticker, "allocation": 1.0}],
+        }
+
+        try:
+            from zoneinfo import ZoneInfo
+            _et = datetime(2026, 5, 21, 11, 30, 0, tzinfo=ZoneInfo("America/New_York"))
+        except Exception:  # pragma: no cover
+            from datetime import timezone, timedelta
+            _et = datetime(
+                2026, 5, 21, 11, 30, 0, tzinfo=timezone(timedelta(hours=-4))
+            )
+
+        with patch.object(alpha_bot_execution, "database") as mock_db, \
+             patch.object(alpha_bot_execution, "reporting"), \
+             patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch, \
+             patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_hist, \
+             patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_vwap, \
+             patch.object(alpha_bot_execution, "get_current_et", return_value=_et), \
+             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [account_id]), \
+             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "k"), \
+             patch.object(alpha_bot_execution, "ALPACA_KEY", "k"), \
+             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
+             patch.object(alpha_bot_execution.time, "sleep"), \
+             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
+
+            # The real reset helper + detector run — only DB I/O is mocked.
+            mock_db.acquire_lock.return_value = True
+            mock_db.load_state.return_value = bot_state
+            mock_db.load_chart_history.return_value = {
+                "date": "2026-05-21", "symphonies": {}
+            }
+            mock_db.get_symphony_strategy.return_value = {
+                "params": {}, "locked_vars": {}
+            }
+            mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
+            mock_db.wipe_transient_state.side_effect = lambda s: s
+            mock_db.reset_symphony_position_state.side_effect = (
+                database.reset_symphony_position_state
+            )
+            mock_db.is_new_position_open.side_effect = database.is_new_position_open
+
+            mock_fetch.return_value = [symphony_payload]
+            mock_hist.return_value = {
+                "2026-05-21": {
+                    "SPY": {
+                        "c": 500.0, "daily_ret": 0.001,
+                        "high": 501.0, "low": 499.0, "close": 500.0,
+                    }
+                }
+            }
+            mock_vwap.return_value = {ticker: {"vwap": 500.0, "last_price": 500.0}}
+
+            alpha_bot_execution.main()
+
+            save_calls = mock_db.save_state.call_args_list
+            assert save_calls, (
+                "save_state was never called — the engine cycle aborted "
+                "before persisting bot_state."
+            )
+            final_state = save_calls[-1].args[0][symphony_id]
+
+        assert final_state.get("triggered") is False, (
+            "AC-1/AC-2 VIOLATED: a symphony that ended a prior position "
+            "triggered=True was re-fetched as a live position with IDENTICAL "
+            "holdings, and the engine did NOT reset it — triggered is still "
+            f"{final_state.get('triggered')!r}. A position-open detector keyed "
+            "only on (position_open_date, composition-hash) cannot see a "
+            "same-composition re-open: identical holdings leave the hash "
+            "unchanged. The detection must treat a previously-triggered "
+            "symphony re-appearing as a live position as a new position open."
+        )
+        assert final_state.get("stop_trigger") is None, (
+            "AC-1/AC-2 VIOLATED: the re-opened position inherited the prior "
+            f"position's stale stop_trigger ({final_state.get('stop_trigger')!r}). "
+            "reset_symphony_position_state must delete it on a same-composition "
+            "re-open."
         )

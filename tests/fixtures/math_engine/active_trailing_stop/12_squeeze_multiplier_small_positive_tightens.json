@@ -1,0 +1,15 @@
+{
+  "name": "squeeze_multiplier_small_positive_tightens",
+  "description": "para_armed=True with a small POSITIVE squeeze_mult (0.2). The squeeze tightens the stop but the result stays strictly positive. Replaces the retired 12_squeeze_multiplier_zero_collapses_output fixture: AC-5 (audit M-2) now REJECTS parabolic_squeeze_multiplier <= 0 with a ValueError, so a 0.0 multiplier is no longer a valid golden-fixture input. The multiplier==0 rejection is covered by tests/math_engine/test_squeeze_multiplier_rejection.py (case multiplier_zero_rejected). This fixture keeps the golden suite's coverage of the squeeze-applied path with a valid in-range multiplier.",
+  "function": "compute_active_trailing_stop",
+  "inputs": {
+    "symphony_vol": 2.0,
+    "dynamic_multiplier": 1.5,
+    "dynamic_min_stop": 0.30,
+    "para_armed": true,
+    "breakeven_locked": false,
+    "parabolic_squeeze_multiplier": 0.2
+  },
+  "expected": 0.6,
+  "derivation": "safe_vol = 2.0. raw = safe_vol * dynamic_multiplier = 2.0 * 1.5 = 3.0. max(3.0, dynamic_min_stop 0.30) = 3.0. para_armed=True -> active *= parabolic_squeeze_multiplier 0.2 -> 3.0 * 0.2 = 0.6. Output = 0.6 (strictly positive — the squeeze tightens but does not collapse the stop). The min_stop floor is NOT re-applied after the squeeze; this fixture pins the producer's exact ordering (floor before squeeze)."
+}
