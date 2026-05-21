@@ -1,0 +1,25 @@
+{
+  "name": "time_squeeze_range_rejection_cases",
+  "description": "AC-6 (M-1): compute_time_squeeze_decay must raise an explicit ValueError on time_ratio outside [0,1], rather than crashing with an opaque log10 domain error (time_ratio < -1/9 makes 1+9t<=0) or silently over-tightening the stop (time_ratio > 1). Endpoints 0.0 and 1.0 are valid and must still yield the documented MULT_OPEN/MULT_CLOSE and MIN_STOP_OPEN/MIN_STOP_CLOSE values.",
+  "function": "compute_time_squeeze_decay",
+  "derivation": "Valid domain is the closed interval [0,1]. time_ratio < 0: out of range (and < -1/9 specifically triggers a math.log10 domain crash on the live execution path). time_ratio > 1: out of range, over-tightens below MULT_CLOSE/MIN_STOP_CLOSE. The function must validate and raise BEFORE the log10 call. Endpoint cases assert the exact documented values: at t=0 decay_curve=log10(1)=0 -> MULT_OPEN=1.5, MIN_STOP_OPEN=0.3; at t=1 decay_curve=log10(10)=1 -> MULT_CLOSE=0.5, MIN_STOP_CLOSE=0.15.",
+  "reject_cases": [
+    {"label": "negative_just_below_zero", "time_ratio": -0.0001, "expect_raises": "ValueError"},
+    {"label": "negative_log10_domain_crash_region", "time_ratio": -0.5, "expect_raises": "ValueError"},
+    {"label": "negative_far", "time_ratio": -10.0, "expect_raises": "ValueError"},
+    {"label": "above_one_just_above", "time_ratio": 1.0001, "expect_raises": "ValueError"},
+    {"label": "above_one_far", "time_ratio": 5.0, "expect_raises": "ValueError"}
+  ],
+  "valid_endpoint_cases": [
+    {
+      "label": "endpoint_zero_market_open",
+      "time_ratio": 0.0,
+      "expected": {"dynamic_multiplier": 1.5, "dynamic_min_stop": 0.3}
+    },
+    {
+      "label": "endpoint_one_market_close",
+      "time_ratio": 1.0,
+      "expected": {"dynamic_multiplier": 0.5, "dynamic_min_stop": 0.15}
+    }
+  ]
+}
