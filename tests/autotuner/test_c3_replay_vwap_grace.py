@@ -272,3 +272,62 @@ def test_replay_grace_threshold_is_named_constant_not_literal() -> None:
         "open-window grace threshold must be a named constant shared with "
         "production's VWAP_OPEN_WINDOW_GRACE_MINUTES — not a bare literal."
     )
+
+
+def test_replay_grace_constant_is_shared_with_production_not_redefined() -> None:
+    """AC-2 (risk-engine-specialist watch item): the replay must SHARE
+    production's VWAP_OPEN_WINDOW_GRACE_MINUTES — it must NOT redefine its
+    own copy. A second module-level definition is a duplicated tuned dial
+    that drifts the moment production re-tunes the grace window.
+
+    The replay's value of the grace minutes must equal production's at
+    runtime. autotuner.py must obtain it by importing/referencing
+    alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES (directly or via a
+    constant bound to it) — never a fresh `VWAP_OPEN_WINDOW_GRACE_MINUTES =
+    15` assignment of its own.
+
+    Asserts: (a) autotuner.py contains NO module-level assignment that binds
+    a VWAP_OPEN_WINDOW_GRACE_MINUTES name to a literal, and (b) the runtime
+    grace value the replay uses equals
+    alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES.
+
+    RED: pre-fix autotuner.py has no grace handling — part (b) cannot be
+    satisfied because there is no shared reference.
+    """
+    import alpha_bot_execution
+
+    production_grace = alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES
+
+    # (a) No autotuner-local module-level redefinition that hardcodes a value.
+    redefinitions: list[str] = []
+    for node in ast.walk(_AUTOTUNER_TREE):
+        if isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name) and "VWAP_OPEN_WINDOW_GRACE" in tgt.id:
+                    # A bare-literal RHS is a duplicated dial; a reference to
+                    # alpha_bot_execution's constant is the shared form and OK.
+                    if isinstance(node.value, ast.Constant):
+                        redefinitions.append(f"line {node.lineno}: {tgt.id} = literal")
+    assert not redefinitions, (
+        f"autotuner.py redefines the grace constant from a literal at "
+        f"{redefinitions}. It must SHARE production's "
+        f"alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES, not duplicate "
+        f"the tuned value — a second definition drifts on the next re-tune."
+    )
+
+    # (b) The replay's runtime grace value must equal production's.
+    grace_value = None
+    for name in ("VWAP_OPEN_WINDOW_GRACE_MINUTES", "_VWAP_OPEN_WINDOW_GRACE_MINUTES"):
+        if hasattr(autotuner, name):
+            grace_value = getattr(autotuner, name)
+            break
+    assert grace_value is not None, (
+        "autotuner exposes no VWAP_OPEN_WINDOW_GRACE_MINUTES reference. The "
+        "replay must import/reference production's constant so the runtime "
+        "grace value is identical."
+    )
+    assert grace_value == production_grace, (
+        f"autotuner's grace value ({grace_value}) does not equal production's "
+        f"VWAP_OPEN_WINDOW_GRACE_MINUTES ({production_grace}). The replay "
+        f"must use the SAME constant, not a drifted copy."
+    )

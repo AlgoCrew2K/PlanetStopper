@@ -129,6 +129,67 @@ def test_replay_tp_counter_resets_on_mc_unavailable_tick() -> None:
     )
 
 
+def test_replay_does_not_confirm_tp_on_the_mc_unavailable_tick_itself() -> None:
+    """AC-3 (increment-before-check trap — risk-engine-specialist watch item):
+    the MC-unavailable tick must NOT itself confirm a TP exit.
+
+    parity_tp_rearm_dip.json arrives at the null tick (tick 2) with tp_armed
+    already True and above_tp_count already at 1. This pre-state is what
+    makes the fixture diagnostic: a GREEN that increments above_tp_count
+    FIRST and only THEN checks mc_available would take the counter 1 -> 2 on
+    the null tick and confirm a phantom TP exit ON TICK 2 (return 3.0 > 0).
+    A correct GREEN — mirroring production, where the increment lives inside
+    the `mc_available and prob_beating >= TAKE_PROFIT_MC_PCT` branch — resets
+    the counter to 0 on the null tick instead.
+
+    Asserts specifically that NO exit fires on the MC-unavailable tick index.
+    A general 'no TP exit anywhere' assertion would also catch a tick-3
+    phantom; this one isolates the increment-before-check ordering bug to the
+    null tick itself.
+
+    RED: pre-fix the replay substitutes 22.5 for the null tick — equivalent
+    to the increment-before-check path — and fires a phantom TP exit on the
+    null tick.
+    """
+    fx = _load_fixture("parity_tp_rearm_dip.json")
+    ticks = fx["ticks"]
+    params = fx.get("params") or _default_params()
+
+    # Locate the MC-unavailable tick(s) in the fixture by null mc_prob.
+    null_tick_indices = [
+        i for i, t in enumerate(ticks) if t.get("mc_prob") is None
+    ]
+    assert null_tick_indices, (
+        "Fixture parity_tp_rearm_dip.json must contain at least one "
+        "mc_prob=null tick to exercise the MC-unavailable TP path."
+    )
+    # Pre-state guard: the null tick must arrive with above_tp_count == 1
+    # (one prior above-threshold tick) — otherwise it cannot expose an
+    # increment-before-check bug. ticks 0 (mc<TP arms) and 1 (mc>=TP) set
+    # that up; assert the fixture's shape matches that intent.
+    null_idx = null_tick_indices[0]
+    assert null_idx >= 2, (
+        f"The MC-unavailable tick is at index {null_idx}; it must be preceded "
+        f"by an arm tick and exactly one above-threshold tick so "
+        f"above_tp_count == 1 on arrival. Fixture pre-state is wrong — it "
+        f"cannot distinguish a correct GREEN from an increment-before-check "
+        f"GREEN."
+    )
+
+    seq = _replay_seq(ticks, params)
+    by_idx = {d["tick_idx"]: d["exit_reason"] for d in seq}
+
+    null_exit = by_idx.get(null_idx)
+    assert null_exit is None or "Take-Profit" not in null_exit, (
+        f"Replay confirmed a Take-Profit exit ON the MC-unavailable tick "
+        f"(tick {null_idx}, exit_reason={null_exit!r}). A None-mc tick can "
+        f"NEVER confirm a TP exit — it carries no MC opinion. This is the "
+        f"increment-before-check ordering bug: the counter must not advance "
+        f"on a None tick. Production keeps the increment INSIDE the "
+        f"`mc_available and prob_beating >= TAKE_PROFIT_MC_PCT` branch."
+    )
+
+
 def test_replay_tp_exit_still_fires_on_consecutive_above_threshold() -> None:
     """AC-3 (the reset must not break a LEGITIMATE TP exit): two CONSECUTIVE
     above-threshold ticks (MC available) while tp_armed, with return > 0,
