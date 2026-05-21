@@ -132,6 +132,74 @@ def test_replay_allows_vwap_exit_after_grace_window() -> None:
     )
 
 
+def test_replay_grace_suppresses_flags_not_counters() -> None:
+    """AC-2 (counter-vs-flag — the subtle correctness trap): the grace gate
+    must suppress the OUTPUT FLAGS (is_vwap_broken / is_vwap_bleed_broken),
+    NOT the VWAP tick COUNTERS.
+
+    Production zeroes the flags AFTER compute_vwap_breakdown_update has run
+    and its returned new_vwap_ticks counter has been assigned
+    (alpha_bot_execution.py:1318-1326) — so the counters keep advancing
+    through the grace window. A wrong fix that resets the counters during
+    grace diverges from production on the first post-grace tick.
+
+    Construction: grace_minutes = 3, VWAP_BREAK_CONFIRM_TICKS = 3. A VWAP
+    breakdown holds on EVERY tick from tick 0:
+      tick 0 (grace): vwap_ticks -> 1, flag suppressed
+      tick 1 (grace): vwap_ticks -> 2, flag suppressed
+      tick 2 (grace): vwap_ticks -> 3, is_vwap_broken True but SUPPRESSED
+      tick 3 (post):  vwap_ticks -> 4, is_vwap_broken True -> EXIT on tick 3
+    Correct (flag-suppression) GREEN exits on EXACTLY tick 3 — the first
+    post-grace tick — because the counter advanced through grace.
+    A wrong (counter-reset) GREEN keeps the counter at 0 through ticks 0-2,
+    so tick 3 only reaches count 1 and the exit slips to tick 5.
+
+    RED: pre-fix the replay has no grace gate at all — it exits on tick 2
+    (inside grace), failing the 'exit on exactly tick 3' assertion.
+    """
+    import math_engine
+
+    grace_minutes = 3
+    confirm_ticks = math_engine.VWAP_BREAK_CONFIRM_TICKS  # 3
+    params = _default_params()
+    params["VWAP_BLEED_TICKS"] = 999  # bleed never confirms — isolate System A
+
+    # Every tick triggers System A: safe_hwm >= VWAP_CROSS_HWM_PCT (1.0) and
+    # current_return < safe_hwm, with negative vwap_diff + full weight so the
+    # VWAP gate passes. The HWM is set on tick 0 and the return stays below it.
+    ticks = [
+        {"time": "09:30", "return": 5.0, "mc_prob": 50.0, "vol": 0.5,
+         "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+    ]
+    ticks += [
+        {"time": f"09:{31 + i:02d}", "return": 2.0, "mc_prob": 50.0, "vol": 0.5,
+         "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0}
+        for i in range(9)
+    ]
+
+    seq = _replay_seq(ticks, params, grace_minutes)
+    exits = [(d["tick_idx"], d["exit_reason"]) for d in seq if d["exit_reason"]]
+
+    assert exits, (
+        "A VWAP breakdown holding every tick must eventually exit once grace "
+        "ends — the grace gate suppresses, it does not disable."
+    )
+    exit_idx, exit_reason = exits[0]
+    assert exit_idx == grace_minutes, (
+        f"VWAP exit fired on tick {exit_idx}; expected exactly tick "
+        f"{grace_minutes} (the first post-grace tick). The grace gate must "
+        f"suppress the OUTPUT FLAG and let the vwap_ticks COUNTER advance "
+        f"through grace — so the break, already confirmed (counter >= "
+        f"{confirm_ticks}) by the end of grace, fires on the very next tick. "
+        f"An exit later than tick {grace_minutes} means the fix wrongly "
+        f"reset the counter during grace instead of just the flag; an exit "
+        f"earlier means the grace suppression is missing."
+    )
+    assert "VWAP" in exit_reason, (
+        f"Expected a VWAP-family exit; got {exit_reason!r}."
+    )
+
+
 def test_replay_grace_suppresses_both_vwap_signals() -> None:
     """AC-2: the grace gate must zero BOTH is_vwap_broken AND
     is_vwap_bleed_broken — production suppresses both. A fix that only
