@@ -1129,7 +1129,15 @@ def main():
                 should_arm = False
                 arm_reason = ""
 
-                if acc_TAKE_PROFIT_MC_PCT <= prob_beating < acc_TRIGGER_THRESHOLD_PCT:
+                # run_monte_carlo returns the out-of-band insufficient sentinel
+                # (None) when MC history is too short. Insufficient MC = the MC
+                # second opinion is absent: no arm, no disarm, no TP — and no
+                # MC veto of the trailing stop (compute_exit_confirmation
+                # handles None). The protective stop still fires on its
+                # ticks-below-stop condition alone.
+                mc_available = prob_beating is not None
+
+                if mc_available and acc_TAKE_PROFIT_MC_PCT <= prob_beating < acc_TRIGGER_THRESHOLD_PCT:
                     should_arm = True
                     arm_reason = f"MC Prob {prob_beating:.1f}%"
 
@@ -1145,14 +1153,21 @@ def main():
                     )
 
                 elif bot_state[symphony_id]["armed"] and not bot_state[symphony_id]["triggered"]:
-                    if prob_beating > (acc_TRIGGER_THRESHOLD_PCT * 2) and current_return > 0.0:
+                    if (
+                        mc_available
+                        and prob_beating > (acc_TRIGGER_THRESHOLD_PCT * 2)
+                        and current_return > 0.0
+                    ):
                         bot_state[symphony_id]["armed"] = False
                         bot_state[symphony_id]["below_stop_count"] = 0
                         print(f"  *** {symphony_name} DISARMED (Conditions Recovered) ***")
 
-                bot_state[symphony_id]["mc_history"].append(prob_beating)
-                if len(bot_state[symphony_id]["mc_history"]) > 5:
-                    bot_state[symphony_id]["mc_history"].pop(0)
+                # Do not pollute the rolling MC history with the None sentinel —
+                # a None entry would break any later averaging/comparison.
+                if mc_available:
+                    bot_state[symphony_id]["mc_history"].append(prob_beating)
+                    if len(bot_state[symphony_id]["mc_history"]) > 5:
+                        bot_state[symphony_id]["mc_history"].pop(0)
 
                 # --- PARABOLIC SQUEEZE LOGIC ---
                 _stored_prev = bot_state[symphony_id].get("prev_return", None)
@@ -1245,8 +1260,11 @@ def main():
                         )
 
                 # Check 2: Take Profit
+                # When MC is unavailable (insufficient history) the TP gate is
+                # skipped entirely — an absent opinion is not an "exceptional
+                # gain" signal and cannot confirm a TP exit.
                 tp_triggered_now = False
-                if prob_beating < acc_TAKE_PROFIT_MC_PCT:
+                if mc_available and prob_beating < acc_TAKE_PROFIT_MC_PCT:
                     if (
                         not bot_state[symphony_id]["tp_armed"]
                         and not bot_state[symphony_id]["triggered"]
@@ -1262,7 +1280,7 @@ def main():
                             "tp-armed",
                         )
                 elif bot_state[symphony_id]["tp_armed"] and not bot_state[symphony_id]["triggered"]:
-                    if prob_beating >= acc_TAKE_PROFIT_MC_PCT:
+                    if mc_available and prob_beating >= acc_TAKE_PROFIT_MC_PCT:
                         bot_state[symphony_id]["above_tp_count"] += 1
                         if bot_state[symphony_id]["above_tp_count"] == 1:
                             print(
@@ -1315,8 +1333,9 @@ def main():
                     print(f"  🩸 {symphony_name[:35]} VWAP Bleed Limit Reached. Forcing exit.")
 
                 safe_name = symphony_name[:35].encode("ascii", "ignore").decode("ascii")
+                arm_prob_str = f"{prob_beating:.1f}%" if mc_available else "N/A"
                 print(
-                    f"  -> {safe_name}: Ret: {current_return:.2f}% | HWM: {high_water_mark:.2f}% | Stop Dist: {active_trailing_stop:.2f}% | ArmProb: {prob_beating:.1f}%"
+                    f"  -> {safe_name}: Ret: {current_return:.2f}% | HWM: {high_water_mark:.2f}% | Stop Dist: {active_trailing_stop:.2f}% | ArmProb: {arm_prob_str}"
                 )
 
                 bot_state[symphony_id]["name"] = symphony_name
@@ -1357,7 +1376,7 @@ def main():
                             "position_open_date", "2000-01-01"
                         ),
                         "mc_sanity_gate_would_block": bool(
-                            prob_beating >= acc_TRIGGER_THRESHOLD_PCT
+                            mc_available and prob_beating >= acc_TRIGGER_THRESHOLD_PCT
                         ),
                         "per_symphony_triggered": bool(
                             is_trailing_stop_hit

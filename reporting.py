@@ -476,12 +476,16 @@ def send_discord_alert(
     color = live_color if is_live else 16766720
     action_text = "Executed 'Sell to Cash' via API. Trade queued for Composer execution window." if is_live else "Bypassed (Dry Run Mode)"
 
+    # prob_beating is None when MC history was insufficient (the out-of-band
+    # insufficient sentinel). Render it safely rather than crashing the alert.
+    mc_prob_text = f"{prob_beating:.1f}%" if prob_beating is not None else "N/A"
+
     fields = [
         {"name": "Symphony", "value": symphony_name, "inline": True},
         {"name": "Exit Return", "value": f"{current_return:.2f}%", "inline": True},
         {"name": "High Water Mark", "value": f"{high_water_mark:.2f}%", "inline": True},
         {"name": "Stop Level", "value": f"{stop_trigger_level:.2f}%", "inline": True},
-        {"name": "MC Probability", "value": f"{prob_beating:.1f}%", "inline": True},
+        {"name": "MC Probability", "value": mc_prob_text, "inline": True},
         {"name": "Action Taken", "value": action_text, "inline": False},
     ]
 
@@ -496,7 +500,7 @@ def send_discord_alert(
         fields.append({"name": "VWAP Breakdown Stats", "value": f"VWAP Diff: {vwap_diff * 100:.2f}% | Ticks Below: {vwap_breakdown_ticks}", "inline": False})
 
     if exit_reason == "Take-Profit" and tp_threshold is not None:
-        fields.append({"name": "Take-Profit Threshold", "value": f"MC Prob Reached: {prob_beating:.1f}% >= {tp_threshold}%", "inline": False})
+        fields.append({"name": "Take-Profit Threshold", "value": f"MC Prob Reached: {mc_prob_text} >= {tp_threshold}%", "inline": False})
 
     payload = {
         "embeds": [

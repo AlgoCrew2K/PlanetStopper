@@ -16,6 +16,17 @@ ALPACA_KEY = os.getenv("ALPACA_KEY")
 ALPACA_SECRET = os.getenv("ALPACA_SECRET")
 ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://data.alpaca.markets/v2")
 
+# Replay-safe substitute for an insufficient-MC result. run_monte_carlo returns
+# the out-of-band sentinel None when MC history is too short; the autotuner
+# replay (autotuner.run_simulation) does unguarded numeric comparisons on the
+# tick's mc_prob, so a None there would crash it. This value is fed instead.
+# It is deliberately placed at the midpoint of the safe band [TRIGGER, 2*TRIGGER]
+# for the autotuner defaults (TAKE_PROFIT_MC_PCT=5, TRIGGER_THRESHOLD_PCT=15):
+# 22.5 falls OUTSIDE the arm band [5, 15) and below the disarm bound 30, so an
+# insufficient-MC tick fabricates neither an arm nor a disarm — matching the
+# production fail-safe (insufficient MC = no MC-driven state transition).
+MC_INSUFFICIENT_REPLAY_VALUE = 22.5
+
 def get_alpaca_headers():
     return {
         "APCA-API-KEY-ID": ALPACA_KEY,
@@ -235,7 +246,12 @@ def generate_synthetic_history(bot_state, current_date_str):
                 # Reduce neighbor_k and paths for speed, 300 paths is fine for tuning approximation
                 # Seed is per-(symphony, day) so cache rebuilds produce bit-identical series.
                 mc_prob = math_engine.run_monte_carlo(holdings, hist_data_up_to_yesterday, spy_today, 300, 5, seed=math_engine.derive_cycle_mc_seed(f"{sym_id}_{date_str}"))
-                
+                # run_monte_carlo returns the insufficient sentinel (None) when
+                # MC history is too short. The autotuner replay cannot consume
+                # None — substitute the replay-safe value before the tick dict.
+                if mc_prob is None:
+                    mc_prob = MC_INSUFFICIENT_REPLAY_VALUE
+
                 ticks.append({
                     "time": ts[11:16],
                     "return": agg_ret * 100.0,

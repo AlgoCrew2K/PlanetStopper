@@ -685,7 +685,15 @@ def run_monte_carlo(
         if h.get("last_percent_change") is not None
     )
     valid_dates = sorted(list(historical_data.keys()))
-    if len(valid_dates) < MC_MIN_HISTORY_DAYS:
+    # Sufficiency is judged on the ELIGIBLE kNN pool, not the raw history: the
+    # first MC_VOL_WINDOW_DAYS - 1 early-window days are excluded below (their
+    # rolling vol is short-sample biased), so a raw history needs at least
+    # MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) days to leave a
+    # non-degenerate eligible pool. A raw-sufficient but eligible-insufficient
+    # history collapses into the SAME insufficient path (one sentinel, one
+    # fail-safe path) — never a degenerate 1-neighbour kNN.
+    eligible_days = len(valid_dates) - (MC_VOL_WINDOW_DAYS - 1)
+    if eligible_days < MC_MIN_HISTORY_DAYS:
         # Insufficient MC history: emit the out-of-band sentinel (None), never
         # an in-band probability. The caller (compute_exit_confirmation) treats
         # this as "MC confirmation unavailable" and does NOT veto the
@@ -706,16 +714,17 @@ def run_monte_carlo(
             spy_vols[i] = 0.0
 
     spy_today_ret_dec = spy_today_return / PCT_SCALAR
-    # Invariant: len(spy_returns) >= MC_VOL_WINDOW_DAYS - 1 because the guard at line ~445 returns
-    # early when len(valid_dates) < MC_MIN_HISTORY_DAYS, and MC_MIN_HISTORY_DAYS >= MC_VOL_WINDOW_DAYS.
+    # Invariant: len(spy_returns) > MC_VOL_WINDOW_DAYS - 1 because the eligible-
+    # days guard above returns early unless eligible_days >= MC_MIN_HISTORY_DAYS,
+    # i.e. len(valid_dates) >= MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1).
     today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1) :], spy_today_ret_dec))
 
     # Early-window exclusion: the first MC_VOL_WINDOW_DAYS - 1 days have their
     # rolling vol computed on a short, downward-biased sample (and spy_vols[0]
     # is a hard-set 0.0). today_vol always uses a full window, so admitting
     # these days lets them be mis-selected as artificially low-vol neighbours.
-    # Exclude them from the kNN candidate pool. The MC_MIN_HISTORY_DAYS guard
-    # (>= MC_VOL_WINDOW_DAYS) ensures at least one candidate day remains.
+    # Exclude them from the kNN candidate pool. The eligible-days guard above
+    # ensures the resulting pool holds at least MC_MIN_HISTORY_DAYS candidates.
     candidate_idx = np.arange(MC_VOL_WINDOW_DAYS - 1, len(spy_returns))
     cand_returns = spy_returns[candidate_idx]
     cand_vols = spy_vols[candidate_idx]
