@@ -21,6 +21,6 @@
     "neighbor_k": 150,
     "numpy_seed": 42
   },
-  "expected": 66.75999999999999,
-  "derivation": "Captured behavioral pin under numpy.random.default_rng(42) via seed=42 kwarg (H3 AC-H3.1). Exercises argpartition branch (len(distances)=200 > neighbor_k=150). Output must be byte-equivalent after extraction."
+  "expected": 60.64000000000001,
+  "derivation": "Re-captured from the fixed producer at branch fix/mc-knn-exit-gate HEAD 7ff61a4 (Cluster 2) with run_monte_carlo(..., seed=42). Exercises the argpartition branch (len(eligible distances) still > neighbor_k=150 after the AC-4 early-window exclusion drops 19 of the 200 days). The value shifted from the pre-Cluster-2 66.76 because AC-1 standardizes the kNN feature vector and AC-4 trims the candidate pool — both intentionally change neighbour selection. The expected value is the EXACT float repr of the producer output ((paths-below)/paths*100 = some integer/5000*100 carries a representation residual); the zero-tolerance pin requires the exact repr. Provenance: captured-from-the-fixed-producer."
 }

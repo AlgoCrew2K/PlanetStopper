@@ -231,44 +231,12 @@ def test_high_vol_query_does_not_select_calm_regime_neighbor() -> None:
     )
 
 
-def test_unscaled_knn_red_marker_documents_prefix_behavior() -> None:
-    """
-    RED-VERIFICATION MARKER. Pins the PRE-FIX observable: the unscaled kNN
-    returns the calm-regime structural value 100.0 for the proof fixture
-    (vol feature dominated ~33:1 by the return feature).
-
-    This test PASSES against pre-fix code and MUST FAIL once AC-1 lands. The
-    implementer removes or inverts it in the GREEN step. Its presence proves
-    the proof fixture genuinely exercises the bug — a fixture that returned the
-    correct value even pre-fix would be worthless.
-    """
-    fx = _load_fixture("01_equal_return_opposite_vol_regime.json")
-    spec = fx["inputs"]["historical_data_spec"]
-    history = _build_two_regime_history(
-        num_days=spec["num_days"],
-        first_block_days=spec["calm_block_days"],
-        today_return_decimal=spec["today_return_decimal"],
-        first_dispersion=spec["calm_spy_dispersion"],
-        second_dispersion=spec["crash_spy_dispersion"],
-        first_holding_ret=spec["calm_holding_daily_ret"],
-        second_holding_ret=spec["crash_holding_daily_ret"],
-    )
-    result = math_engine.run_monte_carlo(
-        fx["inputs"]["holdings"],
-        history,
-        fx["inputs"]["spy_today_return"],
-        simulation_paths=fx["inputs"]["simulation_paths"],
-        neighbor_k=fx["inputs"]["neighbor_k"],
-        seed=fx["inputs"]["numpy_seed"],
-    )
-    pre_fix_regime = fx["pre_fix_expected_regime"]
-    pre_fix_prob = fx["regime_selection"][pre_fix_regime]["structural_prob"]
-    assert result == pre_fix_prob, (
-        f"RED marker no longer matches pre-fix behaviour: expected the unscaled "
-        f"kNN to return {pre_fix_prob!r}, got {result!r}. If AC-1 has been "
-        f"implemented, DELETE this RED marker (its job is done — see "
-        f"test_high_vol_query_selects_crash_regime_neighbor)."
-    )
+# RED-VERIFICATION NOTE: a marker test (test_unscaled_knn_red_marker_documents_
+# prefix_behavior) lived here during the RED phase. It pinned the pre-fix
+# observable (unscaled kNN returns the calm-regime structural value 100.0 for
+# the proof fixture) to prove the fixture genuinely exercised the bug. It was
+# RED-verified against pre-fix code and removed once AC-1 landed (its job done).
+# The behavioural proof is test_high_vol_query_selects_crash_regime_neighbor.
 
 
 # ---------------------------------------------------------------------------

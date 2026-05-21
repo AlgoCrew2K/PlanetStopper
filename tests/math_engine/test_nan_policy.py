@@ -405,25 +405,39 @@ def test_run_monte_carlo_rejects_non_finite_holding_allocation(bad: float) -> No
 
 
 def test_run_monte_carlo_output_is_finite_for_valid_inputs() -> None:
-    """For well-formed inputs across two regimes, the probability output
-    must be finite (a real number; the audit's H4-recommended ``[0, 100]``
-    range pin is a separate cycle)."""
+    """For well-formed inputs the probability output must be a finite real
+    number; for the insufficient-history short-circuit it must be the
+    out-of-band sentinel.
+
+    Cluster 2 AC-2 update: run_monte_carlo no longer returns an in-band
+    probability when history is below MC_MIN_HISTORY_DAYS — it returns the
+    distinct out-of-band sentinel MC_INSUFFICIENT_HISTORY_SENTINEL (None). The
+    sufficient-history regime still returns a finite float; the short-circuit
+    regime returns the sentinel (which is intentionally NOT a finite number)."""
     np.random.seed(42)
     inputs = _valid_mc_inputs()
     result = math_engine.run_monte_carlo(**inputs)
+    assert result is not None, (
+        "run_monte_carlo returned the insufficient sentinel for a "
+        "sufficient-history input; expected a real probability."
+    )
     assert math.isfinite(float(result)), (
         f"run_monte_carlo returned non-finite {result!r} for valid inputs"
     )
 
-    # Short-circuit regime (history < MC_MIN_HISTORY_DAYS) --- still must be finite.
+    # Short-circuit regime (history < MC_MIN_HISTORY_DAYS) --- returns the
+    # out-of-band insufficient sentinel, never an in-band (possibly non-finite)
+    # value.
     short_inputs = _valid_mc_inputs()
     short_inputs["historical_data"] = _build_alternating_history(
         num_days=5, spy_amp=0.01, ticker_amp=0.01, ticker="AAA"
     )
     np.random.seed(42)
     result_short = math_engine.run_monte_carlo(**short_inputs)
-    assert math.isfinite(float(result_short)), (
-        f"run_monte_carlo short-circuit returned non-finite {result_short!r}"
+    assert result_short is math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL, (
+        f"run_monte_carlo short-circuit returned {result_short!r}; expected the "
+        f"out-of-band MC_INSUFFICIENT_HISTORY_SENTINEL "
+        f"({math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL!r})."
     )
 
 

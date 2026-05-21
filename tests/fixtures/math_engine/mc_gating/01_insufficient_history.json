@@ -1,6 +1,6 @@
 {
   "name": "insufficient_history_short_circuit",
-  "description": "Fewer than the MC minimum-history threshold of valid_dates. run_monte_carlo MUST short-circuit and return the documented degenerate-case probability (today: 100.0 — 'no data means we cannot reject beating the benchmark'). This pins the integer threshold AND the float-output sentinel as TWO DIFFERENT semantic roles that happen to share value 100.0.",
+  "description": "Fewer than the MC minimum-history threshold of valid_dates. run_monte_carlo MUST short-circuit and return the distinct out-of-band insufficient-history sentinel (MC_INSUFFICIENT_HISTORY_SENTINEL = None). Updated for Cluster 2 AC-2: the prior in-band 100.0 return was fail-dangerous (100 >= MC_SANITY_THRESHOLD permanently vetoed the protective trailing stop). This fixture pins the short-circuit path returns the out-of-band sentinel, not a probability.",
   "function": "run_monte_carlo",
   "inputs": {
     "holdings": [
@@ -17,6 +17,6 @@
     "neighbor_k": 150,
     "numpy_seed": 42
   },
-  "expected": 100.0,
-  "derivation": "len(valid_dates) = 10 < MC_MIN_HISTORY_DAYS (20). The function short-circuits at the first guard and returns the MC_INSUFFICIENT_HISTORY_PROB sentinel (currently 100.0). This is a structural pin — the value is not derived from inputs; it is the documented degenerate-output."
+  "expected_is_insufficient_sentinel": true,
+  "derivation": "len(valid_dates) = 10 < MC_MIN_HISTORY_DAYS (20). The function short-circuits at the first guard and returns MC_INSUFFICIENT_HISTORY_SENTINEL (None) — a distinct out-of-band signal, not an in-band probability. No producer value is pinned because the short-circuit returns before any Monte Carlo draw."
 }

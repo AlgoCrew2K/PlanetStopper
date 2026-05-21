@@ -18,13 +18,17 @@ in its body and signature defaults. This module:
      neighbor_k) are included in the scan because they are domain knobs,
      not structural plumbing.
 
-  2. Behavioral-equivalence pins (ZERO TOLERANCE) — captures the output
-     of the present implementation across seven regimes (insufficient
-     history, boundary at the MC-min threshold, low/high vol, argpartition
-     active, extreme today-return, constant-zero degenerate, non-default
-     simulation_paths/neighbor_k overrides). The extracted GREEN code MUST
-     produce byte-equivalent outputs — protects against float-associativity
-     drift during the rename.
+  2. Fixed-seed regression pins — captures run_monte_carlo's output across
+     seven regimes (insufficient history, boundary at the MC-min threshold,
+     low/high vol, argpartition active, extreme today-return, constant-zero
+     degenerate, non-default simulation_paths/neighbor_k overrides). Originally
+     a byte-equivalence pin for the magic-number rename cycle; the pinned
+     values were RE-CAPTURED from the fixed producer after Cluster 2
+     (mc-knn-exit-gate) intentionally changed run_monte_carlo's math — AC-1
+     standardizes the kNN feature vector, AC-2 returns an out-of-band
+     insufficient sentinel, AC-4 excludes the early-window days. The pins now
+     guard fixed-seed determinism against UNINTENDED drift; any future change
+     to a pinned value must be justified.
 
   3. Constant existence + value tests — asserts the proposed module-level
      constants exist after GREEN, with the right values, and are referenced
@@ -40,13 +44,14 @@ as the AST scan + behavioral pins still pass):
       - returns_matrix.dot(weights) * 100.0          (decimal -> pct)
       - ((P - below) / P) * 100.0                    (fraction -> pct prob)
 
-  MC_INSUFFICIENT_HISTORY_PROB = 100.0 — distinct from PCT_SCALAR despite
-    the same value: this is the DEGENERATE-CASE probability OUTPUT returned
-    when len(valid_dates) is below the MC-history threshold. Semantically a
-    probability, not a unit scalar. The risk-engine contract is "if we have
-    no data, we cannot reject the hypothesis that we beat the benchmark; emit
-    the maximum probability so no exit is gated by MC". Different role =>
-    different name.
+  MC_INSUFFICIENT_HISTORY_SENTINEL = None (Cluster 2 AC-2) — the out-of-band
+    signal returned when len(valid_dates) is below the MC-history threshold.
+    It REPLACED the prior MC_INSUFFICIENT_HISTORY_PROB = 100.0, which was
+    fail-dangerous: 100 >= MC_SANITY_THRESHOLD permanently vetoed the
+    protective trailing stop. The risk-engine contract is now "if we have no
+    data the MC second opinion is UNAVAILABLE — signal that distinctly so the
+    protective stop still fires on its own condition". A language literal, not
+    a magic number, but still named so the short-circuit's intent is greppable.
 
   MC_MIN_HISTORY_DAYS = 20 — minimum number of historical days required to
     run the Monte Carlo sim; below this, the function short-circuits to the
@@ -205,7 +210,6 @@ def test_run_monte_carlo_behavioral_equivalence_pin(
     sim_paths = inputs["simulation_paths"]
     neighbor_k = inputs["neighbor_k"]
     seed = inputs["numpy_seed"]
-    expected = fixture["expected"]
 
     actual = math_engine.run_monte_carlo(
         holdings, history, spy_today,
@@ -213,13 +217,33 @@ def test_run_monte_carlo_behavioral_equivalence_pin(
         seed=seed,
     )
 
-    # Zero-tolerance: a rename must not change a single ulp.
+    # Insufficient-history fixtures pin the out-of-band sentinel, not a
+    # numeric value (Cluster 2 AC-2). They declare expected_is_insufficient_
+    # sentinel instead of an `expected` float.
+    if fixture.get("expected_is_insufficient_sentinel"):
+        assert actual is math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL, (
+            f"Fixture {fixture_name}: insufficient-history short-circuit must "
+            f"return MC_INSUFFICIENT_HISTORY_SENTINEL "
+            f"({math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL!r}), got "
+            f"{actual!r}. Derivation: {fixture['derivation']}."
+        )
+        return
+
+    expected = fixture["expected"]
+    assert actual is not None, (
+        f"Fixture {fixture_name}: expected a numeric MC probability but "
+        f"run_monte_carlo returned the insufficient sentinel. If this fixture "
+        f"is now on the insufficient path, set expected_is_insufficient_"
+        f"sentinel: true instead of an expected float."
+    )
+
+    # Zero-tolerance: the fixed-seed MC output is deterministic to the ulp.
     assert float(actual) == float(expected), (
         f"Fixture {fixture_name}: behavioral equivalence broken. "
         f"expected {expected!r}, got {actual!r}. "
         f"Derivation: {fixture['derivation']}. "
-        f"This is a byte-equivalence pin: constant extraction is a rename "
-        f"and MUST NOT perturb arithmetic."
+        f"This is a fixed-seed regression pin — a deviation means the MC "
+        f"arithmetic changed and the drift must be justified."
     )
 
 
@@ -386,33 +410,47 @@ def test_pct_scalar_is_reused_in_run_monte_carlo() -> None:
     )
 
 
-def test_mc_insufficient_history_prob_is_named() -> None:
+def test_mc_insufficient_history_sentinel_is_named() -> None:
     """
-    The degenerate-case probability OUTPUT (today: bare literal 100.0 in
-    the `if len(valid_dates) < 20: return 100.0` branch) is semantically
-    a probability sentinel, NOT a pct scalar. It must be named distinctly.
+    The insufficient-MC-history signal must be a NAMED module-level constant
+    referenced by run_monte_carlo — not a bare literal in the short-circuit.
 
-    Asserts SOME module-level constant exists with value 100.0 that is
-    referenced by run_monte_carlo AND is NOT the same name as PCT_SCALAR
-    (because the role is different: scalar vs probability output).
+    Updated for Cluster 2 AC-2: the prior contract used an in-band probability
+    sentinel (MC_INSUFFICIENT_HISTORY_PROB = 100.0). That was fail-dangerous —
+    100 >= MC_SANITY_THRESHOLD permanently vetoed the protective trailing stop.
+    The fixed contract returns a DISTINCT out-of-band sentinel
+    (MC_INSUFFICIENT_HISTORY_SENTINEL = None). It is a language literal, not a
+    magic NUMBER, but it must still be named so the short-circuit's intent is
+    self-documenting and greppable.
+
+    Asserts: (1) math_engine exposes a module-level attribute whose name
+    signals "insufficient history" and whose value is the out-of-band sentinel
+    (None); (2) run_monte_carlo references that constant by name.
     """
-    candidates = [
-        n for n in _module_level_constant_names(100.0)
-        if n != "PCT_SCALAR"
+    # Find module-level constants that are None and named for the insufficient
+    # path. None can't be discovered by value-equality on numeric scanners, so
+    # match on the naming convention used by the GREEN implementation.
+    none_named_constants = [
+        name
+        for name in dir(math_engine)
+        if not name.startswith("_")
+        and getattr(math_engine, name) is None
+        and "INSUFFICIENT" in name.upper()
     ]
-    assert candidates, (
-        "Expected a module-level constant with value 100.0 named for the "
-        "MC insufficient-history probability sentinel (role: degenerate-case "
-        "probability OUTPUT, distinct from PCT_SCALAR). Proposed name: "
-        "MC_INSUFFICIENT_HISTORY_PROB."
+    assert none_named_constants, (
+        "Expected a named module-level constant set to the out-of-band "
+        "insufficient-history sentinel (None) — e.g. "
+        "MC_INSUFFICIENT_HISTORY_SENTINEL. run_monte_carlo's "
+        "insufficient-history short-circuit must return a named constant, not "
+        "a bare `return None`."
     )
     referenced = _names_referenced_in_run_monte_carlo()
-    matched = [c for c in candidates if c in referenced]
+    matched = [c for c in none_named_constants if c in referenced]
     assert matched, (
-        f"A probability-sentinel constant exists ({candidates}) but is not "
-        f"referenced by run_monte_carlo. The `return 100.0` line in the "
-        f"insufficient-history short-circuit must reference the named "
-        f"constant."
+        f"An insufficient-history sentinel constant exists "
+        f"({none_named_constants}) but run_monte_carlo does not reference it by "
+        f"name. The insufficient-history short-circuit must `return "
+        f"<the named sentinel>`, not a bare literal."
     )
 
 

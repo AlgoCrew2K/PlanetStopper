@@ -11,10 +11,10 @@ Scope:
         len(spy_returns) == len(valid_dates). For the else-branch to fire we
         would need len(valid_dates) >= 20 AND len(spy_returns) < 19, which is
         contradictory. The 'short-history' scenario below (15 days) exercises
-        the EARLIER guard (MC_INSUFFICIENT_HISTORY_PROB sentinel) and pins
-        the observable regression contract for the short-history input class.
-        This dead-code condition is documented here so it is visible to the
-        next implementer who adjusts MC_MIN_HISTORY_DAYS.
+        the EARLIER guard (the MC_INSUFFICIENT_HISTORY_SENTINEL out-of-band
+        signal) and pins the observable regression contract for the
+        short-history input class. This dead-code condition is documented here
+        so it is visible to the next implementer who adjusts MC_MIN_HISTORY_DAYS.
 
     Branch B — missing-ticker SPY substitution (line 491 else-branch):
         Fires when a holding's ticker is absent from a historical day's data.
@@ -27,11 +27,20 @@ Fixture files referenced:
     tests/fixtures/math_engine/mc_fallbacks/03_missing_ticker_spy_substitution.json
     tests/fixtures/math_engine/mc_fallbacks/04_present_ticker_normal_path.json
 
+Cluster 2 update (mc-knn-exit-gate, AC-1/AC-2):
+    Test 1's contract changed. run_monte_carlo no longer returns the in-band
+    100.0 for insufficient history — it returns the distinct out-of-band
+    sentinel MC_INSUFFICIENT_HISTORY_SENTINEL (None). The prior 100.0 was
+    fail-dangerous: 100 >= MC_SANITY_THRESHOLD permanently vetoed the protective
+    trailing stop. Tests 2 and 3's pinned values were re-captured from the fixed
+    producer (AC-1 standardizes the kNN feature vector, AC-4 excludes the
+    early-window days — both intentionally shift neighbour selection).
+
 Tolerance policy:
-    Tests 1 and 4 use exact equality because their expected values (100.0 and 0.0)
-    are structural sentinels, not Monte Carlo outputs: 100.0 is the
-    MC_INSUFFICIENT_HISTORY_PROB constant and 0.0 is a deterministic boundary
-    result (all simulated paths are strictly below current_return).
+    Test 1 asserts identity with the out-of-band sentinel (None) — there is no
+    probability to compare. Test 4 uses exact equality because its expected
+    value (0.0) is a deterministic boundary result (all simulated paths are
+    strictly below current_return), not a Monte Carlo draw.
 
     Tests 2 and 3 use pytest.approx with rel=1e-9 because they are genuine
     Monte Carlo outputs (pseudo-random draws under a fixed seed). The tolerance
@@ -141,63 +150,76 @@ def _load_fixture(filename: str) -> dict[str, Any]:
         return json.load(fh)
 
 
-def _run_from_fixture(fixture: dict[str, Any]) -> float:
-    """Build inputs from fixture and call run_monte_carlo under the fixed seed."""
+def _run_from_fixture_raw(fixture: dict[str, Any]) -> Any:
+    """
+    Build inputs from a fixture and call run_monte_carlo under the fixed seed,
+    returning the raw result WITHOUT coercion. The result is a float for the
+    sufficient-history path, or the out-of-band insufficient-history sentinel
+    (None) when the history is below MC_MIN_HISTORY_DAYS — float() must NOT be
+    applied blindly.
+    """
     inputs = fixture["inputs"]
     history = _build_history(inputs["historical_data_spec"])
-    holdings = inputs["holdings"]
-    spy_today = inputs["spy_today_return"]
-    sim_paths = inputs["simulation_paths"]
-    neighbor_k = inputs["neighbor_k"]
-    seed = inputs["numpy_seed"]
-
-    return float(
-        math_engine.run_monte_carlo(
-            holdings,
-            history,
-            spy_today,
-            simulation_paths=sim_paths,
-            neighbor_k=neighbor_k,
-            seed=seed,
-        )
+    return math_engine.run_monte_carlo(
+        inputs["holdings"],
+        history,
+        inputs["spy_today_return"],
+        simulation_paths=inputs["simulation_paths"],
+        neighbor_k=inputs["neighbor_k"],
+        seed=inputs["numpy_seed"],
     )
 
 
+def _run_from_fixture(fixture: dict[str, Any]) -> float:
+    """
+    Call run_monte_carlo and return its result as a float. Use only for fixtures
+    on the sufficient-history path — it fails loudly if the function returned
+    the out-of-band insufficient sentinel (None), which would otherwise crash on
+    float(None).
+    """
+    result = _run_from_fixture_raw(fixture)
+    assert result is not None, (
+        f"Fixture '{fixture['name']}' expected a sufficient-history MC "
+        f"probability but run_monte_carlo returned the insufficient sentinel. "
+        f"Use _run_from_fixture_raw for the insufficient-history path."
+    )
+    return float(result)
+
+
 # ---------------------------------------------------------------------------
-# Test 1 — Short-history input fires MC_INSUFFICIENT_HISTORY_PROB sentinel
+# Test 1 — Short-history input returns the out-of-band insufficient sentinel
 # ---------------------------------------------------------------------------
 
 def test_short_history_spy_vol_fallback_returns_sentinel_and_is_finite() -> None:
     """
     15 days of SPY history is below MC_MIN_HISTORY_DAYS (20).
-    run_monte_carlo must return MC_INSUFFICIENT_HISTORY_PROB (100.0) without
-    raising and without NaN/Inf.
+    run_monte_carlo must return the out-of-band insufficient-history sentinel
+    (MC_INSUFFICIENT_HISTORY_SENTINEL = None) — NOT an in-band probability —
+    without raising.
 
-    The audit description references a 'short-history SPY vol fallback' at
-    line 463; in the current implementation that branch is structurally
-    unreachable when MC_MIN_HISTORY_DAYS >= MC_VOL_WINDOW_DAYS-1 (see module
-    docstring). The test covers the observable regression contract for any
-    input where len(valid_dates) < MC_MIN_HISTORY_DAYS: the function must
-    return the sentinel and not crash.
+    Updated for Cluster 2 AC-2: the prior contract returned the in-band 100.0,
+    which was fail-dangerous (100 >= MC_SANITY_THRESHOLD permanently vetoed the
+    protective trailing stop). The function now signals "MC could not run"
+    out-of-band so the caller can distinguish it from a genuine probability.
     """
     fixture = _load_fixture("01_short_history_spy_vol_fallback.json")
-    actual = _run_from_fixture(fixture)
+    assert fixture.get("expected_is_insufficient_sentinel") is True, (
+        "Fixture 01 must declare expected_is_insufficient_sentinel: true."
+    )
+    actual = _run_from_fixture_raw(fixture)
 
-    assert math.isfinite(actual), (
-        f"run_monte_carlo returned non-finite value {actual!r} for short-history input. "
-        "Expected MC_INSUFFICIENT_HISTORY_PROB sentinel (finite)."
+    # The contract is a DISTINCT out-of-band sentinel — None, not a probability.
+    assert actual is None, (
+        f"run_monte_carlo returned {actual!r} for a 15-day history "
+        f"(< MC_MIN_HISTORY_DAYS). It must return the out-of-band insufficient "
+        f"sentinel (MC_INSUFFICIENT_HISTORY_SENTINEL = None), not an in-band "
+        f"value. Derivation: {fixture['derivation']}"
     )
-    assert 0.0 <= actual <= 100.0, (
-        f"run_monte_carlo returned {actual!r} which is outside [0, 100]. "
-        "MC probability outputs must be bounded."
-    )
-    # Exact equality: 100.0 is a constant sentinel, not a random draw.
-    # Any deviation indicates the short-circuit guard changed or the sentinel
-    # value was modified.
-    assert actual == fixture["expected"], (
-        f"Short-history sentinel mismatch: expected {fixture['expected']!r}, "
-        f"got {actual!r}. "
-        f"Derivation: {fixture['derivation']}"
+    # The sentinel must be exactly the module constant.
+    assert actual is math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL, (
+        f"run_monte_carlo's insufficient-history return {actual!r} is not the "
+        f"named module constant MC_INSUFFICIENT_HISTORY_SENTINEL "
+        f"({math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL!r})."
     )
 
 
@@ -237,24 +259,32 @@ def test_long_history_normal_path_returns_finite_float_in_range() -> None:
 
 def test_long_history_result_differs_from_short_history_sentinel() -> None:
     """
-    The 50-day (normal path) result must differ from the 15-day
-    (MC_INSUFFICIENT_HISTORY_PROB sentinel) result.
+    The 50-day (normal path) result must be a real probability, and the 15-day
+    (insufficient-history) result must be the out-of-band sentinel — the two
+    must differ.
 
-    This assertion guards against a regression where the normal path
-    accidentally returns the sentinel value or the two code paths converge
-    to the same output, which would make the short-circuit invisible.
+    This guards against a regression where the normal path accidentally returns
+    the sentinel, or the short-circuit path leaks an in-band value — either
+    would make the "MC could not run" signal invisible to the caller.
     """
     short_fixture = _load_fixture("01_short_history_spy_vol_fallback.json")
     long_fixture = _load_fixture("02_long_history_normal_path.json")
 
-    short_result = _run_from_fixture(short_fixture)
-    long_result = _run_from_fixture(long_fixture)
+    short_result = _run_from_fixture_raw(short_fixture)
+    long_result = _run_from_fixture_raw(long_fixture)
 
+    assert short_result is None, (
+        f"15-day history must return the insufficient sentinel (None); "
+        f"got {short_result!r}."
+    )
+    assert long_result is not None, (
+        f"50-day history must return a real MC probability, not the "
+        f"insufficient sentinel."
+    )
     assert short_result != long_result, (
-        f"Short-history sentinel ({short_result!r}) equals long-history MC output "
-        f"({long_result!r}). These must differ: the sentinel is the degenerate "
-        f"no-data case; the MC output is a real probability. A match indicates "
-        f"one of the two branches is not executing as expected."
+        f"Short-history sentinel ({short_result!r}) equals long-history MC "
+        f"output ({long_result!r}). These must differ: the sentinel is the "
+        f"degenerate no-data case; the MC output is a real probability."
     )
 
 
@@ -341,7 +371,8 @@ def test_present_ticker_takes_own_returns_and_differs_from_spy_substitution() ->
 
 
 # ---------------------------------------------------------------------------
-# Property: all four fixtures produce finite floats in [0, 100]
+# Property: every fixture returns either a bounded finite probability or the
+# out-of-band insufficient-history sentinel
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -357,15 +388,25 @@ def test_all_mc_fallback_fixtures_return_bounded_finite_probability(
     fixture_filename: str,
 ) -> None:
     """
-    Property invariant: run_monte_carlo must return a finite float in [0, 100]
-    for every fallback regime. This catches NaN/Inf propagation through the
-    fallback paths and probability values that escape the valid range.
+    Property invariant: run_monte_carlo must return EITHER a finite float in
+    [0, 100] (a real probability) OR the out-of-band insufficient-history
+    sentinel (None) — never NaN, Inf, or a number outside [0, 100].
 
-    This test parametrizes over all four mc_fallbacks fixtures so that adding
-    a new fixture automatically enrolls it in the invariant check.
+    The short-history fixture (01) is on the insufficient-history path and
+    legitimately returns the sentinel; the other three return real
+    probabilities. Parametrizing over all four enrolls any new fixture in the
+    invariant automatically.
     """
     fixture = _load_fixture(fixture_filename)
-    actual = _run_from_fixture(fixture)
+    actual = _run_from_fixture_raw(fixture)
+
+    if actual is None:
+        # The insufficient-history sentinel is a valid out-of-band result.
+        assert actual is math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL, (
+            f"{fixture_filename}: run_monte_carlo returned None but it is not "
+            f"the named MC_INSUFFICIENT_HISTORY_SENTINEL constant."
+        )
+        return
 
     assert math.isfinite(actual), (
         f"{fixture_filename}: run_monte_carlo returned non-finite {actual!r}. "

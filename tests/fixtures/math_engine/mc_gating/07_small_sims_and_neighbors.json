@@ -17,6 +17,6 @@
     "neighbor_k": 10,
     "numpy_seed": 123
   },
-  "expected": 100.0,
-  "derivation": "Captured behavioral pin under numpy.random.seed(123). Exercises non-default parameters: simulation_paths=100, neighbor_k=10. Under these parameters and seed, the resulting sim distribution places current_symphony_return at or below the smallest value (below_count=0 from searchsorted 'left' semantics on a value <= all sorted entries), yielding (100-0)/100*100=100.0. Pin protects against any default-value extraction altering parameter wiring."
+  "expected": 44.0,
+  "derivation": "Re-captured from the fixed producer at branch fix/mc-knn-exit-gate HEAD 7ff61a4 (Cluster 2) with run_monte_carlo(..., seed=123). Exercises non-default parameters: simulation_paths=100, neighbor_k=10. The value shifted from the pre-Cluster-2 100.0 because AC-1 standardizes the kNN feature vector and AC-4 excludes the early-window days — both intentionally change which days enter the bootstrap. Still verifies the parameter wiring (simulation_paths/neighbor_k overrides). Provenance: captured-from-the-fixed-producer."
 }

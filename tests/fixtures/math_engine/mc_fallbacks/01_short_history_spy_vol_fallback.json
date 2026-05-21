@@ -1,6 +1,6 @@
 {
   "name": "short_history_spy_vol_fallback",
-  "description": "SPY history with only 15 days (< MC_MIN_HISTORY_DAYS=20). run_monte_carlo MUST short-circuit at the MC_MIN_HISTORY_DAYS guard and return MC_INSUFFICIENT_HISTORY_PROB=100.0. This pins the EARLY short-circuit branch (lines 445-446). NOTE: the vol-window fallback else-branch at line 463 is structurally unreachable when MC_MIN_HISTORY_DAYS >= MC_VOL_WINDOW_DAYS-1 (both are 20/19 today); the test covers the observable regression pin for the 'short history' scenario as declared by the coverage audit.",
+  "description": "SPY history with only 15 days (< MC_MIN_HISTORY_DAYS=20). run_monte_carlo MUST short-circuit at the MC_MIN_HISTORY_DAYS guard and return the out-of-band insufficient-history sentinel (MC_INSUFFICIENT_HISTORY_SENTINEL = None) — NOT an in-band probability. This pins the EARLY short-circuit branch. Updated for Cluster 2 AC-2: the previous in-band 100.0 return was fail-dangerous (it permanently vetoed the protective trailing stop); run_monte_carlo now signals insufficient history out-of-band so the caller can distinguish 'MC could not run' from a genuine probability.",
   "function": "run_monte_carlo",
   "inputs": {
     "holdings": [
@@ -17,6 +17,6 @@
     "neighbor_k": 150,
     "numpy_seed": 42
   },
-  "expected": 100.0,
-  "derivation": "15 < MC_MIN_HISTORY_DAYS(20): guard at line 445 fires, returns MC_INSUFFICIENT_HISTORY_PROB sentinel (100.0). Captured from production code with numpy.random.seed(42). The vol-window else-branch at line 463 is unreachable at these constant values; see production_gap in the test module docstring."
+  "expected_is_insufficient_sentinel": true,
+  "derivation": "15 < MC_MIN_HISTORY_DAYS(20): the sufficiency guard fires and run_monte_carlo returns MC_INSUFFICIENT_HISTORY_SENTINEL (None) — a distinct out-of-band signal, not an in-band probability. The test asserts the return IS the sentinel (None / not a [0,100] float); no producer probability is pinned because there is none — the function short-circuits before the Monte Carlo draw."
 }

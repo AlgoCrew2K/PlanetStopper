@@ -20,6 +20,6 @@
     "neighbor_k": 150,
     "numpy_seed": 42
   },
-  "expected": 48.38,
-  "derivation": "XYZ absent from all days -> returns_matrix uses spy_ret (line 491). historical SPY returns are +-0.005 -> +-0.5 pct after scaling. current_symphony_return = 0.003 * 100 * 1.0 = 0.3. Recaptured with run_monte_carlo(..., seed=42) via numpy.random.default_rng(42) after H3 RNG isolation (default_rng produces different draws than legacy np.random.seed at 42)."
+  "expected": 45.36,
+  "derivation": "XYZ absent from all days -> returns_matrix uses spy_ret (the missing-ticker SPY substitution). historical SPY returns are +-0.005 -> +-0.5 pct after scaling. current_symphony_return = 0.003 * 100 * 1.0 = 0.3. Re-captured from the fixed producer at branch fix/mc-knn-exit-gate HEAD 7ff61a4 (Cluster 2) with run_monte_carlo(..., seed=42). The value shifted from the pre-Cluster-2 48.38 because AC-1 standardizes the kNN feature vector and AC-4 excludes the early-window days — both intentionally change neighbour selection. Provenance: captured-from-the-fixed-producer."
 }

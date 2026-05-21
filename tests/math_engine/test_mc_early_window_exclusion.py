@@ -188,44 +188,13 @@ def test_excluding_early_window_days_flips_regime_selection() -> None:
     )
 
 
-def test_red_marker_prefix_admits_early_window_days_to_pool() -> None:
-    """
-    RED-VERIFICATION MARKER. Pins the PRE-FIX observable: the early-window days
-    are still in the kNN candidate pool, so the proof fixture returns the
-    gain-side structural value 100.0.
-
-    This test PASSES against pre-fix code and MUST FAIL once AC-4 lands. The
-    implementer deletes it in the GREEN step. Its presence proves the proof
-    fixture genuinely exercises the bug.
-    """
-    fx = _load_fixture("01_early_window_excluded_from_knn_pool.json")
-    spec = fx["inputs"]["historical_data_spec"]
-    early_window_days = math_engine.MC_VOL_WINDOW_DAYS - 1
-    history = _build_early_window_bias_history(
-        num_days=spec["num_days"],
-        early_window_days=early_window_days,
-        today_return_decimal=spec["today_return_decimal"],
-        early_dispersion=spec["early_window_spy_dispersion"],
-        full_dispersion=spec["full_window_spy_dispersion"],
-        early_holding_ret=spec["early_window_holding_daily_ret"],
-        full_holding_ret=spec["full_window_holding_daily_ret"],
-    )
-    result = math_engine.run_monte_carlo(
-        fx["inputs"]["holdings"],
-        history,
-        fx["inputs"]["spy_today_return"],
-        simulation_paths=fx["inputs"]["simulation_paths"],
-        neighbor_k=fx["inputs"]["neighbor_k"],
-        seed=fx["inputs"]["numpy_seed"],
-    )
-    pre_fix_regime = fx["pre_fix_expected_regime"]
-    pre_fix_prob = fx["regime_selection"][pre_fix_regime]["structural_prob"]
-    assert result == pre_fix_prob, (
-        f"RED marker no longer matches pre-fix behaviour: expected the "
-        f"early-window-admitted value {pre_fix_prob!r}, got {result!r}. If AC-4 "
-        f"has been implemented, DELETE this RED marker — see "
-        f"test_excluding_early_window_days_flips_regime_selection."
-    )
+# RED-VERIFICATION NOTE: a marker test (test_red_marker_prefix_admits_early_
+# window_days_to_pool) lived here during the RED phase. It pinned the pre-fix
+# observable (the early-window days are still in the kNN candidate pool, so the
+# proof fixture returns the gain-side structural value 100.0) to prove the
+# fixture genuinely exercised the bug. It was RED-verified against pre-fix code
+# and removed once AC-4 landed. The behavioural proof is
+# test_excluding_early_window_days_flips_regime_selection.
 
 
 # ---------------------------------------------------------------------------

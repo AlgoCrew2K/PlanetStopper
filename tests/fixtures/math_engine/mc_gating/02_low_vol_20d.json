@@ -1,6 +1,6 @@
 {
   "name": "low_vol_exactly_at_min_history",
-  "description": "Exactly MC_MIN_HISTORY_DAYS (20) days of alternating SPY and AAA returns. Pins the BOUNDARY of the history guard: at exactly 20 days, the function must NOT short-circuit; it must run the full MC path. With numpy seed 42 and the documented MC pipeline, the captured output is the behavioral-equivalence target.",
+  "description": "Exactly MC_MIN_HISTORY_DAYS (20) days of alternating SPY and AAA returns. At exactly 20 days the function does NOT short-circuit at the sufficiency guard. NOTE (Cluster 2 AC-4): after the early-window exclusion drops the first MC_VOL_WINDOW_DAYS-1 = 19 days, a 20-day history leaves a single eligible kNN candidate — a degenerate 1-neighbour pool whose bootstrap CDF snaps prob_beating to {0.0, 100.0}. This fixture is live evidence of the degenerate-pool boundary that the AC-4 eligible-pool-size policy question concerns; it pins the current GREEN behaviour pending that ruling.",
   "function": "run_monte_carlo",
   "inputs": {
     "holdings": [
@@ -21,6 +21,6 @@
     "neighbor_k": 150,
     "numpy_seed": 42
   },
-  "expected": 50.739999999999995,
-  "derivation": "Captured behavioral pin under numpy.random.default_rng(42) via seed=42 kwarg (H3 AC-H3.1). This regime exercises the boundary case len(valid_dates) == MC_MIN_HISTORY_DAYS (not short-circuited) AND len(distances) <= neighbor_k (uses np.arange path, not argpartition). The expected value is the exact output of the present implementation; any constant-extraction must not perturb it (zero tolerance)."
+  "expected": 0.0,
+  "derivation": "Re-captured from the fixed producer at branch fix/mc-knn-exit-gate HEAD 7ff61a4 (Cluster 2) with run_monte_carlo(..., seed=42). The value shifted from the pre-Cluster-2 50.74 because AC-4 excludes the first MC_VOL_WINDOW_DAYS-1 = 19 early-window days: a 20-day history leaves exactly ONE eligible candidate, the kNN bootstraps from a single day, and the resulting one-point CDF places current_symphony_return strictly above it -> prob_beating = 0.0 (a deterministic boundary value of the degenerate 1-neighbour pool, not a random draw). Provenance: captured-from-the-fixed-producer; flagged as degenerate-pool evidence for the AC-4 policy ruling."
 }

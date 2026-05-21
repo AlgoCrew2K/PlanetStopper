@@ -97,49 +97,13 @@ def _generate_trading_year_cycle_ids(
     return cycle_ids
 
 
-# ---------------------------------------------------------------------------
-# 1. RED marker — the pre-fix 2**31 modulus genuinely collides at fleet scale
-# ---------------------------------------------------------------------------
-
-def test_red_marker_prefix_modulus_collides_in_one_trading_year() -> None:
-    """
-    RED-VERIFICATION MARKER. Proves the pre-fix MC_SEED_MODULUS = 2**31 is too
-    small: a full trading year of ~98,280 cycle_ids produces at least one seed
-    collision.
-
-    This test PASSES against pre-fix code and MUST FAIL once the seed space is
-    widened (the widened space yields zero collisions). The implementer deletes
-    this RED marker in the GREEN step. Its presence proves
-    test_full_trading_year_cycle_ids_produce_distinct_seeds genuinely exercises
-    the bug.
-
-    Note: it asserts on MC_SEED_MODULUS only when that constant is still 2**31,
-    so it does not produce a confusing failure after the fix renames/replaces
-    the constant — it asserts the collision directly on derived seeds.
-    """
-    fx = _load_fixture("04_seed_collision_full_year.json")
-    gen = fx["cycle_id_generation"]
-    year_start = datetime.date.fromisoformat(gen["calendar_year_start"])
-    cycle_ids = _generate_trading_year_cycle_ids(
-        year_start, gen["num_trading_days"]
-    )
-    assert len(cycle_ids) == gen["expected_cycle_count"], (
-        f"Fixture invariant broken: generated {len(cycle_ids)} cycle_ids, "
-        f"expected {gen['expected_cycle_count']}."
-    )
-
-    seeds = [math_engine.derive_cycle_mc_seed(cid) for cid in cycle_ids]
-    collisions = len(seeds) - len(set(seeds))
-
-    # Pre-fix this is >= 1 (measured 1 for the 2024 set). If it is 0 the seed
-    # space has already been widened — delete this RED marker.
-    assert collisions >= 1, (
-        f"RED marker no longer holds: a full trading year of "
-        f"{len(cycle_ids)} cycle_ids produced {collisions} collisions. "
-        f"If MC_SEED_MODULUS has been widened (AC-3), DELETE this RED marker — "
-        f"its job is done. See "
-        f"test_full_trading_year_cycle_ids_produce_distinct_seeds."
-    )
+# RED-VERIFICATION NOTE: a marker test (test_red_marker_prefix_modulus_collides_
+# in_one_trading_year) lived here during the RED phase. It pinned the pre-fix
+# defect — the 2**31 seed modulus produces at least one collision across a full
+# trading year of ~98,280 cycle_ids — to prove the collision fixture genuinely
+# exercised the bug. It was RED-verified against pre-fix code and removed once
+# AC-3 widened the seed space. The behavioural proof is
+# test_full_trading_year_cycle_ids_produce_distinct_seeds.
 
 
 # ---------------------------------------------------------------------------
