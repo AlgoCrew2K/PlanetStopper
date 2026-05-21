@@ -198,51 +198,139 @@ def test_excluding_early_window_days_flips_regime_selection() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. EDGE — minimally-sufficient history stays finite after the exclusion
+# 2. ELIGIBLE-POOL SUFFICIENCY (team-lead Ruling 2 — Option ii)
 # ---------------------------------------------------------------------------
+#
+# Ruling 2: the insufficient-history determination is made on the ELIGIBLE
+# pool, AFTER the early-window exclusion. The MC_MIN_HISTORY_DAYS guard counts
+# ELIGIBLE days, not raw days — equivalently, raw history must be
+#   >= MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1)
+# for the MC path to run. A raw history that is raw-sufficient but
+# eligible-insufficient (eligible_days < MC_MIN_HISTORY_DAYS) collapses into
+# the SAME insufficient path as a too-short history and returns the SAME
+# out-of-band sentinel (None) — never a degenerate 1-neighbour kNN.
+#
+# All boundary day-counts below are DERIVED from math_engine.MC_MIN_HISTORY_DAYS
+# and MC_VOL_WINDOW_DAYS — never hardcoded (per risk-engine-specialist's
+# refinement).
 
-def test_minimally_sufficient_history_stays_finite_after_exclusion() -> None:
-    """
-    AC-4 edge case. With MC_MIN_HISTORY_DAYS == MC_VOL_WINDOW_DAYS in the
-    current constants, a history of exactly MC_MIN_HISTORY_DAYS days is
-    sufficient (the MC path runs), but excluding the first
-    MC_VOL_WINDOW_DAYS - 1 short-sample days shrinks the kNN candidate pool to
-    a single day. run_monte_carlo must still return a finite probability in
-    [0, 100] from that degenerate one-day pool — the exclusion must not crash
-    or emit NaN/Inf on a minimally-sufficient history.
+def _required_raw_days() -> int:
+    """Minimum raw history days for a non-degenerate eligible pool (Ruling 2)."""
+    return math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
 
-    Contract assertion only — no producer probability pinned.
+
+def test_eligible_insufficient_history_returns_the_insufficient_sentinel() -> None:
     """
-    fx = _load_fixture("02_small_sufficient_history_stays_finite.json")
-    spec = fx["inputs"]["historical_data_spec"]
+    AC-4 / Ruling 2. A raw history that is RAW-sufficient (>= MC_MIN_HISTORY_DAYS
+    days) but ELIGIBLE-insufficient (after excluding the first
+    MC_VOL_WINDOW_DAYS - 1 early-window days, fewer than MC_MIN_HISTORY_DAYS
+    eligible days remain) must be treated as insufficient: run_monte_carlo
+    returns the out-of-band insufficient sentinel, NOT a degenerate kNN
+    probability.
+
+    Day count tested: required_raw - 1 (one day below the eligible-sufficient
+    boundary), derived from the named constants.
+
+    RED against pre-Ruling-2 code (the guard counts raw days, so this history
+    runs a degenerate-pool MC and returns an in-band value).
+    """
+    raw_days = _required_raw_days() - 1
+    assert raw_days >= math_engine.MC_MIN_HISTORY_DAYS, (
+        "Test invariant: the eligible-insufficient case must still be "
+        "RAW-sufficient (>= MC_MIN_HISTORY_DAYS) — otherwise it would exercise "
+        "the plain too-short guard, not the eligible-pool guard."
+    )
     history = _build_alternating_history(
-        num_days=math_engine.MC_MIN_HISTORY_DAYS,
-        spy_amp=spec["spy_amplitude"],
-        holding_amp=spec["holding_amplitude"],
+        num_days=raw_days, spy_amp=0.010, holding_amp=0.005
     )
     result = math_engine.run_monte_carlo(
-        fx["inputs"]["holdings"],
+        [{"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}],
         history,
-        fx["inputs"]["spy_today_return"],
-        simulation_paths=fx["inputs"]["simulation_paths"],
-        neighbor_k=fx["inputs"]["neighbor_k"],
-        seed=fx["inputs"]["numpy_seed"],
+        0.2,
+        simulation_paths=2000,
+        neighbor_k=8,
+        seed=42,
     )
-    # A minimally-sufficient history must NOT be misclassified as insufficient:
-    # it is at the MC_MIN_HISTORY_DAYS boundary, so a real probability is
-    # expected. (The insufficient-history sentinel is AC-2's concern.)
+    assert result is math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL, (
+        f"run_monte_carlo returned {result!r} for a history of {raw_days} raw "
+        f"days. After excluding the first MC_VOL_WINDOW_DAYS-1 "
+        f"({math_engine.MC_VOL_WINDOW_DAYS - 1}) early-window days only "
+        f"{raw_days - (math_engine.MC_VOL_WINDOW_DAYS - 1)} eligible days "
+        f"remain — below MC_MIN_HISTORY_DAYS ({math_engine.MC_MIN_HISTORY_DAYS}). "
+        f"Ruling 2: the sufficiency guard counts ELIGIBLE days; this history is "
+        f"insufficient and must return the out-of-band sentinel, never a "
+        f"degenerate kNN probability."
+    )
+
+
+def test_eligible_insufficient_returns_same_sentinel_as_raw_insufficient() -> None:
+    """
+    AC-4 / Ruling 2 (risk-engine-specialist refinement). An eligible-insufficient
+    history must return the IDENTICAL sentinel object as a raw-too-short
+    history — one insufficient sentinel, one downstream fail-safe path. A
+    separate "eligible-insufficient" sentinel would re-open the consumer-gate
+    problem (every is-None branch would need a parallel branch).
+    """
+    raw_insufficient = _build_alternating_history(
+        num_days=math_engine.MC_MIN_HISTORY_DAYS - 1, spy_amp=0.010, holding_amp=0.005
+    )
+    eligible_insufficient = _build_alternating_history(
+        num_days=_required_raw_days() - 1, spy_amp=0.010, holding_amp=0.005
+    )
+    holdings = [{"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}]
+
+    raw_result = math_engine.run_monte_carlo(
+        holdings, raw_insufficient, 0.2, simulation_paths=2000, neighbor_k=8, seed=42
+    )
+    eligible_result = math_engine.run_monte_carlo(
+        holdings, eligible_insufficient, 0.2, simulation_paths=2000, neighbor_k=8, seed=42
+    )
+    assert raw_result is math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL, (
+        f"Raw-too-short history did not return the insufficient sentinel: "
+        f"{raw_result!r}."
+    )
+    assert eligible_result is raw_result, (
+        f"The eligible-insufficient history returned {eligible_result!r} but "
+        f"the raw-too-short history returned {raw_result!r}. Ruling 2: both "
+        f"must return the SAME insufficient sentinel object — a distinct "
+        f"second sentinel would re-open the consumer-gate is-None problem."
+    )
+
+
+def test_eligible_sufficient_history_runs_real_mc_not_sentinel() -> None:
+    """
+    AC-4 / Ruling 2 boundary companion. A history of exactly
+    MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) raw days yields exactly
+    MC_MIN_HISTORY_DAYS eligible days after the early-window exclusion — the
+    inclusive eligible-sufficient boundary. run_monte_carlo must run the real
+    MC path and return a finite probability in [0, 100], NOT the sentinel.
+
+    Together with test_eligible_insufficient_history_returns_the_insufficient_
+    sentinel this pins the exact eligible-pool boundary so the fix does not
+    silently move it.
+    """
+    history = _build_alternating_history(
+        num_days=_required_raw_days(), spy_amp=0.010, holding_amp=0.005
+    )
+    result = math_engine.run_monte_carlo(
+        [{"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}],
+        history,
+        0.2,
+        simulation_paths=2000,
+        neighbor_k=8,
+        seed=42,
+    )
     assert result is not None, (
         f"run_monte_carlo returned the insufficient sentinel for a history of "
-        f"exactly MC_MIN_HISTORY_DAYS days. That history is sufficient — the "
-        f"early-window exclusion must shrink the pool, not reclassify the "
-        f"history as insufficient."
+        f"{_required_raw_days()} raw days — exactly MC_MIN_HISTORY_DAYS eligible "
+        f"days after the early-window exclusion. That is the inclusive "
+        f"eligible-sufficient boundary; the real MC path must run."
     )
     assert math.isfinite(result), (
-        f"run_monte_carlo returned non-finite {result!r} for a "
-        f"minimally-sufficient history. The early-window exclusion must keep "
-        f"the result finite even when the candidate pool shrinks to one day."
+        f"run_monte_carlo returned non-finite {result!r} at the "
+        f"eligible-sufficient boundary."
     )
     assert 0.0 <= result <= 100.0, (
-        f"run_monte_carlo returned {result!r} outside [0, 100] for a "
-        f"minimally-sufficient history after the early-window exclusion."
+        f"run_monte_carlo returned {result!r} outside [0, 100] at the "
+        f"eligible-sufficient boundary."
     )
