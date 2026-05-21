@@ -55,7 +55,6 @@ are schema-derived from ``run_monte_carlo``'s documented input contract.
 from __future__ import annotations
 
 import json
-import math
 import pathlib
 from typing import Any
 
@@ -97,19 +96,6 @@ def _build_constant_history(
         }
         for i in range(num_days)
     }
-
-
-def _build_alternating_history(
-    num_days: int, spy_amp: float, holding_amp: float
-) -> dict[str, dict[str, dict[str, float]]]:
-    history: dict[str, dict[str, dict[str, float]]] = {}
-    for i in range(num_days):
-        sign = 1 if i % 2 == 0 else -1
-        history[_date_key(i)] = {
-            "SPY": {"daily_ret": sign * spy_amp},
-            "AAA": {"daily_ret": sign * holding_amp},
-        }
-    return history
 
 
 def _is_insufficient_sentinel(value: Any) -> bool:
@@ -330,72 +316,30 @@ def test_insufficient_mc_does_not_veto_exit_on_a_single_qualifying_tick() -> Non
 
 
 # ---------------------------------------------------------------------------
-# 3. MC_MIN_HISTORY_DAYS boundary — inclusive
+# 3. MC sufficiency boundary
 # ---------------------------------------------------------------------------
-
-def test_exactly_min_history_days_runs_real_mc_not_sentinel() -> None:
-    """
-    AC-2 boundary: a history of EXACTLY MC_MIN_HISTORY_DAYS days must run the
-    real Monte Carlo path and return a genuine probability — NOT the
-    insufficient sentinel. The sufficiency guard is inclusive at the boundary.
-    """
-    fx = _load_fixture("02_min_history_boundary.json")
-    spec = fx["inputs"]["historical_data_spec"]
-    history = _build_alternating_history(
-        num_days=math_engine.MC_MIN_HISTORY_DAYS,
-        spy_amp=spec["spy_amplitude"],
-        holding_amp=spec["holding_amplitude"],
-    )
-    result = math_engine.run_monte_carlo(
-        fx["inputs"]["holdings"],
-        history,
-        fx["inputs"]["spy_today_return"],
-        simulation_paths=fx["inputs"]["simulation_paths"],
-        neighbor_k=fx["inputs"]["neighbor_k"],
-        seed=fx["inputs"]["numpy_seed"],
-    )
-    assert not _is_insufficient_sentinel(result), (
-        f"run_monte_carlo returned the insufficient sentinel ({result!r}) for a "
-        f"history of exactly MC_MIN_HISTORY_DAYS ({math_engine.MC_MIN_HISTORY_DAYS}) "
-        f"days. The sufficiency guard must be inclusive — exactly the minimum "
-        f"runs the real MC path."
-    )
-    assert math.isfinite(result), (
-        f"run_monte_carlo returned non-finite {result!r} at the MC_MIN_HISTORY_DAYS "
-        f"boundary."
-    )
-    assert 0.0 <= result <= 100.0, (
-        f"run_monte_carlo returned {result!r} outside [0, 100] at the boundary."
-    )
-
-
-def test_one_below_min_history_days_returns_sentinel() -> None:
-    """
-    AC-2 boundary companion: a history of MC_MIN_HISTORY_DAYS - 1 days must
-    return the insufficient sentinel. Together with the test above this pins the
-    exact inclusive boundary so the fix does not silently move it.
-    """
-    fx = _load_fixture("02_min_history_boundary.json")
-    spec = fx["inputs"]["historical_data_spec"]
-    history = _build_alternating_history(
-        num_days=math_engine.MC_MIN_HISTORY_DAYS - 1,
-        spy_amp=spec["spy_amplitude"],
-        holding_amp=spec["holding_amplitude"],
-    )
-    result = math_engine.run_monte_carlo(
-        fx["inputs"]["holdings"],
-        history,
-        fx["inputs"]["spy_today_return"],
-        simulation_paths=fx["inputs"]["simulation_paths"],
-        neighbor_k=fx["inputs"]["neighbor_k"],
-        seed=fx["inputs"]["numpy_seed"],
-    )
-    assert _is_insufficient_sentinel(result), (
-        f"run_monte_carlo returned {result!r} for a history of "
-        f"MC_MIN_HISTORY_DAYS - 1 ({math_engine.MC_MIN_HISTORY_DAYS - 1}) days. "
-        f"One day below the minimum must return the distinct insufficient "
-        f"sentinel, not an in-band probability."
-    )
+#
+# The sufficiency boundary is the ELIGIBLE-day boundary, not the raw-day
+# boundary. Team-lead Ruling 2 (Option ii) unified AC-2 and AC-4: the
+# MC_MIN_HISTORY_DAYS guard counts days remaining AFTER the early-window
+# exclusion (raw history must be >= MC_MIN_HISTORY_DAYS + MC_VOL_WINDOW_DAYS-1).
+# An eligible pool below MC_MIN_HISTORY_DAYS IS "insufficient" and returns the
+# same out-of-band sentinel as a raw-too-short history.
+#
+# The exact eligible-pool boundary (eligible-insufficient -> sentinel;
+# eligible-sufficient -> real MC; both insufficient cases return the SAME
+# sentinel object) is pinned by:
+#   tests/math_engine/test_mc_early_window_exclusion.py
+#     - test_eligible_insufficient_history_returns_the_insufficient_sentinel
+#     - test_eligible_insufficient_returns_same_sentinel_as_raw_insufficient
+#     - test_eligible_sufficient_history_runs_real_mc_not_sentinel
+#
+# A raw-day-boundary test (a history of exactly MC_MIN_HISTORY_DAYS RAW days
+# expected to run the real MC) lived here during the RED phase. Ruling 2
+# superseded the raw-day boundary — at 20 raw days only one day survives the
+# early-window exclusion, so that history is now correctly insufficient. The
+# raw-day boundary tests were removed; the eligible-pool boundary above is the
+# canonical sufficiency pin.
 
 
 # ---------------------------------------------------------------------------

@@ -447,7 +447,13 @@ def test_calculate_14d_atr_pct_output_is_finite_for_valid_inputs() -> None:
 # ===========================================================================
 
 _MC_TICKER = "AAA"
-_MC_NUM_DAYS = 30  # well above MC_MIN_HISTORY_DAYS (20)
+# Eligible-sufficient history length (team-lead Ruling 2, AC-4): run_monte_carlo's
+# sufficiency guard counts days remaining after the early-window exclusion, so a
+# history must have >= MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) raw days
+# (+ a margin) to run the real MC path.
+_MC_NUM_DAYS = (
+    math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1) + 10
+)
 
 
 def _build_mc_history(num_days: int = _MC_NUM_DAYS, spy_amp: float = 0.02,

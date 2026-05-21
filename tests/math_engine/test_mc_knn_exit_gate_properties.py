@@ -76,9 +76,21 @@ _daily_return = st.floats(
 # AC-1 — run_monte_carlo output is always a bounded probability or the sentinel
 # ---------------------------------------------------------------------------
 
+# Minimum raw history days for an ELIGIBLE-sufficient pool (team-lead Ruling 2):
+# the sufficiency guard counts days remaining after the early-window exclusion,
+# so raw history must be >= MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1).
+_MIN_ELIGIBLE_SUFFICIENT_RAW_DAYS = (
+    math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
+)
+
+
 @settings(max_examples=120, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
-    spy_returns=st.lists(_daily_return, min_size=25, max_size=60),
+    spy_returns=st.lists(
+        _daily_return,
+        min_size=_MIN_ELIGIBLE_SUFFICIENT_RAW_DAYS,
+        max_size=_MIN_ELIGIBLE_SUFFICIENT_RAW_DAYS + 40,
+    ),
     holding_offset=st.floats(
         min_value=-0.05, max_value=0.05, allow_nan=False, allow_infinity=False
     ),
@@ -97,12 +109,16 @@ def test_run_monte_carlo_output_is_bounded_probability_or_sentinel(
     seed: int,
 ) -> None:
     """
-    AC-1 + AC-3 invariant: for any sufficient history (>= MC_MIN_HISTORY_DAYS),
-    with any standardization applied and any 64-bit seed, run_monte_carlo
-    returns either:
-      * a finite float in [0, 100] (a real probability), or
-      * the AC-2 out-of-band insufficient sentinel (None).
-    It must never return NaN, Inf, or a number outside [0, 100].
+    AC-1 + AC-3 invariant: for any ELIGIBLE-sufficient history, with any
+    standardization applied and any 64-bit seed, run_monte_carlo returns a
+    finite float in [0, 100] — a real probability. It must never return NaN,
+    Inf, or a number outside [0, 100], and (because the history is
+    eligible-sufficient) it must never return the insufficient sentinel.
+
+    Eligible-sufficiency (Ruling 2): the sufficiency guard counts days remaining
+    after the early-window exclusion, so the history strategy is sized at
+    >= MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) raw days — every generated
+    history has >= MC_MIN_HISTORY_DAYS eligible days.
 
     The holding return is derived from the SPY return plus a fixed offset so the
     feature standardization is exercised across correlated and degenerate
@@ -110,7 +126,7 @@ def test_run_monte_carlo_output_is_bounded_probability_or_sentinel(
     64-bit space so a widened seed that overflows or is mishandled would surface
     here.
     """
-    assume(len(spy_returns) >= math_engine.MC_MIN_HISTORY_DAYS)
+    assume(len(spy_returns) >= _MIN_ELIGIBLE_SUFFICIENT_RAW_DAYS)
     holding_returns = [r + holding_offset for r in spy_returns]
     history = _build_history(spy_returns, holding_returns)
     holdings = [{"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}]
@@ -125,14 +141,15 @@ def test_run_monte_carlo_output_is_bounded_probability_or_sentinel(
     )
 
     if result is None:
-        # The insufficient sentinel is acceptable only below MC_MIN_HISTORY_DAYS;
-        # this history is sufficient, so None would itself be a defect — but
-        # surface that as a clear message rather than an opaque comparison.
+        # The history is eligible-sufficient, so the insufficient sentinel
+        # would itself be a defect — surface it with a clear message.
         pytest.fail(
-            "run_monte_carlo returned the insufficient sentinel for a history "
-            f"of {len(spy_returns)} days (>= MC_MIN_HISTORY_DAYS = "
-            f"{math_engine.MC_MIN_HISTORY_DAYS}). A sufficient history must "
-            "produce a real probability."
+            f"run_monte_carlo returned the insufficient sentinel for a history "
+            f"of {len(spy_returns)} raw days "
+            f"({len(spy_returns) - (math_engine.MC_VOL_WINDOW_DAYS - 1)} "
+            f"eligible after the early-window exclusion, "
+            f">= MC_MIN_HISTORY_DAYS = {math_engine.MC_MIN_HISTORY_DAYS}). An "
+            f"eligible-sufficient history must produce a real probability."
         )
     assert math.isfinite(result), (
         f"run_monte_carlo returned non-finite {result!r}. spy_returns="

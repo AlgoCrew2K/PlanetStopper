@@ -8,7 +8,7 @@
     ],
     "historical_data_spec": {
       "kind": "alternating",
-      "num_days": 30,
+      "num_days": 50,
       "spy_amplitude": 0.005,
       "aaa_amplitude": 0.005
     },
@@ -18,5 +18,5 @@
     "numpy_seed": 42
   },
   "expected": 0.0,
-  "derivation": "Captured behavioral pin under numpy.random.seed(42). current_symphony_return = 0.01 * 100.0 * 1.0 = 1.0. The simulation distribution is constructed from low-amplitude alternating returns scaled by 100 (range [-0.5, 0.5]); current_symphony_return=1.0 lies above the entire distribution => searchsorted returns simulation_paths, below_count=simulation_paths, result = ((P - P) / P) * 100.0 = 0.0."
+  "derivation": "Re-captured from the fixed producer at branch fix/mc-knn-exit-gate HEAD c3834d0 (Cluster 2) with run_monte_carlo(..., seed=42). num_days raised from 30 to 50: under Ruling 2 (AC-4 eligible-pool sufficiency) a 30-day raw history is now eligible-insufficient (30 - (MC_VOL_WINDOW_DAYS-1) = 11 eligible < MC_MIN_HISTORY_DAYS); 50 raw days keeps this fixture on the real MC path it is designed to exercise (the extreme-spy_today searchsorted tail). current_symphony_return = 0.01 * 100.0 * 1.0 = 1.0 lies above the entire low-amplitude sim distribution => below_count = simulation_paths => prob = 0.0 (a deterministic boundary result). Provenance: captured-from-the-fixed-producer."
 }

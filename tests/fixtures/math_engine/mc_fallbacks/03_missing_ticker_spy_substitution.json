@@ -1,6 +1,6 @@
 {
   "name": "missing_ticker_spy_substitution",
-  "description": "Ticker 'XYZ' is absent from all 30 historical days; SPY is present every day. When XYZ is not in day_data, the returns_matrix cell is set to spy_ret (line 491 fallback). All portfolio returns are therefore identical to the SPY daily returns. With current_symphony_return=0.3 (last_percent_change=0.003) and historical SPY returns in +/-0.5 range, roughly half the simulated paths exceed 0.3 -> prob ~50%. This pins that the missing-ticker fallback produces a valid, finite result in [0, 100].",
+  "description": "Ticker 'XYZ' is absent from all 50 historical days; SPY is present every day. When XYZ is not in day_data, the returns_matrix cell is set to spy_ret (the missing-ticker SPY substitution). All portfolio returns are therefore identical to the SPY daily returns. This pins that the missing-ticker fallback produces a valid, finite result in [0, 100]. num_days is 50 so the history is eligible-sufficient under Ruling 2 (AC-4).",
   "function": "run_monte_carlo",
   "inputs": {
     "holdings": [
@@ -12,7 +12,7 @@
     ],
     "historical_data_spec": {
       "kind": "spy_only",
-      "num_days": 30,
+      "num_days": 50,
       "spy_amplitude": 0.005
     },
     "spy_today_return": 0.5,
@@ -20,6 +20,6 @@
     "neighbor_k": 150,
     "numpy_seed": 42
   },
-  "expected": 45.36,
-  "derivation": "XYZ absent from all days -> returns_matrix uses spy_ret (the missing-ticker SPY substitution). historical SPY returns are +-0.005 -> +-0.5 pct after scaling. current_symphony_return = 0.003 * 100 * 1.0 = 0.3. Re-captured from the fixed producer at branch fix/mc-knn-exit-gate HEAD 7ff61a4 (Cluster 2) with run_monte_carlo(..., seed=42). The value shifted from the pre-Cluster-2 48.38 because AC-1 standardizes the kNN feature vector and AC-4 excludes the early-window days — both intentionally change neighbour selection. Provenance: captured-from-the-fixed-producer."
+  "expected": 47.44,
+  "derivation": "XYZ absent from all days -> returns_matrix uses spy_ret (the missing-ticker SPY substitution). historical SPY returns are +-0.005 -> +-0.5 pct after scaling. current_symphony_return = 0.003 * 100 * 1.0 = 0.3. Re-captured from the fixed producer at branch fix/mc-knn-exit-gate HEAD c3834d0 (Cluster 2) with run_monte_carlo(..., seed=42), num_days=50. The value shifted from the pre-Cluster-2 48.38 because AC-1 standardizes the kNN feature vector and AC-4 excludes the early-window days; num_days raised 30->50 so the history is eligible-sufficient under Ruling 2. Provenance: captured-from-the-fixed-producer."
 }
