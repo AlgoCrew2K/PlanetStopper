@@ -30,6 +30,14 @@ Audited at `main @ 53ef340`; this cycle branches from current `main`. Line numbe
 ### Regression
 - [ ] AC-12: every changed math/state layer ships a golden-fixture or property-based test; all existing math tests (705+) and portmode tests (196) pass; new tests are RED-verified against pre-fix code. Golden fixtures for `compute_breakeven_update` and the replay-ratchet-parity test are updated to the new HWM-anchored behavior — an intentional behavior change, not a regression.
 
+  **Full intentional-change file set (the H-1 `previously_persisted_stop_level` removal changes `compute_breakeven_update`'s signature, so every caller and every test pinning the old frozen-resolved-level ratchet is updated in THIS cycle — keeping the tree green after a Cluster 1 signature change is Cluster 1's job):**
+  - Rewritten to the HWM-anchored contract: `tests/math_engine/test_stop_monotonicity.py`, `tests/autotuner/test_e2_replay_ratchet_parity.py`, `tests/execution/test_e2_trailing_stop_monotonicity_wire_up.py` (kept — live-consumer wire-up + C-2 position-open reset verification retained, resolved-level-monotonicity assertions removed).
+  - Call-site / stub signature update: `tests/autotuner/test_run_simulation_characterization.py` (the `_stub_breakeven_no_lock` stub drops the removed kwarg); `autotuner.py` (both `compute_breakeven_update` call sites — `_collect_sim_returns` and `run_simulation` — drop the kwarg + `prev_persisted_stop` threading); `alpha_bot_execution.py` (live call site drops the kwarg).
+  - Retired (encoded the old frozen-resolved-level ratchet): `tests/fixtures/math_engine/stop_sequence/*.json` (4 fixtures).
+  - New fixtures: `tests/fixtures/math/hwm_anchored_stop/`, `tests/fixtures/math/squeeze_rejection/`, `tests/fixtures/math/time_squeeze_range/`.
+  - New test files: `tests/math_engine/test_hwm_anchored_ratchet.py`, `tests/math_engine/test_squeeze_multiplier_rejection.py`, `tests/math_engine/test_time_squeeze_range_rejection.py`, `tests/math_engine/test_exit_math_provenance_and_grace.py`, `tests/portmode/test_port_state_exit_lifecycle.py`, `tests/execution/test_symphony_position_open_reset.py`.
+  - NOT in scope (Cluster 3): routing the autotuner replay's open-coded exit-confirmation through `compute_exit_confirmation` — untouched here.
+
 ## Architecture
 
 | Finding | File / function | Change |
