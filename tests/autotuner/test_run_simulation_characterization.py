@@ -173,10 +173,15 @@ def _stub_active_stop_const(vol, mult, min_stop, para_armed, breakeven_locked,
 
 
 def _stub_breakeven_no_lock(ret, vol, base_stop, hwm_hold_ticks,
-                             breakeven_locked, is_triggered,
-                             previously_persisted_stop_level=None):
+                             breakeven_locked, is_triggered):
     """compute_breakeven_update: keep hwm_hold_ticks at 0, never lock, pass
-    base_stop through unmodified."""
+    base_stop through unmodified.
+
+    H-1 fix: compute_breakeven_update no longer accepts
+    previously_persisted_stop_level — the HWM-anchored stop is recomputed
+    each tick with no cross-tick clamp. This stub mirrors the post-fix
+    6-parameter signature.
+    """
     return (hwm_hold_ticks, breakeven_locked, base_stop)
 
 

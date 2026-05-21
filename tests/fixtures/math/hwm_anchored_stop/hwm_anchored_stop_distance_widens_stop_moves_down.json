@@ -1,0 +1,41 @@
+{
+  "name": "hwm_anchored_stop_distance_widens_stop_moves_down",
+  "description": "AC-3 (H-1): the trailing stop is HWM-anchored. Two consecutive ticks at the SAME high-water mark but with a WIDER vol-scaled distance on tick 2 (mid-day vol spike). The resolved stop_trigger_level MUST move DOWN tick-to-tick — this is the whole point of the fix. The pre-fix code froze the resolved level via the previously_persisted_stop_level max-clamp and would NOT let it drop.",
+  "function": "compute_breakeven_update",
+  "derivation": "Both ticks: symphony_vol=1.0 -> dynamic_activation=max(0.4,min(3.0,1.0))=1.0; threshold=1.0-0.2=0.8. current_return on both ticks (0.5) < 0.8 so hwm_hold_ticks stays 0 and breakeven never locks. Stop = base_stop_level (not locked, no floor). Tick 1: base_stop_level = HWM(3.0) - distance(1.0) = 2.0. Tick 2: base_stop_level = HWM(3.0) - distance(2.5) = 0.5. The HWM is identical (3.0) on both ticks; only the vol-scaled distance widened (1.0 -> 2.5). Expected: stop drops 2.0 -> 0.5. A pre-fix impl threading previously_persisted_stop_level=2.0 into tick 2 would clamp to max(2.0, 0.5)=2.0 and FAIL this fixture.",
+  "ticks": [
+    {
+      "label": "tick1_narrow_distance",
+      "inputs": {
+        "current_return": 0.5,
+        "symphony_vol": 1.0,
+        "base_stop_level": 2.0,
+        "current_hold_ticks": 0,
+        "currently_breakeven_locked": false,
+        "is_triggered": false
+      },
+      "expected": {
+        "new_hold_ticks": 0,
+        "new_breakeven_locked": false,
+        "stop_trigger_level": 2.0
+      }
+    },
+    {
+      "label": "tick2_wider_distance_same_hwm",
+      "inputs": {
+        "current_return": 0.5,
+        "symphony_vol": 1.0,
+        "base_stop_level": 0.5,
+        "current_hold_ticks": 0,
+        "currently_breakeven_locked": false,
+        "is_triggered": false
+      },
+      "expected": {
+        "new_hold_ticks": 0,
+        "new_breakeven_locked": false,
+        "stop_trigger_level": 0.5
+      }
+    }
+  ],
+  "invariant": "stop_trigger_level[tick2] < stop_trigger_level[tick1]; the resolved level is NOT ratcheted, it tracks HWM - distance each tick"
+}

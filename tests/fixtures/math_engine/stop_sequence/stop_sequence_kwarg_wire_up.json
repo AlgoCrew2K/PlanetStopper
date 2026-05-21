@@ -1,7 +1,0 @@
-{
-  "_provenance": "Fixture for test_kwarg_passed_to_compute_breakeven_update. Defines the bot_state shape expected to be present when the live consumer path calls compute_breakeven_update. stop_trigger field is the previously-persisted stop level that must be threaded into the call as previously_persisted_stop_level. A bot_state with stop_trigger=1.5 means the last cycle stored 1.5 as the ratchet floor. The call site alpha_bot_execution.py:700-707 is the consumer under test; we spy the call and assert previously_persisted_stop_level=1.5 is passed.",
-  "description": "bot_state shape for kwarg wire-up pin test. stop_trigger=1.5 is the persisted ratchet floor from the prior cycle.",
-  "bot_state_stop_trigger": 1.5,
-  "expected_kwarg_value": 1.5,
-  "note": "When bot_state[symphony_id].get('stop_trigger') is 1.5, the call to compute_breakeven_update must receive previously_persisted_stop_level=1.5. None is acceptable on first cycle (no prior stop_trigger key in bot_state)."
-}

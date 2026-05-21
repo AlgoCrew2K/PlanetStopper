@@ -191,16 +191,26 @@ def test_active_trailing_stop_matches_derived_expected(
 
 @pytest.mark.parametrize(
     "squeeze_mult",
-    [-1.0, 0.0, 0.25, 0.5, 1.0, 2.0, 1000.0],
+    # Only strictly-positive multipliers: AC-5 (audit M-2) rejects
+    # parabolic_squeeze_multiplier <= 0 with a ValueError at function entry,
+    # UNCONDITIONALLY — even when both flags are False and the squeeze branch
+    # would not fire. The <= 0 rejection (including the no-flags case) is
+    # pinned in tests/math_engine/test_squeeze_multiplier_rejection.py.
+    [0.25, 0.5, 1.0, 2.0, 1000.0],
 )
 def test_no_flags_set_squeeze_multiplier_is_ignored(squeeze_mult: float) -> None:
     """
     Invariant: when para_armed=False AND breakeven_locked=False, the output
-    is EXACTLY max(safe_vol * dynamic_multiplier, dynamic_min_stop) for ANY
-    value of parabolic_squeeze_multiplier (even pathological values).
+    is EXACTLY max(safe_vol * dynamic_multiplier, dynamic_min_stop) for any
+    in-range (strictly positive) parabolic_squeeze_multiplier — the squeeze
+    branch does not fire so the multiplier value has no effect on the output.
 
     Catches an impl that applied the squeeze unconditionally, or that
     flipped OR -> AND with NOT.
+
+    Note: non-positive multipliers are NOT exercised here — AC-5 rejects
+    them at entry regardless of the flags (see test_squeeze_multiplier_
+    rejection.py). "Ignored" applies only to the valid (0, inf) domain.
     """
     sym_vol = 2.0
     mult = 1.5

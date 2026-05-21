@@ -971,15 +971,32 @@ def get_all_port_states() -> "list[dict]":
 
 
 def new_day_reset_port_state(account_id: str) -> None:
-    """AC-P2.5.4: reset prev_return to None for the new trading day.
+    """AC-P2.5.4 + AC-11: reset port_state transient fields for the new trading day.
 
-    Sentinel value (None) causes cycle-1 velocity = 0, preventing PARA-ARM
-    from firing on the opening gap.
+    Resets ``prev_return`` to None (sentinel -> cycle-1 velocity = 0, preventing
+    PARA-ARM on the opening gap) and wipes the transient exit-guard fields —
+    ``triggered``, ``triggered_reason``, ``armed``, ``para_armed``,
+    ``port_breakeven_active`` — so a port_state that ended yesterday triggered
+    or armed cannot carry that stale guard into the new day and fire a spurious
+    port-wide exit on the first cycle. The port_state analogue of
+    wipe_transient_state.
+
+    No-op when the account has no port_state row (a reset, not an upsert).
     """
     existing = read_port_state(account_id)
     if existing is None:
         return
-    write_port_state(account_id, {"prev_return": None})
+    write_port_state(
+        account_id,
+        {
+            "prev_return": None,
+            "triggered": False,
+            "triggered_reason": None,
+            "armed": False,
+            "para_armed": False,
+            "port_breakeven_active": False,
+        },
+    )
 
 
 def rebase_port_state_on_composition_change(
@@ -993,6 +1010,9 @@ def rebase_port_state_on_composition_change(
     composition starts clean. HWM is set to current_port_value (not the old HWM)
     so the ratchet baseline is accurate for the new set of holdings.
     stop_trigger is reset per BC-3 so the ratchet floor is not inherited.
+    triggered / triggered_reason are reset (AC-10) so a stale triggered=True
+    from the prior composition cannot make build_port_signal emit a spurious
+    port-wide exit on the first cycle of the new composition.
     """
     write_port_state(
         account_id,
@@ -1007,6 +1027,8 @@ def rebase_port_state_on_composition_change(
             "para_armed": False,
             "port_breakeven_active": False,
             "stop_trigger": None,
+            "triggered": False,
+            "triggered_reason": None,
         },
     )
 

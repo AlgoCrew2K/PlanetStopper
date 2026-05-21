@@ -1,0 +1,80 @@
+{
+  "name": "squeeze_rejection_multiplier_cases",
+  "description": "AC-5 (M-2): compute_active_trailing_stop must REJECT parabolic_squeeze_multiplier <= 0 with an explicit ValueError (reject-don't-coerce policy). For multiplier in (0,1] the stop distance stays strictly positive and is never collapsed to ~0 or placed above the HWM. Each case lists the inputs and whether the call must raise.",
+  "function": "compute_active_trailing_stop",
+  "derivation": "multiplier == 0.0 yields a zero stop distance (instant exit on the first noise tick); multiplier < 0 yields a NEGATIVE distance placing the stop above the HWM (nonsensical). Both are rejected at entry. For multiplier in (0,1] the squeeze tightens but the unsqueezed distance max(safe_vol*mult, dynamic_min_stop) is strictly positive, so output = positive * (0,1] > 0. The reject cases pin a ValueError; the valid cases pin a strictly-positive float output (shape, not a hardcoded value).",
+  "cases": [
+    {
+      "label": "multiplier_zero_rejected",
+      "inputs": {
+        "symphony_vol": 2.0,
+        "dynamic_multiplier": 1.5,
+        "dynamic_min_stop": 0.30,
+        "para_armed": true,
+        "breakeven_locked": false,
+        "parabolic_squeeze_multiplier": 0.0
+      },
+      "expect_raises": "ValueError"
+    },
+    {
+      "label": "multiplier_negative_rejected",
+      "inputs": {
+        "symphony_vol": 2.0,
+        "dynamic_multiplier": 1.5,
+        "dynamic_min_stop": 0.30,
+        "para_armed": true,
+        "breakeven_locked": false,
+        "parabolic_squeeze_multiplier": -0.5
+      },
+      "expect_raises": "ValueError"
+    },
+    {
+      "label": "multiplier_negative_rejected_even_when_squeeze_branch_inactive",
+      "inputs": {
+        "symphony_vol": 2.0,
+        "dynamic_multiplier": 1.5,
+        "dynamic_min_stop": 0.30,
+        "para_armed": false,
+        "breakeven_locked": false,
+        "parabolic_squeeze_multiplier": -1.0
+      },
+      "expect_raises": "ValueError"
+    },
+    {
+      "label": "multiplier_small_positive_valid_stop_stays_positive",
+      "inputs": {
+        "symphony_vol": 2.0,
+        "dynamic_multiplier": 1.5,
+        "dynamic_min_stop": 0.30,
+        "para_armed": true,
+        "breakeven_locked": false,
+        "parabolic_squeeze_multiplier": 0.05
+      },
+      "expect_raises": null
+    },
+    {
+      "label": "multiplier_one_identity_valid",
+      "inputs": {
+        "symphony_vol": 2.0,
+        "dynamic_multiplier": 1.5,
+        "dynamic_min_stop": 0.30,
+        "para_armed": true,
+        "breakeven_locked": false,
+        "parabolic_squeeze_multiplier": 1.0
+      },
+      "expect_raises": null
+    },
+    {
+      "label": "multiplier_positive_unused_when_no_flags_valid",
+      "inputs": {
+        "symphony_vol": 2.0,
+        "dynamic_multiplier": 1.5,
+        "dynamic_min_stop": 0.30,
+        "para_armed": false,
+        "breakeven_locked": false,
+        "parabolic_squeeze_multiplier": 0.5
+      },
+      "expect_raises": null
+    }
+  ]
+}

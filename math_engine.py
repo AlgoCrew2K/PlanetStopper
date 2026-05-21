@@ -105,6 +105,12 @@ MC_DEFAULT_NEIGHBOR_K = (
 MC_SEED_MODULUS = 2**31
 
 # Time-squeeze decay constants (drives intraday tightening of trailing stops)
+# Rationale (AC-7 / M-4): the log10(1 + 9*t) curve is concave — it tightens the
+# stop FASTER early in the session and SLOWER near the close. The concave shape
+# is a tuned practitioner heuristic: early-session noise warrants quicker
+# give-up of slack while late-session moves are likelier to be real, so the
+# curve flattens. The shape has no formal literature provenance and is flagged
+# for a follow-up empirical review against realized intraday vol term-structure.
 DECAY_CURVE_SCALAR = 9  # log10(1 + 9*t) maps t in [0,1] to decay in [0,1]; produces the characteristic AlphaBot intraday decay curve
 MULT_OPEN = 1.5  # dynamic_multiplier at market open (loosest stop)
 MULT_CLOSE = 0.5  # dynamic_multiplier at market close (tightest)
@@ -159,11 +165,14 @@ def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
     Returns (dynamic_multiplier, dynamic_min_stop) for the time-squeeze decay
     curve.
 
-    - time_ratio in [0.0, 1.0] is fraction of trading session elapsed
-      (0.0 = market open, 1.0 = close). CALLER clamps before passing; this
-      function does not validate.
+    - time_ratio MUST be in the closed interval [0.0, 1.0] (fraction of trading
+      session elapsed: 0.0 = market open, 1.0 = close). A value outside that
+      range raises ValueError — reject-don't-coerce policy (M-1): a negative
+      time_ratio below -1/9 would otherwise crash math.log10 with an opaque
+      domain error, and a value above 1 would silently over-tighten the stop.
     - decay_curve = log10(1 + DECAY_CURVE_SCALAR * time_ratio), ranges from
-      0.0 at open to 1.0 at close.
+      0.0 at open to 1.0 at close. See DECAY_CURVE_SCALAR for the concave-shape
+      rationale.
     - dynamic_multiplier linearly interpolates from MULT_OPEN at decay=0
       to MULT_CLOSE at decay=1.
     - dynamic_min_stop linearly interpolates from MIN_STOP_OPEN at decay=0
@@ -175,6 +184,10 @@ def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
     extraction).
     """
     _reject_non_finite(time_ratio=time_ratio)
+    if time_ratio < 0.0 or time_ratio > 1.0:
+        raise ValueError(
+            f"time_ratio must be in the range [0, 1]; got {time_ratio!r}"
+        )
     decay_curve = math.log10(1 + DECAY_CURVE_SCALAR * time_ratio)
     dynamic_multiplier = float(MULT_OPEN - (MULT_OPEN - MULT_CLOSE) * decay_curve)
     dynamic_min_stop = float(MIN_STOP_OPEN - (MIN_STOP_OPEN - MIN_STOP_CLOSE) * decay_curve)
@@ -199,6 +212,13 @@ def compute_active_trailing_stop(
           active *= parabolic_squeeze_multiplier
       return active
 
+    parabolic_squeeze_multiplier MUST be strictly positive. A value <= 0 is
+    rejected at entry with ValueError — reject-don't-coerce policy (M-2): a
+    zero multiplier collapses the stop distance to 0 (instant exit on the
+    first noise tick) and a negative one yields a negative distance that
+    places the stop ABOVE the high-water mark. Clamping would mask a mistuned
+    Optuna MAX_PARABOLIC_SQUEEZE parameter; rejection surfaces it.
+
     Pure. No I/O. No state. CALLER is responsible for normalizing
     bot_state[...].get("para_armed") and ...get("breakeven_locked") to
     strict Python bool BEFORE passing (typically via bool(...)).
@@ -209,6 +229,11 @@ def compute_active_trailing_stop(
         dynamic_min_stop=dynamic_min_stop,
         parabolic_squeeze_multiplier=parabolic_squeeze_multiplier,
     )
+    if parabolic_squeeze_multiplier <= 0:
+        raise ValueError(
+            f"parabolic_squeeze_multiplier must be > 0; got "
+            f"{parabolic_squeeze_multiplier!r}"
+        )
     safe_vol = symphony_vol if symphony_vol > 0 else VOL_FALLBACK
     active = max(safe_vol * dynamic_multiplier, dynamic_min_stop)
     if para_armed or breakeven_locked:
@@ -223,14 +248,13 @@ def compute_breakeven_update(
     current_hold_ticks: int,
     currently_breakeven_locked: bool,
     is_triggered: bool,
-    previously_persisted_stop_level: float | None = None,
 ) -> tuple[int, bool, float]:
     """
     Computes the breakeven-lock state update and the resolved stop trigger level.
 
     Returns (new_hold_ticks, new_breakeven_locked, stop_trigger_level).
 
-    Logic (extracted verbatim from alpha_bot_execution.py):
+    Logic:
       dynamic_activation = clamp(symphony_vol, BREAKEVEN_ACTIVATION_MIN, BREAKEVEN_ACTIVATION_MAX)
       if current_return >= dynamic_activation - BREAKEVEN_ACTIVATION_DEADBAND:
           new_hold_ticks = current_hold_ticks + 1
@@ -244,25 +268,29 @@ def compute_breakeven_update(
       if is_triggered:
           stop_trigger_level = TRIGGERED_OVERRIDE_LEVEL
 
+    HWM-ANCHORED TRAILING STOP: the caller supplies ``base_stop_level`` as
+    ``high_water_mark - vol_scaled_distance``, recomputed every tick. This
+    function resolves that base each call with NO cross-tick clamp — the
+    resolved stop tracks the HWM upward as the HWM rises, and is allowed to
+    move DOWN when the vol-scaled distance widens (e.g. a mid-day volatility
+    spike). Freezing the resolved level would discard a legitimate widening
+    and keep the stop too tight for realized vol; a true HWM-anchored stop
+    recomputes HWM - distance each tick. The high-water mark itself is
+    monotone non-decreasing within a position, but that monotonicity is
+    engine-side state — not enforced here.
+
     LATCHING INVARIANT: once currently_breakeven_locked=True, new_breakeven_locked
     is ALWAYS True regardless of any other input. The inline producer never
     resets breakeven_locked to False; that one-way transition must be preserved.
 
-    MONOTONICITY INVARIANT (trailing-stop ratchet): a trailing stop must never
-    move DOWN over a position's lifetime. When the caller supplies the
-    previously-persisted stop level (``previously_persisted_stop_level``), the
-    returned ``stop_trigger_level`` is clamped to be no lower than that prior
-    value — this enforces the ratchet across cycles. The clamp is bypassed
-    when ``is_triggered=True`` because the sentinel TRIGGERED_OVERRIDE_LEVEL
-    (-999.0) is a committed-exit marker, not a live stop boundary. When
-    ``previously_persisted_stop_level is None`` (default), the clamp is a
-    no-op and behavior is identical to the pre-monotonicity contract — this
-    preserves backward-compatibility with fixture-driven callers that do not
-    thread prior state.
-    Canonical source for the monotonicity (ratchet) invariant: Glynn, P.W. &
-    Iglehart, D.L. (1995). "Importance sampling for stochastic simulations."
-    Management Science, 41(6), DOI 10.1287/mnsc.41.6.1096. (See also
-    Fu & Zhang 2010 for a survey treatment.)
+    BREAKEVEN FLOOR: once the breakeven latch fires, the resolved stop is
+    floored at 0.0 — "lock gains hard". The stop may still move down between
+    post-lock ticks but never below the 0.0 breakeven floor. This floor is the
+    only ratchet in the resolved stop level. When is_triggered=True the stop
+    is the committed-exit sentinel TRIGGERED_OVERRIDE_LEVEL (-999.0).
+
+    Trailing-stop construction reference: Fu, M.C. & Zhang, H. (2012),
+    Int. J. Operations Research 9(3), 129-140.
 
     Pure. No I/O. No state. Caller assigns the returned new_hold_ticks and
     new_breakeven_locked back into bot_state.
@@ -285,11 +313,7 @@ def compute_breakeven_update(
     else:
         stop_trigger_level = base_stop_level
     if is_triggered:
-        # Triggered stop bypasses monotonicity by design — exit is committed.
         stop_trigger_level = TRIGGERED_OVERRIDE_LEVEL
-    elif previously_persisted_stop_level is not None:
-        # Trailing-stop ratchet: never move the stop DOWN across cycles.
-        stop_trigger_level = max(previously_persisted_stop_level, stop_trigger_level)
     return int(new_hold_ticks), new_breakeven_locked, float(stop_trigger_level)
 
 
@@ -512,7 +536,13 @@ def compute_vwap_breakdown_update(
     if not (valid_vwap_weight > VWAP_WEIGHT_THRESHOLD and weighted_vwap_diff < 0):
         return 0, 0, False, False
 
-    # System A
+    # System A — profit-protection break.
+    # PROVENANCE (AC-8): the gate `safe_hwm >= vwap_cross_hwm_pct` is a tuned
+    # practitioner heuristic with no formal literature provenance. It encodes
+    # the practitioner judgement that VWAP-break profit protection should only
+    # arm once the position has banked a high-water mark above the tuned
+    # vwap_cross_hwm_pct threshold; the threshold itself is an Optuna-tuned
+    # parameter, not a derived quantity.
     if safe_hwm >= vwap_cross_hwm_pct and current_return < safe_hwm:
         new_vwap_ticks = int(current_vwap_ticks) + 1
         is_vwap_broken = bool(new_vwap_ticks >= VWAP_BREAK_CONFIRM_TICKS)
@@ -537,21 +567,32 @@ def is_in_open_window_grace(
     grace_minutes: int,
 ) -> bool:
     """
-    Returns True iff current_et falls in [exec_start, exec_start + grace_minutes).
+    Returns True iff the supplied instant falls in
+    [exec_start, exec_start + grace_minutes), where exec_start is
+    execution_start_hhmm interpreted in US/Eastern wall-clock.
+
+    The instant MUST be a timezone-aware datetime — a naive datetime raises
+    ValueError. The grace window is defined in ET wall-clock; the instant is
+    converted to ET before comparison, so a caller passing the same physical
+    instant in any timezone (e.g. UTC) gets the same answer.
 
     Pure function — no I/O, no state. Returns False before exec_start
     (pre-action-gate territory handled by the existing action gate).
     """
     import datetime as _dt
+    from zoneinfo import ZoneInfo
 
+    if current_et.tzinfo is None or current_et.tzinfo.utcoffset(current_et) is None:
+        raise ValueError(
+            "is_in_open_window_grace requires a timezone-aware datetime; "
+            "a naive datetime cannot be interpreted as an ET wall-clock time"
+        )
+
+    et = current_et.astimezone(ZoneInfo("America/New_York"))
     h, m = map(int, execution_start_hhmm.split(":"))
-    exec_start = _dt.time(h, m)
-    exec_start_dt = current_et.replace(hour=h, minute=m, second=0, microsecond=0)
+    exec_start_dt = et.replace(hour=h, minute=m, second=0, microsecond=0)
     grace_end_dt = exec_start_dt + _dt.timedelta(minutes=grace_minutes)
-    current_time_naive = current_et.replace(tzinfo=None)
-    exec_start_naive = exec_start_dt.replace(tzinfo=None)
-    grace_end_naive = grace_end_dt.replace(tzinfo=None)
-    return exec_start_naive <= current_time_naive < grace_end_naive
+    return exec_start_dt <= et < grace_end_dt
 
 
 # Canonical priority order: VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop.

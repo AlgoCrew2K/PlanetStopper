@@ -1,0 +1,41 @@
+{
+  "name": "hwm_anchored_stop_breakeven_floor_holds_post_lock",
+  "description": "AC-3 (H-1): once breakeven latches, the resolved stop_trigger_level floors at 0.0 even when the HWM-anchored base goes negative (deep vol spike widens the distance past the HWM). The 0.0 breakeven floor is the ONLY ratchet that survives the H-1 fix — 'lock gains hard'. The stop may still move down between post-lock ticks, but never below 0.0.",
+  "function": "compute_breakeven_update",
+  "derivation": "currently_breakeven_locked=True (lock already latched on a prior tick). symphony_vol=1.0 -> threshold=0.8. Tick 1: current_return 2.0 >= 0.8 -> hwm_hold_ticks 5->6; locked stays True; base = HWM(3.0) - distance(0.5) = 2.5; locked -> stop = max(2.5, 0.0) = 2.5. Tick 2: current_return 2.0 -> ticks 6->7; base = HWM(3.0) - distance(4.0) = -1.0 (distance widened past the HWM); locked -> stop = max(-1.0, 0.0) = 0.0 (floored). Expected: stop drops 2.5 -> 0.0 but is floored at 0.0, never negative. A pre-fix impl would clamp to the prior level 2.5; a broken impl that dropped the max(base,0.0) floor would emit -1.0.",
+  "ticks": [
+    {
+      "label": "tick1_post_lock_positive_base",
+      "inputs": {
+        "current_return": 2.0,
+        "symphony_vol": 1.0,
+        "base_stop_level": 2.5,
+        "current_hold_ticks": 5,
+        "currently_breakeven_locked": true,
+        "is_triggered": false
+      },
+      "expected": {
+        "new_hold_ticks": 6,
+        "new_breakeven_locked": true,
+        "stop_trigger_level": 2.5
+      }
+    },
+    {
+      "label": "tick2_post_lock_base_below_zero_floored",
+      "inputs": {
+        "current_return": 2.0,
+        "symphony_vol": 1.0,
+        "base_stop_level": -1.0,
+        "current_hold_ticks": 6,
+        "currently_breakeven_locked": true,
+        "is_triggered": false
+      },
+      "expected": {
+        "new_hold_ticks": 7,
+        "new_breakeven_locked": true,
+        "stop_trigger_level": 0.0
+      }
+    }
+  ],
+  "invariant": "post-lock stop_trigger_level >= 0.0 always; it may move down but the 0.0 breakeven floor is the hard guarantee"
+}

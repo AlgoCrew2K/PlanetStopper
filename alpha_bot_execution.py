@@ -1216,7 +1216,6 @@ def main():
                         current_hold_ticks=bot_state[symphony_id]["hwm_hold_ticks"],
                         currently_breakeven_locked=bot_state[symphony_id]["breakeven_locked"],
                         is_triggered=bot_state[symphony_id]["triggered"],
-                        previously_persisted_stop_level=bot_state[symphony_id].get("stop_trigger"),
                     )
                 )
                 bot_state[symphony_id]["hwm_hold_ticks"] = new_hold_ticks

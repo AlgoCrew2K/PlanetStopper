@@ -1,0 +1,41 @@
+{
+  "name": "hwm_anchored_stop_rises_with_hwm",
+  "description": "AC-3 (H-1): when the high-water mark rises and the vol-scaled distance is constant, the resolved stop_trigger_level rises with it. Confirms the stop tracks HWM upward as a true trailing stop should.",
+  "function": "compute_breakeven_update",
+  "derivation": "Both ticks: symphony_vol=1.0 -> threshold=0.8. current_return on both ticks (0.5) < 0.8 so no lock; stop = base_stop_level. Distance is held constant at 1.0. Tick 1: base = HWM(2.0) - 1.0 = 1.0. Tick 2: HWM advanced to 3.5, base = HWM(3.5) - 1.0 = 2.5. Expected: stop rises 1.0 -> 2.5 (a +1.5 rise exactly matching the +1.5 HWM rise). The stop tracks the HWM 1:1 when distance is constant.",
+  "ticks": [
+    {
+      "label": "tick1_lower_hwm",
+      "inputs": {
+        "current_return": 0.5,
+        "symphony_vol": 1.0,
+        "base_stop_level": 1.0,
+        "current_hold_ticks": 0,
+        "currently_breakeven_locked": false,
+        "is_triggered": false
+      },
+      "expected": {
+        "new_hold_ticks": 0,
+        "new_breakeven_locked": false,
+        "stop_trigger_level": 1.0
+      }
+    },
+    {
+      "label": "tick2_hwm_advanced",
+      "inputs": {
+        "current_return": 0.5,
+        "symphony_vol": 1.0,
+        "base_stop_level": 2.5,
+        "current_hold_ticks": 0,
+        "currently_breakeven_locked": false,
+        "is_triggered": false
+      },
+      "expected": {
+        "new_hold_ticks": 0,
+        "new_breakeven_locked": false,
+        "stop_trigger_level": 2.5
+      }
+    }
+  ],
+  "invariant": "stop_trigger_level[tick2] > stop_trigger_level[tick1]; stop rises 1:1 with HWM when distance is constant"
+}
