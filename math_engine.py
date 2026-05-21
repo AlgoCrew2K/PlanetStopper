@@ -89,9 +89,12 @@ ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 pri
 PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
 
 # Monte Carlo gating constants (run_monte_carlo)
-MC_INSUFFICIENT_HISTORY_PROB = (
-    100.0  # Sentinel probability when MC history insufficient — emits 100% to skip MC exit gate
-)
+# Out-of-band sentinel returned when MC history is insufficient. run_monte_carlo
+# returns None (NOT an in-band probability) so the caller can distinguish "MC
+# could not run" from a genuine probability. compute_exit_confirmation treats
+# None as "MC confirmation unavailable" — it does NOT veto the protective stop,
+# which still fires on the ticks-below-stop condition alone (fail-safe).
+MC_INSUFFICIENT_HISTORY_SENTINEL = None
 MC_MIN_HISTORY_DAYS = (
     20  # Minimum history rows for MC simulation to run; below this we short-circuit
 )
@@ -100,9 +103,13 @@ MC_DEFAULT_SIMULATION_PATHS = 5000  # Default MC path count — CLT stability vs
 MC_DEFAULT_NEIGHBOR_K = (
     150  # Default kNN regime locality — smaller=tighter regime match, larger=smoother estimate
 )
-# Seed modulus maps SHA-256 digest to numpy Generator's safe int range [0, 2^31);
-# 2^31 gives ~98k distinct values/year with no collisions across YYYYMMDD_HHMM space.
-MC_SEED_MODULUS = 2**31
+# Seed modulus maps the SHA-256 digest into a 64-bit seed space [0, 2^64).
+# The daemon runs ~98,280 cycles/year (252 trading days x 390 market minutes);
+# the birthday-bound expected collision count at modulus M is ~ n^2 / (2M). At
+# 2^31 that was ~2.2 expected collisions/year — a birthday-bound problem the
+# prior comment mischaracterised; at 2^64 it falls to ~2.6e-19, i.e. negligible.
+# numpy's default_rng / SeedSequence accept the full 64-bit space.
+MC_SEED_MODULUS = 2**64
 
 # Time-squeeze decay constants (drives intraday tightening of trailing stops)
 # Rationale (AC-7 / M-4): the log10(1 + 9*t) curve is concave — it tightens the
@@ -328,7 +335,7 @@ def compute_exit_confirmation(
     is_triggered: bool,
     current_return: float,
     stop_trigger_level: float,
-    prob_beating: float,
+    prob_beating: float | None,
     current_below_stop_count: int,
 ) -> tuple[int, bool]:
     """
@@ -340,13 +347,20 @@ def compute_exit_confirmation(
       if not armed or is_triggered:
           return current_below_stop_count, False     # whole block skipped; state unchanged
       below_stop_condition = (current_return <= stop_trigger_level - MAGNITUDE_FLOOR_PCT)
-                             and (prob_beating < MC_SANITY_THRESHOLD)
+                             and mc_sanity_ok
       if below_stop_condition:
           new_count = current_below_stop_count + 1
           hit = (new_count >= EXIT_CONFIRM_TICKS)
           return new_count, hit
       else:
           return 0, False                            # reset on miss
+
+    MC SANITY GATE (fail-safe): a real prob_beating >= MC_SANITY_THRESHOLD
+    vetoes the exit (the count resets) — "if we still think we beat the
+    benchmark, don't capitulate." When prob_beating is None the MC second
+    opinion is UNAVAILABLE (insufficient MC history); the gate is treated as
+    passing so the protective stop still fires on the magnitude condition
+    alone. Insufficient MC data must never disable the protective stop.
 
     GUARD INVARIANT: when (not armed) or is_triggered, the function returns
     the INPUT below_stop_count unchanged AND False. This preserves the inline
@@ -359,14 +373,18 @@ def compute_exit_confirmation(
     _reject_non_finite(
         current_return=current_return,
         stop_trigger_level=stop_trigger_level,
-        prob_beating=prob_beating,
     )
+    if prob_beating is not None:
+        _reject_non_finite(prob_beating=prob_beating)
     if (not armed) or is_triggered:
         return int(current_below_stop_count), False
 
-    below_stop_condition = (current_return <= (stop_trigger_level - MAGNITUDE_FLOOR_PCT)) and (
-        prob_beating < MC_SANITY_THRESHOLD
-    )
+    # MC sanity gate: unavailable (None) -> pass (fail-safe); otherwise a real
+    # high-confidence MC opinion (>= MC_SANITY_THRESHOLD) vetoes the exit.
+    mc_sanity_ok = prob_beating is None or prob_beating < MC_SANITY_THRESHOLD
+    below_stop_condition = (
+        current_return <= (stop_trigger_level - MAGNITUDE_FLOOR_PCT)
+    ) and mc_sanity_ok
 
     if below_stop_condition:
         new_count = int(current_below_stop_count) + 1
@@ -635,7 +653,8 @@ def derive_cycle_mc_seed(cycle_id: str) -> int:
     """Deterministic seed for a given cycle_id (YYYYMMDD_HHMM format).
 
     Pure function — no I/O, no global state. Safe across daemon restarts.
-    Same cycle_id always produces the same seed (SHA-256 truncated to 31 bits).
+    Same cycle_id always produces the same seed (SHA-256 digest reduced into
+    the 64-bit MC_SEED_MODULUS space).
     """
     return int(hashlib.sha256(cycle_id.encode()).hexdigest(), 16) % MC_SEED_MODULUS
 
@@ -667,7 +686,11 @@ def run_monte_carlo(
     )
     valid_dates = sorted(list(historical_data.keys()))
     if len(valid_dates) < MC_MIN_HISTORY_DAYS:
-        return MC_INSUFFICIENT_HISTORY_PROB
+        # Insufficient MC history: emit the out-of-band sentinel (None), never
+        # an in-band probability. The caller (compute_exit_confirmation) treats
+        # this as "MC confirmation unavailable" and does NOT veto the
+        # protective stop — fail-safe.
+        return MC_INSUFFICIENT_HISTORY_SENTINEL
 
     # 1. Calculate distances based on SPY return and rolling 20-day volatility
     spy_returns = np.array(
@@ -687,17 +710,47 @@ def run_monte_carlo(
     # early when len(valid_dates) < MC_MIN_HISTORY_DAYS, and MC_MIN_HISTORY_DAYS >= MC_VOL_WINDOW_DAYS.
     today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1) :], spy_today_ret_dec))
 
-    # Euclidean distance across 2 dimensions
-    distances = np.sqrt((spy_returns - spy_today_ret_dec) ** 2 + (spy_vols - today_vol) ** 2)
+    # Early-window exclusion: the first MC_VOL_WINDOW_DAYS - 1 days have their
+    # rolling vol computed on a short, downward-biased sample (and spy_vols[0]
+    # is a hard-set 0.0). today_vol always uses a full window, so admitting
+    # these days lets them be mis-selected as artificially low-vol neighbours.
+    # Exclude them from the kNN candidate pool. The MC_MIN_HISTORY_DAYS guard
+    # (>= MC_VOL_WINDOW_DAYS) ensures at least one candidate day remains.
+    candidate_idx = np.arange(MC_VOL_WINDOW_DAYS - 1, len(spy_returns))
+    cand_returns = spy_returns[candidate_idx]
+    cand_vols = spy_vols[candidate_idx]
 
-    # 2. Get top K indices
+    # Standardize both kNN features with window-fitted (candidate-pool) z-score
+    # params, transforming today's query point with the SAME params, so neither
+    # feature dominates the Euclidean distance by a unit artifact. A zero-std
+    # feature (no spread to standardize) collapses to 0.0 — guarded against the
+    # 0/0 divide so the output stays finite.
+    ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
+    vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
+
+    def _z(values, mean, std):
+        if std == 0.0:
+            return np.zeros_like(values, dtype=float)
+        return (values - mean) / std
+
+    cand_returns_z = _z(cand_returns, ret_mean, ret_std)
+    cand_vols_z = _z(cand_vols, vol_mean, vol_std)
+    today_ret_z = 0.0 if ret_std == 0.0 else (spy_today_ret_dec - ret_mean) / ret_std
+    today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
+
+    # Euclidean distance across 2 standardized dimensions
+    distances = np.sqrt(
+        (cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2
+    )
+
+    # 2. Get top K indices (into the candidate pool)
     if len(distances) <= neighbor_k:
-        nearest_indices = np.arange(len(distances))
+        nearest_pool_indices = np.arange(len(distances))
     else:
         # argpartition is faster than full sort
-        nearest_indices = np.argpartition(distances, neighbor_k)[:neighbor_k]
+        nearest_pool_indices = np.argpartition(distances, neighbor_k)[:neighbor_k]
 
-    nearest_days = [valid_dates[i] for i in nearest_indices]
+    nearest_days = [valid_dates[candidate_idx[i]] for i in nearest_pool_indices]
 
     # 3. Weights and Tickers
     tickers = [h["ticker"] for h in holdings]
