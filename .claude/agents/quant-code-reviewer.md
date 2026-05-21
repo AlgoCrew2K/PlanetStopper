@@ -1,7 +1,7 @@
 ---
 name: quant-code-reviewer
 description: "Project-specific reviewer overlay for AlphaBot. Layered on top of the global code-reviewer. Enforces math correctness, fixture-first integration, schema reversibility, and the live-vs-replay safety boundary."
-tools: Read, Glob, Grep, Bash
+tools: Read, Glob, Grep, Bash, Write, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput
 model: sonnet
 ---
 
