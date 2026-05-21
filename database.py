@@ -234,64 +234,6 @@ def wipe_transient_state(state_dict):
     return state_dict
 
 
-def reset_symphony_position_state(sym_state):
-    """Reset one symphony's per-position transient exit-guard state on a new
-    position open (C-2 fix).
-
-    AlphaBot rotates symphonies — a symphony_id is re-allocated capital and a
-    NEW position re-enters under the SAME symphony_id. Without this reset the
-    new position inherits the prior position's stale ``triggered``/
-    ``stop_trigger``, leaving it with no trailing-stop protection (or a
-    spurious immediate exit).
-
-    Clears the six per-position transient fields — ``triggered``,
-    ``breakeven_locked``, ``hwm_hold_ticks``, ``below_stop_count``,
-    ``vwap_ticks``, ``vwap_bleed_ticks`` — and DELETES the ``stop_trigger``
-    key so the next compute_breakeven_update inherits no stale floor.
-    ``triggered_reason`` and the trigger-snapshot keys are dropped too. Pure:
-    mutates ``sym_state`` in place and returns it; no DB I/O. Identity /
-    accounting fields (name, account, mc_history, current_holdings) are left
-    untouched. The single-symphony analogue of wipe_transient_state.
-    """
-    sym_state["triggered"] = False
-    sym_state["breakeven_locked"] = False
-    sym_state["hwm_hold_ticks"] = 0
-    sym_state["below_stop_count"] = 0
-    sym_state["vwap_ticks"] = 0
-    sym_state["vwap_bleed_ticks"] = 0
-    for k in (
-        "stop_trigger",
-        "triggered_reason",
-        "triggered_at_return",
-        "triggered_at_hwm",
-        "triggered_at_stop",
-        "triggered_at_time",
-        "trigger_prices",
-        "triggered_basket_snapshot",
-    ):
-        if k in sym_state:
-            del sym_state[k]
-    return sym_state
-
-
-def is_new_position_open(prev_identity, current_identity) -> bool:
-    """Return True iff a symphony has opened a NEW position since the last cycle.
-
-    Position identity is a stable string keyed on the composition identity (the
-    symphony's set of holding tickers). A change in identity marks a new
-    position open — the exact event that must trigger
-    reset_symphony_position_state. An unchanged identity (or a None previous
-    identity, i.e. first observation) is NOT a new open, so the reset never
-    fires mid-position. The cross-day re-open boundary is covered separately by
-    wipe_transient_state at the new-day reset.
-
-    Pure — no I/O, no state.
-    """
-    if prev_identity is None:
-        return False
-    return prev_identity != current_identity
-
-
 # --- Chart History & Archive ---
 def load_chart_history():
     conn = get_connection()

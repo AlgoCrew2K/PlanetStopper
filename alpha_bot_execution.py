@@ -1097,25 +1097,6 @@ def main():
                 if "mc_history" not in bot_state[symphony_id]:
                     bot_state[symphony_id]["mc_history"] = []
 
-                # C-2 fix: detect a new position open under this symphony_id and
-                # reset the per-position transient exit-guard state exactly once.
-                # Identity is keyed on the composition (the set of holding
-                # tickers); a change marks a re-opened position that must not
-                # inherit the prior position's triggered/stop_trigger. The
-                # cross-day re-open boundary is covered separately by
-                # database.wipe_transient_state at the new-day reset.
-                _current_position_identity = _port_composition_hash(
-                    [t for t in symphony_holdings if t]
-                )
-                _prev_position_identity = bot_state[symphony_id].get(
-                    "position_identity"
-                )
-                if database.is_new_position_open(
-                    _prev_position_identity, _current_position_identity
-                ):
-                    database.reset_symphony_position_state(bot_state[symphony_id])
-                bot_state[symphony_id]["position_identity"] = _current_position_identity
-
                 if (
                     current_return > bot_state[symphony_id]["high_water_mark"]
                     and not bot_state[symphony_id]["triggered"]
