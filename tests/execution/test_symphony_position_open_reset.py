@@ -52,7 +52,12 @@ structural, not producer outputs.
 
 from __future__ import annotations
 
+from datetime import datetime
+from unittest.mock import patch
+
 import pytest
+
+import database
 
 
 # ---------------------------------------------------------------------------
@@ -793,3 +798,187 @@ class TestPositionOpenIdentityKeyIsHonest:
                 f"C-2 cross-day safety: wipe_transient_state left a stale "
                 f"'{field}' — the re-opened position would inherit it."
             )
+
+
+# ===========================================================================
+# AC-2 BLOCK-1 — the per-position reset must NEVER fire mid-position.
+#
+# quant-code-reviewer's eight-gate review of GREEN 91dc833 raised BLOCK-1:
+# the position identity uses _port_composition_hash of the symphony's CURRENT
+# holding tickers. A symphony's holdings can legitimately change WITHIN a
+# single position lifetime — a Composer symphony is a strategy that rebalances
+# its own sub-positions, and a partial fill can change the ticker set between
+# cycles. When that happens mid-position the composition hash changes,
+# is_new_position_open returns True, and reset_symphony_position_state wipes
+# triggered / stop_trigger / the tick counters ON A LIVE IN-FLIGHT POSITION —
+# destroying that position's exit-guard state mid-flight.
+#
+# AC-2 is explicit: the reset "fires exactly once per new position, never
+# mid-position." A live-holdings hash does not satisfy that — holdings churn
+# is not a position-open event. This is a real-money mis-protection: a
+# position that had latched breakeven / accumulated exit-confirmation ticks
+# would silently lose them when its strategy rebalanced.
+#
+# The fix must key the position-open detection on something that genuinely
+# marks a NEW position — not a derived live-holdings hash.
+# ===========================================================================
+
+
+class TestResetNeverFiresMidPosition:
+    """AC-2 BLOCK-1: a mid-position holdings change must NOT trigger the
+    per-position reset. Holdings churn within a position is not a re-open."""
+
+    def test_mid_position_holdings_change_does_not_reset_exit_guard_state(self):
+        """
+        AC-2 BLOCK-1(a): drive the engine main() for ONE symphony_id that
+        stays in the SAME position, but whose holdings differ from the
+        seeded prior-cycle holdings (the strategy rebalanced — a legitimate
+        mid-position event, NOT a re-open).
+
+        The persisted bot_state seeds a LIVE (not triggered) position that
+        has already latched breakeven (breakeven_locked=True, hwm_hold_ticks
+        =6) and a position_identity computed from the prior {SPY} holding
+        set. On this cycle the symphony holds {SPY, QQQ}.
+
+        That accumulated per-position exit-guard state MUST survive. If the
+        engine keys position-open detection on a live-holdings composition
+        hash, the changed holdings flip the identity, is_new_position_open
+        returns True, and reset_symphony_position_state wipes
+        breakeven_locked / hwm_hold_ticks — an AC-2 violation and a
+        real-money mis-protection.
+
+        RED on 91dc833: identity is f"{position_open_date}|{composition_hash
+        (live holdings)}"; a holdings change flips it and fires the reset
+        mid-position.
+        """
+        import alpha_bot_execution
+
+        symphony_id = "sym-mid-position-rebalance-001"
+        account_id = "acct-mid-position-rebalance-001"
+
+        try:
+            from port_selector import composition_hash as _ch
+        except Exception:  # pragma: no cover
+            _ch = None
+        cycle1_identity = f"|{_ch(['SPY'])}" if _ch is not None else None
+
+        mid_position_state = {
+            "name": "Mid-Position Rebalance Symphony",
+            "account": account_id,
+            "high_water_mark": 3.0,
+            "shadow_hwm": 3.0,
+            "prev_return": 2.4,
+            "armed": True,
+            "tp_armed": False,
+            "para_armed": False,
+            "triggered": False,             # LIVE position, not exited
+            "breakeven_locked": True,       # latched mid-position — MUST survive
+            "hwm_hold_ticks": 6,            # accumulated — MUST survive
+            "below_stop_count": 1,
+            "vwap_ticks": 0,
+            "vwap_bleed_ticks": 0,
+            "mc_history": [],
+            "current_holdings": [{"ticker": "SPY", "allocation": 1.0}],
+        }
+        if cycle1_identity is not None:
+            mid_position_state["position_identity"] = cycle1_identity
+            mid_position_state["position_open_date"] = "2026-05-21"
+
+        bot_state = {
+            "date": "2026-05-21",
+            "last_execution_mode": False,
+            symphony_id: mid_position_state,
+        }
+
+        # The SAME symphony, SAME position — but the strategy rebalanced, so
+        # it now holds {SPY, QQQ} instead of {SPY}.
+        rebalanced_payload = {
+            "id": symphony_id,
+            "name": "Mid-Position Rebalance Symphony",
+            "last_percent_change": 0.031,   # +3.1% — position continuing
+            "current_value": 10000.0,
+            "holdings": [
+                {"ticker": "SPY", "allocation": 0.5},
+                {"ticker": "QQQ", "allocation": 0.5},
+            ],
+        }
+
+        try:
+            from zoneinfo import ZoneInfo
+            _et = datetime(
+                2026, 5, 21, 12, 0, 0, tzinfo=ZoneInfo("America/New_York")
+            )
+        except Exception:  # pragma: no cover
+            from datetime import timedelta, timezone
+            _et = datetime(
+                2026, 5, 21, 12, 0, 0, tzinfo=timezone(timedelta(hours=-4))
+            )
+
+        with patch.object(alpha_bot_execution, "database") as mock_db, \
+             patch.object(alpha_bot_execution, "reporting"), \
+             patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch, \
+             patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_hist, \
+             patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_vwap, \
+             patch.object(alpha_bot_execution, "get_current_et", return_value=_et), \
+             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [account_id]), \
+             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "k"), \
+             patch.object(alpha_bot_execution, "ALPACA_KEY", "k"), \
+             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
+             patch.object(alpha_bot_execution.time, "sleep"), \
+             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
+
+            # Real reset helper + detector run — only DB I/O is mocked.
+            mock_db.acquire_lock.return_value = True
+            mock_db.load_state.return_value = bot_state
+            mock_db.load_chart_history.return_value = {
+                "date": "2026-05-21", "symphonies": {}
+            }
+            mock_db.get_symphony_strategy.return_value = {
+                "params": {}, "locked_vars": {}
+            }
+            mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
+            mock_db.wipe_transient_state.side_effect = lambda s: s
+            mock_db.reset_symphony_position_state.side_effect = (
+                database.reset_symphony_position_state
+            )
+            mock_db.is_new_position_open.side_effect = database.is_new_position_open
+
+            mock_fetch.return_value = [rebalanced_payload]
+            mock_hist.return_value = {
+                "2026-05-21": {
+                    "SPY": {"c": 500.0, "daily_ret": 0.001,
+                            "high": 501.0, "low": 499.0, "close": 500.0},
+                    "QQQ": {"c": 400.0, "daily_ret": 0.001,
+                            "high": 401.0, "low": 399.0, "close": 400.0},
+                }
+            }
+            mock_vwap.return_value = {
+                "SPY": {"vwap": 500.0, "last_price": 500.0},
+                "QQQ": {"vwap": 400.0, "last_price": 400.0},
+            }
+
+            alpha_bot_execution.main()
+
+            save_calls = mock_db.save_state.call_args_list
+            assert save_calls, "save_state was never called — cycle aborted."
+            final_state = save_calls[-1].args[0][symphony_id]
+
+        assert final_state.get("breakeven_locked") is True, (
+            "AC-2 BLOCK-1 VIOLATED: a mid-position holdings change reset the "
+            "live position's breakeven_locked latch (now "
+            f"{final_state.get('breakeven_locked')!r}). The symphony stayed in "
+            "the SAME position — its strategy merely rebalanced its holdings. "
+            "The per-position reset MUST NOT fire mid-position. A position "
+            "identity keyed on a live-holdings composition hash flips on any "
+            "holdings churn and wrongly fires reset_symphony_position_state, "
+            "destroying the position's exit-guard state mid-flight."
+        )
+        assert final_state.get("hwm_hold_ticks", 0) >= 6, (
+            "AC-2 BLOCK-1 VIOLATED: a mid-position holdings change reset "
+            f"hwm_hold_ticks (now {final_state.get('hwm_hold_ticks')!r}, was "
+            "6+ going in). Accumulated breakeven-hold progress must survive a "
+            "mid-position rebalance."
+        )
+        assert final_state.get("triggered") is False, (
+            "Sanity: the position was never triggered; it must still be False."
+        )
