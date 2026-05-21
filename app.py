@@ -660,12 +660,18 @@ def get_state():
 
         # AC-P2.12.2: additive fields — computed once, merged into every response branch.
         _api_state = get_api_state_dict()
+        _additive_env = _dotenv_module.dotenv_values(ENV_FILE_PATH)
+        _additive_live_mode = _additive_env.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
         _additive = {
             "port_state": _api_state.get("port_state", {}),
             "exit_authority": _api_state.get("exit_authority", {}),
             "daemon_started_at": _DAEMON_STARTED_AT,
+            "live_mode": _additive_live_mode,
         }
         # Allow test stubs to inject portfolio_strip via get_api_state_dict return value.
+        # _api_state_has_strip tracks whether the caller explicitly provided portfolio_strip
+        # (used to decide whether to include it in the waiting branch response).
+        _api_state_has_strip = "portfolio_strip" in _api_state
         _injected_portfolio_strip = _api_state.get("portfolio_strip")
 
         # D-03: When portfolio_strip has no hist arrays, build them from a continuous
@@ -1077,9 +1083,10 @@ def get_state():
                     "hist_bot": _injected_portfolio_strip.get("hist_bot", []),
                     "hist_held": _injected_portfolio_strip.get("hist_held", []),
                 }
-            return jsonify(
-                {**waiting_resp, "bot_state": _api_state.get("bot_state", {}), "meta": _build_meta({}, market_state=market_state, portfolio_strip=_wait_strip), **_additive}
-            )
+            _waiting_body = {**waiting_resp, "bot_state": _api_state.get("bot_state", {}), "meta": _build_meta({}, market_state=market_state, portfolio_strip=_wait_strip), **_additive}
+            if _api_state_has_strip:
+                _waiting_body["portfolio_strip"] = _injected_portfolio_strip
+            return jsonify(_waiting_body)
 
         # FP-T3-03 backend: optional ?account=<uuid> filter on bot_state.
         _account_filter = request.args.get("account")

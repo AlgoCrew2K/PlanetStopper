@@ -760,7 +760,7 @@
           <div class="hero-top">
             <div>
               <div class="guard-alpha-label">Guard alpha &middot; <span id="guard-alpha-window-label">30d</span></div>
-              {% set alpha = (meta.portfolio.cr if meta is defined and meta.portfolio is defined else 0) - (meta.portfolio.cr_if_held if meta is defined and meta.portfolio is defined else 0) %}
+              {% set alpha = ((meta.portfolio.cr if meta is defined and meta.portfolio is defined else 0) or 0) - ((meta.portfolio.cr_if_held if meta is defined and meta.portfolio is defined else 0) or 0) %}
               <div style="display:flex;align-items:baseline;gap:14px;">
                 <div id="guard-alpha-headline" data-testid="guard-alpha-headline" class="guard-alpha-headline {% if alpha >= 0 %}pos{% else %}neg{% endif %}">
                   {% if alpha >= 0 %}+{% endif %}{{ "%.2f"|format(alpha) }}%
