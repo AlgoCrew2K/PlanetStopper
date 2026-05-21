@@ -1,57 +1,68 @@
 """
-RED tests for AC-1 / AC-2 — the per-symphony cross-position state reset (the
-CRITICAL audit finding C-2).
+Tests for the per-symphony cross-position exit-state reset (the CRITICAL
+audit finding C-2).
 
-Background (math-audit exit-decision-math__2026-05-21.md, CRITICAL):
+REWRITTEN after the risk-engine-specialist's C-2 ruling.
 
-  `triggered` is never reset to False anywhere in alpha_bot_execution.py.
-  After a trigger, high_water_mark is reset to -999.0 but `stop_trigger` and
-  `triggered` are left set, and the whole bot_state dict persists across
-  cycles/restarts. AlphaBot rotates symphonies — a symphony_id is re-allocated
-  capital and a NEW position re-enters under the SAME symphony_id.
+THE C-2 STORY, RESOLVED:
 
-  On that re-entry the new position inherits the prior position's stale
-  triggered=True + stale stop_trigger:
-    - compute_breakeven_update returns the -999.0 sentinel forever and
-      compute_exit_confirmation early-returns False — the new live position
-      has NO trailing-stop protection at all; OR
-    - if any path clears `triggered`, the stale positive stop_trigger becomes
-      the ratchet floor for the unrelated new position and forces an immediate
-      spurious exit.
-  Either way a real-money position is mis-protected.
+  The audit's CRITICAL C-2 finding was that `triggered` is never reset in
+  the alpha_bot_execution.py engine path — so a symphony_id re-allocated a
+  new position could re-enter carrying a stale triggered=True + stale
+  stop_trigger, leaving the new position mis-protected.
 
-THE FIX (plan AC-1 / AC-2):
-  Detect position-open (keyed on position_open_date / composition identity)
-  and on open clear the six per-position transient fields —
-  triggered, breakeven_locked, hwm_hold_ticks, below_stop_count, vwap_ticks,
-  vwap_bleed_ticks — and DELETE stop_trigger so the next
-  compute_breakeven_update receives no stale floor. The reset fires EXACTLY
-  ONCE per new position, never mid-position.
+  Cluster 1's first GREEN attempt added a per-symphony "position-open
+  detection" — is_new_position_open + reset_symphony_position_state, keyed
+  on a hash of the symphony's CURRENT holding tickers. quant-code-reviewer's
+  BLOCK-1 and the risk-engine-specialist's domain ruling established that
+  this mechanism is WRONG:
 
-THE TESTED CONTRACT — a pure reset helper:
-  The most testable home for this is a pure function (the project file-map
-  rule keeps math/state primitives pure and testable from fixtures). The
-  audit names database.wipe_transient_state as the cross-reference; the
-  per-position reset is its single-symphony analogue. This module resolves
-  the helper from either `database` or `alpha_bot_execution` so the
-  implementer owns the final module placement; the helper is referred to
-  here as `reset_symphony_position_state`.
+    - A Composer symphony is a rebalancing strategy; its holding-ticker set
+      changes WITHIN a single position by design. The engine even maintains
+      a separately-frozen `current_holdings` snapshot (alpha_bot_execution.py
+      :752/825/1352) precisely because live holdings drift — that snapshot
+      would be pointless if holdings were immutable per position.
+    - A composition hash of LIVE holdings is therefore a REBALANCE detector,
+      not a position identity. Keying the reset on it fires
+      reset_symphony_position_state MID-POSITION on a normal rebalance —
+      wiping triggered / breakeven_locked / the tick counters on a live
+      in-flight position. That is a real-money mis-protection and a direct
+      AC-2 violation ("reset fires exactly once per new position, never
+      mid-position").
+    - There is no genuine intraday position-open signal to key on instead:
+      a triggered symphony is FROZEN intraday (the TRUE SHADOW RETURN
+      OVERRIDE) and never re-opens as a live position the same day; the
+      Composer API exposes no verified position-open field.
 
-  Required behavior of reset_symphony_position_state(sym_state: dict) -> dict:
-    - sets triggered=False, breakeven_locked=False
-    - sets hwm_hold_ticks=0, below_stop_count=0, vwap_ticks=0,
-      vwap_bleed_ticks=0
-    - DELETES the 'stop_trigger' key (so .get('stop_trigger') -> None)
-    - does NOT corrupt non-transient fields (name, account, etc.)
+  RESOLUTION: the per-symphony composition-change detection is REMOVED
+  entirely. The audit's C-2 CRITICAL is correctly remediated by the
+  pre-existing database.wipe_transient_state, which IS the engine-path
+  reset: it resets triggered=False, deletes stop_trigger, and zeroes the
+  six per-position counters. wipe_transient_state runs at the new-day
+  boundary and on an exec-mode toggle (alpha_bot_execution.py:643/655) —
+  and every genuine re-allocation of a symphony_id crosses one of those
+  boundaries (intraday a triggered symphony stays frozen). So C-2 is
+  closed, and the cluster's C-2 work is TEST COVERAGE of that existing
+  mechanism — not new detection code.
 
-Provenance: bot_state dicts are schema-derived from the shape main() writes
-(alpha_bot_execution.py:711-726). No producer-computed values are asserted —
-the assertions pin the reset SENTINELS (False / 0 / key-absent), which are
-structural, not producer outputs.
+This module therefore pins:
+  1. wipe_transient_state genuinely resets the audit's exact C-2 field set.
+  2. A same-basket cross-day re-open starts clean (via wipe_transient_state).
+  3. A mid-position holdings rebalance does NOT wipe live exit-guard state
+     (the BLOCK-1 regression guard — passes because the composition-change
+     detection is gone).
+  4. The removed composition-hash detection does not creep back.
+
+Provenance: bot_state dicts are schema-derived from the shape the engine
+writes (alpha_bot_execution.py per-symphony loop + the trigger block). No
+producer-computed values are asserted — assertions pin reset SENTINELS
+(False / 0 / key-absent), which are structural.
 """
 
 from __future__ import annotations
 
+import ast
+import pathlib
 from datetime import datetime
 from unittest.mock import patch
 
@@ -60,33 +71,7 @@ import pytest
 import database
 
 
-# ---------------------------------------------------------------------------
-# Helper resolution — the implementer chooses the module home.
-# ---------------------------------------------------------------------------
-
-
-def _resolve_reset_helper():
-    """Return the per-position reset helper, or None if not yet implemented."""
-    for module_name in ("database", "alpha_bot_execution"):
-        try:
-            module = __import__(module_name)
-        except ImportError:
-            continue
-        for fn_name in (
-            "reset_symphony_position_state",
-            "reset_position_state_on_open",
-            "wipe_symphony_position_state",
-        ):
-            fn = getattr(module, fn_name, None)
-            if callable(fn):
-                return fn
-    return None
-
-
-_RESET_HELPER = _resolve_reset_helper()
-
-
-# The six per-position transient fields AC-1 names explicitly.
+# The six per-position transient fields the audit's C-2 finding names.
 _TRANSIENT_INT_FIELDS = (
     "hwm_hold_ticks",
     "below_stop_count",
@@ -102,7 +87,7 @@ _TRANSIENT_BOOL_FIELDS = (
 def _dirty_symphony_state() -> dict:
     """A bot_state symphony sub-dict left in a fully-triggered, dirty state —
     the exact shape the live engine persists after a trigger fires
-    (alpha_bot_execution.py:1700-1744).
+    (alpha_bot_execution.py trigger block).
     """
     return {
         "name": "Rotated Symphony",
@@ -126,672 +111,149 @@ def _dirty_symphony_state() -> dict:
     }
 
 
-def _resolve_position_open_detector():
-    """Return the position-open detector, or None if not yet implemented."""
-    for module_name in ("database", "alpha_bot_execution"):
-        try:
-            module = __import__(module_name)
-        except ImportError:
-            continue
-        for fn_name in (
-            "is_new_position_open",
-            "detect_position_open",
-            "position_opened",
-        ):
-            fn = getattr(module, fn_name, None)
-            if callable(fn):
-                return fn
-    return None
-
-
 # ===========================================================================
-# AC-1 / AC-2 — UNCONDITIONAL existence pin (the genuine RED for C-2).
+# 1 — wipe_transient_state resets the audit's exact C-2 field set.
 #
-# The skipif-gated classes below cannot fail until the helper exists — a skip
-# is not a RED signal. These two tests fail OUTRIGHT against pre-fix code, so
-# the CRITICAL C-2 finding has a real RED gate the implementer must close.
+# This is the real C-2 regression guard: the audit's CRITICAL was "triggered
+# is never reset in the engine path." wipe_transient_state IS that reset
+# path. Pin that it clears every field the audit named so the C-2 closure
+# cannot silently regress.
 # ===========================================================================
 
 
-def test_per_position_reset_helper_exists() -> None:
-    """
-    AC-1 (C-2 CRITICAL): a per-position reset helper MUST exist. The audit's
-    CRITICAL finding is that the engine never resets `triggered` (or the
-    other five transient fields) when a symphony_id re-opens a position. The
-    fix introduces a pure reset helper — the single-symphony analogue of
-    database.wipe_transient_state.
+class TestWipeTransientStateClosesC2:
+    """C-2: wipe_transient_state is the engine-path reset that closes the
+    audit's CRITICAL — pin the exact field set it must clear."""
 
-    RED: no such helper exists in database.py or alpha_bot_execution.py.
-    This test FAILS (does not skip) until the implementer adds it.
-    """
-    assert _RESET_HELPER is not None, (
-        "No per-position reset helper found in database or "
-        "alpha_bot_execution. AC-1 (C-2 CRITICAL) requires a pure helper "
-        "that, given one symphony's bot_state sub-dict, resets triggered, "
-        "breakeven_locked, hwm_hold_ticks, below_stop_count, vwap_ticks, "
-        "vwap_bleed_ticks and deletes stop_trigger. Acceptable names: "
-        "reset_symphony_position_state / reset_position_state_on_open / "
-        "wipe_symphony_position_state."
-    )
-
-
-def test_position_open_detector_exists() -> None:
-    """
-    AC-2 (C-2 CRITICAL): a position-open detector MUST exist so the reset
-    fires EXACTLY ONCE per new position and never mid-position. The audit
-    requires position-open detection keyed on position_open_date /
-    composition identity.
-
-    RED: no detector exists. This test FAILS (does not skip) until the
-    implementer adds one.
-    """
-    assert _resolve_position_open_detector() is not None, (
-        "No position-open detector found in database or alpha_bot_execution. "
-        "AC-2 requires the per-position reset to be gated on a reliable "
-        "position-open event so it fires once per new position and never "
-        "mid-position. Acceptable names: is_new_position_open / "
-        "detect_position_open / position_opened."
-    )
-
-
-# ===========================================================================
-# AC-1 — a re-opened position starts with fully reset per-position state
-# ===========================================================================
-
-
-@pytest.mark.skipif(
-    _RESET_HELPER is None,
-    reason="per-position reset helper not implemented yet (RED phase)",
-)
-class TestPositionOpenResetsTransientState:
-    """AC-1: a new position under a reused symphony_id starts clean."""
-
-    def test_reset_clears_triggered_flag(self):
+    def test_wipe_transient_state_resets_all_six_exit_guard_fields_and_deletes_stop_trigger(
+        self,
+    ):
         """
-        AC-1: the stale triggered=True from the prior position must be reset
-        to False so the new position's trailing-stop math is not permanently
-        suppressed (compute_breakeven_update would otherwise return the
-        -999.0 sentinel forever).
+        C-2 (the core regression guard): wipe_transient_state must reset the
+        SIX per-position transient exit-guard fields the audit named —
+        triggered, breakeven_locked, hwm_hold_ticks, below_stop_count,
+        vwap_ticks, vwap_bleed_ticks — AND delete the stop_trigger key.
+
+        The audit's CRITICAL C-2 finding was that a re-allocated symphony_id
+        could carry stale triggered=True + stop_trigger into a new position.
+        wipe_transient_state is the engine-path reset (called at the new-day
+        boundary and on an exec-mode toggle) that prevents that. This test
+        pins its contract directly.
+
+        A symphony left in a fully-triggered dirty state must come out of
+        wipe_transient_state fully reset.
         """
-        state = _dirty_symphony_state()
-        _RESET_HELPER(state)
-        assert state["triggered"] is False, (
-            f"AC-1 VIOLATED: triggered={state['triggered']!r} after a "
-            f"position-open reset. A reused symphony_id's new position must "
-            f"start with triggered=False; otherwise compute_breakeven_update "
-            f"emits the -999.0 sentinel and the new live position has NO "
-            f"trailing-stop protection."
-        )
-
-    def test_reset_clears_breakeven_locked(self):
-        """
-        AC-1: breakeven_locked is a one-way latch WITHIN a position; across a
-        position boundary it must reset to False. A stale True would make the
-        new position's stop floor at 0.0 from tick 1, before it has earned
-        any breakeven.
-        """
-        state = _dirty_symphony_state()
-        _RESET_HELPER(state)
-        assert state["breakeven_locked"] is False, (
-            f"AC-1 VIOLATED: breakeven_locked={state['breakeven_locked']!r} "
-            f"survived a position-open reset. The breakeven latch is "
-            f"per-position; a new position has not earned breakeven."
-        )
-
-    @pytest.mark.parametrize("field", _TRANSIENT_INT_FIELDS)
-    def test_reset_zeroes_transient_counters(self, field: str):
-        """
-        AC-1: the four per-position tick counters — hwm_hold_ticks,
-        below_stop_count, vwap_ticks, vwap_bleed_ticks — must all reset to 0
-        on a position open. A stale counter near its threshold would let the
-        new position fire an exit confirmation it never earned.
-        """
-        state = _dirty_symphony_state()
-        assert state[field] != 0, "test setup: field must start dirty"
-        _RESET_HELPER(state)
-        assert state[field] == 0, (
-            f"AC-1 VIOLATED: '{field}'={state[field]!r} after a "
-            f"position-open reset, expected 0. A stale tick counter can "
-            f"trip a confirmation gate the new position never earned."
-        )
-
-    def test_reset_deletes_stop_trigger_key(self):
-        """
-        AC-1: the persisted stop_trigger from the prior position must be
-        DELETED (not set to None or 0) so the next compute_breakeven_update
-        receives previously_persisted_stop_level=None via .get('stop_trigger').
-
-        The plan is explicit: "no persisted stop_trigger (the first
-        compute_breakeven_update receives previously_persisted_stop_level=
-        None)". The new position's first computed stop level must be neither
-        the -999.0 sentinel nor clamped by the prior position's level.
-        """
-        state = _dirty_symphony_state()
-        assert "stop_trigger" in state, "test setup: stop_trigger must start present"
-        _RESET_HELPER(state)
-        assert state.get("stop_trigger") is None, (
-            f"AC-1 VIOLATED: stop_trigger={state.get('stop_trigger')!r} after "
-            f"a position-open reset. It must be cleared so the new position "
-            f"does not inherit the prior position's stop floor."
-        )
-
-    def test_reset_first_stop_is_not_sentinel_and_not_prior_level(self):
-        """
-        AC-1 (the integration assertion): after the reset, feeding the new
-        position's first tick through compute_breakeven_update must produce a
-        stop level that is NEITHER the -999.0 triggered sentinel NOR clamped
-        by the prior position's stop level (2.5 in the dirty fixture).
-
-        Derivation: post-reset triggered=False, breakeven_locked=False,
-        hwm_hold_ticks=0, no stop_trigger. The new position's first tick
-        with base_stop_level=0.3 and a sub-threshold return yields
-        stop = base_stop_level = 0.3 — well below the prior 2.5 and not the
-        -999.0 sentinel.
-        """
-        import math_engine
-
-        state = _dirty_symphony_state()
-        _RESET_HELPER(state)
-
-        first_tick_base = 0.3
-        _, _, first_stop = math_engine.compute_breakeven_update(
-            current_return=-1.0,           # sub-threshold; no lock
-            symphony_vol=1.0,
-            base_stop_level=first_tick_base,
-            current_hold_ticks=state["hwm_hold_ticks"],
-            currently_breakeven_locked=state["breakeven_locked"],
-            is_triggered=state["triggered"],
-        )
-        assert first_stop != math_engine.TRIGGERED_OVERRIDE_LEVEL, (
-            f"AC-1 VIOLATED: the new position's first stop is the -999.0 "
-            f"triggered sentinel ({first_stop}). triggered did not reset."
-        )
-        assert first_stop == pytest.approx(first_tick_base, rel=1e-9, abs=1e-12), (
-            f"AC-1 VIOLATED: the new position's first stop is {first_stop}, "
-            f"expected {first_tick_base} (the HWM-anchored base, no clamp). "
-            f"If it is 2.5 the prior position's stop level still clamps it."
-        )
-
-    def test_reset_preserves_non_transient_fields(self):
-        """
-        AC-1 scope guard: the reset must clear ONLY the per-position
-        transient fields. Identity / accounting fields (name, account,
-        mc_history, current_holdings) are not per-position transients and
-        must survive the reset untouched.
-
-        Catches an over-broad reset that wipes the whole sub-dict.
-        """
-        state = _dirty_symphony_state()
-        name_before = state["name"]
-        account_before = state["account"]
-        _RESET_HELPER(state)
-        assert state["name"] == name_before, (
-            "position-open reset must not clear the symphony name"
-        )
-        assert state["account"] == account_before, (
-            "position-open reset must not clear the account id"
-        )
-
-    def test_reset_returns_or_mutates_the_state_dict(self):
-        """
-        AC-1 contract shape: the helper either mutates the passed dict in
-        place (mirroring database.wipe_transient_state, which mutates) or
-        returns the reset dict. Either is acceptable; this test pins that
-        the post-call state is reset regardless of which the implementer
-        chooses.
-        """
-        state = _dirty_symphony_state()
-        returned = _RESET_HELPER(state)
-        effective = returned if isinstance(returned, dict) else state
-        assert effective["triggered"] is False
-        assert effective.get("stop_trigger") is None
-
-
-# ===========================================================================
-# AC-2 — the reset fires exactly once per new position, never mid-position
-# ===========================================================================
-
-
-@pytest.mark.skipif(
-    _RESET_HELPER is None,
-    reason="per-position reset helper not implemented yet (RED phase)",
-)
-class TestPositionOpenDetectionFiresExactlyOnce:
-    """
-    AC-2: position-open is detected reliably (keyed on position_open_date /
-    composition identity); the reset fires exactly once per new position,
-    never mid-position.
-    """
-
-    def test_reset_is_idempotent_on_an_already_clean_state(self):
-        """
-        AC-2: applying the reset to an already-clean position state is a
-        safe no-op — it leaves every transient field at its reset sentinel.
-        This guards against a reset that toggles rather than sets.
-        """
-        clean = {
-            "name": "Clean Symphony",
-            "triggered": False,
-            "breakeven_locked": False,
-            "hwm_hold_ticks": 0,
-            "below_stop_count": 0,
-            "vwap_ticks": 0,
-            "vwap_bleed_ticks": 0,
-            # stop_trigger key intentionally absent
+        bot_state = {
+            "date": "2026-05-20",
+            "rotated_sym": _dirty_symphony_state(),
         }
-        _RESET_HELPER(clean)
-        for field in _TRANSIENT_BOOL_FIELDS:
-            assert clean[field] is False
-        for field in _TRANSIENT_INT_FIELDS:
-            assert clean[field] == 0
-        assert clean.get("stop_trigger") is None
+        dirty = bot_state["rotated_sym"]
+        # Sanity: the fixture starts genuinely dirty.
+        assert dirty["triggered"] is True
+        assert dirty["breakeven_locked"] is True
+        assert "stop_trigger" in dirty
+        for f in _TRANSIENT_INT_FIELDS:
+            assert dirty[f] != 0
 
-    def test_reset_does_not_resurrect_a_deleted_stop_trigger(self):
-        """
-        AC-2: a second reset call must not re-create the stop_trigger key.
-        Running the reset twice (e.g. position-open detected, then the same
-        open re-evaluated) leaves stop_trigger absent both times.
-        """
-        state = _dirty_symphony_state()
-        _RESET_HELPER(state)
-        assert "stop_trigger" not in state or state.get("stop_trigger") is None
-        _RESET_HELPER(state)  # second call
-        assert state.get("stop_trigger") is None, (
-            "a repeated reset must not resurrect the stop_trigger key"
+        database.wipe_transient_state(bot_state)
+
+        cleaned = bot_state["rotated_sym"]
+        assert cleaned["triggered"] is False, (
+            "C-2 VIOLATED: wipe_transient_state did not reset triggered. "
+            "This is the engine-path reset the audit's CRITICAL requires."
         )
-
-    def test_mid_position_state_is_not_reset_when_position_unchanged(self):
-        """
-        AC-2: the reset must NOT fire mid-position. The reset is gated on a
-        position-open event (a change in position identity / open date);
-        when the position identity is UNCHANGED across two cycles, the
-        engine must not call the reset helper — a mid-position reset would
-        wipe a live position's accumulated tick counters and breakeven
-        latch.
-
-        This test pins the GATING CONTRACT structurally: the engine must
-        expose a position-open detector that returns False when the
-        position identity is unchanged. The detector is resolved from the
-        same modules as the reset helper.
-
-        RED: there is currently no position-open detection at all — the
-        engine never resets `triggered`, so neither a detector nor the
-        gating exists.
-        """
-        detector = None
-        for module_name in ("database", "alpha_bot_execution"):
-            try:
-                module = __import__(module_name)
-            except ImportError:
-                continue
-            for fn_name in (
-                "is_new_position_open",
-                "detect_position_open",
-                "position_opened",
-            ):
-                fn = getattr(module, fn_name, None)
-                if callable(fn):
-                    detector = fn
-                    break
-            if detector is not None:
-                break
-
-        if detector is None:
-            pytest.fail(
-                "No position-open detector found in database or "
-                "alpha_bot_execution. AC-2 requires position-open to be "
-                "detected reliably (keyed on position_open_date / "
-                "composition identity) so the reset fires exactly once per "
-                "new position and never mid-position. Implement a detector "
-                "(e.g. is_new_position_open(prev_identity, current_identity)) "
-                "and gate reset_symphony_position_state on it."
-            )
-
-        # Same position identity across two cycles -> NOT a new open.
-        same_identity = "2026-05-21|comp-hash-abc"
-        assert detector(same_identity, same_identity) is False, (
-            "is_new_position_open must return False when the position "
-            "identity is unchanged — the reset must not fire mid-position."
-        )
-        # A changed identity -> a new open.
-        assert detector(same_identity, "2026-05-22|comp-hash-xyz") is True, (
-            "is_new_position_open must return True when the position "
-            "identity changes (new open date / composition) — that is the "
-            "exact event the per-position reset must fire on."
-        )
-
-    def test_reused_symphony_id_second_position_starts_clean(self):
-        """
-        AC-1 + AC-2 end-to-end: simulate the rotation lifecycle for ONE
-        symphony_id — position 1 opens, runs, triggers; the same
-        symphony_id is re-allocated and position 2 opens. Assert position 2
-        starts with triggered=False, breakeven_locked=False, all four
-        counters 0, and no stop_trigger.
-
-        This is the audit's named CRITICAL scenario: "open->trigger->re-open
-        for the same symphony_id".
-        """
-        # --- Position 1: runs and triggers (engine leaves it dirty) ---
-        symphony_id = "sym-rotation-lifecycle-001"
-        bot_state = {symphony_id: _dirty_symphony_state()}
-        position_1_state = bot_state[symphony_id]
-        assert position_1_state["triggered"] is True, "position 1 ended triggered"
-
-        # --- Position 2 opens under the SAME symphony_id ---
-        # The engine detects the position-open and calls the reset helper on
-        # the existing (dirty) sub-dict before the new position's first tick.
-        _RESET_HELPER(bot_state[symphony_id])
-        position_2_state = bot_state[symphony_id]
-
-        assert position_2_state["triggered"] is False, (
-            "AC-1/AC-2 VIOLATED: position 2 (reused symphony_id) inherited "
-            "triggered=True from position 1."
-        )
-        assert position_2_state["breakeven_locked"] is False, (
-            "position 2 inherited breakeven_locked=True from position 1"
+        assert cleaned["breakeven_locked"] is False, (
+            "C-2 VIOLATED: wipe_transient_state did not reset "
+            "breakeven_locked — a new position would inherit the latch."
         )
         for field in _TRANSIENT_INT_FIELDS:
-            assert position_2_state[field] == 0, (
-                f"position 2 inherited a stale '{field}' from position 1"
+            assert cleaned[field] == 0, (
+                f"C-2 VIOLATED: wipe_transient_state left a stale "
+                f"'{field}'={cleaned[field]!r} — a re-allocated position "
+                f"would inherit it and could trip a confirmation gate it "
+                f"never earned."
             )
-        assert position_2_state.get("stop_trigger") is None, (
-            "position 2 inherited position 1's stop_trigger floor"
+        assert cleaned.get("stop_trigger") is None, (
+            "C-2 VIOLATED: wipe_transient_state did not delete stop_trigger. "
+            "A new position must not inherit the prior position's stop floor "
+            "(audit C-2; the compute_breakeven_update HWM-anchored stop reads "
+            "no prior floor, but a stale persisted value would still mislead "
+            "telemetry / any future consumer)."
         )
+
+    def test_wipe_transient_state_resets_triggered_reason(self):
+        """
+        C-2: wipe_transient_state must also drop triggered_reason — a stale
+        exit-reason string from a prior position is meaningless for the
+        re-allocated one.
+        """
+        bot_state = {"date": "2026-05-20", "s": _dirty_symphony_state()}
+        assert bot_state["s"]["triggered_reason"] == "Trailing Stop"
+        database.wipe_transient_state(bot_state)
+        assert bot_state["s"].get("triggered_reason") in (None, ""), (
+            "wipe_transient_state must clear the stale triggered_reason."
+        )
+
+    def test_wipe_transient_state_preserves_identity_fields(self):
+        """
+        C-2 scope guard: wipe_transient_state clears ONLY transient fields —
+        identity / accounting fields (name, account) survive. Catches an
+        over-broad wipe.
+        """
+        bot_state = {"date": "2026-05-20", "s": _dirty_symphony_state()}
+        name_before = bot_state["s"]["name"]
+        account_before = bot_state["s"]["account"]
+        database.wipe_transient_state(bot_state)
+        assert bot_state["s"]["name"] == name_before
+        assert bot_state["s"]["account"] == account_before
 
 
 # ===========================================================================
-# AC-2 — the position-open identity KEY must mean what its docstring says.
-#
-# risk-engine-specialist's C-2 review of GREEN 91dc833 found a real defect:
-# the engine builds the position identity as
-#     f"{position_open_date}|{composition_hash}"
-# but position_open_date is written in EXACTLY ONE place — inside the
-# `if is_new_position_open(...)` branch — so it is NEVER set on a symphony's
-# first observation. The identity is therefore permanently "|<comphash>" and
-# the position_open_date component carries zero information; the reset is
-# effectively keyed on composition_hash ALONE, while the docstring
-# (database.py) and the inline comment (alpha_bot_execution.py) both claim
-# the key includes position_open_date.
-#
-# C-2's CRITICAL is still SAFE — a triggered symphony is frozen intraday and
-# wipe_transient_state clears triggered/stop_trigger at the next-day boundary
-# — but a dead key + an inaccurate docstring is a latent trap: a maintainer
-# who trusts the documented key (e.g. removes the day-boundary wipe) silently
-# reintroduces the C-2 CRITICAL. Same "no half-fix / no dead key" principle
-# already applied to AC-3's removed parameter.
-#
-# Required GREEN (implementer's choice, both acceptable):
-#   (A) make position_open_date REAL — stamp it on first observation too, so
-#       the identity key genuinely carries it and the docstring is accurate; OR
-#   (B) drop position_open_date from the identity entirely, key on the
-#       composition identity alone, and correct the docstring + comment to say
-#       the cross-day re-open is covered by wipe_transient_state.
-# Either way: NO dead key, NO inaccurate docstring may ship.
+# 2 — A same-basket cross-day re-open starts clean.
 # ===========================================================================
 
 
-class TestPositionOpenIdentityKeyIsHonest:
-    """AC-2: the position-open identity key must not contain a dead component
-    that its own docstring/comment claims is load-bearing."""
-
-    def _engine_identity_region(self) -> str:
-        """Return the per-symphony-loop source region that builds the position
-        identity + runs the position-open detection."""
-        import pathlib
-        import alpha_bot_execution as _abe
-
-        lines = pathlib.Path(_abe.__file__).read_text(encoding="utf-8").splitlines()
-        anchors = [
-            i
-            for i, ln in enumerate(lines)
-            if "is_new_position_open" in ln
-            or "reset_symphony_position_state" in ln
-            or "position_identity" in ln
-        ]
-        assert anchors, (
-            "No position-open detection found in alpha_bot_execution.py."
-        )
-        lo = max(0, min(anchors) - 5)
-        hi = min(len(lines), max(anchors) + 8)
-        return "\n".join(lines[lo:hi])
-
-    @staticmethod
-    def _identity_assignment_references_open_date() -> bool:
-        """AST: does any assignment to a *identity* variable in
-        alpha_bot_execution.py build its value from 'position_open_date'?
-
-        Catches the multi-line f-string form
-            _current_position_identity = (
-                f"{...get('position_open_date', '')}"
-                f"|{_composition_id}"
-            )
-        by walking the value subtree (line-level grep cannot — the var name
-        and the key are on different physical lines).
-        """
-        import ast
-        import pathlib
-        import alpha_bot_execution as _abe
-
-        tree = ast.parse(
-            pathlib.Path(_abe.__file__).read_text(encoding="utf-8")
-        )
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign):
-                continue
-            targets_identity = any(
-                isinstance(t, ast.Name) and "identity" in t.id.lower()
-                for t in node.targets
-            )
-            if not targets_identity:
-                continue
-            for sub in ast.walk(node.value):
-                if (
-                    isinstance(sub, ast.Constant)
-                    and isinstance(sub.value, str)
-                    and "position_open_date" in sub.value
-                ):
-                    return True
-        return False
-
-    @staticmethod
-    def _gated_if_spans() -> "list[tuple[int, int]]":
-        """Line spans of every `if is_new_position_open(...)` block."""
-        import ast
-        import pathlib
-        import alpha_bot_execution as _abe
-
-        source = pathlib.Path(_abe.__file__).read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        spans: list[tuple[int, int]] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.If):
-                test_src = ast.get_source_segment(source, node.test) or ""
-                if "is_new_position_open" in test_src:
-                    spans.append(
-                        (node.lineno, node.end_lineno or node.lineno)
-                    )
-        return spans
-
-    @classmethod
-    def _has_unconditional_open_date_write(cls) -> bool:
-        """AST: is position_open_date written OUTSIDE every
-        `if is_new_position_open(...)` block (an Assign subscript or a
-        setdefault on a bot_state symphony dict)?"""
-        import ast
-        import pathlib
-        import alpha_bot_execution as _abe
-
-        tree = ast.parse(
-            pathlib.Path(_abe.__file__).read_text(encoding="utf-8")
-        )
-        gated = cls._gated_if_spans()
-        for node in ast.walk(tree):
-            lineno = getattr(node, "lineno", None)
-            if lineno is None:
-                continue
-            write_here = False
-            if isinstance(node, ast.Assign):
-                for tgt in node.targets:
-                    if (
-                        isinstance(tgt, ast.Subscript)
-                        and isinstance(tgt.slice, ast.Constant)
-                        and tgt.slice.value == "position_open_date"
-                    ):
-                        write_here = True
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "setdefault"
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and node.args[0].value == "position_open_date"
-            ):
-                write_here = True
-            if write_here and not any(
-                lo <= lineno <= hi for lo, hi in gated
-            ):
-                return True
-        return False
-
-    def test_position_open_date_is_not_a_dead_key_component(self):
-        """
-        AC-2 (risk-engine-specialist finding): position_open_date must not be
-        a dead component of the position identity. Either it is genuinely set
-        on first observation (fix A — the identity carries a real date), or it
-        is removed from the identity string entirely (fix B).
-
-        RED on GREEN 91dc833: position_open_date is written ONLY inside the
-        `if is_new_position_open(...)` branch (alpha_bot_execution.py:1119),
-        so on a symphony's first observation it is never set — the identity
-        string is permanently "|<comphash>" with an empty date prefix and the
-        date component carries zero information.
-
-        This test fails when BOTH hold (the dead-key state):
-          - the identity assignment still interpolates position_open_date, AND
-          - position_open_date is written ONLY inside the detection branch
-            (no unconditional write / setdefault before the identity is built).
-
-        Fix A: add an unconditional write/setdefault — _has_unconditional_open_
-        date_write becomes True. Fix B: drop position_open_date from the
-        identity assignment — _identity_assignment_references_open_date
-        becomes False. Either resolves the dead key.
-        """
-        identity_uses_open_date = self._identity_assignment_references_open_date()
-        if not identity_uses_open_date:
-            # Fix B taken: position_open_date is no longer in the identity
-            # key — nothing dead remains.
-            return
-        assert self._has_unconditional_open_date_write(), (
-            "DEAD KEY: the position identity assignment still interpolates "
-            "position_open_date, but position_open_date is written ONLY "
-            "inside the `if is_new_position_open(...)` branch — never on a "
-            "symphony's first observation. The identity is therefore "
-            "permanently '|<comphash>' and the date component is dead. Fix "
-            "A: stamp position_open_date unconditionally (e.g. via "
-            "bot_state[symphony_id].setdefault('position_open_date', ...)) "
-            "BEFORE building the identity string. Fix B: remove "
-            "position_open_date from the identity string entirely and "
-            "correct the docstring/comment. No dead key may ship."
-        )
-
-    def test_identity_docstring_and_comment_match_the_actual_key(self):
-        """
-        AC-2: database.is_new_position_open's docstring and the
-        alpha_bot_execution.py inline comment must accurately describe what
-        the identity key actually carries. A doc that claims the key is
-        'keyed on position_open_date' while that component is DEAD is an
-        inaccurate comment — the AC-3 dead-parameter principle applied to a
-        comment.
-
-        The contract, by GREEN fix:
-          - Fix A (position_open_date made real — unconditional write): the
-            docs MAY mention position_open_date; it is accurate.
-          - Fix B (position_open_date removed from the identity): the docs
-            must NOT still claim the key includes position_open_date.
-          - The forbidden state (RED on 91dc833): the identity assignment
-            references position_open_date, the date is NEVER written
-            unconditionally (dead), AND a doc claims the key is keyed on it.
-
-        RED on 91dc833: database.is_new_position_open's docstring says
-        identity is 'keyed on position_open_date / composition identity'
-        and alpha_bot_execution.py's comment says the same — while the date
-        component is in fact dead. The doc overstates the key.
-        """
-        import database as _db
-
-        identity_uses_open_date = self._identity_assignment_references_open_date()
-        date_is_real = self._has_unconditional_open_date_write()
-
-        db_doc = (_db.is_new_position_open.__doc__ or "").lower()
-        abe_region = self._engine_identity_region().lower()
-        doc_claims_open_date = (
-            "position_open_date" in db_doc or "position_open_date" in abe_region
-        )
-
-        if not doc_claims_open_date:
-            # No doc claim about position_open_date — nothing to overstate.
-            return
-
-        # A doc DOES claim position_open_date is part of the key. That is only
-        # accurate if the date is genuinely a live component: still in the
-        # identity assignment AND written unconditionally (fix A).
-        assert identity_uses_open_date and date_is_real, (
-            "INACCURATE DOC: is_new_position_open's docstring (or the "
-            "alpha_bot_execution.py comment) claims the position identity is "
-            "'keyed on position_open_date', but position_open_date is a dead "
-            "key component — "
-            f"identity_assignment_references_it={identity_uses_open_date}, "
-            f"written_unconditionally={date_is_real}. Either make the date "
-            "real (fix A: unconditional write) so the doc is accurate, or "
-            "remove position_open_date from BOTH the identity and the doc "
-            "(fix B). A doc must not claim a dead key is load-bearing."
-        )
+class TestSameBasketCrossDayReopen:
+    """C-2: a symphony that triggers one day and re-opens the same basket
+    after a day boundary starts the new position clean — via the new-day
+    wipe_transient_state."""
 
     def test_same_basket_cross_day_reopen_starts_clean(self):
         """
-        AC-2 / C-2: pin WHY C-2 is closed for a same-basket cross-day
-        re-open — so a future maintainer cannot silently break it.
+        C-2: pin WHY a same-basket cross-day re-open is safe.
 
-        Scenario: a symphony triggers (exits) one day, then re-opens with the
-        SAME basket after a new-day boundary. is_new_position_open returns
-        False for this (the composition is unchanged and — pre-fix — the
-        identity is unchanged), so the NEW per-symphony reset path does NOT
-        fire. C-2 is nonetheless closed because the new-day wipe_transient_state
-        runs at the day boundary and resets triggered=False + deletes
-        stop_trigger.
+        A symphony triggers (exits) one day; the SAME symphony_id is
+        re-allocated a new position with the SAME basket after a new-day
+        boundary. The new day fires wipe_transient_state (the engine calls
+        it at alpha_bot_execution.py:655 when bot_state['date'] changes),
+        which resets triggered=False + deletes stop_trigger + zeroes the
+        counters. The re-opened position therefore starts clean.
 
-        This test exercises wipe_transient_state directly on a dirty
-        triggered state to pin that the day-boundary mechanism genuinely
-        clears the C-2 staleness, documenting the safety guarantee that does
-        NOT depend on is_new_position_open.
+        This documents the mechanism that closes C-2 for the most common
+        rotation case — a symphony re-entering its own holdings — so a
+        future maintainer who removes the day-boundary wipe sees this test
+        break and knows why it matters.
         """
-        import database
-
-        # A symphony that ended the prior day triggered, with stale fields —
-        # exactly what persists in bot_state after a trigger.
-        dirty = _dirty_symphony_state()
+        # A symphony that ended the prior day triggered, with stale fields.
         bot_state = {
             "date": "2026-05-20",
-            "some_symphony_id": dirty,
+            "some_symphony_id": _dirty_symphony_state(),
         }
+        dirty = bot_state["some_symphony_id"]
         assert dirty["triggered"] is True, "fixture: prior day ended triggered"
         assert "stop_trigger" in dirty, "fixture: stale stop_trigger present"
 
-        # The new-day boundary fires wipe_transient_state (the engine calls
-        # this at alpha_bot_execution.py:655 when bot_state['date'] changes).
+        # New-day boundary fires wipe_transient_state.
         database.wipe_transient_state(bot_state)
 
         reopened = bot_state["some_symphony_id"]
         assert reopened["triggered"] is False, (
             "C-2 cross-day safety VIOLATED: wipe_transient_state did not "
-            "reset triggered on the new-day boundary. A same-basket cross-day "
-            "re-open relies on this — is_new_position_open returns False for "
-            "an unchanged composition, so the day-boundary wipe is the "
-            "mechanism that closes C-2 here."
+            "reset triggered on the new-day boundary."
         )
         assert reopened.get("stop_trigger") is None, (
-            "C-2 cross-day safety VIOLATED: wipe_transient_state did not "
-            "clear the stale stop_trigger floor on the new-day boundary."
+            "C-2 cross-day safety VIOLATED: stale stop_trigger floor "
+            "survived the new-day boundary."
         )
         for field in _TRANSIENT_INT_FIELDS:
             assert reopened[field] == 0, (
@@ -801,66 +263,48 @@ class TestPositionOpenIdentityKeyIsHonest:
 
 
 # ===========================================================================
-# AC-2 BLOCK-1 — the per-position reset must NEVER fire mid-position.
+# 3 — BLOCK-1 regression guard: a mid-position holdings rebalance must NOT
+# wipe live exit-guard state.
 #
-# quant-code-reviewer's eight-gate review of GREEN 91dc833 raised BLOCK-1:
-# the position identity uses _port_composition_hash of the symphony's CURRENT
-# holding tickers. A symphony's holdings can legitimately change WITHIN a
-# single position lifetime — a Composer symphony is a strategy that rebalances
-# its own sub-positions, and a partial fill can change the ticker set between
-# cycles. When that happens mid-position the composition hash changes,
-# is_new_position_open returns True, and reset_symphony_position_state wipes
-# triggered / stop_trigger / the tick counters ON A LIVE IN-FLIGHT POSITION —
-# destroying that position's exit-guard state mid-flight.
-#
-# AC-2 is explicit: the reset "fires exactly once per new position, never
-# mid-position." A live-holdings hash does not satisfy that — holdings churn
-# is not a position-open event. This is a real-money mis-protection: a
-# position that had latched breakeven / accumulated exit-confirmation ticks
-# would silently lose them when its strategy rebalanced.
-#
-# The fix must key the position-open detection on something that genuinely
-# marks a NEW position — not a derived live-holdings hash.
+# Once the composition-change detection is removed, no engine path resets a
+# live position's exit-guard state on a holdings change. This test pins that
+# — it was RED while the composition-hash detector existed (a rebalance
+# flipped the hash and fired the reset); it PASSES once the detector is gone.
 # ===========================================================================
 
 
-class TestResetNeverFiresMidPosition:
-    """AC-2 BLOCK-1: a mid-position holdings change must NOT trigger the
-    per-position reset. Holdings churn within a position is not a re-open."""
+class TestRebalanceDoesNotResetLivePosition:
+    """BLOCK-1: a mid-position holdings rebalance must not wipe a live
+    position's accumulated exit-guard state."""
 
     def test_mid_position_holdings_change_does_not_reset_exit_guard_state(self):
         """
-        AC-2 BLOCK-1(a): drive the engine main() for ONE symphony_id that
-        stays in the SAME position, but whose holdings differ from the
-        seeded prior-cycle holdings (the strategy rebalanced — a legitimate
-        mid-position event, NOT a re-open).
+        BLOCK-1 (quant-code-reviewer) / AC-2: drive the engine main() for
+        ONE symphony_id that stays in the SAME live position, but whose
+        holdings differ from the prior cycle (the strategy rebalanced — a
+        legitimate mid-position event by Composer's design, NOT a re-open).
 
         The persisted bot_state seeds a LIVE (not triggered) position that
-        has already latched breakeven (breakeven_locked=True, hwm_hold_ticks
-        =6) and a position_identity computed from the prior {SPY} holding
-        set. On this cycle the symphony holds {SPY, QQQ}.
+        has already latched breakeven (breakeven_locked=True) and
+        accumulated hold ticks (hwm_hold_ticks=6). That per-position
+        exit-guard state MUST survive a rebalance.
 
-        That accumulated per-position exit-guard state MUST survive. If the
-        engine keys position-open detection on a live-holdings composition
-        hash, the changed holdings flip the identity, is_new_position_open
-        returns True, and reset_symphony_position_state wipes
-        breakeven_locked / hwm_hold_ticks — an AC-2 violation and a
-        real-money mis-protection.
+        While the composition-hash position-open detection existed, a
+        holdings change flipped the identity hash, is_new_position_open
+        returned True, and reset_symphony_position_state wiped
+        breakeven_locked / hwm_hold_ticks on the live position — a
+        real-money mis-protection. After the detection is removed, no engine
+        path resets a live position on a holdings change, so the state
+        survives.
 
-        RED on 91dc833: identity is f"{position_open_date}|{composition_hash
-        (live holdings)}"; a holdings change flips it and fires the reset
-        mid-position.
+        RED while the composition-change detection exists; GREEN once it is
+        removed. AC-2: "the reset fires exactly once per new position, never
+        mid-position" — and a rebalance is not a new position.
         """
         import alpha_bot_execution
 
         symphony_id = "sym-mid-position-rebalance-001"
         account_id = "acct-mid-position-rebalance-001"
-
-        try:
-            from port_selector import composition_hash as _ch
-        except Exception:  # pragma: no cover
-            _ch = None
-        cycle1_identity = f"|{_ch(['SPY'])}" if _ch is not None else None
 
         mid_position_state = {
             "name": "Mid-Position Rebalance Symphony",
@@ -880,9 +324,21 @@ class TestResetNeverFiresMidPosition:
             "mc_history": [],
             "current_holdings": [{"ticker": "SPY", "allocation": 1.0}],
         }
-        if cycle1_identity is not None:
-            mid_position_state["position_identity"] = cycle1_identity
-            mid_position_state["position_open_date"] = "2026-05-21"
+        # Seed the prior-cycle position_identity as the composition hash of
+        # the prior {SPY} holding set. While the composition-hash detection
+        # exists, the engine compares this cycle's {SPY,QQQ} hash against it,
+        # finds a mismatch, and (defectively) fires the reset mid-position —
+        # the BLOCK-1 defect. After the detection is removed the engine never
+        # reads position_identity, so this seed is harmless. Without it the
+        # symphony looks like a first observation and the test has no teeth.
+        try:
+            from port_selector import composition_hash as _ch
+            mid_position_state["position_identity"] = _ch(["SPY"])
+        except Exception:  # pragma: no cover
+            # If the hash helper cannot be imported, fall back to a sentinel
+            # that still differs from any {SPY,QQQ} hash — the test still
+            # exercises a mid-position identity mismatch.
+            mid_position_state["position_identity"] = "prior-spy-only-identity"
 
         bot_state = {
             "date": "2026-05-21",
@@ -890,8 +346,7 @@ class TestResetNeverFiresMidPosition:
             symphony_id: mid_position_state,
         }
 
-        # The SAME symphony, SAME position — but the strategy rebalanced, so
-        # it now holds {SPY, QQQ} instead of {SPY}.
+        # The SAME symphony, SAME position — strategy rebalanced to {SPY,QQQ}.
         rebalanced_payload = {
             "id": symphony_id,
             "name": "Mid-Position Rebalance Symphony",
@@ -927,7 +382,6 @@ class TestResetNeverFiresMidPosition:
              patch.object(alpha_bot_execution.time, "sleep"), \
              patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
 
-            # Real reset helper + detector run — only DB I/O is mocked.
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = bot_state
             mock_db.load_chart_history.return_value = {
@@ -938,10 +392,22 @@ class TestResetNeverFiresMidPosition:
             }
             mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
             mock_db.wipe_transient_state.side_effect = lambda s: s
-            mock_db.reset_symphony_position_state.side_effect = (
-                database.reset_symphony_position_state
-            )
-            mock_db.is_new_position_open.side_effect = database.is_new_position_open
+            # Wire the REAL C-2 functions through the mocked database so the
+            # engine genuinely exercises any composition-change detection it
+            # still has. If the detection has been removed, these functions
+            # no longer exist on `database` and the engine never calls them —
+            # the getattr guard keeps the test valid in both states (before
+            # and after the BLOCK-1 removal). Without this wiring the engine
+            # would call bare MagicMocks and the test would pass for the
+            # WRONG reason (the real reset never running).
+            if hasattr(database, "is_new_position_open"):
+                mock_db.is_new_position_open.side_effect = (
+                    database.is_new_position_open
+                )
+            if hasattr(database, "reset_symphony_position_state"):
+                mock_db.reset_symphony_position_state.side_effect = (
+                    database.reset_symphony_position_state
+                )
 
             mock_fetch.return_value = [rebalanced_payload]
             mock_hist.return_value = {
@@ -966,12 +432,10 @@ class TestResetNeverFiresMidPosition:
         assert final_state.get("breakeven_locked") is True, (
             "AC-2 BLOCK-1 VIOLATED: a mid-position holdings change reset the "
             "live position's breakeven_locked latch (now "
-            f"{final_state.get('breakeven_locked')!r}). The symphony stayed in "
-            "the SAME position — its strategy merely rebalanced its holdings. "
-            "The per-position reset MUST NOT fire mid-position. A position "
-            "identity keyed on a live-holdings composition hash flips on any "
-            "holdings churn and wrongly fires reset_symphony_position_state, "
-            "destroying the position's exit-guard state mid-flight."
+            f"{final_state.get('breakeven_locked')!r}). The symphony stayed "
+            "in the SAME position — its strategy merely rebalanced its "
+            "holdings. No engine path may reset a live position's exit-guard "
+            "state on a holdings change."
         )
         assert final_state.get("hwm_hold_ticks", 0) >= 6, (
             "AC-2 BLOCK-1 VIOLATED: a mid-position holdings change reset "
@@ -981,4 +445,81 @@ class TestResetNeverFiresMidPosition:
         )
         assert final_state.get("triggered") is False, (
             "Sanity: the position was never triggered; it must still be False."
+        )
+
+
+# ===========================================================================
+# 4 — The removed composition-hash detection must not creep back.
+# ===========================================================================
+
+
+class TestNoCompositionHashPositionDetection:
+    """BLOCK-1 / C-2: the composition-hash position-open detection was
+    removed because a live-holdings hash is a rebalance detector, not a
+    position identity. Pin the removal so it cannot silently return."""
+
+    def test_no_composition_hash_position_detection_remains(self):
+        """
+        BLOCK-1 resolution guard: the per-symphony composition-change
+        position-open detection — is_new_position_open and the
+        position_identity construction — must NOT be present in
+        alpha_bot_execution.py.
+
+        Keying a per-position reset on a hash of LIVE holdings wipes a live
+        position's exit-guard state on a normal Composer rebalance (BLOCK-1,
+        confirmed by the risk-engine-specialist domain ruling). The
+        mechanism was removed; C-2 is closed by wipe_transient_state. This
+        test AST-scans alpha_bot_execution.py to assert the removed names do
+        not reappear.
+
+        RED while the composition-hash detection exists; GREEN once removed.
+        """
+        import alpha_bot_execution as _abe
+
+        source = pathlib.Path(_abe.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        forbidden = {"is_new_position_open", "position_identity"}
+        offenders: list[str] = []
+        for node in ast.walk(tree):
+            # Attribute access: database.is_new_position_open(...)
+            if isinstance(node, ast.Attribute) and node.attr in forbidden:
+                offenders.append(f"attribute '{node.attr}' at line {node.lineno}")
+            # Bare name / subscript-key string literals.
+            if isinstance(node, ast.Name) and node.id in forbidden:
+                offenders.append(f"name '{node.id}' at line {node.lineno}")
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value in forbidden
+            ):
+                offenders.append(
+                    f"string '{node.value}' at line {node.lineno}"
+                )
+
+        assert not offenders, (
+            "The composition-hash position-open detection has crept back "
+            "into alpha_bot_execution.py: "
+            f"{offenders}. A live-holdings composition hash is a REBALANCE "
+            "detector, not a position identity — keying a per-position reset "
+            "on it wipes a live position's exit-guard state on a normal "
+            "rebalance (BLOCK-1). C-2 is closed by wipe_transient_state; the "
+            "composition-change detection must stay removed."
+        )
+
+    def test_is_new_position_open_is_removed_from_database(self):
+        """
+        BLOCK-1 resolution guard: database.is_new_position_open had exactly
+        one caller (the removed alpha_bot_execution.py detection block). With
+        no caller it is dead code; per the project 'no unused code' standard
+        it must be removed from database.py.
+
+        RED while is_new_position_open still exists; GREEN once removed.
+        """
+        assert not hasattr(database, "is_new_position_open"), (
+            "database.is_new_position_open still exists. Its only caller — "
+            "the composition-hash position-open detection in "
+            "alpha_bot_execution.py — was removed (BLOCK-1). An unused "
+            "detector is dead code; remove it. C-2 is closed by "
+            "wipe_transient_state."
         )
