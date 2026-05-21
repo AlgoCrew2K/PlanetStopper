@@ -534,6 +534,90 @@ def test_fu_zhang_citation_corrected_to_2012_or_removed() -> None:
 
 
 # ===========================================================================
+# AC-3 — is_triggered override is absolute AND applied last, but does NOT
+# suppress the hold-ticks / breakeven-locked computation.
+# ===========================================================================
+
+
+def test_triggered_overrides_only_the_stop_level_not_the_state_fields() -> None:
+    """
+    AC-3 interaction safety (per risk-engine-specialist domain ruling): the
+    is_triggered branch overrides ONLY stop_trigger_level — it must NOT
+    suppress the hwm_hold_ticks counter or the breakeven_locked latch
+    computation. Those two are still computed and returned correctly.
+
+    The audit's invariant #5 ("triggered override absolute") is about the
+    STOP LEVEL sentinel; the state evolution (counter + latch) is
+    independent and must keep running so a position's bookkeeping stays
+    consistent.
+
+    Derivation (symphony_vol=1.0 -> threshold 0.8):
+      current_return=1.5 (>= 0.8) -> hwm_hold_ticks 4 -> 5; 5 >=
+      HWM_HOLD_TICKS_THRESHOLD -> new_breakeven_locked flips True. The stop
+      level is overridden to -999.0 because is_triggered=True, but
+      new_hold_ticks must be 5 and new_breakeven_locked must be True.
+
+    Catches an impl that short-circuits the whole function on is_triggered
+    and returns stale / zeroed state fields.
+    """
+    new_hold_ticks, new_breakeven_locked, stop_level = (
+        math_engine.compute_breakeven_update(
+            current_return=1.5,
+            symphony_vol=1.0,
+            base_stop_level=0.5,
+            current_hold_ticks=4,
+            currently_breakeven_locked=False,
+            is_triggered=True,
+        )
+    )
+    assert stop_level == pytest.approx(
+        math_engine.TRIGGERED_OVERRIDE_LEVEL, rel=APPROX_REL, abs=APPROX_ABS
+    ), (
+        f"is_triggered=True must override the stop level to "
+        f"TRIGGERED_OVERRIDE_LEVEL; got {stop_level}."
+    )
+    assert new_hold_ticks == 5, (
+        f"is_triggered=True must NOT suppress the hwm_hold_ticks counter. "
+        f"current_hold_ticks=4 + a qualifying tick -> expected 5, got "
+        f"{new_hold_ticks}. Only the stop LEVEL is overridden."
+    )
+    assert new_breakeven_locked is True, (
+        f"is_triggered=True must NOT suppress the breakeven-lock "
+        f"computation. 5 hold ticks >= HWM_HOLD_TICKS_THRESHOLD -> the latch "
+        f"must flip True; got {new_breakeven_locked}."
+    )
+
+
+def test_triggered_override_is_applied_last_beats_breakeven_floor() -> None:
+    """
+    AC-3: the is_triggered override is applied LAST — it beats the
+    breakeven floor. Even with currently_breakeven_locked=True and a
+    positive base_stop_level (locked branch would yield max(base,0.0)), an
+    is_triggered=True must still return the -999.0 sentinel, not the floored
+    level.
+
+    Catches an impl that applies the override BEFORE the floor (the floor
+    would then re-clamp -999.0 up to 0.0).
+    """
+    _, _, stop_level = math_engine.compute_breakeven_update(
+        current_return=2.0,
+        symphony_vol=1.0,
+        base_stop_level=3.0,           # locked branch would give 3.0
+        current_hold_ticks=10,
+        currently_breakeven_locked=True,
+        is_triggered=True,
+    )
+    assert stop_level == pytest.approx(
+        math_engine.TRIGGERED_OVERRIDE_LEVEL, rel=APPROX_REL, abs=APPROX_ABS
+    ), (
+        f"is_triggered override must be applied LAST and beat the breakeven "
+        f"floor. Expected TRIGGERED_OVERRIDE_LEVEL "
+        f"({math_engine.TRIGGERED_OVERRIDE_LEVEL}), got {stop_level} — if it "
+        f"is 3.0 or 0.0 the override ran before the floor."
+    )
+
+
+# ===========================================================================
 # Determinism guard
 # ===========================================================================
 
