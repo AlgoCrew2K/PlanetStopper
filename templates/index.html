@@ -7,9 +7,10 @@
   <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
   <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Universal + body reset live in static/layout.css (shared single source) */
 
     body {
       background: var(--studio-bg);
@@ -18,11 +19,7 @@
       min-height: 100vh;
     }
 
-    .page-wrap {
-      max-width: 100%;
-      margin: 0 auto;
-      padding: 24px 28px 48px;
-    }
+    /* .page-wrap skeleton lives in static/layout.css (shared single source) */
 
     /* status-strip removed (V-40): status info is inline in the chrome nav right-rail */
 

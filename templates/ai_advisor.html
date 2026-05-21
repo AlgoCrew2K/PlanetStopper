@@ -8,6 +8,7 @@
     <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
     <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -23,13 +24,10 @@
             background: var(--studio-bg);
             color: var(--studio-ink);
             min-height: 100vh;
-            padding: 2rem;
             font-family: var(--studio-sans, sans-serif);
         }
 
-        .page-wrap {
-            width: 100%;
-        }
+        /* .page-wrap skeleton lives in static/layout.css (shared single source) */
 
         /* Header */
         .adv-header {

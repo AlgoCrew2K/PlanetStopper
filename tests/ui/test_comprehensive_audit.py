@@ -374,8 +374,9 @@ def test_dashboard_window_selector_buttons_have_fetch_handler():
 # ---------------------------------------------------------------------------
 
 def _extract_page_wrap_css_block(src: str) -> str:
-    """Return the CSS declaration block for .page-wrap (or .dashboard-layout) from a
-    <style> section.  Returns empty string if no such rule is found.
+    """Return the CSS declaration block for .page-wrap (or .dashboard-layout).
+
+    Returns empty string if no such rule is found.
 
     Scopes the D-LAY-01 max-width check to the top-level layout wrapper only —
     inner elements (modals, dialogs, cards) legitimately use max-width and must
@@ -388,31 +389,52 @@ def _extract_page_wrap_css_block(src: str) -> str:
     return m.group(1) if m else ""
 
 
+def _page_max_width_caps(css: str) -> list[int]:
+    """Return literal `max-width: <N>px` caps <= 1600 declared in `css`.
+
+    Resolves the `--studio-page-max-width` custom property: the .page-wrap
+    skeleton (post-consolidation) sets `max-width: var(--studio-page-max-width)`,
+    so the real cap is whatever value that variable is bound to. Both the
+    `--studio-page-max-width: <N>px` custom-property declarations and any direct
+    `max-width: <N>px` literal on .page-wrap are inspected.
+    """
+    values = re.findall(r'--studio-page-max-width\s*:\s*(\d+)px', css)
+    values += re.findall(r'max-width\s*:\s*(\d+)px', css)
+    return [int(v) for v in values if int(v) <= 1600]
+
+
 def test_dashboard_no_max_width_cap_on_top_level_container():
     """D-LAY-01: The dashboard page layout must fill the full viewport width on 4K ultrawide.
 
-    Checks only the .page-wrap / .dashboard-layout CSS rule, NOT inner elements
-    (modals, dialogs, cards may legitimately cap their own width).
+    Checks only the top-level .page-wrap / .dashboard-layout layout rule, NOT
+    inner elements (modals, dialogs, cards may legitimately cap their own width).
 
-    Inner column/card widths may cap, but the page wrapper must not.
+    Post-consolidation the .page-wrap skeleton lives in static/layout.css and
+    caps width via the `--studio-page-max-width` custom property, so this test
+    reads layout.css (the single source of truth) and resolves that variable.
 
-    Fix: remove or increase the max-width on the top-level .page-wrap / .dashboard-layout
-    container in index.html.
+    Fix: remove or increase the max-width / --studio-page-max-width on the
+    shared .page-wrap skeleton in static/layout.css.
     """
-    src = _INDEX_HTML.read_text(encoding="utf-8")
-    page_wrap_css = _extract_page_wrap_css_block(src)
-    assert page_wrap_css, (
-        "templates/index.html has no .page-wrap or .dashboard-layout CSS rule. "
-        "The top-level layout wrapper must be defined with one of these class names."
+    layout_css_path = _STATIC_DIR / "layout.css"
+    assert layout_css_path.is_file(), (
+        "static/layout.css must exist — it is the single shared source of "
+        "truth for the .page-wrap page-layout skeleton."
     )
-    max_width_matches = re.findall(r'max-width\s*:\s*(\d+)px', page_wrap_css)
-    capped_values = [int(v) for v in max_width_matches if int(v) <= 1600]
+    layout_css = layout_css_path.read_text(encoding="utf-8")
+    page_wrap_css = _extract_page_wrap_css_block(layout_css)
+    assert page_wrap_css, (
+        "static/layout.css has no .page-wrap or .dashboard-layout CSS rule. "
+        "The top-level layout wrapper skeleton must be defined there."
+    )
+    capped_values = _page_max_width_caps(layout_css)
     assert len(capped_values) == 0, (
-        f"templates/index.html .page-wrap has max-width cap(s) of {capped_values}px. "
+        f"static/layout.css .page-wrap has max-width cap(s) of {capped_values}px. "
         "On a 3840px wide 4K display this leaves large blank margins. "
-        "The design uses a fluid grid — the outermost layout wrapper must have no max-width "
-        "(or a value ≥ 1920px). Inner elements like modals may retain their own max-width. "
-        "Fix: remove or increase max-width from the .page-wrap rule."
+        "The design uses a fluid grid — the shared layout wrapper must have no "
+        "max-width cap (or a value ≥ 1920px). Inner elements like modals may "
+        "retain their own max-width. "
+        "Fix: remove or raise --studio-page-max-width / max-width in layout.css."
     )
 
 

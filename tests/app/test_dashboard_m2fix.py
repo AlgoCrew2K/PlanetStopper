@@ -121,33 +121,44 @@ class TestContainerWidth:
     def test_outer_container_uses_wider_than_7xl(self):
         """
         The outer page wrapper must NOT cap the layout at 1280px (max-w-7xl).
-        The Studio design uses a custom CSS class (page-wrap) with max-width: 100%
-        rather than Tailwind max-w-* classes.  We assert:
-          (a) no max-w-7xl on any wrapper div (already passing via does_not_use test),
-          (b) the page-wrap CSS declaration uses a width >= 100% or no restrictive cap.
+        The Studio design uses a custom CSS class (page-wrap) whose skeleton
+        lives in static/layout.css (the shared single source of truth) with
+        max-width driven by the --studio-page-max-width custom property.
+        We assert:
+          (a) class="page-wrap" is the outer wrapper in index.html,
+          (b) the shared .page-wrap CSS in layout.css uses no restrictive cap.
         """
         html = _INDEX_HTML.read_text(encoding="utf-8")
 
         # The Studio outer wrapper is class="page-wrap", not a Tailwind mx-auto div.
-        # Assert it exists and the CSS definition is not a narrow cap.
         assert 'class="page-wrap"' in html, (
             'index.html must contain class="page-wrap" as the outer page wrapper; '
             "the Studio design uses a custom CSS layout class, not Tailwind mx-auto"
         )
 
-        # page-wrap CSS: max-width must be 100% or unset (not a narrow pixel cap).
-        # We inspect the inline <style> block where page-wrap is defined.
+        # page-wrap skeleton CSS lives in static/layout.css post-consolidation.
+        layout_css = (_WORKTREE / "static" / "layout.css").read_text(encoding="utf-8")
         page_wrap_css_match = re.search(
-            r'\.page-wrap\s*\{([^}]+)\}', html, re.DOTALL
+            r'\.page-wrap\s*\{([^}]+)\}', layout_css, re.DOTALL
         )
-        assert page_wrap_css_match, ".page-wrap CSS definition not found in index.html <style> block"
+        assert page_wrap_css_match, (
+            ".page-wrap CSS definition not found in static/layout.css — the "
+            "shared page-layout skeleton must define it."
+        )
 
         css_body = page_wrap_css_match.group(1)
-        narrow_cap = re.search(r'max-width\s*:\s*(?:[0-9]{1,3}px|[0-9]{2,3}rem)', css_body)
+        # A narrow literal cap on the rule itself, or on the --studio-page-max-width
+        # custom property the rule resolves, would re-introduce the 1280px cap bug.
+        narrow_cap = re.search(
+            r'(?:max-width|--studio-page-max-width)\s*:\s*'
+            r'(?:[0-9]{1,3}px|[0-9]{2,3}rem)',
+            layout_css,
+        )
         assert not narrow_cap, (
-            f".page-wrap CSS must not set a narrow max-width cap; "
-            f"got: {css_body.strip()!r}. "
-            "The layout must use max-width: 100% or the max-width property must be absent."
+            f".page-wrap must not set a narrow max-width cap in static/layout.css; "
+            f".page-wrap rule body: {css_body.strip()!r}. "
+            "The layout must use max-width: 100% (or the --studio-page-max-width "
+            "default) — no narrow pixel/rem cap."
         )
 
 

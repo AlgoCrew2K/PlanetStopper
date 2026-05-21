@@ -53,11 +53,13 @@ class TestOuterWrapperIsFlexColumn:
 
     def test_outer_wrapper_has_flex_1_and_flex_col(self):
         """
-        The Studio outer wrapper is class="page-wrap" with CSS max-width: 100%.
-        The old Tailwind mx-auto pattern (max-w-screen-2xl flex flex-col) was
-        replaced in the V3 Studio redesign.  We assert:
-          - class="page-wrap" exists as the outer wrapper
-          - page-wrap CSS sets max-width to 100% or wider (no narrow cap)
+        The Studio outer wrapper is class="page-wrap". Its skeleton CSS lives in
+        static/layout.css (the shared single source of truth) with max-width
+        driven by --studio-page-max-width. The old Tailwind mx-auto pattern
+        (max-w-screen-2xl flex flex-col) was replaced in the V3 Studio redesign.
+        We assert:
+          - class="page-wrap" exists as the outer wrapper in index.html
+          - the shared .page-wrap CSS in layout.css uses no narrow max-width cap
         """
         html = _INDEX_HTML.read_text(encoding="utf-8")
 
@@ -67,18 +69,25 @@ class TestOuterWrapperIsFlexColumn:
             "a custom CSS class"
         )
 
-        # page-wrap CSS must use max-width: 100% (full-width layout, no 1280px Tailwind cap)
+        # page-wrap skeleton CSS lives in static/layout.css post-consolidation.
+        layout_css = (_WORKTREE / "static" / "layout.css").read_text(encoding="utf-8")
         page_wrap_css_match = re.search(
-            r'\.page-wrap\s*\{([^}]+)\}', html, re.DOTALL
+            r'\.page-wrap\s*\{([^}]+)\}', layout_css, re.DOTALL
         )
         assert page_wrap_css_match, (
-            ".page-wrap CSS definition must be present in the index.html <style> block"
+            ".page-wrap CSS definition must be present in static/layout.css — "
+            "the shared page-layout skeleton."
         )
         css_body = page_wrap_css_match.group(1)
-        narrow_cap = re.search(r'max-width\s*:\s*(?:[0-9]{1,3}px|[0-9]{2,3}rem)', css_body)
+        narrow_cap = re.search(
+            r'(?:max-width|--studio-page-max-width)\s*:\s*'
+            r'(?:[0-9]{1,3}px|[0-9]{2,3}rem)',
+            layout_css,
+        )
         assert not narrow_cap, (
-            f".page-wrap must not set a narrow max-width; "
-            f"got CSS: {css_body.strip()!r}. Use max-width: 100%."
+            f".page-wrap must not set a narrow max-width in static/layout.css; "
+            f".page-wrap rule body: {css_body.strip()!r}. Use max-width: 100% "
+            "(or the --studio-page-max-width default)."
         )
 
 

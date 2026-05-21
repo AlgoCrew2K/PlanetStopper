@@ -1,0 +1,37 @@
+/* Shared page-layout skeleton — single source of truth for outer page
+   positioning across all Studio v3 pages. Previously every page template
+   redefined this in its own inline <style>; the copies drifted and shifted
+   the non-Dashboard pages right. Defined ONCE here; pages tune intentional
+   variation via the named --studio-page-* overrides below. */
+
+/* Universal base reset — shared so every page uses border-box and zeroed
+   element margins/padding. Previously only 2 of 5 pages carried this; the
+   3 without it rendered content-box, diverging the box model. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* Canonical page-wrapper values (index.html known-good defaults). A page
+     with intentional variation re-declares one of these in its own :root. */
+  --studio-page-max-width: 100%;
+  --studio-page-inset: 28px;
+}
+
+/* Body reset — zero the UA-default 8px margin so every page sits flush.
+   Shared here so pages cannot drift on the body box model. */
+body {
+  margin: 0;
+  padding: 0;
+}
+
+.page-wrap {
+  box-sizing: border-box;
+  max-width: var(--studio-page-max-width);
+  margin: 0 auto;
+  padding: 24px var(--studio-page-inset) 48px;
+}

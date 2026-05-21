@@ -8,6 +8,7 @@
     <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
     <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -23,16 +24,13 @@
             background: var(--studio-bg);
             color: var(--studio-ink);
             min-height: 100vh;
-            padding: 2rem;
             font-family: var(--studio-sans, sans-serif);
         }
 
-        /* V-32: full-width fluid layout up to a sensible max so ultrawide
-           doesn't strand content in a narrow center column. */
-        .page-wrap {
-            width: 100%;
-            max-width: 2400px;
-            margin: 0 auto;
+        /* V-32: ultrawide cap — keep content from stranding in a narrow
+           center column. Named override of the shared layout.css skeleton. */
+        :root {
+            --studio-page-max-width: 2400px;
         }
 
         /* Header */
