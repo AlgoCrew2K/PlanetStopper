@@ -22,6 +22,14 @@ This roadmap implements the **user-ratified verdict** of the Decision-Science Co
 3. **Regime & Decision Narrator advisor role is Phase-2-conditional.** Structurally inapplicable at Phase 1 (no drift to narrate).
 4. **"EUT+CVaR" ships as "CVaR-with-risk-aversion-shaping."** No literal `E[U(exit)]` vs `E[U(hold)]` crossover layer; gamma shapes the CVaR thresholds.
 
+### 0.1 Why two finalists, not three (H-9 — the Finalist-C exclusion argued in-body)
+
+The evaluation flagged v3 as having argued the Finalist-C exclusion **only** in its §10 compliance index, never in its body. Per H-9 disposition, the argument is restated here once, in the roadmap that the implementing team actually reads — the place a reader of the two-finalist structure naturally looks:
+
+**There is no coherent standalone third finalist.** The only candidate "third path" — pre-committing to the evidence-gated Phase-2 roadmap — is **not a separate architecture; it is Finalist B**. Finalist A is the terminal-acceptable floor; Finalist B is *Finalist A plus the evidence-gated Phase-2 roadmap*; "pre-commit to Phase 2" is therefore a **choice within Finalist B's framing**, not a distinct third architecture. The genuine decision space is **two finalists plus the user's pre-commit choice** — and the user already made that choice (scaffold Phase 2 now, evidence-gate execution). So the roadmap structure is two finalists, with Phase 2's gating preconditions making the user's pre-commit visible and reversible.
+
+A second candidate sometimes raised — *"Finalist A + a permanent diagnostic-grade CVaR layer that never moves money"* — collapses into Finalist A by inspection: M2 already ships that diagnostic-grade layer (see synthesis §3.1 and `phase-1/m2-cvar-diagnostic/plan.md`). It is not a separate architecture; it is what Finalist A delivers.
+
 ---
 
 ## 1. Cross-cutting hazards (binding for EVERY relevant plan's hazard callouts)
@@ -202,7 +210,7 @@ The audits run alongside the cycles. Findings feed remediation tasks back into t
 | **H-6 — serial-correlation residual W-H5** | `phase-1/m1-crra-eu-autotuner-objective/plan.md` §H-6 (disclose-and-accept) |
 | **H-7 — PINS, not VALIDATES** | `phase-1/red-test-1-crra-tstat-pin/plan.md` (verb fix in test name) |
 | **H-8 — migration filename + table-count + parity-exclusion** | `phase-1/016-spec-bundles/plan.md`, `phase-1/019-fold-role-columns/plan.md`, `phase-1/gate-1-replay-parity/plan.md` |
-| **H-9 — Finalist-C exclusion argued in body** | Documentation-sweep PR (out of code scope) |
+| **H-9 — Finalist-C exclusion argued in body** | README §0.1 (this file) — argument restated where the implementing team reads it; the synthesis doc-sweep PR is a follow-up but H-9 is closed by §0.1 alone |
 | **§B operator-optional second window (DISJOINT, no signed-divergence)** | `phase-1/second-window-residue/plan.md` + `phase-1/m2-cvar-diagnostic/plan.md` §B + `phase-2/test-operator-second-window/plan.md` |
 | **NN1 spec-freeze** | `phase-1/nn1-spec-freeze-discipline/plan.md` + every plan's hazard callout |
 | **`N_effective = N_optuna + S` additive accounting** | `phase-1/n-effective-additive-accounting/plan.md` |
