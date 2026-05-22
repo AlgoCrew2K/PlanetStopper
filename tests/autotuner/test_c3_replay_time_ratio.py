@@ -33,42 +33,62 @@ _AUTOTUNER_PATH = pathlib.Path(autotuner.__file__)
 _AUTOTUNER_TREE = ast.parse(_AUTOTUNER_PATH.read_text(encoding="utf-8"))
 
 
-def _function_node(name: str) -> ast.FunctionDef:
-    for node in ast.walk(_AUTOTUNER_TREE):
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"function {name!r} not found in autotuner.py")
+# Replay machinery: the two top-level replay functions plus any shared
+# per-tick exit core. The replay may extract a shared core (the preferred
+# single-source-of-truth design) — the AST checks walk the union so the
+# refactor is accommodated, not forbidden.
+_REPLAY_MACHINERY_NAMES = (
+    "_collect_sim_returns",
+    "run_simulation",
+    "replay_exit_sequence",
+    "_replay_exit_tick",
+    "_replay_tick",
+    "_simulate_exit_tick",
+)
 
 
-def _numeric_constants_in(func: ast.FunctionDef) -> list[float]:
+def _replay_machinery_nodes() -> list[ast.FunctionDef]:
+    return [
+        node
+        for node in ast.walk(_AUTOTUNER_TREE)
+        if isinstance(node, ast.FunctionDef) and node.name in _REPLAY_MACHINERY_NAMES
+    ]
+
+
+def _numeric_constants_in(node: ast.AST) -> list[float]:
     out: list[float] = []
-    for node in ast.walk(func):
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
-                and not isinstance(node.value, bool):
-            out.append(float(node.value))
+    for n in ast.walk(node):
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) \
+                and not isinstance(n.value, bool):
+            out.append(float(n.value))
     return out
 
 
 # ===========================================================================
-# AC-7 — structural: no bare 390 literal in either replay function.
+# AC-7 — structural: no bare 390 literal anywhere in the replay machinery.
 # ===========================================================================
 
 
-@pytest.mark.parametrize("func_name", ["_collect_sim_returns", "run_simulation"])
-def test_replay_function_has_no_390_session_length_literal(func_name: str) -> None:
+def test_replay_machinery_has_no_390_session_length_literal() -> None:
     """AC-7: the unnamed `390` / `390.0` full-session-length literal must be
-    gone from both replay functions. time_ratio must derive from the actual
-    tick count (or session datetimes), not assume a fixed 390-bar session.
+    gone from the replay machinery (the two replay functions and any shared
+    per-tick exit core). time_ratio must derive from the actual tick count
+    (or session datetimes), not assume a fixed 390-bar session.
 
-    RED: both functions contain `tick_idx / 390.0`.
+    Walks the whole replay machinery so a shared-core refactor that relocates
+    the time_ratio computation cannot hide a surviving 390 literal.
+
+    RED: the replay contains `tick_idx / 390.0`.
     """
-    func = _function_node(func_name)
-    consts = _numeric_constants_in(func)
-    assert 390.0 not in consts, (
-        f"autotuner.{func_name} still contains the bare 390 session-length "
-        f"literal. time_ratio must be derived from the actual session length "
-        f"— tick_idx / max(1, len(ticks) - 1) — so half-day sessions reach "
-        f"full end-of-day stop tightening."
+    offenders: list[str] = []
+    for func in _replay_machinery_nodes():
+        if 390.0 in _numeric_constants_in(func):
+            offenders.append(func.name)
+    assert not offenders, (
+        f"Replay machinery {offenders} still contains the bare 390 session-"
+        f"length literal. time_ratio must be derived from the actual session "
+        f"length — tick_idx / max(1, len(ticks) - 1) — so half-day sessions "
+        f"reach full end-of-day stop tightening."
     )
 
 

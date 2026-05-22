@@ -260,16 +260,38 @@ def _per_day_builder_or_skip():
 
 def _minimal_day_inputs() -> dict:
     """Minimal fixture inputs for a single replay day — one symphony, one
-    holding, a handful of intraday bars and >= MC_MIN_HISTORY_DAYS of daily
-    history so run_monte_carlo's history-length gate is not the variable
-    under test (the recorder/None double overrides its return regardless).
+    holding, a handful of intraday bars and >= 20 days of daily history.
 
-    This is a schema-derived fixture: shapes match what synthetic_history's
-    process_day consumes (intraday bars keyed by date/ticker, daily history,
-    holdings with ticker+allocation). The implementer's per-day builder
-    signature determines the exact kwargs; this dict is the contract the
-    builder must accept.
+    PROVENANCE — verified against the real producer, NOT assumed. The
+    hist_data_up_to_yesterday shape is exactly what synthetic_history's
+    process_day builds and passes (synthetic_history.py:244-291): a
+    DATE-keyed dict {date_str: {ticker: {c, daily_ret, high, low, close}}}.
+    math_engine.calculate_20d_vol / calculate_14d_atr_pct consume it that way
+    (iterate historical_data.values() -> day_data.values()); a ticker-keyed
+    or list shape crashes them. The fixture carries >= 20 dated entries so
+    calculate_20d_vol's LOOKBACK_DAYS gate is satisfied (run_monte_carlo
+    itself is monkeypatched in the AC-4/AC-5 tests, so its own history gate
+    is not the variable under test).
+
+    intraday_by_date / timestamps / holdings / yesterday_closes / spy_today
+    match the implementer's build_replay_day signature.
     """
+    # 24 dated daily-history entries (> LOOKBACK_DAYS=20). Each date maps a
+    # ticker to the producer's per-ticker record shape.
+    hist_data_up_to_yesterday: dict[str, dict[str, dict[str, float]]] = {}
+    for d in range(1, 25):
+        date_str = f"2026-03-{d:02d}"
+        close = 100.0 + d * 0.5
+        hist_data_up_to_yesterday[date_str] = {
+            "SPY": {
+                "c": close,
+                "daily_ret": 0.001,  # small flat daily return
+                "high": close + 0.5,
+                "low": close - 0.5,
+                "close": close,
+            }
+        }
+
     return {
         "sym_id": "sym-A",
         "date_str": "2026-04-06",
@@ -283,12 +305,7 @@ def _minimal_day_inputs() -> dict:
             }
         },
         "timestamps": [f"2026-04-06T09:{30 + i:02d}:00Z" for i in range(5)],
-        "hist_data_up_to_yesterday": {
-            "SPY": [
-                {"date": f"2026-03-{d:02d}", "close": 100.0 + d}
-                for d in range(1, 25)
-            ]
-        },
+        "hist_data_up_to_yesterday": hist_data_up_to_yesterday,
         "yesterday_closes": {"SPY": 100.0},
         "spy_today": 100.0,
     }

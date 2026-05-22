@@ -51,55 +51,123 @@ def _function_node(name: str) -> ast.FunctionDef:
     raise AssertionError(f"function {name!r} not found in autotuner.py")
 
 
-def _calls_in(func: ast.FunctionDef, attr: str) -> list[ast.Call]:
+def _calls_in(node: ast.AST, attr: str) -> list[ast.Call]:
     calls: list[ast.Call] = []
-    for node in ast.walk(func):
-        if isinstance(node, ast.Call):
-            f = node.func
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            f = n.func
             if (isinstance(f, ast.Attribute) and f.attr == attr) or (
                 isinstance(f, ast.Name) and f.id == attr
             ):
-                calls.append(node)
+                calls.append(n)
     return calls
 
 
-def _numeric_constants_in(func: ast.FunctionDef) -> list[float]:
-    """All numeric literal constants appearing in a function body."""
+def _numeric_constants_in(node: ast.AST) -> list[float]:
+    """All numeric literal constants appearing in an AST subtree."""
     out: list[float] = []
-    for node in ast.walk(func):
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
-                and not isinstance(node.value, bool):
-            out.append(float(node.value))
+    for n in ast.walk(node):
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) \
+                and not isinstance(n.value, bool):
+            out.append(float(n.value))
     return out
 
 
+# Replay machinery: the two top-level replay functions plus any shared
+# per-tick exit core they delegate to. A shared-core refactor (run_simulation
+# / _collect_sim_returns / replay_exit_sequence all calling one
+# _replay_exit_tick) is the PREFERRED architecture — these AC-1 tests must
+# accommodate it, not forbid it. They therefore walk the whole autotuner
+# module / the union of replay-machinery functions, not a single FunctionDef.
+_REPLAY_MACHINERY_NAMES = (
+    "_collect_sim_returns",
+    "run_simulation",
+    "replay_exit_sequence",
+    "_replay_exit_tick",
+    "_replay_tick",
+    "_simulate_exit_tick",
+)
+
+
+def _replay_machinery_nodes() -> list[ast.FunctionDef]:
+    """The replay-machinery FunctionDefs that exist in autotuner.py."""
+    found: list[ast.FunctionDef] = []
+    for node in ast.walk(_AUTOTUNER_TREE):
+        if isinstance(node, ast.FunctionDef) and node.name in _REPLAY_MACHINERY_NAMES:
+            found.append(node)
+    return found
+
+
 # ===========================================================================
-# STRUCTURAL — compute_exit_confirmation is called in both replay functions.
+# STRUCTURAL — compute_exit_confirmation is the replay's trailing-stop exit.
+#
+# These tests are architecture-agnostic: the replay may keep one per-tick
+# exit core shared by run_simulation / _collect_sim_returns / replay_exit_
+# sequence (the PREFERRED single-source-of-truth design) or inline it — but
+# either way compute_exit_confirmation must own the trailing-stop decision
+# and no open-coded exit literal may survive anywhere in autotuner.py.
 # ===========================================================================
 
 
-@pytest.mark.parametrize("func_name", ["_collect_sim_returns", "run_simulation"])
-def test_replay_function_calls_compute_exit_confirmation(func_name: str) -> None:
-    """AC-1: both replay functions must call
+def test_autotuner_replay_calls_compute_exit_confirmation() -> None:
+    """AC-1: the autotuner replay must call
     math_engine.compute_exit_confirmation for the trailing-stop decision.
 
-    RED: neither function calls it pre-fix — the exit is open-coded.
+    Walks the whole autotuner module: the call must appear in the replay
+    machinery (the two replay functions or a shared per-tick exit core they
+    delegate to). This accommodates the preferred shared-core refactor — the
+    call lives ONCE, not duplicated per function.
+
+    RED: pre-fix autotuner.py never calls compute_exit_confirmation — the
+    exit is open-coded in both replay functions.
     """
-    func = _function_node(func_name)
-    calls = _calls_in(func, "compute_exit_confirmation")
+    calls = _calls_in(_AUTOTUNER_TREE, "compute_exit_confirmation")
     assert calls, (
-        f"autotuner.{func_name} does not call compute_exit_confirmation. "
-        f"The trailing-stop exit must delegate to the canonical "
-        f"math_engine primitive — not be open-coded."
+        "autotuner.py never calls math_engine.compute_exit_confirmation. "
+        "The replay's trailing-stop exit must delegate to the canonical "
+        "math_engine primitive — not be open-coded."
     )
 
 
-@pytest.mark.parametrize("func_name", ["_collect_sim_returns", "run_simulation"])
-def test_replay_function_has_no_open_coded_exit_literals(func_name: str) -> None:
+def test_both_replay_functions_reach_compute_exit_confirmation() -> None:
+    """AC-1: BOTH run_simulation and _collect_sim_returns must reach
+    compute_exit_confirmation — directly, or via a shared per-tick exit core
+    they call. Neither replay function may keep its own open-coded exit.
+
+    For each of the two replay functions: either it calls
+    compute_exit_confirmation directly, OR it calls a shared replay-machinery
+    helper (e.g. _replay_exit_tick) that itself calls compute_exit_
+    confirmation. This is the call-graph check the shared-core architecture
+    requires — a lexical-containment check would wrongly forbid the refactor.
+
+    RED: pre-fix neither function calls it and there is no shared exit core.
+    """
+    shared_cores = {
+        f.name
+        for f in _replay_machinery_nodes()
+        if f.name not in ("_collect_sim_returns", "run_simulation")
+        and _calls_in(f, "compute_exit_confirmation")
+    }
+    for func_name in ("_collect_sim_returns", "run_simulation"):
+        func = _function_node(func_name)
+        calls_directly = bool(_calls_in(func, "compute_exit_confirmation"))
+        calls_shared_core = any(
+            _calls_in(func, core_name) for core_name in shared_cores
+        )
+        assert calls_directly or calls_shared_core, (
+            f"autotuner.{func_name} neither calls compute_exit_confirmation "
+            f"directly nor delegates to a shared per-tick exit core that "
+            f"does. The replay's trailing-stop exit must route through "
+            f"compute_exit_confirmation for this function."
+        )
+
+
+def test_replay_machinery_has_no_open_coded_exit_literals() -> None:
     """AC-1: the open-coded exit block duplicated MAGNITUDE_FLOOR_PCT (0.10),
     MC_SANITY_THRESHOLD (60.0) and EXIT_CONFIRM_TICKS (3). After the fix the
     replay calls compute_exit_confirmation, so NONE of those three exit-rule
-    literals may appear as bare numbers in the replay function body.
+    literals may appear as bare numbers anywhere in the replay machinery
+    (the two replay functions or any shared per-tick exit core).
 
     The literals are sourced from math_engine so the test fails if the
     producer re-tunes them — it asserts 'these specific values are not
@@ -107,23 +175,25 @@ def test_replay_function_has_no_open_coded_exit_literals(func_name: str) -> None
 
     RED: the inline block contains `0.10`, `60.0` and `3` verbatim.
     """
-    func = _function_node(func_name)
-    consts = _numeric_constants_in(func)
-
     forbidden = {
         "MAGNITUDE_FLOOR_PCT": math_engine.MAGNITUDE_FLOOR_PCT,
         "MC_SANITY_THRESHOLD": math_engine.MC_SANITY_THRESHOLD,
         "EXIT_CONFIRM_TICKS": float(math_engine.EXIT_CONFIRM_TICKS),
     }
-    leaked = {
-        name: value for name, value in forbidden.items() if value in consts
-    }
+    leaked: dict[str, dict[str, float]] = {}
+    for func in _replay_machinery_nodes():
+        consts = _numeric_constants_in(func)
+        hits = {
+            name: value for name, value in forbidden.items() if value in consts
+        }
+        if hits:
+            leaked[func.name] = hits
     assert not leaked, (
-        f"autotuner.{func_name} still contains exit-rule literals {leaked} "
-        f"as bare numbers. These are named in math_engine "
-        f"(MAGNITUDE_FLOOR_PCT / MC_SANITY_THRESHOLD / EXIT_CONFIRM_TICKS); "
-        f"the replay must call compute_exit_confirmation, which owns them, "
-        f"so the values are never duplicated in autotuner.py."
+        f"Replay machinery still contains exit-rule literals {leaked} as "
+        f"bare numbers. These are named in math_engine (MAGNITUDE_FLOOR_PCT "
+        f"/ MC_SANITY_THRESHOLD / EXIT_CONFIRM_TICKS); the replay must call "
+        f"compute_exit_confirmation, which owns them, so the values are "
+        f"never duplicated in autotuner.py."
     )
 
 
@@ -133,14 +203,16 @@ def test_no_open_coded_below_stop_count_increment() -> None:
     the replay assigns its returned new_below_stop_count instead of mutating
     a local with `+= 1`.
 
-    Detects an AugAssign that increments a name containing 'below_stop' in
-    either replay function.
+    Detects an AugAssign that increments a name containing 'below_stop'
+    ANYWHERE in the replay machinery (the two replay functions or any shared
+    per-tick exit core). Architecture-agnostic — a shared-core refactor must
+    not relocate the open-coded increment, it must remove it.
 
-    RED: both functions do `below_stop_count += 1` inside the inline block.
+    RED: the replay functions do `below_stop_count += 1` inside the inline
+    exit block.
     """
     offenders: list[str] = []
-    for func_name in ("_collect_sim_returns", "run_simulation"):
-        func = _function_node(func_name)
+    for func in _replay_machinery_nodes():
         for node in ast.walk(func):
             if (
                 isinstance(node, ast.AugAssign)
@@ -148,7 +220,7 @@ def test_no_open_coded_below_stop_count_increment() -> None:
                 and isinstance(node.target, ast.Name)
                 and "below_stop" in node.target.id
             ):
-                offenders.append(f"{func_name}:line {node.lineno}")
+                offenders.append(f"{func.name}:line {node.lineno}")
     assert not offenders, (
         f"Open-coded below_stop_count increment still present at {offenders}. "
         f"compute_exit_confirmation returns the updated count; the replay "

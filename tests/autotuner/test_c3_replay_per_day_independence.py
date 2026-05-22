@@ -59,69 +59,105 @@ _PER_DAY_STATE_NAMES = {
 }
 
 
-def _function_node(name: str) -> ast.FunctionDef:
+def _function_node(name: str) -> ast.FunctionDef | None:
     for node in ast.walk(_AUTOTUNER_TREE):
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return node
-    raise AssertionError(f"function {name!r} not found in autotuner.py")
+    return None
 
 
-def _date_loop(func: ast.FunctionDef) -> ast.For:
-    """Return the `for date, ticks in ...` per-day loop inside a replay func."""
+# Replay machinery — the two top-level replay functions plus any per-day
+# simulate / per-tick exit helper a shared-core refactor may introduce. The
+# per-day state init may legitimately live in any of these after the
+# AC-1/AC-2/AC-3 restructure; the structural pin walks the union.
+_REPLAY_MACHINERY_NAMES = (
+    "_collect_sim_returns",
+    "run_simulation",
+    "replay_exit_sequence",
+    "_replay_exit_tick",
+    "_replay_tick",
+    "_simulate_exit_tick",
+    "_replay_simulate_day",
+    "_simulate_day",
+)
+
+
+def _date_loops(func: ast.FunctionDef) -> list[ast.For]:
+    """All `for date, ticks in ...` per-day loops inside a function."""
+    loops: list[ast.For] = []
     for node in ast.walk(func):
         if isinstance(node, ast.For) and isinstance(node.target, ast.Tuple):
-            elts = node.target.elts
-            names = {e.id for e in elts if isinstance(e, ast.Name)}
+            names = {e.id for e in node.target.elts if isinstance(e, ast.Name)}
             if {"date", "ticks"} <= names:
-                return node
-    raise AssertionError(
-        f"per-day `for date, ticks` loop not found in {func.name}"
-    )
+                loops.append(node)
+    return loops
 
 
 def _names_assigned_in(node: ast.AST) -> set[str]:
+    """Names bound by plain assignment OR by subscript/attribute assignment
+    (e.g. state['hwm'] = ... or state.hwm = ...) — so a state-dict / dataclass
+    reset is recognized as a re-initialization, not missed."""
     assigned: set[str] = set()
     for n in ast.walk(node):
         if isinstance(n, ast.Assign):
             for tgt in n.targets:
                 if isinstance(tgt, ast.Name):
                     assigned.add(tgt.id)
+                elif isinstance(tgt, ast.Subscript) and isinstance(tgt.slice, ast.Constant):
+                    if isinstance(tgt.slice.value, str):
+                        assigned.add(tgt.slice.value)
+                elif isinstance(tgt, ast.Attribute):
+                    assigned.add(tgt.attr)
     return assigned
 
 
 # ===========================================================================
-# AC-9 — structural: per-day state is re-initialized inside the date loop.
+# AC-9 — structural: per-day state is re-initialized per simulated day.
 # ===========================================================================
 
 
-@pytest.mark.parametrize("func_name", ["_collect_sim_returns", "run_simulation"])
-def test_replay_reinitializes_per_position_state_inside_date_loop(
-    func_name: str,
-) -> None:
-    """AC-9: each replay function must re-initialize per-position transient
-    state INSIDE its `for date, ticks` loop body — so each simulated day is
-    independent, mirroring production's daily wipe_transient_state.
+def test_replay_reinitializes_per_position_state_per_simulated_day() -> None:
+    """AC-9: the replay must re-initialize per-position transient state at the
+    start of each simulated day — so each day is independent, mirroring
+    production's daily wipe_transient_state (Cluster 1).
 
-    Asserts the per-day state names are assigned within the date-loop body.
+    Asserts every per-day state name is assigned inside a `for date, ticks`
+    per-day loop somewhere in the replay machinery. Architecture-agnostic:
+    accepts plain-name, state-dict (`state['hwm'] = ...`) or attribute
+    (`state.hwm = ...`) re-initialization, in either replay function or a
+    shared per-day simulate helper.
+
     Guards against a refactor (driven by the AC-1/AC-2/AC-3 changes) that
-    hoists state init above the date loop and silently introduces cross-day
-    state bleed.
-
-    This is a faithfulness PIN — it stays green if the implementer keeps the
-    init inside the loop, and REDs only if a future refactor moves it out.
+    hoists state init above the per-day loop and silently introduces
+    cross-day state bleed. A faithfulness PIN — green while init is per-day,
+    RED only if a refactor moves it out.
     """
-    func = _function_node(func_name)
-    date_loop = _date_loop(func)
-    assigned_in_loop = _names_assigned_in(date_loop)
+    # Collect every per-day loop across the replay machinery.
+    all_date_loops: list[ast.For] = []
+    for name in _REPLAY_MACHINERY_NAMES:
+        func = _function_node(name)
+        if func is not None:
+            all_date_loops.extend(_date_loops(func))
 
-    missing = sorted(_PER_DAY_STATE_NAMES - assigned_in_loop)
+    assert all_date_loops, (
+        "No `for date, ticks` per-day loop found anywhere in the replay "
+        "machinery. The replay must iterate per simulated day so each day's "
+        "state is independent."
+    )
+
+    # Per-day state must be re-initialized inside at least one per-day loop.
+    assigned_in_a_date_loop: set[str] = set()
+    for loop in all_date_loops:
+        assigned_in_a_date_loop |= _names_assigned_in(loop)
+
+    missing = sorted(_PER_DAY_STATE_NAMES - assigned_in_a_date_loop)
     assert not missing, (
-        f"autotuner.{func_name} does not re-initialize {missing} inside its "
-        f"per-day `for date, ticks` loop. Every per-position transient state "
-        f"must be reset at the top of each simulated day — that per-day "
+        f"The replay does not re-initialize {missing} inside any per-day "
+        f"`for date, ticks` loop. Every per-position transient state must be "
+        f"reset at the start of each simulated day — that per-day "
         f"independence is the faithful mirror of production's daily "
-        f"wipe_transient_state (Cluster 1). Hoisting init out of the loop "
-        f"reintroduces cross-day state bleed."
+        f"wipe_transient_state (Cluster 1). Hoisting init out of the per-day "
+        f"loop reintroduces cross-day state bleed."
     )
 
 

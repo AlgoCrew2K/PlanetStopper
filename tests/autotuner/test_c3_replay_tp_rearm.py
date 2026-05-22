@@ -403,31 +403,45 @@ def test_tp_confirm_count_is_a_named_constant_not_a_literal() -> None:
         )
 
 
+# Replay machinery: the two top-level replay functions plus any shared
+# per-tick exit core a shared-core refactor may introduce. The TP-literal
+# scan walks the union so the refactor is accommodated, not forbidden.
+_REPLAY_MACHINERY_NAMES = (
+    "_collect_sim_returns",
+    "run_simulation",
+    "replay_exit_sequence",
+    "_replay_exit_tick",
+    "_replay_tick",
+    "_simulate_exit_tick",
+)
+
+
 def test_autotuner_has_no_open_coded_tp_confirm_literal() -> None:
     """AC-3 / D-C3a (REQUIRED): once the replay calls the shared
     compute_tp_confirmation, the bare confirm-count literal `2` must be gone
-    from the TP block of both replay functions — they delegate the count to
+    from the TP block of the replay machinery — it delegates the count to
     the shared function.
 
-    Detects a bare `2` compared against an `above_tp`-named variable inside
-    either replay function (the `above_tp_count >= 2` open-coded check).
+    Detects a bare `2` compared against an `above_tp`-named variable anywhere
+    in the replay machinery (the two replay functions OR a shared per-tick
+    exit core) — the `above_tp_count >= 2` open-coded check. Architecture-
+    agnostic: a shared-core refactor must REMOVE the literal, not relocate it.
 
-    RED: pre-fix both _collect_sim_returns and run_simulation contain
-    `above_tp_count >= 2`.
+    RED: pre-fix the replay contains `above_tp_count >= 2`.
     """
     autotuner_tree = _ast.parse(
         pathlib.Path(autotuner.__file__).read_text(encoding="utf-8")
     )
 
-    def _function_node(name: str):
-        for node in _ast.walk(autotuner_tree):
-            if isinstance(node, _ast.FunctionDef) and node.name == name:
-                return node
-        raise AssertionError(f"function {name!r} not found in autotuner.py")
+    machinery = [
+        node
+        for node in _ast.walk(autotuner_tree)
+        if isinstance(node, _ast.FunctionDef)
+        and node.name in _REPLAY_MACHINERY_NAMES
+    ]
 
     offenders: list[str] = []
-    for func_name in ("_collect_sim_returns", "run_simulation"):
-        func = _function_node(func_name)
+    for func in machinery:
         for node in _ast.walk(func):
             if isinstance(node, _ast.Compare):
                 # left operand an above_tp* name, a comparator the literal 2
@@ -442,11 +456,11 @@ def test_autotuner_has_no_open_coded_tp_confirm_literal() -> None:
                     for n in node.comparators
                 )
                 if has_above_tp and has_literal_2:
-                    offenders.append(f"{func_name}:line {node.lineno}")
+                    offenders.append(f"{func.name}:line {node.lineno}")
 
     assert not offenders, (
         f"autotuner.py still open-codes the TP confirm count at {offenders} "
         f"(`above_tp_count >= 2`). The replay must delegate take-profit "
         f"confirmation to the shared math_engine.compute_tp_confirmation; "
-        f"the literal 2 must not survive in the replay."
+        f"the literal 2 must not survive in the replay machinery."
     )
