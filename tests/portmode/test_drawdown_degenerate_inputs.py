@@ -87,16 +87,22 @@ class TestMaxDrawdownDoesNotRaiseOnDegenerateInputs:
         result = _compute_max_drawdown_from_series(case["input"])
         assert result is case["expected"]
 
-    def test_zero_interior_peak_returns_none_not_raises(self, drawdown_cases):
-        """The zero-peak guard must cover the peak-UPDATE branch, not only
-        values[0]: a running peak that climbs to exactly 0.0 then a later drop
-        must not raise ZeroDivisionError."""
+    def test_non_positive_anchored_series_with_zero_interior_returns_none(
+        self, drawdown_cases
+    ):
+        """A non-positive-anchored series containing a zero interior value must
+        return None. NOTE: this is covered by the first-point guard — a running
+        peak starts at values[0] and only ratchets UP, so a series that PASSES
+        the first-point guard (values[0] > 0.0) can never drive the peak
+        non-positive at an interior point; a separate interior-peak guard would
+        be unreachable dead code. This case confirms the first-point guard
+        catches the whole non-positive-anchored series, including one with a
+        zero interior value that the pre-fix producer divided by."""
         case = drawdown_cases["zero_interior_peak_then_drop"]
         result = _compute_max_drawdown_from_series(case["input"])
         assert result is case["expected"], (
-            "interior peak of 0.0 must be guarded too — the audit understated "
-            "this as first-point-only; direct execution confirms the interior "
-            "peak-update branch also raises"
+            "a non-positive-anchored series (values[0] <= 0.0) must return "
+            "None via the first-point guard, never raise ZeroDivisionError"
         )
 
     @pytest.mark.parametrize(

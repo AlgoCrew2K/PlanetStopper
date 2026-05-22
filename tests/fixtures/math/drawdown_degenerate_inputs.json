@@ -29,7 +29,7 @@
     "zero_interior_peak_then_drop": {
       "input": [{"t": 0, "port_value": -10.0}, {"t": 1, "port_value": 0.0}, {"t": 2, "port_value": -5.0}],
       "expected": null,
-      "derivation": "The running peak becomes 0.0 at t=1; the subsequent point -5.0 divides (v-peak)/peak by a zero denominator. The zero-peak guard must cover the peak-UPDATE branch, not only values[0]. The producer currently raises ZeroDivisionError here too.",
+      "derivation": "values[0] = -10.0 is non-positive, so the zero/negative-anchored first-point guard returns None immediately. NOTE: because a port-equity series' running peak starts at values[0] and only ratchets UP, a series that PASSES the first-point guard (values[0] > 0.0) can never drive the running peak non-positive at an interior point — so a separate interior-peak guard is provably unreachable dead code. This case is therefore covered by the SAME first-point guard as the other zero/negative-anchored cases; it exists to confirm a non-positive value anywhere in a non-positive-anchored series still yields None. The pre-fix producer raised ZeroDivisionError here.",
       "currently_raises": "ZeroDivisionError"
     },
     "negative_series_monotonic_decline": {
