@@ -74,6 +74,34 @@ def _all_except_handlers(tree: ast.AST) -> list[ast.ExceptHandler]:
     return [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]
 
 
+# AC-3 is scoped to the CACHE I/O exception handlers. synthetic_history.py
+# also has pre-existing network-retry handlers inside `fetch_bars` that
+# legitimately catch `requests.RequestException` (already a specific type —
+# not a defect, not in AC-3 scope). The cache-set / cache-context assertions
+# below must apply ONLY to cache handlers, so they exclude any handler nested
+# inside `fetch_bars`.
+_NON_CACHE_FUNCTIONS = frozenset({"fetch_bars"})
+
+
+def _cache_io_except_handlers(tree: ast.AST) -> list[ast.ExceptHandler]:
+    """Every except-handler EXCEPT those inside the network-fetch function(s).
+
+    A handler is treated as cache I/O scope unless it is lexically nested
+    inside a function named in ``_NON_CACHE_FUNCTIONS`` (the Alpaca network
+    retry loop). This keeps AC-3's cache-specific assertions off the
+    pre-existing, already-specific ``requests.RequestException`` handlers.
+    """
+    excluded: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name in _NON_CACHE_FUNCTIONS:
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.ExceptHandler):
+                    excluded.add(id(sub))
+    return [
+        h for h in _all_except_handlers(tree) if id(h) not in excluded
+    ]
+
+
 def _handler_caught_names(handler: ast.ExceptHandler) -> set[str]:
     """The set of exception-type names a handler catches.
 
@@ -213,18 +241,19 @@ def test_no_over_broad_exception_handler_swallows_cache_io(
 def test_cache_io_handlers_catch_only_specific_io_exceptions(
     synth_tree: ast.Module,
 ) -> None:
-    """Every except-handler in synthetic_history.py must catch ONLY exceptions
-    from the acceptable cache-I/O set.
+    """Every CACHE I/O except-handler in synthetic_history.py must catch ONLY
+    exceptions from the acceptable cache-I/O set.
 
-    This is the positive form of the previous test: not only must the broad
-    catches be gone, every remaining handler must scope to a known, specific
-    exception type. A handler catching some unrelated broad type would also
-    fail here.
+    This is the positive form of the broad-handler test: not only must the
+    broad catches be gone, every cache handler must scope to a known, specific
+    exception type. SCOPE: AC-3 covers the cache read/write handlers — the
+    pre-existing network-retry handlers inside ``fetch_bars`` legitimately
+    catch ``requests.RequestException`` (already specific) and are excluded.
     """
-    handlers = _all_except_handlers(synth_tree)
+    handlers = _cache_io_except_handlers(synth_tree)
     assert handlers, (
-        "synthetic_history.py has no except-handlers at all — the cache I/O "
-        "operations must still handle their specific failure modes."
+        "synthetic_history.py has no cache-scope except-handlers — the cache "
+        "I/O operations must still handle their specific failure modes."
     )
 
     offenders: list[tuple[int, set[str]]] = []
@@ -238,8 +267,8 @@ def test_cache_io_handlers_catch_only_specific_io_exceptions(
             offenders.append((h.lineno, unexpected))
 
     assert not offenders, (
-        "synthetic_history.py except-handler(s) catch exception types outside "
-        "the expected cache-I/O set:\n"
+        "synthetic_history.py cache except-handler(s) catch exception types "
+        "outside the expected cache-I/O set:\n"
         + "\n".join(
             f"  - line {ln}: unexpected {sorted(names)}"
             for ln, names in offenders
@@ -276,15 +305,18 @@ def test_cache_exception_handlers_log_a_warning_not_just_print(
 def test_cache_exception_handlers_name_the_failure_context(
     synth_tree: ast.Module,
 ) -> None:
-    """Each exception handler's logged message must NAME the affected context.
+    """Each CACHE exception handler's logged message must NAME the affected
+    context.
 
     For a cache operation the context is the cache file path; the caught
-    exception detail must also appear. Static check: every handler that logs
-    must reference BOTH the caught exception's bound name AND a cache-path-like
-    variable in its logging-call arguments.
+    exception detail must also appear. Static check: every cache handler that
+    logs must reference BOTH the caught exception's bound name AND a
+    cache-path-like variable in its logging-call arguments. SCOPE: AC-3 covers
+    cache I/O — the ``fetch_bars`` network-retry handlers (which name the HTTP
+    attempt, not a cache path) are excluded.
     """
     offenders: list[tuple[int, str]] = []
-    for h in _all_except_handlers(synth_tree):
+    for h in _cache_io_except_handlers(synth_tree):
         if not _calls_logging_warning(h):
             continue  # non-logging handlers covered by the print test above
         exc_name = h.name  # the `as e` binding, or None

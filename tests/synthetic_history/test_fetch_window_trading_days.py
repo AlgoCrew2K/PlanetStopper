@@ -332,3 +332,191 @@ def test_window_meets_floor_across_multiple_end_dates(
         f"{trading_days} trading days, below the required "
         f"{_MIN_REQUIRED_TRADING_DAYS}."
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-1 Revise round — wiring + shortfall guard.
+#
+# The window-sizing helper passing in isolation does not prove the production
+# path USES it, nor that a genuine bar shortfall is surfaced rather than
+# silently sliced. Audit finding 8's fix has TWO parts: (a) size the window
+# with margin — covered above; (b) "assert len(intraday_dates) >= 125 (or a
+# documented floor) before proceeding — raise/log ERROR on shortfall instead
+# of silently running a degenerate split." The plan's Edge Cases likewise
+# require "Alpaca returning fewer bars than requested (partial data) — the
+# bare-except replacement must surface this, not swallow it." These tests pin
+# part (b) and the wiring.
+# ---------------------------------------------------------------------------
+
+import ast as _ast  # noqa: E402  (Revise-round import, kept local to its section)
+
+
+def _synth_tree() -> _ast.Module:
+    """Parse synthetic_history.py — Revise-round static analysis."""
+    import pathlib
+
+    path = pathlib.Path(__file__).resolve().parents[2] / "synthetic_history.py"
+    assert path.is_file(), f"expected production module at {path}"
+    return _ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+def test_no_fixed_180_day_timedelta_literal_survives_in_code() -> None:
+    """Static guard: no executable ``timedelta(days=180)`` may remain.
+
+    The helper passing in isolation does not prove the old literal is gone
+    from the fetch-window code path. A worse implementation could add the
+    helper yet leave the original ``timedelta(days=180)`` driving the actual
+    fetch. This walks the AST for any ``timedelta`` call with ``days`` ~ 180
+    and fails if one survives (a docstring mention of "180" is fine — only
+    executable Call nodes are inspected).
+    """
+    tree = _synth_tree()
+    offenders: list[int] = []
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        func = node.func
+        is_timedelta = (
+            isinstance(func, _ast.Name) and func.id == "timedelta"
+        ) or (
+            isinstance(func, _ast.Attribute) and func.attr == "timedelta"
+        )
+        if not is_timedelta:
+            continue
+        for kw in node.keywords:
+            if kw.arg == "days" and isinstance(kw.value, _ast.Constant):
+                # The old window literal was 180; flag anything in that range
+                # so a near-miss (e.g. 175/185) is also caught.
+                if isinstance(kw.value.value, (int, float)) and (
+                    150 <= kw.value.value <= 220
+                ):
+                    offenders.append(node.lineno)
+    assert not offenders, (
+        f"synthetic_history.py still has an executable `timedelta(days=~180)` "
+        f"call at line(s) {offenders}. The fetch window must be sized by the "
+        f"trading-day-counted helper, not a calendar-day literal."
+    )
+
+
+def test_generate_synthetic_history_calls_the_window_helper() -> None:
+    """Static guard: ``generate_synthetic_history`` must invoke the
+    trading-day window helper.
+
+    Pins the wiring: the production fetch path must call
+    ``compute_fetch_window_start`` (or the accepted alias). Without this a
+    helper could exist, pass the isolation tests, and never be reached by the
+    real fetch.
+    """
+    tree = _synth_tree()
+    gen = None
+    for node in _ast.walk(tree):
+        if (
+            isinstance(node, _ast.FunctionDef)
+            and node.name == "generate_synthetic_history"
+        ):
+            gen = node
+            break
+    assert gen is not None, (
+        "synthetic_history.generate_synthetic_history not found."
+    )
+
+    helper_names = {
+        "compute_fetch_window_start",
+        "trading_day_window_start",
+        "fetch_window_start_date",
+    }
+    called = False
+    for node in _ast.walk(gen):
+        if isinstance(node, _ast.Call):
+            f = node.func
+            if isinstance(f, _ast.Name) and f.id in helper_names:
+                called = True
+            elif isinstance(f, _ast.Attribute) and f.attr in helper_names:
+                called = True
+    assert called, (
+        "generate_synthetic_history does not call the trading-day fetch-window "
+        "helper (compute_fetch_window_start / trading_day_window_start / "
+        "fetch_window_start_date). The window-sizing fix is not wired into the "
+        "production fetch path."
+    )
+
+
+def test_replay_window_shortfall_is_surfaced_not_silently_sliced() -> None:
+    """Audit finding 8 part (b): a trading-day shortfall must be SURFACED.
+
+    Before the fix, ``intraday_dates = sorted(...)[-125:]`` silently takes
+    whatever exists — if the upstream fetch returns fewer than 125 trading
+    days the autotuner runs a degenerate validation fold with no warning.
+    The fix must surface the shortfall: when the available replay days fall
+    below the documented floor, the code must raise OR log at ERROR/WARNING
+    level — it must NOT silently proceed.
+
+    Static check: ``generate_synthetic_history`` must contain, downstream of
+    the intraday-date collection, either a comparison of a ``len(...)`` of the
+    replay-date sequence against a numeric floor that feeds a raise/log, OR an
+    explicit raise / logging.error|warning whose reachability is guarded by
+    such a length check. We assert the WEAKER, robust proxy: the function body
+    references both a length check on the replay dates AND a raise or an
+    ERROR/WARNING log — the silent bare ``[-125:]`` slice with no guard fails.
+    """
+    tree = _synth_tree()
+    gen = None
+    for node in _ast.walk(tree):
+        if (
+            isinstance(node, _ast.FunctionDef)
+            and node.name == "generate_synthetic_history"
+        ):
+            gen = node
+            break
+    assert gen is not None, (
+        "synthetic_history.generate_synthetic_history not found."
+    )
+
+    # Does the function compare a len(...) against a numeric constant? (the
+    # shortfall guard's predicate)
+    has_len_floor_compare = False
+    for node in _ast.walk(gen):
+        if not isinstance(node, _ast.Compare):
+            continue
+        operands = [node.left, *node.comparators]
+        has_len_call = any(
+            isinstance(o, _ast.Call)
+            and isinstance(o.func, _ast.Name)
+            and o.func.id == "len"
+            for o in operands
+        )
+        has_numeric = any(
+            isinstance(o, _ast.Constant)
+            and isinstance(o.value, (int, float))
+            and not isinstance(o.value, bool)
+            for o in operands
+        )
+        if has_len_call and has_numeric:
+            has_len_floor_compare = True
+            break
+
+    # Does the function raise an exception OR log at ERROR/WARNING level?
+    has_raise = any(isinstance(n, _ast.Raise) for n in _ast.walk(gen))
+    has_error_log = False
+    for node in _ast.walk(gen):
+        if isinstance(node, _ast.Call):
+            f = node.func
+            if (
+                isinstance(f, _ast.Attribute)
+                and f.attr in ("error", "warning", "exception", "critical")
+                and isinstance(f.value, _ast.Name)
+                and f.value.id in ("logging", "logger", "log")
+            ):
+                has_error_log = True
+                break
+
+    assert has_len_floor_compare and (has_raise or has_error_log), (
+        "generate_synthetic_history does not surface a replay-window "
+        "shortfall. The `[-125:]` slice silently truncates to whatever the "
+        "fetch returned; audit finding 8 (b) requires the code to compare the "
+        "available replay-day count against a documented floor and "
+        "raise / log ERROR on shortfall — never run a degenerate split "
+        "silently. Found: len-vs-floor comparison="
+        f"{has_len_floor_compare}, raise={has_raise}, error/warning log="
+        f"{has_error_log}."
+    )
