@@ -86,54 +86,14 @@ class TestPortModeTrainValFrozenSplit:
 
 
 # ---------------------------------------------------------------------------
-# F1: DSR T-correction call site pinning
+# F1: DSR T-correction — REMOVED.
+# Cluster 4 Decision D4 deleted the dead port-mode DSR T-correction helper: it
+# was dead code on main and the validation-days-times-symphony-count inflation
+# it applied double-counts cross-sectionally correlated calendar days, inflating
+# sqrt(T-1) and overstating significance. The DSR T is now the in-sample
+# return-observation count — see tests/autotuner/
+# test_c4_dsr_t_observation_count.py.
 # ---------------------------------------------------------------------------
-
-class TestDSRTCorrectionCallSite:
-    """
-    Amendment F1: DSR T-correction at autotuner.py:724 (approx).
-    For port-mode studies: T = validation_calendar_days * N_symphonies_in_account.
-    For per-symphony studies: T = validation_calendar_days (existing behavior).
-    """
-
-    def test_dsr_t_uses_n_symphonies_for_port_mode(self):
-        """
-        For port studies, T must be multiplied by N_symphonies in the account.
-        The function compute_port_study_dsr_T must exist and implement this.
-        """
-        from autotuner import compute_dsr_T  # noqa: F401
-        # Per-symphony: T = validation_calendar_days * 1
-        t_per_sym = compute_dsr_T(
-            validation_calendar_days=25,
-            math_mode="per_symphony",
-            n_symphonies=1,
-        )
-        assert t_per_sym == 25
-
-        # Port-mode: T = validation_calendar_days * N_symphonies
-        t_port = compute_dsr_T(
-            validation_calendar_days=25,
-            math_mode="port_level",
-            n_symphonies=4,
-        )
-        assert t_port == 100, (
-            "Amendment F1: port DSR T = validation_calendar_days * N_symphonies = 25*4 = 100"
-        )
-
-    def test_dsr_t_per_symphony_ignores_n_symphonies(self):
-        """Per-symphony DSR T is NOT multiplied by N_symphonies."""
-        from autotuner import compute_dsr_T
-        t_1 = compute_dsr_T(validation_calendar_days=20, math_mode="per_symphony", n_symphonies=1)
-        t_3 = compute_dsr_T(validation_calendar_days=20, math_mode="per_symphony", n_symphonies=3)
-        assert t_1 == t_3 == 20, (
-            "Per-symphony DSR T must NOT be multiplied by n_symphonies (F1: ELSE branch)"
-        )
-
-    def test_dsr_t_is_always_positive(self):
-        from autotuner import compute_dsr_T
-        for mode in ("per_symphony", "port_level"):
-            t = compute_dsr_T(validation_calendar_days=10, math_mode=mode, n_symphonies=2)
-            assert t > 0
 
 
 # ---------------------------------------------------------------------------

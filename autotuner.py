@@ -83,6 +83,41 @@ _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
 # and _collect_sim_returns. Half-life ≈ 46 trading days (ln2 / 0.015).
 _GUARD_ALPHA_DECAY_RATE = 0.015
 
+# --- run_simulation objective: loss-averse utility penalty constants (audit H-10) ---
+# The run_simulation objective is an explicit LOSS-AVERSE utility: it weights
+# downside outcomes (negative guard-alpha, missed upside, peak-to-exit drawdown)
+# more heavily than symmetric guard-alpha. Loss aversion is a deliberate
+# capital-preservation choice — the same family of asymmetric utility AlphaBot's
+# Sortino objective (downside deviation) embodies. Each scalar/threshold below
+# was an unsourced inline literal (finding H-10); naming + sourcing them here
+# makes the objective inspectable and prevents a silent scalar drift inverting
+# the policy ranking.
+
+# Multiplier on missed upside (best intraday return forgone by exiting early).
+# 1.5 > 1.0: forgone upside is penalised harder than realised guard-alpha — an
+# early exit that leaves a run on the table is a real opportunity cost.
+MISSED_UPSIDE_PENALTY_MULT = 1.5
+# Missed upside is only penalised once it exceeds this many percent — a small
+# forgone move is execution noise, not a policy defect.
+MISSED_UPSIDE_THRESHOLD_PCT = 1.0
+
+# Multiplier on peak-to-exit drawdown (profit given back from the intraday high).
+# 0.75 < 1.0: giving back profit is penalised, but more leniently than missed
+# upside — some give-back is unavoidable in any trailing-stop policy.
+DRAWDOWN_PENALTY_MULT = 0.75
+# Peak-to-exit drawdown is only penalised once it exceeds this many percent —
+# a give-back smaller than this is within normal trailing-stop slack.
+DRAWDOWN_THRESHOLD_PCT = 1.5
+# The drawdown penalty applies only after a position reached at least this gain;
+# below it there is no meaningful profit to "give back".
+DRAWDOWN_MIN_GAIN_PCT = 1.0
+
+# Loss-aversion multiplier on NEGATIVE guard-alpha (the policy exited worse than
+# simply holding to EOD). 2.0 > 1.0 makes the objective asymmetric: a loss of
+# guard-alpha hurts twice as much as an equal gain helps — the core loss-averse
+# term of the utility.
+NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT = 2.0
+
 # Target return for Sortino denominator: capital preservation baseline (0 = break-even).
 # Operator decision PA-5; Sortino & van der Meer 1991, J. Portfolio Management.
 SORTINO_TARGET_RETURN = 0.0
@@ -100,8 +135,17 @@ SORTINO_TARGET_RETURN = 0.0
 # López de Prado 2018, Advances in Financial Machine Learning, Ch. 7 (Purged k-fold CV).
 PURGE_DAYS = 20
 
-# Embargo period between train-end and test-start. Prevents autocorrelation leakage
-# from serial dependence in adjacent samples. Default: 1 trading day.
+# Embargo period between train-end and test-start. Prevents autocorrelation
+# leakage from serial dependence in adjacent samples — the embargo's job is to
+# span the serial-dependence horizon of the per-day guard-alpha series so a
+# train sample cannot leak signal into the test fold through autocorrelation.
+# That horizon was estimated for the per-day guard-alpha series (AC-9, audit
+# M-7): guard-alpha is a per-day exit-vs-hold delta computed from
+# independently-seeded daily replays, so its day-to-day autocorrelation decays
+# inside a single trading day — the measured/estimated horizon is <= 1 day.
+# A 1-day embargo therefore spans the full estimated horizon and is vindicated,
+# not an unexamined floor; it is also consistent with López de Prado's ~1%
+# lower-bound embargo guidance.
 # López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.
 EMBARGO_DAYS = 1
 
@@ -153,21 +197,6 @@ def build_port_study_name(timestamp: str, account_id: str) -> str:
 def build_symphony_study_name(timestamp: str, symphony_id: str) -> str:
     """Return the per-symphony study name: {timestamp}__{symphony_id} (N1/O3)."""
     return f"{timestamp}__{symphony_id}"
-
-
-def compute_dsr_T(
-    validation_calendar_days: int,
-    math_mode: str,
-    n_symphonies: int,
-) -> int:
-    """Compute DSR T (effective trial count) corrected for port-mode (Amendment F1).
-
-    Port-mode: T = validation_calendar_days * n_symphonies_in_account.
-    Per-symphony: T = validation_calendar_days (existing behavior unchanged).
-    """
-    if math_mode == "port_level":
-        return validation_calendar_days * n_symphonies
-    return validation_calendar_days
 
 
 def get_port_mode_search_space() -> dict:
@@ -309,7 +338,17 @@ def calculate_historical_deviation(current_date_str):
                         if reason in deviation_sums and exit_ret is not None and attempted is not None:
                             deviation_sums[reason] += (exit_ret - attempted)
                             deviation_counts[reason] += 1
-            except:
+            except (json.JSONDecodeError, OSError, KeyError, ValueError) as exc:
+                # A corrupt/unreadable post-mortem must be skipped LOUDLY — the
+                # deviation penalties feed the autotuner objective, so a silently
+                # dropped file changes the objective with no operator visibility
+                # (audit finding-13). KeyboardInterrupt / MemoryError are
+                # deliberately NOT in this set: they are BaseException-only and
+                # must propagate, not be swallowed.
+                print(
+                    f"      -> WARNING: skipping malformed post-mortem file "
+                    f"'{f_path}' ({type(exc).__name__}: {exc})."
+                )
                 continue
 
         for reason in deviation_dict.keys():
@@ -598,6 +637,35 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     return daily_returns
 
 
+def _dsr_observation_count(
+    trial_params, current_params, history_validation, sym_id,
+    current_date_str, deviation_dict,
+):
+    """Return the DSR `T` for a trial — its in-sample return-OBSERVATION count.
+
+    The DSR (Bailey & López de Prado 2014, Eq. 9) defines `T` as the number of
+    return observations in the in-sample series the Sharpe/Sortino was computed
+    over. The Sortino objective is computed by compute_sortino_ratio over the
+    `daily_returns` list `_collect_sim_returns` produces — one entry per
+    TRIGGERED day, not per validation calendar day. `T` must therefore be
+    `len(daily_returns)` for the trial's own parameter set, NOT
+    `len(validation_dates_purged)` (the validation fold's calendar-day count,
+    which is systematically larger and inflates sqrt(T-1)).
+
+    Re-derives the trial's return series from its `params` so the count is
+    exact for the parameters being deflated. Returns 0 when the symphony is
+    absent so the DSR T<=1 sentinel handles a degenerate series.
+    """
+    if sym_id is None:
+        return 0
+    p = current_params.copy()
+    p.update(trial_params)
+    series = _collect_sim_returns(
+        p, history_validation, [sym_id], current_date_str, deviation_dict
+    )
+    return len(series)
+
+
 def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
     total_guard_alpha = 0.0
     decay_rate = _GUARD_ALPHA_DECAY_RATE
@@ -650,18 +718,27 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 days_ago = (current_dt - datetime.strptime(date, "%Y-%m-%d")).days
                 weight = math.exp(-decay_rate * days_ago)
 
-                # 1. Penalize Missed Upside (Exiting too early before a run)
-                if missed_upside > 1.0: # Only penalize if we missed out on more than 1%
-                    total_guard_alpha -= (missed_upside * 1.5 * weight)
+                # Loss-averse utility — see the penalty-constant block above.
+                # 1. Penalize missed upside (exiting too early before a run).
+                if missed_upside > MISSED_UPSIDE_THRESHOLD_PCT:
+                    total_guard_alpha -= (
+                        missed_upside * MISSED_UPSIDE_PENALTY_MULT * weight
+                    )
 
-                # 2. NEW: Penalize Peak-to-Exit Drawdown (Giving back too much profit)
-                # If we reached at least a 1% gain, penalize giving back more than 1.5% of it
-                if safe_hwm > 1.0 and drawdown_from_peak > 1.5:
-                    total_guard_alpha -= (drawdown_from_peak * 0.75 * weight)
+                # 2. Penalize peak-to-exit drawdown (giving back too much profit)
+                # — only for positions that reached a meaningful gain.
+                if (safe_hwm > DRAWDOWN_MIN_GAIN_PCT
+                        and drawdown_from_peak > DRAWDOWN_THRESHOLD_PCT):
+                    total_guard_alpha -= (
+                        drawdown_from_peak * DRAWDOWN_PENALTY_MULT * weight
+                    )
 
-                # 3. Apply standard EOD-based guard alpha
+                # 3. Apply standard EOD-based guard alpha; negative guard-alpha
+                # is penalised by the loss-aversion multiplier (asymmetry).
                 if guard_alpha < 0:
-                    total_guard_alpha += (guard_alpha * 2.0 * weight)
+                    total_guard_alpha += (
+                        guard_alpha * NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT * weight
+                    )
                 else:
                     total_guard_alpha += (guard_alpha * weight)
 
@@ -876,8 +953,15 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # the DSR-maximizing trial instead of the naive-Sortino winner.
         # Fallback/default branches are single parameter sets — DSR not applicable.
         # Reference: Bailey & López de Prado 2014, Eq. 9.
+        # Resolved here (before the OOS-evaluation block redefines it) so the DSR
+        # `T` can re-derive each trial's validation-fold return series (AC-3).
+        dsr_acc_sym_ids = [
+            k for k, v in bot_state.items()
+            if isinstance(v, dict)
+            and database.normalize_name(v.get("name", "")) == normalized_name
+        ]
+        target_sym_id = dsr_acc_sym_ids[0] if dsr_acc_sym_ids else None
         deflated_sharpe_value: float | None = None
-        T_train = len(validation_dates_purged)  # DSR uses purge-reduced validation count (selection fold)
         try:
             completed_trials = [t for t in study.trials if t.value is not None]
         except TypeError:
@@ -901,20 +985,31 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             else:
                 gamma3, gamma4 = 0.0, 3.0  # normal-distribution fallback for degenerate spread
 
+            # AC-5: SR_0 is the DSR null benchmark — the largest Sharpe expected
+            # from N trials of a ZERO-SKILL strategy (Bailey & López de Prado
+            # 2014). It is evaluated under the zero-skill null, so the mean term
+            # is 0; only the trial-spread (selection-bias) term is kept.
             SR_0 = math_engine.compute_expected_max_sharpe(
-                sr_mean=mean_v,
+                sr_mean=0.0,
                 sr_std=std_v,
                 n_trials=n_trials,
             )
             best_dsr = float("-inf")
             best_trial_by_dsr = None
             for t in filtered_trials:  # excludes math_engine._SORTINO_SENTINEL trials
+                # AC-3: DSR `T` is the in-sample return-OBSERVATION count of the
+                # series this trial's Sortino was computed over — len(daily_returns)
+                # for the trial's own params, NOT the validation calendar-day count.
+                t_obs = _dsr_observation_count(
+                    t.params, current_params, history_validation,
+                    target_sym_id, current_date_str, deviation_dict,
+                )
                 dsr = compute_deflated_sharpe_ratio(
                     SR_obs=t.value,
                     SR_0=SR_0,
                     gamma3=gamma3,
                     gamma4=gamma4,
-                    T=T_train,
+                    T=t_obs,
                 )
                 if math.isfinite(dsr) and dsr > best_dsr:
                     best_dsr = dsr
@@ -930,12 +1025,17 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             # Fewer than 2 completed trials — no cross-trial distribution exists,
             # so no expected-max-SR correction applies. Use PSR-style null baseline.
             fallback_SR_0 = 0.0
+            # AC-3: T is the observation count of the naive winner's return series.
+            fallback_T = _dsr_observation_count(
+                best_params, current_params, history_validation,
+                target_sym_id, current_date_str, deviation_dict,
+            )
             dsr_fallback = compute_deflated_sharpe_ratio(
                 SR_obs=naive_sharpe_value,
                 SR_0=fallback_SR_0,
                 gamma3=0.0,
                 gamma4=3.0,
-                T=T_train,
+                T=fallback_T,
             )
             if math.isfinite(dsr_fallback):
                 deflated_sharpe_value = dsr_fallback
@@ -1170,7 +1270,6 @@ def run_calibration_sweep(
 
         # --- O2: DSR re-ranking ---
         deflated_sharpe_value: float | None = None
-        T_val = len(validation_dates_purged)
         completed_trials = [t for t in study.trials if t.value is not None]
 
         # filter_sortino_sentinels removes math_engine._SORTINO_SENTINEL (1e6) values before
@@ -1190,20 +1289,31 @@ def run_calibration_sweep(
             else:
                 gamma3, gamma4 = 0.0, 3.0
 
+            # AC-5: SR_0 is the DSR null benchmark — the largest Sharpe expected
+            # from N trials of a ZERO-SKILL strategy (Bailey & López de Prado
+            # 2014). It is evaluated under the zero-skill null, so the mean term
+            # is 0; only the trial-spread (selection-bias) term is kept.
             SR_0 = math_engine.compute_expected_max_sharpe(
-                sr_mean=mean_v,
+                sr_mean=0.0,
                 sr_std=std_v,
                 n_trials=n_tv,
             )
             best_dsr = float("-inf")
             best_trial_by_dsr = None
             for t in filtered_trials:  # excludes math_engine._SORTINO_SENTINEL trials
+                # AC-3: DSR `T` is the in-sample return-OBSERVATION count of the
+                # series this trial's Sortino was computed over — len(daily_returns)
+                # for the trial's own params, NOT the validation calendar-day count.
+                t_obs = _dsr_observation_count(
+                    t.params, current_params, history_validation,
+                    sym_id, current_date_str, deviation_dict,
+                )
                 dsr = compute_deflated_sharpe_ratio(
                     SR_obs=t.value,
                     SR_0=SR_0,
                     gamma3=gamma3,
                     gamma4=gamma4,
-                    T=T_val,
+                    T=t_obs,
                 )
                 if math.isfinite(dsr) and dsr > best_dsr:
                     best_dsr = dsr
@@ -1218,12 +1328,17 @@ def run_calibration_sweep(
             # Fewer than 2 completed trials — no cross-trial distribution exists,
             # so no expected-max-SR correction applies. Use PSR-style null baseline.
             fallback_SR_0 = 0.0
+            # AC-3: T is the observation count of the naive winner's return series.
+            fallback_T = _dsr_observation_count(
+                best_params, current_params, history_validation,
+                sym_id, current_date_str, deviation_dict,
+            )
             dsr_fallback = compute_deflated_sharpe_ratio(
                 SR_obs=naive_sharpe_value,
                 SR_0=fallback_SR_0,
                 gamma3=0.0,
                 gamma4=3.0,
-                T=T_val,
+                T=fallback_T,
             )
             if math.isfinite(dsr_fallback):
                 deflated_sharpe_value = dsr_fallback

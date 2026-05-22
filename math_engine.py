@@ -8,6 +8,13 @@ from scipy.stats import norm
 # Eq. 9 expected-max-SR appendix). Used to derive SR_0 for selection-bias correction.
 _GAMMA_EULER_MASCHERONI = 0.5772156649015329
 
+# Ceiling for the norm.ppf arguments in compute_expected_max_sharpe — the largest
+# IEEE-754 double strictly below 1.0 (math.nextafter(1.0, 0.0)). For n_trials
+# large enough that `1 - 1/N` rounds to exactly 1.0, norm.ppf(1.0) is +inf;
+# clamping the argument to this ceiling keeps the result finite. Source: IEEE-754
+# double precision — norm.ppf of this value is finite, norm.ppf(1.0) is not.
+_PPF_ARG_CEILING = math.nextafter(1.0, 0.0)
+
 # Sentinel returned by compute_sortino_ratio (autotuner.py) when downside_deviation==0
 # (all trial returns beat the target). The value is finite and looks like a valid trial
 # result to Optuna's TPE, but its magnitude (~1e6) dominates the cross-trial distribution
@@ -32,8 +39,17 @@ def compute_expected_max_sharpe(sr_mean: float, sr_std: float, n_trials: int) ->
         raise ValueError(f"sr_std must be >= 0; got {sr_std}")
     if n_trials == 1 or sr_std == 0:
         return float(sr_mean)
-    ppf1 = norm.ppf(1.0 - 1.0 / n_trials)
-    ppf2 = norm.ppf(1.0 - 1.0 / (n_trials * math.e))
+    # Clamp the norm.ppf arguments strictly below 1.0. For n_trials >= ~1e16,
+    # `1 - 1/N` rounds to exactly 1.0 in IEEE-754 double precision (1/N falls
+    # below machine epsilon relative to 1.0); norm.ppf(1.0) is +inf, which would
+    # overflow SR_0 to +inf and poison the DSR numerator (SR_obs - inf = -inf)
+    # for every trial. _PPF_ARG_CEILING is the largest double strictly below 1.0
+    # — norm.ppf of it is finite, so the clamp caps (never inverts) the
+    # selection-bias benchmark at very large N.
+    arg1 = min(1.0 - 1.0 / n_trials, _PPF_ARG_CEILING)
+    arg2 = min(1.0 - 1.0 / (n_trials * math.e), _PPF_ARG_CEILING)
+    ppf1 = norm.ppf(arg1)
+    ppf2 = norm.ppf(arg2)
     return sr_mean + sr_std * (
         (1.0 - _GAMMA_EULER_MASCHERONI) * ppf1 + _GAMMA_EULER_MASCHERONI * ppf2
     )
