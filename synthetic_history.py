@@ -61,6 +61,17 @@ _REQUIRED_FETCH_TRADING_DAYS = (
 # enforced post-fetch on the real returned-bar count.
 _CALENDAR_DAYS_PER_TRADING_DAY = 1.5
 
+# Widen+refetch fallback policy. When a first fetch returns fewer trading days
+# than _REQUIRED_FETCH_TRADING_DAYS, the window start is pushed earlier by this
+# many calendar days and the fetch is retried. 60 calendar days ~ 42 trading
+# days — a meaningful widen that recovers a short window in one or two steps.
+_FETCH_WIDEN_STEP_CALENDAR_DAYS = 60
+# Hard bound on the widen+refetch loop: after this many fetch attempts still
+# short of the floor, the helper raises rather than widening forever. 3 keeps
+# the rare fallback bounded — the first window is already generously padded, so
+# a persistent shortfall means a genuine upstream data gap, not a sizing miss.
+_MAX_FETCH_WIDEN_ATTEMPTS = 3
+
 
 def utc_to_eastern(utc_dt):
     """Convert a UTC datetime to the corresponding US Eastern datetime.
@@ -96,6 +107,70 @@ def compute_fetch_window_start(end_date):
         _REQUIRED_FETCH_TRADING_DAYS * _CALENDAR_DAYS_PER_TRADING_DAY
     )
     return end_date - timedelta(days=calendar_days)
+
+
+def _count_distinct_trading_days(bars_payload):
+    """Count distinct trading-day dates in a fetch_bars-shaped payload.
+
+    fetch_bars returns {symbol: [bar, ...]} where each bar carries a 't' ISO
+    timestamp. Alpaca emits a daily bar only on a real trading day, so the
+    distinct t[:10] dates ARE the exchange calendar — the self-validating
+    authority for the trading-day floor.
+    """
+    days = set()
+    for bar_list in (bars_payload or {}).values():
+        for bar in bar_list:
+            days.add(bar["t"][:10])
+    return len(days)
+
+
+def fetch_daily_bars_with_floor(fetch_fn, end_date=None):
+    """Fetch daily bars, widening the window and refetching until the floor is met.
+
+    Drives a bounded count -> widen -> refetch loop: the first window start is
+    the generous calendar pad from compute_fetch_window_start; if the returned
+    bars hold fewer than _REQUIRED_FETCH_TRADING_DAYS distinct trading days the
+    start is pushed _FETCH_WIDEN_STEP_CALENDAR_DAYS earlier and the fetch is
+    retried, up to _MAX_FETCH_WIDEN_ATTEMPTS times. A still-short result after
+    the bound is a HARD failure (RuntimeError) — never a silent proceed with an
+    under-floor history, which would feed the autotuner a degenerate replay.
+
+    fetch_fn is the fetch callable, injected so the retry loop is testable
+    without a live Alpaca fetch. It is called with the window start date and
+    must return a fetch_bars-shaped {symbol: [bar, ...]} payload.
+
+    Returns the first fetch_bars-shaped payload that clears the floor.
+    """
+    if end_date is None:
+        end_date = utc_to_eastern(datetime.now(timezone.utc)).date()
+    window_start = compute_fetch_window_start(end_date)
+
+    for attempt in range(_MAX_FETCH_WIDEN_ATTEMPTS):
+        bars = fetch_fn(window_start)
+        distinct_days = _count_distinct_trading_days(bars)
+        if distinct_days >= _REQUIRED_FETCH_TRADING_DAYS:
+            return bars
+        logging.warning(
+            "synthetic_history: daily-bar fetch short of the %d-trading-day "
+            "floor (%d returned, attempt %d/%d) — widening the window %d "
+            "calendar days and refetching",
+            _REQUIRED_FETCH_TRADING_DAYS,
+            distinct_days,
+            attempt + 1,
+            _MAX_FETCH_WIDEN_ATTEMPTS,
+            _FETCH_WIDEN_STEP_CALENDAR_DAYS,
+        )
+        window_start = window_start - timedelta(
+            days=_FETCH_WIDEN_STEP_CALENDAR_DAYS
+        )
+
+    raise RuntimeError(
+        "synthetic_history: daily-bar fetch remained short of the "
+        f"{_REQUIRED_FETCH_TRADING_DAYS}-trading-day floor after "
+        f"{_MAX_FETCH_WIDEN_ATTEMPTS} widen+refetch attempts — the upstream "
+        "feed has an insufficient daily-bar history; aborting rather than "
+        "running the autotuner on a degenerate replay window"
+    )
 
 
 def load_cached_history(cache_file):
@@ -331,16 +406,29 @@ def generate_synthetic_history(bot_state, current_date_str):
     if end_date >= today_us:
         end_date = today_us - timedelta(days=1)
 
-    # Size the fetch window from a trading-day count (walk-forward + MC warmup +
-    # buffer) so it delivers the required trading days even across holidays — a
-    # fixed calendar-day span under-delivers (audit finding 8).
+    # Size the fetch window from a generously-padded calendar span (audit
+    # finding 8: a fixed 180-day literal under-delivered trading days). The
+    # daily fetch goes through the widen+refetch helper which enforces the
+    # trading-day floor; the intraday fetch uses the same padded start.
     window_start = compute_fetch_window_start(end_date)
-    start_daily_str = window_start.strftime("%Y-%m-%dT00:00:00Z")
-    start_1m_str = start_daily_str
+    start_1m_str = window_start.strftime("%Y-%m-%dT00:00:00Z")
     end_date_str_utc = end_date.strftime("%Y-%m-%dT23:59:59Z")
     
     # 3. Fetch Data
-    daily_bars_raw = fetch_bars(tickers_list, start_daily_str, end_date_str_utc, "1Day")
+    # Route the daily fetch through the bounded widen+refetch helper: if the
+    # first generously-padded window returns fewer than the required trading
+    # days it widens and refetches, and hard-fails after the bound rather than
+    # feeding a degenerate replay to the autotuner. The helper drives the
+    # window start, so fetch_bars is wrapped in a closure taking that start.
+    def _fetch_daily(window_start_date):
+        return fetch_bars(
+            tickers_list,
+            window_start_date.strftime("%Y-%m-%dT00:00:00Z"),
+            end_date_str_utc,
+            "1Day",
+        )
+
+    daily_bars_raw = fetch_daily_bars_with_floor(_fetch_daily, end_date)
     intraday_bars_raw = fetch_bars(list(all_tickers), start_1m_str, end_date_str_utc, "1Min")
     
     # 4. Process Daily Bars into historical_data format
@@ -361,27 +449,11 @@ def generate_synthetic_history(bot_state, current_date_str):
                     "close": curr_close
                 }
                 
+    # The daily / MC-warmup floor is enforced upstream by
+    # fetch_daily_bars_with_floor — it widens + refetches and hard-fails if the
+    # returned daily bars stay short of _REQUIRED_FETCH_TRADING_DAYS — so by
+    # this point the daily history is guaranteed to clear the warmup floor.
     daily_dates = sorted(list(historical_daily.keys()))
-
-    # Surface a daily / MC-warmup shortfall. The MC gate on the earliest replay
-    # days needs MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) daily bars of
-    # prior history (build_replay_day feeds hist_data_up_to_yesterday into
-    # run_monte_carlo); that warmup PRECEDES the 125-day replay slice, which is
-    # why the fetch floor is _REQUIRED_FETCH_TRADING_DAYS, not 125. If Alpaca
-    # under-delivers the daily bars, the first MC-warmup folds get a None
-    # mc_prob and the autotuner tunes MC-coupled parameters against an MC-dark
-    # replay. Log at ERROR (parallel to the intraday guard; a hard raise would
-    # abort the whole EOD tuning run).
-    if len(daily_dates) < _REQUIRED_FETCH_TRADING_DAYS:
-        logging.error(
-            "synthetic_history: daily-bar warmup shortfall — %d daily trading "
-            "days available, need >= %d (%d replay + %d MC warmup + buffer); "
-            "the first MC-warmup folds will have no MC opinion",
-            len(daily_dates),
-            _REQUIRED_FETCH_TRADING_DAYS,
-            _WALK_FORWARD_TRADING_DAYS,
-            _MC_WARMUP_TRADING_DAYS,
-        )
 
     # 5. Process Intraday Bars
     intraday_by_date = {}
