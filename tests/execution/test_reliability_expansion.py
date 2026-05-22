@@ -199,6 +199,10 @@ def _run_main_patched(
         mock_math.compute_active_trailing_stop.return_value = 2.0
         mock_math.compute_breakeven_update.return_value = (0, False, -2.0)
         mock_math.compute_exit_confirmation.return_value = (0, False)
+        # compute_tp_confirmation (D-C3a extraction) returns
+        # (new_tp_armed, new_above_tp_count, is_tp_hit); safe default = not
+        # armed, count 0, no TP exit.
+        mock_math.compute_tp_confirmation.return_value = (False, 0, False)
         mock_math.compute_vwap_breakdown_update.return_value = (0, 0, False, False)
         mock_math.compute_vwap_bleed_arm_threshold.return_value = 0.5
 

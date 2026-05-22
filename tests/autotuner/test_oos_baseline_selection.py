@@ -210,7 +210,17 @@ def _autotuner_patches(best_params: dict, fallback: dict, default: dict,
         # corrupt the captured snapshot.
         save_calls.append((symphony_name, dict(params), list(locked_vars)))
 
-    with patch("autotuner.optuna.create_study", return_value=fake_study), \
+    # Cluster-3 re-pin: the autotuner replay now applies production's VWAP
+    # open-window grace gate (tick_idx < VWAP_OPEN_WINDOW_GRACE_MINUTES) — see
+    # autotuner-replay-parity AC-2. These OOS-cascade tests stub
+    # compute_vwap_breakdown_update to fire the trigger on an early tick; the
+    # grace gate would suppress it and shift the pinned OOS guard-alpha. These
+    # tests pin the OOS adopt/fallback/default cascade, NOT the grace gate;
+    # disabling grace (VWAP_OPEN_WINDOW_GRACE_MINUTES = 0) keeps their pinned
+    # alpha values valid. AC-2's grace behaviour is covered by
+    # tests/autotuner/test_c3_replay_vwap_grace.py.
+    with patch("autotuner.VWAP_OPEN_WINDOW_GRACE_MINUTES", 0), \
+         patch("autotuner.optuna.create_study", return_value=fake_study), \
          patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
          patch("autotuner.synthetic_history.generate_synthetic_history",
                return_value=history), \
