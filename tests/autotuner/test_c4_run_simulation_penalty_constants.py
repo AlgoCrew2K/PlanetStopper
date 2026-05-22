@@ -84,25 +84,34 @@ def _load_fixture() -> dict:
 
 def test_run_simulation_body_has_no_bare_penalty_literals():
     """
-    AC-4: the run_simulation function body must contain NO bare numeric literal
+    AC-4: the run_simulation function body must contain NO bare FLOAT literal
     from the H-10 set {1.5, 0.75, 2.0, 1.0} in its penalty block.
 
-    AST inspection: collect every ast.Constant numeric literal inside the
-    run_simulation FunctionDef and assert none equals a penalty literal. After
-    AC-4 these values live in named module constants referenced by name.
+    AST inspection: collect every ast.Constant whose value is a `float` inside
+    the run_simulation FunctionDef and assert none equals a penalty literal.
+    After AC-4 these values live in named module constants referenced by name.
 
-    Exemptions: a literal `0.0` initializer and the loop's structural integers
-    (e.g. tick indices) are not in the H-10 set and are not flagged.
+    Scope note: the five H-10 penalty scalars/thresholds are all written as
+    FLOAT literals in source (1.5, 0.75, 2.0, 1.0). Structural INTEGER literals —
+    a `[-1]` index, a loop bound, a tick count — are a different syntactic class
+    (`int`, not `float`) and are intentionally NOT flagged: `ticks[-1]` parses as
+    UnaryOp(USub, Constant(int 1)) and must not be confused with the float
+    threshold 1.0. Restricting the scan to `float` constants cleanly separates
+    the penalty literals from structural integers; `bool` is excluded explicitly
+    (a Python bool is an int subclass, never a penalty literal).
     """
     func = _run_simulation_func_node()
 
     offending: list[str] = []
     for node in ast.walk(func):
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            if bool(node.value) and float(node.value) in _PENALTY_LITERALS:
-                offending.append(
-                    f"line {getattr(node, 'lineno', '?')}: literal {node.value!r}"
-                )
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, float)  # penalty literals are floats; ints are structural
+            and node.value in _PENALTY_LITERALS
+        ):
+            offending.append(
+                f"line {getattr(node, 'lineno', '?')}: float literal {node.value!r}"
+            )
 
     assert not offending, (
         "run_simulation still contains bare penalty literals from the H-10 set "
