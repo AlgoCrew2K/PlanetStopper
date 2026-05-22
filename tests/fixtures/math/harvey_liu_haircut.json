@@ -1,0 +1,60 @@
+{
+  "provenance": "Independently hand-derived from the Harvey & Liu 2015 multiple-testing haircut (Decision D3, resolved 2026-05-22). 'Backtesting', Journal of Portfolio Management 42(1), DOI 10.3905/jpm.2015.42.1.013. Pipeline per trial i over N trials: (1) t_i = Sortino_i * sqrt(T_i) where T_i is that trial's return-observation count; (2) one-sided p_i = 1 - Phi(t_i), standard-normal survival (large-sample approximation; Harvey & Liu use the normal for large samples); (3) Benjamini-Hochberg step-up adjustment across the N raw p-values: sort p ascending, p_adj_(k) = min over j>=k of [ N/j * p_(j) ], clamp to [0,1]; (4) selection: argmin p_adj_i, gated by p_adj_i <= q. Every t/p/p_adj value below was computed in Python with scipy.stats.norm.cdf and the BHY step-up by hand — NO producer (autotuner) output is used. The tolerance for matching these values in tests is 1e-9 absolute: the pipeline is deterministic; larger error means a wrong formula, not float rounding. Sortino and T inputs are scenario design choices, not producer values.",
+  "fdr_q": 0.05,
+  "fdr_q_comment": "Benjamini-Hochberg false-discovery-rate level. Conventional 0.05. In the autotuner this must be a NAMED policy-dial constant (e.g. HARVEY_LIU_FDR_Q) with a sourced comment; the fixture pins q=0.05 only so the cleared-set assertions are reproducible.",
+  "scenarios": {
+    "mixed_one_clear_winner": {
+      "description": "Five trials spanning strong / mid / weak / marginal / negative skill. A_strong is the unambiguous BHY winner (smallest p_adj); A_strong and A_mid clear the q=0.05 gate. No raw p underflows to 0.0 — chosen so the haircut math is exercised without hitting the p-value clamp.",
+      "trials": [
+        {"label": "A_strong",   "sortino": 0.55,  "T": 60},
+        {"label": "A_mid",      "sortino": 0.32,  "T": 55},
+        {"label": "A_weak",     "sortino": 0.18,  "T": 50},
+        {"label": "A_marginal", "sortino": 0.10,  "T": 48},
+        {"label": "A_neg",      "sortino": -0.08, "T": 45}
+      ],
+      "expected": {
+        "t_stat":  [4.2602816808, 2.3731835159, 1.2727922061, 0.6928203230, -0.5366563146],
+        "raw_p":   [0.0000102085, 0.0088177496, 0.1015458938, 0.2442111583, 0.7042474815],
+        "p_adj":   [0.0000510424, 0.0220443741, 0.1692431563, 0.3052639479, 0.7042474815],
+        "winner_label": "A_strong",
+        "cleared_q_05": ["A_strong", "A_mid"]
+      }
+    },
+    "noise_only_none_clears": {
+      "description": "Six pure-noise trials: small both-sign Sortino values consistent with a zero-skill strategy's sampling variation. After BHY adjustment NO trial clears q=0.05 (min p_adj ~= 0.7512). This is the overfitting-protection property: the haircut must reject the ENTIRE noise set so the AI proposal falls through to the fallback/default cascade.",
+      "trials": [
+        {"label": "B_n1", "sortino": 0.12,  "T": 50},
+        {"label": "B_n2", "sortino": -0.05, "T": 48},
+        {"label": "B_n3", "sortino": 0.08,  "T": 52},
+        {"label": "B_n4", "sortino": -0.10, "T": 46},
+        {"label": "B_n5", "sortino": 0.03,  "T": 49},
+        {"label": "B_n6", "sortino": -0.02, "T": 51}
+      ],
+      "expected": {
+        "t_stat":  [0.8485281374, -0.3464101615, 0.5768882041, -0.6782329983, 0.2100000000, -0.1428285686],
+        "raw_p":   [0.1980719546, 0.6354827552, 0.2820074898, 0.7511880134, 0.4168338365, 0.5567872130],
+        "p_adj":   [0.7511880134, 0.7511880134, 0.7511880134, 0.7511880134, 0.7511880134, 0.7511880134],
+        "min_p_adj": 0.7511880134,
+        "cleared_q_05": []
+      }
+    },
+    "one_signal_among_noise": {
+      "description": "One genuinely skilled trial (C_signal, large t-stat) among five noise trials. Only C_signal clears q=0.05 and is the BHY winner. Companion to noise_only_none_clears: proves the gate is not so strict it rejects a real signal.",
+      "trials": [
+        {"label": "C_signal", "sortino": 0.62,  "T": 60},
+        {"label": "C_n1",     "sortino": 0.10,  "T": 50},
+        {"label": "C_n2",     "sortino": -0.05, "T": 48},
+        {"label": "C_n3",     "sortino": 0.08,  "T": 52},
+        {"label": "C_n4",     "sortino": -0.10, "T": 46},
+        {"label": "C_n5",     "sortino": 0.04,  "T": 49}
+      ],
+      "expected": {
+        "t_stat":  [4.8024993492, 0.7071067812, -0.3464101615, 0.5768882041, -0.6782329983, 0.2800000000],
+        "raw_p":   [0.0000007835, 0.2397500611, 0.6354827552, 0.2820074898, 0.7511880134, 0.3897387524],
+        "p_adj":   [0.0000047009, 0.5640149796, 0.7511880134, 0.5640149796, 0.7511880134, 0.5846081287],
+        "winner_label": "C_signal",
+        "cleared_q_05": ["C_signal"]
+      }
+    }
+  }
+}
