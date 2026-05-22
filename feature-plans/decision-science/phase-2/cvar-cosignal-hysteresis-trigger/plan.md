@@ -30,19 +30,26 @@ Per §5.6 R-1, the system after Phase 2 is **MORE complex**, not less — 6 heur
 - **`math_engine.py`** — new pure function:
   ```python
   def compute_cvar_cosignal_confirmation(
-      current_cvar_pct: float | None,         # from CVaRAssessment.cvar_pct (Phase 2 multi-day)
-      current_cvar_breach: bool,              # entry-threshold crossed THIS tick
-      current_cvar_recovery: bool,            # exit-threshold crossed THIS tick (lower band)
-      current_breach_ticks: int,              # confirmation counter (carried in state)
-      current_recovery_ticks: int,            # de-confirmation counter (carried in state)
-      cvar_assessment_available: bool,        # False -> abstain fail-safe (F-4 ★)
+      current_cvar_pct: float | None,                  # from CVaRAssessment.cvar_pct (Phase-2 multi-day)
+      is_arm_threshold_crossed_this_tick: bool,        # RAW input: current-tick CVaR > arm threshold (semantic b — never exposed on the typed object)
+      is_clear_threshold_crossed_this_tick: bool,     # RAW input: current-tick CVaR < clear threshold (semantic b)
+      current_arm_ticks: int,                          # confirmation counter (carried in state)
+      current_clear_ticks: int,                        # de-confirmation counter (carried in state)
+      cvar_assessment_available: bool,                 # False -> abstain fail-safe (F-4 ★)
   ) -> tuple[int, int, bool, bool]:
-      """Returns (new_breach_ticks, new_recovery_ticks, is_cosignal_active, is_cosignal_cleared).
+      """Returns (new_arm_ticks, new_clear_ticks, breach_latched, recovery_latched).
       
-      Two-level hysteresis: entry-threshold > exit-threshold. The cosignal becomes
-      ACTIVE only after CVAR_COSIGNAL_CONFIRM_TICKS consecutive breach ticks. Once
-      active, it stays active until CVAR_COSIGNAL_CLEAR_TICKS consecutive recovery
-      ticks. This sibling-of-compute_exit_confirmation pattern is the C-1 ★ binding
+      The returned `breach_latched` is the LATCHED OUTPUT (semantic a) — what
+      `CVaRAssessment.breach` carries and what the priority resolver reads.
+      `recovery_latched` is the one-tick clear-transition output. The raw
+      threshold-crossing inputs (semantic b) are NEVER exposed on the typed
+      object — they live only inside this state machine.
+      
+      Two-level hysteresis: arm-threshold > clear-threshold. The cosignal
+      becomes ARMED only after CVAR_COSIGNAL_CONFIRM_TICKS consecutive
+      arm-threshold crossings. Once armed, it stays armed until
+      CVAR_COSIGNAL_CLEAR_TICKS consecutive clear-threshold crossings. This
+      sibling-of-compute_exit_confirmation pattern is the C-1 ★ binding
       structure. A hard single-tick trigger would be a C-1 KILL.
       
       When cvar_assessment_available is False, returns (0, 0, False, True) — abstain
@@ -58,24 +65,34 @@ Per §5.6 R-1, the system after Phase 2 is **MORE complex**, not less — 6 heur
 
 #### Frozen typed object — `CVaRAssessment` extended
 
-Phase-1 M2 introduced `CVaRAssessment(cvar_pct, n_tail, stderr, insufficient_reason)`. Phase 2 extends it (additive only; M2-Phase-1 consumers untouched):
+Phase-1 M2 introduces `CVaRAssessment(cvar_pct, tail_obs_count, stderr, insufficient_reason)` — field name `tail_obs_count` is canonical per synthesis §2.6 verbatim and per critic's `mc-sentinel-blast-radius` plan's four-field contract. The SQL column in `cvar_diagnostics` is `cvar_n_tail` (a column name; renaming would force a destructive migration — forbidden by additive-first); the scalar projection is `cvar_n_tail → tail_obs_count` at the Python boundary. Phase 2 extends the dataclass additively (Phase-1 M2 consumers untouched):
 
 ```python
 @dataclass(frozen=True)
 class CVaRAssessment:
-    # Phase-1 M2 fields (unchanged):
+    # Phase-1 M2 fields (canonical, unchanged through both phases):
     cvar_pct: float | None              # None = insufficient (F-4 ★)
-    n_tail: int
-    stderr: float | None
+    tail_obs_count: int                  # genuine distinct sub-5% tail observations; the auditable T (NEVER the path count); per synthesis §2.6
+    stderr: float | None                 # computed on tail_obs_count, per H-2 binding (NEVER on the resample count)
     insufficient_reason: str | None
-    # Phase-2 additions:
-    breach: bool                         # entry-threshold crossed THIS evaluation
-    recovery: bool                       # exit-threshold crossed THIS evaluation
-    tail_obs_count: int                  # genuine independent tail observations (for T in any future test; NEVER the path count)
+    # Phase-2 additions (additive only; Phase-1 consumers byte-identical):
+    breach: bool = False                 # the LATCHED hysteresis-arm output of compute_cvar_cosignal_confirmation — True iff the state machine is currently ARMED; False until CVAR_COSIGNAL_CONFIRM_TICKS consecutive arm-threshold crossings, False again only after CVAR_COSIGNAL_CLEAR_TICKS consecutive clear-threshold crossings; NEVER a raw single-tick threshold-crossing input
+    recovery: bool = False               # the LATCHED hysteresis-clear output — True for one tick on the transition from ARMED → CLEARED (used by upstream callers to bookkeep one-shot recovery events); NEVER a raw single-tick clear-threshold-crossing input
+
+    def __post_init__(self) -> None:
+        # F-4 ★ fail-safe invariant — load-bearing.
+        # When cvar_pct is None (insufficient pool / unavailable ensemble), the
+        # cosignal CANNOT be armed AND CANNOT be in a recovery transition. The
+        # protective stop still fires on its own; the cosignal NEVER disables
+        # the safety floor.
+        if self.cvar_pct is None:
+            object.__setattr__(self, "breach", False)
+            object.__setattr__(self, "recovery", False)
 ```
 
-- `breach` is always `False` when `cvar_pct is None` (fail-safe; F-4 ★).
-- `recovery` is always `False` when `cvar_pct is None`.
+- **`breach` semantics — pinned (a) per critic's reconciliation.** `breach` is the **LATCHED OUTPUT** of `compute_cvar_cosignal_confirmation` (the hysteresis state machine), NOT the instantaneous "current-tick CVaR > arm threshold" raw input. (a) is what the priority resolver reads; (b) would be a debug field at best and would invite naive callers to threshold on it. The resolver's input is `breach`; nothing in the resolver, the test harness, or the abstain-fail-safe coverage code may read the raw threshold-crossing signal under that name.
+- **`recovery` semantics — also pinned (a).** `recovery` is the LATCHED one-tick clear-transition output, not the raw "current-tick CVaR < clear threshold" input. Mutually exclusive with `breach` within a single evaluation: a single tick cannot both arm and clear.
+- **`__post_init__` enforces the F-4 ★ invariant structurally.** `cvar_pct is None` forces both `breach` and `recovery` to `False`. The `frozen=True` workaround (`object.__setattr__` from inside `__post_init__`) is the standard idiom; the dataclass remains immutable from the consumer's perspective.
 - The dataclass is `frozen=True` — replay-parity invariant (F-2 ★).
 
 #### Wiring into the per-cycle path
@@ -99,8 +116,10 @@ class CVaRAssessment:
 | **De-confirmation (recovery)** | Active cosignal + (recovery, recovery, recovery) ticks → cleared. (recovery, no-recovery, recovery) → counter resets. |
 | **F-4 ★ abstain fail-safe** | `cvar_assessment_available=False` → returns `(0, 0, False, True)`. Active state is wiped — the cosignal CANNOT survive an ensemble unavailability. |
 | **A-2 ★ NaN/Inf closure** | NaN inputs raise `ValueError` at entry. |
-| **`CVaRAssessment.breach` is `False` when `cvar_pct is None`** | A test asserts the typed object's invariant — fail-safe. |
-| **`recovery` and `breach` are mutually exclusive within one tick** | Both `True` at once would mean entry and exit thresholds crossed simultaneously — structural invariant. |
+| **F-4 ★ post_init guard — `cvar_pct is None → breach=False AND recovery=False`** | A test constructs `CVaRAssessment(cvar_pct=None, tail_obs_count=0, stderr=None, insufficient_reason="thin pool", breach=True, recovery=True)` and asserts `assessment.breach == False AND assessment.recovery == False` after `__post_init__` runs. The structural enforcement test — without `__post_init__`, a buggy producer could construct a sentinel with `breach=True`, and the resolver would treat it as armed. |
+| **`recovery` and `breach` are mutually exclusive within one tick** | Both `True` at once would mean arm- and clear-thresholds crossed simultaneously — structural invariant. |
+| **`breach` semantic (a) — LATCHED, not raw** | A test asserts that a single arm-threshold crossing tick does NOT set `CVaRAssessment.breach=True` on the produced assessment; only after `CVAR_COSIGNAL_CONFIRM_TICKS` consecutive crossings does the state machine latch `breach=True`. Pins the (a) vs (b) semantic — the typed object NEVER carries the raw threshold-crossing input. |
+| **`tail_obs_count` is the canonical field name (synthesis §2.6)** | A regression test asserts the typed object's field is `tail_obs_count` (NOT `n_tail`); asserts the M2 SQL column `cvar_n_tail` is projected to `tail_obs_count` at the Python boundary; asserts no consumer reads a `n_tail` Python attribute. |
 | **Layered-structure invariant (G-3 safety floor)** | A test asserts the 6 incumbent layers (vol-scaling, time-squeeze, parabolic ratchet, breakeven, VWAP×2, MC) are NOT removed when the cosignal is added. A scan over `math_engine.py` enumerates the 6 functions and asserts presence. |
 | **Cosignal does NOT solely fire an exit (§5.2 binding)** | An integration test: cosignal `is_cosignal_active=True` AND all 4 incumbent exit booleans `False` → `resolve_trigger_priority_extended` returns `(None, [])`. Validates the cosignal is NOT a sole trigger. |
 | **lambda not in Optuna search (★ load-bearing)** | A regression test scans the autotuner search space and asserts `lambda` is NOT among the searched parameters. Synthesis §5.3 binding. |

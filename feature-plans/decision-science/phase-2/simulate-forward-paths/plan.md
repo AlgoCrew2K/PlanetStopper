@@ -62,10 +62,11 @@ Per §2.3, **precondition (d) may be structurally unsatisfiable** — the ~1,000
       tier1_seed: int            # the seed that produced this bundle (audit)
       regime_key: str            # the regime bucket used
       block_length: int          # the block length used (NN1-frozen)
-      n_tail: int                # count of genuine distinct sub-5% historical observations
+      tail_obs_count: int        # count of genuine distinct sub-5% historical observations in the regime bucket (canonical name per synthesis §2.6 — mirrors CVaRAssessment.tail_obs_count semantics one layer up)
       insufficient_reason: str | None
   ```
 - `paths = None` is the **out-of-band insufficient sentinel** — mirrors `MC_INSUFFICIENT_HISTORY_SENTINEL = None` (F-4 ★). The downstream consumer must abstain fail-safe when `paths is None`.
+- **Field-name reconciliation (binding):** `tail_obs_count` is canonical per synthesis §2.6 verbatim and critic's `mc-sentinel-blast-radius` plan's four-field `CVaRAssessment` contract. The `ForwardPathBundle.tail_obs_count` field is semantically the same kind of quantity (distinct genuine tail observations in the underlying historical pool — never the path count); using the same name across the two typed objects keeps the reviewer surface coherent.
 
 #### Determinism
 
