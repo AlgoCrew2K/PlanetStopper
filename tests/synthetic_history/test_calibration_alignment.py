@@ -352,11 +352,19 @@ def test_synthetic_history_valid_alloc_accumulator_is_NOT_gated_by_v_gt_zero() -
     """
     SEMANTIC-ASYMMETRY PIN, producer side.
 
-    synthetic_history.process_day() contains an inner loop over each
+    synthetic_history.build_replay_day() contains an inner loop over each
     holding's bar. The ``valid_alloc += alloc`` line MUST be OUTSIDE the
     ``if v > 0:`` guard — i.e. accumulated on bar-existence alone. This is
     Cycle-A behavior verbatim and is intentional (the producer's coverage
     accumulator counts bars-with-data, not bars-with-positive-vwap).
+
+    Cluster 5 / Decision D6 triage note: the per-day tick builder (and with
+    it the ``valid_alloc`` accumulator) was extracted out of the inner
+    ``process_day`` closure into the module-level ``build_replay_day``
+    function. This test was orphaned-RED purely because its AST query still
+    targeted ``process_day``. The contract it pins — the producer-vs-canonical
+    v>0 asymmetry — is unchanged and still intentional, so the test is
+    RETARGETED (not deleted): it now walks ``build_replay_day``.
 
     REGRESSION CATCH: if a future contributor moves this line INSIDE the
     ``if v > 0:`` guard ("harmonizing" with math_engine.compute_vwap_-
@@ -370,28 +378,31 @@ def test_synthetic_history_valid_alloc_accumulator_is_NOT_gated_by_v_gt_zero() -
     enclosing ``if v > 0:`` guard sits between it and the for-loop body.
     """
     tree = _parse_synth()
-    # process_day is defined inside generate_synthetic_history; use ast.walk
-    process_day = _find_function(tree, "process_day")
-    assert process_day is not None, (
-        "synthetic_history.process_day not found — the cycle-A producer "
-        "function appears to have been removed or renamed. This test "
+    # The per-day tick builder is the module-level build_replay_day function;
+    # generate_synthetic_history.process_day delegates to it.
+    build_replay_day = _find_function(tree, "build_replay_day")
+    assert build_replay_day is not None, (
+        "synthetic_history.build_replay_day not found — the producer per-day "
+        "tick builder appears to have been removed or renamed. This test "
         "cannot verify the asymmetry."
     )
 
-    aug_lineno = _augassign_lineno_of_name_inside_node(process_day, "valid_alloc")
+    aug_lineno = _augassign_lineno_of_name_inside_node(build_replay_day, "valid_alloc")
     assert aug_lineno is not None, (
-        "synthetic_history.process_day no longer contains an AugAssign on "
-        "`valid_alloc`. The Cycle-A producer accumulator appears to have "
+        "synthetic_history.build_replay_day no longer contains an AugAssign "
+        "on `valid_alloc`. The producer coverage accumulator appears to have "
         "been removed or renamed. If the rename was intentional, update "
         "this test to target the new name and re-verify the asymmetry."
     )
 
-    enclosing_if = _enclosing_if_test_at_or_above(process_day, aug_lineno, "valid_alloc")
+    enclosing_if = _enclosing_if_test_at_or_above(
+        build_replay_day, aug_lineno, "valid_alloc"
+    )
     if enclosing_if is not None and _if_test_compares_v_gt_zero(enclosing_if):
         pytest.fail(
             "SEMANTIC-ASYMMETRY REGRESSION (producer side): "
-            f"synthetic_history.process_day's `valid_alloc += alloc` at line "
-            f"{aug_lineno} is now gated by `if v > 0:` at line "
+            f"synthetic_history.build_replay_day's `valid_alloc += alloc` at "
+            f"line {aug_lineno} is now gated by `if v > 0:` at line "
             f"{enclosing_if.lineno}. This 'harmonizes' the producer with "
             "math_engine.compute_vwap_signals (which DOES gate on v > 0). "
             "If intentional, the change must be paired with a Cycle-A "
