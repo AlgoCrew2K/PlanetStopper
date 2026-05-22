@@ -535,6 +535,192 @@ class TestHarveyLiuHaircutD3:
         )
 
 
+class TestHaircutOutcomeSurfacing:
+    """
+    risk-engine-specialist trace + team-lead conditional ruling (2026-05-22):
+    run_calibration_sweep is diagnostic-only (no live-write path) — but team-lead's
+    branch-2 condition requires the calibration report to surface, UNAMBIGUOUSLY
+    and adjacent to the winner, whether a trial cleared the Harvey & Liu FDR gate.
+
+    The defect: when no trial clears the gate, run_calibration_sweep silently keeps
+    the NAIVE Optuna winner with `selection_tstat=None`. That None is ambiguous —
+    it is the SAME None a row carries when the haircut could not run at all (zero
+    non-sentinel trials). An operator reading the report sees a concrete proposed
+    parameter change with a blank significance field; nothing says "this proposal
+    is statistically indistinguishable from noise — it FAILED the overfitting
+    gate". Unlike run_autotuner (winner=None → haircut_rejected_proposal → cascade
+    poison), the sweep drops the rejection signal.
+
+    Required fix: every report row carries an explicit `haircut_outcome` field
+    with one of three values:
+      - "cleared"          — a trial cleared the FDR gate; selection_tstat is its
+                             t-statistic.
+      - "no_trial_cleared" — the haircut ran but no trial cleared q; proposed_value
+                             is the NAIVE winner and is NOT statistically qualified.
+      - "not_run"          — fewer than 1 non-sentinel trial; the haircut could
+                             not run.
+    This disambiguates selection_tstat=None with an adjacent explicit verdict.
+
+    These tests force each branch deterministically by patching
+    benjamini_hochberg_adjust — driving real history cannot reliably produce a
+    pure-noise trial set.
+    """
+
+    _VALID_OUTCOMES = {"cleared", "no_trial_cleared", "not_run"}
+
+    def _run_sweep(self, autotuner_module, single_sym_history, deviation_dict):
+        return autotuner_module.run_calibration_sweep(
+            history_data=single_sym_history,
+            current_params={"PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                            "VWAP_CROSS_HWM_PCT": 1.0},
+            current_date_str="2024-03-01",
+            deviation_dict=deviation_dict,
+            random_state=42,
+        )
+
+    def test_every_report_row_carries_an_explicit_haircut_outcome(
+        self, autotuner_module, single_sym_history, deviation_dict
+    ):
+        """
+        Every calibration report row must carry a `haircut_outcome` field whose
+        value is one of {cleared, no_trial_cleared, not_run}. The field must be
+        present on EVERY row — it is the operator's gate verdict, not optional.
+        """
+        result = self._run_sweep(autotuner_module, single_sym_history, deviation_dict)
+        assert result, "run_calibration_sweep returned an empty report."
+        for row in result:
+            assert "haircut_outcome" in row, (
+                f"Report row is missing the 'haircut_outcome' field — the "
+                f"calibration report must surface the FDR-gate verdict adjacent "
+                f"to the winner so selection_tstat=None is not read as a blank.\n"
+                f"  row: {row}"
+            )
+            assert row["haircut_outcome"] in self._VALID_OUTCOMES, (
+                f"haircut_outcome={row['haircut_outcome']!r} is not one of "
+                f"{sorted(self._VALID_OUTCOMES)}."
+            )
+
+    def test_haircut_outcome_is_consistent_with_selection_tstat(
+        self, autotuner_module, single_sym_history, deviation_dict
+    ):
+        """
+        The haircut_outcome value and the selection_tstat field must be mutually
+        consistent on every row:
+          - "cleared"          ⇒ selection_tstat is a finite float (the winner's t-stat).
+          - "no_trial_cleared" ⇒ selection_tstat is None (no qualified winner).
+          - "not_run"          ⇒ selection_tstat is None (haircut did not run).
+        A row claiming "cleared" with a None t-stat, or a populated t-stat with a
+        non-cleared outcome, is an incoherent report.
+        """
+        result = self._run_sweep(autotuner_module, single_sym_history, deviation_dict)
+        assert result, "run_calibration_sweep returned an empty report."
+        for row in result:
+            assert "haircut_outcome" in row, (
+                f"Report row is missing 'haircut_outcome' — cannot check "
+                f"consistency with selection_tstat.\n  row: {row}"
+            )
+            outcome = row["haircut_outcome"]
+            assert outcome in self._VALID_OUTCOMES, (
+                f"haircut_outcome={outcome!r} is not one of "
+                f"{sorted(self._VALID_OUTCOMES)}."
+            )
+            tstat = row.get("selection_tstat")
+            if outcome == "cleared":
+                assert tstat is not None and math.isfinite(tstat), (
+                    f"haircut_outcome='cleared' but selection_tstat={tstat!r} — "
+                    f"a cleared row must carry the winner's finite t-statistic."
+                )
+            elif outcome in ("no_trial_cleared", "not_run"):
+                assert tstat is None, (
+                    f"haircut_outcome={outcome!r} but selection_tstat={tstat!r} — "
+                    f"a row with no qualified winner must have selection_tstat=None."
+                )
+
+    def test_no_trial_cleared_outcome_when_haircut_rejects_all(
+        self, autotuner_module, single_sym_history, deviation_dict
+    ):
+        """
+        When the Harvey & Liu haircut rejects every trial (no BHY-adjusted p-value
+        clears the FDR gate), every report row must report
+        haircut_outcome='no_trial_cleared' — NOT a blank field and NOT 'cleared'.
+
+        Forced deterministically: benjamini_hochberg_adjust is patched to return
+        all-1.0 adjusted p-values (the saturated rejection case), so no trial can
+        clear q regardless of the underlying study. This is the pure-noise
+        scenario — the report must tell the operator the proposal did not clear
+        the overfitting gate.
+        """
+        orig_bhy = autotuner_module.benjamini_hochberg_adjust
+
+        def _reject_all(p_values):
+            # Saturated rejection: every adjusted p-value pinned to 1.0 — far
+            # above any conventional FDR q, so _haircut_select returns no winner.
+            return [1.0 for _ in p_values]
+
+        autotuner_module.benjamini_hochberg_adjust = _reject_all
+        try:
+            result = self._run_sweep(autotuner_module, single_sym_history,
+                                     deviation_dict)
+        finally:
+            autotuner_module.benjamini_hochberg_adjust = orig_bhy
+
+        assert result, "run_calibration_sweep returned an empty report."
+        for row in result:
+            assert row.get("haircut_outcome") == "no_trial_cleared", (
+                f"With the haircut rejecting every trial, each report row must "
+                f"report haircut_outcome='no_trial_cleared'; got "
+                f"{row.get('haircut_outcome')!r}. The operator must be told the "
+                f"proposal failed the FDR gate — the naive winner is not "
+                f"statistically qualified.\n  row: {row}"
+            )
+            assert row.get("selection_tstat") is None, (
+                "A no-trial-cleared row must carry selection_tstat=None."
+            )
+
+    def test_cleared_outcome_when_a_trial_clears_the_gate(
+        self, autotuner_module, single_sym_history, deviation_dict
+    ):
+        """
+        Companion to the rejection test: when the haircut lets a trial clear the
+        FDR gate, the report rows must report haircut_outcome='cleared' with a
+        populated selection_tstat — the gate is not so strict it can never
+        produce a qualified winner.
+
+        Forced deterministically: benjamini_hochberg_adjust is patched to return
+        all-0.0 adjusted p-values, so the argmin winner clears any q>0 gate.
+        """
+        orig_bhy = autotuner_module.benjamini_hochberg_adjust
+
+        def _clear_all(p_values):
+            # Every adjusted p-value pinned to 0.0 — well below any FDR q, so
+            # _haircut_select's argmin winner clears the gate.
+            return [0.0 for _ in p_values]
+
+        autotuner_module.benjamini_hochberg_adjust = _clear_all
+        try:
+            result = self._run_sweep(autotuner_module, single_sym_history,
+                                     deviation_dict)
+        finally:
+            autotuner_module.benjamini_hochberg_adjust = orig_bhy
+
+        assert result, "run_calibration_sweep returned an empty report."
+        for row in result:
+            # A study with >=1 non-sentinel trial and an all-clear haircut must
+            # yield a cleared row. (If the study had zero non-sentinel trials the
+            # outcome would legitimately be 'not_run'; the single_sym_history
+            # fixture produces real trials, so 'cleared' is expected here.)
+            assert row.get("haircut_outcome") in ("cleared", "not_run"), (
+                f"haircut_outcome={row.get('haircut_outcome')!r} is invalid for "
+                f"an all-clear haircut run."
+            )
+            if row.get("haircut_outcome") == "cleared":
+                tstat = row.get("selection_tstat")
+                assert tstat is not None and math.isfinite(tstat), (
+                    f"A 'cleared' row must carry a finite selection_tstat; "
+                    f"got {tstat!r}."
+                )
+
+
 # ---------------------------------------------------------------------------
 # 7. FROZEN EVAL (O6) — held-out fold consumed exactly once, post-selection
 # ---------------------------------------------------------------------------
