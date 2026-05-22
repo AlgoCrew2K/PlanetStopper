@@ -353,17 +353,33 @@ def test_autotuner_collect_sim_returns_calls_resolve_trigger_priority():
 
 def test_autotuner_run_simulation_calls_resolve_trigger_priority():
     """
-    AC3 (site 2): autotuner.py run_simulation must also call
-    math_engine.resolve_trigger_priority. Two call sites → two appearances in AST.
+    AC3: autotuner.py's replay must call math_engine.resolve_trigger_priority
+    for the trigger-priority decision — the inline if/elif cascade must be
+    gone.
 
-    RED: only one (or zero) calls exist pre-fix.
+    Cluster-3 relaxation: the original assertion expected >= 2 call sites
+    (one lexically inside each of run_simulation and _collect_sim_returns).
+    The autotuner-replay-parity cycle extracted a single shared per-tick
+    exit core (_replay_exit_tick) that run_simulation, _collect_sim_returns
+    and replay_exit_sequence all call — so resolve_trigger_priority now has
+    ONE canonical call site, which is strictly better (single source of
+    truth, zero duplication) than two. The contract this test enforces is
+    "the canonical resolver is called, not open-coded" — satisfied by >= 1.
+    That both replay functions REACH it (via the shared core) is covered by
+    tests/autotuner/test_c3_replay_internal_lockstep.py; the absence of any
+    inline cascade is covered by test_autotuner_has_no_inline_trigger_cascade
+    below.
+
+    RED (pre-fix): zero calls — the replay open-coded an inline if/elif ladder.
     """
     tree = _load_ast("autotuner.py")
     calls = _find_call_names(tree, "resolve_trigger_priority")
-    assert len(calls) >= 2, (
-        f"autotuner.py must contain resolve_trigger_priority calls at BOTH replay "
-        f"sites (_collect_sim_returns + run_simulation). Found {len(calls)} call(s). "
-        f"Both inline ladders must be replaced."
+    assert len(calls) >= 1, (
+        f"autotuner.py must call math_engine.resolve_trigger_priority for the "
+        f"replay's trigger-priority decision. Found {len(calls)} call(s). The "
+        f"inline if/elif trigger ladders must be replaced with the shared "
+        f"resolver call (one canonical call site via the shared per-tick "
+        f"exit core is the correct post-cluster-3 architecture)."
     )
 
 

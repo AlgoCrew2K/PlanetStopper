@@ -124,19 +124,25 @@ def _compute_breakeven_update_call_sites(filename: str) -> list[ast.Call]:
 def test_no_autotuner_call_site_passes_previously_persisted_stop_level() -> None:
     """
     AC1 (post-H-1): the H-1 fix removes previously_persisted_stop_level from
-    compute_breakeven_update. Both autotuner.py call sites
-    (_collect_sim_returns ~line 365 and run_simulation ~line 508) must call
-    the function WITHOUT that kwarg — passing it would raise TypeError.
+    compute_breakeven_update. Every autotuner.py call site must call the
+    function WITHOUT that kwarg — passing it would raise TypeError.
 
-    RED: both autotuner call sites currently pass
+    Cluster-3 relaxation: the original assertion expected >= 2 call sites
+    (one lexically inside each of run_simulation and _collect_sim_returns).
+    The autotuner-replay-parity cycle extracted a single shared per-tick
+    exit core (_replay_exit_tick) that both replay functions call — so
+    compute_breakeven_update now has ONE canonical call site, strictly
+    better (single source of truth) than two. The real contract this test
+    enforces is the `offenders` check below: NO call site passes the removed
+    kwarg. The count is only a precondition; >= 1 is correct post-cluster-3.
+
+    RED: the autotuner call sites passed
     previously_persisted_stop_level=prev_persisted_stop.
-
-    This is the inverse of the pre-fix contract; H-1 flips it.
     """
     calls = _compute_breakeven_update_call_sites("autotuner.py")
-    assert len(calls) >= 2, (
-        f"Expected >=2 compute_breakeven_update call sites in autotuner.py "
-        f"(_collect_sim_returns + run_simulation); found {len(calls)}."
+    assert len(calls) >= 1, (
+        f"Expected >=1 compute_breakeven_update call site in autotuner.py "
+        f"(the replay must call the canonical helper); found {len(calls)}."
     )
     offenders = [
         f"line {c.lineno}"
@@ -146,7 +152,7 @@ def test_no_autotuner_call_site_passes_previously_persisted_stop_level() -> None
     assert not offenders, (
         f"autotuner.py still passes the removed previously_persisted_stop_"
         f"level kwarg at {offenders}. The H-1 fix removes the parameter; "
-        f"both call sites must drop it and drop the prev_persisted_stop "
+        f"every call site must drop it and drop the prev_persisted_stop "
         f"threading entirely. The replay stop is HWM-anchored — recomputed "
         f"HWM - distance each tick — exactly like the live path."
     )

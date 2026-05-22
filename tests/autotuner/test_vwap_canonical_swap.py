@@ -90,11 +90,43 @@ def _find_canonical_calls(tree: ast.Module) -> list[ast.Call]:
 
 
 def _find_run_simulation(tree: ast.Module) -> ast.FunctionDef | None:
-    """Locate the inner ``run_simulation`` function definition within run_autotuner."""
+    """Locate the ``run_simulation`` function definition."""
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "run_simulation":
             return node
     return None
+
+
+# Cluster-3: the autotuner-replay-parity cycle may extract the per-tick exit
+# loop into a shared core (_replay_exit_tick) that run_simulation /
+# _collect_sim_returns / replay_exit_sequence all call. The VWAP state machine
+# then lives in that shared core, not lexically inside run_simulation. These
+# names cover both the pre-cluster-3 (loop inside run_simulation) and the
+# post-cluster-3 shared-core layouts.
+_REPLAY_VWAP_BEARING_NAMES = (
+    "run_simulation",
+    "_collect_sim_returns",
+    "_replay_exit_tick",
+    "_replay_tick",
+    "_simulate_exit_tick",
+)
+
+
+def _find_vwap_state_machine_functions(tree: ast.Module) -> list[ast.FunctionDef]:
+    """Return the replay function(s) that carry the VWAP breakdown state
+    machine — whichever of the replay-machinery functions actually contain a
+    call to math_engine.compute_vwap_breakdown_update.
+
+    Pre-cluster-3 this is run_simulation itself; post-cluster-3 it is the
+    shared per-tick exit core. The inline-mutation check runs against
+    whichever function(s) own the machine.
+    """
+    out: list[ast.FunctionDef] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name in _REPLAY_VWAP_BEARING_NAMES:
+            if any(_is_compute_vwap_breakdown_call(n) for n in ast.walk(node)):
+                out.append(node)
+    return out
 
 
 def _value_reads_valid_vwap_weight_from_tick(value: ast.AST) -> bool:
@@ -216,92 +248,84 @@ def test_inline_vwap_state_mutations_are_removed() -> None:
     (``vwap_ticks += 1``) and standalone reassignments (``vwap_ticks = 0``)
     are inline-state-machine signatures and are forbidden.
 
-    Initialization assignments (``vwap_ticks = 0`` at the top of the per-day
-    block) are allowed — they bind the starting state that the helper then
-    advances.
+    Cluster-3 update: the autotuner-replay-parity cycle may extract the
+    per-tick exit machine into a shared core (_replay_exit_tick). The VWAP
+    state machine then lives in that core, not lexically inside
+    run_simulation. This test now checks the function(s) that actually OWN
+    the VWAP machine — whichever replay-machinery function calls
+    compute_vwap_breakdown_update — so it is correct under both the
+    pre-cluster-3 (loop inside run_simulation) and the shared-core layouts.
+
+    A plain-Name Assign of vwap_ticks / vwap_bleed_ticks that is NOT a
+    tuple-unpack of the canonical call is an inline-state-machine signature
+    and is forbidden; an AugAssign of those names is always forbidden. Plain
+    initialization (``vwap_ticks = 0``) outside any per-tick context is
+    allowed. A shared core that threads VWAP state via a dict
+    (``state["vwap_ticks"]``) has no plain-Name mutation at all — also fine.
     """
     tree = _parse_autotuner()
-    run_sim = _find_run_simulation(tree)
-    assert run_sim is not None, "Could not locate run_simulation in autotuner.py"
-
-    canonical_calls_in_run_sim = [
-        n for n in ast.walk(run_sim) if _is_compute_vwap_breakdown_call(n)
-    ]
-
-    # Collect every Assign / AugAssign of vwap_ticks or vwap_bleed_ticks
-    # inside run_simulation.
-    offending: list[tuple[str, int]] = []
-    init_lines: set[int] = set()  # lines we treat as initialization (allowed)
-
-    # Find the line range of the innermost for-tick loop (tick_idx, tick).
-    # Mutations inside that loop body that are NOT tuple-unpacks of the
-    # canonical call are offending.
-    tick_loop: ast.For | None = None
-    for node in ast.walk(run_sim):
-        if isinstance(node, ast.For):
-            tgt = node.target
-            # for tick_idx, tick in enumerate(ticks):
-            if (
-                isinstance(tgt, ast.Tuple)
-                and len(tgt.elts) == 2
-                and isinstance(tgt.elts[1], ast.Name)
-                and tgt.elts[1].id == "tick"
-            ):
-                tick_loop = node
-                break
-
-    assert tick_loop is not None, (
-        "Could not find the per-tick for-loop in run_simulation — autotuner "
-        "may have been refactored in a way these tests don't understand."
+    vwap_funcs = _find_vwap_state_machine_functions(tree)
+    assert vwap_funcs, (
+        "No replay-machinery function calls math_engine.compute_vwap_"
+        "breakdown_update. The replay's VWAP breakdown decision must "
+        "delegate to the canonical helper — see autotuner.py "
+        "run_simulation / _collect_sim_returns / _replay_exit_tick."
     )
-
-    tick_loop_start = tick_loop.lineno
-    tick_loop_end = getattr(tick_loop, "end_lineno", tick_loop_start)
 
     def _is_tuple_unpack_of_canonical_call(value: ast.AST) -> bool:
         return isinstance(value, ast.Call) and _is_compute_vwap_breakdown_call(value)
 
-    # Initialization sites: any Assign of these names OUTSIDE the tick loop
-    # (i.e. in the per-day setup) is permitted. Pre-swap, the offending
-    # mutations all live INSIDE the tick loop, so this is sufficient.
-    for node in ast.walk(run_sim):
-        if isinstance(node, ast.Assign):
-            for tgt in node.targets:
-                # Plain `vwap_ticks = 0` or `vwap_bleed_ticks = 0`
+    # An offending mutation = a plain-Name (not subscript/attribute) Assign or
+    # AugAssign of vwap_ticks / vwap_bleed_ticks that is NOT the tuple-unpack
+    # of the canonical call. Walk every VWAP-bearing replay function.
+    offending: list[tuple[str, int]] = []
+    for func in vwap_funcs:
+        for node in ast.walk(func):
+            if isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    # Plain `vwap_ticks = <something>` — forbidden unless it
+                    # is a tuple-unpack of the canonical call, or a bare
+                    # init (= 0 / a constant) binding the starting state.
+                    if isinstance(tgt, ast.Name) and tgt.id in INLINE_VWAP_STATE_NAMES:
+                        if _is_tuple_unpack_of_canonical_call(node.value):
+                            continue
+                        if isinstance(node.value, ast.Constant):
+                            continue  # plain initialization is allowed
+                        offending.append((tgt.id, node.lineno))
+                    # Tuple-target: (vwap_ticks, vwap_bleed_ticks, ...) = ...
+                    if isinstance(tgt, ast.Tuple):
+                        names_in_target = {
+                            e.id for e in tgt.elts if isinstance(e, ast.Name)
+                        }
+                        hit = names_in_target & INLINE_VWAP_STATE_NAMES
+                        if hit and not _is_tuple_unpack_of_canonical_call(node.value):
+                            for n in hit:
+                                offending.append((n, node.lineno))
+            if isinstance(node, ast.AugAssign):
+                tgt = node.target
                 if isinstance(tgt, ast.Name) and tgt.id in INLINE_VWAP_STATE_NAMES:
-                    if not (tick_loop_start <= node.lineno <= tick_loop_end):
-                        init_lines.add(node.lineno)
-                        continue
-                    # Inside tick loop — must be a tuple-unpack of the canonical call
-                    if _is_tuple_unpack_of_canonical_call(node.value):
-                        continue
                     offending.append((tgt.id, node.lineno))
-                # Tuple-target: (vwap_ticks, vwap_bleed_ticks, ...) = canonical_call(...)
-                if isinstance(tgt, ast.Tuple):
-                    names_in_target = {e.id for e in tgt.elts if isinstance(e, ast.Name)}
-                    hit = names_in_target & INLINE_VWAP_STATE_NAMES
-                    if hit and not _is_tuple_unpack_of_canonical_call(node.value):
-                        for n in hit:
-                            offending.append((n, node.lineno))
-        if isinstance(node, ast.AugAssign):
-            tgt = node.target
-            if isinstance(tgt, ast.Name) and tgt.id in INLINE_VWAP_STATE_NAMES:
-                offending.append((tgt.id, node.lineno))
 
     assert not offending, (
-        "Inline VWAP state mutations still present in run_simulation. The "
-        "following Assign/AugAssign nodes mutate vwap_ticks / vwap_bleed_ticks "
-        "without unpacking from math_engine.compute_vwap_breakdown_update:\n"
+        "Inline VWAP state mutations still present in the replay machinery. "
+        "The following Assign/AugAssign nodes mutate vwap_ticks / "
+        "vwap_bleed_ticks without unpacking from math_engine.compute_vwap_"
+        "breakdown_update:\n"
         + "\n".join(f"  - {name} mutated at line {lineno}" for name, lineno in offending)
         + "\nThese must be removed and replaced by a single tuple-unpack of "
         "the canonical helper's return value."
     )
 
-    # Sanity: there should also actually BE a canonical call inside the tick
-    # loop — otherwise the absence of mutations is vacuous.
+    # Sanity: a canonical call must actually exist — _find_vwap_state_machine_
+    # functions already guarantees this (it selects functions that call it),
+    # but assert explicitly so the no-mutations result is never vacuous.
+    canonical_calls_in_run_sim = [
+        n for f in vwap_funcs for n in ast.walk(f)
+        if _is_compute_vwap_breakdown_call(n)
+    ]
     assert canonical_calls_in_run_sim, (
-        "No call to math_engine.compute_vwap_breakdown_update found inside "
-        "run_simulation. The inline state machine was removed but the "
+        "No call to math_engine.compute_vwap_breakdown_update found in the "
+        "replay machinery. The inline state machine was removed but the "
         "canonical helper was not wired in."
     )
 
