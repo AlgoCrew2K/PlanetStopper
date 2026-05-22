@@ -274,60 +274,158 @@ def test_replay_grace_threshold_is_named_constant_not_literal() -> None:
     )
 
 
+def _rhs_references_production_grace(value: ast.AST) -> bool:
+    """True iff an assignment RHS obtains the grace value by REFERENCING
+    alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES (the shared source of
+    truth) rather than re-deriving it.
+
+    Accepted: an Attribute access whose attr is VWAP_OPEN_WINDOW_GRACE_MINUTES
+    on an `alpha_bot_execution` value (alpha_bot_execution.VWAP_... — possibly
+    through an alias), or a bare Name of that constant imported `from
+    alpha_bot_execution import VWAP_OPEN_WINDOW_GRACE_MINUTES`.
+    Rejected: a Constant, an os.getenv(...) Call, arithmetic — any RHS that
+    re-derives the dial instead of referencing production's.
+    """
+    if isinstance(value, ast.Attribute):
+        return value.attr == "VWAP_OPEN_WINDOW_GRACE_MINUTES"
+    if isinstance(value, ast.Name):
+        return value.id == "VWAP_OPEN_WINDOW_GRACE_MINUTES"
+    return False
+
+
 def test_replay_grace_constant_is_shared_with_production_not_redefined() -> None:
-    """AC-2 (risk-engine-specialist watch item): the replay must SHARE
-    production's VWAP_OPEN_WINDOW_GRACE_MINUTES — it must NOT redefine its
-    own copy. A second module-level definition is a duplicated tuned dial
-    that drifts the moment production re-tunes the grace window.
+    """AC-2 / quant-code-reviewer BLOCK (Gate 6): the replay must SHARE
+    production's VWAP_OPEN_WINDOW_GRACE_MINUTES — it must NOT re-derive its
+    own copy. A second derivation (a literal, OR an independent
+    os.getenv(..., "15") parse with its own default) is a duplicated tuned
+    dial: production and the replay agree today only by coincidence of the
+    same default, and drift the moment one is re-tuned.
 
-    The replay's value of the grace minutes must equal production's at
-    runtime. autotuner.py must obtain it by importing/referencing
-    alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES (directly or via a
-    constant bound to it) — never a fresh `VWAP_OPEN_WINDOW_GRACE_MINUTES =
-    15` assignment of its own.
+    autotuner.py must obtain the grace value by REFERENCING
+    alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES — via a function-local
+    / deferred import (top-level import is out: alpha_bot_execution imports
+    autotuner, a circular import — verified) or a lazy accessor. Never a
+    fresh `VWAP_OPEN_WINDOW_GRACE_MINUTES = int(os.getenv(...,"15"))` of its
+    own.
 
-    Asserts: (a) autotuner.py contains NO module-level assignment that binds
-    a VWAP_OPEN_WINDOW_GRACE_MINUTES name to a literal, and (b) the runtime
-    grace value the replay uses equals
+    Asserts: (a) every autotuner.py assignment binding a VWAP_OPEN_WINDOW_
+    GRACE_MINUTES name has an RHS that REFERENCES production's constant — a
+    Constant RHS, an os.getenv Call RHS, or any other re-derivation fails;
+    and (b) the runtime grace value the replay uses equals
     alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES.
 
-    RED: pre-fix autotuner.py has no grace handling — part (b) cannot be
-    satisfied because there is no shared reference.
+    RED: autotuner.py:19 currently does
+    `VWAP_OPEN_WINDOW_GRACE_MINUTES = int(os.getenv("VWAP_OPEN_WINDOW_GRACE_MINUTES", "15"))`
+    — an independent os.getenv re-derivation duplicating production's dial.
     """
     import alpha_bot_execution
 
     production_grace = alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES
 
-    # (a) No autotuner-local module-level redefinition that hardcodes a value.
+    # (a) Every autotuner-local binding of the grace name must REFERENCE
+    # production's constant — not re-derive it (literal / os.getenv / arith).
     redefinitions: list[str] = []
     for node in ast.walk(_AUTOTUNER_TREE):
         if isinstance(node, ast.Assign):
             for tgt in node.targets:
                 if isinstance(tgt, ast.Name) and "VWAP_OPEN_WINDOW_GRACE" in tgt.id:
-                    # A bare-literal RHS is a duplicated dial; a reference to
-                    # alpha_bot_execution's constant is the shared form and OK.
-                    if isinstance(node.value, ast.Constant):
-                        redefinitions.append(f"line {node.lineno}: {tgt.id} = literal")
+                    if not _rhs_references_production_grace(node.value):
+                        kind = type(node.value).__name__
+                        redefinitions.append(
+                            f"line {node.lineno}: {tgt.id} = <{kind}> "
+                            f"(re-derives the dial; must reference "
+                            f"alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES)"
+                        )
     assert not redefinitions, (
-        f"autotuner.py redefines the grace constant from a literal at "
-        f"{redefinitions}. It must SHARE production's "
-        f"alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES, not duplicate "
-        f"the tuned value — a second definition drifts on the next re-tune."
+        f"autotuner.py re-derives the grace constant at {redefinitions}. It "
+        f"must SHARE production's alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_"
+        f"MINUTES by referencing it (function-local import or lazy accessor "
+        f"— top-level import is circular), NOT re-parse the env var or "
+        f"hardcode a literal. An independent derivation is a duplicated "
+        f"tuned dial that drifts on the next re-tune."
     )
 
-    # (b) The replay's runtime grace value must equal production's.
-    grace_value = None
-    for name in ("VWAP_OPEN_WINDOW_GRACE_MINUTES", "_VWAP_OPEN_WINDOW_GRACE_MINUTES"):
-        if hasattr(autotuner, name):
-            grace_value = getattr(autotuner, name)
-            break
-    assert grace_value is not None, (
-        "autotuner exposes no VWAP_OPEN_WINDOW_GRACE_MINUTES reference. The "
-        "replay must import/reference production's constant so the runtime "
-        "grace value is identical."
+    # (b) The replay's runtime grace value must equal production's. autotuner
+    # may not have a module-level constant at all under the shared-reference
+    # fix — it may use a function-local import or lazy accessor. So part (b)
+    # only requires production's constant to exist and be a non-negative int;
+    # the BINDING (the replay actually tracks it) is proven behaviourally by
+    # test_replay_grace_gate_tracks_retuned_production_constant below, which
+    # monkeypatches production's value and asserts the replay's gate shifts.
+    assert isinstance(production_grace, int) and production_grace >= 0, (
+        f"alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES must be a "
+        f"non-negative int; got {production_grace!r}."
     )
-    assert grace_value == production_grace, (
-        f"autotuner's grace value ({grace_value}) does not equal production's "
-        f"VWAP_OPEN_WINDOW_GRACE_MINUTES ({production_grace}). The replay "
-        f"must use the SAME constant, not a drifted copy."
+
+
+def test_replay_grace_gate_tracks_retuned_production_constant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-2 / quant-code-reviewer BLOCK (Gate 6 — the anti-drift behavioural
+    proof): when production's VWAP_OPEN_WINDOW_GRACE_MINUTES is re-tuned, the
+    autotuner replay's grace gate MUST shift with it — proving the replay
+    references production's constant rather than carrying an independent
+    duplicate.
+
+    Construct a VWAP breakdown that confirms early in the session. Run the
+    replay twice:
+      * production grace = 0  -> the breakdown is NOT suppressed -> exit.
+      * production grace re-tuned high (past the breakdown's confirm tick)
+        -> the breakdown IS suppressed -> no early exit.
+    The replay's exit decision must flip between the two. A duplicated
+    autotuner-local dial would NOT shift when only production's value is
+    monkeypatched — that GREEN goes RED here.
+
+    This drives the replay's internal grace path (run_simulation /
+    _collect_sim_returns, which read production's constant), NOT
+    replay_exit_sequence (which takes grace as an explicit parameter and so
+    cannot detect the duplication).
+    """
+    import alpha_bot_execution
+
+    params = _default_params()
+    params["VWAP_BLEED_TICKS"] = 999  # isolate System A (breakdown)
+
+    # A VWAP breakdown holding every tick from tick 0: tick 0 banks the HWM,
+    # subsequent ticks sit below it with negative vwap_diff + full weight.
+    ticks = [
+        {"time": "09:30", "return": 5.0, "mc_prob": 50.0, "vol": 0.5,
+         "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+    ]
+    ticks += [
+        {"time": f"09:{31 + i:02d}", "return": 2.0, "mc_prob": 50.0, "vol": 0.5,
+         "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0}
+        for i in range(20)
+    ]
+    history = {"sym-A": {"2026-04-06": ticks}}
+
+    def _run_sim_exits() -> bool:
+        """True iff run_simulation's replay fires an exit on this day."""
+        # run_simulation returns -total_guard_alpha; a day that triggers an
+        # exit contributes a non-zero term, a no-exit day contributes 0.0.
+        return autotuner.run_simulation(
+            params, history, ["sym-A"], "2026-05-10", {}
+        ) != 0.0
+
+    # Production grace = 0: the early VWAP breakdown is NOT suppressed.
+    monkeypatch.setattr(alpha_bot_execution, "VWAP_OPEN_WINDOW_GRACE_MINUTES", 0)
+    exits_grace_off = _run_sim_exits()
+
+    # Production grace re-tuned to 999: the entire session is inside grace,
+    # the VWAP breakdown is suppressed for every tick.
+    monkeypatch.setattr(alpha_bot_execution, "VWAP_OPEN_WINDOW_GRACE_MINUTES", 999)
+    exits_grace_max = _run_sim_exits()
+
+    assert exits_grace_off, (
+        "With production VWAP_OPEN_WINDOW_GRACE_MINUTES = 0 the early VWAP "
+        "breakdown must NOT be suppressed — run_simulation's replay must "
+        "fire an exit."
+    )
+    assert not exits_grace_max, (
+        "With production VWAP_OPEN_WINDOW_GRACE_MINUTES re-tuned to 999 the "
+        "whole session is inside grace — the replay must suppress the VWAP "
+        "exit. The replay's grace gate did NOT shift when production's "
+        "constant was re-tuned: autotuner is reading a DUPLICATED grace dial "
+        "instead of referencing alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_"
+        "MINUTES."
     )

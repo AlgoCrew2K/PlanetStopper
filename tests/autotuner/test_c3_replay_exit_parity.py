@@ -197,29 +197,22 @@ def _production_exit_sequence(
             current_below_stop_count=below_stop_count,
         )
 
-        # Check 2: Take Profit — production's open-coded TP machine
-        # (alpha_bot_execution.py:1266-1301), reproduced faithfully here so
-        # the replay's TP can be parity-checked. The mc_available conjuncts
-        # are load-bearing: the `elif tp_armed` inner `else` is reached ONLY
-        # when MC is unavailable while tp_armed, and it RESETS above_tp_count
-        # — that is the real divergence the pre-fix replay misses (it
-        # substitutes an in-band 22.5 and increments instead).
-        is_tp_hit = False
-        if mc_available and mc < take_profit_mc:
-            if not tp_armed:
-                tp_armed = True
-                above_tp_count = 0
-        elif tp_armed:
-            if mc_available and mc >= take_profit_mc:
-                above_tp_count += 1
-                if above_tp_count >= 2:
-                    if ret > 0:
-                        is_tp_hit = True
-                    else:
-                        tp_armed = False
-                        above_tp_count = 0
-            else:
-                above_tp_count = 0
+        # Check 2: Take Profit — the REAL production primitive.
+        # Production (alpha_bot_execution.py) was refactored this cluster
+        # (D-C3a) to call math_engine.compute_tp_confirmation; so this
+        # harness calls the SAME function, exactly as Check 1 calls the real
+        # compute_exit_confirmation and Check 3 the real
+        # compute_vwap_breakdown_update. The parity test must exercise the
+        # production code path, never a hand-written copy of it.
+        tp_armed, above_tp_count, is_tp_hit = math_engine.compute_tp_confirmation(
+            mc_available=mc_available,
+            prob_beating=mc,
+            take_profit_mc_pct=take_profit_mc,
+            current_return=ret,
+            is_triggered=False,
+            tp_armed=tp_armed,
+            above_tp_count=above_tp_count,
+        )
 
         # Check 3: VWAP Breakdown — real primitive + grace suppression.
         vwap_bleed_arm_pct = math_engine.compute_vwap_bleed_arm_threshold(

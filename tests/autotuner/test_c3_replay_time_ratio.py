@@ -227,3 +227,67 @@ def test_replay_time_ratio_full_day_still_reaches_one(
         f"A full 390-tick session must reach time_ratio 1.0; got "
         f"{max(seen) if seen else 'no calls'}."
     )
+
+
+def test_replay_single_tick_day_time_ratio_reaches_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-7 / risk-engine-specialist MEDIUM M-C3.1 — the degenerate
+    single-tick day (n_ticks == 1).
+
+    `time_ratio = tick_idx / max(1, n_ticks - 1)`. For a 1-tick day the
+    only tick has tick_idx = 0, so time_ratio = 0 / max(1, 0) = 0.0 — the
+    single tick is treated as session OPEN (loosest stop). Production
+    derives time_ratio from wall-clock open/close datetimes, so a 1-bar
+    session's single tick is at/near the CLOSE (time_ratio near 1.0,
+    tightest stop). That is a genuine replay-vs-production divergence on a
+    degenerate day: the replay under-tightens.
+
+    RULING (risk-engine-specialist M-C3.1, leaning option b — faithful
+    parity): a single-tick day must reach time_ratio 1.0, matching
+    production's "single bar approximately at close". This test pins that
+    intended behaviour.
+
+    A 1-tick trading day is effectively unreachable in real Alpaca minute
+    data (even half-days are ~210 bars) — but a synthetic / data-gap day
+    could hit it, and the behaviour must be pinned, not incidental.
+
+    RED: the current `tick_idx / max(1, n_ticks - 1)` formula yields 0.0
+    for the single tick. The fix special-cases n_ticks == 1 to time_ratio
+    1.0 (production parity).
+    """
+    real_decay = autotuner.math_engine.compute_time_squeeze_decay
+    seen: list[float] = []
+
+    def _spy_decay(time_ratio):
+        seen.append(time_ratio)
+        return real_decay(time_ratio)
+
+    monkeypatch.setattr(
+        autotuner.math_engine, "compute_time_squeeze_decay", _spy_decay
+    )
+
+    # A single-tick day — the degenerate n_ticks == 1 case.
+    ticks = [
+        {
+            "time": "09:30", "return": 0.5, "mc_prob": 50.0, "vol": 0.5,
+            "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0,
+        }
+    ]
+    history = {"sym-A": {"2026-04-06": ticks}}
+    autotuner.run_simulation(_default_params(), history, ["sym-A"], "2026-05-01", {})
+
+    assert seen, "compute_time_squeeze_decay was never called for the 1-tick day."
+    assert len(seen) == 1, (
+        f"A 1-tick day must drive compute_time_squeeze_decay exactly once; "
+        f"got {len(seen)} calls."
+    )
+    # Exact equality: a faithful single-tick day maps the lone tick to the
+    # session close — time_ratio 1.0 exactly, no tolerance.
+    assert seen[0] == 1.0, (
+        f"Single-tick day: the lone tick's time_ratio was {seen[0]}, not "
+        f"1.0. A 1-bar session's only tick is at the close (production "
+        f"derives time_ratio from wall-clock datetimes) — the replay must "
+        f"reach full end-of-day stop tightening, not treat it as the open "
+        f"(0.0). M-C3.1: special-case n_ticks == 1 to time_ratio 1.0."
+    )
