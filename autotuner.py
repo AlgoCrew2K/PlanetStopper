@@ -563,27 +563,12 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
             if not ticks: continue
 
             # Per-position transient state — re-initialized INSIDE the per-day
-            # loop so every simulated day is independent, mirroring
-            # production's daily database.wipe_transient_state (Cluster 1).
-            hwm = -999.0
-            armed = False
-            tp_armed = False
-            para_armed = False
-            breakeven_locked = False
-            prev_return = None  # cycle-1 velocity = 0 sentinel (mirrors database.py wipe)
-            hwm_hold_ticks = 0
-            below_stop_count = 0
-            above_tp_count = 0
-            vwap_ticks = 0
-            vwap_bleed_ticks = 0
-            day_state = {
-                "hwm": hwm, "armed": armed, "tp_armed": tp_armed,
-                "para_armed": para_armed, "breakeven_locked": breakeven_locked,
-                "prev_return": prev_return, "hwm_hold_ticks": hwm_hold_ticks,
-                "below_stop_count": below_stop_count,
-                "above_tp_count": above_tp_count, "vwap_ticks": vwap_ticks,
-                "vwap_bleed_ticks": vwap_bleed_ticks,
-            }
+            # loop via the canonical constructor so every simulated day is
+            # independent, mirroring production's daily
+            # database.wipe_transient_state (Cluster 1). _fresh_replay_state()
+            # is the single source of truth for the replay state shape — the
+            # same constructor replay_exit_sequence uses.
+            day_state = _fresh_replay_state()
 
             triggered_return = None
             eod_return = ticks[-1]["return"]
@@ -625,27 +610,12 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
             if not ticks: continue
 
             # Per-position transient state — re-initialized INSIDE the per-day
-            # loop so every simulated day is independent, mirroring
-            # production's daily database.wipe_transient_state (Cluster 1).
-            hwm = -999.0
-            armed = False
-            tp_armed = False
-            para_armed = False
-            breakeven_locked = False
-            prev_return = None  # cycle-1 velocity = 0 sentinel (mirrors database.py wipe)
-            hwm_hold_ticks = 0
-            below_stop_count = 0
-            above_tp_count = 0
-            vwap_ticks = 0
-            vwap_bleed_ticks = 0
-            day_state = {
-                "hwm": hwm, "armed": armed, "tp_armed": tp_armed,
-                "para_armed": para_armed, "breakeven_locked": breakeven_locked,
-                "prev_return": prev_return, "hwm_hold_ticks": hwm_hold_ticks,
-                "below_stop_count": below_stop_count,
-                "above_tp_count": above_tp_count, "vwap_ticks": vwap_ticks,
-                "vwap_bleed_ticks": vwap_bleed_ticks,
-            }
+            # loop via the canonical constructor so every simulated day is
+            # independent, mirroring production's daily
+            # database.wipe_transient_state (Cluster 1). _fresh_replay_state()
+            # is the single source of truth for the replay state shape — the
+            # same constructor replay_exit_sequence uses.
+            day_state = _fresh_replay_state()
 
             triggered_return = None
             eod_return = ticks[-1]["return"]
