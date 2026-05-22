@@ -334,10 +334,13 @@ def warn_port_mode_replay_blind_spot():
 def _replay_exit_tick(state, tick, tick_idx, n_ticks, p, grace_minutes):
     """Run ONE replay tick of the production exit path; mutate `state` in place.
 
-    This is the single per-tick exit core shared by run_simulation,
-    _collect_sim_returns and replay_exit_sequence — so the replay calls the
-    canonical math_engine primitives exactly once, in one place, and the
-    AC-6 parity helper IS the replay path rather than a copy of it.
+    The per-tick exit core backing replay_exit_sequence — the AC-6
+    observability seam. run_simulation and _collect_sim_returns carry a
+    byte-faithful inlined copy of this same loop;
+    tests/autotuner/test_c3_replay_internal_lockstep.py enforces that the
+    inlined copies stay in lockstep with this core, and AC-6's
+    test_c3_replay_exit_parity.py pins this core against the production
+    exit path.
 
     Returns the resolve_trigger_priority exit reason string when an exit fires
     on this tick, else None. Faithfully reproduces the production exit
@@ -514,10 +517,11 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
     every non-exit tick. The loop stops after the first exit (production
     commits the exit and freezes the symphony for the day).
 
-    Calls the SAME per-tick exit core (_replay_exit_tick) that run_simulation
-    and _collect_sim_returns use, so this helper IS the replay path — the
-    observability seam the bit-identical parity test compares against the
-    production exit harness.
+    Runs the _replay_exit_tick per-tick core; run_simulation and
+    _collect_sim_returns carry a byte-faithful inlined copy of that same loop,
+    held in lockstep by tests/autotuner/test_c3_replay_internal_lockstep.py.
+    This helper is the observability seam the bit-identical AC-6 parity test
+    compares against the production exit harness.
     """
     state = _fresh_replay_state()
     n_ticks = len(ticks)
@@ -567,8 +571,10 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
             n_ticks = len(ticks)
 
             # Per-tick exit loop. Byte-faithful to run_simulation's loop and to
-            # replay_exit_sequence / _replay_exit_tick — the AC-6 parity test
-            # guards that the three stay in lockstep. Every exit-rule constant
+            # replay_exit_sequence / _replay_exit_tick —
+            # tests/autotuner/test_c3_replay_internal_lockstep.py drives both
+            # replay functions over the parity fixtures and enforces that they
+            # stay in lockstep with the shared core. Every exit-rule constant
             # is owned by the named math_engine primitives; no exit-rule
             # literal is duplicated here.
             for tick_idx, tick in enumerate(ticks):
@@ -722,10 +728,12 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
             safe_hwm = hwm  # last-tick safe_hwm; refreshed each tick below
 
             # Per-tick exit loop. Byte-faithful to _collect_sim_returns's loop
-            # and to replay_exit_sequence / _replay_exit_tick — the AC-6 parity
-            # test guards that the three stay in lockstep. Every exit-rule
-            # constant is owned by the named math_engine primitives; no
-            # exit-rule literal is duplicated here.
+            # and to replay_exit_sequence / _replay_exit_tick —
+            # tests/autotuner/test_c3_replay_internal_lockstep.py drives both
+            # replay functions over the parity fixtures and enforces that they
+            # stay in lockstep with the shared core. Every exit-rule constant
+            # is owned by the named math_engine primitives; no exit-rule
+            # literal is duplicated here.
             for tick_idx, tick in enumerate(ticks):
                 ret = tick.get("return", 0.0)
                 # mc may be the None sentinel (MC unavailable); mc_available
