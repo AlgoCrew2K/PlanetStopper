@@ -1,7 +1,7 @@
 """
 Cluster 4 — AC-2 / Decision D3: the autotuner selection-bias correction is a
-Harvey & Liu 2015 Benjamini-Hochberg multiple-testing haircut applied to the
-Sortino — NOT a Sortino fed into the Sharpe-derived DSR Eq. 9.
+Harvey & Liu 2015 Benjamini-Hochberg-Yekutieli (BHY) multiple-testing haircut
+applied to the Sortino — NOT a Sortino fed into the Sharpe-derived DSR Eq. 9.
 
 RED tests, written before the implementation.
 
@@ -13,10 +13,20 @@ different and Eq. 9 does not describe it (audit M-3). It is replaced by a Harvey
 & Liu 2015 multiple-testing haircut — metric-agnostic, it haircuts a p-value for
 the number of tests tried.
 
+Finding H1 (risk-engine-specialist, team-lead-confirmed Option A, 2026-05-22):
+the multiple-testing adjustment is Benjamini-Hochberg-YEKUTIELI (BHY) — Benjamini,
+Hochberg & Yekutieli (2001), Annals of Statistics 29(4) — NOT plain
+Benjamini-Hochberg 1995. BHY adds the Yekutieli arbitrary-dependence correction
+factor c(N) = sum_{j=1}^{N} 1/j (the N-th harmonic number). Harvey & Liu 2015
+prescribe BHY precisely because strategy test statistics are dependent (Optuna
+TPE concentrates the search, so the trial Sortinos are strongly dependent — not
+independent). Plain BH-1995's FDR guarantee needs independence/PRDS, which does
+not hold here; it under-corrects by ~c(N)x (c(500) ≈ 6.79).
+
 The haircut pipeline, per trial i over the N sentinel-filtered completed trials:
   1. t-statistic:  t_i  = Sortino_i · sqrt(T_i),  T_i = len(daily_returns_i)
   2. one-sided p:  p_i  = 1 − Φ(t_i)              (large-sample normal survival)
-  3. BHY adjust:   p_adj = Benjamini-Hochberg step-up over the N raw p-values
+  3. BHY adjust:   p_adj_(k) = min_{j>=k} [ (N·c(N)/j) · p_(j) ], clamp [0,1]
   4. selection:    deploy argmin p_adj, gated by p_adj <= HARVEY_LIU_FDR_Q;
                    if no trial clears the gate the AI proposal falls through.
 
@@ -25,15 +35,20 @@ implementer's names differ, reconcile here — but the pure functions must exist
 the haircut is unit-testable, not buried inside run_autotuner):
   - autotuner.compute_sortino_tstat(sortino: float, T: int) -> float
   - autotuner.benjamini_hochberg_adjust(p_values: list[float]) -> list[float]
+    (the BHY step-up with the c(N) factor — the function name is kept for
+    continuity; the procedure it implements is BHY-2001, not BH-1995)
   - autotuner.HARVEY_LIU_FDR_Q : float  (named FDR policy-dial constant)
 
 Fixture provenance: tests/fixtures/math/harvey_liu_haircut.json — every t / p /
 p_adj is hand-derived from the Harvey & Liu BHY formula (scipy.stats.norm.cdf for
-Φ, the BHY step-up by hand). No producer output is pinned. Tolerance 1e-9
-absolute: the pipeline is deterministic; larger error is a wrong formula.
+Φ, the BHY step-up with the c(N) factor by hand). No producer output is pinned.
+Tolerance 1e-9 absolute: the pipeline is deterministic; larger error is a wrong
+formula.
 
 Reference: Harvey, C.R. & Liu, Y. (2015). "Backtesting." Journal of Portfolio
-Management 42(1), 13-28. DOI 10.3905/jpm.2015.42.1.013.
+Management 42(1), 13-28. DOI 10.3905/jpm.2015.42.1.013. Benjamini, Y., Hochberg,
+Y. & Yekutieli, D. (2001). "The Control of the False Discovery Rate in Multiple
+Testing under Dependency." Annals of Statistics 29(4), 1165-1188.
 """
 
 from __future__ import annotations
@@ -129,6 +144,56 @@ def test_benjamini_hochberg_adjust_exists():
     )
 
 
+def test_benjamini_hochberg_adjust_applies_the_bhy_dependency_factor():
+    """
+    AC-2 / Finding H1: benjamini_hochberg_adjust must implement BHY (Benjamini-
+    Hochberg-Yekutieli 2001), NOT plain Benjamini-Hochberg 1995.
+
+    BHY multiplies the BH step-up by the Yekutieli arbitrary-dependence factor
+    c(N) = sum_{j=1}^{N} 1/j (the N-th harmonic number):
+        p_adj_(k) = min_{j>=k} [ (N·c(N)/j) · p_(j) ],  clamp [0,1].
+    Plain BH-1995 omits the c(N) factor and under-corrects by exactly c(N)x.
+
+    This test uses the fixture's `bh_vs_bhy_discriminator` — a 3-trial p-value
+    vector chosen so the two procedures differ by exactly c(3)=1.8333... (no
+    clamping). The implementation's output must equal the BHY vector and must
+    NOT equal the plain-BH-1995 vector.
+
+    Harvey & Liu 2015 prescribe BHY because strategy test statistics are
+    dependent (TPE concentrates the search). Tolerance 1e-9 absolute.
+    """
+    autotuner = _import_autotuner()
+    disc = _load_fixture()["bh_vs_bhy_discriminator"]
+
+    raw_p = disc["raw_p_values"]
+    bhy_expected = disc["expected"]["bhy_p_adj"]
+    bh_1995 = disc["expected"]["plain_bh_1995_p_adj"]
+
+    result = autotuner.benjamini_hochberg_adjust(list(raw_p))
+
+    assert len(result) == len(bhy_expected), (
+        f"benjamini_hochberg_adjust returned {len(result)} values for a "
+        f"{len(raw_p)}-element input."
+    )
+    for i, (got, bhy_exp, bh_exp) in enumerate(zip(result, bhy_expected, bh_1995)):
+        assert got == pytest.approx(bhy_exp, abs=_TOL), (
+            f"benjamini_hochberg_adjust must apply the BHY c(N) harmonic-number "
+            f"dependency factor (finding H1).\n"
+            f"  index {i}: raw p = {raw_p[i]!r}\n"
+            f"  expected BHY p_adj   = {bhy_exp!r}  (BH-1995 × c(3)=1.8333...)\n"
+            f"  plain BH-1995 p_adj  = {bh_exp!r}  (the WRONG, under-correcting value)\n"
+            f"  got = {got!r}\n"
+            f"BHY: p_adj_(k) = min_(j>=k) [ N·c(N)/j · p_(j) ]. Harvey & Liu 2015 "
+            f"prescribe BHY because the trial statistics are dependent."
+        )
+        # The got value must NOT match plain BH-1995 (the discriminator is
+        # constructed so the two procedures are distinguishable).
+        assert got != pytest.approx(bh_exp, abs=_TOL), (
+            f"index {i}: benjamini_hochberg_adjust produced the plain BH-1995 "
+            f"value {bh_exp!r} — the c(N) Yekutieli dependency factor is missing."
+        )
+
+
 @pytest.mark.parametrize("scenario_key", [
     "mixed_one_clear_winner",
     "noise_only_none_clears",
@@ -138,11 +203,12 @@ def test_benjamini_hochberg_adjust_matches_fixture(scenario_key):
     """
     AC-2: benjamini_hochberg_adjust must implement the BHY step-up exactly.
 
-    BHY step-up: sort p ascending, p_adj_(k) = min over j>=k of [ N/j · p_(j) ],
-    clamp to [0,1], map back to the input order. Pinned against the hand-derived
-    fixture p_adj vector. The input raw p-values are themselves derived from the
-    fixture's hand-computed Φ survival values, so this test is end-to-end against
-    the literature formula, not the producer.
+    BHY step-up: sort p ascending, p_adj_(k) = min over j>=k of
+    [ N·c(N)/j · p_(j) ] where c(N) = sum_{j=1}^{N} 1/j, clamp to [0,1], map
+    back to the input order. Pinned against the hand-derived fixture p_adj
+    vector. The input raw p-values are themselves derived from the fixture's
+    hand-computed Φ survival values, so this test is end-to-end against the
+    literature formula, not the producer.
 
     Tolerance 1e-9 absolute.
     """
@@ -165,7 +231,8 @@ def test_benjamini_hochberg_adjust_matches_fixture(scenario_key):
             f"  raw p = {raw_p[i]!r}\n"
             f"  expected p_adj = {exp!r}\n"
             f"  got = {got!r}\n"
-            f"  BHY step-up: p_adj_(k) = min_(j>=k) [ N/j · p_(j) ], clamp [0,1]."
+            f"  BHY step-up: p_adj_(k) = min_(j>=k) [ N·c(N)/j · p_(j) ], "
+            f"clamp [0,1]; c(N) = sum_(j=1..N) 1/j."
         )
 
 
@@ -173,9 +240,9 @@ def test_benjamini_hochberg_adjust_results_are_in_unit_interval():
     """
     AC-2 property: every BHY-adjusted p-value must lie in [0, 1].
 
-    The step-up multiplies by N/j (which can exceed 1) so the clamp to 1.0 is
-    load-bearing. A p_adj outside [0,1] is not a probability and would corrupt the
-    q-gate comparison.
+    The step-up multiplies by N·c(N)/j (which readily exceeds 1, especially with
+    the c(N) dependency inflation) so the clamp to 1.0 is load-bearing. A p_adj
+    outside [0,1] is not a probability and would corrupt the q-gate comparison.
     """
     autotuner = _import_autotuner()
 
@@ -186,7 +253,7 @@ def test_benjamini_hochberg_adjust_results_are_in_unit_interval():
         for i, p in enumerate(result):
             assert 0.0 <= p <= 1.0, (
                 f"BHY adjusted p-value out of [0,1] at index {i} ({scenario_key}): "
-                f"{p!r}. The N/j step-up factor must be clamped to 1.0."
+                f"{p!r}. The N·c(N)/j step-up factor must be clamped to 1.0."
             )
 
 
