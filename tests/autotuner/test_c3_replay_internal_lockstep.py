@@ -3,29 +3,30 @@ Cluster 3 — internal lockstep guard for the autotuner replay.
 
 WHY THIS FILE EXISTS
 --------------------
-The GREEN implementation keeps THREE per-tick exit loops in autotuner.py:
-  * _replay_exit_tick  — the shared core, called by replay_exit_sequence
-  * run_simulation     — its own inlined copy of the per-tick exit loop
-  * _collect_sim_returns — its own inlined copy of the per-tick exit loop
+Under the cluster-3 final architecture (team-lead Option (a-plus) ruling)
+there is ONE per-tick exit core, _replay_exit_tick, called by all three
+replay entry points: run_simulation, _collect_sim_returns and
+replay_exit_sequence. So today the three paths are identical-by-construction
+— they share the core, there are no copies to drift.
 
-The inlined copies exist to satisfy pre-existing structural tests that
-require the canonical math_engine helpers lexically inside run_simulation /
-_collect_sim_returns. They are asserted "byte-faithful to each other" — but
-the AC-6 parity test (test_c3_replay_exit_parity.py) exercises ONLY
-replay_exit_sequence (i.e. _replay_exit_tick). It does NOT compare the two
-inlined copies against the shared core.
+This file is the REGRESSION GUARD against a future RE-INLINE. If a later
+change ever inlines the per-tick exit loop back into run_simulation or
+_collect_sim_returns (the rejected Option (b)), the AC-6 parity test would
+NOT catch a drift — test_c3_replay_exit_parity.py exercises only
+replay_exit_sequence. run_simulation and _collect_sim_returns ARE the
+autotuner objective function (the code every deployed parameter set is
+selected against with real money); an unguarded inlined copy that drifts
+from the parity-tested core re-creates exactly the replay-vs-production
+divergence surface Cluster 3 exists to remove. This file closes that gap
+permanently: it drives run_simulation and _collect_sim_returns over the same
+parity fixtures as replay_exit_sequence and asserts their exit behaviour is
+in lockstep. Under the shared core it passes trivially; if anyone re-inlines
+and the copy drifts, it goes RED.
 
-run_simulation and _collect_sim_returns ARE the autotuner objective function
-— the code every deployed parameter set is selected against with real money.
-If an inlined copy silently drifts from the parity-tested _replay_exit_tick,
-the autotuner optimizes a different exit rule than the one AC-6 verified, and
-nothing catches it. That is precisely the replay-vs-production divergence
-surface Cluster 3 exists to remove — re-created internally.
-
-This file closes that gap: it drives run_simulation and _collect_sim_returns
-over the SAME parity fixtures as replay_exit_sequence and asserts their exit
-behaviour is in lockstep with the shared core. Any drift between an inlined
-copy and _replay_exit_tick fails here.
+EDITOR NOTE: any change that gives run_simulation or _collect_sim_returns
+their own copy of the per-tick exit loop MUST keep these tests green — they
+are the guarantee that all three replay paths produce identical exit
+decisions.
 
 WHAT IS ASSERTED
 ----------------
@@ -40,8 +41,8 @@ Both equivalences must hold for every parity fixture — exit / no-exit must
 agree across all three replay code paths.
 
 These tests call the REAL replay functions and the REAL math_engine
-primitives — nothing is mocked. They are the durable guard that the inlined
-copies never drift from the parity-verified shared core.
+primitives — nothing is mocked. They are the durable guard that the three
+replay paths never diverge.
 """
 
 from __future__ import annotations
@@ -61,11 +62,20 @@ _FIXTURE_DIR = (
     / "replay_parity"
 )
 
-# The grace value the inlined run_simulation / _collect_sim_returns loops use
-# internally — they read autotuner.VWAP_OPEN_WINDOW_GRACE_MINUTES directly,
-# so the shared-core comparison must drive replay_exit_sequence with the SAME
-# value for an apples-to-apples lockstep check.
-_INLINE_GRACE = autotuner.VWAP_OPEN_WINDOW_GRACE_MINUTES
+def _replay_grace() -> int:
+    """The VWAP open-window grace value the replay uses internally.
+
+    run_simulation / _collect_sim_returns resolve grace via the lazy
+    accessor autotuner._replay_grace_minutes() (which references production's
+    alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES — no autotuner-local
+    module constant; see test_c3_replay_vwap_grace.py B1). The shared-core
+    comparison drives replay_exit_sequence with the SAME value for an
+    apples-to-apples lockstep check. Resolved lazily (not at import) so this
+    file collects regardless of how grace is wired and tracks any
+    monkeypatch.
+    """
+    return autotuner._replay_grace_minutes()
+
 
 _PARITY_FIXTURES = [
     "parity_trailing_stop_exit.json",
@@ -96,25 +106,28 @@ def _default_params() -> dict:
 def _shared_core_exits(ticks: list[dict], params: dict) -> bool:
     """True iff the shared-core replay (replay_exit_sequence) fires an exit.
 
-    Driven with grace_minutes = the inline loops' VWAP_OPEN_WINDOW_GRACE_
-    MINUTES so the comparison against run_simulation / _collect_sim_returns
-    (which use that value internally) is apples-to-apples.
+    Driven with grace_minutes = the value run_simulation / _collect_sim_
+    returns resolve internally via autotuner._replay_grace_minutes(), so the
+    comparison against those two paths is apples-to-apples.
     """
     seq = autotuner.replay_exit_sequence(
-        ticks, params, grace_minutes=_INLINE_GRACE
+        ticks, params, grace_minutes=_replay_grace()
     )
     return any(d["exit_reason"] for d in seq)
 
 
 @pytest.mark.parametrize("fixture_name", _PARITY_FIXTURES)
 def test_collect_sim_returns_in_lockstep_with_shared_core(fixture_name: str) -> None:
-    """_collect_sim_returns' inlined exit loop must agree with the shared
+    """_collect_sim_returns' exit path must agree with the shared
     _replay_exit_tick core on exit / no-exit for every parity fixture.
+
+    Under the cluster-3 shared-core architecture _collect_sim_returns calls
+    _replay_exit_tick directly, so this passes by construction. It is the
+    regression guard: a future re-inline that drifts goes RED here.
 
     _collect_sim_returns appends a per-triggered-day guard-alpha exactly when
     the day's tick loop fires an exit. So: shared core reports an exit
-    <=> _collect_sim_returns returns a non-empty list. A drift between the
-    inlined copy and _replay_exit_tick breaks this equivalence.
+    <=> _collect_sim_returns returns a non-empty list.
     """
     fx = _load_fixture(fixture_name)
     ticks = fx["ticks"]
@@ -128,21 +141,25 @@ def test_collect_sim_returns_in_lockstep_with_shared_core(fixture_name: str) -> 
     collect_exits = len(daily_returns) > 0
 
     assert collect_exits == shared_exits, (
-        f"[{fixture_name}] _collect_sim_returns' inlined exit loop diverged "
-        f"from the shared _replay_exit_tick core: shared core "
+        f"[{fixture_name}] _collect_sim_returns' exit path diverged from the "
+        f"shared _replay_exit_tick core: shared core "
         f"{'exits' if shared_exits else 'does not exit'}, but "
         f"_collect_sim_returns returned {len(daily_returns)} triggered-day "
-        f"entr{'y' if len(daily_returns) == 1 else 'ies'}. The inlined copy "
-        f"must stay byte-faithful to _replay_exit_tick — it is the autotuner "
-        f"objective function and an undetected drift mis-selects deployed "
-        f"parameters."
+        f"entr{'y' if len(daily_returns) == 1 else 'ies'}. _collect_sim_"
+        f"returns is the autotuner objective function — it must route exit "
+        f"decisions through _replay_exit_tick; an undetected drift "
+        f"mis-selects deployed parameters."
     )
 
 
 @pytest.mark.parametrize("fixture_name", _PARITY_FIXTURES)
 def test_run_simulation_in_lockstep_with_shared_core(fixture_name: str) -> None:
-    """run_simulation's inlined exit loop must agree with the shared
-    _replay_exit_tick core on exit / no-exit for every parity fixture.
+    """run_simulation's exit path must agree with the shared _replay_exit_tick
+    core on exit / no-exit for every parity fixture.
+
+    Under the cluster-3 shared-core architecture run_simulation calls
+    _replay_exit_tick directly, so this passes by construction. It is the
+    regression guard: a future re-inline that drifts goes RED here.
 
     run_simulation contributes a guard-alpha term for a day ONLY when that
     day's tick loop fires an exit; a non-triggered day contributes nothing.
@@ -166,20 +183,23 @@ def test_run_simulation_in_lockstep_with_shared_core(fixture_name: str) -> None:
     run_sim_exits = guard_alpha != 0.0
 
     assert run_sim_exits == shared_exits, (
-        f"[{fixture_name}] run_simulation's inlined exit loop diverged from "
-        f"the shared _replay_exit_tick core: shared core "
+        f"[{fixture_name}] run_simulation's exit path diverged from the "
+        f"shared _replay_exit_tick core: shared core "
         f"{'exits' if shared_exits else 'does not exit'}, but run_simulation "
         f"returned guard-alpha {guard_alpha!r} "
         f"({'non-zero -> exit' if run_sim_exits else 'zero -> no exit'}). "
-        f"run_simulation is the OOS-cascade objective; an inlined-copy drift "
-        f"from _replay_exit_tick silently mis-selects deployed parameters."
+        f"run_simulation is the OOS-cascade objective; it must route exit "
+        f"decisions through _replay_exit_tick — a drift silently mis-selects "
+        f"deployed parameters."
     )
 
 
 def test_all_three_replay_paths_agree_on_every_parity_fixture() -> None:
     """Cross-cutting: for every parity fixture the three replay code paths —
-    replay_exit_sequence (shared core), run_simulation and _collect_sim_
-    returns (inlined copies) — must AGREE on whether the day exits.
+    replay_exit_sequence, run_simulation and _collect_sim_returns — must
+    AGREE on whether the day exits. Under the shared core all three call
+    _replay_exit_tick so they agree by construction; this is the
+    consolidated regression guard against a future re-inline.
 
     A single consolidated assertion so a divergence anywhere across the
     fixture set is reported together, not one parametrized case at a time.
