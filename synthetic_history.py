@@ -16,16 +16,21 @@ ALPACA_KEY = os.getenv("ALPACA_KEY")
 ALPACA_SECRET = os.getenv("ALPACA_SECRET")
 ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://data.alpaca.markets/v2")
 
-# Replay-safe substitute for an insufficient-MC result. run_monte_carlo returns
-# the out-of-band sentinel None when MC history is too short; the autotuner
-# replay (autotuner.run_simulation) does unguarded numeric comparisons on the
-# tick's mc_prob, so a None there would crash it. This value is fed instead.
-# It is deliberately placed at the midpoint of the safe band [TRIGGER, 2*TRIGGER]
-# for the autotuner defaults (TAKE_PROFIT_MC_PCT=5, TRIGGER_THRESHOLD_PCT=15):
-# 22.5 falls OUTSIDE the arm band [5, 15) and below the disarm bound 30, so an
-# insufficient-MC tick fabricates neither an arm nor a disarm — matching the
-# production fail-safe (insufficient MC = no MC-driven state transition).
-MC_INSUFFICIENT_REPLAY_VALUE = 22.5
+# Insufficient-MC handling: run_monte_carlo returns the out-of-band sentinel
+# None (math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL) when MC history is too
+# short. The replay carries that None straight through into the tick's
+# mc_prob — production's Cluster 2 fail-safe contract treats None as "MC
+# opinion absent": no arm, no disarm, no TP transition, no MC veto of the
+# trailing stop. The autotuner replay's exit core (autotuner._replay_exit_tick)
+# gates every MC-driven branch on mc_available, so a None tick is handled
+# exactly as production handles it. No fabricated in-band substitute value.
+
+# Monte-Carlo simulation path count for the replay. Paths only add unbiased
+# variance to the bootstrap estimate, so a lower count than production's
+# default (5000) is an acceptable speed/precision tradeoff for tuning — only
+# neighbor_k must match production (it shapes the CDF resolution). 300 paths
+# is sufficient for the tuning approximation.
+_MC_REPLAY_SIMULATION_PATHS = 300
 
 def get_alpaca_headers():
     return {
@@ -85,6 +90,91 @@ def fetch_bars(tickers_list, start_str, end_str, timeframe="1Day"):
             time.sleep(0.35)
                 
     return all_data
+
+def build_replay_day(
+    sym_id,
+    date_str,
+    holdings,
+    intraday_by_date,
+    timestamps,
+    hist_data_up_to_yesterday,
+    yesterday_closes,
+    spy_today,
+):
+    """Build one symphony's replay tick list for a single day — API-free.
+
+    Module-level, independently-callable per-day tick builder. Consumes
+    pre-fetched bar data (no live Alpaca fetch) so the replay's Monte-Carlo
+    parity — neighbor_k and insufficient-MC handling — is testable from
+    fixtures. generate_synthetic_history's process_day delegates to this so the
+    tick-building logic has one home.
+
+    Returns a list of tick dicts with the replay tick schema:
+    {time, return, mc_prob, vol, vwap_diff, base_atr_pct, valid_vwap_weight}.
+    mc_prob is the run_monte_carlo result verbatim — including the None
+    sentinel for an insufficient-MC tick (production's fail-safe contract).
+    """
+    ticks = []
+
+    ref_sym = holdings[0]["ticker"] if holdings else None
+    if not ref_sym or ref_sym not in intraday_by_date.get(date_str, {}):
+        return ticks
+
+    vol = math_engine.calculate_20d_vol(holdings, hist_data_up_to_yesterday)
+    base_atr = math_engine.calculate_14d_atr_pct(holdings, hist_data_up_to_yesterday)
+
+    for i, ts in enumerate(timestamps):
+        agg_ret = 0.0
+        weighted_vwap_diff = 0.0
+        valid_alloc = 0.0
+
+        for h in holdings:
+            ticker = h["ticker"]
+            alloc = h["allocation"]
+
+            if ticker in intraday_by_date[date_str] and i < len(intraday_by_date[date_str][ticker]):
+                bar = intraday_by_date[date_str][ticker][i]
+                c = bar['c']
+                v = bar['vwap']
+
+                y_close = yesterday_closes.get(ticker, c)
+                if y_close > 0:
+                    ret = (c - y_close) / y_close
+                    agg_ret += alloc * ret
+
+                if v > 0:
+                    weighted_vwap_diff += alloc * ((c - v) / v)
+                valid_alloc += alloc
+
+        # neighbor_k must equal production's MC_DEFAULT_NEIGHBOR_K so the
+        # replay's mc_prob matches the live engine's estimand — with a smaller
+        # k the kNN bootstrap CDF is a coarse step function. Seed is
+        # per-(symphony, day) so cache rebuilds produce bit-identical series.
+        mc_prob = math_engine.run_monte_carlo(
+            holdings,
+            hist_data_up_to_yesterday,
+            spy_today,
+            _MC_REPLAY_SIMULATION_PATHS,
+            math_engine.MC_DEFAULT_NEIGHBOR_K,
+            seed=math_engine.derive_cycle_mc_seed(f"{sym_id}_{date_str}"),
+        )
+        # run_monte_carlo returns the insufficient sentinel (None) when MC
+        # history is too short. Carry it straight through — production treats
+        # None as "MC opinion absent" and the autotuner replay's exit core
+        # gates every MC-driven branch on mc_available. No fabricated value.
+
+        ticks.append({
+            "time": ts[11:16],
+            "return": agg_ret * 100.0,
+            "mc_prob": mc_prob,
+            "vol": vol,
+            "vwap_diff": weighted_vwap_diff,
+            "base_atr_pct": base_atr,
+            "valid_vwap_weight": valid_alloc,
+        })
+
+    return ticks
+
 
 def generate_synthetic_history(bot_state, current_date_str):
     print("  -> Generating Synthetic Forward-Looking Intraday History...")
@@ -209,61 +299,25 @@ def generate_synthetic_history(bot_state, current_date_str):
             spy_today = historical_daily[date_str]["SPY"]["daily_ret"] * 100.0
             
         for sym_id, holdings in symphony_holdings.items():
-            ticks = []
-            
             ref_sym = holdings[0]["ticker"] if holdings else None
             if not ref_sym or ref_sym not in intraday_by_date[date_str]:
                 continue
-                
-            timestamps = [row['t'] for row in intraday_by_date[date_str][ref_sym]]
-            
-            vol = math_engine.calculate_20d_vol(holdings, hist_data_up_to_yesterday)
-            base_atr = math_engine.calculate_14d_atr_pct(holdings, hist_data_up_to_yesterday)
-            
-            for i, ts in enumerate(timestamps):
-                agg_ret = 0.0
-                weighted_vwap_diff = 0.0
-                valid_alloc = 0.0
-                
-                for h in holdings:
-                    ticker = h["ticker"]
-                    alloc = h["allocation"]
-                    
-                    if ticker in intraday_by_date[date_str] and i < len(intraday_by_date[date_str][ticker]):
-                        bar = intraday_by_date[date_str][ticker][i]
-                        c = bar['c']
-                        v = bar['vwap']
-                        
-                        y_close = yesterday_closes.get(ticker, c)
-                        if y_close > 0:
-                            ret = (c - y_close) / y_close
-                            agg_ret += alloc * ret
-                            
-                        if v > 0:
-                            weighted_vwap_diff += alloc * ((c - v) / v)
-                        valid_alloc += alloc
-                        
-                # Reduce neighbor_k and paths for speed, 300 paths is fine for tuning approximation
-                # Seed is per-(symphony, day) so cache rebuilds produce bit-identical series.
-                mc_prob = math_engine.run_monte_carlo(holdings, hist_data_up_to_yesterday, spy_today, 300, 5, seed=math_engine.derive_cycle_mc_seed(f"{sym_id}_{date_str}"))
-                # run_monte_carlo returns the insufficient sentinel (None) when
-                # MC history is too short. The autotuner replay cannot consume
-                # None — substitute the replay-safe value before the tick dict.
-                if mc_prob is None:
-                    mc_prob = MC_INSUFFICIENT_REPLAY_VALUE
 
-                ticks.append({
-                    "time": ts[11:16],
-                    "return": agg_ret * 100.0,
-                    "mc_prob": mc_prob,
-                    "vol": vol,
-                    "vwap_diff": weighted_vwap_diff,
-                    "base_atr_pct": base_atr,
-                    "valid_vwap_weight": valid_alloc,
-                })
-                
-            day_history[sym_id] = ticks
-            
+            timestamps = [row['t'] for row in intraday_by_date[date_str][ref_sym]]
+
+            # Delegate per-symphony tick building to the module-level,
+            # API-free per-day builder.
+            day_history[sym_id] = build_replay_day(
+                sym_id=sym_id,
+                date_str=date_str,
+                holdings=holdings,
+                intraday_by_date=intraday_by_date,
+                timestamps=timestamps,
+                hist_data_up_to_yesterday=hist_data_up_to_yesterday,
+                yesterday_closes=yesterday_closes,
+                spy_today=spy_today,
+            )
+
         return date_str, day_history
 
     print(f"  -> Simulating {len(intraday_dates)} days of Intraday Tick Data using Parallel Processing...")

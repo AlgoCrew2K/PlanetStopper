@@ -1,5 +1,6 @@
 import time
 import math
+import os
 import statistics
 import optuna
 from datetime import datetime, timedelta, timezone
@@ -8,6 +9,29 @@ import math_engine
 import synthetic_history
 import glob
 import json
+
+# VWAP open-window grace period for the autotuner replay.
+# Mirrors alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES — the production
+# engine suppresses VWAP-Breakdown and VWAP-Bleed-Cut for this many minutes
+# after the session open to avoid open-volatility false exits (V2, AC-V2.1).
+# Sourced from the SAME env var so a re-tune flows through to both paths; a
+# direct `import alpha_bot_execution` here would be circular (that module
+# imports autotuner). Minute-bar replay ticks: tick_idx 0 == session open, so
+# the faithful equivalent of production's datetime grace gate is
+# `tick_idx < VWAP_OPEN_WINDOW_GRACE_MINUTES`.
+VWAP_OPEN_WINDOW_GRACE_MINUTES = int(os.getenv("VWAP_OPEN_WINDOW_GRACE_MINUTES", "15"))
+
+# --- PORT-LEVEL REPLAY BLIND SPOT (AC-8 / plan D-C3b) ---
+# The autotuner replay (run_simulation / _collect_sim_returns /
+# replay_exit_sequence) simulates ONLY the per-symphony altitude — it iterates
+# per sym_id and replays each symphony's exit path in isolation. There is no
+# port-level altitude replay: no port aggregation, no port-level exit. So
+# port-mode autotuning results are NOT replay-validated — the objective the
+# optimizer maximizes in port mode does not reflect a port-level exit
+# simulation. Port-level exiting is currently dormant (the standing config runs
+# per_symphony); a full port-level replay simulation is a separate, larger
+# feature. warn_port_mode_replay_blind_spot() makes this gap visible so
+# port-mode tuning cannot be silently trusted.
 
 # Required keys for a complete Optuna best_params payload.
 # MUST be kept in sync with the suggest_* calls in the objective() closure
@@ -146,6 +170,9 @@ def get_port_mode_search_space() -> dict:
     the shared per-symphony study and must not be re-tuned per account.
     Returns a dict of param_name -> (low, high, step) for suggest_float/int calls.
     """
+    # Port-mode tuning is not replay-validated — surface the blind spot
+    # whenever the port-mode search space is requested (AC-8 / plan D-C3b).
+    warn_port_mode_replay_blind_spot()
     return {
         "PARABOLIC_VELOCITY_THRESHOLD": (_SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX, None),
         "VWAP_CROSS_HWM_PCT": (_SS_VWAP_CROSS_HWM_V1_MIN, _SS_VWAP_CROSS_HWM_V1_MAX, None),
@@ -287,6 +314,224 @@ def calculate_historical_deviation(current_date_str):
     print(f"  -> Historical Execution Deviation Penalties: {deviation_dict}")
     return deviation_dict
 
+def warn_port_mode_replay_blind_spot():
+    """Surface the per-symphony-only replay limitation for port-mode autotuning.
+
+    The autotuner replay validates only the per-symphony altitude; the
+    port-level exit altitude is NOT replay-validated (plan D-C3b). The
+    port-mode autotuning path calls this guard so port-mode results cannot be
+    silently trusted. Pure and idempotent — it only prints a warning, never
+    mutates state or raises, so it is safe to call on every port-mode run.
+    """
+    print(
+        "  -> WARNING: port-mode autotuning is NOT replay-validated. The "
+        "autotuner replay simulates only the per-symphony altitude; the "
+        "port-level exit altitude has no replay simulation. Treat port-mode "
+        "tuning results as un-validated for the port-level exit path."
+    )
+
+
+def _replay_exit_tick(state, tick, tick_idx, n_ticks, p, grace_minutes):
+    """Run ONE replay tick of the production exit path; mutate `state` in place.
+
+    This is the single per-tick exit core shared by run_simulation,
+    _collect_sim_returns and replay_exit_sequence — so the replay calls the
+    canonical math_engine primitives exactly once, in one place, and the
+    AC-6 parity helper IS the replay path rather than a copy of it.
+
+    Returns the resolve_trigger_priority exit reason string when an exit fires
+    on this tick, else None. Faithfully reproduces the production exit
+    decision (alpha_bot_execution.py) — see test_c3_replay_exit_parity.py's
+    _production_exit_sequence, the reference this must match tick-for-tick.
+
+    `state` is a mutable dict carrying per-position transient state across
+    ticks within a single day. `n_ticks` is the day's tick count, used to
+    derive time_ratio from the actual session length.
+    """
+    ret = tick.get("return", 0.0)
+    # mc_prob may be the None sentinel (MC unavailable / insufficient MC
+    # history) — production's run_monte_carlo None contract. mc_available
+    # gates every MC-driven branch exactly as production does; an absent MC
+    # opinion drives no arm, no disarm, no TP transition, and no MC veto.
+    mc = tick.get("mc_prob", 50.0)
+    mc_available = mc is not None
+    vol = tick.get("vol", 1.0)
+    vwap_diff = tick.get("vwap_diff", 0.0)
+    valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
+
+    take_profit_mc = p.get("TAKE_PROFIT_MC_PCT", 5.0)
+    trigger_threshold = p.get("TRIGGER_THRESHOLD_PCT", 15.0)
+
+    if ret > state["hwm"]:
+        state["hwm"] = ret
+    safe_hwm = max(state["hwm"], ret)
+
+    # --- PARABOLIC SQUEEZE LOGIC ---
+    para_threshold = p.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
+    effective_prev = ret if state["prev_return"] is None else state["prev_return"]
+    _velocity, should_arm = math_engine.compute_para_arm_decision(
+        current_return=ret,
+        prev_return=effective_prev,
+        para_threshold=para_threshold,
+        currently_armed=state["para_armed"],
+    )
+    state["prev_return"] = ret
+    if should_arm:
+        state["para_armed"] = True
+
+    # MC arm / disarm — gated on mc_available (alpha_bot_execution.py
+    # 1140-1163). An absent MC opinion drives neither an arm nor a disarm.
+    if mc_available and take_profit_mc <= mc < trigger_threshold:
+        if not state["armed"]:
+            state["armed"] = True
+    elif state["armed"]:
+        if mc_available and mc > (trigger_threshold * 2) and ret > 0.0:
+            state["armed"] = False
+            state["below_stop_count"] = 0
+
+    # --- TIME SQUEEZE DECAY LOGIC ---
+    # time_ratio is derived from the ACTUAL session length so half-day
+    # sessions reach full end-of-day stop tightening — the last tick of any
+    # session maps to 1.0, tick 0 to 0.0 (AC-7).
+    time_ratio = tick_idx / max(1, n_ticks - 1)
+    dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(
+        time_ratio
+    )
+
+    active_stop_dist = math_engine.compute_active_trailing_stop(
+        vol, dynamic_multiplier, dynamic_min_stop,
+        state["para_armed"], state["breakeven_locked"],
+        p.get("MAX_PARABOLIC_SQUEEZE", 0.50),
+    )
+    base_stop = safe_hwm - active_stop_dist
+
+    # is_triggered=False: the replay breaks on the first trigger and never
+    # re-enters a tick with triggered state mid-day.
+    state["hwm_hold_ticks"], state["breakeven_locked"], stop_level = (
+        math_engine.compute_breakeven_update(
+            ret, vol, base_stop, state["hwm_hold_ticks"],
+            state["breakeven_locked"], False,
+        )
+    )
+
+    # Check 1: Trailing Stop — the canonical math_engine primitive. It owns
+    # MAGNITUDE_FLOOR_PCT, MC_SANITY_THRESHOLD and EXIT_CONFIRM_TICKS; the
+    # replay never duplicates those exit-rule literals (AC-1).
+    state["below_stop_count"], is_trailing_hit = math_engine.compute_exit_confirmation(
+        armed=state["armed"],
+        is_triggered=False,
+        current_return=ret,
+        stop_trigger_level=stop_level,
+        prob_beating=mc,
+        current_below_stop_count=state["below_stop_count"],
+    )
+
+    # Check 2: Take Profit — the shared, pure math_engine.compute_tp_confirmation
+    # (D-C3a). Production and the replay call the SAME TP confirm machine, so
+    # the confirm-count constant (TP_CONFIRM_TICKS) has one source of truth.
+    # An MC-unavailable tick while tp_armed resets above_tp_count to 0 — an
+    # absent MC opinion cannot count toward a TP confirmation (AC-3).
+    state["tp_armed"], state["above_tp_count"], is_tp_hit = (
+        math_engine.compute_tp_confirmation(
+            mc_available=mc_available,
+            prob_beating=mc,
+            take_profit_mc_pct=take_profit_mc,
+            current_return=ret,
+            is_triggered=False,
+            tp_armed=state["tp_armed"],
+            above_tp_count=state["above_tp_count"],
+        )
+    )
+
+    # Check 3: VWAP Breakdown — canonical state machine + open-window grace.
+    vwap_bleed_arm_pct = math_engine.compute_vwap_bleed_arm_threshold(
+        vol, p.get("VWAP_BLEED_MULTIPLIER", 1.5)
+    )
+    (
+        state["vwap_ticks"],
+        state["vwap_bleed_ticks"],
+        is_vwap_broken,
+        is_vwap_bleed_broken,
+    ) = math_engine.compute_vwap_breakdown_update(
+        is_triggered=False,
+        valid_vwap_weight=valid_vwap_weight,
+        weighted_vwap_diff=vwap_diff,
+        safe_hwm=safe_hwm,
+        current_return=ret,
+        vwap_cross_hwm_pct=p.get("VWAP_CROSS_HWM_PCT", 1.0),
+        vwap_bleed_arm_pct=vwap_bleed_arm_pct,
+        vwap_bleed_ticks_threshold=p.get("VWAP_BLEED_TICKS", 10),
+        current_vwap_ticks=state["vwap_ticks"],
+        current_vwap_bleed_ticks=state["vwap_bleed_ticks"],
+    )
+    # Open-window grace: production suppresses BOTH VWAP signals for the first
+    # grace_minutes of the session (alpha_bot_execution.py 1321-1326). On
+    # minute-bar replay ticks, tick_idx 0 == session open, so the faithful
+    # equivalent of the datetime grace gate is tick_idx < grace_minutes (AC-2).
+    if tick_idx < grace_minutes:
+        is_vwap_broken = False
+        is_vwap_bleed_broken = False
+
+    if is_trailing_hit or is_tp_hit or is_vwap_broken or is_vwap_bleed_broken:
+        reason_str, _ = math_engine.resolve_trigger_priority(
+            is_vwap_broken=is_vwap_broken,
+            is_tp_hit=is_tp_hit,
+            is_vwap_bleed_broken=is_vwap_bleed_broken,
+            is_trailing_stop_hit=is_trailing_hit,
+        )
+        return reason_str
+    return None
+
+
+def _fresh_replay_state():
+    """Return a fresh per-position transient-state dict for one simulated day.
+
+    Re-created at the top of each day so every replay day is independent —
+    the faithful mirror of production's daily database.wipe_transient_state
+    (Cluster 1). prev_return starts None: cycle-1 velocity = 0.
+    """
+    return {
+        "hwm": -999.0,
+        "armed": False,
+        "tp_armed": False,
+        "para_armed": False,
+        "breakeven_locked": False,
+        "prev_return": None,
+        "hwm_hold_ticks": 0,
+        "below_stop_count": 0,
+        "above_tp_count": 0,
+        "vwap_ticks": 0,
+        "vwap_bleed_ticks": 0,
+    }
+
+
+def replay_exit_sequence(ticks, params, *, grace_minutes):
+    """Run the replay's per-tick exit loop over one day; return the decision trace.
+
+    Pure helper exposing the replay's per-tick exit decision (AC-6). Returns
+    one {"tick_idx", "exit_reason"} dict per executed tick — exit_reason is the
+    resolve_trigger_priority string on the tick the position exits, None on
+    every non-exit tick. The loop stops after the first exit (production
+    commits the exit and freezes the symphony for the day).
+
+    Calls the SAME per-tick exit core (_replay_exit_tick) that run_simulation
+    and _collect_sim_returns use, so this helper IS the replay path — the
+    observability seam the bit-identical parity test compares against the
+    production exit harness.
+    """
+    state = _fresh_replay_state()
+    n_ticks = len(ticks)
+    out = []
+    for tick_idx, tick in enumerate(ticks):
+        reason = _replay_exit_tick(
+            state, tick, tick_idx, n_ticks, params, grace_minutes
+        )
+        out.append({"tick_idx": tick_idx, "exit_reason": reason})
+        if reason is not None:
+            break
+    return out
+
+
 def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
     """Run the guard-alpha simulation and return per-triggered-day guard_alpha values.
 
@@ -302,6 +547,9 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
         for date, ticks in dates_data.items():
             if not ticks: continue
 
+            # Per-position transient state — re-initialized INSIDE the per-day
+            # loop so every simulated day is independent, mirroring
+            # production's daily database.wipe_transient_state (Cluster 1).
             hwm = -999.0
             armed = False
             tp_armed = False
@@ -309,26 +557,34 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
             vwap_bleed_ticks = 0
             para_armed = False
             breakeven_locked = False
-            prev_return = None
+            prev_return = None  # sentinel: cycle-1 velocity = 0 (mirrors database.py wipe)
             hwm_hold_ticks = 0
             below_stop_count = 0
             above_tp_count = 0
-            mc_history = []
 
             triggered_return = None
             eod_return = ticks[-1]["return"]
-            day_max_return = max(t.get("return", 0.0) for t in ticks)
+            n_ticks = len(ticks)
 
+            # Per-tick exit loop. Byte-faithful to run_simulation's loop and to
+            # replay_exit_sequence / _replay_exit_tick — the AC-6 parity test
+            # guards that the three stay in lockstep. Every exit-rule constant
+            # is owned by the named math_engine primitives; no exit-rule
+            # literal is duplicated here.
             for tick_idx, tick in enumerate(ticks):
                 ret = tick.get("return", 0.0)
+                # mc may be the None sentinel (MC unavailable); mc_available
+                # gates every MC-driven branch exactly as production does.
                 mc = tick.get("mc_prob", 50.0)
+                mc_available = mc is not None
                 vol = tick.get("vol", 1.0)
                 vwap_diff = tick.get("vwap_diff", 0.0)
-                base_atr_pct = tick.get("base_atr_pct", vol)
+                valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
 
                 if ret > hwm: hwm = ret
                 safe_hwm = max(hwm, ret)
 
+                # --- PARABOLIC SQUEEZE LOGIC ---
                 para_threshold = p.get("PARABOLIC_VELOCITY_THRESHOLD", 2.0)
                 effective_prev = ret if prev_return is None else prev_return
                 _velocity, should_arm = math_engine.compute_para_arm_decision(
@@ -341,17 +597,22 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
                 if should_arm:
                     para_armed = True
 
-                if not armed:
-                    if p.get("TAKE_PROFIT_MC_PCT", 5.0) <= mc < p.get("TRIGGER_THRESHOLD_PCT", 15.0): armed = True
-                else:
-                    if mc > (p.get("TRIGGER_THRESHOLD_PCT", 15.0) * 2) and ret > 0.0:
+                # MC arm / disarm — gated on mc_available; an absent MC opinion
+                # drives neither an arm nor a disarm.
+                take_profit_mc = p.get("TAKE_PROFIT_MC_PCT", 5.0)
+                trigger_threshold = p.get("TRIGGER_THRESHOLD_PCT", 15.0)
+                if mc_available and take_profit_mc <= mc < trigger_threshold:
+                    if not armed:
+                        armed = True
+                elif armed:
+                    if mc_available and mc > (trigger_threshold * 2) and ret > 0.0:
                         armed = False
                         below_stop_count = 0
 
-                mc_history.append(mc)
-                if len(mc_history) > 5: mc_history.pop(0)
-
-                time_ratio = tick_idx / 390.0
+                # --- TIME SQUEEZE DECAY LOGIC ---
+                # time_ratio from the ACTUAL session length so half-day
+                # sessions reach full end-of-day stop tightening (AC-7).
+                time_ratio = tick_idx / max(1, n_ticks - 1)
                 dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
 
                 active_stop_dist = math_engine.compute_active_trailing_stop(
@@ -365,30 +626,28 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
                     ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, False,
                 )
 
-                is_trailing_hit = False
-                if armed:
-                    if ret <= (stop_level - 0.10) and mc < 60.0:
-                        below_stop_count += 1
-                        if below_stop_count >= 3: is_trailing_hit = True
-                    else: below_stop_count = 0
+                # Check 1: Trailing Stop — the canonical math_engine primitive.
+                below_stop_count, is_trailing_hit = math_engine.compute_exit_confirmation(
+                    armed=armed,
+                    is_triggered=False,
+                    current_return=ret,
+                    stop_trigger_level=stop_level,
+                    prob_beating=mc,
+                    current_below_stop_count=below_stop_count,
+                )
 
-                is_tp_hit = False
-                if mc < p.get("TAKE_PROFIT_MC_PCT", 5.0):
-                    if not tp_armed:
-                        tp_armed = True
-                        above_tp_count = 0
-                elif tp_armed:
-                    if mc >= p.get("TAKE_PROFIT_MC_PCT", 5.0):
-                        above_tp_count += 1
-                        if above_tp_count >= 2:
-                            if ret > 0: is_tp_hit = True
-                            else:
-                                tp_armed = False
-                                above_tp_count = 0
-                    else: above_tp_count = 0
+                # Check 2: Take Profit — shared math_engine.compute_tp_confirmation.
+                tp_armed, above_tp_count, is_tp_hit = math_engine.compute_tp_confirmation(
+                    mc_available=mc_available,
+                    prob_beating=mc,
+                    take_profit_mc_pct=take_profit_mc,
+                    current_return=ret,
+                    is_triggered=False,
+                    tp_armed=tp_armed,
+                    above_tp_count=above_tp_count,
+                )
 
-                valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
-
+                # Check 3: VWAP Breakdown — canonical state machine + grace.
                 vwap_bleed_arm_pct = math_engine.compute_vwap_bleed_arm_threshold(vol, p.get("VWAP_BLEED_MULTIPLIER", 1.5))
 
                 vwap_ticks, vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = math_engine.compute_vwap_breakdown_update(
@@ -403,6 +662,12 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
                     current_vwap_ticks=vwap_ticks,
                     current_vwap_bleed_ticks=vwap_bleed_ticks,
                 )
+                # Open-window grace: production suppresses BOTH VWAP signals
+                # for the first VWAP_OPEN_WINDOW_GRACE_MINUTES of the session;
+                # tick_idx 0 == session open (AC-2).
+                if tick_idx < VWAP_OPEN_WINDOW_GRACE_MINUTES:
+                    is_vwap_broken = False
+                    is_vwap_bleed_broken = False
 
                 if is_trailing_hit or is_tp_hit or is_vwap_broken or is_vwap_bleed_broken:
                     reason_str, _ = math_engine.resolve_trigger_priority(
@@ -435,6 +700,9 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
         for date, ticks in dates_data.items():
             if not ticks: continue
 
+            # Per-position transient state — re-initialized INSIDE the per-day
+            # loop so every simulated day is independent, mirroring
+            # production's daily database.wipe_transient_state (Cluster 1).
             hwm = -999.0
             armed = False
             tp_armed = False
@@ -446,18 +714,27 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
             hwm_hold_ticks = 0
             below_stop_count = 0
             above_tp_count = 0
-            mc_history = []
 
             triggered_return = None
             eod_return = ticks[-1]["return"]
             day_max_return = max(t.get("return", 0.0) for t in ticks)
+            n_ticks = len(ticks)
+            safe_hwm = hwm  # last-tick safe_hwm; refreshed each tick below
 
+            # Per-tick exit loop. Byte-faithful to _collect_sim_returns's loop
+            # and to replay_exit_sequence / _replay_exit_tick — the AC-6 parity
+            # test guards that the three stay in lockstep. Every exit-rule
+            # constant is owned by the named math_engine primitives; no
+            # exit-rule literal is duplicated here.
             for tick_idx, tick in enumerate(ticks):
                 ret = tick.get("return", 0.0)
+                # mc may be the None sentinel (MC unavailable); mc_available
+                # gates every MC-driven branch exactly as production does.
                 mc = tick.get("mc_prob", 50.0)
+                mc_available = mc is not None
                 vol = tick.get("vol", 1.0)
                 vwap_diff = tick.get("vwap_diff", 0.0)
-                base_atr_pct = tick.get("base_atr_pct", vol)
+                valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
 
                 if ret > hwm: hwm = ret
                 safe_hwm = max(hwm, ret)
@@ -474,24 +751,25 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 prev_return = ret
                 if should_arm:
                     para_armed = True
-                # ------------------------------
 
-                if not armed:
-                    if p.get("TAKE_PROFIT_MC_PCT", 5.0) <= mc < p.get("TRIGGER_THRESHOLD_PCT", 15.0): armed = True
-                else:
-                    if mc > (p.get("TRIGGER_THRESHOLD_PCT", 15.0) * 2) and ret > 0.0:
+                # MC arm / disarm — gated on mc_available; an absent MC opinion
+                # drives neither an arm nor a disarm.
+                take_profit_mc = p.get("TAKE_PROFIT_MC_PCT", 5.0)
+                trigger_threshold = p.get("TRIGGER_THRESHOLD_PCT", 15.0)
+                if mc_available and take_profit_mc <= mc < trigger_threshold:
+                    if not armed:
+                        armed = True
+                elif armed:
+                    if mc_available and mc > (trigger_threshold * 2) and ret > 0.0:
                         armed = False
                         below_stop_count = 0
 
-                mc_history.append(mc)
-                if len(mc_history) > 5: mc_history.pop(0)
-
                 # --- TIME SQUEEZE DECAY LOGIC ---
-                # Assuming ticks are minute bars (9:30-16:00 = 390 mins)
-                time_ratio = tick_idx / 390.0
+                # time_ratio from the ACTUAL session length so half-day
+                # sessions reach full end-of-day stop tightening (AC-7).
+                time_ratio = tick_idx / max(1, n_ticks - 1)
                 dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
 
-                # Calculate active stop distance based strictly on 20-day volatility
                 active_stop_dist = math_engine.compute_active_trailing_stop(
                     vol, dynamic_multiplier, dynamic_min_stop,
                     para_armed, breakeven_locked, p.get("MAX_PARABOLIC_SQUEEZE", 0.50)
@@ -499,44 +777,37 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
 
                 base_stop = safe_hwm - active_stop_dist
 
-                # --- RISK GUARD LOGIC ---
                 # is_triggered=False: simulation loop breaks on trigger before re-entering
                 hwm_hold_ticks, breakeven_locked, stop_level = math_engine.compute_breakeven_update(
-                    ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, is_triggered=False,
+                    ret, vol, base_stop, hwm_hold_ticks, breakeven_locked, False,
                 )
-                # ------------------------
 
-                is_trailing_hit = False
-                if armed:
-                    if ret <= (stop_level - 0.10) and mc < 60.0:
-                        below_stop_count += 1
-                        if below_stop_count >= 3: is_trailing_hit = True
-                    else: below_stop_count = 0
+                # Check 1: Trailing Stop — the canonical math_engine primitive.
+                below_stop_count, is_trailing_hit = math_engine.compute_exit_confirmation(
+                    armed=armed,
+                    is_triggered=False,
+                    current_return=ret,
+                    stop_trigger_level=stop_level,
+                    prob_beating=mc,
+                    current_below_stop_count=below_stop_count,
+                )
 
-                is_tp_hit = False
-                if mc < p.get("TAKE_PROFIT_MC_PCT", 5.0):
-                    if not tp_armed:
-                        tp_armed = True
-                        above_tp_count = 0
-                elif tp_armed:
-                    if mc >= p.get("TAKE_PROFIT_MC_PCT", 5.0):
-                        above_tp_count += 1
-                        if above_tp_count >= 2:
-                            if ret > 0: is_tp_hit = True
-                            else:
-                                tp_armed = False
-                                above_tp_count = 0
-                    else: above_tp_count = 0
+                # Check 2: Take Profit — shared math_engine.compute_tp_confirmation.
+                tp_armed, above_tp_count, is_tp_hit = math_engine.compute_tp_confirmation(
+                    mc_available=mc_available,
+                    prob_beating=mc,
+                    take_profit_mc_pct=take_profit_mc,
+                    current_return=ret,
+                    is_triggered=False,
+                    tp_armed=tp_armed,
+                    above_tp_count=above_tp_count,
+                )
 
-                # Read valid_vwap_weight from tick with backward-compat fallback
-                # (fallback covers any stale v1 cache that might slip through despite the v2 marker)
-                valid_vwap_weight = tick.get("valid_vwap_weight", 1.0)
-
+                # Check 3: VWAP Breakdown — canonical state machine + grace.
                 vwap_bleed_arm_pct = math_engine.compute_vwap_bleed_arm_threshold(vol, p.get("VWAP_BLEED_MULTIPLIER", 1.5))
 
-                # Canonical VWAP-breakdown state machine
                 vwap_ticks, vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = math_engine.compute_vwap_breakdown_update(
-                    is_triggered=False,  # autotuner sim breaks on trigger; never re-enters with triggered state mid-tick
+                    is_triggered=False,
                     valid_vwap_weight=valid_vwap_weight,
                     weighted_vwap_diff=vwap_diff,
                     safe_hwm=safe_hwm,
@@ -547,6 +818,12 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                     current_vwap_ticks=vwap_ticks,
                     current_vwap_bleed_ticks=vwap_bleed_ticks,
                 )
+                # Open-window grace: production suppresses BOTH VWAP signals
+                # for the first VWAP_OPEN_WINDOW_GRACE_MINUTES of the session;
+                # tick_idx 0 == session open (AC-2).
+                if tick_idx < VWAP_OPEN_WINDOW_GRACE_MINUTES:
+                    is_vwap_broken = False
+                    is_vwap_bleed_broken = False
 
                 if is_trailing_hit or is_tp_hit or is_vwap_broken or is_vwap_bleed_broken:
                     reason_str, _ = math_engine.resolve_trigger_priority(

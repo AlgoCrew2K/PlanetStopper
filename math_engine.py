@@ -394,6 +394,75 @@ def compute_exit_confirmation(
         return 0, False
 
 
+# Take-profit confirmation constant (gates the take-profit trigger)
+TP_CONFIRM_TICKS = 2  # consecutive above-threshold ticks (with return > 0) needed to confirm a take-profit exit
+
+
+def compute_tp_confirmation(
+    mc_available: bool,
+    prob_beating: float | None,
+    take_profit_mc_pct: float,
+    current_return: float,
+    is_triggered: bool,
+    tp_armed: bool,
+    above_tp_count: int,
+) -> tuple[bool, int, bool]:
+    """
+    Computes the take-profit confirmation state update.
+
+    Returns (new_tp_armed, new_above_tp_count, is_tp_hit).
+
+    Logic (extracted verbatim from alpha_bot_execution.py Check 2):
+      if mc_available and prob_beating < take_profit_mc_pct:
+          if not tp_armed and not is_triggered:
+              -> arm: tp_armed = True, above_tp_count = 0
+          else: state unchanged
+      elif tp_armed and not is_triggered:
+          if mc_available and prob_beating >= take_profit_mc_pct:
+              above_tp_count += 1
+              if above_tp_count >= TP_CONFIRM_TICKS:
+                  if current_return > 0:  -> is_tp_hit = True
+                  else:                   -> disarm: tp_armed = False, above_tp_count = 0
+          else:
+              -> above_tp_count = 0   (MC dipped back below, or MC unavailable)
+
+    MC-AVAILABILITY GATE (fail-safe): an absent MC opinion (mc_available
+    False) is not an "exceptional gain" signal and cannot arm or confirm a
+    take-profit exit. While tp_armed, an MC-UNAVAILABLE tick falls into the
+    inner `else` and RESETS above_tp_count — an absent opinion cannot count
+    toward a confirmation. A sub-threshold MC dip while MC IS available also
+    resets the counter via the same `else` branch (the count is not preserved
+    across a dip — production keeps no special-case).
+
+    Pure. No I/O. No state. Caller handles print/log transitions by comparing
+    input (tp_armed, above_tp_count) to the returned values.
+    """
+    if prob_beating is not None:
+        _reject_non_finite(prob_beating=prob_beating)
+    _reject_non_finite(current_return=current_return)
+
+    is_tp_hit = False
+    if mc_available and prob_beating < take_profit_mc_pct:
+        if not tp_armed and not is_triggered:
+            return True, 0, False
+        return tp_armed, int(above_tp_count), False
+    elif tp_armed and not is_triggered:
+        if mc_available and prob_beating >= take_profit_mc_pct:
+            new_count = int(above_tp_count) + 1
+            if new_count >= TP_CONFIRM_TICKS:
+                if current_return > 0:
+                    is_tp_hit = True
+                else:
+                    # MC rose to confirm but return non-positive: disarm.
+                    return False, 0, False
+            return tp_armed, new_count, is_tp_hit
+        # MC dipped back below the threshold, or MC unavailable: reset count.
+        return tp_armed, 0, False
+
+    # Not in the TP arm band and not armed: state unchanged.
+    return tp_armed, int(above_tp_count), False
+
+
 def compute_vwap_signals(
     holdings: list[dict],
     live_vwaps: dict[str, dict],

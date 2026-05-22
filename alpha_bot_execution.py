@@ -1263,42 +1263,48 @@ def main():
                 # When MC is unavailable (insufficient history) the TP gate is
                 # skipped entirely — an absent opinion is not an "exceptional
                 # gain" signal and cannot confirm a TP exit.
-                tp_triggered_now = False
-                if mc_available and prob_beating < acc_TAKE_PROFIT_MC_PCT:
-                    if (
-                        not bot_state[symphony_id]["tp_armed"]
-                        and not bot_state[symphony_id]["triggered"]
-                    ):
-                        bot_state[symphony_id]["tp_armed"] = True
-                        bot_state[symphony_id]["above_tp_count"] = 0
+                # The TP confirm machine is the shared, pure
+                # math_engine.compute_tp_confirmation — production and the
+                # autotuner replay call the SAME function (D-C3a). The prints
+                # / event-logs below are driven by comparing the pre-call
+                # state to the returned state.
+                prev_tp_armed = bot_state[symphony_id]["tp_armed"]
+                prev_above_tp_count = bot_state[symphony_id]["above_tp_count"]
+                new_tp_armed, new_above_tp_count, tp_triggered_now = (
+                    math_engine.compute_tp_confirmation(
+                        mc_available=mc_available,
+                        prob_beating=prob_beating,
+                        take_profit_mc_pct=acc_TAKE_PROFIT_MC_PCT,
+                        current_return=current_return,
+                        is_triggered=bot_state[symphony_id]["triggered"],
+                        tp_armed=prev_tp_armed,
+                        above_tp_count=prev_above_tp_count,
+                    )
+                )
+                bot_state[symphony_id]["tp_armed"] = new_tp_armed
+                bot_state[symphony_id]["above_tp_count"] = new_above_tp_count
+
+                # Transition prints/logs — driven by the pre/post state delta.
+                if new_tp_armed and not prev_tp_armed:
+                    print(
+                        f"  *** {symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_beating:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%) ***"
+                    )
+                    database.log_symphony_event(
+                        symphony_id,
+                        f"{symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_beating:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%)",
+                        "tp-armed",
+                    )
+                elif prev_tp_armed and new_tp_armed:
+                    if new_above_tp_count == 1 and prev_above_tp_count == 0:
                         print(
-                            f"  *** {symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_beating:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%) ***"
+                            f"  ⚠️ {symphony_name[:35]} TP signal flashed. Awaiting 2nd tick confirmation..."
                         )
-                        database.log_symphony_event(
-                            symphony_id,
-                            f"{symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_beating:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%)",
-                            "tp-armed",
-                        )
-                elif bot_state[symphony_id]["tp_armed"] and not bot_state[symphony_id]["triggered"]:
-                    if mc_available and prob_beating >= acc_TAKE_PROFIT_MC_PCT:
-                        bot_state[symphony_id]["above_tp_count"] += 1
-                        if bot_state[symphony_id]["above_tp_count"] == 1:
-                            print(
-                                f"  ⚠️ {symphony_name[:35]} TP signal flashed. Awaiting 2nd tick confirmation..."
-                            )
-                        elif bot_state[symphony_id]["above_tp_count"] >= 2:
-                            if current_return > 0:
-                                tp_triggered_now = True
-                            else:
-                                bot_state[symphony_id]["tp_armed"] = False
-                                bot_state[symphony_id]["above_tp_count"] = 0
-                                print(
-                                    f"  *** {symphony_name} TP-DISARMED (MC Rose but Return <= 0) ***"
-                                )
-                    else:
-                        if bot_state[symphony_id]["above_tp_count"] > 0:
-                            print(f"  📉 {symphony_name[:35]} TP signal vanished. Still cranking.")
-                        bot_state[symphony_id]["above_tp_count"] = 0
+                    elif new_above_tp_count == 0 and prev_above_tp_count > 0:
+                        print(f"  📉 {symphony_name[:35]} TP signal vanished. Still cranking.")
+                elif prev_tp_armed and not new_tp_armed:
+                    print(
+                        f"  *** {symphony_name} TP-DISARMED (MC Rose but Return <= 0) ***"
+                    )
 
                 # Check 3: True VWAP Breakdown
                 new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = (
