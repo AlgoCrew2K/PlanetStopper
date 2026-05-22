@@ -566,11 +566,13 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # when declines co-occur. Fall back to value-weighted only when cache is cold.
         #
         # D8 sign convention: the operator-facing portfolio MDD is canonically a
-        # POSITIVE magnitude. The warm-cache portfolio_mdd is written from
-        # compute_quantstats_metrics, which keeps the internal NEGATIVE convention,
-        # so abs()-convert it here at the consumer boundary. The cold-cache path
-        # flows through analytics.get_portfolio_max_drawdown, already positive
-        # magnitude — both branches must agree on sign regardless of cache warmth.
+        # POSITIVE magnitude. The warm-cache portfolio_mdd is written in
+        # _refresh_account_totals from Composer's API metrics.max_drawdown field
+        # (app.py:272), which is conventionally NEGATIVE; abs()-convert it here at
+        # the consumer boundary so the operator-facing value is positive
+        # magnitude. The cold-cache path flows through
+        # analytics.get_portfolio_max_drawdown, already positive magnitude — both
+        # branches must agree on sign regardless of cache warmth.
         if "portfolio_mdd" in _account_totals_cache:
             max_drawdown: dict = {
                 "if_held": abs(_account_totals_cache["portfolio_mdd"]),
