@@ -696,35 +696,39 @@ class TestPositionEpochStampStability:
     def test_wipe_does_not_restamp_untriggered_but_does_restamp_triggered(
         self, tmp_path, monkeypatch
     ):
-        """Direct contract test of the CONDITIONAL re-stamp, both arms:
-          - a wipe on an UNTRIGGERED symphony leaves position_epoch unchanged;
-          - a wipe on a TRIGGERED symphony assigns a new position_epoch.
-        This pins the conditional itself, independent of the DB write path."""
+        """Direct controlled contract test of the CONDITIONAL re-stamp. Both
+        arms start from the SAME epoch and the SAME wipe call, differing ONLY
+        in the `triggered` flag — so the test isolates the conditional to its
+        one variable:
+          - Arm A (triggered=False): wipe leaves position_epoch unchanged.
+          - Arm B (triggered=True):  wipe assigns a fresh position_epoch.
+        An unconditional re-stamp fails Arm A; a never-re-stamp fails Arm B.
+        The pair pins the conditional precisely."""
         db_file = _make_post_migration_shadow_db(tmp_path)
         monkeypatch.setattr(_db, "DB_FILE", db_file)
 
-        # Arm A — untriggered symphony: epoch must survive the wipe.
-        # _open_position_bot_state already stamps the epoch at open (engine
-        # fresh-entry path); a wipe on the still-untriggered position must NOT
-        # change it.
-        untriggered = _open_position_bot_state("untriggered-sym")
-        epoch_before = untriggered["untriggered-sym"]["position_epoch"]
-        assert epoch_before is not None, "open-stamp must have set the epoch"
-        _db.wipe_transient_state(untriggered)  # wipe — still untriggered
-        epoch_after = untriggered["untriggered-sym"].get("position_epoch")
-        assert epoch_after == epoch_before, (
-            "a wipe on an UNTRIGGERED still-open position must NOT re-stamp "
-            f"the epoch; was {epoch_before!r}, became {epoch_after!r}"
+        # The SAME starting epoch for both arms — the controlled constant.
+        starting_epoch = _db.mint_position_epoch()
+
+        # Arm A — triggered=False: a wipe on an untriggered still-open position
+        # must NOT re-stamp the epoch.
+        arm_a = {"sym-A": {"triggered": False, "position_epoch": starting_epoch}}
+        _db.wipe_transient_state(arm_a)
+        assert arm_a["sym-A"].get("position_epoch") == starting_epoch, (
+            "a wipe on an UNTRIGGERED still-open position must NOT re-stamp the "
+            f"epoch; it changed from {starting_epoch!r} to "
+            f"{arm_a['sym-A'].get('position_epoch')!r}. An unconditional "
+            f"re-stamp would fragment a multi-day position."
         )
 
-        # Arm B — triggered symphony: epoch must change.
-        triggered = _open_position_bot_state("triggered-sym")
-        _db.wipe_transient_state(triggered)
-        epoch_pre_trigger = triggered["triggered-sym"].get("position_epoch")
-        triggered["triggered-sym"]["triggered"] = True
-        _db.wipe_transient_state(triggered)
-        epoch_post_trigger = triggered["triggered-sym"].get("position_epoch")
-        assert epoch_post_trigger != epoch_pre_trigger, (
+        # Arm B — triggered=True: the ONLY difference from Arm A. A wipe on a
+        # triggered position is a new-position boundary and MUST re-stamp.
+        arm_b = {"sym-B": {"triggered": True, "position_epoch": starting_epoch}}
+        _db.wipe_transient_state(arm_b)
+        new_epoch = arm_b["sym-B"].get("position_epoch")
+        assert new_epoch is not None and new_epoch != starting_epoch, (
             "a wipe on a TRIGGERED position is a new-position boundary and "
-            f"MUST re-stamp the epoch; stayed {epoch_pre_trigger!r}"
+            f"MUST re-stamp the epoch; it stayed {starting_epoch!r}. A "
+            f"never-re-stamp implementation would splice the re-entered "
+            f"position onto the triggered one."
         )
