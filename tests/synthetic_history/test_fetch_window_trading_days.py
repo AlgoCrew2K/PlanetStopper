@@ -349,15 +349,22 @@ def test_window_meets_floor_across_multiple_end_dates(
 # ---------------------------------------------------------------------------
 
 import ast as _ast  # noqa: E402  (Revise-round import, kept local to its section)
+import pathlib as _pathlib  # noqa: E402
+
+_SYNTH_PATH = (
+    _pathlib.Path(__file__).resolve().parents[2] / "synthetic_history.py"
+)
+
+
+def _synth_source() -> str:
+    """Raw text of synthetic_history.py — Revise-round static analysis."""
+    assert _SYNTH_PATH.is_file(), f"expected production module at {_SYNTH_PATH}"
+    return _SYNTH_PATH.read_text(encoding="utf-8")
 
 
 def _synth_tree() -> _ast.Module:
     """Parse synthetic_history.py — Revise-round static analysis."""
-    import pathlib
-
-    path = pathlib.Path(__file__).resolve().parents[2] / "synthetic_history.py"
-    assert path.is_file(), f"expected production module at {path}"
-    return _ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return _ast.parse(_synth_source(), filename=str(_SYNTH_PATH))
 
 
 def test_no_fixed_180_day_timedelta_literal_survives_in_code() -> None:
@@ -451,13 +458,13 @@ def test_replay_window_shortfall_is_surfaced_not_silently_sliced() -> None:
     below the documented floor, the code must raise OR log at ERROR/WARNING
     level — it must NOT silently proceed.
 
-    Static check: ``generate_synthetic_history`` must contain, downstream of
-    the intraday-date collection, either a comparison of a ``len(...)`` of the
-    replay-date sequence against a numeric floor that feeds a raise/log, OR an
-    explicit raise / logging.error|warning whose reachability is guarded by
-    such a length check. We assert the WEAKER, robust proxy: the function body
-    references both a length check on the replay dates AND a raise or an
-    ERROR/WARNING log — the silent bare ``[-125:]`` slice with no guard fails.
+    Static check: ``generate_synthetic_history`` must contain a comparison of
+    a ``len(...)`` of the replay-date sequence against a numeric floor — the
+    floor may be a bare literal OR (preferred) a Name bound to a module-level
+    numeric constant carrying the 125 + 39 + buffer derivation — AND a raise
+    or an ERROR/WARNING log. We assert the robust proxy: the function body
+    references both a length-vs-floor check AND a raise / ERROR-WARNING log.
+    The silent bare ``[-125:]`` slice with no guard fails this.
     """
     tree = _synth_tree()
     gen = None
@@ -472,8 +479,52 @@ def test_replay_window_shortfall_is_surfaced_not_silently_sliced() -> None:
         "synthetic_history.generate_synthetic_history not found."
     )
 
-    # Does the function compare a len(...) against a numeric constant? (the
-    # shortfall guard's predicate)
+    # Module-level names bound to a numeric constant. The shortfall guard
+    # SHOULD compare against a NAMED floor constant (not a bare literal — the
+    # floor's 125 + 39 + buffer derivation belongs in a source comment), so a
+    # Compare operand that is an ast.Name resolving to one of these counts as
+    # the numeric side of the floor check.
+    module_numeric_consts: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, _ast.Assign) and isinstance(
+            node.value, _ast.Constant
+        ):
+            if isinstance(node.value.value, (int, float)) and not isinstance(
+                node.value.value, bool
+            ):
+                for tgt in node.targets:
+                    if isinstance(tgt, _ast.Name):
+                        module_numeric_consts.add(tgt.id)
+        # `_NAME: int = 174` annotated assignment also counts.
+        if isinstance(node, _ast.AnnAssign) and isinstance(
+            node.value, _ast.Constant
+        ):
+            if isinstance(node.value.value, (int, float)) and not isinstance(
+                node.value.value, bool
+            ):
+                if isinstance(node.target, _ast.Name):
+                    module_numeric_consts.add(node.target.id)
+
+    def _is_numeric_floor_operand(operand: _ast.AST) -> bool:
+        """A Compare operand counts as the numeric floor if it is a numeric
+        literal OR a Name bound to a module-level numeric constant.
+
+        A NAMED constant (the preferred form — it carries the derivation
+        comment) and a bare literal both satisfy the floor-check contract; the
+        test must not force a magic number to be reachable.
+        """
+        if (
+            isinstance(operand, _ast.Constant)
+            and isinstance(operand.value, (int, float))
+            and not isinstance(operand.value, bool)
+        ):
+            return True
+        if isinstance(operand, _ast.Name) and operand.id in module_numeric_consts:
+            return True
+        return False
+
+    # Does the function compare a len(...) against a numeric floor (literal or
+    # named module constant)? — the shortfall guard's predicate.
     has_len_floor_compare = False
     for node in _ast.walk(gen):
         if not isinstance(node, _ast.Compare):
@@ -485,12 +536,7 @@ def test_replay_window_shortfall_is_surfaced_not_silently_sliced() -> None:
             and o.func.id == "len"
             for o in operands
         )
-        has_numeric = any(
-            isinstance(o, _ast.Constant)
-            and isinstance(o.value, (int, float))
-            and not isinstance(o.value, bool)
-            for o in operands
-        )
+        has_numeric = any(_is_numeric_floor_operand(o) for o in operands)
         if has_len_call and has_numeric:
             has_len_floor_compare = True
             break
@@ -519,4 +565,104 @@ def test_replay_window_shortfall_is_surfaced_not_silently_sliced() -> None:
         "silently. Found: len-vs-floor comparison="
         f"{has_len_floor_compare}, raise={has_raise}, error/warning log="
         f"{has_error_log}."
+    )
+
+
+def test_stale_cache_cannot_bypass_the_new_trading_day_floor() -> None:
+    """A cache written under the OLD calendar-day window must not load and
+    bypass the new trading-day floor.
+
+    synthetic_history.py keys its on-disk cache as
+    ``synthetic_history_v<N>_<date>_<hash>.json``. The cache marker was ``v2``
+    when the fetch window was the old fixed-180-calendar-day literal. The
+    Cluster-5 window-sizing change alters what a cache file represents: a
+    ``v2`` file written before this fix holds a history sized under the old
+    (short) window. If that stale ``v2`` file is loaded verbatim, the new
+    AC-1 trading-day floor check is skipped entirely — the autotuner silently
+    optimises against a short history, exactly the defect AC-1 closes, just
+    routed through the cache.
+
+    The fix must close this hole one of two ways (implementer's GREEN choice):
+      (a) bump the cache marker (v2 -> v3+) so a stale v2 file cannot match
+          the new cache filename and is therefore never loaded; OR
+      (b) run the trading-day floor check on a cache-LOADED history too, so a
+          short cached history is rejected / surfaced just like a short fetch.
+
+    Static check: EITHER the cache filename no longer contains the literal
+    ``v2`` marker, OR the cache-load branch is followed by a floor check.
+    A bare ``v2`` cache key with no post-load validation fails RED.
+    """
+    tree = _synth_tree()
+    src = _synth_source()
+
+    # --- Path (a): the cache marker is bumped past v2. ---------------------
+    # Find the cache-filename f-string / string literal and inspect its
+    # version marker token. The old marker is the literal substring
+    # "synthetic_history_v2".
+    marker_is_stale = "synthetic_history_v2" in src
+
+    # --- Path (b): a floor check runs on the cache-loaded history. ---------
+    # The cache-load branch binds the loaded history to a name (e.g.
+    # `cached = load_cached_history(...)`). Path (b) is satisfied if, after
+    # such a load, the function applies a len()-vs-floor comparison to the
+    # cached object before returning it. We use a robust proxy: the module
+    # exposes a floor-validation helper applied to the loaded cache, OR the
+    # cache-load branch contains a len() comparison.
+    gen = None
+    for node in _ast.walk(tree):
+        if (
+            isinstance(node, _ast.FunctionDef)
+            and node.name == "generate_synthetic_history"
+        ):
+            gen = node
+            break
+    assert gen is not None, (
+        "synthetic_history.generate_synthetic_history not found."
+    )
+
+    # Collect names bound from a load_cached_history(...) call.
+    cache_loaded_names: set[str] = set()
+    for node in _ast.walk(gen):
+        if isinstance(node, _ast.Assign) and isinstance(node.value, _ast.Call):
+            f = node.value.func
+            is_cache_load = (
+                isinstance(f, _ast.Name)
+                and f.id in ("load_cached_history", "read_history_cache", "_load_cache")
+            ) or (
+                isinstance(f, _ast.Attribute)
+                and f.attr in ("load_cached_history", "read_history_cache", "_load_cache")
+            )
+            if is_cache_load:
+                for tgt in node.targets:
+                    if isinstance(tgt, _ast.Name):
+                        cache_loaded_names.add(tgt.id)
+
+    # Path (b): is there a len() comparison referencing a cache-loaded name,
+    # i.e. the cached history's day-count is validated before use?
+    floor_checks_cached_history = False
+    for node in _ast.walk(gen):
+        if not isinstance(node, _ast.Compare):
+            continue
+        operands = [node.left, *node.comparators]
+        for o in operands:
+            if (
+                isinstance(o, _ast.Call)
+                and isinstance(o.func, _ast.Name)
+                and o.func.id == "len"
+                and o.args
+            ):
+                arg = o.args[0]
+                # len(cached) or len(cached[...]) / len(cached.values()) etc.
+                for sub in _ast.walk(arg):
+                    if isinstance(sub, _ast.Name) and sub.id in cache_loaded_names:
+                        floor_checks_cached_history = True
+
+    assert (not marker_is_stale) or floor_checks_cached_history, (
+        "a stale synthetic_history_v2 cache can bypass the new AC-1 "
+        "trading-day floor. The cache marker is still 'v2' AND the "
+        "cache-loaded history is not floor-validated before use — a cache "
+        "file written under the old 180-calendar-day window would load "
+        "verbatim and feed a short history to the autotuner. Fix: bump the "
+        "cache marker (v2 -> v3+) so old caches cannot match, OR run the "
+        "trading-day floor check on the cache-loaded history too."
     )

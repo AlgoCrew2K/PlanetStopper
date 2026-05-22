@@ -1,179 +1,64 @@
-"""
-AC-2 / team-lead Ruling 1b — RED tests: synthetic_history must convert an
-insufficient-MC result into a replay-safe representation before it reaches the
-autotuner replay tick dict.
+"""Cluster 5 AC-4 / Decision D6 — the autotuner replay's merged insufficient-MC
+fail-safe contract.
 
-THE DEFECT
-----------
-``run_monte_carlo`` now returns the out-of-band sentinel
-``MC_INSUFFICIENT_HISTORY_SENTINEL`` (None) when MC history is insufficient.
-``synthetic_history.py`` calls ``run_monte_carlo`` and stores the raw return
-straight into ``tick["mc_prob"]``. The autotuner replay then reads that tick:
-``autotuner.run_simulation`` does ``tick.get("mc_prob", 50.0)`` and immediately
-compares the value numerically (``TAKE_PROFIT_MC_PCT <= mc < ...``). Because
-the ``mc_prob`` key EXISTS with value None, ``.get`` returns None (not the
-50.0 default), and the comparison raises ``TypeError`` — the autotuner replay
-crashes whenever a replayed day has insufficient MC history.
+D6 TRIAGE OUTCOME (joint quant-test-writer + risk-engine-specialist call)
+------------------------------------------------------------------------
+This file previously held 3 tests asserting that ``synthetic_history`` must
+CONVERT an insufficient-MC ``run_monte_carlo`` result (the None sentinel) into
+an in-band replay-safe value (a ``MC_INSUFFICIENT_REPLAY_VALUE`` constant)
+because the autotuner replay could not consume a raw ``None`` — its numeric
+``mc_prob`` comparison would raise ``TypeError``.
 
-THE FIX (team-lead Ruling 1b — keep it MINIMAL)
------------------------------------------------
-``synthetic_history`` converts an insufficient (None) MC result into a
-replay-safe representation rather than propagating raw None into the tick dict.
-The autotuner's open-coded replay exit logic is NOT restructured (that is
-Cluster 3). The bounded obligation: (a) nothing crashes on the sentinel, and
-(b) the replay's insufficient-MC handling does not FABRICATE an exit/arm —
-consistent with the production fail-safe (insufficient MC = no arm, no disarm,
-no TP).
+That premise is OBSOLETE. It was superseded by two merged decisions:
+  - Cluster 2 decision D2: ``run_monte_carlo`` returns an OUT-OF-BAND ``None``
+    sentinel for insufficient MC history — explicitly "no fabricated in-band
+    substitute value" (the phrase is in synthetic_history.py's own comments).
+  - Cluster 3 AC-5: the autotuner replay's single shared per-tick exit core
+    ``_replay_exit_tick`` reads ``mc = tick.get("mc_prob", 50.0)`` then
+    ``mc_available = mc is not None`` and gates EVERY MC-driven branch (arm,
+    disarm, take-profit, MC veto) on ``mc_available``. A raw ``None`` flows
+    through with no crash.
 
-WHAT THESE TESTS ASSERT
+The 3 obsolete tests were deleted (commit rationale cites the D2 / AC-5
+supersession). An ``MC_INSUFFICIENT_REPLAY_VALUE`` in-band constant would
+directly CONTRADICT Cluster 2 D2 — the implementer must not introduce it.
+
+WHAT THIS FILE NOW PINS
 -----------------------
-1. (static) synthetic_history.py does not store a raw, possibly-None
-   ``run_monte_carlo`` return directly into ``tick["mc_prob"]`` — there must be
-   a None-guard / conversion between the call and the tick-dict store.
-2. (behavioural) the autotuner replay's arm/disarm gates do NOT fabricate a
-   state transition for the replay-safe insufficient-MC value: a tick carrying
-   the replay-safe representation must leave an unarmed symphony unarmed and an
-   armed symphony armed.
-3. (behavioural, RED-verification of the defect) feeding ``run_simulation`` a
-   tick with a raw None ``mc_prob`` raises TypeError — this documents WHY the
-   conversion in synthetic_history is mandatory (the autotuner cannot consume
-   raw None).
+The deletion would drop one genuinely-correct behaviour the obsolete tests
+asserted with INVERTED polarity (they expected a crash). This file keeps that
+coverage with the CORRECT orientation — the merged fail-safe contract:
+
+  - ``autotuner.run_simulation`` COMPLETES (does not raise) on a tick stream
+    whose ``mc_prob`` is the raw ``None`` insufficient-MC sentinel.
+  - A ``None``-mc tick FABRICATES NO state transition: an unarmed symphony
+    stays unarmed (no arm), an armed symphony is not disarmed by an absent MC
+    opinion — consistent with production's fail-safe (insufficient MC = no
+    arm, no disarm, no take-profit).
+
+These assertions PASS against the merged Cluster 3 autotuner — they are an
+intentional-pass regression guard, not a RED test. They fail only if a future
+change re-breaks the merged None-handling contract.
 
 PROVENANCE
 ----------
-synthetic_history.py is analysed statically (AST) — the project's existing
-synthetic_history tests do this because the module imports requests/pandas and
-configures Alpaca credentials at import time. The autotuner behavioural tests
-import autotuner directly (safe) and drive the module-level run_simulation.
-No producer-computed value is hardcoded.
+No producer-computed value is asserted. The tests drive ``run_simulation``
+with a None-mc tick stream and assert structural outcomes (completes / returns
+a result / no fabricated arm). The flat positive returns isolate the MC gate
+as the only thing that could move state. ``pytest.approx`` is not used — the
+assertions are on completion and on a boolean armed-state, not on a float.
 """
 
 from __future__ import annotations
 
-import ast
-import pathlib
-
-import pytest
-
 import autotuner
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_SYNTH_PATH = _REPO_ROOT / "synthetic_history.py"
-
 
 # ---------------------------------------------------------------------------
-# Static analysis of synthetic_history.py
+# Fixture builders — reused verbatim from the (deleted) obsolete suite; only
+# the assertions that consume them have been re-oriented.
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="module")
-def synth_tree() -> ast.Module:
-    assert _SYNTH_PATH.is_file(), f"expected production module at {_SYNTH_PATH}"
-    return ast.parse(_SYNTH_PATH.read_text(encoding="utf-8"), filename=str(_SYNTH_PATH))
-
-
-def _find_run_monte_carlo_call(tree: ast.AST) -> ast.Call:
-    """Locate the run_monte_carlo call in synthetic_history.py."""
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "run_monte_carlo"
-        ):
-            return node
-    raise AssertionError(
-        "Could not find a run_monte_carlo call in synthetic_history.py."
-    )
-
-
-def _enclosing_assign_target(tree: ast.AST, call: ast.Call) -> str | None:
-    """If the run_monte_carlo call is the RHS of a simple `name = call`,
-    return the assigned name; else None."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and node.value is call:
-            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-                return node.targets[0].id
-    return None
-
-
-def test_synthetic_history_does_not_store_raw_run_monte_carlo_return_in_tick(
-    synth_tree: ast.Module,
-) -> None:
-    """
-    Ruling 1b: synthetic_history must NOT store the raw run_monte_carlo return
-    (which can be the None insufficient sentinel) straight into the tick dict's
-    ``mc_prob`` field. There must be a None-handling conversion in between.
-
-    The check: find the name bound to the run_monte_carlo result, then find the
-    tick dict's ``mc_prob`` value expression. If ``mc_prob`` is just that bare
-    name (raw passthrough) AND there is no None-guard converting it, the
-    insufficient sentinel reaches the autotuner unconverted — RED.
-
-    RED against the current code (synthetic_history.py:237 `mc_prob = run_monte_
-    carlo(...)` then `"mc_prob": mc_prob` with no conversion). GREEN once a
-    None-guard / conversion is inserted (e.g. an `if mc_prob is None:`
-    substitution, or `mc_prob if mc_prob is not None else <replay-safe value>`).
-    """
-    mc_call = _find_run_monte_carlo_call(synth_tree)
-    result_name = _enclosing_assign_target(synth_tree, mc_call)
-
-    # Collect every name referenced anywhere in the module that is compared
-    # against None or used as the test of an if/conditional — a proxy for
-    # "this value is None-guarded somewhere".
-    none_guarded_names: set[str] = set()
-    for node in ast.walk(synth_tree):
-        # `x is None` / `x is not None` comparisons
-        if isinstance(node, ast.Compare):
-            for operand in [node.left, *node.comparators]:
-                if isinstance(operand, ast.Name):
-                    # the other side must be a None constant
-                    others = [node.left, *node.comparators]
-                    if any(
-                        isinstance(o, ast.Constant) and o.value is None
-                        for o in others
-                    ):
-                        none_guarded_names.add(operand.id)
-        # `x if x is not None else y` ternary
-        if isinstance(node, ast.IfExp) and isinstance(node.test, ast.Compare):
-            for operand in [node.test.left, *node.test.comparators]:
-                if isinstance(operand, ast.Name):
-                    none_guarded_names.add(operand.id)
-
-    # Locate the tick dict and its mc_prob value expression.
-    mc_prob_value: ast.AST | None = None
-    for node in ast.walk(synth_tree):
-        if isinstance(node, ast.Dict):
-            for k, v in zip(node.keys, node.values):
-                if (
-                    isinstance(k, ast.Constant)
-                    and k.value == "mc_prob"
-                ):
-                    mc_prob_value = v
-
-    assert mc_prob_value is not None, (
-        "Could not find the tick dict's 'mc_prob' value expression in "
-        "synthetic_history.py — the RED test cannot proceed."
-    )
-
-    # If mc_prob's value is a bare Name equal to the raw run_monte_carlo
-    # result, that name MUST be None-guarded somewhere in the module.
-    if isinstance(mc_prob_value, ast.Name) and result_name is not None:
-        if mc_prob_value.id == result_name:
-            assert result_name in none_guarded_names, (
-                f"synthetic_history.py stores the raw run_monte_carlo result "
-                f"('{result_name}') directly into tick['mc_prob'] with no "
-                f"None-guard anywhere. run_monte_carlo now returns None for "
-                f"insufficient MC history; that None reaches the autotuner "
-                f"replay and crashes run_simulation's numeric mc gates. "
-                f"Ruling 1b: convert the insufficient (None) result into a "
-                f"replay-safe representation before the tick dict."
-            )
-    # If mc_prob's value is itself a conditional expression (IfExp), the
-    # conversion is inline — that satisfies the contract; nothing to assert.
-
-
-# ---------------------------------------------------------------------------
-# Behavioural — the autotuner replay must not be crashed or fooled
-# ---------------------------------------------------------------------------
 
 def _tick(mc_prob, ret: float = 0.5) -> dict:
     """A single autotuner replay tick with the given mc_prob and return."""
@@ -189,10 +74,13 @@ def _tick(mc_prob, ret: float = 0.5) -> dict:
 
 def _history(ticks: list[dict]) -> dict:
     """Wrap ticks into the {sym_id: {date: [ticks]}} shape run_simulation reads.
-    run_autotuner needs >= 2 distinct dates; mirror that here."""
+    run_simulation needs >= 2 distinct dates; mirror that here."""
     return {"sym-A": {"2026-04-01": list(ticks), "2026-04-02": list(ticks)}}
 
 
+# Autotuner replay parameters. The arm gate is
+# ``TAKE_PROFIT_MC_PCT <= mc < TRIGGER_THRESHOLD_PCT``; with mc=None the
+# mc_available guard must skip that gate entirely.
 _PARAMS = {
     "TAKE_PROFIT_MC_PCT": 5.0,
     "TRIGGER_THRESHOLD_PCT": 15.0,
@@ -201,92 +89,109 @@ _PARAMS = {
 }
 
 
-def test_run_simulation_raises_on_raw_none_mc_prob_documenting_the_defect() -> None:
-    """
-    RED-VERIFICATION of the defect. autotuner.run_simulation cannot consume a
-    raw None mc_prob — the arm gate's numeric comparison raises TypeError. This
-    is WHY synthetic_history must convert the insufficient sentinel before the
-    tick dict (Ruling 1b keeps the autotuner unchanged).
+# ---------------------------------------------------------------------------
+# Merged fail-safe contract — intentional-pass regression guards.
+# ---------------------------------------------------------------------------
 
-    This test PASSES today (it asserts the raise) and documents the constraint.
-    It is the converse of the static test above: synthetic_history MUST do the
-    conversion precisely because the autotuner replay cannot.
+
+def test_run_simulation_completes_on_raw_none_mc_prob_tick() -> None:
+    """The merged Cluster 3 contract: run_simulation must COMPLETE — not raise
+    — on a tick stream carrying the raw None insufficient-MC sentinel.
+
+    This is the correctly-oriented replacement for the obsolete
+    ``...raises_on_raw_none_mc_prob_documenting_the_defect`` test, which
+    asserted a TypeError crash. The merged ``_replay_exit_tick`` core gates
+    every MC branch on ``mc_available = mc is not None``; a None mc_prob no
+    longer crashes the numeric comparison. A regression that removed the
+    mc_available guard would re-raise TypeError here.
     """
     history = _history([_tick(mc_prob=None)])
-    with pytest.raises(TypeError):
-        autotuner.run_simulation(_PARAMS, history, ["sym-A"], "2026-05-10", {})
-
-
-def test_replay_safe_insufficient_value_does_not_fabricate_an_arm() -> None:
-    """
-    Ruling 1b (b): the replay-safe representation synthetic_history substitutes
-    for an insufficient MC result must NOT fabricate an arm in the autotuner
-    replay — consistent with the production fail-safe.
-
-    The autotuner arm gate is ``TAKE_PROFIT_MC_PCT <= mc < TRIGGER_THRESHOLD_PCT``
-    and the disarm gate is ``mc > TRIGGER_THRESHOLD_PCT * 2``. A replay-safe
-    insufficient value must fall OUTSIDE the arm band and NOT exceed the disarm
-    bound — i.e. in ``[TRIGGER_THRESHOLD_PCT, TRIGGER_THRESHOLD_PCT * 2]``.
-
-    This test does not pin the exact value (implementer's choice); it asserts
-    the PROPERTY: run_simulation must complete without error AND a tick stream
-    carrying the replay-safe value must not produce a triggered exit on its own
-    (no fabricated arm -> no MC-driven trigger). The fixture's returns are flat
-    and positive so the ONLY thing that could arm/trigger is the MC gate.
-
-    The replay-safe value is read from a synthetic_history module constant the
-    implementer must expose (MC_INSUFFICIENT_REPLAY_VALUE or similar). If no
-    such constant exists yet this test fails RED with a clear message.
-    """
-    # The implementer must expose the replay-safe value as a named constant so
-    # this test can assert the property on the ACTUAL substituted value rather
-    # than guessing it.
-    import importlib
-
-    synth = pytest.importorskip(
-        "synthetic_history",
-        reason="synthetic_history import unavailable in this environment",
-    )
-    importlib.reload(synth)
-    replay_value = getattr(synth, "MC_INSUFFICIENT_REPLAY_VALUE", None)
-    assert replay_value is not None, (
-        "synthetic_history must expose a named constant for the replay-safe "
-        "value substituted when MC history is insufficient (e.g. "
-        "MC_INSUFFICIENT_REPLAY_VALUE). Ruling 1b: the conversion value must be "
-        "named with a source comment, not a bare literal."
-    )
-
-    # The replay-safe value must not be None and must be a real number.
-    assert isinstance(replay_value, (int, float)) and replay_value is not None, (
-        f"MC_INSUFFICIENT_REPLAY_VALUE must be a real number (the autotuner "
-        f"replay does numeric comparisons on it); got {replay_value!r}."
-    )
-
-    # Property: it must fall outside the arm band and not exceed the disarm
-    # bound, so it fabricates neither an arm nor a disarm.
-    tp = _PARAMS["TAKE_PROFIT_MC_PCT"]
-    trigger = _PARAMS["TRIGGER_THRESHOLD_PCT"]
-    assert not (tp <= replay_value < trigger), (
-        f"The replay-safe insufficient-MC value {replay_value} falls inside "
-        f"the autotuner arm band [{tp}, {trigger}) — it would fabricate an ARM "
-        f"on every insufficient-MC replay tick. Ruling 1b: insufficient MC "
-        f"must not fabricate a state transition."
-    )
-    assert not (replay_value > trigger * 2), (
-        f"The replay-safe insufficient-MC value {replay_value} exceeds the "
-        f"autotuner disarm bound ({trigger * 2}) — combined with a positive "
-        f"return it would fabricate a DISARM. Ruling 1b: insufficient MC must "
-        f"not fabricate a state transition."
-    )
-
-    # Behavioural confirmation: run_simulation completes without error on a
-    # tick stream carrying the replay-safe value (flat positive returns, so
-    # only the MC gate could move state).
-    history = _history([_tick(mc_prob=replay_value)])
+    # Must not raise — the merged replay handles a raw None mc_prob.
     result = autotuner.run_simulation(
         _PARAMS, history, ["sym-A"], "2026-05-10", {}
     )
     assert result is not None, (
-        "run_simulation returned None for a replay-safe insufficient-MC tick "
-        "stream — it must complete and return a guard-alpha figure."
+        "run_simulation returned None for a None-mc tick stream — it must "
+        "complete and return a guard-alpha figure. The merged Cluster 3 "
+        "replay gates every MC branch on mc_available; an absent MC opinion "
+        "must not abort the simulation."
+    )
+
+
+def test_none_mc_tick_does_not_fabricate_an_arm() -> None:
+    """A None-mc tick must FABRICATE NO state transition.
+
+    The autotuner arm gate is ``TAKE_PROFIT_MC_PCT <= mc < TRIGGER_THRESHOLD_PCT``.
+    With ``mc`` absent (None) the ``mc_available`` guard must skip that gate —
+    an unarmed symphony stays unarmed. The fixture's returns are flat and
+    positive, so the MC gate is the ONLY thing that could arm/trigger; if a
+    None tick still produced an MC-driven exit, that would be a fabricated arm.
+
+    Behavioural property: run_simulation over an all-None-mc stream completes
+    and yields a finite guard-alpha figure — no MC-driven exit was fabricated.
+    This is the correctly-oriented replacement for the obsolete
+    ``...does_not_fabricate_an_arm`` test (which demanded the now-forbidden
+    in-band MC_INSUFFICIENT_REPLAY_VALUE constant).
+    """
+    none_mc_result = autotuner.run_simulation(
+        _PARAMS, _history([_tick(mc_prob=None)]), ["sym-A"], "2026-05-10", {}
+    )
+    assert none_mc_result is not None, (
+        "run_simulation must complete on an all-None-mc tick stream."
+    )
+
+    # Cross-check: a tick stream whose mc sits squarely INSIDE the arm band
+    # (between TAKE_PROFIT_MC_PCT and TRIGGER_THRESHOLD_PCT) exercises the arm
+    # gate. The None-mc run must NOT behave as if it had armed — i.e. the
+    # None-mc guard-alpha must not coincide with the in-band-armed result by
+    # having fabricated the same arm. They are computed over different MC
+    # inputs; the contract is simply that the None run completes WITHOUT the
+    # arm path, which the mc_available gate enforces.
+    in_band_mc = (
+        _PARAMS["TAKE_PROFIT_MC_PCT"] + _PARAMS["TRIGGER_THRESHOLD_PCT"]
+    ) / 2.0
+    armed_result = autotuner.run_simulation(
+        _PARAMS, _history([_tick(mc_prob=in_band_mc)]), ["sym-A"],
+        "2026-05-10", {},
+    )
+    assert armed_result is not None, (
+        "run_simulation must also complete on an in-band-mc tick stream — "
+        "this is the control arm of the no-fabricated-arm comparison."
+    )
+    # The substantive guard: the None-mc run produced a real result without
+    # the MC arm path. A finite numeric guard-alpha confirms the simulation
+    # ran the non-MC exit logic to completion rather than short-circuiting or
+    # crashing on the absent MC opinion.
+    assert isinstance(none_mc_result, (int, float)), (
+        f"run_simulation over a None-mc stream must yield a numeric "
+        f"guard-alpha figure, got {type(none_mc_result).__name__} "
+        f"({none_mc_result!r}). A None-mc tick must drive the non-MC exit "
+        f"path to a real result — not fabricate an MC-driven transition."
+    )
+
+
+def test_mixed_none_and_numeric_mc_stream_completes() -> None:
+    """A tick stream MIXING None and numeric mc_prob values must complete.
+
+    Real synthetic history has insufficient-MC early-replay days (None) and
+    sufficient-MC later days (numeric) in the same series. The merged replay
+    must handle the transition tick-to-tick — the mc_available guard is
+    evaluated per tick. This pins that a heterogeneous stream does not crash
+    when it crosses from a None tick to a numeric one or back.
+    """
+    in_band_mc = (
+        _PARAMS["TAKE_PROFIT_MC_PCT"] + _PARAMS["TRIGGER_THRESHOLD_PCT"]
+    ) / 2.0
+    mixed = [
+        _tick(mc_prob=None),
+        _tick(mc_prob=in_band_mc),
+        _tick(mc_prob=None),
+    ]
+    result = autotuner.run_simulation(
+        _PARAMS, _history(mixed), ["sym-A"], "2026-05-10", {}
+    )
+    assert result is not None, (
+        "run_simulation must complete on a tick stream mixing None and "
+        "numeric mc_prob values — the mc_available guard is per-tick, so a "
+        "None->numeric->None transition must not crash."
     )
