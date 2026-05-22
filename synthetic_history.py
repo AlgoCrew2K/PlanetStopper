@@ -26,7 +26,9 @@ _US_EASTERN = ZoneInfo("America/New_York")
 
 # --- Fetch-window sizing (trading-day counted, not calendar-day literal) ----
 # The autotuner slices the last 125 trading days of synthetic history for its
-# walk-forward replay. Pinned to the autotuner replay-window length.
+# walk-forward replay. Pinned to the autotuner replay-window length — also the
+# minimum replay-day floor: fewer than this and the validation fold is
+# degenerate (the shortfall guard below logs an ERROR).
 _WALK_FORWARD_TRADING_DAYS = 125
 # The Monte-Carlo gate on the FIRST replay day still needs MC_MIN_HISTORY_DAYS
 # eligible days of prior history, and each eligible day needs
@@ -333,7 +335,12 @@ def generate_synthetic_history(bot_state, current_date_str):
     
     cache_dir = "cache"
     os.makedirs(cache_dir, exist_ok=True)
-    cache_file = os.path.join(cache_dir, f"synthetic_history_v2_{current_date_str}_{holdings_hash}.json")
+    # Cache marker bumped v2 -> v3: a v2 file was written under the old fixed
+    # 180-calendar-day fetch window and holds a history sized under that short
+    # window. The Cluster-5 trading-day-counted window changes what a cache
+    # file represents, so stale v2 files must never match and load verbatim —
+    # bypassing the new replay-window floor check.
+    cache_file = os.path.join(cache_dir, f"synthetic_history_v3_{current_date_str}_{holdings_hash}.json")
     
     if os.path.exists(cache_file):
         print(f"  -> Loading cached synthetic history from {cache_file}...")
@@ -410,8 +417,23 @@ def generate_synthetic_history(bot_state, current_date_str):
             
             intraday_by_date[date_str][sym] = group[['t', 'c', 'vwap']].to_dict(orient='records')
 
-    intraday_dates = sorted(list(intraday_by_date.keys()))[-125:] # Get last 125 trading days (~6 months)
-    
+    # Last _WALK_FORWARD_TRADING_DAYS trading days — the autotuner replay slice.
+    intraday_dates = sorted(list(intraday_by_date.keys()))[-_WALK_FORWARD_TRADING_DAYS:]
+
+    # Surface a replay-window shortfall: if the upstream fetch returned fewer
+    # than the walk-forward floor (partial data / feed hiccup), the [-N:] slice
+    # silently truncates and the autotuner runs a degenerate validation fold.
+    # Log at ERROR so the operator sees it — a hard raise would abort the whole
+    # EOD tuning run, and the autotuner has its own downstream fold handling.
+    if len(intraday_dates) < _WALK_FORWARD_TRADING_DAYS:
+        logging.error(
+            "synthetic_history: replay window shortfall — %d trading days "
+            "available, autotuner expects >= %d; the walk-forward fold will "
+            "be degenerate",
+            len(intraday_dates),
+            _WALK_FORWARD_TRADING_DAYS,
+        )
+
     history_125d = {sym_id: {} for sym_id in symphony_holdings.keys()}
     
     def process_day(date_str):
