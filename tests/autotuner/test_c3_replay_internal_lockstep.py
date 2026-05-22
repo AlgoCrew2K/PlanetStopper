@@ -47,6 +47,7 @@ replay paths never diverge.
 
 from __future__ import annotations
 
+import ast
 import json
 import pathlib
 
@@ -230,8 +231,129 @@ def test_all_three_replay_paths_agree_on_every_parity_fixture() -> None:
     assert not disagreements, (
         "The three autotuner replay code paths disagree on exit / no-exit "
         "for these fixtures:\n" + "\n".join(disagreements) + "\n"
-        "The inlined per-tick loops in run_simulation and _collect_sim_"
-        "returns MUST stay in lockstep with the shared _replay_exit_tick "
-        "core. A divergence here is a re-introduced replay drift surface — "
-        "the exact defect Cluster 3 removes."
+        "run_simulation and _collect_sim_returns MUST route exit decisions "
+        "through the shared _replay_exit_tick core. A divergence here is a "
+        "re-introduced replay drift surface — the exact defect Cluster 3 "
+        "removes."
+    )
+
+
+# ===========================================================================
+# State-construction single-source-of-truth guard.
+#
+# quant-code-reviewer's bd01199 re-review finding: run_simulation and
+# _collect_sim_returns must build the per-day transient-state dict via the
+# canonical constructor _fresh_replay_state() — the SAME constructor
+# replay_exit_sequence uses — not via hand-rolled inline `day_state = {...}`
+# dict literals. Two ways to build replay state is a drift seam: if
+# _fresh_replay_state() ever gains or renames a key, an inline literal
+# silently won't follow — the single-source-of-truth failure Option (a)
+# exists to eliminate. This guard makes "one source of truth" hold for
+# replay STATE, not just the exit loop.
+# ===========================================================================
+
+
+def _autotuner_function_node(name: str) -> ast.FunctionDef:
+    tree = ast.parse(pathlib.Path(autotuner.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"function {name!r} not found in autotuner.py")
+
+
+@pytest.mark.parametrize("func_name", ["run_simulation", "_collect_sim_returns"])
+def test_replay_function_builds_day_state_via_canonical_constructor(
+    func_name: str,
+) -> None:
+    """quant-code-reviewer finding: run_simulation and _collect_sim_returns
+    must construct the per-day state dict by CALLING _fresh_replay_state(),
+    not by hand-rolling an inline dict literal.
+
+    Asserts: inside the function, every assignment to a `day_state`-named
+    target has an RHS that is a Call to _fresh_replay_state — and NO
+    assignment to `day_state` is a Dict literal. A hand-rolled inline
+    `day_state = {...}` is a second replay-state constructor that drifts
+    from the canonical one.
+
+    RED: at bd01199 both functions build day_state via an inline dict
+    literal (with 11 dead intermediate locals copied in).
+    """
+    func = _autotuner_function_node(func_name)
+
+    day_state_assigns: list[ast.Assign] = []
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name) and tgt.id == "day_state":
+                    day_state_assigns.append(node)
+
+    assert day_state_assigns, (
+        f"autotuner.{func_name} has no `day_state = ...` assignment — the "
+        f"per-day replay state must be constructed for the shared "
+        f"_replay_exit_tick core."
+    )
+
+    offenders: list[str] = []
+    calls_constructor = False
+    for node in day_state_assigns:
+        rhs = node.value
+        if isinstance(rhs, ast.Dict):
+            offenders.append(f"line {node.lineno}: inline dict literal")
+        elif (
+            isinstance(rhs, ast.Call)
+            and (
+                (isinstance(rhs.func, ast.Name) and rhs.func.id == "_fresh_replay_state")
+                or (isinstance(rhs.func, ast.Attribute) and rhs.func.attr == "_fresh_replay_state")
+            )
+        ):
+            calls_constructor = True
+
+    assert not offenders, (
+        f"autotuner.{func_name} builds day_state via {offenders} — a "
+        f"hand-rolled inline dict literal. It must call the canonical "
+        f"_fresh_replay_state() (the same constructor replay_exit_sequence "
+        f"uses) so the per-day replay state has ONE source of truth. A "
+        f"second inline literal drifts the moment _fresh_replay_state() "
+        f"gains or renames a key."
+    )
+    assert calls_constructor, (
+        f"autotuner.{func_name} does not construct day_state via "
+        f"_fresh_replay_state(). It must use the canonical constructor."
+    )
+
+
+@pytest.mark.parametrize("func_name", ["run_simulation", "_collect_sim_returns"])
+def test_replay_function_has_no_dead_per_day_state_locals(func_name: str) -> None:
+    """quant-code-reviewer finding (the dead-intermediates half): once the
+    replay function builds day_state via _fresh_replay_state(), the 11
+    per-day state scalar locals (hwm, armed, tp_armed, para_armed,
+    breakeven_locked, prev_return, hwm_hold_ticks, below_stop_count,
+    above_tp_count, vwap_ticks, vwap_bleed_ticks) that previously existed
+    only to be copied into the inline dict literal are DEAD and must be
+    deleted (CLAUDE.md: "if something is unused, delete it").
+
+    Asserts none of those names is bound by a plain-Name assignment in the
+    function body — the canonical constructor owns those initial values.
+
+    RED: at bd01199 both functions declare all 11 as dead intermediates.
+    """
+    func = _autotuner_function_node(func_name)
+
+    dead_state_names = {
+        "hwm", "armed", "tp_armed", "para_armed", "breakeven_locked",
+        "prev_return", "hwm_hold_ticks", "below_stop_count",
+        "above_tp_count", "vwap_ticks", "vwap_bleed_ticks",
+    }
+    offenders: list[str] = []
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name) and tgt.id in dead_state_names:
+                    offenders.append(f"{tgt.id} (line {node.lineno})")
+
+    assert not offenders, (
+        f"autotuner.{func_name} still declares per-day state scalar locals "
+        f"{offenders}. Once day_state is built via _fresh_replay_state() "
+        f"these are dead intermediates — the canonical constructor owns the "
+        f"initial values. Delete them (no unused code)."
     )

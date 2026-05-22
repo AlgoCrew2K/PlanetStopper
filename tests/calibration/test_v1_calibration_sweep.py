@@ -634,24 +634,37 @@ class TestE1VelocityContract:
         self, autotuner_module, e1_velocity_contract
     ):
         """
-        E1: Both _collect_sim_returns and run_simulation must initialize
-        prev_return = None (not 0.0). Verified by inspecting source.
-        """
-        import inspect as _inspect
-        source_collect = _inspect.getsource(autotuner_module._collect_sim_returns)
-        source_sim = _inspect.getsource(autotuner_module.run_simulation)
+        E1: the replay's per-day transient state must initialize
+        prev_return = None (the cycle-1-velocity-zero sentinel), not 0.0.
 
-        # E1 contract: prev_return = None (sentinel), not prev_return = 0.0
+        Cluster-3 update: the autotuner-replay-parity cycle made
+        _fresh_replay_state() the SINGLE canonical constructor of the per-day
+        replay state dict — run_simulation, _collect_sim_returns and
+        replay_exit_sequence all build state through it. The E1 contract is
+        therefore checked at that single source of truth: assert
+        _fresh_replay_state()["prev_return"] is None. This replaces the prior
+        brittle `"prev_return = None" in inspect.getsource(...)` string grep,
+        which broke the moment the replay functions adopted the shared
+        constructor (the string no longer appears lexically in their bodies).
+        The constructor-based assertion is refactor-stable and checks the
+        actual contract. The RUNTIME effect (cycle-1 velocity == 0 via the
+        None sentinel) is independently covered by
+        test_calibration_sweep_sim_path_uses_e1_corrected_velocity below.
+        """
         contract = e1_velocity_contract["cycle1_velocity_contract"]
         assert contract["prev_return_init"] is None, (
             "Fixture contract must specify None init for prev_return"
         )
         prohibited = e1_velocity_contract["prohibited_pattern"]
-        assert "prev_return = None" in source_collect, (
-            f"_collect_sim_returns: E1 violated — {prohibited}"
+
+        fresh_state = autotuner_module._fresh_replay_state()
+        assert "prev_return" in fresh_state, (
+            "_fresh_replay_state() must include a 'prev_return' key — the "
+            "per-day replay state's cycle-1 velocity sentinel."
         )
-        assert "prev_return = None" in source_sim, (
-            f"run_simulation: E1 violated — {prohibited}"
+        assert fresh_state["prev_return"] is None, (
+            f"E1 violated — _fresh_replay_state()['prev_return'] is "
+            f"{fresh_state['prev_return']!r}, must be None. {prohibited}"
         )
 
     def test_calibration_sweep_sim_path_uses_e1_corrected_velocity(
