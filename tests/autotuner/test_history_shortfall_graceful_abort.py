@@ -499,3 +499,290 @@ def test_intraday_shortfall_guard_raises_consistently_with_the_daily_axis() -> N
         f"exception, not log-an-ERROR-and-proceed with a degenerate replay "
         f"slice (a latent silent-under-floor defect)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Consumer-path pins (risk-engine-specialist RED-gap finding).
+#
+# run_autotuner's abort marker flows to TWO downstream consumers that both
+# assume a {symphony_id: {...}} dict:
+#   - augment_optimization_results_with_selection_stats (alpha_bot_execution)
+#   - reporting.send_eod_discord_post
+# A truthy reason-carrying abort marker (which the surfaced-abort requirement
+# mandates) would be ITERATED as a symphony dict by both — DB lookups on fake
+# symphony ids, and the abort reason never rendered to the operator. The
+# run_autotuner-return pins above do NOT catch this: the reason must SURVIVE
+# to the operator surface, and the two consumers sit between the return and
+# the operator. These tests pin that survival.
+# ---------------------------------------------------------------------------
+
+
+def _abort_marker(reason: str = "persistent history shortfall") -> dict:
+    """An abort marker shaped as run_autotuner returns on a graceful abort.
+
+    The discriminator key is ``aborted`` (the implementer's chosen shape);
+    these tests assert the consumers branch on that discriminator rather than
+    iterating the marker as per-symphony optimization results.
+    """
+    return {"aborted": True, "reason": f"autotuner aborted — {reason}"}
+
+
+def test_abort_marker_does_not_reach_the_symphony_selection_stats_augmentation() -> None:
+    """The abort marker must NOT flow into the per-symphony selection-stats
+    augmentation — augment_optimization_results_with_selection_stats iterates
+    its input as ``{symphony_id: {...}}`` and issues
+    ``database.get_latest_autotune_run(sym_id)`` per key, so an abort marker
+    would produce garbage DB lookups on its structural keys ("aborted",
+    "reason").
+
+    risk-engine-specialist's contract allows EITHER resolution: augment itself
+    recognises and skips the marker, OR the call site skips augment for an
+    abort marker. This test pins whichever the implementer chose by asserting
+    the OBSERVABLE production contract: in alpha_bot_execution's autotuner
+    block, the augment call must be guarded so an abort-marker
+    ``autotuner_changes`` does not reach it.
+
+    Static check on alpha_bot_execution.py: the call to
+    augment_optimization_results_with_selection_stats must sit inside an
+    ``if`` whose test references the abort discriminator (``aborted``), OR
+    augment itself must contain an abort-discriminator early-out. A bare
+    ``augment(autotuner_changes)`` with no abort guard on either side fails.
+    """
+    abe_path = _REPO_ROOT / "alpha_bot_execution.py"
+    abe_tree = ast.parse(
+        abe_path.read_text(encoding="utf-8"), filename=str(abe_path)
+    )
+
+    augment_name = "augment_optimization_results_with_selection_stats"
+
+    # --- Path A: the call site guards the augment call against an abort marker.
+    # Find every call to augment_...; for each, check an enclosing `if` whose
+    # test mentions the `aborted` discriminator.
+    def _enclosing_if_tests_for_call(tree: ast.AST, call_func_name: str):
+        """Yield the test expressions of `if` statements whose body contains a
+        call to call_func_name."""
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.If):
+                continue
+            for sub in ast.walk(node):
+                if (
+                    isinstance(sub, ast.Call)
+                    and (
+                        (isinstance(sub.func, ast.Name) and sub.func.id == call_func_name)
+                        or (
+                            isinstance(sub.func, ast.Attribute)
+                            and sub.func.attr == call_func_name
+                        )
+                    )
+                ):
+                    yield node.test
+                    break
+
+    call_site_guarded = False
+    for test in _enclosing_if_tests_for_call(abe_tree, augment_name):
+        # Does the guard test reference the "aborted" discriminator anywhere?
+        for sub in ast.walk(test):
+            if (
+                isinstance(sub, ast.Constant)
+                and isinstance(sub.value, str)
+                and sub.value == "aborted"
+            ):
+                call_site_guarded = True
+            if isinstance(sub, ast.Name) and sub.id == "aborted":
+                call_site_guarded = True
+
+    # --- Path B: augment itself early-outs on the abort discriminator. -----
+    synth_augment_guarded = False
+    for node in ast.walk(abe_tree):
+        if isinstance(node, ast.FunctionDef) and node.name == augment_name:
+            for sub in ast.walk(node):
+                if (
+                    isinstance(sub, ast.Constant)
+                    and isinstance(sub.value, str)
+                    and sub.value == "aborted"
+                ):
+                    synth_augment_guarded = True
+
+    assert call_site_guarded or synth_augment_guarded, (
+        "alpha_bot_execution.py routes run_autotuner's return into "
+        "augment_optimization_results_with_selection_stats with NO abort-marker "
+        "guard — neither the call site nor augment itself checks the 'aborted' "
+        "discriminator. A truthy abort marker would be iterated as a symphony "
+        "dict, issuing database.get_latest_autotune_run on its structural keys. "
+        "Guard the augment call against the abort marker."
+    )
+
+
+def test_eod_post_renders_the_abort_reason_as_an_operator_notice(
+    monkeypatch, tmp_path
+) -> None:
+    """send_eod_discord_post given an abort marker must RENDER the abort reason
+    as an operator-visible notice — not iterate it as optimization_results.
+
+    This is the test that actually discharges team-lead's BINDING requirement:
+    the abort reason must reach the operator's primary surface (the EOD Discord
+    post), not merely be carried on run_autotuner's return. send_eod_discord_post
+    sits between that return and the operator.
+
+    We monkeypatch requests.post to capture the Discord payload and assert the
+    abort reason string appears in a rendered embed — no live webhook call.
+    """
+    import json as _json
+
+    import reporting
+
+    # A minimal valid EOD report file so send_eod_discord_post proceeds.
+    report_file = tmp_path / "post_mortem_2026-05-10.json"
+    report_file.write_text(
+        _json.dumps({"summary": {"total_monitored": 0}, "triggers": []}),
+        encoding="utf-8",
+    )
+
+    captured: list = []
+
+    def _capture_post(url, *args, **kwargs):
+        # Capture both json= and data= payload forms.
+        payload = kwargs.get("json")
+        if payload is None and "data" in kwargs:
+            data = kwargs["data"]
+            if isinstance(data, dict) and "payload_json" in data:
+                try:
+                    payload = _json.loads(data["payload_json"])
+                except Exception:
+                    payload = None
+        captured.append(payload)
+
+        class _Resp:
+            status_code = 204
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                # send_eod_discord_post posts to QuickChart too and reads
+                # resp.json().get('url'); return an empty dict so the chart is
+                # simply omitted (the function handles a missing url).
+                return {}
+
+        return _Resp()
+
+    monkeypatch.setattr(reporting.requests, "post", _capture_post)
+
+    reason = "autotuner aborted — persistent history shortfall after widen+refetch"
+    marker = {"aborted": True, "reason": reason}
+
+    reporting.send_eod_discord_post(
+        "2026-05-10",
+        str(report_file),
+        marker,
+        "https://discord.example/webhook/abort-test",
+    )
+
+    # Flatten every embed title + description across every captured payload.
+    rendered_text = ""
+    for payload in captured:
+        if not isinstance(payload, dict):
+            continue
+        for embed in payload.get("embeds", []):
+            if isinstance(embed, dict):
+                rendered_text += " " + str(embed.get("title", ""))
+                rendered_text += " " + str(embed.get("description", ""))
+
+    assert captured, (
+        "send_eod_discord_post issued no Discord post for an abort-marker "
+        "input — the EOD operator report must still fire on a graceful abort."
+    )
+    low = rendered_text.lower()
+    assert "abort" in low, (
+        f"send_eod_discord_post did not render an explicit 'aborted' notice "
+        f"for the abort marker. team-lead BINDING requirement: the EOD post "
+        f"must explicitly state the autotuner aborted. Rendered embeds: "
+        f"{rendered_text!r}"
+    )
+    assert "shortfall" in low or "history" in low, (
+        f"send_eod_discord_post rendered an abort notice but did not carry "
+        f"the shortfall REASON — the operator must be told WHY (persistent "
+        f"history shortfall), not merely that something aborted. Rendered: "
+        f"{rendered_text!r}"
+    )
+
+
+def test_eod_post_does_not_iterate_an_abort_marker_as_symphonies(
+    monkeypatch, tmp_path
+) -> None:
+    """send_eod_discord_post must not treat the abort marker's structural keys
+    as symphony names.
+
+    If the marker is iterated as ``optimization_results``, keys ``aborted`` /
+    ``reason`` become "symphony" embeds with garbage payloads. Pin: the
+    rendered embeds do not contain a symphony-style optimization embed titled
+    after the marker's keys.
+    """
+    import json as _json
+
+    import reporting
+
+    report_file = tmp_path / "post_mortem_2026-05-10.json"
+    report_file.write_text(
+        _json.dumps({"summary": {"total_monitored": 0}, "triggers": []}),
+        encoding="utf-8",
+    )
+
+    captured: list = []
+
+    def _capture_post(url, *args, **kwargs):
+        payload = kwargs.get("json")
+        if payload is None and "data" in kwargs:
+            data = kwargs["data"]
+            if isinstance(data, dict) and "payload_json" in data:
+                try:
+                    payload = _json.loads(data["payload_json"])
+                except Exception:
+                    payload = None
+        captured.append(payload)
+
+        class _Resp:
+            status_code = 204
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                # send_eod_discord_post posts to QuickChart too and reads
+                # resp.json().get('url'); return an empty dict so the chart is
+                # simply omitted (the function handles a missing url).
+                return {}
+
+        return _Resp()
+
+    monkeypatch.setattr(reporting.requests, "post", _capture_post)
+
+    marker = {"aborted": True, "reason": "persistent history shortfall"}
+    reporting.send_eod_discord_post(
+        "2026-05-10",
+        str(report_file),
+        marker,
+        "https://discord.example/webhook/abort-test",
+    )
+
+    titles: list[str] = []
+    for payload in captured:
+        if not isinstance(payload, dict):
+            continue
+        for embed in payload.get("embeds", []):
+            if isinstance(embed, dict):
+                titles.append(str(embed.get("title", "")))
+
+    # The marker's structural keys must not surface as per-symphony
+    # "<Name> Optimization" embeds.
+    offenders = [
+        t for t in titles
+        if ("aborted" in t.lower() and "optimization" in t.lower())
+        or ("reason" in t.lower() and "optimization" in t.lower())
+    ]
+    assert not offenders, (
+        f"send_eod_discord_post iterated the abort marker as a symphony dict "
+        f"— its structural keys surfaced as per-symphony optimization embeds: "
+        f"{offenders}. The marker must be detected and rendered as a single "
+        f"abort notice, not iterated."
+    )
