@@ -1,0 +1,59 @@
+{
+  "provenance": "Hand-constructed better-vs-worse policy pair for AC-4 (audit finding H-10). Each scenario is a single simulated day fed through autotuner.run_simulation with the math_engine exit helpers stubbed so the exit fires on a known tick (VWAP-break stub triggers on a chosen tick_idx). The penalty block under test (autotuner.py run_simulation, missed_upside / drawdown_from_peak / negative-guard-alpha terms) operates purely on the per-day scalars triggered_return, day_max_return, safe_hwm, eod_return derived below. NO run_simulation output is hardcoded — the test computes the relative ordering it expects from these inputs and the documented objective definition (loss-averse utility: lower run_simulation return == better policy, because the OOS cascade does oos_alpha = -run_simulation(...)). The penalty SCALARS themselves are deliberately NOT named here — they are the producer's named constants under test; the test asserts ORDERING, not magnitudes.",
+  "objective_contract": {
+    "lower_is_better": true,
+    "comment": "run_simulation returns -total_guard_alpha. The OOS cascade computes oos_alpha = -run_simulation(...), and a HIGHER oos_alpha is a better policy. Therefore a LOWER run_simulation return is the better policy. An objective that preserves correct ordering must return a strictly lower value for the better policy in every pair below."
+  },
+  "deviation_dict": {
+    "Take-Profit": 0.0,
+    "Trailing Stop": 0.0,
+    "VWAP Breakdown": 0.0,
+    "VWAP Bleed Cut": 0.0,
+    "comment": "All execution-deviation penalties set to 0.0 so triggered_return == the exit tick's raw return — this isolates the run_simulation penalty block (missed_upside / drawdown / negative-guard-alpha) from the historical-deviation layer, which is a separate concern (AC-7)."
+  },
+  "current_date": "2026-05-10",
+  "scenario_date": "2026-05-10",
+  "scenario_date_comment": "Exit day == current_date so days_ago == 0 and the exp(-decay*0) weight == 1.0 exactly — the decay weight is removed as a confounder; ordering is judged on the raw penalty terms.",
+  "pairs": [
+    {
+      "name": "capital_preserving_early_exit_beats_late_giveback",
+      "rationale": "The audit's core inversion case. Policy GOOD exits with a healthy locked gain and only modest missed upside. Policy BAD rides the position past its peak all the way down to a negative guard-alpha (gave back the entire run AND underperformed buy-and-hold). A correct loss-averse objective MUST rank GOOD better (strictly lower run_simulation return). If the missed-upside scalar is large enough to make GOOD's penalty exceed BAD's negative-guard-alpha penalty, the objective inverts — exactly finding H-10.",
+      "good_policy_ticks": [
+        {"return": 0.0, "vwap_diff": 0.0, "vol": 1.0, "mc_prob": 50.0, "valid_vwap_weight": 1.0},
+        {"return": 4.0, "vwap_diff": 0.0, "vol": 1.0, "mc_prob": 50.0, "valid_vwap_weight": 1.0},
+        {"return": 3.0, "vwap_diff": -9.9, "vol": 1.0, "mc_prob": 50.0, "valid_vwap_weight": 1.0},
+        {"return": 5.0, "vwap_diff": 0.0, "vol": 1.0, "mc_prob": 50.0, "valid_vwap_weight": 1.0}
+      ],
+      "good_policy_exit_tick_idx": 2,
+      "good_policy_derived": {
+        "triggered_return": 3.0,
+        "day_max_return": 5.0,
+        "safe_hwm_at_exit": 4.0,
+        "eod_return": 5.0,
+        "guard_alpha": -2.0,
+        "missed_upside": 2.0,
+        "drawdown_from_peak": 1.0,
+        "comment": "guard_alpha = triggered_return(3.0) - eod_return(5.0) = -2.0. safe_hwm at exit tick 2 = max return through tick 2 = 4.0. missed_upside = day_max(5.0) - triggered(3.0) = 2.0. drawdown_from_peak = safe_hwm(4.0) - triggered(3.0) = 1.0. NOTE this 'good' policy still has a negative guard-alpha here — both policies do; GOOD is RELATIVELY better, not perfect."
+      },
+      "bad_policy_ticks": [
+        {"return": 0.0, "vwap_diff": 0.0, "vol": 1.0, "mc_prob": 50.0, "valid_vwap_weight": 1.0},
+        {"return": 6.0, "vwap_diff": 0.0, "vol": 1.0, "mc_prob": 50.0, "valid_vwap_weight": 1.0},
+        {"return": -1.0, "vwap_diff": -9.9, "vol": 1.0, "mc_prob": 50.0, "valid_vwap_weight": 1.0},
+        {"return": 5.0, "vwap_diff": 0.0, "vol": 1.0, "mc_prob": 50.0, "valid_vwap_weight": 1.0}
+      ],
+      "bad_policy_exit_tick_idx": 2,
+      "bad_policy_derived": {
+        "triggered_return": -1.0,
+        "day_max_return": 6.0,
+        "safe_hwm_at_exit": 6.0,
+        "eod_return": 5.0,
+        "guard_alpha": -6.0,
+        "missed_upside": 7.0,
+        "drawdown_from_peak": 7.0,
+        "comment": "guard_alpha = triggered_return(-1.0) - eod_return(5.0) = -6.0. safe_hwm at exit tick 2 = max return through tick 2 = max(0,6,-1) = 6.0. missed_upside = day_max(6.0) - triggered(-1.0) = 7.0. drawdown_from_peak = safe_hwm(6.0) - triggered(-1.0) = 7.0. BAD is worse on EVERY axis: worse guard-alpha (-6.0 vs -2.0), worse missed upside (7.0 vs 2.0), worse drawdown (7.0 vs 1.0)."
+      },
+      "expected_ordering": "good_policy run_simulation return STRICTLY LESS THAN bad_policy run_simulation return",
+      "expected_ordering_comment": "BAD is dominated by GOOD on all three penalty axes simultaneously, so NO choice of (positive) penalty scalars can legitimately rank BAD better. This pair is robust to the exact scalar values — it tests that the objective is not catastrophically inverted."
+    }
+  ]
+}
