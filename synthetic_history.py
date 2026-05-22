@@ -73,6 +73,17 @@ _FETCH_WIDEN_STEP_CALENDAR_DAYS = 60
 _MAX_FETCH_WIDEN_ATTEMPTS = 3
 
 
+class HistoryShortfallError(Exception):
+    """Raised when synthetic-history generation cannot meet the trading-day floor.
+
+    Signals a persistent shortfall on either axis — the daily / MC-warmup fetch
+    (after the bounded widen+refetch) or the intraday / replay-slice. A named
+    exception type (not a bare RuntimeError with a magic string) so
+    autotuner.run_autotuner can catch it precisely and convert it to a graceful,
+    surfaced abort without swallowing unrelated failures.
+    """
+
+
 def utc_to_eastern(utc_dt):
     """Convert a UTC datetime to the corresponding US Eastern datetime.
 
@@ -132,8 +143,9 @@ def fetch_daily_bars_with_floor(fetch_fn, end_date=None):
     bars hold fewer than _REQUIRED_FETCH_TRADING_DAYS distinct trading days the
     start is pushed _FETCH_WIDEN_STEP_CALENDAR_DAYS earlier and the fetch is
     retried, up to _MAX_FETCH_WIDEN_ATTEMPTS times. A still-short result after
-    the bound is a HARD failure (RuntimeError) — never a silent proceed with an
-    under-floor history, which would feed the autotuner a degenerate replay.
+    the bound is a HARD failure (HistoryShortfallError) — never a silent proceed
+    with an under-floor history, which would feed the autotuner a degenerate
+    replay.
 
     fetch_fn is the fetch callable, injected so the retry loop is testable
     without a live Alpaca fetch. It is called with the window start date and
@@ -164,7 +176,7 @@ def fetch_daily_bars_with_floor(fetch_fn, end_date=None):
             days=_FETCH_WIDEN_STEP_CALENDAR_DAYS
         )
 
-    raise RuntimeError(
+    raise HistoryShortfallError(
         "synthetic_history: daily-bar fetch remained short of the "
         f"{_REQUIRED_FETCH_TRADING_DAYS}-trading-day floor after "
         f"{_MAX_FETCH_WIDEN_ATTEMPTS} widen+refetch attempts — the upstream "
@@ -476,18 +488,25 @@ def generate_synthetic_history(bot_state, current_date_str):
     # Last _WALK_FORWARD_TRADING_DAYS trading days — the autotuner replay slice.
     intraday_dates = sorted(list(intraday_by_date.keys()))[-_WALK_FORWARD_TRADING_DAYS:]
 
-    # Surface a replay-window shortfall: if the upstream fetch returned fewer
-    # than the walk-forward floor (partial data / feed hiccup), the [-N:] slice
-    # silently truncates and the autotuner runs a degenerate validation fold.
-    # Log at ERROR so the operator sees it — a hard raise would abort the whole
-    # EOD tuning run, and the autotuner has its own downstream fold handling.
+    # Surface a replay-window shortfall consistently with the daily axis: if the
+    # upstream fetch returned fewer than the walk-forward floor (partial data /
+    # feed hiccup), the [-N:] slice silently truncates and the autotuner would
+    # run a degenerate validation fold. Log, then RAISE the shortfall exception
+    # — both shortfall axes (daily / warmup and intraday / replay-slice) must
+    # surface identically; run_autotuner catches it and aborts gracefully.
     if len(intraday_dates) < _WALK_FORWARD_TRADING_DAYS:
         logging.error(
             "synthetic_history: replay window shortfall — %d trading days "
-            "available, autotuner expects >= %d; the walk-forward fold will "
+            "available, autotuner expects >= %d; the walk-forward fold would "
             "be degenerate",
             len(intraday_dates),
             _WALK_FORWARD_TRADING_DAYS,
+        )
+        raise HistoryShortfallError(
+            "synthetic_history: intraday replay-slice short of the "
+            f"{_WALK_FORWARD_TRADING_DAYS}-trading-day floor "
+            f"({len(intraday_dates)} available) — aborting rather than "
+            "running the autotuner on a degenerate replay window"
         )
 
     history_125d = {sym_id: {} for sym_id in symphony_holdings.keys()}

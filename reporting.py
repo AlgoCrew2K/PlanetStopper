@@ -378,7 +378,24 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
             embeds[0]["image"] = {"url": chart_url}
 
         # 2. Symphony Optimization Embeds (Delta-Only)
-        if optimization_results:
+        # run_autotuner returns a reason-carrying abort marker on a graceful
+        # history-shortfall abort — render it as an explicit operator notice
+        # rather than iterating it as per-symphony optimization results.
+        if (
+            isinstance(optimization_results, dict)
+            and optimization_results.get("aborted")
+        ):
+            embeds.append(
+                {
+                    "title": "Autotuner Aborted",
+                    "description": (
+                        "Autotuner aborted — "
+                        f"{optimization_results.get('reason', 'history shortfall')}"
+                    ),
+                    "color": 15158332,  # red — an aborted optimisation run
+                }
+            )
+        elif optimization_results:
             for sym_name, changes in optimization_results.items():
                 sym_changes_text = ""
                 baseline_text = ""

@@ -886,8 +886,18 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         for sym_id, data in chart_history.get("symphonies", {}).items():
             database.save_chart_archive(current_date_str, sym_id, data)
 
-    # 2. Fetch the rolling 125-trading-day synthetic forward-looking data
-    history_125d = synthetic_history.generate_synthetic_history(bot_state, current_date_str)
+    # 2. Fetch the rolling 125-trading-day synthetic forward-looking data.
+    # A persistent history shortfall surfaces as HistoryShortfallError — the
+    # autotuner is a secondary optimisation step, so catch it (narrowly, never
+    # a bare except) and convert it to a graceful abort. The abort return
+    # carries the shortfall reason so the EOD operator report can surface
+    # "autotuner aborted — persistent history shortfall" rather than leaving
+    # the operator unable to distinguish the abort from a no-change run.
+    try:
+        history_125d = synthetic_history.generate_synthetic_history(bot_state, current_date_str)
+    except synthetic_history.HistoryShortfallError as e:
+        print(f"  -> Autotuner aborted: persistent history shortfall — {e}")
+        return {"aborted": True, "reason": str(e)}
     if not history_125d:
         print("  -> Autotuner aborted: Failed to generate synthetic history.")
         return

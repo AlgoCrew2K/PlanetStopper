@@ -962,7 +962,15 @@ def main():
                 autotuner_changes = autotuner.run_autotuner(
                     bot_state, current_date_str, ACCOUNT_UUIDS, is_forced=force_run
                 )
-                if autotuner_changes:
+                # run_autotuner returns a reason-carrying abort marker on a
+                # graceful history-shortfall abort — pass it straight through
+                # to the EOD post (which surfaces it to the operator) without
+                # the per-symphony selection-stats augmentation, which expects
+                # genuine optimization results.
+                if autotuner_changes and not (
+                    isinstance(autotuner_changes, dict)
+                    and autotuner_changes.get("aborted")
+                ):
                     autotuner_changes = augment_optimization_results_with_selection_stats(autotuner_changes)
             else:
                 print(f"  -> Day is {current_et.strftime('%A')}. Skipping weekly autotune.")
