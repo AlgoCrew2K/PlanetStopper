@@ -19,22 +19,36 @@ MECHANISM (team-lead D7 + risk-engine-specialist 2026-05-22, DETERMINISTIC —
 not a heuristic):
   - Migration 015_shadow_history_position_epoch.sql adds a NULLable
     `position_epoch TEXT` column to shadow_history.
-  - The engine stamps a fresh epoch per symphony at the wipe_transient_state
-    position-lifecycle boundary (the AC-E2.5 new-position reset) and at the
-    `symphony_id not in bot_state` fresh-entry branches.
+  - The engine stamps a fresh epoch per symphony at TWO sites:
+      (i) first-ever entry creation (`symphony_id not in bot_state`), and
+      (ii) inside wipe_transient_state, CONDITIONALLY — re-stamped ONLY when
+           `s_data.get("triggered")` was True at wipe time (a triggered
+           position rolled into a new session = a genuine new-position
+           boundary). An untriggered still-open position is NOT re-stamped,
+           so its epoch is STABLE across the per-day wipes it survives.
+    The conditional is load-bearing: wipe_transient_state runs every trading
+    day for every symphony, so an UNCONDITIONAL re-stamp would give a 5-day
+    position 5 distinct epochs and the latest-epoch query would truncate the
+    position's own trajectory to its last day.
   - record_shadow_observation gains a `position_epoch` kwarg, written per row.
   - `_get_shadow_cumulative_trajectory` self-selects the LATEST epoch for the
     symphony_id and filters the trajectory to it — the caller threads nothing.
   - The cache key (analytics.py:503) gains the resolved epoch.
-  - NULL-epoch pre-migration rows form a single legacy segment.
-  - Documented limitation: epoch granularity is the session; an intraday
-    same-symphony re-entry shares one epoch (the engine does not record
-    intraday position rotation — pre-existing, out of scope, documented).
+  - NULL-epoch pre-migration rows form a single legacy segment; the query
+    tolerates BOTH a missing position_epoch column (pre-migration DB) and a
+    present-but-NULL value (post-migration legacy row).
+  - Documented limitation (CASE 2): a re-entry following an UNTRIGGERED exit
+    (Composer rebalances the symphony out, then back in) is NOT segmented —
+    the engine records no untriggered-rotation event. Fixing it needs
+    engine-execution position-rotation bookkeeping, tracked out-of-cluster.
 
-These tests seed shadow_history exactly as the engine would write it (two
-epochs under one symphony_id) and assert the trajectory reflects ONLY the
-current epoch. Expected values are derived from the chain-link formula on the
-fixtured per-day returns — no producer-captured numbers.
+The query-side tests seed shadow_history with pre-written epochs and assert
+the trajectory reflects ONLY the current epoch. The stamping-stability tests
+drive the ACTUAL stamp path (wipe_transient_state + record_shadow_observation)
+and assert a multi-day position keeps ONE epoch — these catch the
+fragmentation flaw a query-only suite cannot. Expected values are derived from
+the chain-link formula on the fixtured per-day returns — no producer-captured
+numbers.
 
 Tolerance: pytest.approx with rel=1e-9 for chain-link products of small
 fixtured returns — these are exact arithmetic; the only error is float
@@ -458,4 +472,259 @@ class TestNullEpochLegacySegment:
         assert trajectory == pytest.approx(_POSITION_B_RETURNS, rel=1e-9), (
             "all legacy NULL-epoch rows form one segment — the trajectory "
             "returns all of them"
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-3 STAMPING STABILITY — the load-bearing adversarial gap.
+#
+# Every test above hand-writes position_epoch as already-distinct strings, so
+# it tests the QUERY ("given two epochs, filter to the latest?") but NEVER the
+# STAMP ("does one multi-day position get exactly ONE stable epoch?"). A broken
+# UNCONDITIONAL-stamp implementation — re-stamping the epoch on every per-day
+# wipe_transient_state call — passes every query-side test while silently
+# fragmenting a 5-day position into 5 epochs, so the latest-epoch query then
+# truncates the position's trajectory to its last day.
+#
+# These tests drive the ACTUAL stamp path (database.wipe_transient_state +
+# database.record_shadow_observation) and assert epoch STABILITY. They are the
+# tests that fail on the unconditional-stamp implementation.
+# ---------------------------------------------------------------------------
+
+
+# Post-migration shadow_history schema — record_shadow_observation must be able
+# to write the position_epoch column, so the test DB carries it.
+_SHADOW_SCHEMA_POST_MIGRATION = _SHADOW_SCHEMA_WITH_EPOCH
+
+
+def _make_post_migration_shadow_db(tmp_path: Path) -> str:
+    """An empty shadow_history table WITH the position_epoch column — the
+    post-migration shape record_shadow_observation writes into."""
+    db_file = str(tmp_path / "shadow_stamp_stability.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute(_SHADOW_SCHEMA_POST_MIGRATION)
+    conn.commit()
+    conn.close()
+    return db_file
+
+
+def _open_position_bot_state(symphony_id: str) -> dict:
+    """A minimal bot_state with one open, untriggered symphony position.
+
+    Models the engine's fresh-entry path: the engine stamps a position_epoch at
+    the `symphony_id not in bot_state` branch when a position first opens, so a
+    just-opened entry already carries an epoch. The test stamps it the same way
+    the engine does (database.mint_position_epoch) — a hand-built dict with NO
+    epoch is not a state the engine ever produces.
+    """
+    return {
+        symphony_id: {
+            "high_water_mark": 0.0,
+            "shadow_hwm": 0.0,
+            "triggered": False,
+            "armed": False,
+            "current_return": 0.0,
+            # The engine stamps the epoch at position open (fresh-entry branch).
+            "position_epoch": _db.mint_position_epoch(),
+        }
+    }
+
+
+def _record_day(symphony_id: str, bot_state: dict, day: str, ret: float) -> None:
+    """Write one shadow_history row for `symphony_id`, sourcing position_epoch
+    from bot_state exactly as the engine's record path does."""
+    epoch = bot_state[symphony_id].get("position_epoch")
+    _db.record_shadow_observation(
+        symphony_id=symphony_id,
+        account_id="acct-stamp-test",
+        cycle_id=f"{day.replace('-', '')}_1500",
+        ts_utc=f"{day}T19:00:00Z",
+        ts_et=f"{day}T15:00:00",
+        trading_day=day,
+        current_return=ret,
+        shadow_return=ret,
+        is_post_trigger=int(bool(bot_state[symphony_id].get("triggered"))),
+        trigger_id=None,
+        position_epoch=epoch,
+    )
+
+
+class TestPositionEpochStampStability:
+    """The epoch must be STABLE for one position's entire life and change ONLY
+    at a post-trigger session-rollover boundary. A per-day-wipe unconditional
+    re-stamp fragments a multi-day position — these tests catch that."""
+
+    def test_five_day_untriggered_position_keeps_one_epoch(
+        self, tmp_path, monkeypatch
+    ):
+        """ADVERSARIAL: a single 5-day untriggered position survives 4 new-day
+        wipes (days 2-5). Every wipe must LEAVE the epoch unchanged — an
+        untriggered open position is not a new-position boundary. All 5
+        shadow_history rows must carry the SAME position_epoch.
+
+        Under an unconditional-stamp implementation each wipe re-stamps, the 5
+        rows get 5 distinct epochs, and this test fails."""
+        db_file = _make_post_migration_shadow_db(tmp_path)
+        monkeypatch.setattr(_db, "DB_FILE", db_file)
+
+        symphony_id = "stamp-stability-sym"
+        bot_state = _open_position_bot_state(symphony_id)
+
+        days = ["2026-02-02", "2026-02-03", "2026-02-04", "2026-02-05", "2026-02-06"]
+        for i, day in enumerate(days):
+            if i > 0:
+                # Day 2..5: the new-trading-day wipe runs. The position is
+                # still open and untriggered — its epoch must NOT change.
+                _db.wipe_transient_state(bot_state)
+            # The engine writes a shadow row each day.
+            _record_day(symphony_id, bot_state, day, ret=0.5)
+
+        # All 5 rows must share ONE epoch.
+        conn = sqlite3.connect(db_file)
+        epochs = [
+            row[0]
+            for row in conn.execute(
+                "SELECT position_epoch FROM shadow_history "
+                "WHERE symphony_id = ? ORDER BY ts_utc ASC",
+                (symphony_id,),
+            ).fetchall()
+        ]
+        conn.close()
+        assert len(epochs) == 5, "5 days recorded -> 5 rows expected"
+        assert len(set(epochs)) == 1, (
+            f"a single 5-day untriggered position must carry ONE stable "
+            f"position_epoch across all rows; got {len(set(epochs))} distinct "
+            f"epochs {set(epochs)}. An unconditional re-stamp in "
+            f"wipe_transient_state fragments the position — the re-stamp must "
+            f"be CONDITIONAL on s_data.get('triggered') being True at wipe time."
+        )
+        assert epochs[0] is not None, (
+            "the epoch must be stamped (not None) on a position opened "
+            "post-migration — the first-entry stamp site must fire"
+        )
+
+    def test_five_day_untriggered_position_trajectory_returns_all_days(
+        self, tmp_path, monkeypatch
+    ):
+        """The fragmentation flaw's observable consequence: if the 5-day
+        position fragments into 5 epochs, the latest-epoch query returns only
+        day 5. The trajectory must return ALL 5 days."""
+        db_file = _make_post_migration_shadow_db(tmp_path)
+        monkeypatch.setattr(_db, "DB_FILE", db_file)
+
+        symphony_id = "stamp-traj-sym"
+        bot_state = _open_position_bot_state(symphony_id)
+        returns = [0.5, -1.0, 0.8, 1.2, -0.3]
+        days = ["2026-02-02", "2026-02-03", "2026-02-04", "2026-02-05", "2026-02-06"]
+        for i, (day, ret) in enumerate(zip(days, returns)):
+            if i > 0:
+                _db.wipe_transient_state(bot_state)
+            _record_day(symphony_id, bot_state, day, ret)
+
+        _db._shadow_cr_cache.clear()
+        trajectory = _get_shadow_cumulative_trajectory(symphony_id, db_file)
+        assert trajectory is not None, (
+            "a 5-day position must yield a trajectory (>= 2 rows)"
+        )
+        assert trajectory == pytest.approx(returns, rel=1e-9), (
+            f"the trajectory must contain all 5 days of the single position "
+            f"{returns}; got {trajectory}. If it returns only the last day, "
+            f"the epoch fragmented across the per-day wipes."
+        )
+
+    def test_post_trigger_reentry_gets_a_new_epoch(self, tmp_path, monkeypatch):
+        """The CONDITIONAL re-stamp: position A runs days 1-5 and is triggered
+        on day 5; the day-6 wipe — running on a position whose triggered flag
+        is True — IS a genuine new-position boundary and MUST re-stamp. Position
+        B (days 6-10) must carry a DIFFERENT epoch from position A, and the
+        trajectory must return only B."""
+        db_file = _make_post_migration_shadow_db(tmp_path)
+        monkeypatch.setattr(_db, "DB_FILE", db_file)
+
+        symphony_id = "reentry-sym"
+        bot_state = _open_position_bot_state(symphony_id)
+
+        # Position A — days 1-5, untriggered until day 5.
+        a_days = ["2026-02-02", "2026-02-03", "2026-02-04", "2026-02-05", "2026-02-06"]
+        for i, day in enumerate(a_days):
+            if i > 0:
+                _db.wipe_transient_state(bot_state)
+            _record_day(symphony_id, bot_state, day, ret=0.4)
+        # On day 5 a trigger fires — mark the position triggered.
+        bot_state[symphony_id]["triggered"] = True
+
+        # Day 6: the new-day wipe runs on a TRIGGERED position -> new-position
+        # boundary -> the epoch MUST be re-stamped here.
+        _db.wipe_transient_state(bot_state)
+
+        # Position B — days 6-10, the re-entered position.
+        b_days = ["2026-02-09", "2026-02-10", "2026-02-11", "2026-02-12", "2026-02-13"]
+        b_returns = [-0.5, 0.8, -1.2, 2.0, -0.3]
+        for i, (day, ret) in enumerate(zip(b_days, b_returns)):
+            if i > 0:
+                _db.wipe_transient_state(bot_state)
+            _record_day(symphony_id, bot_state, day, ret)
+
+        conn = sqlite3.connect(db_file)
+        rows = conn.execute(
+            "SELECT trading_day, position_epoch FROM shadow_history "
+            "WHERE symphony_id = ? ORDER BY ts_utc ASC",
+            (symphony_id,),
+        ).fetchall()
+        conn.close()
+        a_epochs = {ep for day, ep in rows if day in a_days}
+        b_epochs = {ep for day, ep in rows if day in b_days}
+        assert len(a_epochs) == 1 and len(b_epochs) == 1, (
+            f"each of the two positions must have ONE stable epoch; "
+            f"A={a_epochs}, B={b_epochs}"
+        )
+        assert a_epochs != b_epochs, (
+            f"position B (post-trigger re-entry) must carry a DIFFERENT epoch "
+            f"from position A — the day-6 wipe on a triggered position is a "
+            f"new-position boundary that MUST re-stamp. A={a_epochs}, "
+            f"B={b_epochs}"
+        )
+
+        _db._shadow_cr_cache.clear()
+        trajectory = _get_shadow_cumulative_trajectory(symphony_id, db_file)
+        assert trajectory == pytest.approx(b_returns, rel=1e-9), (
+            f"after a post-trigger re-entry the trajectory must reflect ONLY "
+            f"position B {b_returns}; got {trajectory}. A spliced query would "
+            f"return all 10 days."
+        )
+
+    def test_wipe_does_not_restamp_untriggered_but_does_restamp_triggered(
+        self, tmp_path, monkeypatch
+    ):
+        """Direct contract test of the CONDITIONAL re-stamp, both arms:
+          - a wipe on an UNTRIGGERED symphony leaves position_epoch unchanged;
+          - a wipe on a TRIGGERED symphony assigns a new position_epoch.
+        This pins the conditional itself, independent of the DB write path."""
+        db_file = _make_post_migration_shadow_db(tmp_path)
+        monkeypatch.setattr(_db, "DB_FILE", db_file)
+
+        # Arm A — untriggered symphony: epoch must survive the wipe.
+        # _open_position_bot_state already stamps the epoch at open (engine
+        # fresh-entry path); a wipe on the still-untriggered position must NOT
+        # change it.
+        untriggered = _open_position_bot_state("untriggered-sym")
+        epoch_before = untriggered["untriggered-sym"]["position_epoch"]
+        assert epoch_before is not None, "open-stamp must have set the epoch"
+        _db.wipe_transient_state(untriggered)  # wipe — still untriggered
+        epoch_after = untriggered["untriggered-sym"].get("position_epoch")
+        assert epoch_after == epoch_before, (
+            "a wipe on an UNTRIGGERED still-open position must NOT re-stamp "
+            f"the epoch; was {epoch_before!r}, became {epoch_after!r}"
+        )
+
+        # Arm B — triggered symphony: epoch must change.
+        triggered = _open_position_bot_state("triggered-sym")
+        _db.wipe_transient_state(triggered)
+        epoch_pre_trigger = triggered["triggered-sym"].get("position_epoch")
+        triggered["triggered-sym"]["triggered"] = True
+        _db.wipe_transient_state(triggered)
+        epoch_post_trigger = triggered["triggered-sym"].get("position_epoch")
+        assert epoch_post_trigger != epoch_pre_trigger, (
+            "a wipe on a TRIGGERED position is a new-position boundary and "
+            f"MUST re-stamp the epoch; stayed {epoch_pre_trigger!r}"
         )
