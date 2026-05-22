@@ -1717,12 +1717,17 @@ def test_advisor_js_generates_suggestion_cards_with_required_fields():
 def test_advisor_js_populates_autotune_panel_from_api():
     """ai_advisor.js must populate the autotune runs panel from /api/autotune-runs.
 
-    advisor.jsx AutotuneRuns renders a list of recent runs with:
-    symphony name, naive_sharpe, dsr, frozen_eval_verdict, completed_at.
+    The recent-runs panel renders a list of runs with: symphony name,
+    naive_sharpe, the selection statistic, frozen_eval_verdict, completed_at.
 
     The right-rail autotune panel must be populated by JS from /api/autotune-runs,
     not static HTML. Currently the tbody shows 'Loading...' permanently if the
     JS fetch fails or doesn't run.
+
+    Re-pinned for Decision D3: the per-run selection statistic is the Harvey &
+    Liu haircut t-statistic (field `selection_tstat`), NOT a Deflated Sharpe
+    Ratio — D3 removed the DSR. The JS must reference `selection_tstat` and must
+    not carry the deleted 'DSR' name.
     """
     js_path = _STATIC_DIR / "ai_advisor.js"
     assert js_path.exists(), "static/ai_advisor.js must exist"
@@ -1730,7 +1735,7 @@ def test_advisor_js_populates_autotune_panel_from_api():
 
     assert "api/autotune-runs" in src, (
         "ai_advisor.js must fetch /api/autotune-runs to populate the right-rail panel. "
-        "advisor.jsx AutotuneRuns displays recent Optuna study results per symphony."
+        "The recent-runs panel displays recent Optuna study results per symphony."
     )
 
     # The JS must update the autotune tbody
@@ -1738,19 +1743,24 @@ def test_advisor_js_populates_autotune_panel_from_api():
         "ai_advisor.js must update the autotune runs table body from the API response. "
     )
 
-    # Must include naive_sharpe, dsr, frozen_eval_verdict in generated row HTML
+    # Must include naive_sharpe and the selection statistic in generated row HTML
     assert "naive_sharpe" in src or "sharpe" in src.lower(), (
         "ai_advisor.js autotune run rows must include naive_sharpe. "
     )
 
-    assert "dsr" in src.lower(), (
-        "ai_advisor.js autotune run rows must include DSR (deflated Sharpe ratio). "
-        "advisor.jsx AutotuneRuns shows r.dsr per run."
+    assert "selection_tstat" in src, (
+        "ai_advisor.js autotune run rows must include selection_tstat — the "
+        "Harvey & Liu haircut winner's t-statistic (D3; replaced the deleted "
+        "deflated_sharpe / DSR field)."
+    )
+    assert "dsr" not in src.lower() and "deflated sharpe" not in src.lower(), (
+        "ai_advisor.js still contains 'DSR' / 'Deflated Sharpe' — D3 removed the "
+        "Deflated Sharpe Ratio; the autotune rows must use selection_tstat."
     )
 
     assert "frozen_eval" in src or "frozen" in src.lower(), (
         "ai_advisor.js autotune run rows must include frozen_eval_verdict. "
-        "advisor.jsx AutotuneRuns shows frozen-eval decision color per run."
+        "The recent-runs panel shows the frozen-eval decision color per run."
     )
 
 

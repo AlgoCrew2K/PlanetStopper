@@ -73,7 +73,7 @@ _AUTOTUNE_RUNS_STUB = [
         "oos_alpha": 0.12,
         "train_alpha": 0.20,
         "baseline_decision": "apply",
-        "deflated_sharpe": 1.23,
+        "selection_tstat": 1.23,
         "naive_sharpe": 1.45,
         "validation_sharpe": 1.30,
         "frozen_eval_sharpe": 1.10,
@@ -87,7 +87,7 @@ _AUTOTUNE_RUNS_STUB = [
         "oos_alpha": -0.05,
         "train_alpha": 0.18,
         "baseline_decision": "reject",
-        "deflated_sharpe": 0.80,
+        "selection_tstat": 0.80,
         "naive_sharpe": 0.95,
         "validation_sharpe": 0.85,
         "frozen_eval_sharpe": 0.75,
@@ -560,13 +560,15 @@ def test_autotune_runs_each_has_naive_sharpe(adv_client):
         assert "naive_sharpe" in row
 
 
-def test_autotune_runs_each_has_deflated_sharpe(adv_client):
-    """deflated_sharpe (DSR) must be present in each row."""
+def test_autotune_runs_each_has_selection_tstat(adv_client):
+    """selection_tstat (the Harvey & Liu haircut winner's t-statistic) must be
+    present in each row. Re-pinned for D3 — the column was renamed from the
+    deleted deflated_sharpe."""
     with _patch_advisor():
         resp = adv_client.get("/api/autotune-runs")
     rows = json.loads(resp.data)
     for row in rows:
-        assert "deflated_sharpe" in row
+        assert "selection_tstat" in row
 
 
 def test_autotune_runs_each_has_frozen_eval_sharpe(adv_client):
@@ -853,11 +855,25 @@ def test_advisor_autotune_table_has_decision_col(adv_client):
     assert "decision" in html
 
 
-def test_advisor_autotune_table_has_sharpe_col(adv_client):
-    """Autotune table header must include Sharpe or DSR column."""
-    resp = adv_client.get("/ai-advisor")
-    html = resp.data.decode("utf-8", errors="replace").lower()
-    assert "sharpe" in html or "dsr" in html
+def test_advisor_autotune_panel_surfaces_selection_tstat(adv_client):
+    """Re-pinned for Decision D3: the recent-runs panel must surface the Harvey
+    & Liu selection statistic. D3 removed the Deflated Sharpe Ratio; the panel
+    is JS-rendered (C-16 migration), so this checks ai_advisor.js — it must
+    reference `selection_tstat` and must NOT carry the deleted 'DSR' name.
+    """
+    js_path = Path(__file__).parents[2] / "static" / "ai_advisor.js"
+    assert js_path.exists(), "static/ai_advisor.js must exist"
+    js_lower = js_path.read_text(encoding="utf-8").lower()
+
+    assert "selection_tstat" in js_lower, (
+        "static/ai_advisor.js must reference 'selection_tstat' to render the "
+        "Harvey & Liu selection statistic in the autotune panel (D3)."
+    )
+    assert "dsr" not in js_lower and "deflated sharpe" not in js_lower, (
+        "static/ai_advisor.js still contains 'DSR' / 'Deflated Sharpe' — D3 "
+        "removed the Deflated Sharpe Ratio; the panel must not use the deleted "
+        "name for the selection statistic."
+    )
 
 
 def test_advisor_autotune_table_has_frozen_eval_col(adv_client):
