@@ -59,9 +59,14 @@ CREATE TABLE IF NOT EXISTS shadow_history (
   shadow_return REAL NOT NULL,
   is_post_trigger INTEGER NOT NULL DEFAULT 0,
   trigger_id INTEGER,
-  math_mode TEXT NOT NULL DEFAULT 'per_symphony'
+  math_mode TEXT NOT NULL DEFAULT 'per_symphony',
+  position_epoch TEXT
 )
 """
+# position_epoch added by Cluster 6 AC-3 (migration 015) — additive, NULLable,
+# no DEFAULT. record_shadow_observation writes it, so this test-side DDL must
+# carry it or the INSERT fails (the column-list INSERT in record_shadow_
+# observation names position_epoch).
 
 _IDX_SYM_DAY = (
     "CREATE INDEX IF NOT EXISTS idx_shadow_history_sym_day "
