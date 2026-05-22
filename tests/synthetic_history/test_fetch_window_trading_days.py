@@ -666,3 +666,207 @@ def test_stale_cache_cannot_bypass_the_new_trading_day_floor() -> None:
         "cache marker (v2 -> v3+) so old caches cannot match, OR run the "
         "trading-day floor check on the cache-loaded history too."
     )
+
+
+# ---------------------------------------------------------------------------
+# BLOCKER round (risk-engine-specialist DENY on f4f645d) — two AC-1 defects
+# the prior RED suite did not catch.
+#
+# BLOCKER 1: a hand-maintained _US_MARKET_HOLIDAYS table shipped with a drift
+# error (2026-07-03 is NOT an NYSE holiday — July 4 2026 is a Saturday and the
+# NYSE does not observe the preceding Friday; that is the FEDERAL rule). AC-1
+# was ruled Option B specifically to AVOID a hand-maintained holiday table.
+#
+# BLOCKER 2: the shortfall guard checks only the 125-day intraday replay slice.
+# It does NOT verify the daily-bar history clears the 39-day MC-warmup floor.
+# A short daily fetch silently yields None mc_prob for the first ~39 of 125
+# walk-forward folds — a silent under-floor history the autotuner optimises
+# against. AC-1's text explicitly names the MC warmup floor.
+# ---------------------------------------------------------------------------
+
+
+def test_independence_day_2026_is_a_trading_day_not_a_holiday() -> None:
+    """BLOCKER 1 — 2026-07-03 must NOT be treated as a market holiday.
+
+    July 4, 2026 is a SATURDAY. The "observe the preceding Friday" rule is the
+    US FEDERAL holiday rule — it is NOT the NYSE rule. The NYSE does not close
+    the Friday before a Saturday Independence Day; the exchange is OPEN on
+    Friday 2026-07-03. (The Sunday -> following-Monday observance rule does
+    apply to the NYSE; the Saturday -> preceding-Friday rule does not.)
+
+    If synthetic_history.py exposes a holiday table, 2026-07-03 must not be in
+    it — a busday calculation that excludes a real trading day drifts the
+    fetch window. If the table has been removed entirely (the preferred AC-1
+    Option-B resolution), this test is trivially satisfied — there is no table
+    to carry the drift.
+    """
+    synth = pytest.importorskip(
+        "synthetic_history",
+        reason="synthetic_history import unavailable in this environment",
+    )
+    holidays = getattr(synth, "_US_MARKET_HOLIDAYS", None)
+    if holidays is None:
+        # Table removed — AC-1 Option B as ruled. No hand-maintained holiday
+        # table means no drift class. Nothing to assert.
+        return
+
+    # A table still exists — it must not misclassify 2026-07-03.
+    jul3 = np.datetime64("2026-07-03", "D")
+    holidays_arr = np.asarray(holidays, dtype="datetime64[D]")
+    assert jul3 not in set(holidays_arr.tolist()), (
+        "synthetic_history._US_MARKET_HOLIDAYS lists 2026-07-03 as a market "
+        "holiday. July 4 2026 is a Saturday; the NYSE does NOT close the "
+        "preceding Friday (that is the federal-observance rule, not the NYSE "
+        "rule) — 2026-07-03 is a real trading day. Remove the entry, or "
+        "remove the hand-maintained table entirely per the AC-1 Option-B "
+        "ruling."
+    )
+    # Stronger: with that table as the holiday set, 2026-07-03 must be a
+    # business day.
+    assert bool(
+        np.is_busday(jul3, holidays=holidays_arr)
+    ), (
+        "with _US_MARKET_HOLIDAYS as the holiday set, np.is_busday reports "
+        "2026-07-03 as a non-trading day. It is a real NYSE trading day."
+    )
+
+
+def test_fetch_window_count_does_not_depend_on_a_hand_maintained_holiday_table() -> None:
+    """BLOCKER 1 (deeper) — the trading-day floor must not be enforced by a
+    hand-maintained holiday table.
+
+    AC-1 was ruled Option B precisely to AVOID a hand-maintained holiday
+    table: Alpaca returns daily bars only on real trading days, so the
+    returned-bar count IS the exchange calendar — self-validating, no drift
+    class. A hand-listed ``_US_MARKET_HOLIDAYS`` constant reintroduces exactly
+    the drift the ruling excluded (and shipped with a 2026-07-03 error).
+
+    Contract: ``synthetic_history`` must NOT carry a hand-maintained holiday
+    table that drives the trading-day count. The fetch-window START may be
+    picked by generous calendar-day padding; the AUTHORITY for the floor is
+    the actual returned-bar count plus the post-fetch floor checks — not a
+    holiday list.
+
+    This test fails RED while ``_US_MARKET_HOLIDAYS`` exists; it passes once
+    the table is removed.
+    """
+    synth = pytest.importorskip(
+        "synthetic_history",
+        reason="synthetic_history import unavailable in this environment",
+    )
+    assert not hasattr(synth, "_US_MARKET_HOLIDAYS"), (
+        "synthetic_history still defines a hand-maintained _US_MARKET_HOLIDAYS "
+        "table. AC-1 was ruled Option B to AVOID a hand-maintained holiday "
+        "table — the returned Alpaca bar count is the self-validating "
+        "exchange calendar. The table already shipped a drift error "
+        "(2026-07-03). Remove it: pick the fetch-window start by generous "
+        "calendar-day padding and let the returned-bar count + the post-fetch "
+        "floor checks be the sole authority for the trading-day floor."
+    )
+
+
+def test_daily_warmup_shortfall_is_surfaced_not_only_the_intraday_slice() -> None:
+    """BLOCKER 2 — the shortfall guard must also check the daily / MC-warmup
+    floor, not only the 125-day intraday replay slice.
+
+    ``_REQUIRED_FETCH_TRADING_DAYS`` is 174 = 125 walk-forward + 39 MC warmup
+    + 10 buffer. The 39-day warmup is the daily history that PRECEDES the
+    replay window: ``build_replay_day`` feeds ``hist_data_up_to_yesterday``
+    into ``run_monte_carlo``, and on the earliest replay days that prior daily
+    history must be >= the MC warmup floor or ``run_monte_carlo`` returns the
+    None insufficient sentinel. If Alpaca under-delivers the DAILY bars,
+    ``daily_dates`` is silently short and the first ~39 of 125 walk-forward
+    folds get None mc_prob — the MC exit gate is dark for ~31% of the
+    validation window and the autotuner tunes the MC-coupled parameters
+    against a systematically MC-blind replay.
+
+    The current guard checks only ``len(intraday_dates)`` against the 125-day
+    floor. AC-1's text explicitly requires the window to "guarantee at least
+    ... the MC warmup floor (MC_MIN_HISTORY_DAYS + MC_VOL_WINDOW_DAYS - 1)" —
+    so a guard that verifies the 125 but not the 39 half-implements AC-1.
+
+    Static check: ``generate_synthetic_history`` must contain a SECOND
+    length-vs-floor comparison, distinct from the intraday-slice guard, that
+    checks the DAILY history (a ``len(...)`` of the daily-date sequence /
+    daily history) against the MC-warmup floor — feeding a raise or an
+    ERROR/WARNING log. We detect it as: a ``len()`` comparison whose len()
+    argument references a daily-history name AND at least two distinct
+    length-vs-floor comparisons total (the intraday guard + the daily guard).
+    """
+    tree = _synth_tree()
+    gen = None
+    for node in _ast.walk(tree):
+        if (
+            isinstance(node, _ast.FunctionDef)
+            and node.name == "generate_synthetic_history"
+        ):
+            gen = node
+            break
+    assert gen is not None, (
+        "synthetic_history.generate_synthetic_history not found."
+    )
+
+    # Names that plausibly hold the daily-bar history / its date sequence.
+    # The current code names it `daily_dates` (sorted historical_daily keys)
+    # and `historical_daily`.
+    daily_history_names = {"daily_dates", "historical_daily", "daily_bars_raw"}
+
+    # Walk every Compare; classify each len()-vs-floor comparison by whether
+    # its len() argument touches a daily-history name or an intraday name.
+    intraday_floor_checks = 0
+    daily_floor_checks = 0
+    for node in _ast.walk(gen):
+        if not isinstance(node, _ast.Compare):
+            continue
+        operands = [node.left, *node.comparators]
+        len_args: list[_ast.AST] = []
+        has_floor_operand = False
+        for o in operands:
+            if (
+                isinstance(o, _ast.Call)
+                and isinstance(o.func, _ast.Name)
+                and o.func.id == "len"
+                and o.args
+            ):
+                len_args.append(o.args[0])
+            # numeric literal or a module-level numeric constant Name
+            if (
+                isinstance(o, _ast.Constant)
+                and isinstance(o.value, (int, float))
+                and not isinstance(o.value, bool)
+            ):
+                has_floor_operand = True
+            if isinstance(o, _ast.Name) and (
+                o.id.isupper()
+                or o.id.startswith("_")
+                and any(c.isupper() for c in o.id)
+            ):
+                # heuristic: a NAMED floor constant (e.g. _MC_WARMUP_TRADING_DAYS)
+                has_floor_operand = True
+        if not (len_args and has_floor_operand):
+            continue
+        for arg in len_args:
+            names = {
+                n.id for n in _ast.walk(arg) if isinstance(n, _ast.Name)
+            }
+            if names & daily_history_names:
+                daily_floor_checks += 1
+            elif any("intraday" in n for n in names):
+                intraday_floor_checks += 1
+            else:
+                # An unclassified len()-vs-floor check — count it toward
+                # neither; the test needs an explicitly daily-scoped one.
+                pass
+
+    assert daily_floor_checks >= 1, (
+        "generate_synthetic_history surfaces an intraday-slice shortfall but "
+        "NOT a daily / MC-warmup shortfall. The 39-day MC warmup is the "
+        "reason the fetch floor is 174 (not 125); a short DAILY fetch leaves "
+        "the first ~39 walk-forward folds MC-dark with nothing surfaced. "
+        "AC-1 requires the MC warmup floor to be guaranteed. Add a daily-side "
+        "floor check parallel to the intraday guard: compare the available "
+        "daily history (len of daily_dates / historical_daily) against the "
+        "MC-warmup floor and raise / log ERROR on shortfall. "
+        f"Found {intraday_floor_checks} intraday floor check(s), "
+        f"{daily_floor_checks} daily floor check(s)."
+    )
