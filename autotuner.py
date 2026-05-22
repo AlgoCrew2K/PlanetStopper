@@ -1,6 +1,5 @@
 import time
 import math
-import statistics
 import optuna
 from datetime import datetime, timedelta, timezone
 import database
@@ -79,10 +78,6 @@ _SS_MAX_PARA_SQUEEZE_MAX = 0.8
 _SS_VWAP_CROSS_HWM_V1_MIN = 0.3
 _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
 
-# Exponential time-decay rate applied to per-day guard-alpha in run_simulation
-# and _collect_sim_returns. Half-life ≈ 46 trading days (ln2 / 0.015).
-_GUARD_ALPHA_DECAY_RATE = 0.015
-
 # --- run_simulation objective: loss-averse utility penalty constants (audit H-10) ---
 # The run_simulation objective is an explicit LOSS-AVERSE utility: it weights
 # downside outcomes (negative guard-alpha, missed upside, peak-to-exit drawdown)
@@ -128,10 +123,8 @@ SORTINO_TARGET_RETURN = 0.0
 #   - calculate_20d_vol:      LOOKBACK_DAYS      = 20 trading days
 #   - calculate_14d_atr_pct:  ATR_LOOKBACK_DAYS  = 15 trading days (14 TR periods + 1 prior close)
 # PURGE_DAYS = max(20, 15) = 20.
-# NOTE: The exponential decay weight (_GUARD_ALPHA_DECAY_RATE, half-life ≈ 46 days) is an
-# OBJECTIVE AGGREGATION WEIGHT, not a feature lookback — it does not cause any train
-# sample's feature computation to reach into the test fold and is therefore excluded from
-# purge sizing. mc_prob is pre-computed in tick data, not computed live in the sim loop.
+# NOTE: mc_prob is pre-computed in tick data, not computed live in the sim loop, so it
+# adds no feature lookback to purge sizing.
 # López de Prado 2018, Advances in Financial Machine Learning, Ch. 7 (Purged k-fold CV).
 PURGE_DAYS = 20
 
@@ -266,41 +259,90 @@ def compute_sortino_ratio(returns: list, target: float = SORTINO_TARGET_RETURN) 
     return mean_r / downside_deviation
 
 
-def compute_deflated_sharpe_ratio(
-    SR_obs: float,
-    SR_0: float,
-    gamma3: float,
-    gamma4: float,
-    T: int,
-) -> float:
-    """Deflated Sharpe Ratio (DSR) — corrects for selection bias from multiple testing.
+# --- Harvey & Liu 2015 selection-bias haircut (Decision D3) ---
+# The autotuner runs hundreds of trials and deploys the best — a multiple-testing
+# problem: the best-of-N Sortino is upward-biased by selection. The correction is
+# a Harvey & Liu 2015 Benjamini-Hochberg false-discovery-rate haircut, metric-
+# agnostic: it adjusts a per-trial p-value for the number of tests tried, instead
+# of feeding a Sortino into a Sharpe-derived deflation formula (the H-6 category
+# error this replaces — a Sortino's sampling distribution is not the Sharpe's).
+# Reference: Harvey, C.R. & Liu, Y. (2015). "Backtesting." Journal of Portfolio
+# Management 42(1), 13-28. DOI 10.3905/jpm.2015.42.1.013.
 
-    Formula: (SR_obs - SR_0) * sqrt(T-1) / sqrt(1 - gamma3*SR_obs + (gamma4-1)/4 * SR_obs^2)
+# Benjamini-Hochberg false-discovery-rate level for the selection haircut. A trial
+# is deployable only if its BHY-adjusted p-value is <= this q. Conventional 0.05
+# (Harvey & Liu 2015 use FDR control for best-of-N strategy selection; BHY rather
+# than Bonferroni because Bonferroni at N~500 is brutally over-conservative).
+# Policy dial — the operator may tighten/loosen the selection strictness here.
+HARVEY_LIU_FDR_Q = 0.05
 
-    Reference: Bailey, D.H. & López de Prado, M. (2014). "The Deflated Sharpe Ratio:
-    Correcting for Selection Bias, Backtest Overfitting, and Non-Normality."
-    Journal of Portfolio Management, 40(5), 94-107. DOI 10.3905/jpm.2014.40.5.094.
-    Equation 9.
+# Numerical-stability epsilon for the haircut p-value clamp. A large trial
+# t-statistic drives the one-sided p-value `1 - Φ(t)` to underflow to exactly 0.0
+# (and a large-negative t saturates it to exactly 1.0); a degenerate 0.0/1.0
+# p-value makes any downstream log / inverse-CDF non-finite. Every haircut p-value
+# is clamped into [_HAIRCUT_PVALUE_EPSILON, 1 - _HAIRCUT_PVALUE_EPSILON]. This is
+# a numerical-stability bound, NOT a policy dial. Source: IEEE-754 double-precision
+# Φ saturates for |t| beyond ~8.3; 1e-12 sits safely inside the representable range.
+_HAIRCUT_PVALUE_EPSILON = 1e-12
 
-    Args:
-        SR_obs: Observed Sharpe/Sortino ratio of the candidate trial.
-        SR_0:   Null-hypothesis Sharpe (random-trading baseline; typically 0.0).
-        gamma3: Skewness of the trial Sharpe distribution across N trials.
-        gamma4: Kurtosis of the trial Sharpe distribution across N trials.
-        T:      Number of observations in the in-sample return series.
 
-    Returns:
-        DSR as a finite float. Degenerate cases return sentinels:
-          - T <= 1 (no degree of freedom in sqrt(T-1)) → returns 0.0.
-          - Invalid denominator (sqrt of non-positive) → returns float('-inf').
-          Never returns +inf (would unfairly favor the AI branch).
+def compute_sortino_tstat(sortino: float, T: int) -> float:
+    """Per-trial t-statistic for the Harvey & Liu haircut: ``sortino * sqrt(T)``.
+
+    The metric-neutral bridge from a ratio to a significance statistic is the
+    per-observation effect size scaled by the square root of the sample length.
+    ``T`` is the in-sample return-OBSERVATION count of the series the Sortino was
+    computed over (``len(daily_returns)``) — not a calendar-day count.
+
+    Reference: Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013.
     """
-    if T <= 1:
+    if T <= 0:
         return 0.0
-    denom_sq = 1.0 - gamma3 * SR_obs + ((gamma4 - 1.0) / 4.0) * (SR_obs ** 2)  # compute_deflated_sharpe_ratio denominator (Bailey & López de Prado 2014 Eq. 9)
-    if denom_sq <= 0.0:
-        return float("-inf")
-    return (SR_obs - SR_0) * math.sqrt(T - 1) / math.sqrt(denom_sq)
+    return sortino * math.sqrt(T)
+
+
+def compute_haircut_pvalue(t_stat: float) -> float:
+    """One-sided p-value for a haircut t-statistic: ``1 - Φ(t)``, clamped.
+
+    Φ is the standard-normal CDF (large-sample approximation; Harvey & Liu 2015
+    use the normal for large samples). The result is clamped into
+    ``[_HAIRCUT_PVALUE_EPSILON, 1 - _HAIRCUT_PVALUE_EPSILON]`` so an extreme
+    t-statistic cannot produce a degenerate exactly-0.0 / exactly-1.0 p-value
+    that would make a downstream log / inverse-CDF non-finite.
+    """
+    # Φ(t) = 0.5·(1 + erf(t/√2)); the one-sided survival p is 1 - Φ(t).
+    phi = 0.5 * (1.0 + math.erf(t_stat / math.sqrt(2.0)))
+    p = 1.0 - phi
+    return min(max(p, _HAIRCUT_PVALUE_EPSILON), 1.0 - _HAIRCUT_PVALUE_EPSILON)
+
+
+def benjamini_hochberg_adjust(p_values: list[float]) -> list[float]:
+    """Benjamini-Hochberg step-up adjustment of a vector of raw p-values.
+
+    BHY step-up: sort the p-values ascending, then
+    ``p_adj_(k) = min over j >= k of [ N/j * p_(j) ]``, clamp each to [0, 1],
+    and map back to the input order. The running minimum from the largest rank
+    downward makes the adjusted p-values monotone non-decreasing in raw-p rank.
+
+    Returns one adjusted p-value per input, in the input order.
+
+    Reference: Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013; the BHY
+    procedure (Benjamini & Hochberg 1995).
+    """
+    n = len(p_values)
+    if n == 0:
+        return []
+    # Sort indices by ascending raw p-value.
+    order = sorted(range(n), key=lambda i: p_values[i])
+    adjusted = [0.0] * n
+    running_min = 1.0
+    # Step up from the largest rank (k = n) down to the smallest (k = 1).
+    for rank in range(n, 0, -1):
+        idx = order[rank - 1]
+        candidate = (n / rank) * p_values[idx]
+        running_min = min(running_min, candidate)
+        adjusted[idx] = min(max(running_min, 0.0), 1.0)
+    return adjusted
 
 
 def calculate_historical_deviation(current_date_str):
@@ -594,10 +636,13 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
 
     Identical tick logic to run_simulation; returns a list instead of a scalar
     so the Sortino objective can compute risk-adjusted return across triggered days.
+
+    Each triggered day contributes its RAW guard-alpha — no recency decay weight
+    (Decision D5): walk-forward CV already supplies recency relevance by testing on
+    the most recent fold, so an in-objective decay weight would double-count it and
+    bias selection toward the last few weeks.
     """
     daily_returns = []
-    decay_rate = _GUARD_ALPHA_DECAY_RATE
-    current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
     grace_minutes = _replay_grace_minutes()  # shared with production; resolved once per run
 
     for sym_id in acc_sym_ids:
@@ -634,46 +679,50 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
 
             if triggered_return is not None:
                 guard_alpha = triggered_return - eod_return
-                days_ago = (current_dt - datetime.strptime(date, "%Y-%m-%d")).days
-                weight = math.exp(-decay_rate * days_ago)
-                daily_returns.append(guard_alpha * weight)
+                daily_returns.append(guard_alpha)
 
     return daily_returns
 
 
-def _dsr_observation_count(
-    trial_params, current_params, history_validation, sym_id,
-    current_date_str, deviation_dict,
-):
-    """Return the DSR `T` for a trial — its in-sample return-OBSERVATION count.
+def _haircut_select(completed_trials):
+    """Apply the Harvey & Liu selection-bias haircut to a set of completed trials.
 
-    The DSR (Bailey & López de Prado 2014, Eq. 9) defines `T` as the number of
-    return observations in the in-sample series the Sharpe/Sortino was computed
-    over. The Sortino objective is computed by compute_sortino_ratio over the
-    `daily_returns` list `_collect_sim_returns` produces — one entry per
-    TRIGGERED day, not per validation calendar day. `T` must therefore be
-    `len(daily_returns)` for the trial's own parameter set, NOT
-    `len(validation_dates_purged)` (the validation fold's calendar-day count,
-    which is systematically larger and inflates sqrt(T-1)).
+    Each completed trial must carry its in-sample validation return series under
+    the ``daily_returns`` user-attr (persisted by the objective). The haircut, per
+    trial i over the N sentinel-filtered trials:
+      1. t-statistic  t_i  = Sortino_i · sqrt(T_i),  T_i = len(daily_returns_i)
+      2. one-sided p  p_i  = clamped 1 - Φ(t_i)
+      3. BHY adjust   p_adj = benjamini_hochberg_adjust over the N raw p-values
+      4. selection    winner = argmin p_adj, deployable iff p_adj <= HARVEY_LIU_FDR_Q
 
-    Re-derives the trial's return series from its `params` so the count is
-    exact for the parameters being deflated. Returns 0 when the symphony is
-    absent so the DSR T<=1 sentinel handles a degenerate series.
+    Returns ``(winner_trial, winner_p_adj, winner_tstat)`` — the BHY-winning
+    trial, its adjusted p-value, and its t-statistic. ``winner_trial`` is None
+    when no trial clears the FDR gate (the AI proposal must then fall through to
+    the fallback/default cascade) or when fewer than 1 trial is available.
+
+    Reference: Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013.
     """
-    if sym_id is None:
-        return 0
-    p = current_params.copy()
-    p.update(trial_params)
-    series = _collect_sim_returns(
-        p, history_validation, [sym_id], current_date_str, deviation_dict
-    )
-    return len(series)
+    if not completed_trials:
+        return None, None, None
+
+    tstats = []
+    for t in completed_trials:
+        series = t.user_attrs.get("daily_returns", []) if hasattr(t, "user_attrs") else []
+        T_i = len(series)
+        tstats.append(compute_sortino_tstat(t.value, T_i))
+    p_values = [compute_haircut_pvalue(ts) for ts in tstats]
+    p_adj = benjamini_hochberg_adjust(p_values)
+
+    winner_idx = min(range(len(p_adj)), key=lambda i: p_adj[i])
+    if p_adj[winner_idx] > HARVEY_LIU_FDR_Q:
+        # No trial clears the FDR gate — the trial set is statistically
+        # indistinguishable from noise; reject the AI proposal in full.
+        return None, p_adj[winner_idx], tstats[winner_idx]
+    return completed_trials[winner_idx], p_adj[winner_idx], tstats[winner_idx]
 
 
 def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
     total_guard_alpha = 0.0
-    decay_rate = _GUARD_ALPHA_DECAY_RATE
-    current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
     grace_minutes = _replay_grace_minutes()  # shared with production; resolved once per run
 
     for sym_id in acc_sym_ids:
@@ -718,33 +767,26 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 missed_upside = day_max_return - triggered_return
                 drawdown_from_peak = safe_hwm - triggered_return
 
-                # Exponential Time-Decay Weighting
-                days_ago = (current_dt - datetime.strptime(date, "%Y-%m-%d")).days
-                weight = math.exp(-decay_rate * days_ago)
-
                 # Loss-averse utility — see the penalty-constant block above.
+                # Each triggered day contributes its RAW penalised guard-alpha;
+                # no recency-decay weight (Decision D5 — walk-forward CV already
+                # supplies recency relevance, an in-objective weight double-counts it).
                 # 1. Penalize missed upside (exiting too early before a run).
                 if missed_upside > MISSED_UPSIDE_THRESHOLD_PCT:
-                    total_guard_alpha -= (
-                        missed_upside * MISSED_UPSIDE_PENALTY_MULT * weight
-                    )
+                    total_guard_alpha -= missed_upside * MISSED_UPSIDE_PENALTY_MULT
 
                 # 2. Penalize peak-to-exit drawdown (giving back too much profit)
                 # — only for positions that reached a meaningful gain.
                 if (safe_hwm > DRAWDOWN_MIN_GAIN_PCT
                         and drawdown_from_peak > DRAWDOWN_THRESHOLD_PCT):
-                    total_guard_alpha -= (
-                        drawdown_from_peak * DRAWDOWN_PENALTY_MULT * weight
-                    )
+                    total_guard_alpha -= drawdown_from_peak * DRAWDOWN_PENALTY_MULT
 
                 # 3. Apply standard EOD-based guard alpha; negative guard-alpha
                 # is penalised by the loss-aversion multiplier (asymmetry).
                 if guard_alpha < 0:
-                    total_guard_alpha += (
-                        guard_alpha * NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT * weight
-                    )
+                    total_guard_alpha += guard_alpha * NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT
                 else:
-                    total_guard_alpha += (guard_alpha * weight)
+                    total_guard_alpha += guard_alpha
 
     return -total_guard_alpha
 
@@ -800,9 +842,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
     - Purge (PURGE_DAYS=20) and Embargo (EMBARGO_DAYS=1) applied at BOTH fold boundaries:
         (a) train | validation boundary
         (b) validation | frozen-eval boundary
-      Binding purge constraint: max(vol=20, ATR=15)=20 trading days. The decay weight
-      (_GUARD_ALPHA_DECAY_RATE half-life ≈ 46 days) is an objective aggregation weight, not
-      a feature lookback, and is excluded from purge sizing.
+      Binding purge constraint: max(vol=20, ATR=15)=20 trading days.
     - Selection: Optuna trials score on the validation fold only. Frozen-eval is hidden during
       the trial sweep.
     - Frozen-eval consumption: exactly once after best-trial selection, to produce the honest
@@ -930,6 +970,9 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             target_sym_id = acc_sym_ids[0]
             # Score on validation fold only — frozen-eval is withheld from all trial callbacks.
             daily_returns = _collect_sim_returns(p, history_validation, [target_sym_id], current_date_str, deviation_dict)
+            # Persist the per-trial return series so the Harvey & Liu haircut can
+            # source each trial's observation count T = len(daily_returns).
+            trial.set_user_attr("daily_returns", daily_returns)
             # Annualization intentionally omitted — this is a ranking signal, not an annualized statistic.
             return compute_sortino_ratio(daily_returns)
 
@@ -951,98 +994,48 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         best_alpha_train = naive_sharpe_value
         best_params = study.best_params
 
-        # --- O2: DSR RE-RANKING (AI branch only) ---
-        # Collect completed trial values to derive the cross-trial Sharpe distribution
-        # moments (gamma3, gamma4). Then re-rank all completed trials by DSR and select
-        # the DSR-maximizing trial instead of the naive-Sortino winner.
-        # Fallback/default branches are single parameter sets — DSR not applicable.
-        # Reference: Bailey & López de Prado 2014, Eq. 9.
-        # Resolved here (before the OOS-evaluation block redefines it) so the DSR
-        # `T` can re-derive each trial's validation-fold return series (AC-3).
-        dsr_acc_sym_ids = [
-            k for k, v in bot_state.items()
-            if isinstance(v, dict)
-            and database.normalize_name(v.get("name", "")) == normalized_name
-        ]
-        target_sym_id = dsr_acc_sym_ids[0] if dsr_acc_sym_ids else None
+        # --- HARVEY & LIU SELECTION HAIRCUT (AI branch only) ---
+        # The best-of-N Optuna Sortino is upward-biased by selection across N
+        # trials. The Harvey & Liu 2015 BHY haircut corrects this: each completed
+        # trial gets a t-statistic Sortino·sqrt(T), a one-sided p-value, and a
+        # Benjamini-Hochberg-adjusted p-value over the whole trial set; the
+        # BHY-winning trial (argmin p_adj) is deployed only if it clears the FDR
+        # gate. If no trial clears the gate the trial set is statistically
+        # indistinguishable from noise and the AI proposal is rejected — the
+        # cascade then falls through to fallback/default (overfitting protection).
+        # The stored `deflated_sharpe` value is the winner's t-statistic — a
+        # higher-is-better significance scalar that keeps the persistence/Discord
+        # surface's orientation honest; the adjusted p-value is the internal
+        # selection key, surfaced only in logs.
         deflated_sharpe_value: float | None = None
+        haircut_rejected_proposal = False
         try:
             completed_trials = [t for t in study.trials if t.value is not None]
         except TypeError:
             completed_trials = []
 
-        # filter_sortino_sentinels removes math_engine._SORTINO_SENTINEL (1e6) values before
-        # moments AND scoring — sentinels pollute cross-trial distribution moments AND win the
-        # scoring loop because (1e6 - SR_0) dominates the DSR numerator even after moment fix.
-        trial_values = math_engine.filter_sortino_sentinels([t.value for t in completed_trials])
-        filtered_trials = [t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL]
+        # filter_sortino_sentinels excludes math_engine._SORTINO_SENTINEL (1e6)
+        # zero-downside trials — a sentinel's t-statistic would dominate the
+        # haircut and let a degenerate trial masquerade as a genuine signal.
+        haircut_trials = [
+            t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
+        ]
 
-        if len(trial_values) >= 2:
-            n_trials = len(trial_values)
-            mean_v = statistics.mean(trial_values)
-            # Population variance (divisor = N) for moment computation
-            variance_v = sum((v - mean_v) ** 2 for v in trial_values) / n_trials
-            std_v = math.sqrt(variance_v) if variance_v > 0 else 0.0
-            if std_v > 0:
-                gamma3 = sum((v - mean_v) ** 3 for v in trial_values) / (n_trials * std_v ** 3)
-                gamma4 = sum((v - mean_v) ** 4 for v in trial_values) / (n_trials * std_v ** 4)
+        if haircut_trials:
+            winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials)
+            if winner_trial is not None:
+                best_params = winner_trial.params
+                best_alpha_train = winner_trial.value
+                deflated_sharpe_value = winner_tstat
             else:
-                gamma3, gamma4 = 0.0, 3.0  # normal-distribution fallback for degenerate spread
-
-            # AC-5: SR_0 is the DSR null benchmark — the largest Sharpe expected
-            # from N trials of a ZERO-SKILL strategy (Bailey & López de Prado
-            # 2014). It is evaluated under the zero-skill null, so the mean term
-            # is 0; only the trial-spread (selection-bias) term is kept.
-            SR_0 = math_engine.compute_expected_max_sharpe(
-                sr_mean=0.0,
-                sr_std=std_v,
-                n_trials=n_trials,
-            )
-            best_dsr = float("-inf")
-            best_trial_by_dsr = None
-            for t in filtered_trials:  # excludes math_engine._SORTINO_SENTINEL trials
-                # AC-3: DSR `T` is the in-sample return-OBSERVATION count of the
-                # series this trial's Sortino was computed over — len(daily_returns)
-                # for the trial's own params, NOT the validation calendar-day count.
-                t_obs = _dsr_observation_count(
-                    t.params, current_params, history_validation,
-                    target_sym_id, current_date_str, deviation_dict,
+                # No trial cleared the FDR gate — reject the AI proposal.
+                haircut_rejected_proposal = True
+                print(
+                    f"       Harvey & Liu haircut: no trial cleared the q="
+                    f"{HARVEY_LIU_FDR_Q} FDR gate for '{normalized_name}' "
+                    f"(best adjusted p-value {winner_p_adj}). Rejecting AI "
+                    f"proposal; cascading to Fallback/Default."
                 )
-                dsr = compute_deflated_sharpe_ratio(
-                    SR_obs=t.value,
-                    SR_0=SR_0,
-                    gamma3=gamma3,
-                    gamma4=gamma4,
-                    T=t_obs,
-                )
-                if math.isfinite(dsr) and dsr > best_dsr:
-                    best_dsr = dsr
-                    best_trial_by_dsr = t
-
-            if best_trial_by_dsr is not None and math.isfinite(best_dsr):
-                best_params = best_trial_by_dsr.params
-                best_alpha_train = best_trial_by_dsr.value
-                deflated_sharpe_value = best_dsr
-            # If no valid DSR trial found, fall through with naive Optuna winner
-
-        if deflated_sharpe_value is None and naive_sharpe_value is not None:
-            # Fewer than 2 completed trials — no cross-trial distribution exists,
-            # so no expected-max-SR correction applies. Use PSR-style null baseline.
-            fallback_SR_0 = 0.0
-            # AC-3: T is the observation count of the naive winner's return series.
-            fallback_T = _dsr_observation_count(
-                best_params, current_params, history_validation,
-                target_sym_id, current_date_str, deviation_dict,
-            )
-            dsr_fallback = compute_deflated_sharpe_ratio(
-                SR_obs=naive_sharpe_value,
-                SR_0=fallback_SR_0,
-                gamma3=0.0,
-                gamma4=3.0,
-                T=fallback_T,
-            )
-            if math.isfinite(dsr_fallback):
-                deflated_sharpe_value = dsr_fallback
         # ----------------------------------------------------
 
         # --- BEST_PARAMS SCHEMA VALIDATION (B2-FU2) ---
@@ -1053,16 +1046,18 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # to fall through to fallback (or default if fallback also fails) by
         # poisoning oos_alpha to -inf. Do NOT raise -- the daemon must keep ticking.
         ai_proposal_invalid = (
-            not best_params
+            haircut_rejected_proposal
+            or not best_params
             or not OPTUNA_SEARCH_SPACE_KEYS.issubset(best_params.keys())
         )
-        if ai_proposal_invalid:
+        if ai_proposal_invalid and not haircut_rejected_proposal:
             missing = sorted(OPTUNA_SEARCH_SPACE_KEYS - set(best_params.keys()))
             print(
                 f"       Warning: best_params schema invalid for '{normalized_name}' "
                 f"(missing keys: {missing or '<empty dict>'}). "
                 f"Rejecting AI proposal; cascading to Fallback/Default."
             )
+        if ai_proposal_invalid:
             deflated_sharpe_value = None
             naive_sharpe_value = None
         # ---------------------------------------------
@@ -1142,12 +1137,12 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             optimization_results[normalized_name][k] = {"old": original_val, "new": current_params.get(k, original_val)}
 
         elapsed = time.time() - start_time
-        dsr_log = (
-            f" | DSR: {deflated_sharpe_value:.4f} (naive: {naive_sharpe_value:.4f})"
+        haircut_log = (
+            f" | Haircut t-stat: {deflated_sharpe_value:.4f} (naive Sortino: {naive_sharpe_value:.4f})"
             if deflated_sharpe_value is not None and naive_sharpe_value is not None
-            else " | DSR: N/A"
+            else " | Haircut: N/A"
         )
-        print(f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count}){dsr_log}")
+        print(f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count}){haircut_log}")
 
         database.save_symphony_strategy(normalized_name, current_params, locked_vars)
 
@@ -1155,8 +1150,8 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # retrieve them via get_latest_autotune_run().  Called AFTER baseline_decision
         # is finalized and save_symphony_strategy has written the chosen params,
         # so the row captures the decision that was actually applied.
-        # O2: deflated_sharpe (DSR winner) and naive_sharpe (raw Optuna best) recorded for
-        # backward-comparison and operator awareness of deflation magnitude.
+        # deflated_sharpe carries the Harvey & Liu haircut winner's t-statistic (a
+        # higher-is-better significance scalar); naive_sharpe is the raw Optuna best.
         # O6: validation_sharpe (selection metric) and frozen_eval_sharpe (honest post-selection
         # metric, consumed once from the withheld final 20% fold).
         database.save_autotune_run(
@@ -1186,10 +1181,10 @@ def run_calibration_sweep(
 ) -> list[dict]:
     """V1 calibration sweep over PARABOLIC_VELOCITY_THRESHOLD and VWAP_CROSS_HWM_PCT only.
 
-    Consumes O1 purge+embargo, O2 DSR re-ranking, O3 timestamped study names,
-    O5 Sortino objective, O6 frozen-eval fold — same methodology as run_autotuner
-    but search space is limited to the two V1 parameters. Does NOT persist anything
-    to the DB (AC-V1.3: read-only, operator-gated rollout).
+    Consumes O1 purge+embargo, the Harvey & Liu selection haircut, O3 timestamped
+    study names, O5 Sortino objective, O6 frozen-eval fold — same methodology as
+    run_autotuner but search space is limited to the two V1 parameters. Does NOT
+    persist anything to the DB (AC-V1.3: read-only, operator-gated rollout).
 
     Returns a list of report dicts, one per tuned param per symphony found in
     history_data. The caller decides whether to act on proposals.
@@ -1257,6 +1252,9 @@ def run_calibration_sweep(
             daily_returns = _collect_sim_returns(
                 p, history_validation, [_sym_id], current_date_str, deviation_dict
             )
+            # Persist the per-trial return series so the Harvey & Liu haircut can
+            # source each trial's observation count T = len(daily_returns).
+            trial.set_user_attr("daily_returns", daily_returns)
             return compute_sortino_ratio(daily_returns)
 
         sampler = optuna.samplers.TPESampler(seed=random_state)
@@ -1272,80 +1270,28 @@ def run_calibration_sweep(
         best_params = study.best_params
         n_trials = len([t for t in study.trials if t.value is not None])
 
-        # --- O2: DSR re-ranking ---
+        # --- HARVEY & LIU SELECTION HAIRCUT ---
+        # Same multiple-testing correction as run_autotuner: re-rank the completed
+        # trials by Benjamini-Hochberg-adjusted p-value and select the BHY winner
+        # if it clears the FDR gate. deflated_sharpe carries the winner's
+        # t-statistic (higher-is-better); if no trial clears the gate the sweep
+        # reports the naive Optuna winner with no haircut statistic.
         deflated_sharpe_value: float | None = None
         completed_trials = [t for t in study.trials if t.value is not None]
 
-        # filter_sortino_sentinels removes math_engine._SORTINO_SENTINEL (1e6) values before
-        # moments AND scoring — sentinels pollute cross-trial distribution moments AND win the
-        # scoring loop because (1e6 - SR_0) dominates the DSR numerator even after moment fix.
-        trial_values = math_engine.filter_sortino_sentinels([t.value for t in completed_trials])
-        filtered_trials = [t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL]
+        # filter_sortino_sentinels excludes math_engine._SORTINO_SENTINEL (1e6)
+        # zero-downside trials before the haircut — a sentinel's t-statistic would
+        # dominate the BHY adjustment.
+        haircut_trials = [
+            t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
+        ]
 
-        if len(trial_values) >= 2:
-            n_tv = len(trial_values)
-            mean_v = sum(trial_values) / n_tv
-            variance_v = sum((v - mean_v) ** 2 for v in trial_values) / n_tv
-            std_v = math.sqrt(variance_v) if variance_v > 0 else 0.0
-            if std_v > 0:
-                gamma3 = sum((v - mean_v) ** 3 for v in trial_values) / (n_tv * std_v ** 3)
-                gamma4 = sum((v - mean_v) ** 4 for v in trial_values) / (n_tv * std_v ** 4)
-            else:
-                gamma3, gamma4 = 0.0, 3.0
-
-            # AC-5: SR_0 is the DSR null benchmark — the largest Sharpe expected
-            # from N trials of a ZERO-SKILL strategy (Bailey & López de Prado
-            # 2014). It is evaluated under the zero-skill null, so the mean term
-            # is 0; only the trial-spread (selection-bias) term is kept.
-            SR_0 = math_engine.compute_expected_max_sharpe(
-                sr_mean=0.0,
-                sr_std=std_v,
-                n_trials=n_tv,
-            )
-            best_dsr = float("-inf")
-            best_trial_by_dsr = None
-            for t in filtered_trials:  # excludes math_engine._SORTINO_SENTINEL trials
-                # AC-3: DSR `T` is the in-sample return-OBSERVATION count of the
-                # series this trial's Sortino was computed over — len(daily_returns)
-                # for the trial's own params, NOT the validation calendar-day count.
-                t_obs = _dsr_observation_count(
-                    t.params, current_params, history_validation,
-                    sym_id, current_date_str, deviation_dict,
-                )
-                dsr = compute_deflated_sharpe_ratio(
-                    SR_obs=t.value,
-                    SR_0=SR_0,
-                    gamma3=gamma3,
-                    gamma4=gamma4,
-                    T=t_obs,
-                )
-                if math.isfinite(dsr) and dsr > best_dsr:
-                    best_dsr = dsr
-                    best_trial_by_dsr = t
-
-            if best_trial_by_dsr is not None and math.isfinite(best_dsr):
-                best_params = best_trial_by_dsr.params
-                naive_sharpe_value = best_trial_by_dsr.value
-                deflated_sharpe_value = best_dsr
-
-        if deflated_sharpe_value is None and naive_sharpe_value is not None:
-            # Fewer than 2 completed trials — no cross-trial distribution exists,
-            # so no expected-max-SR correction applies. Use PSR-style null baseline.
-            fallback_SR_0 = 0.0
-            # AC-3: T is the observation count of the naive winner's return series.
-            fallback_T = _dsr_observation_count(
-                best_params, current_params, history_validation,
-                sym_id, current_date_str, deviation_dict,
-            )
-            dsr_fallback = compute_deflated_sharpe_ratio(
-                SR_obs=naive_sharpe_value,
-                SR_0=fallback_SR_0,
-                gamma3=0.0,
-                gamma4=3.0,
-                T=fallback_T,
-            )
-            if math.isfinite(dsr_fallback):
-                deflated_sharpe_value = dsr_fallback
+        if haircut_trials:
+            winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials)
+            if winner_trial is not None:
+                best_params = winner_trial.params
+                naive_sharpe_value = winner_trial.value
+                deflated_sharpe_value = winner_tstat
 
         # Validation-fold Sortino of best trial params
         best_p = current_params.copy()

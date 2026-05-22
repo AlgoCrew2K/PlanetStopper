@@ -2,69 +2,27 @@ import hashlib
 import math
 
 import numpy as np
-from scipy.stats import norm
-
-# Euler-Mascheroni constant (Bailey & López de Prado 2014, DOI: 10.3905/jpm.2014.40.5.094,
-# Eq. 9 expected-max-SR appendix). Used to derive SR_0 for selection-bias correction.
-_GAMMA_EULER_MASCHERONI = 0.5772156649015329
-
-# Ceiling for the norm.ppf arguments in compute_expected_max_sharpe — the largest
-# IEEE-754 double strictly below 1.0 (math.nextafter(1.0, 0.0)). For n_trials
-# large enough that `1 - 1/N` rounds to exactly 1.0, norm.ppf(1.0) is +inf;
-# clamping the argument to this ceiling keeps the result finite. Source: IEEE-754
-# double precision — norm.ppf of this value is finite, norm.ppf(1.0) is not.
-_PPF_ARG_CEILING = math.nextafter(1.0, 0.0)
 
 # Sentinel returned by compute_sortino_ratio (autotuner.py) when downside_deviation==0
 # (all trial returns beat the target). The value is finite and looks like a valid trial
-# result to Optuna's TPE, but its magnitude (~1e6) dominates the cross-trial distribution
-# mean and std, distorting gamma3/gamma4 and SR_0 fed to compute_deflated_sharpe_ratio.
-# Filtering before moment computation prevents sentinel pollution of DSR Eq. 9.
+# result to Optuna's TPE, but its magnitude (~1e6) would dominate the cross-trial
+# distribution that the Harvey & Liu selection haircut counts over. Filtering before the
+# haircut prevents a degenerate trial from masquerading as a genuine signal.
 # Source: autotuner.py compute_sortino_ratio — returns 1e6 for zero downside_deviation.
 _SORTINO_SENTINEL = 1e6
 
 
-def compute_expected_max_sharpe(sr_mean: float, sr_std: float, n_trials: int) -> float:
-    """Expected maximum Sharpe across N independent trials (Bailey & López de Prado 2014,
-    DOI: 10.3905/jpm.2014.40.5.094, Eq. 9 expected-max-SR appendix).
-
-    SR_0 = sr_mean + sr_std * ((1 - gamma_E) * Phi^-1(1 - 1/N) + gamma_E * Phi^-1(1 - 1/(N*e)))
-
-    Used as SR_0 in compute_deflated_sharpe_ratio to correct for selection bias
-    across N Optuna trials.
-    """
-    if n_trials <= 0:
-        raise ValueError(f"n_trials must be >= 1; got {n_trials}")
-    if sr_std < 0:
-        raise ValueError(f"sr_std must be >= 0; got {sr_std}")
-    if n_trials == 1 or sr_std == 0:
-        return float(sr_mean)
-    # Clamp the norm.ppf arguments strictly below 1.0. For n_trials >= ~1e16,
-    # `1 - 1/N` rounds to exactly 1.0 in IEEE-754 double precision (1/N falls
-    # below machine epsilon relative to 1.0); norm.ppf(1.0) is +inf, which would
-    # overflow SR_0 to +inf and poison the DSR numerator (SR_obs - inf = -inf)
-    # for every trial. _PPF_ARG_CEILING is the largest double strictly below 1.0
-    # — norm.ppf of it is finite, so the clamp caps (never inverts) the
-    # selection-bias benchmark at very large N.
-    arg1 = min(1.0 - 1.0 / n_trials, _PPF_ARG_CEILING)
-    arg2 = min(1.0 - 1.0 / (n_trials * math.e), _PPF_ARG_CEILING)
-    ppf1 = norm.ppf(arg1)
-    ppf2 = norm.ppf(arg2)
-    return sr_mean + sr_std * (
-        (1.0 - _GAMMA_EULER_MASCHERONI) * ppf1 + _GAMMA_EULER_MASCHERONI * ppf2
-    )
-
-
 def filter_sortino_sentinels(sortino_values: list[float]) -> list[float]:
-    """Remove sentinel values from a Sortino trial series before DSR moment computation.
+    """Remove sentinel values from a Sortino trial series before the selection haircut.
 
     Returns a new list with all _SORTINO_SENTINEL (1e6) entries removed. The input
     list is not mutated. Legitimate trial values — including negative Sortinos and 0.0
     (empty-returns series) — are preserved unchanged.
 
-    Call this on trial_values BEFORE computing mean, std, gamma3, gamma4, or SR_0.
-    Sentinel values pollute moments: their ~1e6 magnitude dominates the cross-trial
-    distribution and distorts DSR Eq. 9 (Bailey & López de Prado 2014).
+    Call this on the trial Sortino values BEFORE the Harvey & Liu selection haircut.
+    A sentinel's ~1e6 magnitude would produce a t-statistic so large its p-value
+    underflows to the clamp floor, letting a degenerate (zero-downside) trial win the
+    haircut over a genuinely-skilled one.
     """
     return [v for v in sortino_values if v != _SORTINO_SENTINEL]
 
