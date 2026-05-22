@@ -299,8 +299,14 @@ class TestEmbargoIsNamedConstant:
 
     def test_embargo_days_constant_has_source_comment(self):
         """
-        The EMBARGO_DAYS constant must have a source comment citing Lopez de Prado 2018 Ch. 7
-        on the same or adjacent line.
+        The EMBARGO_DAYS constant must have a source comment citing Lopez de Prado
+        2018 Ch. 7.
+
+        AC-9 (Cluster 4) rewrote the EMBARGO_DAYS rationale into a multi-line
+        block (the serial-dependence-horizon justification). The scan therefore
+        walks the WHOLE contiguous comment block immediately above the
+        assignment, not just the line just above — the citation lives anywhere in
+        that block.
         """
         source = _parse_autotuner_source()
         lines = source.splitlines()
@@ -314,13 +320,17 @@ class TestEmbargoIsNamedConstant:
 
         found_citation = False
         for lineno, _ in embargo_lines:
-            context = "\n".join(lines[max(0, lineno - 1): lineno + 3])
+            # Walk upward over the contiguous comment block above the assignment.
+            start = lineno
+            while start > 0 and lines[start - 1].strip().startswith("#"):
+                start -= 1
+            context = "\n".join(lines[start: lineno + 1])
             if re.search(r"[Ll]ópez de Prado|Lopez de Prado|L.pez de Prado", context) and "2018" in context:
                 found_citation = True
                 break
         assert found_citation, (
             "EMBARGO_DAYS constant must have a source comment citing "
-            "'Lopez de Prado 2018' (Ch. 7) in the same or adjacent line(s)"
+            "'Lopez de Prado 2018' (Ch. 7) in its rationale comment block"
         )
 
     def test_no_bare_embargo_literal_in_split_logic(self):
@@ -472,12 +482,21 @@ class TestPurgeUsesMaxLookbackNotPartial:
             "confirming it is NOT treated as a purge-relevant feature lookback"
         )
 
-    def test_purge_constant_has_source_comment_excluding_decay(self):
+    def test_purge_constant_has_source_comment(self):
         """
-        The PURGE_DAYS constant in autotuner.py must have a comment explaining
-        why the decay weighting is excluded from purge sizing. This prevents a
-        future reader from 'correcting' the value to 46.
-        RED until the implementer adds the constant with the comment.
+        The PURGE_DAYS constant in autotuner.py must have a comment that cites
+        López de Prado 2018 Ch. 7 and explains the max(vol-lookback, ATR-lookback)
+        derivation of the 20-day value.
+
+        Re-pinned for Decision D5: the previous version of this test required the
+        comment to explain why the recency-decay weighting (_GUARD_ALPHA_DECAY_RATE)
+        was EXCLUDED from purge sizing — a guard against "correcting" PURGE_DAYS up
+        to the 46-day decay half-life. D5 removed the decay weighting and deleted
+        _GUARD_ALPHA_DECAY_RATE entirely, so there is no decay constant left to be
+        confused for a feature lookback — the decay-exclusion clause is moot. The
+        comment must still cite the methodology source and justify the value.
+
+        The scan walks the contiguous comment block above the assignment.
         """
         source = _parse_autotuner_source()
         lines = source.splitlines()
@@ -487,17 +506,28 @@ class TestPurgeUsesMaxLookbackNotPartial:
             if re.search(r"\bPURGE_DAYS\b\s*=", line)
         ]
         assert purge_lines, (
-            "PURGE_DAYS = ... assignment not found in autotuner.py — RED until implemented"
+            "PURGE_DAYS = ... assignment not found in autotuner.py"
         )
 
-        found_decay_exclusion = False
+        found_comment = False
         for lineno, _ in purge_lines:
-            context = "\n".join(lines[max(0, lineno - 1): lineno + 4])
-            if re.search(r"decay|objective.weight|not.a.feature", context, re.IGNORECASE):
-                found_decay_exclusion = True
+            start = lineno
+            while start > 0 and lines[start - 1].strip().startswith("#"):
+                start -= 1
+            context = "\n".join(lines[start: lineno + 1])
+            cites_source = bool(
+                re.search(r"[Ll][óo]pez de Prado", context) and "2018" in context
+            )
+            explains_derivation = bool(
+                re.search(r"max\s*\(", context)
+                or re.search(r"lookback", context, re.IGNORECASE)
+            )
+            if cites_source and explains_derivation:
+                found_comment = True
                 break
-        assert found_decay_exclusion, (
-            "PURGE_DAYS constant must have a comment explaining that the decay weighting "
-            "(_GUARD_ALPHA_DECAY_RATE) is excluded from purge sizing because it is an "
-            "objective weight, not a feature lookback. This prevents future over-purge to 46."
+        assert found_comment, (
+            "PURGE_DAYS constant must have a comment block citing López de Prado "
+            "2018 (Ch. 7) and explaining the max(vol-lookback, ATR-lookback) "
+            "derivation of the 20-day value. (D5 re-pin: the decay-exclusion "
+            "clause is dropped — _GUARD_ALPHA_DECAY_RATE no longer exists.)"
         )

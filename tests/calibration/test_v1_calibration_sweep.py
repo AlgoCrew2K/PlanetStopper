@@ -453,19 +453,30 @@ class TestStudyNamingO3:
 # 6. BEST TRIAL SELECTION (O2) — deflated Sharpe re-ranking
 # ---------------------------------------------------------------------------
 
-class TestDeflatedSharpeO2:
-    def test_compute_deflated_sharpe_ratio_present(self, autotuner_module):
-        """O2: compute_deflated_sharpe_ratio must exist in autotuner."""
-        assert hasattr(autotuner_module, "compute_deflated_sharpe_ratio"), (
-            "compute_deflated_sharpe_ratio missing from autotuner (O2)"
+class TestHarveyLiuHaircutD3:
+    """
+    Re-pinned for Decision D3: the calibration sweep's selection-bias correction
+    is the Harvey & Liu 2015 Benjamini-Hochberg haircut, NOT the (deleted)
+    Sharpe-derived Deflated Sharpe Ratio. The previous TestDeflatedSharpeO2
+    class pinned compute_deflated_sharpe_ratio and a `deflated_sharpe` report
+    key — both removed by D3. This class pins the haircut in the calibration
+    path instead.
+    """
+
+    def test_compute_deflated_sharpe_ratio_is_deleted(self, autotuner_module):
+        """D3: compute_deflated_sharpe_ratio must no longer exist in autotuner."""
+        assert not hasattr(autotuner_module, "compute_deflated_sharpe_ratio"), (
+            "compute_deflated_sharpe_ratio must be DELETED (Decision D3) — "
+            "the Sharpe-DSR is replaced by the Harvey & Liu haircut."
         )
 
-    def test_report_contains_both_deflated_and_naive_sharpe(
+    def test_report_contains_selection_tstat_and_naive_sharpe(
         self, autotuner_module, single_sym_history, deviation_dict
     ):
         """
-        Report rows must expose both deflated_sharpe and naive_sharpe.
-        Neither must be asserted as a specific float — shape/presence only.
+        Report rows must expose both selection_tstat (the Harvey & Liu haircut
+        winner's t-statistic) and naive_sharpe. Neither is asserted as a specific
+        float — shape / presence only.
         """
         result = autotuner_module.run_calibration_sweep(
             history_data=single_sym_history,
@@ -475,33 +486,38 @@ class TestDeflatedSharpeO2:
             random_state=42,
         )
         for row in result:
-            assert "deflated_sharpe" in row, f"Row missing deflated_sharpe: {row}"
+            assert "selection_tstat" in row, f"Row missing selection_tstat: {row}"
             assert "naive_sharpe" in row, f"Row missing naive_sharpe: {row}"
-            # Values may be None if <2 trials completed, but must not be absent
-            if row["deflated_sharpe"] is not None:
-                assert math.isfinite(row["deflated_sharpe"]), (
-                    "deflated_sharpe must be finite float or None — not NaN/Inf"
+            assert "deflated_sharpe" not in row, (
+                f"Row still carries the deleted 'deflated_sharpe' key: {row}"
+            )
+            # Values may be None if no trial cleared the FDR gate / <2 trials,
+            # but must not be absent.
+            if row["selection_tstat"] is not None:
+                assert math.isfinite(row["selection_tstat"]), (
+                    "selection_tstat must be a finite float or None — not NaN/Inf"
                 )
             if row["naive_sharpe"] is not None:
                 assert math.isfinite(row["naive_sharpe"]), (
-                    "naive_sharpe must be finite float or None — not NaN/Inf"
+                    "naive_sharpe must be a finite float or None — not NaN/Inf"
                 )
 
-    def test_deflated_sharpe_is_used_for_best_trial_selection(
+    def test_benjamini_hochberg_haircut_is_wired_into_calibration_sweep(
         self, autotuner_module, single_sym_history, deviation_dict
     ):
         """
-        compute_deflated_sharpe_ratio must be called during run_calibration_sweep,
-        confirming O2 re-ranking is wired into the calibration path (not just present).
+        D3: benjamini_hochberg_adjust must be called during run_calibration_sweep
+        — the Harvey & Liu haircut must gate trial selection in the calibration
+        path, not only in run_autotuner.
         """
         call_count = [0]
-        orig_dsr = autotuner_module.compute_deflated_sharpe_ratio
+        orig_bhy = autotuner_module.benjamini_hochberg_adjust
 
-        def _tracking_dsr(*a, **k):
+        def _tracking_bhy(*a, **k):
             call_count[0] += 1
-            return orig_dsr(*a, **k)
+            return orig_bhy(*a, **k)
 
-        autotuner_module.compute_deflated_sharpe_ratio = _tracking_dsr
+        autotuner_module.benjamini_hochberg_adjust = _tracking_bhy
         try:
             autotuner_module.run_calibration_sweep(
                 history_data=single_sym_history,
@@ -511,10 +527,11 @@ class TestDeflatedSharpeO2:
                 random_state=42,
             )
         finally:
-            autotuner_module.compute_deflated_sharpe_ratio = orig_dsr
+            autotuner_module.benjamini_hochberg_adjust = orig_bhy
 
         assert call_count[0] >= 1, (
-            "compute_deflated_sharpe_ratio was never called — O2 re-ranking not wired"
+            "benjamini_hochberg_adjust was never called — the Harvey & Liu "
+            "haircut is not wired into the calibration-sweep selection path (D3)."
         )
 
 

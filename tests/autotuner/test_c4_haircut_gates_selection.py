@@ -66,6 +66,16 @@ def _make_trial(sortino_value: float, params: dict,
     return t
 
 
+def _noise_return_series() -> list[float]:
+    """A per-day guard-alpha series consistent with a zero-skill strategy.
+
+    Roughly balanced small gains and losses — its Sortino is near zero, so the
+    Sortino·sqrt(T) t-statistic stays small and will not survive a BHY haircut.
+    Used as the non-winning filler trials in the gates-selection scenarios.
+    """
+    return [0.3, -0.2, 0.4, -0.25, 0.35, -0.15, 0.3, -0.2, 0.4, -0.25]
+
+
 def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
     """
     AC-2 integration: a full run_autotuner pass over >=2 completed trials must
@@ -277,22 +287,30 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
             autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
 
         assert captured, "run_autotuner did not persist an autotune_run row."
-        value = captured[0].get("deflated_sharpe")
+        # D3 resolution (a) renamed the column deflated_sharpe -> selection_tstat;
+        # the persisted kwarg follows. The value is the haircut winner's t-stat.
+        value = captured[0].get("selection_tstat")
         assert value is not None, (
-            "save_autotune_run must persist a deflated_sharpe value for a "
-            "genuine-signal study."
+            "save_autotune_run must persist a selection_tstat value for a "
+            "genuine-signal study (the Harvey & Liu haircut winner's t-stat)."
         )
         return value
 
-    # A markedly stronger signal series vs a weaker (but still positive) one.
-    strong = [1.5, 1.4, 1.6, 1.5, 1.7, 1.4, 1.6, 1.5, 1.8, 1.4]
-    weak = [0.5, 0.4, 0.6, 0.5, 0.45, 0.4, 0.55, 0.5, 0.6, 0.4]
+    # A markedly stronger signal series vs a weaker one. Each MUST include at
+    # least one downside observation so compute_sortino_ratio returns a finite
+    # ratio — an all-positive series hits the 1e6 zero-downside sentinel, which
+    # filter_sortino_sentinels then drops from the haircut set entirely (the
+    # trial would never reach selection). Both series here have one downside
+    # tick: strong Sortino ~14.4, weak ~2.4 — both finite, strong > weak, both
+    # large enough to clear the BHY FDR gate against the noise filler trials.
+    strong = [1.5, 1.4, 1.6, 1.5, 1.7, 1.4, 1.6, 1.5, 1.8, -0.3]
+    weak = [0.5, 0.4, 0.6, 0.5, 0.45, -0.3, 0.55, 0.5, 0.6, -0.35]
 
     strong_value = _persisted_deflated_for(strong)
     weak_value = _persisted_deflated_for(weak)
 
     assert strong_value > weak_value, (
-        f"SURFACE-INVERSION REGRESSION: the persisted `deflated_sharpe` is "
+        f"SURFACE-INVERSION REGRESSION: the persisted `selection_tstat` is "
         f"{strong_value!r} for a STRONG-signal winner and {weak_value!r} for a "
         f"WEAKER-signal winner. The column must stay HIGHER-IS-BETTER oriented "
         f"(store the winner's t-statistic Sortino·sqrt(T), not the BHY-adjusted "

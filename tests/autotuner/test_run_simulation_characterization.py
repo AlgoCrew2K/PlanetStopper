@@ -483,37 +483,25 @@ def test_run_simulation_triggered_exit_pins_specific_guard_alpha():
         guard_alpha = 2.60 - 3.0 = -0.40
         missed_upside = 3.0 - 2.60 = 0.40       (NOT > 1.0 -> no penalty)
         drawdown_from_peak = 3.0 - 2.60 = 0.40  (NOT > 1.5 -> no penalty)
-        guard_alpha < 0 -> total += -0.40 * 2.0 * weight = -0.80 * weight
+        guard_alpha < 0 -> total += -0.40 * 2.0 = -0.80
 
-    The time-decay weight is::
+    Re-pinned for Decision D5: the recency-decay weight is REMOVED — the
+    objective appends RAW guard-alpha. There is no `exp(-rate·days_ago)` factor
+    and the per-day contribution no longer depends on the trigger date. The
+    expected total is therefore the un-weighted product.
 
-        weight = exp(-0.015 * days_ago)
-
-    Since OOS evaluation runs over the LAST 20% of the 5-date series (after
-    the 80/20 split inside run_autotuner), it picks up exactly the most
-    recent date, "2026-04-05". days_ago vs current_date_str ("2026-05-10")
-    is (May 10 - Apr 5) = 35 days. weight = exp(-0.015 * 35).
-
-    Producer pin: oos_alpha = -(-0.80 * exp(-0.525)) = 0.80 * exp(-0.525).
+    Producer pin: oos_alpha = -(-0.80) = 0.80.
     """
-    # Compute the expected total_guard_alpha by hand using the same constants
-    # the producer uses. We do NOT hardcode the literal — we DERIVE it from
-    # the constants the producer uses (decay_rate=0.015 at autotuner.py:144;
-    # penalty=-0.40 from calculate_historical_deviation's "VWAP Breakdown"
-    # default at autotuner.py:35).
-    DECAY_RATE = 0.015  # autotuner.py:144 — local to run_simulation
-    DEFAULT_VWAP_BREAKDOWN_PENALTY = -0.40  # autotuner.py:35
-    GUARD_ALPHA_NEGATIVE_MULTIPLIER = 2.0  # autotuner.py:294
+    # Derive the expected total_guard_alpha from the named producer constants —
+    # no literal hardcoded. D5: no decay weight, so the per-day contribution is
+    # just penalty * negative-guard-alpha multiplier.
+    DEFAULT_VWAP_BREAKDOWN_PENALTY = -0.40  # calculate_historical_deviation default
+    GUARD_ALPHA_NEGATIVE_MULTIPLIER = 2.0   # NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT
 
-    current_dt = datetime.strptime(_CURRENT_DATE_STR, "%Y-%m-%d")
-    trigger_date = datetime.strptime(_TEST_DATES_5[-1], "%Y-%m-%d")
-    days_ago = (current_dt - trigger_date).days
-    weight = _math.exp(-DECAY_RATE * days_ago)
-
-    # guard_alpha (per day, single-day OOS) = penalty * 2.0 * weight
+    # guard_alpha (per day, single-day OOS) = penalty * 2.0 (no decay weight).
     # run_simulation returns -total_guard_alpha; caller flips back ->
     # oos_alpha = total_guard_alpha (sign-equivalent).
-    expected_total = DEFAULT_VWAP_BREAKDOWN_PENALTY * GUARD_ALPHA_NEGATIVE_MULTIPLIER * weight
+    expected_total = DEFAULT_VWAP_BREAKDOWN_PENALTY * GUARD_ALPHA_NEGATIVE_MULTIPLIER
     # The .2f pin: format expected to match producer.
     expected_formatted = f"{expected_total:.2f}"
 
@@ -611,21 +599,18 @@ def test_run_simulation_drawdown_penalty_fires_when_peak_exceeds_threshold():
         {d: [high_tick, peak_tick, crash_tick] for d in _TEST_DATES_5}
     )
 
-    # Hand-compute expected total_guard_alpha per OOS day:
-    DECAY_RATE = 0.015
+    # Hand-compute expected total_guard_alpha per OOS day. Re-pinned for
+    # Decision D5: no recency-decay weight — the objective appends RAW
+    # guard-alpha, so the per-day weight is 1.0 (no exp(-rate·days_ago) factor)
+    # and the contribution no longer depends on the trigger date.
     DEFAULT_VWAP_BREAKDOWN_PENALTY = -0.40
-    MISSED_UPSIDE_THRESHOLD = 1.0  # autotuner.py:284
-    MISSED_UPSIDE_MULTIPLIER = 1.5  # autotuner.py:285
-    DRAWDOWN_THRESHOLD = 1.5  # autotuner.py:289
-    DRAWDOWN_MULTIPLIER = 0.75  # autotuner.py:290
-    GUARD_ALPHA_NEG_MULTIPLIER = 2.0  # autotuner.py:294
+    MISSED_UPSIDE_THRESHOLD = 1.0   # MISSED_UPSIDE_PENALTY_THRESHOLD
+    MISSED_UPSIDE_MULTIPLIER = 1.5  # MISSED_UPSIDE_PENALTY_MULT
+    DRAWDOWN_THRESHOLD = 1.5        # DRAWDOWN_PENALTY_THRESHOLD
+    DRAWDOWN_MULTIPLIER = 0.75      # DRAWDOWN_PENALTY_MULT
+    GUARD_ALPHA_NEG_MULTIPLIER = 2.0  # NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT
 
-    current_dt = datetime.strptime(_CURRENT_DATE_STR, "%Y-%m-%d")
-    # O6 (60/20/20): OOS cascade uses full validation fold = dates[3] = _TEST_DATES_5[-2].
-    # dates[-1] is the frozen-eval fold (withheld from cascade evaluation).
-    trigger_date = datetime.strptime(_TEST_DATES_5[-2], "%Y-%m-%d")
-    days_ago = (current_dt - trigger_date).days
-    weight = _math.exp(-DECAY_RATE * days_ago)
+    weight = 1.0  # D5: recency-decay weighting removed — raw guard-alpha
 
     safe_hwm = 10.0
     triggered_return = 1.0 + DEFAULT_VWAP_BREAKDOWN_PENALTY  # 0.6
@@ -921,59 +906,11 @@ def test_run_simulation_called_three_times_per_symphony_for_oos_evaluation():
     )
 
 
-def test_run_simulation_decay_rate_constant_is_0_015():
-    """
-    CHARACTERIZATION INVARIANT — the time-decay rate (autotuner.py:144,
-    ``decay_rate = 0.015``) is a producer-private numeric constant that
-    drives the exponential weighting in the penalty block. The closure-hoist
-    refactor must keep this constant byte-identical; if the implementer
-    parameterizes it, the parameter's DEFAULT must remain 0.015.
-
-    We pin indirectly by comparing the OOS alpha at a known days_ago against
-    the closed-form expression ``penalty * 2.0 * exp(-0.015 * days_ago)``.
-    Any drift in decay_rate would show up as a .2f-level mismatch here.
-
-    This duplicates Scenario 2's check but isolates the decay constant
-    specifically — a refactor that swaps 0.015 for (say) 0.01 would pass
-    Scenario 2's hand-computed pin only if Scenario 2's expected was
-    re-derived with the wrong constant. Independent pin defends against
-    that.
-    """
-    ai = _ai_full_params()
-    fallback = _ai_full_params()
-    fallback["VWAP_CROSS_HWM_PCT"] = 2.0
-    default = _ai_full_params()
-    default["VWAP_CROSS_HWM_PCT"] = 2.5
-
-    history = _make_history({d: [_trigger_tick()] for d in _TEST_DATES_5})
-
-    stdout, _ctx = _run_capture(
-        history=history,
-        fallback_params=fallback,
-        default_strategy=default,
-        best_params=ai,
-        vwap_side_effect=_stub_vwap_breakdown_trigger_on_first_tick,
-    )
-
-    alphas = _extract_alphas(stdout)
-
-    # If decay_rate were anything other than 0.015 in the producer, this
-    # expected value would mismatch. We do NOT assert against the alternate
-    # decay rates — the producer's value is 0.015, period.
-    DECAY_RATE = 0.015
-    DEFAULT_PENALTY = -0.40
-    GUARD_NEG_MULT = 2.0
-    days_ago = (
-        datetime.strptime(_CURRENT_DATE_STR, "%Y-%m-%d")
-        - datetime.strptime(_TEST_DATES_5[-1], "%Y-%m-%d")
-    ).days
-    expected = DEFAULT_PENALTY * GUARD_NEG_MULT * _math.exp(-DECAY_RATE * days_ago)
-
-    assert alphas["ai"] == pytest.approx(float(f"{expected:.2f}"), abs=1e-9), (
-        f"Producer's decay_rate must be 0.015. Observed OOS alpha would "
-        f"only match the expected formula with decay_rate=0.015.\n"
-        f"  produced: {alphas['ai']}\n  expected (decay=0.015): {expected:.2f}\n"
-    )
+# NOTE: test_run_simulation_decay_rate_constant_is_0_015 was DELETED for
+# Decision D5. It pinned the producer-private `decay_rate = 0.015` recency-decay
+# constant; D5 removed the recency-decay weighting from the selection objective
+# entirely and deleted `_GUARD_ALPHA_DECAY_RATE`. There is no decay constant left
+# to characterize — the test's subject no longer exists.
 
 
 def test_run_simulation_eod_return_taken_from_last_tick():
@@ -1021,7 +958,6 @@ def test_run_simulation_eod_return_taken_from_last_tick():
         }
     )
 
-    DECAY_RATE = 0.015
     PENALTY = -0.40
     safe_hwm = 3.0
     triggered_return = 1.0 + PENALTY
@@ -1030,12 +966,9 @@ def test_run_simulation_eod_return_taken_from_last_tick():
     guard_alpha = triggered_return - eod_return  # -4.4
     missed_upside = day_max_return - triggered_return  # 4.4
     drawdown_from_peak = safe_hwm - triggered_return  # 2.4
-    # O6 (60/20/20): OOS cascade uses full validation = dates[3] = _TEST_DATES_5[-2].
-    days_ago = (
-        datetime.strptime(_CURRENT_DATE_STR, "%Y-%m-%d")
-        - datetime.strptime(_TEST_DATES_5[-2], "%Y-%m-%d")
-    ).days
-    weight = _math.exp(-DECAY_RATE * days_ago)
+    # Re-pinned for Decision D5: recency-decay weighting removed — the objective
+    # appends raw guard-alpha, so the per-day weight is 1.0 (no exp(-rate·days_ago)).
+    weight = 1.0
 
     total = 0.0
     if missed_upside > 1.0:

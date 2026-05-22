@@ -99,23 +99,23 @@ def isolated_db(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _dsr_data_from_fixture(fixture_row: dict) -> dict:
+def _selection_stats_from_fixture(fixture_row: dict) -> dict:
     """
-    Build the dsr_data dict from a fixture row.  This mirrors what
+    Build the selection_stats dict from a fixture row.  This mirrors what
     run_autotuner's caller (alpha_bot_execution.py) should assemble when
     constructing the optimization_results blob for send_eod_discord_post.
 
     Shape (proposed by test-writer; implementer must match):
       {
         "naive_sharpe":      float | None,
-        "deflated_sharpe":   float | None,
+        "selection_tstat":   float | None,
         "frozen_eval_sharpe": float | None,
       }
     """
     row = fixture_row["row"]
     return {
         "naive_sharpe": row["naive_sharpe"],
-        "deflated_sharpe": row["deflated_sharpe"],
+        "selection_tstat": row["selection_tstat"],
         "frozen_eval_sharpe": row["frozen_eval_sharpe"],
     }
 
@@ -153,7 +153,7 @@ class TestDiscordEmbedIncludesDSR:
         path.write_text(json.dumps(report), encoding="utf-8")
         return str(path)
 
-    def _build_optimization_results_with_dsr(self, symphony_id: str, dsr_data: dict) -> dict:
+    def _build_optimization_results_with_selection_stats(self, symphony_id: str, selection_stats: dict) -> dict:
         """
         Build the optimization_results dict that send_eod_discord_post receives.
 
@@ -166,7 +166,7 @@ class TestDiscordEmbedIncludesDSR:
         return {
             symphony_id: {
                 "_baseline_chosen": "Adopted AI",
-                "_dsr_data": dsr_data,
+                "_selection_stats": selection_stats,
             }
         }
 
@@ -176,18 +176,18 @@ class TestDiscordEmbedIncludesDSR:
         for that symphony must contain the formatted naive_sharpe value to 4
         decimal places and a human-readable label (not 'naive_sharpe' raw column).
 
-        This test will FAIL (RED) until send_eod_discord_post reads dsr_data
+        This test will FAIL (RED) until send_eod_discord_post reads selection_stats
         from optimization_results and formats it into the embed description.
         """
         import reporting
 
         row = full_run_fixture["row"]
         fmt = full_run_fixture["format_expectations"]
-        dsr_data = _dsr_data_from_fixture(full_run_fixture)
+        selection_stats = _selection_stats_from_fixture(full_run_fixture)
         sym_id = row["symphony_id"]
 
         report_path = self._make_minimal_eod_report(tmp_path)
-        opt_results = self._build_optimization_results_with_dsr(sym_id, dsr_data)
+        opt_results = self._build_optimization_results_with_selection_stats(sym_id, selection_stats)
 
         captured_embeds = []
 
@@ -246,21 +246,23 @@ class TestDiscordEmbedIncludesDSR:
             "AC-1 + AC-5 violation."
         )
 
-    def test_discord_embed_contains_deflated_sharpe_when_present(self, full_run_fixture, tmp_path):
+    def test_discord_embed_contains_selection_tstat_when_present(self, full_run_fixture, tmp_path):
         """
-        AC-1: Discord embed must contain the deflated_sharpe (DSR) value with a
+        AC-1 — re-pinned for Decision D3: the Discord embed must contain the
+        selection_tstat (the Harvey & Liu haircut winner's t-statistic) with a
         human-readable label. The label must NOT be the raw DB column name
-        'deflated_sharpe'; it must be something operator-readable like 'DSR'.
+        'selection_tstat', and must NOT be 'DSR' / 'Deflated Sharpe' (D3 removed
+        the DSR) — it must accurately name the selection statistic.
         """
         import reporting
 
         row = full_run_fixture["row"]
         fmt = full_run_fixture["format_expectations"]
-        dsr_data = _dsr_data_from_fixture(full_run_fixture)
+        selection_stats = _selection_stats_from_fixture(full_run_fixture)
         sym_id = row["symphony_id"]
 
         report_path = self._make_minimal_eod_report(tmp_path)
-        opt_results = self._build_optimization_results_with_dsr(sym_id, dsr_data)
+        opt_results = self._build_optimization_results_with_selection_stats(sym_id, selection_stats)
 
         captured_embeds = []
 
@@ -308,16 +310,23 @@ class TestDiscordEmbedIncludesDSR:
 
         all_text = " ".join(e.get("description", "") + e.get("title", "") for e in sym_embeds)
 
-        expected_dsr = fmt["deflated_sharpe_formatted"]  # "0.9217" — from fixture
-        assert expected_dsr in all_text, (
-            f"Discord embed must contain deflated_sharpe formatted as '{expected_dsr}'. "
-            f"Found embed text: {all_text!r}. AC-1 + AC-5 violation."
+        expected_tstat = fmt["selection_tstat_formatted"]  # from fixture (4dp)
+        assert expected_tstat in all_text, (
+            f"Discord embed must contain selection_tstat formatted as "
+            f"'{expected_tstat}'. Found embed text: {all_text!r}. "
+            f"AC-1 + AC-5 violation."
         )
 
-        # Raw DB column name is NOT an operator-readable label
-        assert "deflated_sharpe" not in all_text.lower().replace(expected_dsr, ""), (
-            "Discord embed must NOT use the raw DB column name 'deflated_sharpe' as a label. "
-            "Use an operator-readable label such as 'DSR'. AC-1 violation."
+        # Raw DB column name is NOT an operator-readable label.
+        assert "selection_tstat" not in all_text.lower().replace(expected_tstat, ""), (
+            "Discord embed must NOT use the raw DB column name 'selection_tstat' "
+            "as a label. Use an operator-readable label (e.g. 'selection t-stat')."
+        )
+        # D3: the deleted-DSR name must not label this value.
+        assert "dsr" not in all_text.lower() and "deflated sharpe" not in all_text.lower(), (
+            "Discord embed must NOT label the value 'DSR' / 'Deflated Sharpe' — "
+            "D3 removed the Deflated Sharpe Ratio; this is the Harvey & Liu "
+            "selection t-statistic."
         )
 
     def test_discord_embed_contains_frozen_eval_sharpe_when_present(
@@ -331,11 +340,11 @@ class TestDiscordEmbedIncludesDSR:
 
         row = full_run_fixture["row"]
         fmt = full_run_fixture["format_expectations"]
-        dsr_data = _dsr_data_from_fixture(full_run_fixture)
+        selection_stats = _selection_stats_from_fixture(full_run_fixture)
         sym_id = row["symphony_id"]
 
         report_path = self._make_minimal_eod_report(tmp_path)
-        opt_results = self._build_optimization_results_with_dsr(sym_id, dsr_data)
+        opt_results = self._build_optimization_results_with_selection_stats(sym_id, selection_stats)
 
         captured_embeds = []
 
@@ -397,15 +406,15 @@ class TestDiscordEmbedIncludesDSR:
         import reporting
 
         row = legacy_run_fixture["row"]
-        dsr_data = _dsr_data_from_fixture(legacy_run_fixture)
+        selection_stats = _selection_stats_from_fixture(legacy_run_fixture)
         sym_id = row["symphony_id"]
 
-        assert dsr_data["naive_sharpe"] is None
-        assert dsr_data["deflated_sharpe"] is None
-        assert dsr_data["frozen_eval_sharpe"] is None
+        assert selection_stats["naive_sharpe"] is None
+        assert selection_stats["selection_tstat"] is None
+        assert selection_stats["frozen_eval_sharpe"] is None
 
         report_path = self._make_minimal_eod_report(tmp_path)
-        opt_results = self._build_optimization_results_with_dsr(sym_id, dsr_data)
+        opt_results = self._build_optimization_results_with_selection_stats(sym_id, selection_stats)
 
         captured_embeds = []
 
@@ -465,14 +474,14 @@ class TestDiscordEmbedIncludesDSR:
 
 class TestAutotuneRunsApiRoute:
     """
-    AC-3: /api/autotune-runs route must return naive_sharpe, deflated_sharpe,
+    AC-3: /api/autotune-runs route must return naive_sharpe, selection_tstat,
     and frozen_eval_sharpe for each row in its JSON response.
 
     AC-5: Numeric fields present as floats (4-decimal precision contract is
     on the rendering layer, not the JSON API — the API returns raw floats).
 
     AC-8 (RED): A row with all three values present → JSON response contains them.
-    AC-9 (RED): A row with deflated_sharpe = None → JSON response handles it
+    AC-9 (RED): A row with selection_tstat = None → JSON response handles it
     gracefully (null in JSON, no KeyError, no 500).
     """
 
@@ -528,12 +537,12 @@ class TestAutotuneRunsApiRoute:
     ):
         """
         AC-3 + AC-8: A row with all three Sharpe fields populated → the JSON
-        response for that row must include naive_sharpe, deflated_sharpe, and
+        response for that row must include naive_sharpe, selection_tstat, and
         frozen_eval_sharpe with the correct values (within float precision).
 
         This test will FAIL (RED) until:
           A. /api/autotune-runs route exists.
-          B. The route queries naive_sharpe, deflated_sharpe, frozen_eval_sharpe.
+          B. The route queries naive_sharpe, selection_tstat, frozen_eval_sharpe.
           C. get_latest_autotune_run (or a new get_all_autotune_runs accessor)
              includes frozen_eval_sharpe in its SELECT (currently missing — bug
              introduced by migration 007 not reflected in the accessor).
@@ -549,7 +558,7 @@ class TestAutotuneRunsApiRoute:
             baseline_decision=row["baseline_decision"],
             fallback_oos_alpha=row["fallback_oos_alpha"],
             default_oos_alpha=row["default_oos_alpha"],
-            deflated_sharpe=row["deflated_sharpe"],
+            selection_tstat=row["selection_tstat"],
             naive_sharpe=row["naive_sharpe"],
             validation_sharpe=row["validation_sharpe"],
             frozen_eval_sharpe=row["frozen_eval_sharpe"],
@@ -574,8 +583,8 @@ class TestAutotuneRunsApiRoute:
         assert "naive_sharpe" in api_row, (
             "AC-3: /api/autotune-runs response row must include 'naive_sharpe' key."
         )
-        assert "deflated_sharpe" in api_row, (
-            "AC-3: /api/autotune-runs response row must include 'deflated_sharpe' key."
+        assert "selection_tstat" in api_row, (
+            "AC-3: /api/autotune-runs response row must include 'selection_tstat' key."
         )
         assert "frozen_eval_sharpe" in api_row, (
             "AC-3: /api/autotune-runs response row must include 'frozen_eval_sharpe' key. "
@@ -591,9 +600,9 @@ class TestAutotuneRunsApiRoute:
             f"naive_sharpe mismatch: fixture={row['naive_sharpe']}, "
             f"api={api_row['naive_sharpe']}. Float drift > 1e-6 relative."
         )
-        assert api_row["deflated_sharpe"] == pytest.approx(row["deflated_sharpe"], rel=1e-6), (
-            f"deflated_sharpe mismatch: fixture={row['deflated_sharpe']}, "
-            f"api={api_row['deflated_sharpe']}."
+        assert api_row["selection_tstat"] == pytest.approx(row["selection_tstat"], rel=1e-6), (
+            f"selection_tstat mismatch: fixture={row['selection_tstat']}, "
+            f"api={api_row['selection_tstat']}."
         )
         assert api_row["frozen_eval_sharpe"] == pytest.approx(
             row["frozen_eval_sharpe"], rel=1e-6
@@ -606,7 +615,7 @@ class TestAutotuneRunsApiRoute:
         self, legacy_run_fixture, isolated_db, app_client
     ):
         """
-        AC-9: A legacy row with deflated_sharpe = None (pre-O2 migration) must
+        AC-9: A legacy row with selection_tstat = None (pre-O2 migration) must
         be returned with null JSON values, not a 500 or KeyError.
         """
         import database as db_module
@@ -620,7 +629,7 @@ class TestAutotuneRunsApiRoute:
             baseline_decision=row["baseline_decision"],
             fallback_oos_alpha=row["fallback_oos_alpha"],
             default_oos_alpha=row["default_oos_alpha"],
-            deflated_sharpe=row["deflated_sharpe"],  # None
+            selection_tstat=row["selection_tstat"],  # None
             naive_sharpe=row["naive_sharpe"],  # None
             validation_sharpe=row["validation_sharpe"],  # None
             frozen_eval_sharpe=row["frozen_eval_sharpe"],  # None
@@ -642,8 +651,8 @@ class TestAutotuneRunsApiRoute:
         assert api_row.get("naive_sharpe") is None, (
             f"naive_sharpe must be null (JSON) for a legacy NULL row; got {api_row.get('naive_sharpe')!r}."
         )
-        assert api_row.get("deflated_sharpe") is None, (
-            f"deflated_sharpe must be null (JSON) for a legacy NULL row; got {api_row.get('deflated_sharpe')!r}."
+        assert api_row.get("selection_tstat") is None, (
+            f"selection_tstat must be null (JSON) for a legacy NULL row; got {api_row.get('selection_tstat')!r}."
         )
         assert api_row.get("frozen_eval_sharpe") is None, (
             f"frozen_eval_sharpe must be null (JSON) for a legacy NULL row; got {api_row.get('frozen_eval_sharpe')!r}."
@@ -702,20 +711,51 @@ class TestAiAdvisorRecentRunsPanel:
             "Add a recent-runs panel to ai_advisor.html. AC-4 violation."
         )
 
-    def test_ai_advisor_page_has_dsr_column_header(self, app_client):
+    def test_ai_advisor_page_has_selection_tstat_column_header(self, app_client):
         """
-        AC-4: The recent-runs panel HTML must contain a column header for DSR.
-        Acceptable: 'DSR', 'Deflated Sharpe', 'deflated sharpe' (case-insensitive).
+        AC-4 — re-pinned for Decision D3: the recent-runs panel must surface the
+        selection statistic under an ACCURATE label.
+
+        D3 removed the Deflated Sharpe Ratio; the panel now renders the Harvey &
+        Liu haircut selection t-statistic. Like the naive/frozen header tests,
+        this checks ai_advisor.js (the panel migrated from a static <table> to a
+        JS-rendered card list, C-16). The JS must (a) reference the
+        `selection_tstat` field, (b) render an accurate operator label for it
+        ("Sel t-stat" / "selection t-stat"), and (c) NOT call it "DSR" /
+        "Deflated Sharpe" — the naming lie D3's surface-consistency requirement
+        forbids.
         """
+        js_path = pathlib.Path(__file__).parents[2] / "static" / "ai_advisor.js"
+        assert js_path.exists(), "static/ai_advisor.js must exist"
+        js_src = js_path.read_text(encoding="utf-8")
+        js_lower = js_src.lower()
+
+        assert "selection_tstat" in js_src, (
+            "static/ai_advisor.js must reference 'selection_tstat' to render the "
+            "Harvey & Liu selection statistic in autotune run cards. AC-4 / D3."
+        )
+        accurate_labels = ["sel t-stat", "selection t-stat", "selection tstat",
+                           "selection statistic"]
+        assert any(lbl in js_lower for lbl in accurate_labels), (
+            f"static/ai_advisor.js must render an accurate operator label for "
+            f"the selection statistic (one of: {accurate_labels}). AC-4 / D3."
+        )
+        assert "dsr" not in js_lower and "deflated sharpe" not in js_lower, (
+            "static/ai_advisor.js still contains 'DSR' / 'Deflated Sharpe' — D3 "
+            "removed the Deflated Sharpe Ratio; the panel must not label the "
+            "Harvey & Liu selection statistic with the deleted DSR name."
+        )
+
+        # The rendered /ai-advisor page itself must also be free of the naming
+        # lie — a stale CSS comment '/* V-23: Sharpe/DSR bold mono */' in
+        # templates/ai_advisor.html is a known offender and must be de-DSR'd.
         resp = app_client.get("/ai-advisor")
         assert resp.status_code == 200
-        html = resp.data.decode("utf-8").lower()
-
-        dsr_headers = ["dsr", "deflated sharpe"]
-        has_dsr_col = any(h in html for h in dsr_headers)
-        assert has_dsr_col, (
-            f"GET /ai-advisor HTML must contain a DSR column header "
-            f"(one of: {dsr_headers}). AC-4 violation."
+        page_html = resp.data.decode("utf-8").lower()
+        assert "dsr" not in page_html and "deflated sharpe" not in page_html, (
+            "GET /ai-advisor HTML still contains 'DSR' / 'Deflated Sharpe' (e.g. "
+            "the stale '/* V-23: Sharpe/DSR bold mono */' CSS comment in "
+            "templates/ai_advisor.html). D3 removed the DSR — de-DSR the comment."
         )
 
     def test_ai_advisor_page_has_naive_sharpe_column_header(self, app_client):
@@ -776,7 +816,7 @@ class TestAiAdvisorRecentRunsPanel:
             baseline_decision=row["baseline_decision"],
             fallback_oos_alpha=row["fallback_oos_alpha"],
             default_oos_alpha=row["default_oos_alpha"],
-            deflated_sharpe=row["deflated_sharpe"],
+            selection_tstat=row["selection_tstat"],
             naive_sharpe=row["naive_sharpe"],
             validation_sharpe=row["validation_sharpe"],
             frozen_eval_sharpe=row["frozen_eval_sharpe"],
@@ -797,7 +837,7 @@ class TestAiAdvisorRecentRunsPanel:
         api_row = matching[0]
 
         # All three keys must be present for the template to render them
-        for key in ("naive_sharpe", "deflated_sharpe", "frozen_eval_sharpe"):
+        for key in ("naive_sharpe", "selection_tstat", "frozen_eval_sharpe"):
             assert key in api_row, (
                 f"AC-4 data contract: /api/autotune-runs response must include '{key}' "
                 f"so the recent-runs panel can render it. Key missing from: {list(api_row.keys())}"
@@ -867,9 +907,9 @@ class TestDiscordEmbedNoRegression:
         opt_with_dsr = {
             "alpha_symphony": {
                 "_baseline_chosen": "Adopted AI",
-                "_dsr_data": {
+                "_selection_stats": {
                     "naive_sharpe": 1.5,
-                    "deflated_sharpe": 0.8,
+                    "selection_tstat": 0.8,
                     "frozen_eval_sharpe": 0.6,
                 },
             }
@@ -929,14 +969,14 @@ class TestDiscordEmbedNoRegression:
 class TestProductionWiringAugmentsOptimizationResultsWithDSR:
     """
     Gap identified after initial GREEN: the tests in TestDiscordEmbedIncludesDSR
-    inject _dsr_data directly into optimization_results, so they pass. But the
+    inject _selection_stats directly into optimization_results, so they pass. But the
     production path in alpha_bot_execution.py must augment autotuner_changes with
     DB-fetched DSR data before calling send_eod_discord_post — otherwise the DSR
     line is silently omitted in production.
 
     These tests verify the observable behavior of the production augmentation
-    path: given optimization_results with NO _dsr_data (as run_autotuner returns)
-    and a matching DB row, the augmentation must inject _dsr_data so the Discord
+    path: given optimization_results with NO _selection_stats (as run_autotuner returns)
+    and a matching DB row, the augmentation must inject _selection_stats so the Discord
     embed ultimately contains the DSR values.
 
     The tests do NOT require a specific function name — they test the inline
@@ -962,12 +1002,12 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
         path.write_text(json.dumps(report), encoding="utf-8")
         return str(path)
 
-    def test_production_wiring_injects_dsr_data_from_db_into_optimization_results(
+    def test_production_wiring_injects_selection_stats_from_db_into_optimization_results(
         self, full_run_fixture, isolated_db, tmp_path
     ):
         """
         When alpha_bot_execution's EOD path augments optimization_results with
-        DB-fetched DSR data, the resulting dict must contain _dsr_data with all
+        DB-fetched DSR data, the resulting dict must contain _selection_stats with all
         three Sharpe fields populated from the DB row.
 
         Tested by: calling database.get_latest_autotune_run (the same call the
@@ -991,14 +1031,14 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
             baseline_decision=row["baseline_decision"],
             fallback_oos_alpha=row["fallback_oos_alpha"],
             default_oos_alpha=row["default_oos_alpha"],
-            deflated_sharpe=row["deflated_sharpe"],
+            selection_tstat=row["selection_tstat"],
             naive_sharpe=row["naive_sharpe"],
             validation_sharpe=row["validation_sharpe"],
             frozen_eval_sharpe=row["frozen_eval_sharpe"],
         )
 
         # The production augmentation loop calls get_latest_autotune_run per symphony.
-        # Verify it returns all three Sharpe fields so the _dsr_data injection is complete.
+        # Verify it returns all three Sharpe fields so the _selection_stats injection is complete.
         run_row = db_module.get_latest_autotune_run(sym_id)
         assert run_row is not None, (
             f"get_latest_autotune_run('{sym_id}') returned None after save_autotune_run."
@@ -1006,10 +1046,10 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
 
         assert "naive_sharpe" in run_row, (
             "get_latest_autotune_run must return 'naive_sharpe' so the production "
-            "augmentation loop can inject it as _dsr_data['naive_sharpe']."
+            "augmentation loop can inject it as _selection_stats['naive_sharpe']."
         )
-        assert "deflated_sharpe" in run_row, (
-            "get_latest_autotune_run must return 'deflated_sharpe'."
+        assert "selection_tstat" in run_row, (
+            "get_latest_autotune_run must return 'selection_tstat'."
         )
         assert "frozen_eval_sharpe" in run_row, (
             "get_latest_autotune_run must return 'frozen_eval_sharpe'. "
@@ -1021,9 +1061,9 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
         assert run_row["naive_sharpe"] == pytest.approx(row["naive_sharpe"], rel=1e-6), (
             f"naive_sharpe round-trip: wrote {row['naive_sharpe']}, read {run_row['naive_sharpe']}."
         )
-        assert run_row["deflated_sharpe"] == pytest.approx(row["deflated_sharpe"], rel=1e-6), (
-            f"deflated_sharpe round-trip: wrote {row['deflated_sharpe']}, "
-            f"read {run_row['deflated_sharpe']}."
+        assert run_row["selection_tstat"] == pytest.approx(row["selection_tstat"], rel=1e-6), (
+            f"selection_tstat round-trip: wrote {row['selection_tstat']}, "
+            f"read {run_row['selection_tstat']}."
         )
         assert run_row["frozen_eval_sharpe"] == pytest.approx(
             row["frozen_eval_sharpe"], rel=1e-6
@@ -1037,21 +1077,21 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
     ):
         """
         End-to-end production wiring test: when optimization_results has NO
-        _dsr_data (as returned by run_autotuner), but the production augmentation
-        loop calls get_latest_autotune_run and injects _dsr_data, the resulting
+        _selection_stats (as returned by run_autotuner), but the production augmentation
+        loop calls get_latest_autotune_run and injects _selection_stats, the resulting
         Discord embed must contain the formatted DSR values.
 
         Simulates the production path by:
         1. Writing a real DB row (isolated_db).
-        2. Building raw optimization_results (no _dsr_data) as run_autotuner produces.
+        2. Building raw optimization_results (no _selection_stats) as run_autotuner produces.
         3. Running the augmentation inline (mirroring alpha_bot_execution.py:765-773).
         4. Passing the augmented dict to send_eod_discord_post.
         5. Asserting the embed contains the three formatted Sharpe values.
 
         This test is GREEN if and only if:
         - get_latest_autotune_run returns frozen_eval_sharpe (16a5b5c fix)
-        - The augmentation loop correctly injects _dsr_data
-        - reporting.send_eod_discord_post renders the DSR line from _dsr_data
+        - The augmentation loop correctly injects _selection_stats
+        - reporting.send_eod_discord_post renders the DSR line from _selection_stats
         """
         import database as db_module
         import reporting
@@ -1068,31 +1108,31 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
             baseline_decision=row["baseline_decision"],
             fallback_oos_alpha=row["fallback_oos_alpha"],
             default_oos_alpha=row["default_oos_alpha"],
-            deflated_sharpe=row["deflated_sharpe"],
+            selection_tstat=row["selection_tstat"],
             naive_sharpe=row["naive_sharpe"],
             validation_sharpe=row["validation_sharpe"],
             frozen_eval_sharpe=row["frozen_eval_sharpe"],
         )
 
-        # Raw optimization_results — no _dsr_data (what run_autotuner returns)
+        # Raw optimization_results — no _selection_stats (what run_autotuner returns)
         raw_changes = {sym_id: {"_baseline_chosen": row["baseline_decision"]}}
 
         # Inline augmentation — mirrors alpha_bot_execution.py:765-773
         for sid, sym_data in raw_changes.items():
             run_row = db_module.get_latest_autotune_run(sid)
             if run_row:
-                sym_data["_dsr_data"] = {
+                sym_data["_selection_stats"] = {
                     "naive_sharpe": run_row.get("naive_sharpe"),
-                    "deflated_sharpe": run_row.get("deflated_sharpe"),
+                    "selection_tstat": run_row.get("selection_tstat"),
                     "frozen_eval_sharpe": run_row.get("frozen_eval_sharpe"),
                 }
 
-        # Verify augmentation produced the expected _dsr_data
-        assert "_dsr_data" in raw_changes[sym_id], (
-            f"Inline augmentation must inject '_dsr_data' for '{sym_id}' "
+        # Verify augmentation produced the expected _selection_stats
+        assert "_selection_stats" in raw_changes[sym_id], (
+            f"Inline augmentation must inject '_selection_stats' for '{sym_id}' "
             "when a DB row exists. Production wiring gap if this fails."
         )
-        assert raw_changes[sym_id]["_dsr_data"]["frozen_eval_sharpe"] is not None, (
+        assert raw_changes[sym_id]["_selection_stats"]["frozen_eval_sharpe"] is not None, (
             "frozen_eval_sharpe must be non-None after augmentation — "
             "requires get_latest_autotune_run to SELECT frozen_eval_sharpe (16a5b5c fix)."
         )
@@ -1136,7 +1176,7 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
         # All three formatted values must appear in the embed
         for key, expected_str in [
             ("naive_sharpe", fmt["naive_sharpe_formatted"]),
-            ("deflated_sharpe", fmt["deflated_sharpe_formatted"]),
+            ("selection_tstat", fmt["selection_tstat_formatted"]),
             ("frozen_eval_sharpe", fmt["frozen_eval_sharpe_formatted"]),
         ]:
             assert expected_str in all_text, (
@@ -1148,7 +1188,7 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
     def test_production_wiring_no_crash_when_symphony_has_no_db_run(self, isolated_db, tmp_path):
         """
         When no autotune_runs row exists for a symphony, the augmentation loop
-        must not crash — it must skip _dsr_data injection gracefully, and
+        must not crash — it must skip _selection_stats injection gracefully, and
         send_eod_discord_post must still produce a valid embed (without DSR line).
         """
         import database as db_module
@@ -1161,17 +1201,17 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
         for sid, sym_data in raw_changes.items():
             run_row = db_module.get_latest_autotune_run(sid)
             if run_row:
-                sym_data["_dsr_data"] = {
+                sym_data["_selection_stats"] = {
                     "naive_sharpe": run_row.get("naive_sharpe"),
-                    "deflated_sharpe": run_row.get("deflated_sharpe"),
+                    "selection_tstat": run_row.get("selection_tstat"),
                     "frozen_eval_sharpe": run_row.get("frozen_eval_sharpe"),
                 }
-        # _dsr_data must NOT have been injected (no DB row)
-        assert "_dsr_data" not in raw_changes["no_run_symphony"], (
-            "Augmentation must not inject _dsr_data when no DB row exists."
+        # _selection_stats must NOT have been injected (no DB row)
+        assert "_selection_stats" not in raw_changes["no_run_symphony"], (
+            "Augmentation must not inject _selection_stats when no DB row exists."
         )
 
-        # send_eod_discord_post must not crash with no _dsr_data
+        # send_eod_discord_post must not crash with no _selection_stats
         report_path = self._make_minimal_eod_report(tmp_path)
         captured_embeds = []
 
@@ -1206,7 +1246,7 @@ class TestProductionWiringAugmentsOptimizationResultsWithDSR:
             os.chdir(orig_cwd)
 
         assert captured_embeds, (
-            "send_eod_discord_post must produce embeds even when no _dsr_data is present."
+            "send_eod_discord_post must produce embeds even when no _selection_stats is present."
         )
         # Python literal 'None' must not appear (no DSR line → nothing to mis-render)
         all_text = " ".join(e.get("description", "") for e in captured_embeds)

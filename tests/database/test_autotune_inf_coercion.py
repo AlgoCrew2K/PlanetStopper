@@ -49,7 +49,7 @@ _NUMERIC_FIELDS = (
     "train_alpha",
     "fallback_oos_alpha",
     "default_oos_alpha",
-    "deflated_sharpe",
+    "selection_tstat",
     "naive_sharpe",
     "validation_sharpe",
     "frozen_eval_sharpe",
@@ -71,7 +71,7 @@ def _make_raw_row(overrides: dict) -> tuple:
         "baseline_decision": "HOLD",
         "fallback_oos_alpha": 0.5,
         "default_oos_alpha": 2.1,
-        "deflated_sharpe": 0.8,
+        "selection_tstat": 0.8,
         "naive_sharpe": 1.1,
         "validation_sharpe": 0.9,
         "frozen_eval_sharpe": None,
@@ -88,7 +88,7 @@ def _make_raw_row(overrides: dict) -> tuple:
         defaults["baseline_decision"],
         defaults["fallback_oos_alpha"],
         defaults["default_oos_alpha"],
-        defaults["deflated_sharpe"],
+        defaults["selection_tstat"],
         defaults["naive_sharpe"],
         defaults["validation_sharpe"],
         defaults["frozen_eval_sharpe"],
@@ -114,7 +114,7 @@ class TestNegInfCoercedToNone:
         "train_alpha",
         "fallback_oos_alpha",
         "default_oos_alpha",
-        "deflated_sharpe",
+        "selection_tstat",
         "naive_sharpe",
         "validation_sharpe",
         "frozen_eval_sharpe",
@@ -202,11 +202,11 @@ class TestFiniteValuesUnchanged:
         """AC-INF.4: 0.0 is a valid finite value — must not be coerced to None."""
         import database as db_module
 
-        row = _make_raw_row({"deflated_sharpe": 0.0})
+        row = _make_raw_row({"selection_tstat": 0.0})
         result = db_module._autotune_run_row_to_dict(row)
 
-        assert result["deflated_sharpe"] == pytest.approx(0.0, abs=1e-12), (
-            f"0.0 is finite — must not be coerced to None. Got {result['deflated_sharpe']!r}."
+        assert result["selection_tstat"] == pytest.approx(0.0, abs=1e-12), (
+            f"0.0 is finite — must not be coerced to None. Got {result['selection_tstat']!r}."
         )
 
     def test_string_fields_not_coerced(self):
@@ -254,7 +254,7 @@ class TestJsonDumpsWithoutAllowNan:
         row = _make_raw_row({
             "oos_alpha": float("-inf"),
             "train_alpha": float("-inf"),
-            "deflated_sharpe": float("-inf"),
+            "selection_tstat": float("-inf"),
             "naive_sharpe": float("nan"),
             "validation_sharpe": float("inf"),
         })
