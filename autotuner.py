@@ -317,21 +317,32 @@ def compute_haircut_pvalue(t_stat: float) -> float:
 
 
 def benjamini_hochberg_adjust(p_values: list[float]) -> list[float]:
-    """Benjamini-Hochberg step-up adjustment of a vector of raw p-values.
+    """Benjamini-Hochberg-Yekutieli (BHY) step-up adjustment of raw p-values.
 
     BHY step-up: sort the p-values ascending, then
-    ``p_adj_(k) = min over j >= k of [ N/j * p_(j) ]``, clamp each to [0, 1],
-    and map back to the input order. The running minimum from the largest rank
-    downward makes the adjusted p-values monotone non-decreasing in raw-p rank.
+    ``p_adj_(k) = min over j >= k of [ (N * c(N) / j) * p_(j) ]``, clamp each to
+    [0, 1], and map back to the input order. The running minimum from the largest
+    rank downward makes the adjusted p-values monotone non-decreasing in raw-p
+    rank.
+
+    ``c(N) = sum_{j=1}^{N} 1/j`` is the N-th harmonic number — the Yekutieli
+    arbitrary-dependence correction factor. It is required here because the
+    Optuna trial statistics are NOT independent (the TPE sampler concentrates
+    the search), so plain Benjamini-Hochberg 1995 — which assumes independence /
+    PRDS — would under-correct the false-discovery rate by a factor of c(N).
 
     Returns one adjusted p-value per input, in the input order.
 
-    Reference: Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013; the BHY
-    procedure (Benjamini & Hochberg 1995).
+    Reference: Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013, which prescribe
+    BHY; Benjamini, Hochberg & Yekutieli (2001), "The Control of the False
+    Discovery Rate in Multiple Testing under Dependency", Annals of Statistics
+    29(4), 1165-1188 (the c(N) arbitrary-dependence factor).
     """
     n = len(p_values)
     if n == 0:
         return []
+    # Yekutieli arbitrary-dependence factor: the N-th harmonic number.
+    c_n = sum(1.0 / j for j in range(1, n + 1))
     # Sort indices by ascending raw p-value.
     order = sorted(range(n), key=lambda i: p_values[i])
     adjusted = [0.0] * n
@@ -339,7 +350,7 @@ def benjamini_hochberg_adjust(p_values: list[float]) -> list[float]:
     # Step up from the largest rank (k = n) down to the smallest (k = 1).
     for rank in range(n, 0, -1):
         idx = order[rank - 1]
-        candidate = (n / rank) * p_values[idx]
+        candidate = (n * c_n / rank) * p_values[idx]
         running_min = min(running_min, candidate)
         adjusted[idx] = min(max(running_min, 0.0), 1.0)
     return adjusted
