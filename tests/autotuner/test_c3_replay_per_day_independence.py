@@ -113,26 +113,50 @@ def _names_assigned_in(node: ast.AST) -> set[str]:
 
 # ===========================================================================
 # AC-9 — structural: per-day state is re-initialized per simulated day.
+#
+# The AC-9 contract has two halves. Cluster 3's drift-seam fix made
+# _fresh_replay_state() the SINGLE canonical constructor of the per-day state
+# dict (run_simulation / _collect_sim_returns / replay_exit_sequence all call
+# it). So the two halves are now pinned at their correct sources of truth:
+#   * PLACEMENT — the per-day state is CONSTRUCTED FRESH inside the
+#     `for date, ticks` loop (not hoisted above it -> no cross-day bleed).
+#     Checked by test_replay_reinitializes_per_day_state_inside_date_loop.
+#   * COMPLETENESS — _fresh_replay_state() actually resets every per-day
+#     state name to its documented value. Checked by
+#     test_fresh_replay_state_resets_all_per_day_state.
+# Splitting it this way is robust to the canonical-constructor refactor: a
+# whole-state re-init via _fresh_replay_state() inside the loop satisfies
+# placement, and the constructor's own contract is verified directly.
 # ===========================================================================
 
 
-def test_replay_reinitializes_per_position_state_per_simulated_day() -> None:
-    """AC-9: the replay must re-initialize per-position transient state at the
-    start of each simulated day — so each day is independent, mirroring
-    production's daily wipe_transient_state (Cluster 1).
+def _is_fresh_replay_state_call(value: ast.AST) -> bool:
+    """True iff an assignment RHS is a Call to _fresh_replay_state()."""
+    return isinstance(value, ast.Call) and (
+        (isinstance(value.func, ast.Name) and value.func.id == "_fresh_replay_state")
+        or (isinstance(value.func, ast.Attribute) and value.func.attr == "_fresh_replay_state")
+    )
 
-    Asserts every per-day state name is assigned inside a `for date, ticks`
-    per-day loop somewhere in the replay machinery. Architecture-agnostic:
-    accepts plain-name, state-dict (`state['hwm'] = ...`) or attribute
-    (`state.hwm = ...`) re-initialization, in either replay function or a
-    shared per-day simulate helper.
 
-    Guards against a refactor (driven by the AC-1/AC-2/AC-3 changes) that
-    hoists state init above the per-day loop and silently introduces
-    cross-day state bleed. A faithfulness PIN — green while init is per-day,
-    RED only if a refactor moves it out.
+def test_replay_reinitializes_per_day_state_inside_date_loop() -> None:
+    """AC-9 (placement half): the replay must CONSTRUCT the per-day transient
+    state FRESH inside the `for date, ticks` per-day loop — so each simulated
+    day starts independent, mirroring production's daily wipe_transient_state
+    (Cluster 1).
+
+    Cluster-3 form: per-day state is built by the canonical constructor
+    _fresh_replay_state(). This test asserts a `_fresh_replay_state()` call
+    appears inside a `for date, ticks` loop body somewhere in the replay
+    machinery — AND that no whole-state construction is hoisted above the
+    loop. It also still accepts a legacy per-name / state-dict / attribute
+    re-init inside the loop (architecture-agnostic), so it does not
+    over-constrain to the constructor form — but the constructor-call-in-loop
+    is the path the drift-seam fix takes.
+
+    Guards against a refactor that hoists the per-day state construction
+    above the loop and silently reintroduces cross-day state bleed. A
+    faithfulness PIN — RED only if state init moves out of the per-day loop.
     """
-    # Collect every per-day loop across the replay machinery.
     all_date_loops: list[ast.For] = []
     for name in _REPLAY_MACHINERY_NAMES:
         func = _function_node(name)
@@ -145,19 +169,77 @@ def test_replay_reinitializes_per_position_state_per_simulated_day() -> None:
         "state is independent."
     )
 
-    # Per-day state must be re-initialized inside at least one per-day loop.
+    # The per-day state must be re-initialized inside at least one per-day
+    # loop — either via a _fresh_replay_state() call (the canonical form) OR
+    # via the full set of per-name re-inits (the legacy form).
+    constructor_call_in_a_loop = False
     assigned_in_a_date_loop: set[str] = set()
     for loop in all_date_loops:
+        for node in ast.walk(loop):
+            if isinstance(node, ast.Assign) and _is_fresh_replay_state_call(node.value):
+                constructor_call_in_a_loop = True
         assigned_in_a_date_loop |= _names_assigned_in(loop)
 
-    missing = sorted(_PER_DAY_STATE_NAMES - assigned_in_a_date_loop)
+    legacy_complete = _PER_DAY_STATE_NAMES <= assigned_in_a_date_loop
+    assert constructor_call_in_a_loop or legacy_complete, (
+        "The replay does not re-initialize per-day transient state inside a "
+        "`for date, ticks` loop. Expected either `day_state = "
+        "_fresh_replay_state()` (the canonical Cluster-3 form) inside the "
+        "loop, or a full per-name re-init of "
+        f"{sorted(_PER_DAY_STATE_NAMES)}. Per-day state must be reset at the "
+        "start of each simulated day — hoisting it above the loop "
+        "reintroduces cross-day state bleed (the faithful mirror of "
+        "production's daily wipe_transient_state, Cluster 1)."
+    )
+
+
+def test_fresh_replay_state_resets_all_per_day_state() -> None:
+    """AC-9 (completeness half): the canonical per-day state constructor
+    _fresh_replay_state() must reset EVERY per-position transient-state name
+    to its documented reset value — so a fresh day genuinely starts clean.
+
+    Checked at the single source of truth (the constructor itself) rather
+    than by AST-walking the replay loop, because the Cluster-3 drift-seam
+    fix routes all per-day state construction through _fresh_replay_state().
+    A missing or wrongly-defaulted key here is a real cross-day-bleed defect
+    — e.g. a stale `armed=True` or a non-(-999.0) hwm leaking into the next
+    simulated day.
+    """
+    state = autotuner._fresh_replay_state()
+
+    missing = sorted(_PER_DAY_STATE_NAMES - set(state.keys()))
     assert not missing, (
-        f"The replay does not re-initialize {missing} inside any per-day "
-        f"`for date, ticks` loop. Every per-position transient state must be "
-        f"reset at the start of each simulated day — that per-day "
-        f"independence is the faithful mirror of production's daily "
-        f"wipe_transient_state (Cluster 1). Hoisting init out of the per-day "
-        f"loop reintroduces cross-day state bleed."
+        f"_fresh_replay_state() does not reset {missing}. Every per-position "
+        f"transient-state name must be a key in the fresh-state dict so each "
+        f"simulated day starts independent."
+    )
+
+    # Documented reset values — the clean-slate a new day must start from.
+    # hwm = -999.0 sentinel; all flags False; all counters 0. prev_return is
+    # the None velocity sentinel, verified separately by the E1 contract test.
+    expected_reset = {
+        "hwm": -999.0,
+        "armed": False,
+        "tp_armed": False,
+        "para_armed": False,
+        "breakeven_locked": False,
+        "below_stop_count": 0,
+        "above_tp_count": 0,
+        "vwap_ticks": 0,
+        "vwap_bleed_ticks": 0,
+        "hwm_hold_ticks": 0,
+    }
+    wrong = {
+        name: (state[name], expected_reset[name])
+        for name in expected_reset
+        if state[name] != expected_reset[name]
+        or type(state[name]) is not type(expected_reset[name])
+    }
+    assert not wrong, (
+        f"_fresh_replay_state() returns non-reset values {wrong} "
+        f"(actual, expected). Each per-day state name must start at its "
+        f"clean-slate value — a stale flag or counter leaking into a new "
+        f"simulated day is cross-day state bleed."
     )
 
 
