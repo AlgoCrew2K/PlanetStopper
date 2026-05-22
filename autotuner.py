@@ -1297,12 +1297,25 @@ def run_calibration_sweep(
             t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
         ]
 
-        if haircut_trials:
+        # haircut_outcome makes the FDR-gate verdict explicit on every report
+        # row — without it a noise-grade naive winner (no trial cleared the
+        # gate) is indistinguishable from a gate-cleared one, since both carry
+        # selection_tstat=None. Diagnostic-only, but the operator must be able
+        # to tell a statistically-qualified proposal from an unqualified one.
+        if not haircut_trials:
+            haircut_outcome = "not_run"
+        else:
             winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials)
             if winner_trial is not None:
                 best_params = winner_trial.params
                 naive_sharpe_value = winner_trial.value
                 selection_tstat_value = winner_tstat
+                haircut_outcome = "cleared"
+            else:
+                # The haircut ran but no trial cleared the FDR gate — the
+                # proposed_value below is the NAIVE Optuna winner and is NOT
+                # statistically qualified.
+                haircut_outcome = "no_trial_cleared"
 
         # Validation-fold Sortino of best trial params
         best_p = current_params.copy()
@@ -1344,6 +1357,7 @@ def run_calibration_sweep(
                 "frozen_eval_alpha": frozen_eval_alpha,
                 "naive_sharpe": naive_sharpe_value,
                 "selection_tstat": selection_tstat_value,
+                "haircut_outcome": haircut_outcome,
                 "sortino": sortino_value,
                 "n_trials": n_trials,
                 "study_name": study_name,
