@@ -125,7 +125,21 @@ def _compute_max_drawdown_from_series(port_equity_series: list[dict]) -> float |
     Max drawdown = min over all (peak, trough) pairs where peak < trough in time
     of (trough_value - peak_value) / peak_value.
 
-    Returns None when the series is insufficient (fewer than 2 points).
+    Sign convention: NEGATIVE — a 20% drawdown is returned as -0.20, a
+    no-drawdown (monotonic-rise) series as a genuine 0.0. This is the same
+    negative-convention family as analytics.compute_quantstats_metrics. It is
+    DELIBERATELY the opposite of analytics.get_symphony_max_drawdown, which
+    returns a POSITIVE magnitude (a 20% drawdown as +20.0) for app.py templates;
+    the two conventions are intentionally split, not a bug — see
+    get_symphony_max_drawdown for the positive-magnitude side.
+
+    Returns None when the series is degenerate:
+      - fewer than 2 points (no peak-to-trough excursion is possible), or
+      - any running peak used as a denominator is non-positive (a zero or
+        negative peak makes the drawdown ratio undefined / sign-inverted).
+        Mirrors the sibling _compute_simple_return_from_series initial==0.0
+        guard. A port-equity series is normally strictly positive; a
+        non-positive peak is a degenerate snapshot, not a tradeable baseline.
 
     Pospisil-Vecer 2010: drawdown at time t is (S_t - sup_{s<=t} S_s) / sup_{s<=t} S_s.
     Maximum drawdown is the infimum of this over all t.
@@ -134,12 +148,23 @@ def _compute_max_drawdown_from_series(port_equity_series: list[dict]) -> float |
         return None
 
     values = [p["port_value"] for p in port_equity_series]
+    # A zero-anchored series (first value non-positive) has a degenerate
+    # baseline: even a later real drawdown cannot be expressed against a
+    # non-positive starting peak without ambiguity. Mirror the sibling
+    # _compute_simple_return_from_series initial==0.0 guard.
+    if values[0] <= 0.0:
+        return None
     max_dd = 0.0
     peak = values[0]
     for v in values[1:]:
         if v > peak:
             peak = v
         else:
+            # A non-positive peak makes (v - peak) / peak undefined (zero
+            # denominator) or sign-inverted (negative denominator). Treat the
+            # whole series as degenerate rather than raising or mis-signing.
+            if peak <= 0.0:
+                return None
             dd = (v - peak) / peak
             if dd < max_dd:
                 max_dd = dd
