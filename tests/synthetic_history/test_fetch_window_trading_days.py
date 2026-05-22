@@ -765,33 +765,30 @@ def test_fetch_window_count_does_not_depend_on_a_hand_maintained_holiday_table()
     )
 
 
-def test_daily_warmup_shortfall_is_surfaced_not_only_the_intraday_slice() -> None:
-    """BLOCKER 2 — the shortfall guard must also check the daily / MC-warmup
-    floor, not only the 125-day intraday replay slice.
+def test_daily_warmup_floor_is_enforced_on_the_returned_daily_bars() -> None:
+    """BLOCKER 2 — the daily / MC-warmup floor must be enforced on the
+    RETURNED daily bars, not only the 125-day intraday replay slice.
 
     ``_REQUIRED_FETCH_TRADING_DAYS`` is 174 = 125 walk-forward + 39 MC warmup
     + 10 buffer. The 39-day warmup is the daily history that PRECEDES the
     replay window: ``build_replay_day`` feeds ``hist_data_up_to_yesterday``
     into ``run_monte_carlo``, and on the earliest replay days that prior daily
-    history must be >= the MC warmup floor or ``run_monte_carlo`` returns the
-    None insufficient sentinel. If Alpaca under-delivers the DAILY bars,
-    ``daily_dates`` is silently short and the first ~39 of 125 walk-forward
-    folds get None mc_prob — the MC exit gate is dark for ~31% of the
-    validation window and the autotuner tunes the MC-coupled parameters
-    against a systematically MC-blind replay.
+    history must clear the MC warmup floor or ``run_monte_carlo`` returns the
+    None insufficient sentinel. If Alpaca under-delivers the DAILY bars the
+    first ~39 of 125 walk-forward folds get None mc_prob — the MC exit gate is
+    dark for ~31% of the validation window and the autotuner tunes the
+    MC-coupled parameters against a systematically MC-blind replay.
 
-    The current guard checks only ``len(intraday_dates)`` against the 125-day
-    floor. AC-1's text explicitly requires the window to "guarantee at least
-    ... the MC warmup floor (MC_MIN_HISTORY_DAYS + MC_VOL_WINDOW_DAYS - 1)" —
-    so a guard that verifies the 125 but not the 39 half-implements AC-1.
-
-    Static check: ``generate_synthetic_history`` must contain a SECOND
-    length-vs-floor comparison, distinct from the intraday-slice guard, that
-    checks the DAILY history (a ``len(...)`` of the daily-date sequence /
-    daily history) against the MC-warmup floor — feeding a raise or an
-    ERROR/WARNING log. We detect it as: a ``len()`` comparison whose len()
-    argument references a daily-history name AND at least two distinct
-    length-vs-floor comparisons total (the intraday guard + the daily guard).
+    Per the consolidated risk-engine-specialist + team-lead ruling, the daily
+    floor is enforced by the bounded widen+refetch helper checking the
+    RETURNED distinct-trading-day count against the FULL 174 floor (which
+    includes the 39-day warmup). This test accepts EITHER:
+      (a) generate_synthetic_history calls the widen+refetch helper (whose own
+          behavioural tests pin the 174-floor enforcement), OR
+      (b) generate_synthetic_history contains an explicit daily-history
+          length-vs-floor check.
+    A build that enforces only the intraday-125 slice and never the daily/174
+    floor fails RED.
     """
     tree = _synth_tree()
     gen = None
@@ -806,14 +803,24 @@ def test_daily_warmup_shortfall_is_surfaced_not_only_the_intraday_slice() -> Non
         "synthetic_history.generate_synthetic_history not found."
     )
 
-    # Names that plausibly hold the daily-bar history / its date sequence.
-    # The current code names it `daily_dates` (sorted historical_daily keys)
-    # and `historical_daily`.
-    daily_history_names = {"daily_dates", "historical_daily", "daily_bars_raw"}
+    # --- Path (a): generate_synthetic_history calls the widen+refetch helper.
+    widen_helper_names = {
+        "fetch_daily_bars_with_floor",
+        "fetch_daily_bars_with_widen_retry",
+        "fetch_with_trading_day_floor",
+    }
+    calls_widen_helper = False
+    for node in _ast.walk(gen):
+        if isinstance(node, _ast.Call):
+            f = node.func
+            if (isinstance(f, _ast.Name) and f.id in widen_helper_names) or (
+                isinstance(f, _ast.Attribute) and f.attr in widen_helper_names
+            ):
+                calls_widen_helper = True
+                break
 
-    # Walk every Compare; classify each len()-vs-floor comparison by whether
-    # its len() argument touches a daily-history name or an intraday name.
-    intraday_floor_checks = 0
+    # --- Path (b): an explicit daily-history len()-vs-floor check. ---------
+    daily_history_names = {"daily_dates", "historical_daily", "daily_bars_raw"}
     daily_floor_checks = 0
     for node in _ast.walk(gen):
         if not isinstance(node, _ast.Compare):
@@ -829,7 +836,6 @@ def test_daily_warmup_shortfall_is_surfaced_not_only_the_intraday_slice() -> Non
                 and o.args
             ):
                 len_args.append(o.args[0])
-            # numeric literal or a module-level numeric constant Name
             if (
                 isinstance(o, _ast.Constant)
                 and isinstance(o.value, (int, float))
@@ -841,32 +847,275 @@ def test_daily_warmup_shortfall_is_surfaced_not_only_the_intraday_slice() -> Non
                 or o.id.startswith("_")
                 and any(c.isupper() for c in o.id)
             ):
-                # heuristic: a NAMED floor constant (e.g. _MC_WARMUP_TRADING_DAYS)
                 has_floor_operand = True
         if not (len_args and has_floor_operand):
             continue
         for arg in len_args:
-            names = {
-                n.id for n in _ast.walk(arg) if isinstance(n, _ast.Name)
-            }
+            names = {n.id for n in _ast.walk(arg) if isinstance(n, _ast.Name)}
             if names & daily_history_names:
                 daily_floor_checks += 1
-            elif any("intraday" in n for n in names):
-                intraday_floor_checks += 1
-            else:
-                # An unclassified len()-vs-floor check — count it toward
-                # neither; the test needs an explicitly daily-scoped one.
-                pass
 
-    assert daily_floor_checks >= 1, (
-        "generate_synthetic_history surfaces an intraday-slice shortfall but "
-        "NOT a daily / MC-warmup shortfall. The 39-day MC warmup is the "
-        "reason the fetch floor is 174 (not 125); a short DAILY fetch leaves "
-        "the first ~39 walk-forward folds MC-dark with nothing surfaced. "
-        "AC-1 requires the MC warmup floor to be guaranteed. Add a daily-side "
-        "floor check parallel to the intraday guard: compare the available "
-        "daily history (len of daily_dates / historical_daily) against the "
-        "MC-warmup floor and raise / log ERROR on shortfall. "
-        f"Found {intraday_floor_checks} intraday floor check(s), "
-        f"{daily_floor_checks} daily floor check(s)."
+    assert calls_widen_helper or daily_floor_checks >= 1, (
+        "generate_synthetic_history enforces the intraday-125 slice floor but "
+        "NOT the daily / MC-warmup floor. The 39-day MC warmup is the reason "
+        "the fetch floor is 174 (not 125); a short DAILY fetch leaves the "
+        "first ~39 walk-forward folds MC-dark with nothing surfaced. The "
+        "consolidated ruling requires the daily floor be enforced — either "
+        "via the bounded widen+refetch helper (checking the returned "
+        "distinct-trading-day count against the full 174 floor) or an "
+        "explicit daily-history length-vs-floor check. "
+        f"Found: calls widen+refetch helper={calls_widen_helper}, "
+        f"explicit daily floor checks={daily_floor_checks}."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Consolidated AC-1 RED — bounded widen+refetch (risk-engine-specialist +
+# team-lead joint ruling).
+#
+# Removing the hand-maintained holiday table changes the failure mode: the
+# fetch-window START becomes a generous-but-FIXED calendar pad, so a
+# too-narrow first fetch must be RECOVERABLE — team-lead's Option B always
+# specified "widen+refetch is a rare fallback". A LOG-ONLY shortfall guard is
+# insufficient under the no-table design (log-only + no-table = "the window
+# can be silently too short and we just print about it" — strictly worse than
+# the table). The post-fetch behaviour must be:
+#   count distinct returned trading days
+#   -> >= _REQUIRED_FETCH_TRADING_DAYS: proceed
+#   -> short: WIDEN the window + REFETCH (bounded retry)
+#   -> still short after the bounded retry: HARD failure (raise / abort) —
+#      never proceed-degenerate.
+# The returned-bar count against the FULL 174 floor (125 + 39 warmup + 10)
+# also discharges BLOCKER 2 — the MC warmup is inside that floor.
+#
+# Testability: the widen+refetch loop must live in a PURE, importable helper
+# that takes the fetch callable as a parameter, so the retry behaviour is
+# exercised with an injected stub — no live Alpaca call. These tests are
+# import-guarded; a not-yet-extracted helper fails RED with a clear message.
+# ---------------------------------------------------------------------------
+
+
+def _make_daily_bars(num_trading_days: int, symbol: str = "SPY") -> dict:
+    """Build a fetch_bars-shaped daily-bar payload with the given number of
+    DISTINCT trading days.
+
+    fetch_bars returns {symbol: [bar, ...]} where each bar has a 't' ISO
+    timestamp. Distinct trading days = distinct t[:10]. We emit consecutive
+    weekday dates ending 2026-05-15 so the count is unambiguous — this is the
+    test's own input fixture, not a producer value.
+    """
+    bars = []
+    d = _dt.date(2026, 5, 15)
+    emitted = 0
+    while emitted < num_trading_days:
+        if d.weekday() < 5:  # weekday — a plausible trading day
+            bars.append(
+                {
+                    "t": f"{d.isoformat()}T00:00:00Z",
+                    "c": 100.0,
+                    "h": 101.0,
+                    "l": 99.0,
+                    "o": 100.0,
+                    "v": 1_000_000,
+                    "vw": 100.0,
+                }
+            )
+            emitted += 1
+        d -= _dt.timedelta(days=1)
+    return {symbol: list(reversed(bars))}
+
+
+def _distinct_trading_days(bars_payload: dict) -> int:
+    """Count distinct trading-day dates across a fetch_bars-shaped payload."""
+    days: set[str] = set()
+    for bar_list in bars_payload.values():
+        for bar in bar_list:
+            days.add(bar["t"][:10])
+    return len(days)
+
+
+def _resolve_widen_refetch_helper():
+    """Return the pure bounded widen+refetch helper synthetic_history must
+    expose.
+
+    Contract: a callable that takes (at least) a fetch callable and drives the
+    count -> widen -> refetch -> hard-failure loop. The implementer chooses
+    the exact name; this resolver accepts the documented candidates and fails
+    RED if none exists.
+    """
+    synth = pytest.importorskip(
+        "synthetic_history",
+        reason="synthetic_history import unavailable in this environment",
+    )
+    for name in (
+        "fetch_daily_bars_with_floor",
+        "fetch_daily_bars_with_widen_retry",
+        "fetch_with_trading_day_floor",
+    ):
+        fn = getattr(synth, name, None)
+        if callable(fn):
+            return fn
+    pytest.fail(
+        "synthetic_history must expose a PURE, importable bounded widen+"
+        "refetch helper (expected one of: fetch_daily_bars_with_floor / "
+        "fetch_daily_bars_with_widen_retry / fetch_with_trading_day_floor). "
+        "The retry loop must take the fetch callable as a parameter so the "
+        "widen+refetch behaviour is testable without a live Alpaca fetch."
+    )
+
+
+def test_widen_refetch_helper_returns_first_fetch_when_floor_is_met() -> None:
+    """When the first fetch already clears the 174 floor, the helper returns
+    it WITHOUT a second fetch.
+
+    The widen+refetch path is a fallback — it must not fire when the first
+    window is already sufficient. The injected fetch stub counts its calls;
+    a sufficient first return must leave the count at exactly 1.
+    """
+    helper = _resolve_widen_refetch_helper()
+
+    calls = {"n": 0}
+
+    def fetch_stub(*args, **kwargs):
+        calls["n"] += 1
+        # A generous return well over the 174 floor.
+        return _make_daily_bars(_MIN_REQUIRED_TRADING_DAYS + 30)
+
+    result = helper(fetch_stub)
+    assert calls["n"] == 1, (
+        f"the widen+refetch helper called the fetch {calls['n']} times when "
+        f"the first fetch already cleared the floor — it must fetch exactly "
+        f"once on the happy path."
+    )
+    assert _distinct_trading_days(result) >= _MIN_REQUIRED_TRADING_DAYS, (
+        "the helper must return a bar set that clears the required "
+        f"{_MIN_REQUIRED_TRADING_DAYS}-trading-day floor."
+    )
+
+
+def test_widen_refetch_triggers_a_second_fetch_on_first_short_return() -> None:
+    """A first fetch SHORT of the 174 floor must trigger a WIDENED REFETCH.
+
+    This is the core widen+refetch contract. The injected stub returns a
+    short payload on the first call and a sufficient one on the second; the
+    helper must call the fetch a SECOND time (the widen+refetch) and return
+    the sufficient set. A log-only guard would call fetch exactly once and
+    return the short set — RED against that.
+    """
+    helper = _resolve_widen_refetch_helper()
+
+    calls = {"n": 0}
+
+    def fetch_stub(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # First window too narrow — under the floor.
+            return _make_daily_bars(_MIN_REQUIRED_TRADING_DAYS - 20)
+        # Widened window now clears the floor.
+        return _make_daily_bars(_MIN_REQUIRED_TRADING_DAYS + 10)
+
+    result = helper(fetch_stub)
+    assert calls["n"] >= 2, (
+        f"a first fetch returning fewer than {_MIN_REQUIRED_TRADING_DAYS} "
+        f"trading days must trigger a WIDENED REFETCH — the helper called the "
+        f"fetch only {calls['n']} time(s). A log-only shortfall guard is "
+        f"insufficient: the too-narrow window must be recovered, not just "
+        f"reported."
+    )
+    assert _distinct_trading_days(result) >= _MIN_REQUIRED_TRADING_DAYS, (
+        "after the widened refetch the helper must return a bar set that "
+        f"clears the {_MIN_REQUIRED_TRADING_DAYS}-trading-day floor."
+    )
+
+
+def test_widen_refetch_is_bounded_and_hard_fails_on_persistent_shortfall() -> None:
+    """A fetch that stays SHORT across every widen attempt must end in a HARD
+    failure — never a silent proceed with an under-floor history.
+
+    The retry loop must be BOUNDED (it cannot widen forever) and, once the
+    bound is exhausted with the floor still unmet, must raise (or otherwise
+    hard-fail). A helper that returned the short set after exhausting retries
+    would feed an under-floor history to the autotuner — exactly the silent
+    degradation the consolidated ruling forbids.
+    """
+    helper = _resolve_widen_refetch_helper()
+
+    calls = {"n": 0}
+
+    def always_short_fetch(*args, **kwargs):
+        calls["n"] += 1
+        # Every window — including every widened one — comes back short.
+        return _make_daily_bars(_MIN_REQUIRED_TRADING_DAYS - 30)
+
+    # Persistent shortfall must surface as a hard failure, not a short return.
+    with pytest.raises(Exception) as excinfo:
+        helper(always_short_fetch)
+
+    # The retry loop must be BOUNDED — a finite number of fetch attempts.
+    assert calls["n"] >= 2, (
+        f"the helper made only {calls['n']} fetch attempt(s) on a persistent "
+        f"shortfall — it must WIDEN and retry at least once before failing."
+    )
+    assert calls["n"] <= 10, (
+        f"the helper made {calls['n']} fetch attempts on a persistent "
+        f"shortfall — the widen+refetch loop must be BOUNDED by a small named "
+        f"max-attempts constant, not retry unboundedly."
+    )
+    # The failure message should name the shortfall so it is diagnosable.
+    msg = str(excinfo.value).lower()
+    assert any(
+        token in msg for token in ("short", "floor", "trading day", "insufficient")
+    ), (
+        f"the hard-failure exception must name the trading-day shortfall so "
+        f"it is diagnosable; got: {excinfo.value!r}"
+    )
+
+
+def test_widen_refetch_loop_uses_named_constants_no_magic_numbers() -> None:
+    """The widen step and the max-attempts bound must be NAMED module
+    constants — not bare literals in the retry loop.
+
+    The retry loop's two control numbers (how far each widen pushes the start,
+    how many attempts before hard failure) are policy values; per the
+    consolidated ruling they must be named with source comments, not magic
+    numbers buried in the loop.
+
+    Static check: synthetic_history.py exposes module-level numeric constants
+    whose names indicate a widen step and a retry bound.
+    """
+    synth = pytest.importorskip(
+        "synthetic_history",
+        reason="synthetic_history import unavailable in this environment",
+    )
+    module_consts = {
+        name: getattr(synth, name)
+        for name in dir(synth)
+        if name.isupper() or (name.startswith("_") and any(c.isupper() for c in name))
+    }
+    numeric_consts = {
+        n: v for n, v in module_consts.items() if isinstance(v, (int, float))
+        and not isinstance(v, bool)
+    }
+
+    has_widen_const = any(
+        ("widen" in n.lower() or "refetch" in n.lower())
+        for n in numeric_consts
+    )
+    has_retry_bound_const = any(
+        (
+            "attempt" in n.lower()
+            or "retry" in n.lower()
+            or "retries" in n.lower()
+            or "max" in n.lower()
+            and ("widen" in n.lower() or "refetch" in n.lower() or "fetch" in n.lower())
+        )
+        for n in numeric_consts
+    )
+
+    assert has_widen_const and has_retry_bound_const, (
+        "the bounded widen+refetch loop must use NAMED module constants for "
+        "the widen step and the max-attempts bound — not bare literals. "
+        f"Found numeric module constants: {sorted(numeric_consts)}. Expected "
+        "a widen-step constant (name containing 'widen'/'refetch') and a "
+        "retry-bound constant (name containing 'attempt'/'retry'/'max...fetch')."
     )
