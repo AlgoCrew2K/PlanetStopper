@@ -2,10 +2,13 @@ import logging
 import os
 import json
 import time
+import datetime as _dt
 import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone
+from json import JSONDecodeError
+from zoneinfo import ZoneInfo
 from joblib import Parallel, delayed
 
 import math_engine
@@ -15,6 +18,137 @@ load_dotenv()
 ALPACA_KEY = os.getenv("ALPACA_KEY")
 ALPACA_SECRET = os.getenv("ALPACA_SECRET")
 ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://data.alpaca.markets/v2")
+
+# US Eastern is the canonical exchange zone for NYSE/NASDAQ. ZoneInfo handles
+# the EST<->EDT transition automatically, so the UTC->ET conversion is correct
+# year-round (a fixed UTC-4 offset is wrong for the ~5 months ET is on EST).
+_US_EASTERN = ZoneInfo("America/New_York")
+
+# --- Fetch-window sizing (trading-day counted, not calendar-day literal) ----
+# The autotuner slices the last 125 trading days of synthetic history for its
+# walk-forward replay. Pinned to the autotuner replay-window length.
+_WALK_FORWARD_TRADING_DAYS = 125
+# The Monte-Carlo gate on the FIRST replay day still needs MC_MIN_HISTORY_DAYS
+# eligible days of prior history, and each eligible day needs
+# MC_VOL_WINDOW_DAYS - 1 raw days of vol-window warmup behind it
+# (math_engine.run_monte_carlo eligible-pool guard). That warmup PRECEDES the
+# replay window, so it is additive to the 125-day slice.
+_MC_WARMUP_TRADING_DAYS = (
+    math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
+)
+# Holiday / margin buffer: a safety cushion of extra trading days so the
+# fetched window comfortably clears the floor even if the upstream bar feed
+# drops a trailing day or a half-day. 10 trading days ~ two market weeks.
+_FETCH_WINDOW_BUFFER_TRADING_DAYS = 10
+# Total trading days the fetch window must span, counting back from the end
+# date. busday_offset accounts for weekends + holidays exactly, so this count
+# is the genuine number of trading days delivered.
+_REQUIRED_FETCH_TRADING_DAYS = (
+    _WALK_FORWARD_TRADING_DAYS
+    + _MC_WARMUP_TRADING_DAYS
+    + _FETCH_WINDOW_BUFFER_TRADING_DAYS
+)
+
+# US equity market holidays — the NYSE published calendar. Used by
+# numpy.busday_offset to count trading days exactly (pandas_market_calendars
+# is not a dependency). Spans late-2024 through 2026 so any fetch window the
+# producer requests is fully covered; extend as the calendar advances.
+_US_MARKET_HOLIDAYS = np.array(
+    [
+        # 2024
+        "2024-01-01",  # New Year's Day
+        "2024-01-15",  # MLK Jr. Day
+        "2024-02-19",  # Washington's Birthday
+        "2024-03-29",  # Good Friday
+        "2024-05-27",  # Memorial Day
+        "2024-06-19",  # Juneteenth
+        "2024-07-04",  # Independence Day
+        "2024-09-02",  # Labor Day
+        "2024-11-28",  # Thanksgiving
+        "2024-12-25",  # Christmas
+        # 2025
+        "2025-01-01",  # New Year's Day
+        "2025-01-20",  # MLK Jr. Day
+        "2025-02-17",  # Washington's Birthday
+        "2025-04-18",  # Good Friday
+        "2025-05-26",  # Memorial Day
+        "2025-06-19",  # Juneteenth
+        "2025-07-04",  # Independence Day
+        "2025-09-01",  # Labor Day
+        "2025-11-27",  # Thanksgiving
+        "2025-12-25",  # Christmas
+        # 2026
+        "2026-01-01",  # New Year's Day
+        "2026-01-19",  # MLK Jr. Day
+        "2026-02-16",  # Washington's Birthday
+        "2026-04-03",  # Good Friday
+        "2026-05-25",  # Memorial Day
+        "2026-06-19",  # Juneteenth
+        "2026-07-03",  # Independence Day (observed)
+        "2026-09-07",  # Labor Day
+        "2026-11-26",  # Thanksgiving
+        "2026-12-25",  # Christmas
+    ],
+    dtype="datetime64[D]",
+)
+
+
+def utc_to_eastern(utc_dt):
+    """Convert a UTC datetime to the corresponding US Eastern datetime.
+
+    DST-aware: ZoneInfo("America/New_York") applies EST (UTC-5) or EDT (UTC-4)
+    according to the instant, so the resolved wall clock is correct year-round.
+    A naive input is assumed to be UTC. Returns a tz-aware ET datetime.
+    """
+    if utc_dt.tzinfo is None:
+        utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+    return utc_dt.astimezone(_US_EASTERN)
+
+
+def compute_fetch_window_start(end_date):
+    """Return the fetch-window start date for a given end date.
+
+    Counts back _REQUIRED_FETCH_TRADING_DAYS trading days from end_date using
+    numpy.busday_offset against the US market holiday calendar, so the
+    [start, end] span yields at least that many trading days regardless of how
+    many weekends or holidays it straddles. Replaces the old fixed
+    timedelta(days=180) literal, which under-delivered trading days once
+    holidays were counted (audit finding 8).
+
+    Accepts a date or datetime; returns a datetime.date.
+    """
+    if isinstance(end_date, _dt.datetime):
+        end_date = end_date.date()
+    end64 = np.datetime64(end_date, "D")
+    # roll="backward": if end_date is itself a holiday/weekend, start counting
+    # from the prior trading day. Offsetting by -(N-1) lands on the trading day
+    # that is N trading days back inclusive of the end date.
+    start64 = np.busday_offset(
+        end64,
+        -(_REQUIRED_FETCH_TRADING_DAYS - 1),
+        roll="backward",
+        holidays=_US_MARKET_HOLIDAYS,
+    )
+    return start64.astype(_dt.date)
+
+
+def load_cached_history(cache_file):
+    """Load a parsed synthetic-history cache file, or None on a corrupt/missing one.
+
+    A corrupt or unreadable cache is a recoverable miss — the caller regenerates
+    the history — so this never raises. On failure it logs a WARNING naming the
+    cache file and the exception detail, then returns None.
+    """
+    try:
+        with open(cache_file, "r") as f:
+            return json.load(f)
+    except (OSError, JSONDecodeError, ValueError, UnicodeDecodeError) as e:
+        logging.warning(
+            "synthetic_history: corrupt or unreadable cache file %s: %s",
+            cache_file,
+            e,
+        )
+        return None
 
 # Insufficient-MC handling: run_monte_carlo returns the out-of-band sentinel
 # None (math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL) when MC history is too
@@ -203,11 +337,10 @@ def generate_synthetic_history(bot_state, current_date_str):
     
     if os.path.exists(cache_file):
         print(f"  -> Loading cached synthetic history from {cache_file}...")
-        try:
-            with open(cache_file, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"  -> Cache load failed: {e}. Regenerating...")
+        cached = load_cached_history(cache_file)
+        if cached is not None:
+            return cached
+        print("  -> Cache load failed. Regenerating...")
 
     tickers_list = list(all_tickers)
     if "SPY" not in tickers_list:
@@ -216,24 +349,23 @@ def generate_synthetic_history(bot_state, current_date_str):
     # 2. Compute date ranges
     end_date = datetime.strptime(current_date_str, "%Y-%m-%d")
     
-    # Use UTC to prevent local timezone (e.g. Japan) from messing up the 'today' comparison
-    from datetime import timezone
+    # Use UTC to prevent local timezone (e.g. Japan) from messing up the 'today' comparison.
     now_utc = datetime.now(timezone.utc)
-    # If the requested end_date is today (or in the future) relative to US market hours, cap it to yesterday
-    # US Eastern is UTC-4 (EDT) or UTC-5 (EST). We can approximate by shifting UTC by -4 hours.
-    now_us = now_utc + timedelta(hours=-4)
+    # If the requested end_date is today (or in the future) relative to US market
+    # hours, cap it to yesterday. Resolve "today in US markets" with a DST-aware
+    # ET conversion so the day boundary is correct in both EST and EDT.
+    now_us = utc_to_eastern(now_utc)
     today_us = now_us.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-    
+
     if end_date >= today_us:
         end_date = today_us - timedelta(days=1)
-    
-    # 120 trading days is ~180 calendar days
-    start_daily = end_date - timedelta(days=180)
-    start_daily_str = start_daily.strftime("%Y-%m-%dT00:00:00Z")
-    
-    # 6 months lookback (125 trading days is ~180 calendar days)
-    start_1m = end_date - timedelta(days=180)
-    start_1m_str = start_1m.strftime("%Y-%m-%dT00:00:00Z")
+
+    # Size the fetch window from a trading-day count (walk-forward + MC warmup +
+    # buffer) so it delivers the required trading days even across holidays — a
+    # fixed calendar-day span under-delivers (audit finding 8).
+    window_start = compute_fetch_window_start(end_date)
+    start_daily_str = window_start.strftime("%Y-%m-%dT00:00:00Z")
+    start_1m_str = start_daily_str
     end_date_str_utc = end_date.strftime("%Y-%m-%dT23:59:59Z")
     
     # 3. Fetch Data
@@ -331,7 +463,13 @@ def generate_synthetic_history(bot_state, current_date_str):
     try:
         with open(cache_file, "w") as f:
             json.dump(history_125d, f)
-    except Exception as e:
-        print(f"  -> Failed to write cache file: {e}")
+    except (OSError, TypeError, ValueError, UnicodeError) as e:
+        # A failed cache write is non-fatal — the history was still generated.
+        # Log a WARNING naming the cache file so the operator sees the miss.
+        logging.warning(
+            "synthetic_history: failed to write cache file %s: %s",
+            cache_file,
+            e,
+        )
                 
     return history_125d
