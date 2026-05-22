@@ -1003,11 +1003,11 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # gate. If no trial clears the gate the trial set is statistically
         # indistinguishable from noise and the AI proposal is rejected — the
         # cascade then falls through to fallback/default (overfitting protection).
-        # The stored `deflated_sharpe` value is the winner's t-statistic — a
+        # The stored selection_tstat value is the winner's t-statistic — a
         # higher-is-better significance scalar that keeps the persistence/Discord
         # surface's orientation honest; the adjusted p-value is the internal
         # selection key, surfaced only in logs.
-        deflated_sharpe_value: float | None = None
+        selection_tstat_value: float | None = None
         haircut_rejected_proposal = False
         try:
             completed_trials = [t for t in study.trials if t.value is not None]
@@ -1026,7 +1026,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             if winner_trial is not None:
                 best_params = winner_trial.params
                 best_alpha_train = winner_trial.value
-                deflated_sharpe_value = winner_tstat
+                selection_tstat_value = winner_tstat
             else:
                 # No trial cleared the FDR gate — reject the AI proposal.
                 haircut_rejected_proposal = True
@@ -1058,7 +1058,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
                 f"Rejecting AI proposal; cascading to Fallback/Default."
             )
         if ai_proposal_invalid:
-            deflated_sharpe_value = None
+            selection_tstat_value = None
             naive_sharpe_value = None
         # ---------------------------------------------
 
@@ -1138,8 +1138,8 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
 
         elapsed = time.time() - start_time
         haircut_log = (
-            f" | Haircut t-stat: {deflated_sharpe_value:.4f} (naive Sortino: {naive_sharpe_value:.4f})"
-            if deflated_sharpe_value is not None and naive_sharpe_value is not None
+            f" | Haircut t-stat: {selection_tstat_value:.4f} (naive Sortino: {naive_sharpe_value:.4f})"
+            if selection_tstat_value is not None and naive_sharpe_value is not None
             else " | Haircut: N/A"
         )
         print(f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count}){haircut_log}")
@@ -1150,7 +1150,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # retrieve them via get_latest_autotune_run().  Called AFTER baseline_decision
         # is finalized and save_symphony_strategy has written the chosen params,
         # so the row captures the decision that was actually applied.
-        # deflated_sharpe carries the Harvey & Liu haircut winner's t-statistic (a
+        # selection_tstat carries the Harvey & Liu haircut winner's t-statistic (a
         # higher-is-better significance scalar); naive_sharpe is the raw Optuna best.
         # O6: validation_sharpe (selection metric) and frozen_eval_sharpe (honest post-selection
         # metric, consumed once from the withheld final 20% fold).
@@ -1162,7 +1162,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             baseline_decision=baseline_decision,
             fallback_oos_alpha=fallback_oos_alpha,
             default_oos_alpha=default_oos_alpha,
-            deflated_sharpe=deflated_sharpe_value,
+            selection_tstat=selection_tstat_value,
             naive_sharpe=naive_sharpe_value,
             validation_sharpe=validation_sharpe_value,
             frozen_eval_sharpe=frozen_eval_sharpe_value,
@@ -1273,10 +1273,10 @@ def run_calibration_sweep(
         # --- HARVEY & LIU SELECTION HAIRCUT ---
         # Same multiple-testing correction as run_autotuner: re-rank the completed
         # trials by Benjamini-Hochberg-adjusted p-value and select the BHY winner
-        # if it clears the FDR gate. deflated_sharpe carries the winner's
+        # if it clears the FDR gate. selection_tstat carries the winner's
         # t-statistic (higher-is-better); if no trial clears the gate the sweep
         # reports the naive Optuna winner with no haircut statistic.
-        deflated_sharpe_value: float | None = None
+        selection_tstat_value: float | None = None
         completed_trials = [t for t in study.trials if t.value is not None]
 
         # filter_sortino_sentinels excludes math_engine._SORTINO_SENTINEL (1e6)
@@ -1291,7 +1291,7 @@ def run_calibration_sweep(
             if winner_trial is not None:
                 best_params = winner_trial.params
                 naive_sharpe_value = winner_trial.value
-                deflated_sharpe_value = winner_tstat
+                selection_tstat_value = winner_tstat
 
         # Validation-fold Sortino of best trial params
         best_p = current_params.copy()
@@ -1332,7 +1332,7 @@ def run_calibration_sweep(
                 "expected_trigger_freq_change": expected_trigger_freq_change,
                 "frozen_eval_alpha": frozen_eval_alpha,
                 "naive_sharpe": naive_sharpe_value,
-                "deflated_sharpe": deflated_sharpe_value,
+                "selection_tstat": selection_tstat_value,
                 "sortino": sortino_value,
                 "n_trials": n_trials,
                 "study_name": study_name,

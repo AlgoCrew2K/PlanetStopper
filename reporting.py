@@ -382,16 +382,16 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
             for sym_name, changes in optimization_results.items():
                 sym_changes_text = ""
                 baseline_text = ""
-                dsr_data = None
+                selection_stats = None
                 if changes:
                     if "_baseline_chosen" in changes:
                         baseline_text = f"**Decision:** {changes['_baseline_chosen']}\n\n"
 
-                    if "_dsr_data" in changes:
-                        dsr_data = changes["_dsr_data"]
+                    if "_selection_stats" in changes:
+                        selection_stats = changes["_selection_stats"]
 
                     for var, vals in changes.items():
-                        if var in ("_baseline_chosen", "_dsr_data"):
+                        if var in ("_baseline_chosen", "_selection_stats"):
                             continue
                         # Delta-Only Filter: Only add to string if the value actually changed
                         if vals['old'] != vals['new']:
@@ -400,16 +400,18 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                 if not sym_changes_text:
                     sym_changes_text = "✅ Optimal parameters retained."
 
-                if dsr_data is not None:
+                if selection_stats is not None:
                     def _fmt(v):
                         return f"{v:.4f}" if v is not None else "N/A"
-                    dsr_line = (
-                        f"\nSharpe (naive / DSR / frozen-eval): "
-                        f"{_fmt(dsr_data.get('naive_sharpe'))} / "
-                        f"{_fmt(dsr_data.get('deflated_sharpe'))} / "
-                        f"{_fmt(dsr_data.get('frozen_eval_sharpe'))}"
+                    # naive = raw Optuna best Sortino; selection t-stat = Harvey & Liu
+                    # haircut winner's Sortino·sqrt(T); frozen-eval = held-out Sortino.
+                    selection_line = (
+                        f"\nSortino (naive / selection t-stat / frozen-eval): "
+                        f"{_fmt(selection_stats.get('naive_sharpe'))} / "
+                        f"{_fmt(selection_stats.get('selection_tstat'))} / "
+                        f"{_fmt(selection_stats.get('frozen_eval_sharpe'))}"
                     )
-                    sym_changes_text += dsr_line
+                    sym_changes_text += selection_line
 
                 embeds.append({
                     "title": f"⚙️ {sym_name.title()} Optimization",

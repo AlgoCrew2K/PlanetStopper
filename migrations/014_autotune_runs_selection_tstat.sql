@@ -1,0 +1,27 @@
+-- Migration 014: Rename the autotune_runs selection-statistic column to selection_tstat
+-- Trigger: Decision D3 (Cluster 4) — the Bailey & López de Prado Deflated Sharpe Ratio
+--          is removed and replaced by a Harvey & Liu 2015 selection haircut. The column
+--          previously named `deflated_sharpe` now carries the haircut winner's
+--          t-statistic (Sortino * sqrt(T)); the old name is a naming lie.
+-- Risk: additive-only; one NULLable REAL column with DEFAULT NULL; no existing column
+--       is dropped or modified (the legacy `deflated_sharpe` column, if present on an
+--       older DB, is simply left unread — a destructive DROP COLUMN is never issued).
+-- Idempotent: ALTER TABLE ADD COLUMN is safe if the column does not already exist;
+--             wrapped in the schema_migrations tracker so run_migrations() skips on re-run.
+--
+-- Target table: autotune_runs in alphabot_state.db
+--
+-- selection_tstat: the Harvey & Liu 2015 selection haircut's winning-trial t-statistic
+--                  (Sortino * sqrt(T)) — a higher-is-better significance scalar. NULL when
+--                  the AI branch was not used (fallback / default cascade), or when no trial
+--                  cleared the false-discovery-rate gate.
+--
+-- Existing rows are preserved; the new column defaults to NULL per the additive-first
+-- migration pattern (project CLAUDE.md: additive-first, NULLable + DEFAULT, never
+-- destructive in one step).
+--
+-- Apply via:
+--   sqlite3 alphabot_state.db < migrations/014_autotune_runs_selection_tstat.sql
+--   (migrations 004 through 013 must be applied first)
+
+ALTER TABLE autotune_runs ADD COLUMN selection_tstat REAL DEFAULT NULL;

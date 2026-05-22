@@ -102,7 +102,7 @@ def init_db():
             baseline_decision   TEXT    DEFAULT NULL,
             fallback_oos_alpha  REAL    DEFAULT NULL,
             default_oos_alpha   REAL    DEFAULT NULL,
-            deflated_sharpe     REAL    DEFAULT NULL,
+            selection_tstat     REAL    DEFAULT NULL,
             naive_sharpe        REAL    DEFAULT NULL,
             validation_sharpe   REAL    DEFAULT NULL,
             frozen_eval_sharpe  REAL    DEFAULT NULL
@@ -373,7 +373,7 @@ def save_autotune_run(
     baseline_decision,
     fallback_oos_alpha,
     default_oos_alpha,
-    deflated_sharpe=None,
+    selection_tstat=None,
     naive_sharpe=None,
     validation_sharpe=None,
     frozen_eval_sharpe=None,
@@ -384,10 +384,13 @@ def save_autotune_run(
     is finalized.  All metric columns are NULLable so partial data never fails an
     INSERT (though callers should supply all values).
 
-    O2 additions:
-      deflated_sharpe: DSR value for the AI-branch best trial (Bailey & López de Prado 2014).
-                       None when the fallback or default cascade was used instead.
-      naive_sharpe:    Raw Optuna best trial Sortino before DSR correction. None for non-AI rows.
+    Selection-metric columns:
+      selection_tstat: the Harvey & Liu 2015 selection haircut's winning-trial
+                       t-statistic (Sortino·sqrt(T)) — a higher-is-better
+                       significance scalar. None when the fallback or default
+                       cascade was used instead of the AI branch.
+      naive_sharpe:    Raw Optuna best trial Sortino before the selection haircut.
+                       None for non-AI rows.
 
     O6 additions:
       validation_sharpe:  Sortino on the validation fold (20% of history); the metric used for
@@ -402,7 +405,7 @@ def save_autotune_run(
         INSERT INTO autotune_runs
             (run_timestamp, symphony_id, oos_alpha, train_alpha,
              baseline_decision, fallback_oos_alpha, default_oos_alpha,
-             deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe)
+             selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
@@ -413,7 +416,7 @@ def save_autotune_run(
             baseline_decision,
             fallback_oos_alpha,
             default_oos_alpha,
-            deflated_sharpe,
+            selection_tstat,
             naive_sharpe,
             validation_sharpe,
             frozen_eval_sharpe,
@@ -433,7 +436,7 @@ def _autotune_run_row_to_dict(row) -> dict:
         "baseline_decision": row[4],
         "fallback_oos_alpha": _finite_or_none(row[5]),
         "default_oos_alpha": _finite_or_none(row[6]),
-        "deflated_sharpe": _finite_or_none(row[7]),
+        "selection_tstat": _finite_or_none(row[7]),
         "naive_sharpe": _finite_or_none(row[8]),
         "validation_sharpe": _finite_or_none(row[9]),
         "frozen_eval_sharpe": _finite_or_none(row[10]),
@@ -446,7 +449,7 @@ def _autotune_run_row_to_dict(row) -> dict:
 _AUTOTUNE_RUNS_SELECT = """
     SELECT run_timestamp, symphony_id, oos_alpha, train_alpha,
            baseline_decision, fallback_oos_alpha, default_oos_alpha,
-           deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
+           selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
            math_mode, account_id, sortino_sentinel_pct
     FROM autotune_runs
 """
@@ -494,7 +497,7 @@ def record_autotune_run(
     baseline_decision=None,
     fallback_oos_alpha=None,
     default_oos_alpha=None,
-    deflated_sharpe=None,
+    selection_tstat=None,
     naive_sharpe=None,
     validation_sharpe=None,
     frozen_eval_sharpe=None,
@@ -513,7 +516,7 @@ def record_autotune_run(
         INSERT INTO autotune_runs
             (run_timestamp, symphony_id, oos_alpha, train_alpha,
              baseline_decision, fallback_oos_alpha, default_oos_alpha,
-             deflated_sharpe, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
+             selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
              math_mode, account_id, sortino_sentinel_pct)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -525,7 +528,7 @@ def record_autotune_run(
             baseline_decision,
             fallback_oos_alpha,
             default_oos_alpha,
-            deflated_sharpe,
+            selection_tstat,
             naive_sharpe,
             validation_sharpe,
             frozen_eval_sharpe,
@@ -541,7 +544,7 @@ def record_autotune_run(
 def get_all_autotune_runs(limit: int = 50) -> list[dict]:
     """Return the most-recent autotune_runs rows across all symphonies.
 
-    Used by the /api/autotune-runs dashboard route to surface DSR metrics.
+    Used by the /api/autotune-runs dashboard route to surface selection metrics.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -725,6 +728,7 @@ _MIGRATION_FILES = [
     "011_exit_triggers_port.sql",
     "012_autotune_runs_portmode.sql",
     "013_fleet_alert_tripped_symphonies.sql",
+    "014_autotune_runs_selection_tstat.sql",
 ]
 
 

@@ -432,8 +432,9 @@
                     var frozenVerdict = r.frozen_eval_verdict || '';
                     var frozenColor = frozenEvalColor(frozenVerdict);
                     var symLabel = escHtml(r.symphony_name || r.symphony_id || '');
-                    // V-23: timestamp muted, Sharpe/DSR bold mono.
-                    var dsrVal = r.dsr !== undefined ? r.dsr : r.deflated_sharpe;
+                    // V-23: timestamp muted, Sortino / selection t-stat bold mono.
+                    // selection_tstat is the Harvey & Liu haircut winner's t-statistic.
+                    var selTstat = r.selection_tstat;
                     return (
                         '<div class="autotune-run-card" data-testid="autotune-run-row">' +
                         '<div class="autotune-run-top">' +
@@ -443,8 +444,8 @@
                         '</div>' +
                         '<div class="autotune-run-meta">' +
                         '<span style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(r.run_timestamp || '') + '</span>' +
-                        '<span>Sharpe <span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span>' +
-                        ' · DSR <span class="mono-bold">' + escHtml(fmtSharpe(dsrVal)) + '</span>' +
+                        '<span>Sortino <span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span>' +
+                        ' · Sel t-stat <span class="mono-bold">' + escHtml(fmtSharpe(selTstat)) + '</span>' +
                         '</span>' +
                         '</div>' +
                         // V-23: FROZEN-EVAL as colored pill.
