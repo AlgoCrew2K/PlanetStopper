@@ -135,11 +135,12 @@ def _compute_max_drawdown_from_series(port_equity_series: list[dict]) -> float |
 
     Returns None when the series is degenerate:
       - fewer than 2 points (no peak-to-trough excursion is possible), or
-      - any running peak used as a denominator is non-positive (a zero or
-        negative peak makes the drawdown ratio undefined / sign-inverted).
-        Mirrors the sibling _compute_simple_return_from_series initial==0.0
-        guard. A port-equity series is normally strictly positive; a
-        non-positive peak is a degenerate snapshot, not a tradeable baseline.
+      - the first value is non-positive (a zero or negative starting equity
+        makes every drawdown ratio undefined / sign-inverted, since the peak
+        starts there and only ratchets up). Mirrors the sibling
+        _compute_simple_return_from_series initial==0.0 guard. A port-equity
+        series is normally strictly positive; a non-positive first value is a
+        degenerate snapshot, not a tradeable baseline.
 
     Pospisil-Vecer 2010: drawdown at time t is (S_t - sup_{s<=t} S_s) / sup_{s<=t} S_s.
     Maximum drawdown is the infimum of this over all t.
@@ -160,11 +161,8 @@ def _compute_max_drawdown_from_series(port_equity_series: list[dict]) -> float |
         if v > peak:
             peak = v
         else:
-            # A non-positive peak makes (v - peak) / peak undefined (zero
-            # denominator) or sign-inverted (negative denominator). Treat the
-            # whole series as degenerate rather than raising or mis-signing.
-            if peak <= 0.0:
-                return None
+            # peak is strictly positive here: the first-value guard above
+            # rejected a non-positive values[0], and peak only ratchets up.
             dd = (v - peak) / peak
             if dd < max_dd:
                 max_dd = dd

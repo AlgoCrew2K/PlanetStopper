@@ -486,13 +486,34 @@ def _load_latest_shadow_row_for_analytics(
         return None
 
 
+# AC-3: sentinel cache-key component for a legacy shadow_history table that has
+# no position_epoch column at all (pre-migration DB shape). Distinct from a real
+# epoch string and from None (which is a legitimate NULL epoch on a migrated DB).
+_LEGACY_NO_EPOCH_COLUMN = "__legacy_no_epoch_column__"
+
+
 def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[float] | None:
     """Return ordered list of per-day EOD shadow_return values for chain-link CR.
 
     Day-row selection: last row per trading_day by ts_utc (AC-M1F.3.2).
     Returns None when fewer than 2 distinct trading days exist.
-    Result is cached per (symphony_id, db_file) in database._shadow_cr_cache;
-    invalidated on new row write (record_shadow_observation).
+
+    AC-3: the query is scoped to the CURRENT position epoch. A Composer
+    symphony_id is long-lived and AlphaBot opens/exits/re-enters positions under
+    it; an epoch-blind query would chain-link a prior position's returns into the
+    new position. The current epoch is self-selected as the position_epoch of the
+    latest row by ts_utc, and rows are filtered to it with `IS` so legacy
+    NULL-epoch rows (pre-migration) all match and form one legacy segment.
+
+    Epoch boundary granularity = session: an intraday same-symphony re-entry
+    shares one epoch (the engine stamps the epoch at the wipe_transient_state /
+    fresh-entry boundary and does not record intraday position rotation). This is
+    a deliberate, documented limitation — deterministic, not a heuristic.
+
+    Result is cached per (symphony_id, today, db_file, resolved_epoch) in
+    database._shadow_cr_cache; the resolved epoch is part of the key so a
+    trajectory cached for an earlier epoch is never served for a later one.
+    Invalidated on new row write (record_shadow_observation).
     """
     import sqlite3
     from datetime import datetime as _dt
@@ -500,23 +521,62 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
     import database as _db
 
     today = _dt.now(UTC).strftime("%Y-%m-%d")
-    cache_key = (symphony_id, today, db_file)
-    cached = _db._shadow_cr_cache.get(cache_key)
-    if cached is not None:
-        return cached  # type: ignore[return-value]
 
     try:
         conn = sqlite3.connect(db_file, timeout=10.0)
-        rows = conn.execute(
-            "SELECT trading_day, shadow_return "
-            "FROM shadow_history "
-            "WHERE symphony_id = ? "
-            "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
-            "                WHERE s2.symphony_id = shadow_history.symphony_id "
-            "                  AND s2.trading_day = shadow_history.trading_day) "
-            "ORDER BY trading_day ASC",
-            (symphony_id,),
-        ).fetchall()
+        # Resolve the current epoch: the position_epoch of the latest row by
+        # ts_utc. A legacy table has no position_epoch column -> OperationalError;
+        # treat that as the single legacy segment.
+        try:
+            epoch_row = conn.execute(
+                "SELECT position_epoch FROM shadow_history "
+                "WHERE symphony_id = ? ORDER BY ts_utc DESC LIMIT 1",
+                (symphony_id,),
+            ).fetchone()
+            has_epoch_column = True
+            current_epoch = epoch_row[0] if epoch_row is not None else None
+        except sqlite3.OperationalError:
+            has_epoch_column = False
+            current_epoch = None
+
+        cache_key = (
+            symphony_id,
+            today,
+            db_file,
+            current_epoch if has_epoch_column else _LEGACY_NO_EPOCH_COLUMN,
+        )
+        cached = _db._shadow_cr_cache.get(cache_key)
+        if cached is not None:
+            conn.close()
+            return cached  # type: ignore[return-value]
+
+        if has_epoch_column:
+            # `IS` (not `=`) so a NULL current epoch matches NULL legacy rows.
+            rows = conn.execute(
+                "SELECT trading_day, shadow_return "
+                "FROM shadow_history "
+                "WHERE symphony_id = ? "
+                "  AND position_epoch IS ( "
+                "        SELECT position_epoch FROM shadow_history s3 "
+                "        WHERE s3.symphony_id = ? "
+                "        ORDER BY s3.ts_utc DESC LIMIT 1) "
+                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                "                  AND s2.trading_day = shadow_history.trading_day) "
+                "ORDER BY trading_day ASC",
+                (symphony_id, symphony_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT trading_day, shadow_return "
+                "FROM shadow_history "
+                "WHERE symphony_id = ? "
+                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                "                  AND s2.trading_day = shadow_history.trading_day) "
+                "ORDER BY trading_day ASC",
+                (symphony_id,),
+            ).fetchall()
         conn.close()
     except Exception:
         return None

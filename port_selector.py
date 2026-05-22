@@ -68,7 +68,11 @@ def _compute_l1_score(
 
 
 def _tie_epsilon(score_a: float, score_b: float) -> float:
-    """1% of the smaller (non-zero) dollar amount; falls back to absolute 0.01 if both zero."""
+    """1% of the smaller (non-zero) L1 deviation score; falls back to absolute 0.01 if both zero.
+
+    The inputs are L1 deviation scores from _compute_l1_score (a sum of
+    per-ticker under/over-shoot deviations) — not a portfolio cash value.
+    """
     smaller = min(abs(score_a), abs(score_b))
     if smaller == 0.0:
         return 0.01

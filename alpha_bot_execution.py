@@ -724,6 +724,9 @@ def main():
                             "vwap_bleed_ticks": 0,
                             "breakeven_locked": False,
                             "hwm_hold_ticks": 0,
+                            # AC-3: first-ever position for this symphony gets a
+                            # fresh epoch so its shadow_history rows are scoped.
+                            "position_epoch": database.mint_position_epoch(),
                         }
 
                     bot_state[s_id]["current_return"] = current_return
@@ -793,6 +796,8 @@ def main():
                         shadow_return=shadow_return,
                         is_post_trigger=int(is_post_trigger),
                         trigger_id=trigger_id,
+                        # AC-3: scope this row to the current position epoch.
+                        position_epoch=bot_state[s_id].get("position_epoch"),
                     )
 
             # Only persist here on pre-gate cycles; the action phase terminal save_state
@@ -1084,6 +1089,9 @@ def main():
                         "vwap_bleed_ticks": 0,
                         "breakeven_locked": False,
                         "hwm_hold_ticks": 0,
+                        # AC-3: first-ever position for this symphony gets a
+                        # fresh epoch so its shadow_history rows are scoped.
+                        "position_epoch": database.mint_position_epoch(),
                     }
 
                 prev_armed = bot_state[symphony_id].get("armed", False)

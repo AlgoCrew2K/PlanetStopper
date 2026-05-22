@@ -7,6 +7,7 @@ import math
 import os
 import sqlite3
 import time
+import uuid
 from datetime import UTC, datetime
 
 
@@ -193,12 +194,26 @@ def save_state(state_dict):
 _WIPE_RESERVED_KEYS = {"date", "last_execution_mode", "last_market_close_snapshot"}
 
 
+def mint_position_epoch() -> str:
+    """Mint a fresh opaque position-epoch identifier (AC-3).
+
+    Stamped on bot_state at every position-lifecycle boundary so shadow_history
+    rows written under one position carry a stable epoch. The trajectory query
+    self-selects the CURRENT epoch by the latest row's ts_utc, so the value need
+    not be sortable — a uuid4 hex string is sufficient and collision-free.
+    """
+    return uuid.uuid4().hex
+
+
 def wipe_transient_state(state_dict):
     """Wipes transient state keys for all symphonies to prevent bleeding across sessions."""
     for s_id, s_data in state_dict.items():
         if s_id in _WIPE_RESERVED_KEYS:
             continue
         if isinstance(s_data, dict):
+            # AC-3: capture the triggered state BEFORE the wipe clears it — the
+            # epoch re-stamp below is conditional on it.
+            was_triggered = bool(s_data.get("triggered"))
             s_data["high_water_mark"] = -999.0
             s_data["shadow_hwm"] = -999.0
             s_data["prev_return"] = (
@@ -212,6 +227,14 @@ def wipe_transient_state(state_dict):
             s_data["stop_trigger"] = (
                 None  # AC-E2.5: new position must not inherit prior position's stop floor
             )
+            # AC-3: stamp the position epoch CONDITIONALLY. A wipe on a TRIGGERED
+            # position is a genuine new-position boundary -> re-stamp. A wipe on
+            # an untriggered still-open position is NOT a boundary -> keep the
+            # existing epoch (only stamp if absent, i.e. the first stamp). An
+            # unconditional re-stamp would fragment a multi-day position into one
+            # epoch per day and truncate its trajectory query.
+            if was_triggered or "position_epoch" not in s_data:
+                s_data["position_epoch"] = mint_position_epoch()
             s_data["below_stop_count"] = 0
             s_data["above_tp_count"] = 0
             s_data["vwap_ticks"] = 0
@@ -729,6 +752,7 @@ _MIGRATION_FILES = [
     "012_autotune_runs_portmode.sql",
     "013_fleet_alert_tripped_symphonies.sql",
     "014_autotune_runs_selection_tstat.sql",
+    "015_shadow_history_position_epoch.sql",
 ]
 
 
@@ -1156,6 +1180,7 @@ def record_shadow_observation(
     shadow_return: float,
     is_post_trigger: int,
     trigger_id: "int | None",
+    position_epoch: "str | None" = None,
 ) -> None:
     """Write one shadow-equity telemetry row (M1F).
 
@@ -1163,6 +1188,8 @@ def record_shadow_observation(
     Failure is logged at ERROR and swallowed; the cycle must never fail on telemetry.
     AC-M1F.1.2, PA-M1F-10: both current_return and shadow_return are required (NOT NULL,
     no DEFAULT) — caller must supply real values.
+    AC-3: position_epoch scopes the row to one position-open; the trajectory query
+    self-selects the current epoch. None on a legacy/unstamped row.
     """
     # Invalidate all cache entries for this symphony (keys now include db_file as 3rd element).
     stale = [k for k in _shadow_cr_cache if k[0] == symphony_id]
@@ -1173,8 +1200,9 @@ def record_shadow_observation(
         conn.execute(
             "INSERT INTO shadow_history "
             "(ts_utc, ts_et, trading_day, symphony_id, account_id, cycle_id, "
-            " current_return, shadow_return, is_post_trigger, trigger_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " current_return, shadow_return, is_post_trigger, trigger_id, "
+            " position_epoch) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ts_utc,
                 ts_et,
@@ -1186,6 +1214,7 @@ def record_shadow_observation(
                 shadow_return,
                 is_post_trigger,
                 trigger_id,
+                position_epoch,
             ),
         )
         conn.commit()

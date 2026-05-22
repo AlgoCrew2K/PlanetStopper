@@ -1,0 +1,34 @@
+-- Migration 015: Add a position_epoch column to shadow_history.
+-- Trigger: Cluster 6 AC-3 (team-lead D7 + risk-engine-specialist 2026-05-22) —
+--          _get_shadow_cumulative_trajectory selects every shadow_history row for
+--          a symphony_id with no position-lifecycle boundary. A Composer
+--          symphony_id is long-lived; AlphaBot opens/exits/re-enters positions
+--          under it across the 180-day retention window, so the trajectory query
+--          chain-links a prior position's returns into the new position's
+--          dry_run CR/MDD. The position_epoch column scopes each row to one
+--          position so the trajectory query can self-select the current epoch.
+-- Risk: additive-only; one NULLable TEXT column with no DEFAULT-backfill (a
+--       destructive step is never issued). Pre-existing rows get NULL; all-NULL
+--       rows for a symphony form a single legacy segment by design.
+-- Idempotent: ALTER TABLE ADD COLUMN is safe if the column does not already
+--             exist; wrapped in the schema_migrations tracker so run_migrations()
+--             skips on re-run. The "duplicate column name" branch in
+--             run_migrations() handles a fresh DB whose CREATE already has it.
+--
+-- Target table: shadow_history in alphabot_state.db
+--
+-- position_epoch: an opaque per-position-open identifier stamped by the engine at
+--                 the wipe_transient_state position-lifecycle boundary and at the
+--                 fresh-entry branches. NULL on pre-migration rows (legacy
+--                 segment). The trajectory query finds the CURRENT epoch by the
+--                 latest row's ts_utc, so the value need not be sortable.
+--
+-- Existing rows are preserved; the new column is NULL per the additive-first
+-- migration pattern (project CLAUDE.md: additive-first, NULLable, never
+-- destructive in one step).
+--
+-- Apply via:
+--   sqlite3 alphabot_state.db < migrations/015_shadow_history_position_epoch.sql
+--   (migrations 004 through 014 must be applied first)
+
+ALTER TABLE shadow_history ADD COLUMN position_epoch TEXT;

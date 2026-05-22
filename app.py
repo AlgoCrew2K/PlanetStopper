@@ -564,9 +564,16 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # curve) when available. The value-weighted average of per-symphony MDDs is
         # mathematically wrong — portfolio drawdowns can exceed any constituent MDD
         # when declines co-occur. Fall back to value-weighted only when cache is cold.
+        #
+        # D8 sign convention: the operator-facing portfolio MDD is canonically a
+        # POSITIVE magnitude. The warm-cache portfolio_mdd is written from
+        # compute_quantstats_metrics, which keeps the internal NEGATIVE convention,
+        # so abs()-convert it here at the consumer boundary. The cold-cache path
+        # flows through analytics.get_portfolio_max_drawdown, already positive
+        # magnitude — both branches must agree on sign regardless of cache warmth.
         if "portfolio_mdd" in _account_totals_cache:
             max_drawdown: dict = {
-                "if_held": _account_totals_cache["portfolio_mdd"],
+                "if_held": abs(_account_totals_cache["portfolio_mdd"]),
                 "dry_run": analytics.get_portfolio_max_drawdown(
                     symphonies_list, bot_state, trading_day=trading_day
                 ).get("dry_run"),
