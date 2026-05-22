@@ -1,0 +1,56 @@
+{
+  "_provenance": "Schema-derived from port_aggregator._compute_max_drawdown_from_series docstring (Pospisil-Vecer 2010 drawdown definition: dd_t = (S_t - sup_{s<=t} S_s) / sup_{s<=t} S_s) and the sibling _compute_simple_return_from_series zero-initial guard policy (port_aggregator.py:161 returns None on initial==0.0). Each degenerate case below has its expected output INDEPENDENTLY derived from the drawdown definition + the documented None-on-degenerate policy, NOT captured from the producer. The producer currently RAISES ZeroDivisionError on the zero-peak cases and SILENTLY MIS-SIGNS the negative-peak case — these fixtures pin the corrected behavior.",
+  "description": "AC-2 / AC-4 golden fixtures for max-drawdown computation degenerate inputs: empty series, single point, zero-valued first point, zero-valued interior peak, negative-valued series, and well-formed control cases. Layer: portfolio drawdown math.",
+  "function": "port_aggregator._compute_max_drawdown_from_series",
+  "convention": "Negative-float drawdown convention: a 3% drawdown is -0.03; a no-drawdown series is 0.0; an undefined/degenerate series is None. Consistent with port_aggregator.py:146 docstring and compute_quantstats_metrics max_drawdown<=0 convention.",
+  "cases": {
+    "empty_series": {
+      "input": [],
+      "expected": null,
+      "derivation": "Fewer than 2 points -> drawdown undefined -> None (existing len<2 guard)."
+    },
+    "single_point": {
+      "input": [{"t": 0, "port_value": 100.0}],
+      "expected": null,
+      "derivation": "One point cannot have a peak-to-trough excursion -> None (existing len<2 guard)."
+    },
+    "zero_first_point_then_drop": {
+      "input": [{"t": 0, "port_value": 0.0}, {"t": 1, "port_value": -50.0}],
+      "expected": null,
+      "derivation": "peak = values[0] = 0.0; the drawdown ratio (v-peak)/peak has a zero denominator and is undefined. Policy: mirror the sibling _compute_simple_return_from_series initial==0.0 guard -> return None. The producer currently raises ZeroDivisionError here.",
+      "currently_raises": "ZeroDivisionError"
+    },
+    "zero_first_point_then_rise": {
+      "input": [{"t": 0, "port_value": 0.0}, {"t": 1, "port_value": 50.0}, {"t": 2, "port_value": 30.0}],
+      "expected": null,
+      "derivation": "First value 0.0 makes the initial peak denominator undefined. Even though a later real drawdown exists (50 -> 30), the series anchored at a zero peak cannot yield a well-defined ratio without ambiguity; the documented policy is None on a zero-anchored series (consistent with _compute_simple_return_from_series). A zero starting equity is a degenerate snapshot, not a tradeable baseline.",
+      "currently_raises": "ZeroDivisionError"
+    },
+    "zero_interior_peak_then_drop": {
+      "input": [{"t": 0, "port_value": -10.0}, {"t": 1, "port_value": 0.0}, {"t": 2, "port_value": -5.0}],
+      "expected": null,
+      "derivation": "The running peak becomes 0.0 at t=1; the subsequent point -5.0 divides (v-peak)/peak by a zero denominator. The zero-peak guard must cover the peak-UPDATE branch, not only values[0]. The producer currently raises ZeroDivisionError here too.",
+      "currently_raises": "ZeroDivisionError"
+    },
+    "negative_series_monotonic_decline": {
+      "input": [{"t": 0, "port_value": -100.0}, {"t": 1, "port_value": -200.0}],
+      "expected": -0.5,
+      "derivation": "peak = -100.0, trough = -200.0. The drawdown ratio with a negative peak is sign-inverted under the naive (v-peak)/peak formula: (-200 - -100)/-100 = -100/-100 = +1.0, which is positive and never updates max_dd, so the producer SILENTLY returns 0.0 (a no-drawdown lie). The correct magnitude of decline from -100 to -200 is a 100% worse equity position; the documented negative convention with an absolute denominator gives (v-peak)/abs(peak) = (-200 - -100)/100 = -1.0. NOTE: a port equity series is normally strictly positive; this case exists to prove the function does not silently mis-sign if a negative snapshot ever reaches it. If the GREEN fix instead chooses to return None for any non-positive peak (treating negative equity as degenerate, consistent with the zero-peak None policy), set expected to null and document that ruling. The RED test accepts EITHER a correct-magnitude negative drawdown OR None — it must NOT accept the silent 0.0.",
+      "currently_returns": 0.0,
+      "accept_either": [-1.0, null],
+      "reject": 0.0
+    },
+    "well_formed_drawdown_control": {
+      "input": [{"t": 0, "port_value": 100.0}, {"t": 1, "port_value": 95.0}, {"t": 2, "port_value": 110.0}, {"t": 3, "port_value": 88.0}],
+      "expected": -0.2,
+      "derivation": "Two excursions: peak 100 -> trough 95 gives (95-100)/100 = -0.05; peak 110 -> trough 88 gives (88-110)/110 = -0.2. Max drawdown is the most-negative = -0.2. Control case confirming the guard does not regress well-formed input.",
+      "tolerance_rel": 1e-9
+    },
+    "no_drawdown_monotonic_rise": {
+      "input": [{"t": 0, "port_value": 100.0}, {"t": 1, "port_value": 110.0}, {"t": 2, "port_value": 120.0}],
+      "expected": 0.0,
+      "derivation": "Strictly rising series has no peak-to-trough excursion -> max drawdown 0.0 (a genuine zero, distinct from None which means undefined). Control case.",
+      "tolerance_abs": 1e-12
+    }
+  }
+}
