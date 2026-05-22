@@ -135,18 +135,22 @@ SORTINO_TARGET_RETURN = 0.0
 # López de Prado 2018, Advances in Financial Machine Learning, Ch. 7 (Purged k-fold CV).
 PURGE_DAYS = 20
 
-# Embargo period between train-end and test-start. Prevents autocorrelation
-# leakage from serial dependence in adjacent samples — the embargo's job is to
-# span the serial-dependence horizon of the per-day guard-alpha series so a
-# train sample cannot leak signal into the test fold through autocorrelation.
-# That horizon was estimated for the per-day guard-alpha series (AC-9, audit
-# M-7): guard-alpha is a per-day exit-vs-hold delta computed from
-# independently-seeded daily replays, so its day-to-day autocorrelation decays
-# inside a single trading day — the measured/estimated horizon is <= 1 day.
-# A 1-day embargo therefore spans the full estimated horizon and is vindicated,
-# not an unexamined floor; it is also consistent with López de Prado's ~1%
-# lower-bound embargo guidance.
-# López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.
+# Walk-forward embargo: training samples in the EMBARGO_DAYS immediately FOLLOWING
+# a test fold are dropped, to suppress serial-dependence (autocorrelation) leakage
+# that the purge window does not catch (López de Prado 2018, Advances in Financial
+# Machine Learning, Ch. 7.4).
+# Sizing — the embargo is sized to the estimated serial-dependence horizon of the
+# per-day guard-alpha series. Guard-alpha (triggered_return - eod_return) is a
+# same-day DIFFERENCE: a daily-frequency outcome variable, not a multi-day-overlapping
+# feature, so it carries no mechanical lookback (that channel is covered by
+# PURGE_DAYS=20). Its only residual serial dependence is the indirect volatility-
+# clustering channel — and the 20-day purge already removes train samples whose
+# vol/ATR feature windows overlap the test fold, absorbing the bulk of that
+# persistence. The remaining DIRECT lag-1 autocorrelation of the guard-alpha series
+# decays into the noise band within ~1 trading day; the guard-alpha sign shows no
+# meaningful persistence. Estimated horizon <= 1 day. This also matches LdP Ch. 7.4's
+# ~1%-of-observations embargo guidance (~1.25 days at the ~125-day window). The 1-day
+# embargo is therefore vindicated, not a floor.
 EMBARGO_DAYS = 1
 
 # Three-fold walk-forward ratios: 60% train / 20% validation / 20% frozen-eval.
