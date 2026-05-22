@@ -42,57 +42,24 @@ _MC_WARMUP_TRADING_DAYS = (
 # fetched window comfortably clears the floor even if the upstream bar feed
 # drops a trailing day or a half-day. 10 trading days ~ two market weeks.
 _FETCH_WINDOW_BUFFER_TRADING_DAYS = 10
-# Total trading days the fetch window must span, counting back from the end
-# date. busday_offset accounts for weekends + holidays exactly, so this count
-# is the genuine number of trading days delivered.
+# Total trading days the fetch window must guarantee. This is the floor the
+# AUTHORITY for which is the actual count of daily bars Alpaca returns (Alpaca
+# delivers a bar only on a real trading day, so the returned-bar count is the
+# self-validating exchange calendar) plus the post-fetch shortfall guards in
+# generate_synthetic_history — NOT a hand-maintained holiday table.
 _REQUIRED_FETCH_TRADING_DAYS = (
     _WALK_FORWARD_TRADING_DAYS
     + _MC_WARMUP_TRADING_DAYS
     + _FETCH_WINDOW_BUFFER_TRADING_DAYS
 )
 
-# US equity market holidays — the NYSE published calendar. Used by
-# numpy.busday_offset to count trading days exactly (pandas_market_calendars
-# is not a dependency). Spans late-2024 through 2026 so any fetch window the
-# producer requests is fully covered; extend as the calendar advances.
-_US_MARKET_HOLIDAYS = np.array(
-    [
-        # 2024
-        "2024-01-01",  # New Year's Day
-        "2024-01-15",  # MLK Jr. Day
-        "2024-02-19",  # Washington's Birthday
-        "2024-03-29",  # Good Friday
-        "2024-05-27",  # Memorial Day
-        "2024-06-19",  # Juneteenth
-        "2024-07-04",  # Independence Day
-        "2024-09-02",  # Labor Day
-        "2024-11-28",  # Thanksgiving
-        "2024-12-25",  # Christmas
-        # 2025
-        "2025-01-01",  # New Year's Day
-        "2025-01-20",  # MLK Jr. Day
-        "2025-02-17",  # Washington's Birthday
-        "2025-04-18",  # Good Friday
-        "2025-05-26",  # Memorial Day
-        "2025-06-19",  # Juneteenth
-        "2025-07-04",  # Independence Day
-        "2025-09-01",  # Labor Day
-        "2025-11-27",  # Thanksgiving
-        "2025-12-25",  # Christmas
-        # 2026
-        "2026-01-01",  # New Year's Day
-        "2026-01-19",  # MLK Jr. Day
-        "2026-02-16",  # Washington's Birthday
-        "2026-04-03",  # Good Friday
-        "2026-05-25",  # Memorial Day
-        "2026-06-19",  # Juneteenth
-        "2026-07-03",  # Independence Day (observed)
-        "2026-09-07",  # Labor Day
-        "2026-11-26",  # Thanksgiving
-        "2026-12-25",  # Christmas
-    ],
-    dtype="datetime64[D]",
-)
+# Calendar-days-per-trading-day padding factor used only to pick a generously
+# early fetch-window START. The raw weekday ratio is 7/5 = 1.4; NYSE closes
+# ~9 days/year for holidays, so 1.5 leaves a comfortable cushion. The start
+# does not need to be exact — it only needs to be early enough that the fetch
+# returns at least _REQUIRED_FETCH_TRADING_DAYS bars; the genuine floor is
+# enforced post-fetch on the real returned-bar count.
+_CALENDAR_DAYS_PER_TRADING_DAY = 1.5
 
 
 def utc_to_eastern(utc_dt):
@@ -110,28 +77,25 @@ def utc_to_eastern(utc_dt):
 def compute_fetch_window_start(end_date):
     """Return the fetch-window start date for a given end date.
 
-    Counts back _REQUIRED_FETCH_TRADING_DAYS trading days from end_date using
-    numpy.busday_offset against the US market holiday calendar, so the
-    [start, end] span yields at least that many trading days regardless of how
-    many weekends or holidays it straddles. Replaces the old fixed
-    timedelta(days=180) literal, which under-delivered trading days once
-    holidays were counted (audit finding 8).
+    Picks a generously early start by padding the required trading-day floor
+    into calendar days (_REQUIRED_FETCH_TRADING_DAYS * _CALENDAR_DAYS_PER_-
+    TRADING_DAY). This deliberately over-reaches: the start only needs to be
+    early enough that the Alpaca fetch returns at least the required number of
+    trading days. The genuine trading-day floor is NOT enforced here — it is
+    enforced post-fetch on the real returned-bar count (Alpaca returns a bar
+    only on a real trading day, so the bar count is the self-validating
+    exchange calendar). No hand-maintained holiday table — the old
+    timedelta(days=180) literal under-delivered (audit finding 8); a holiday
+    table would reintroduce a drift class of its own.
 
     Accepts a date or datetime; returns a datetime.date.
     """
     if isinstance(end_date, _dt.datetime):
         end_date = end_date.date()
-    end64 = np.datetime64(end_date, "D")
-    # roll="backward": if end_date is itself a holiday/weekend, start counting
-    # from the prior trading day. Offsetting by -(N-1) lands on the trading day
-    # that is N trading days back inclusive of the end date.
-    start64 = np.busday_offset(
-        end64,
-        -(_REQUIRED_FETCH_TRADING_DAYS - 1),
-        roll="backward",
-        holidays=_US_MARKET_HOLIDAYS,
+    calendar_days = int(
+        _REQUIRED_FETCH_TRADING_DAYS * _CALENDAR_DAYS_PER_TRADING_DAY
     )
-    return start64.astype(_dt.date)
+    return end_date - timedelta(days=calendar_days)
 
 
 def load_cached_history(cache_file):
@@ -398,7 +362,27 @@ def generate_synthetic_history(bot_state, current_date_str):
                 }
                 
     daily_dates = sorted(list(historical_daily.keys()))
-    
+
+    # Surface a daily / MC-warmup shortfall. The MC gate on the earliest replay
+    # days needs MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) daily bars of
+    # prior history (build_replay_day feeds hist_data_up_to_yesterday into
+    # run_monte_carlo); that warmup PRECEDES the 125-day replay slice, which is
+    # why the fetch floor is _REQUIRED_FETCH_TRADING_DAYS, not 125. If Alpaca
+    # under-delivers the daily bars, the first MC-warmup folds get a None
+    # mc_prob and the autotuner tunes MC-coupled parameters against an MC-dark
+    # replay. Log at ERROR (parallel to the intraday guard; a hard raise would
+    # abort the whole EOD tuning run).
+    if len(daily_dates) < _REQUIRED_FETCH_TRADING_DAYS:
+        logging.error(
+            "synthetic_history: daily-bar warmup shortfall — %d daily trading "
+            "days available, need >= %d (%d replay + %d MC warmup + buffer); "
+            "the first MC-warmup folds will have no MC opinion",
+            len(daily_dates),
+            _REQUIRED_FETCH_TRADING_DAYS,
+            _WALK_FORWARD_TRADING_DAYS,
+            _MC_WARMUP_TRADING_DAYS,
+        )
+
     # 5. Process Intraday Bars
     intraday_by_date = {}
     for sym, bars in intraday_bars_raw.items():
