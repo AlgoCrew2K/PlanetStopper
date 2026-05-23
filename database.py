@@ -753,6 +753,7 @@ _MIGRATION_FILES = [
     "013_fleet_alert_tripped_symphonies.sql",
     "014_autotune_runs_selection_tstat.sql",
     "015_shadow_history_position_epoch.sql",
+    "019_fold_role_columns.sql",
 ]
 
 
@@ -791,7 +792,8 @@ def run_migrations() -> None:
             )
             conn.commit()
         except Exception as exc:
-            if "duplicate column name" in str(exc).lower():
+            exc_lower = str(exc).lower()
+            if "duplicate column name" in exc_lower:
                 # initialize_db() CREATE TABLE already includes these columns — safe to mark applied.
                 logging.info(
                     "run_migrations: %s columns already present, marking applied", migration_name
@@ -805,6 +807,104 @@ def run_migrations() -> None:
                 logging.error("run_migrations: failed to apply %s: %s", migration_name, exc)
 
     conn.close()
+
+
+# --- Advisor Wall: frozen-eval access guard ---
+
+# Bare fold_role inequality patterns that the Advisor wall must reject.
+# Both SQL inequality operators (!=  and  <>) have identical H3 NULL trap semantics —
+# neither coerces NULL to a non-match, so both silently hide legacy rows.
+# Callers must use COALESCE(fold_role, '') != 'frozen_eval'.
+_BARE_FOLD_ROLE_PREDICATES = ("fold_role !=", "fold_role <>")
+
+
+def advisor_ro_query(sql: str, params: tuple = ()) -> list:
+    """Execute a read-only query on behalf of an Advisor code path.
+
+    This is the ONLY entry point from Advisor code to the state DB.  Calling
+    get_connection() or get_ro_connection() directly from Advisor code is a
+    structural side door that bypasses both the COALESCE guard and the
+    wall-breach tripwire — it is prohibited (enforced by the lint test in CI).
+
+    Caller contract
+    ---------------
+    - Any predicate that filters on fold_role MUST use the COALESCE form:
+          COALESCE(fold_role, '') != 'frozen_eval'
+      A bare ``fold_role != ...`` is rejected with ValueError before execution.
+    - The query must never return a row with fold_role = 'frozen_eval'.  If one
+      slips through (e.g. the caller constructed an OR 1=1 bypass), the
+      wall-breach tripwire writes a WALL_BREACH row to advisor_observations and
+      then raises — ensuring the audit record survives even if the caller
+      swallows the exception.
+
+    Returns a list of sqlite3.Row objects.
+    """
+    # --- Predicate guard: reject bare fold_role != / <> before touching the DB ---
+    if any(pat in sql for pat in _BARE_FOLD_ROLE_PREDICATES):
+        raise ValueError(
+            "advisor_ro_query: bare 'fold_role !=' predicate detected in caller SQL. "
+            "Use COALESCE(fold_role, '') != 'frozen_eval' to avoid the H3 SQL-NULL trap "
+            "(NULL rows are silently excluded by the bare form)."
+        )
+
+    conn = get_ro_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+    # --- Wall-breach tripwire: detect frozen_eval rows in the result set ---
+    for row in rows:
+        try:
+            role = row["fold_role"]
+        except (IndexError, KeyError):
+            # This row does not project fold_role — skip it and inspect the next.
+            # Must be `continue`, not `break`: a break would silently skip all
+            # remaining rows, letting a frozen_eval row in a later position escape.
+            continue
+        if role == "frozen_eval":
+            # Write the audit record first, then raise — the write must survive
+            # even if the caller swallows the exception (plan §Risk callouts).
+            _write_wall_breach_observation(sql)
+            raise RuntimeError(
+                "advisor_ro_query: WALL_BREACH — a frozen_eval row reached the Advisor "
+                "result set.  The frozen-eval fold is the held-out evaluation partition; "
+                "Advisor reads must never touch it.  SQL fragment logged to advisor_observations."
+            )
+
+    return list(rows)
+
+
+def _write_wall_breach_observation(sql_fragment: str) -> None:
+    """Write a WALL_BREACH audit row to advisor_observations.
+
+    Called by advisor_ro_query before raising on a wall-breach.  Uses a
+    plain get_connection() (not the RO connection) so the write succeeds even
+    when the offending query came through the read-only path.
+
+    If the write itself fails (full disk, locked DB), the caller will still
+    raise — the audit row is best-effort; the breach detection is not.
+    """
+    try:
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO advisor_observations "
+            "(advisor_role, subject_type, subject_id, verdict, raw_response, is_advisory_only) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "WALL_BREACH",
+                "fold_role_wall",
+                "frozen_eval",
+                "BREACH",
+                sql_fragment[:2000],  # cap at 2 000 chars; avoid unbounded writes
+                1,
+            ),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:  # noqa: BLE001
+        logging.error("_write_wall_breach_observation: failed to write audit row: %s", exc)
 
 
 # --- R1: Fleet Alert State Helpers ---
