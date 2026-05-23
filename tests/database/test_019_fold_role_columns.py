@@ -1,10 +1,10 @@
 """
 RED tests — Migration 019_fold_role_columns (structural frozen-eval Advisor wall).
 
-Seven tests per the plan §Golden-fixture tests required. All tests are RED
-until the implementer:
+Tests per the plan §Golden-fixture tests required + spec-019 domain requirements
+R-1..R-11. All tests are RED until the implementer:
   1. creates migrations/019_fold_role_columns.sql with ALTER TABLE ADD COLUMN fold_role TEXT DEFAULT NULL
-  2. appends "019_fold_role_columns.sql" to database._MIGRATION_FILES
+  2. appends "019_fold_role_columns.sql" to database._MIGRATION_FILES (after 015_*)
   3. adds database.advisor_ro_query(sql, params=()) with COALESCE guard + wall-breach tripwire
   4. ensures advisor_observations table exists (from migration 017)
 
@@ -472,4 +472,345 @@ def test_fold_role_column_present_and_all_role_values_representable(fold_db):
     assert "cycle-legacy-1" in cycle_ids, (
         "Fixture DB must contain a row with fold_role=NULL (legacy row — cycle-legacy-1). "
         "H3 test and tripwire test both require a NULL fold_role row present."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — R-1: migration file content — DEFAULT NULL, no NOT NULL, no CHECK
+# ---------------------------------------------------------------------------
+
+
+def test_migration_file_has_default_null_no_not_null_no_check():
+    """R-1 (spec-019): The migration SQL file must add fold_role with DEFAULT NULL,
+    must NOT include NOT NULL, and must NOT include a CHECK constraint.
+
+    Application-level enum only — no CHECK constraint (codebase precedent:
+    init_db() has no CHECK constraints anywhere).
+    """
+    migrations_dir = pathlib.Path(__file__).parents[2] / "migrations"
+    migration_path = migrations_dir / "019_fold_role_columns.sql"
+
+    assert migration_path.exists(), (
+        f"migrations/019_fold_role_columns.sql does not exist at {migration_path}. "
+        "Plan deliverable 1 requires this file."
+    )
+
+    sql_text = migration_path.read_text(encoding="utf-8").upper()
+
+    assert "DEFAULT NULL" in sql_text, (
+        "019_fold_role_columns.sql must include DEFAULT NULL on the fold_role column. "
+        "R-1: existing rows must get NULL (no value specified on ALTER)."
+    )
+    assert "NOT NULL" not in sql_text, (
+        "019_fold_role_columns.sql must NOT include NOT NULL. "
+        "R-1: existing rows have no fold_role value — a NOT NULL constraint would "
+        "violate the additive-first migration rule."
+    )
+    # CHECK constraints would block additive schema evolution (e.g. adding 'holdout' role later).
+    assert "CHECK" not in sql_text, (
+        "019_fold_role_columns.sql must NOT include a CHECK constraint. "
+        "R-1: fold_role values are an application-level enum only (plan §Risk callouts)."
+    )
+    assert "ADD COLUMN" in sql_text, (
+        "019_fold_role_columns.sql must use ALTER TABLE ... ADD COLUMN. "
+        "R-1: additive ALTER is the required migration pattern."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — R-2: _MIGRATION_FILES ordering — 019 appears after 015
+# ---------------------------------------------------------------------------
+
+
+def test_migration_files_list_019_appears_after_015():
+    """R-2 (spec-019): '019_fold_role_columns.sql' must be present in
+    _MIGRATION_FILES AND its list index must be greater than the index of
+    '015_shadow_history_position_epoch.sql'.
+
+    Migration files are append-only in dependency order. 019 depends on nothing
+    (plan §Dependencies) but must come after the existing baseline 015.
+    """
+    migration_list = db._MIGRATION_FILES
+
+    assert "019_fold_role_columns.sql" in migration_list, (
+        "'019_fold_role_columns.sql' missing from _MIGRATION_FILES. "
+        "R-2: the append is required (plan deliverable 4)."
+    )
+    assert "015_shadow_history_position_epoch.sql" in migration_list, (
+        "'015_shadow_history_position_epoch.sql' unexpectedly missing from _MIGRATION_FILES. "
+        "Cannot verify ordering — this entry is the baseline anchor."
+    )
+
+    idx_015 = migration_list.index("015_shadow_history_position_epoch.sql")
+    idx_019 = migration_list.index("019_fold_role_columns.sql")
+
+    assert idx_019 > idx_015, (
+        f"'019_fold_role_columns.sql' (index {idx_019}) must appear AFTER "
+        f"'015_shadow_history_position_epoch.sql' (index {idx_015}) in _MIGRATION_FILES. "
+        "R-2: migration list is append-only in dependency order."
+    )
+
+    # No duplicate entries.
+    count = sum(1 for m in migration_list if m == "019_fold_role_columns.sql")
+    assert count == 1, (
+        f"'019_fold_role_columns.sql' appears {count} times in _MIGRATION_FILES. "
+        "R-2: append-only means exactly one entry."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 10 — R-3: migration file targets state DB only (no ATTACH, no optuna)
+# ---------------------------------------------------------------------------
+
+
+def test_migration_file_targets_state_db_only():
+    """R-3 (spec-019): 019_fold_role_columns.sql must not reference the Optuna DB,
+    use ATTACH DATABASE, or reference the optimization DB path.
+
+    All decision-science migrations land in the state DB only (architecture
+    constraint 3 — Two-DB boundary, E-2 binding hazard in README §1).
+    """
+    migrations_dir = pathlib.Path(__file__).parents[2] / "migrations"
+    migration_path = migrations_dir / "019_fold_role_columns.sql"
+
+    assert migration_path.exists(), (
+        f"migrations/019_fold_role_columns.sql does not exist — cannot check R-3."
+    )
+
+    sql_text = migration_path.read_text(encoding="utf-8").upper()
+
+    assert "ATTACH" not in sql_text, (
+        "019_fold_role_columns.sql must not use ATTACH DATABASE. "
+        "R-3: the migration targets state DB (alphabot_state.db) only — "
+        "Two-DB boundary (architecture constraint 3) prohibits cross-DB operations."
+    )
+    assert "OPTUNA" not in sql_text, (
+        "019_fold_role_columns.sql must not reference the Optuna DB. "
+        "R-3: optimization DB (Optuna studies) is a separate file."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 11 — R-4/R-10: PRAGMA table_info on autotune_runs after migration applies
+# ---------------------------------------------------------------------------
+
+
+def test_fold_partitioned_table_fold_role_column_shape_after_run_migrations(tmp_path):
+    """R-4/R-10 (spec-019): After run_migrations() on a fresh DB that has the
+    fold-partitioned table pre-created, fold_role must appear on that table with:
+      - type TEXT (or empty — SQLite is flexible)
+      - notnull = 0 (NULLable)
+
+    Also asserts pre-existing rows (inserted before migration) have fold_role IS NULL
+    after migration (existing rows get the column DEFAULT, which is NULL).
+
+    The implementer determined the fold-partitioned table is backtest_replay_rows
+    (plan §Numbering: "current candidate is the backtest-replay rows"). This test
+    targets that table specifically. The _FOLD_TABLE constant at the top of this
+    file also uses backtest_replay_rows for consistency.
+
+    This is the authoritative PRAGMA check on the actual target table.
+    """
+    assert "019_fold_role_columns.sql" in db._MIGRATION_FILES, (
+        "'019_fold_role_columns.sql' missing from _MIGRATION_FILES — "
+        "cannot test run_migrations() effect on backtest_replay_rows."
+    )
+
+    db_path = str(tmp_path / "test_pragma.db")
+    with patch.object(db, "DB_FILE", db_path):
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations ("
+            "  migration_name TEXT PRIMARY KEY,"
+            "  applied_at     TEXT NOT NULL DEFAULT (datetime('now'))"
+            ")"
+        )
+        # Create the fold-partitioned table WITHOUT fold_role — simulating a pre-migration DB.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS backtest_replay_rows (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id  TEXT NOT NULL,
+                symphony_id TEXT NOT NULL
+            )
+            """
+        )
+        # Pre-migration row — no fold_role column yet.
+        conn.execute(
+            "INSERT INTO backtest_replay_rows (cycle_id, symphony_id) VALUES (?, ?)",
+            ("cycle-pre-001", "test-symphony"),
+        )
+        # Mark all prior migrations as already applied so only 019 is new.
+        prior = [
+            "004_schema_migrations_tracker.sql",
+            "005_exit_triggers.sql",
+            "006_autotune_runs_sharpe.sql",
+            "007_autotune_runs_frozen_eval.sql",
+            "008_shadow_history.sql",
+            "009_fleet_alert_state.sql",
+            "010_port_state.sql",
+            "011_exit_triggers_port.sql",
+            "012_autotune_runs_portmode.sql",
+            "013_fleet_alert_tripped_symphonies.sql",
+            "014_autotune_runs_selection_tstat.sql",
+            "015_shadow_history_position_epoch.sql",
+        ]
+        for m in prior:
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (migration_name) VALUES (?)", (m,)
+            )
+        conn.commit()
+        conn.close()
+
+        # Now run_migrations — only 019 (and any 016/017/018 if present) should apply.
+        db.run_migrations()
+
+        # Check PRAGMA table_info on backtest_replay_rows.
+        conn = sqlite3.connect(db_path)
+        try:
+            columns = conn.execute(
+                "PRAGMA table_info(backtest_replay_rows)"
+            ).fetchall()
+            # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
+            col_map = {row[1]: row for row in columns}
+        finally:
+            conn.close()
+
+    assert "fold_role" in col_map, (
+        "fold_role column missing from backtest_replay_rows after run_migrations(). "
+        "R-4/R-10: migration 019 must ADD COLUMN fold_role to the fold-partitioned table."
+    )
+
+    col_info = col_map["fold_role"]
+    # notnull = 0 means NULLable.
+    assert col_info[3] == 0, (
+        f"fold_role must be NULLable (notnull=0) on backtest_replay_rows; got notnull={col_info[3]}. "
+        "R-4: existing rows must be preserved with NULL (additive ALTER)."
+    )
+    col_type = col_info[2].upper()
+    assert col_type in ("TEXT", ""), (
+        f"fold_role column type must be TEXT on backtest_replay_rows; found '{col_info[2]}'. "
+        "R-10: plan §Deliverables 1 specifies TEXT DEFAULT NULL."
+    )
+
+    # Pre-existing row must have fold_role IS NULL after migration.
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT fold_role FROM backtest_replay_rows WHERE cycle_id = 'cycle-pre-001'"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row is not None, (
+        "Pre-existing backtest_replay_rows row not found after migration — "
+        "the row must be preserved (additive ALTER does not delete rows)."
+    )
+    assert row[0] is None, (
+        f"Pre-existing backtest_replay_rows row must have fold_role IS NULL after migration; "
+        f"got fold_role={row[0]!r}. "
+        "R-4: existing rows get the column DEFAULT (NULL) — not any other value."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 12 — R-5: WAL mode preserved before and after migration applies
+# ---------------------------------------------------------------------------
+
+
+def test_wal_mode_preserved_through_migration(tmp_path):
+    """R-5 (spec-019): ALTER TABLE ADD COLUMN is safe under WAL mode. The test
+    confirms journal_mode is 'wal' before and after the migration applies,
+    verifying no journal-mode incompatibility exists.
+    """
+    assert "019_fold_role_columns.sql" in db._MIGRATION_FILES, (
+        "'019_fold_role_columns.sql' missing from _MIGRATION_FILES — "
+        "cannot test WAL compatibility."
+    )
+
+    db_path = str(tmp_path / "test_wal.db")
+    with patch.object(db, "DB_FILE", db_path):
+        db.init_db()
+
+        # Confirm WAL is set after init_db() (before migration re-check).
+        conn = sqlite3.connect(db_path)
+        try:
+            mode_before = conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
+        finally:
+            conn.close()
+
+        assert mode_before == "wal", (
+            f"journal_mode must be 'wal' after init_db(); got '{mode_before}'. "
+            "R-5: WAL must be set before migration applies."
+        )
+
+        # Run migrations again (idempotent) — WAL must survive.
+        db.run_migrations()
+
+        conn = sqlite3.connect(db_path)
+        try:
+            mode_after = conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
+        finally:
+            conn.close()
+
+    assert mode_after == "wal", (
+        f"journal_mode must still be 'wal' after run_migrations(); got '{mode_after}'. "
+        "R-5: ALTER TABLE ADD COLUMN must not disturb WAL mode."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 13 — R-6: COALESCE semantics anchored to fixture JSON
+# ---------------------------------------------------------------------------
+
+
+def test_coalesce_filter_semantics_match_fixture_documentation(fold_db, fixtures_dir):
+    """R-6 (spec-019): The fixture at tests/fixtures/math/fold_role_columns_019.json
+    documents the wall_filter semantics. This test loads that fixture and asserts
+    the live SQL results match what the fixture documents.
+
+    This anchors the test to the fixture provenance (schema-derived, documented
+    before implementation) rather than floating assertions.
+    """
+    fixture_path = fixtures_dir / "math" / "fold_role_columns_019.json"
+    assert fixture_path.exists(), (
+        f"Fixture file not found at {fixture_path}. "
+        "R-6: tests must be anchored to the golden fixture."
+    )
+
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    semantics = fixture["wall_filter"]["semantics"]
+
+    # The fixture states NULL row is INCLUDED under the correct filter.
+    assert "included" in semantics["null_row_under_correct_filter"].lower(), (
+        "Fixture documents that NULL fold_role is included under COALESCE filter. "
+        "If this assertion fails, the fixture itself is wrong and must be corrected first."
+    )
+    # The fixture states NULL row is EXCLUDED under the buggy filter.
+    assert "excluded" in semantics["null_row_under_buggy_filter"].lower(), (
+        "Fixture documents that NULL fold_role is excluded under bare != filter. "
+        "If this assertion fails, the fixture itself is wrong."
+    )
+
+    # Now verify the live SQL matches the fixture documentation.
+    conn = sqlite3.connect(fold_db)
+    try:
+        correct_count = conn.execute(
+            f"SELECT COUNT(*) FROM {_FOLD_TABLE} "
+            f"WHERE COALESCE(fold_role, '') != 'frozen_eval'"
+        ).fetchone()[0]
+        buggy_count = conn.execute(
+            f"SELECT COUNT(*) FROM {_FOLD_TABLE} "
+            f"WHERE fold_role != 'frozen_eval'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    # The fixture's documented semantics must hold in the live DB.
+    # Correct filter includes 3 rows (train, validation, NULL); buggy excludes NULL → 2 rows.
+    assert correct_count > buggy_count, (
+        f"Live SQL result ({correct_count} COALESCE vs {buggy_count} bare) "
+        "does not match fixture-documented semantics (COALESCE must return more rows). "
+        "R-6: the fixture and the live DB must agree."
     )
