@@ -109,6 +109,50 @@ FLEET_CORRELATION_CLEAR_MINUTES = int(os.getenv("FLEET_CORRELATION_CLEAR_MINUTES
 
 HISTORY_CACHE_FILE = "history_cache.json"
 
+
+# --- AC-2 / D12: positive-holdings predicate + transition detector ---
+# Used by the data-phase loop to detect a per-symphony zero -> positive
+# holdings transition (the intraday-rotation reset trigger).
+
+# Per risk-engine-specialist's B3 strict-positivity semantic: a symphony is
+# "in a holdings-positive state" iff the holdings list has at least one
+# entry AND at least one entry's allocation/amount is strictly > 0. No
+# dollar-value tolerance, no len-only shortcut. Zero-quantity stubs and
+# all-cash baskets must read as NOT positive so a Composer rotation OUT
+# (which leaves the list shape but zeros the allocations) cleanly reads as
+# zero-holdings.
+def has_positive_holdings(holdings) -> bool:
+    """Strict-positivity predicate over a Composer holdings list.
+
+    Args:
+        holdings: list of holding dicts with at least an 'amount' or
+            'allocation' or 'quantity' field. Empty list, None, or every
+            entry having amount <= 0 read as False.
+
+    Returns:
+        True iff len(holdings) > 0 AND any(amount > 0). Used by AC-2's
+        per-cycle data-phase loop to decide whether the symphony is in
+        a holdings-positive state for the zero -> positive transition
+        detector.
+    """
+    if not holdings:
+        return False
+    for h in holdings:
+        if not isinstance(h, dict):
+            continue
+        # Accept multiple field-name conventions: amount / allocation /
+        # quantity. Composer's surface uses 'amount' in some payloads and
+        # 'allocation' in others; the engine's bot_state copy uses 'allocation'.
+        for field in ("amount", "allocation", "quantity"):
+            if field in h:
+                try:
+                    if float(h[field]) > 0.0:
+                        return True
+                except (TypeError, ValueError):
+                    continue
+                break
+    return False
+
 COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
 ALPACA_BASE_URL = "https://data.alpaca.markets/v2"
 
@@ -728,6 +772,86 @@ def main():
                             # fresh epoch so its shadow_history rows are scoped.
                             "position_epoch": database.mint_position_epoch(),
                         }
+                    else:
+                        # AC-2 / D11 / D12: detect a zero -> positive holdings
+                        # transition and reset the symphony's transient bot_state
+                        # fields to a fresh-position baseline. Closes E-1 (AlphaBot
+                        # exit then Composer rebuy intraday) AND Cluster 6 CASE 2
+                        # (untriggered Composer rotation out then back in) with one
+                        # mechanism.
+                        #
+                        # Detection inputs (any one positive signal fires the reset
+                        # when current holdings are positive):
+                        #   (a) `last_holdings_positive` marker EXPLICITLY False —
+                        #       the canonical D12 bookkeeping field this loop
+                        #       writes at the end of every cycle below.
+                        #   (b) prior cycle's `current_value` EXPLICITLY 0.0 —
+                        #       Composer reports a sold-to-cash position with
+                        #       value=0; the next positive read is a re-open.
+                        # Both signals MUST be EXPLICITLY-zero to fire — missing
+                        # values (legacy bot_state, first-ever observation) are
+                        # the conservative "don't fire" default so a pre-AC-2
+                        # state's first post-upgrade cycle does not spuriously
+                        # reset (BLOCK-1 mid-position-rebalance pin test).
+                        # B5 same-cycle-triggered case (live position whose value
+                        # Composer still reports as positive) reads neither
+                        # signal — reset does NOT fire — the trailing-stop sell-
+                        # to-cash path proceeds normally on the same-cycle-as-
+                        # trigger surface.
+                        current_holdings_positive = has_positive_holdings(
+                            sym.get("holdings", [])
+                        )
+                        prior_marker = bot_state[s_id].get("last_holdings_positive")
+                        prior_value = bot_state[s_id].get("current_value")
+                        try:
+                            prior_value_zero = (
+                                prior_value is not None
+                                and float(prior_value) <= 0.0
+                            )
+                        except (TypeError, ValueError):
+                            prior_value_zero = False
+                        prior_zero_signal = (
+                            prior_marker is False or prior_value_zero
+                        )
+                        if prior_zero_signal and current_holdings_positive:
+                            # Reset transient fields in place — same canonical
+                            # field set the trigger block writes, with the
+                            # trigger-snapshot fields removed and a fresh
+                            # position_epoch minted. In-memory bookkeeping only;
+                            # NO broker side effects (B4).
+                            entry = bot_state[s_id]
+                            entry["triggered"] = False
+                            entry["breakeven_locked"] = False
+                            entry["armed"] = False
+                            entry["tp_armed"] = False
+                            entry["para_armed"] = False
+                            entry["prev_return"] = None
+                            entry["high_water_mark"] = current_return
+                            entry["shadow_hwm"] = current_return
+                            entry["hwm_hold_ticks"] = 0
+                            entry["below_stop_count"] = 0
+                            entry["above_tp_count"] = 0
+                            entry["vwap_ticks"] = 0
+                            entry["vwap_bleed_ticks"] = 0
+                            entry["stop_trigger"] = None
+                            entry["mc_history"] = []
+                            # Drop trigger-snapshot fields — the new position
+                            # has not triggered.
+                            for k in (
+                                "triggered_reason",
+                                "triggered_at_return",
+                                "triggered_at_hwm",
+                                "triggered_at_stop",
+                                "triggered_at_time",
+                                "trigger_prices",
+                                "triggered_basket_snapshot",
+                            ):
+                                if k in entry:
+                                    del entry[k]
+                            # Mint a fresh epoch so shadow_history rows for the
+                            # new position do not bleed into the prior position's
+                            # epoch.
+                            entry["position_epoch"] = database.mint_position_epoch()
 
                     bot_state[s_id]["current_return"] = current_return
                     bot_state[s_id]["current_value"] = sym.get(
@@ -798,6 +922,15 @@ def main():
                         trigger_id=trigger_id,
                         # AC-3: scope this row to the current position epoch.
                         position_epoch=bot_state[s_id].get("position_epoch"),
+                    )
+
+                    # AC-2 / D12 bookkeeping: persist the current cycle's
+                    # holdings-positive boolean so the NEXT cycle's
+                    # detect_zero_to_positive_holdings_transition sees an
+                    # accurate prior_state. Computed from this cycle's
+                    # Composer fetch — same source the reset detection used.
+                    bot_state[s_id]["last_holdings_positive"] = (
+                        has_positive_holdings(sym.get("holdings", []))
                     )
 
             # Only persist here on pre-gate cycles; the action phase terminal save_state

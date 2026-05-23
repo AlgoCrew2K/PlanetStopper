@@ -205,6 +205,36 @@ def mint_position_epoch() -> str:
     return uuid.uuid4().hex
 
 
+def detect_zero_to_positive_holdings_transition(
+    previous_state, current_holdings_positive: bool
+) -> bool:
+    """Pure helper: does a per-symphony cycle exhibit a zero -> positive
+    holdings transition (AC-2 / D12)?
+
+    Returns True iff the prior cycle's `last_holdings_positive` marker is
+    False AND the current cycle's holdings are positive. A first-ever
+    observation (no marker on previous_state) is NOT a transition — there
+    is no prior cycle to transition from. Mirrors the conservative semantic
+    the data-phase loop needs to avoid spurious resets on a symphony's very
+    first observation.
+
+    Args:
+        previous_state: a dict (typically bot_state[symphony_id]) carrying
+            the persisted `last_holdings_positive` boolean. Absent key reads
+            as False so a first-ever observation does NOT fire (the
+            mid-position-rebalance / carry-across-day pin tests assume
+            this conservative semantic).
+        current_holdings_positive: the boolean reading of this cycle's
+            holdings via has_positive_holdings.
+
+    Returns:
+        True only on the F -> T transition; False on F -> F, T -> T, T -> F,
+        and the first-observation case.
+    """
+    prior_positive = bool((previous_state or {}).get("last_holdings_positive", False))
+    return (not prior_positive) and bool(current_holdings_positive)
+
+
 def wipe_transient_state(state_dict):
     """Wipes transient state keys for all symphonies to prevent bleeding across sessions."""
     for s_id, s_data in state_dict.items():

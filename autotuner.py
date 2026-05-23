@@ -330,22 +330,30 @@ MAX_OPTUNA_TRIALS = 500
 
 # Numerical-stability + BHY-scaling-floor epsilon for the haircut p-value clamp.
 # Two rationales — both must hold:
-#   (a) IEEE-754 stability — a large trial t-statistic drives the one-sided
+#   (a) IEEE-754 stability — a large positive t-statistic drives the one-sided
 #       p-value `1 - Φ(t)` to underflow to exactly 0.0 (and a large-negative t
 #       saturates it to exactly 1.0); a degenerate 0.0/1.0 p-value makes any
 #       downstream log / inverse-CDF non-finite. The clamp must sit safely
 #       inside the IEEE-754 representable range (Φ saturates for |t| beyond
 #       ~8.3, so any value above ~1e-16 satisfies this floor).
-#   (b) BHY scaling-floor (math-audit-2 RM-M2) — the BHY step-up multiplies
-#       each raw p-value by N * c(N) / rank. At rank 1 the smallest reachable
-#       adjusted p-value is (N * c(N)) * eps. If eps is smaller than
-#       q / (N * c(N)) then a SINGLE trial whose t-stat saturates Φ produces
-#       an adjusted p-value far below q — the haircut silently collapses into
-#       a no-op and rubber-stamps every trial as significant.
+#   (b) BHY scaling floor (math-audit-2 RM-M2) — the BHY step-up's running
+#       minimum from rank N down locks the smallest reachable adjusted p-value
+#       at c(N) * eps (the rank-N candidate). Holding the clamp at the
+#       information-preservation floor eps = q / (N * c(N)) keeps c(N) * eps
+#       at q / N — orders of magnitude above the old 1e-12 clamp's c(N) * eps
+#       ≈ 6.79e-12 — so a trial with a clipped raw p still carries usable
+#       p-adjusted information into the FDR gate. The fully-saturated residual
+#       case (every trial's t-stat clipped to eps) is a benign intrinsic
+#       property of multi-test correction at saturation — under that residual
+#       the haircut collapses to naive best-of-N pre-Cluster-4 behaviour, not
+#       to a defective accept-all rubber-grant. The floor exists to preserve
+#       p-adjusted information across the BHY step-up, not to "save" the gate
+#       from a single saturated trial (BHY's running-min direction makes the
+#       single-trial overstatement impossible by construction).
 # Both rationales are satisfied by eps = q / (N * c(N)) with q = HARVEY_LIU_FDR_Q
 # and N = MAX_OPTUNA_TRIALS — approximately 1.5e-5 at N=500, q=0.05, well inside
-# the IEEE-754 range AND at the BHY floor so the worst-case adjusted p-value at
-# rank 1 lands at q (a strict-> q gate then rejects, as intended). c(N) =
+# the IEEE-754 range AND at the BHY scaling floor so a clipped raw p still
+# contributes a finite, meaningfully scaled adjusted value. c(N) =
 # sum_{j=1..N} 1/j is the N-th harmonic number (Yekutieli arbitrary-dependence
 # factor); same factor benjamini_hochberg_adjust uses below.
 _HAIRCUT_PVALUE_EPSILON = HARVEY_LIU_FDR_Q / (
