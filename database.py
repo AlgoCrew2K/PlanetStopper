@@ -1288,6 +1288,38 @@ def write_telemetry_row(
         conn.close()
 
 
+def record_cvar_diagnostic(
+    cycle_id: str,
+    symphony_id: str,
+    cvar_5pct: "float | None",
+    cvar_5pct_stderr: "float | None",
+    cvar_n_tail: "int | None",
+    cvar_5pct_long: "float | None",
+    cvar_n_tail_long: "int | None",
+    *,
+    mode: Literal["live", "replay"],
+) -> None:
+    """Write one cvar_diagnostics telemetry row (M2 Phase-1 consumer).
+
+    Thin wrapper over write_telemetry_row — all connection management and
+    live-swallow / replay-raise logic lives there (H4 plan deliverable 6;
+    spec-h4 Finding 6 / rev-h4 REQ-7).
+
+    mode= is required (keyword-only, no default) — same contract as
+    write_telemetry_row: every call site states the mode explicitly.
+    """
+    row_dict = {
+        "cycle_id": cycle_id,
+        "symphony_id": symphony_id,
+        "cvar_5pct": cvar_5pct,
+        "cvar_5pct_stderr": cvar_5pct_stderr,
+        "cvar_n_tail": cvar_n_tail,
+        "cvar_5pct_long": cvar_5pct_long,
+        "cvar_n_tail_long": cvar_n_tail_long,
+    }
+    write_telemetry_row("cvar_diagnostics", row_dict, mode=mode)
+
+
 def prune_old_shadow_history(retention_days: int) -> int:
     """Delete shadow_history rows older than retention_days. Returns total rows deleted.
 
