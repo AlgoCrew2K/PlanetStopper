@@ -1026,17 +1026,13 @@ def test_tripwire_fires_when_first_row_lacks_fold_role_but_second_row_is_frozen_
                 f"SELECT id FROM {_FOLD_TABLE} "
                 f"WHERE COALESCE(fold_role, '') != 'frozen_eval'"
             )
-            with pytest.raises(Exception) as exc_info:
+            # Assert RuntimeError specifically with the WALL_BREACH message fragment.
+            # This confirms the tripwire (not some other codepath) fired.
+            # With `break`: the loop exits on row 0, advisor_ro_query returns normally,
+            # pytest.raises(RuntimeError) raises DID NOT RAISE — test fails correctly.
+            # With `continue`: row 0 is skipped, row 1 detected, RuntimeError raised — GREEN.
+            with pytest.raises(RuntimeError, match="WALL_BREACH"):
                 db.advisor_ro_query(safe_sql)
-
-        # The tripwire must have fired (raised). If it did NOT raise, the loop used
-        # `break` on row 0 and never checked row 1.
-        assert exc_info is not None, (
-            "advisor_ro_query must raise when a frozen_eval row appears in the result set, "
-            "even if an earlier row in the set lacks fold_role. "
-            "spec-019 MUST-FIX: change `break` to `continue` in the tripwire loop so all "
-            "rows are inspected, not just rows before the first KeyError."
-        )
 
     # The WALL_BREACH write uses get_connection() not the mocked ro connection,
     # so we cannot verify the DB write here without a real DB path. The raise
