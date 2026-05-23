@@ -1,0 +1,268 @@
+{
+  "schema_version": "1.0.0",
+  "frozen_at": "2026-05-23T00:00:00Z",
+  "provenance_tag": "THEORY+MANDATE+STYLIZED_FACT",
+  "freeze_discipline": "THEORY|MANDATE|STYLIZED_FACT",
+  "freeze_discipline_NOT": "BACKTEST_SELECTION",
+  "owner": "team-lead (W-H2 derivation lead-author)",
+  "critic": "w-h2-critic (risk-engine-specialist)",
+  "binds": [
+    "docs/decision-science/w-h2-wealth-argument-derivation.md",
+    "feature-plans/decision-science/phase-1/m1-crra-eu-autotuner-objective/plan.md",
+    "feature-plans/decision-science/phase-1/red-test-2-m1-wealth-argument/plan.md",
+    "docs/handoff/decision-science-council-synthesis.md#section-3.9-W-H2",
+    "docs/handoff/decision-science-v3-and-divergence-evaluation.md#A.1-H-1"
+  ],
+
+  "selected_wealth_argument_formula": {
+    "name": "per_period_gross_wealth_ratio",
+    "pseudo_code": "W_i = max(WEALTH_ARG_FLOOR, 1 + r_i_policy)  where  r_i_policy = guard_alpha_i + eod_return_i",
+    "domain": "W in (0, +inf); after floor W in [WEALTH_ARG_FLOOR, +inf)",
+    "codomain_of_U": "U in (u(WEALTH_ARG_FLOOR; gamma), +inf); always finite for gamma in [0, 10]",
+    "floor_target": "INPUT W (NEVER output U); flooring U inflates t-stat (anti-conservative)",
+    "rf_adjustment": "NONE; r_f = 0 by MANDATE (operator decision PA-5, matches SORTINO_TARGET_RETURN=0.0 at autotuner.py:117-118)",
+    "aggregation": "one U_i per fold-day; mean(U) and sd(U) computed over T fold-days within one Optuna trial",
+    "horizon": "one trading day, close-to-close",
+    "scope": "M1 autotuner branch only (spec_bundle.objective_kind == 'crra_eu'); Sortino branch untouched"
+  },
+
+  "crra_utility_formula": {
+    "general": "u(W; gamma) = (W^(1 - gamma) - 1) / (1 - gamma)   for gamma != 1",
+    "log_branch": "u(W; gamma = 1) = ln(W)                          (limit; log utility)",
+    "log_branch_tolerance_constant_name": "CRRA_LOG_UTILITY_GAMMA_TOL",
+    "log_branch_tolerance_value_suggestion": 1e-9,
+    "log_branch_provenance": "Merton 1969 / Samuelson 1969 derive log utility as the gamma->1 limit; the tolerance avoids 1/(1-gamma) blow-up near gamma=1."
+  },
+
+  "WEALTH_ARG_FLOOR": {
+    "value": 0.001,
+    "units": "dimensionless wealth ratio",
+    "justification_legs": [
+      {
+        "leg": "THEORY (IEEE-754 stability)",
+        "claim": "For prudential gamma <= 5, W^(1-gamma) = W^(-4) at gamma=5; W=1e-3 yields W^(-4)=1e12, well within IEEE-754 double dynamic range (~1.8e308); ~4 orders of magnitude slack against fold-day accumulation."
+      },
+      {
+        "leg": "STYLIZED_FACT (operational impossibility)",
+        "claim": "A realized per-day return r <= -99.9% implies the protective stop has catastrophically failed; in-distribution AlphaBot trailing-stop-protected losses do not approach this magnitude (Carver 2015 Ch.9; Chan 2013 Ch.8 cite ~-20% to -25% as 99.9th-percentile worst single-day loss for similar long-only trailing-stop strategies)."
+      },
+      {
+        "leg": "MANDATE (project no-magic-numbers rule)",
+        "claim": ".claude/CLAUDE.md 'Coding Standards (project additions)' requires named module-scope constant with source comment; this fixture is the source citation."
+      }
+    ],
+    "applied_to": "INPUT W only",
+    "applied_to_negation": "NEVER to output U (would compress lower tail, shrink sd(U), inflate t-stat -- evaluation A.1 H-1 binding)"
+  },
+
+  "rejected_candidates": [
+    {
+      "name": "guard_alpha_as_W",
+      "reason": "guard_alpha is a signed difference, not a wealth ratio; CRRA domain requires W>0; this is the W-H2 defect the derivation closes."
+    },
+    {
+      "name": "net_of_rf_W = 1 + (r_policy - r_f)",
+      "reason": "Inconsistent with operator MANDATE (SORTINO_TARGET_RETURN=0); introduces benchmark drift between Sortino branch and CRRA branch (A-4 violation)."
+    },
+    {
+      "name": "log_return_W = ln(1 + r)",
+      "reason": "Ill-typed against general CRRA form for gamma != 1 (log-returns can be negative; raising negative numbers to fractional powers produces complex values)."
+    },
+    {
+      "name": "terminal_wealth_W = prod(1 + r_i)",
+      "reason": "Collapses T -> 1; binding condition S-2 requires t-stat = mean(U)/(sd(U)/sqrt(T)) with T>=2; sd(U) undefined for T=1."
+    }
+  ],
+
+  "worked_examples": [
+    {
+      "id": "ex1_typical_small_gain",
+      "scenario": "Typical small gain day; well above floor",
+      "inputs": {
+        "guard_alpha": 0.005,
+        "eod_return": 0.005,
+        "r_policy": 0.01
+      },
+      "W_raw": 1.01,
+      "W_floored": 1.01,
+      "floor_applied": false,
+      "U_by_gamma": {
+        "gamma_0.5": {
+          "value": 0.00997512422417805,
+          "formula": "2 * (sqrt(1.01) - 1)",
+          "intermediate_sqrt_W": 1.004987562112089,
+          "tolerance_for_test": 1e-12
+        },
+        "gamma_1.0": {
+          "value": 0.009950330853168083,
+          "formula": "ln(1.01)",
+          "tolerance_for_test": 1e-15
+        },
+        "gamma_2.0": {
+          "value": 0.009900990099009901,
+          "formula": "1 - 1/1.01",
+          "tolerance_for_test": 1e-15
+        }
+      }
+    },
+    {
+      "id": "ex2_typical_small_loss",
+      "scenario": "Typical small loss day; well above floor",
+      "inputs": {
+        "guard_alpha": -0.003,
+        "eod_return": -0.007,
+        "r_policy": -0.01
+      },
+      "W_raw": 0.99,
+      "W_floored": 0.99,
+      "floor_applied": false,
+      "U_by_gamma": {
+        "gamma_0.5": {
+          "value": -0.010025125786779900,
+          "formula": "2 * (sqrt(0.99) - 1)",
+          "intermediate_sqrt_W": 0.99498743710662,
+          "tolerance_for_test": 1e-12
+        },
+        "gamma_1.0": {
+          "value": -0.010050335853501441,
+          "formula": "ln(0.99)",
+          "tolerance_for_test": 1e-15
+        },
+        "gamma_2.0": {
+          "value": -0.010101010101010102,
+          "formula": "1 - 1/0.99",
+          "tolerance_for_test": 1e-15
+        }
+      }
+    },
+    {
+      "id": "ex3_moderate_gain",
+      "scenario": "Moderate gain day; well above floor",
+      "inputs": {
+        "guard_alpha": 0.02,
+        "eod_return": 0.03,
+        "r_policy": 0.05
+      },
+      "W_raw": 1.05,
+      "W_floored": 1.05,
+      "floor_applied": false,
+      "U_by_gamma": {
+        "gamma_0.5": {
+          "value": 0.04939015319191968,
+          "formula": "2 * (sqrt(1.05) - 1)",
+          "intermediate_sqrt_W": 1.024695076595960,
+          "tolerance_for_test": 1e-12
+        },
+        "gamma_1.0": {
+          "value": 0.04879016416943205,
+          "formula": "ln(1.05)",
+          "tolerance_for_test": 1e-15
+        },
+        "gamma_2.0": {
+          "value": 0.04761904761904762,
+          "formula": "1 - 1/1.05",
+          "tolerance_for_test": 1e-15
+        }
+      }
+    },
+    {
+      "id": "ex4_large_loss_above_floor",
+      "scenario": "Large but realistic loss day (-30%); still above floor; tests monotonicity and finiteness in the regime where CRRA risk-aversion matters most.",
+      "inputs": {
+        "guard_alpha": -0.10,
+        "eod_return": -0.20,
+        "r_policy": -0.30
+      },
+      "W_raw": 0.70,
+      "W_floored": 0.70,
+      "floor_applied": false,
+      "U_by_gamma": {
+        "gamma_0.5": {
+          "value": -0.3266799469318489,
+          "formula": "2 * (sqrt(0.70) - 1)",
+          "intermediate_sqrt_W": 0.8366600265340756,
+          "tolerance_for_test": 1e-12
+        },
+        "gamma_1.0": {
+          "value": -0.35667494393873245,
+          "formula": "ln(0.70)",
+          "tolerance_for_test": 1e-15
+        },
+        "gamma_2.0": {
+          "value": -0.4285714285714286,
+          "formula": "1 - 1/0.70",
+          "tolerance_for_test": 1e-15
+        }
+      }
+    },
+    {
+      "id": "ex5_floor_hitting_day",
+      "scenario": "Floor-hitting day (catastrophic synthetic case): r_policy = -0.9999 implies W_raw=0.0001 < WEALTH_ARG_FLOOR=0.001; floor applied; U finite for all prudential gamma.",
+      "inputs": {
+        "guard_alpha": -0.4999,
+        "eod_return": -0.5,
+        "r_policy": -0.9999
+      },
+      "W_raw": 0.0001,
+      "W_floored": 0.001,
+      "floor_applied": true,
+      "discriminating_power_note": "Tests the W-H4 contract: floor applied to W (not U); U is finite; sd(U) over a series containing this day reflects the honest monotone CRRA shape of u(WEALTH_ARG_FLOOR), not a U-side compressed-tail artifact.",
+      "U_by_gamma": {
+        "gamma_0.5": {
+          "value": -1.9367544467966324,
+          "formula": "2 * (sqrt(0.001) - 1)",
+          "intermediate_sqrt_W": 0.03162277660168379,
+          "tolerance_for_test": 1e-12,
+          "finite": true
+        },
+        "gamma_1.0": {
+          "value": -6.907755278982137,
+          "formula": "ln(0.001)",
+          "tolerance_for_test": 1e-14,
+          "finite": true
+        },
+        "gamma_2.0": {
+          "value": -999.0,
+          "formula": "1 - 1/0.001",
+          "tolerance_for_test": 1e-12,
+          "finite": true
+        }
+      },
+      "U_naive_without_floor_for_comparison": {
+        "gamma_0.5": -1.9367544467966324,
+        "gamma_1.0": -9.210340371976184,
+        "gamma_2.0": -9999.0,
+        "note": "Without the floor, gamma=2.0 case would yield U = 1 - 1/0.0001 = -9999.0 (still finite for W=1e-4 but consuming an extra order of magnitude of IEEE-754 budget); had W reached 0 exactly, U -> -inf for gamma>=1 -- the binding H-1 NaN-poisoning failure mode."
+      }
+    }
+  ],
+
+  "A4_consistency_assertion": {
+    "claim": "Wherever CRRA is evaluated in Phase-1 M1, W = max(WEALTH_ARG_FLOOR, 1 + r_policy). Same definition; same units; same horizon.",
+    "phase_1_call_sites": [
+      "autotuner.py run_simulation -> compute_crra_eu_objective(daily_returns, gamma)",
+      "autotuner.py BHY pipeline -> compute_crra_eu_tstat(U_series) where U_series = [u(W_i; gamma) for i in fold-days]"
+    ],
+    "phase_2_extension_note": "If Finalist B unlocks a hold-vs-exit CRRA crossover, the hold-branch W uses the same 1 + r_policy form evaluated on the hypothetical hold path. Phase-2 plumbing is out-of-scope here."
+  },
+
+  "test_assertions_supported": [
+    "RED-test-2 Scenario 1: element-wise W matches per-formula computation (use examples ex1-ex4 where floor not applied; tolerance per U_by_gamma.tolerance_for_test).",
+    "RED-test-2 Scenario 2: ex5 demonstrates W_floored == WEALTH_ARG_FLOOR exactly (not approx); other examples demonstrate W_floored == W_raw exactly when floor not applied.",
+    "RED-test-2 Scenario 3 (discriminating): ex5 supports asserting sd(U) computed with W-side floor differs from a hypothetical U-side floor by a closed-form known gap; see U_naive_without_floor_for_comparison for the gamma=2.0 contrast.",
+    "RED-test-2 Scenario 4: ex5's U_by_gamma values are all finite (math.isfinite true) and the implied t-stat over a series containing this day is finite.",
+    "RED-test-2 Scenario 5: ex1-ex4 demonstrate that derive_floored_wealth_argument == derive_wealth_argument when no day breaches the floor."
+  ],
+
+  "limitations": [
+    "Worked U values computed at IEEE-754 double precision; test tolerances are set conservatively above the round-off floor.",
+    "Floor at 1e-3 is sized for prudential gamma <= 5; revisit if the operator pre-registers gamma > 10.",
+    "Serial-correlation residual (W-H5 / H-6) is disclose-and-accept per M1 plan; the t-stat finiteness assertion does NOT claim t-stat unbiasedness in the presence of lag-1 autocorrelation."
+  ],
+
+  "fixture_schema_check": {
+    "rule_D2_non_circular_provenance": "Memo IS the producer (the W-H2 derivation document); fixture is schema-derived from that memo; this fixture is NOT authored alongside the SUT.",
+    "rule_no_magic_numbers": "Every constant (WEALTH_ARG_FLOOR, CRRA_LOG_UTILITY_GAMMA_TOL_suggestion, gamma values) is named and provenanced.",
+    "rule_NN1_spec_freeze": "freeze_discipline == 'THEORY|MANDATE|STYLIZED_FACT'; NOT 'BACKTEST_SELECTION'."
+  }
+}
