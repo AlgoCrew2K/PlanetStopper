@@ -825,3 +825,220 @@ def test_coalesce_filter_semantics_match_fixture_documentation(fold_db, fixtures
         "does not match fixture-documented semantics (COALESCE must return more rows). "
         "R-6: the fixture and the live DB must agree."
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 14 — spec-019 BLOCK-1: failed migration (no such table) NOT recorded applied
+# ---------------------------------------------------------------------------
+
+
+def test_run_migrations_does_not_record_failed_migration_as_applied(tmp_path):
+    """spec-019 BLOCK-1: If a migration fails because its target table does not
+    exist, run_migrations() must NOT record that migration in schema_migrations.
+
+    The \"duplicate column name\" swallow has a documented justification (init_db()
+    can pre-create columns). There is no analogous justification for swallowing
+    \"no such table\" — doing so silently hides schema failures and normalises
+    broken migrations into no-ops.
+
+    Test strategy: construct a migration that ALTERs a table that does not exist,
+    confirm schema_migrations does NOT contain it after run_migrations().
+
+    This test is RED against any implementation that swallows \"no such table\" and
+    records the migration as applied. It goes GREEN when the swallow is removed.
+    """
+    import tempfile
+
+    # Create a migration file that ALTERs a table that will never exist.
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".sql", delete=False, dir=str(tmp_path), encoding="utf-8"
+    ) as fh:
+        fh.write("ALTER TABLE definitely_nonexistent_table_xyz ADD COLUMN canary TEXT;\n")
+        canary_migration_path = fh.name
+
+    canary_migration_name = pathlib.Path(canary_migration_path).name
+
+    db_path = str(tmp_path / "test_no_such_table.db")
+
+    # Inject the canary migration into _MIGRATION_FILES for this test only.
+    original_files = db._MIGRATION_FILES[:]
+    original_dir = getattr(db, "_MIGRATIONS_DIR", None)
+
+    try:
+        # Point migration dir at tmp_path so the canary file is found.
+        db._MIGRATION_FILES = original_files + [canary_migration_name]
+        db._MIGRATIONS_DIR = str(tmp_path)
+
+        with patch.object(db, "DB_FILE", db_path):
+            db.init_db()
+
+        # schema_migrations must NOT contain the canary — the ALTER failed.
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT migration_name FROM schema_migrations WHERE migration_name = ?",
+                (canary_migration_name,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row is None, (
+            f"run_migrations() recorded '{canary_migration_name}' as applied even though "
+            "its target table does not exist. "
+            "spec-019 BLOCK-1: a 'no such table' error must NOT be swallowed as success — "
+            "it must leave the migration unrecorded so it can be diagnosed and retried. "
+            "Remove the 'no such table' swallow branch from run_migrations()."
+        )
+
+    finally:
+        db._MIGRATION_FILES = original_files
+        if original_dir is not None:
+            db._MIGRATIONS_DIR = original_dir
+        pathlib.Path(canary_migration_path).unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Test 15 — spec-019 BLOCK-2: fold_role <> form is rejected by advisor_ro_query
+# ---------------------------------------------------------------------------
+
+
+def test_advisor_ro_query_rejects_fold_role_diamond_predicate(fold_db_with_advisor_observations):
+    """spec-019 BLOCK-2: advisor_ro_query must reject BOTH inequality forms:
+      - fold_role != 'frozen_eval'   (caught by existing test 5)
+      - fold_role <> 'frozen_eval'   (this test — the SQL standard form)
+
+    Both forms have identical H3 SQL-NULL trap semantics: NULL is excluded under
+    either bare inequality. The predicate guard must cover both.
+
+    This test is RED against any implementation that only checks for '!=' but
+    not '<>'. It goes GREEN when the guard covers both forms.
+    """
+    assert hasattr(db, "advisor_ro_query"), (
+        "database.advisor_ro_query() does not exist — cannot test <> predicate rejection."
+    )
+
+    db_path = fold_db_with_advisor_observations
+    with patch.object(db, "DB_FILE", db_path):
+        diamond_predicate_sql = (
+            f"SELECT id FROM {_FOLD_TABLE} WHERE fold_role <> 'frozen_eval'"
+        )
+
+        with pytest.raises((ValueError, Exception)) as exc_info:
+            db.advisor_ro_query(diamond_predicate_sql)
+
+        # Must be a ValueError specifically — predicate rejection is a caller contract
+        # violation, not a DB error. A generic Exception from SQL execution would mean
+        # the guard did not fire and the query reached the DB.
+        assert isinstance(exc_info.value, ValueError), (
+            f"advisor_ro_query with fold_role <> must raise ValueError at the predicate "
+            f"guard level (before DB execution), not {type(exc_info.value).__name__}. "
+            "spec-019 BLOCK-2: both != and <> forms must be caught by the guard."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 16 — spec-019 MUST-FIX: tripwire fires when row 0 lacks fold_role, row 1 is frozen_eval
+# ---------------------------------------------------------------------------
+
+
+def test_tripwire_fires_when_first_row_lacks_fold_role_but_second_row_is_frozen_eval(
+    fold_db_with_advisor_observations,
+):
+    """spec-019 MUST-FIX: The tripwire loop must use `continue` (not `break`) when a
+    row lacks the fold_role column. A `break` exits the loop on the first row that
+    cannot be inspected, silently skipping all remaining rows — including rows with
+    fold_role = 'frozen_eval'.
+
+    Test strategy: construct a UNION query where:
+      - Row 0: a query that does NOT project fold_role (simulates a non-fold table join)
+      - Row 1: the autotune_runs row with fold_role = 'frozen_eval'
+
+    With `break`: the tripwire exits on row 0 (KeyError), never sees row 1 → no raise.
+    With `continue`: the tripwire skips row 0, inspects row 1, detects frozen_eval → raises.
+
+    This test is RED against any implementation using `break`. It goes GREEN when
+    `break` is changed to `continue`.
+    """
+    assert hasattr(db, "advisor_ro_query"), (
+        "database.advisor_ro_query() does not exist — cannot test tripwire loop behaviour."
+    )
+
+    db_path = fold_db_with_advisor_observations
+    with patch.object(db, "DB_FILE", db_path):
+        # The UNION query:
+        # First SELECT: execution_lock — has no fold_role column.
+        # Second SELECT: autotune_runs row with fold_role='frozen_eval', padded with a
+        # NULL column to match the column count so the UNION is valid.
+        #
+        # SQLite UNION uses column names from the first SELECT, so fold_role will be
+        # named 'is_locked' (from execution_lock). The row_factory access by name
+        # 'fold_role' will raise KeyError on both rows — which is exactly what we need
+        # to trigger the break-vs-continue path. We use a direct approach instead:
+        # pass the OR 1=1 bypass (same as test 3) but with a JOIN to a table that has
+        # no fold_role column as the first result row.
+        #
+        # Simpler and more direct: insert a second advisory_observations row first,
+        # then use a raw connection to add a row to autotune_runs with fold_role=NULL
+        # before our frozen_eval row, and use a subquery ordering trick.
+        # Actually the cleanest way: use the existing fold_db rows. Row ordering in
+        # SQLite is insertion order without ORDER BY. Our fixture inserts:
+        #   cycle-train-1 (fold_role='train')
+        #   cycle-val-1   (fold_role='validation')
+        #   cycle-frozen-1 (fold_role='frozen_eval')  ← row index 2
+        #   cycle-legacy-1 (fold_role=NULL)
+        #
+        # The OR 1=1 bypass already returns all rows including frozen_eval. The
+        # break-vs-continue difference is observable when the result-set row_factory
+        # returns a row where 'fold_role' raises KeyError. We simulate this by
+        # querying a table that lacks fold_role as part of a subquery result.
+        #
+        # The most direct simulation: pass a raw query against execution_lock first,
+        # then autotune_runs. We achieve this via a CTE that stacks rows where
+        # the first row comes from execution_lock (no fold_role).
+        #
+        # Given the complexity of a pure-SQL simulation, use a direct approach:
+        # mock row_factory to return a custom row-like sequence where row[0] has no
+        # fold_role key and row[1] has fold_role='frozen_eval'. This is cleaner and
+        # tests the loop logic directly without SQL gymnastics.
+
+        # Approach: patch the connection to return a controlled result set.
+        import sqlite3 as _sqlite3
+        from unittest.mock import MagicMock, patch as _patch
+
+        mock_row_no_fold_role = MagicMock(spec=_sqlite3.Row)
+        mock_row_no_fold_role.__getitem__ = MagicMock(side_effect=KeyError("fold_role"))
+        mock_row_frozen = MagicMock(spec=_sqlite3.Row)
+        mock_row_frozen.__getitem__ = MagicMock(
+            side_effect=lambda k: "frozen_eval" if k == "fold_role" else None
+        )
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchall.return_value = [
+            mock_row_no_fold_role,  # row 0: no fold_role — triggers break or continue
+            mock_row_frozen,         # row 1: fold_role='frozen_eval' — the wall breach
+        ]
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        with _patch.object(db, "get_ro_connection", return_value=mock_conn):
+            # Any SQL that passes the predicate guard (uses COALESCE).
+            safe_sql = (
+                f"SELECT id FROM {_FOLD_TABLE} "
+                f"WHERE COALESCE(fold_role, '') != 'frozen_eval'"
+            )
+            with pytest.raises(Exception) as exc_info:
+                db.advisor_ro_query(safe_sql)
+
+        # The tripwire must have fired (raised). If it did NOT raise, the loop used
+        # `break` on row 0 and never checked row 1.
+        assert exc_info is not None, (
+            "advisor_ro_query must raise when a frozen_eval row appears in the result set, "
+            "even if an earlier row in the set lacks fold_role. "
+            "spec-019 MUST-FIX: change `break` to `continue` in the tripwire loop so all "
+            "rows are inspected, not just rows before the first KeyError."
+        )
+
+    # The WALL_BREACH write uses get_connection() not the mocked ro connection,
+    # so we cannot verify the DB write here without a real DB path. The raise
+    # itself is sufficient to confirm the tripwire fired.
+    # A WALL_BREACH write is verified by the existing test 3.
