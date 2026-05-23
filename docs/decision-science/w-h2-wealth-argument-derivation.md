@@ -1,6 +1,7 @@
 # W-H2 — Derivation of the wealth argument `W` fed to CRRA utility in the M1 autotuner objective
 
-**Status:** DRAFT for `w-h2-critic` review.
+**Status:** DRAFT — revision 2 (post-critic-round-1).
+**Revision 2 changes:** §3 unit-frame discipline + corrected codebase-identity line citations (C-1 + C-2 blockers); §3.3 NN1 form-as-persistent-facet clarification (S-3); §2.4 candidate-D disqualifier scoped to current walk-forward (S-4); §4.3 floor-sizing arithmetic corrected; §6.1 W-H4-B information-collapse residual added (S-2); §4.1 Carver/Chan citation softened (S-6).
 **Lane:** Phase-1 M1 (CRRA-EU autotuner objective).
 **Owner:** lead author (`team-lead`). Adversarial critic: `w-h2-critic` (`risk-engine-specialist`).
 **Freeze discipline (NN1):** THEORY + STYLIZED_FACT only. No P&L-fitted choices.
@@ -151,13 +152,17 @@ be a one-element series.
   axioms define expected-utility on terminal-wealth outcomes; the **expectation**
   is taken across **states of the world**, not across time within a single
   realized path.
-- **Statistical disqualifier (binding).** S-2 requires `compute_crra_eu_tstat(U)
-  = mean(U)/(sd(U)/√T)` where `T` is the **count of independent observations**
-  contributing to the mean. A single fold-end scalar yields `T = 1`, `sd(U) =
-  undefined`, and the t-stat is structurally undefined. The BHY haircut
+- **Statistical disqualifier (binding, scoped to the current walk-forward).** S-2
+  requires `compute_crra_eu_tstat(U) = mean(U)/(sd(U)/√T)` where `T` is the
+  **count of independent observations** contributing to the mean. Under the
+  current 60/20/20 single-frozen-fold walk-forward (`autotuner.py:154-159`), a
+  terminal-wealth scalar per fold yields `T = 1` per trial; `sd(U)` is
+  undefined and the t-stat is structurally undefined. The BHY haircut
   (`autotuner.py:706-728`) requires a non-degenerate t-stat per trial. A
-  terminal-wealth candidate would force a different statistical machinery
-  entirely — incompatible with the binding condition S-2.
+  future multi-fold-per-trial design (e.g. rolling k-fold, explicitly
+  dismissed by council synthesis §3.5 as "no rolling k-fold needed" but
+  architecturally supportable) would revisit this disqualifier; out of scope
+  for M1.
 - **Stylized-fact friction.** A single 125-day-fold realization cannot estimate
   the dispersion of policy outcomes; the dispersion is the very thing the BHY
   haircut is honest about. Terminal wealth collapses that dispersion.
@@ -168,19 +173,67 @@ be a one-element series.
 
 ## §3 — Selection: Candidate A, with explicit provenance
 
-**Selected formulation:**
+**Selected formulation (canonical, decimal-fraction frame):**
 
 ```
-W_i = 1 + r_i^{policy}                                          (gross daily wealth ratio)
-r_i^{policy} = guard_alpha_i + eod_i^{benchmark}                (identity from autotuner.py:137-143)
+W_i  =  max(WEALTH_ARG_FLOOR, 1 + r_i^{policy})                 (gross daily wealth ratio)
+r_i^{policy}  =  triggered_return_i                             (the policy's realized per-day return; ≡ guard_alpha_i + eod_return_i by algebraic rearrangement)
 ```
 
-where `guard_alpha_i = triggered_return_i − eod_return_i` is the **same per-day
-signed difference** the legacy Sortino branch uses, and `eod_return_i` is the
-buy-and-hold ("hold-to-EOD") realized return on the same position over the same
-day. The identity reconstructs the AlphaBot policy's realized per-day return
-from the legacy series; **no new data is required**, only an additive
-combination of two columns already present in the fold-day records.
+The simpler statement is **`r_i^{policy} ≡ triggered_return_i`** — the policy's
+realized per-day return on the position, defined in `_collect_sim_returns`
+(`autotuner.py:672-695`: `eod_return = ticks[-1]["return"]` at line 673;
+`triggered_return = tick["return"] + penalty` at line 688; `guard_alpha =
+triggered_return - eod_return` at line 692) and identically structured in
+`run_simulation` (`autotuner.py:752-777`: lines 753, 769, 777). The algebraic
+rearrangement `triggered_return ≡ guard_alpha + eod_return` makes it visible
+that **no new data is required**: the CRRA branch's `W` is reconstructible from
+the same two-column fold-day record the Sortino branch already consumes
+(`guard_alpha` and the EOD-benchmark return), via elementary addition.
+
+### §3.0 Unit-frame discipline — `r^{policy}` is decimal-fraction inside this formula
+
+The codebase carries per-day returns in **percent** units, established at the
+producer boundary `synthetic_history.py:355`:
+
+```
+ticks.append({..., "return": agg_ret * 100.0, ...})
+```
+
+The `_PCT` suffix on the legacy Sortino-branch thresholds (`autotuner.py:97`
+`MISSED_UPSIDE_THRESHOLD_PCT = 1.0`; `:105` `DRAWDOWN_THRESHOLD_PCT = 1.5`;
+`:108` `DRAWDOWN_MIN_GAIN_PCT = 1.0`) and the magnitude of `tick["return"]`
+values in `tests/autotuner/test_c3_*` / `test_c4_*` fixtures (values like
+`0.5`, `2.0`, `-8.0`, `-50.0` — nonsensical as decimal fractions but normal
+as percentages) both pin the codebase unit-frame as percent.
+
+The CRRA wealth-ratio formula `W = 1 + r` **requires `r` in decimal-fraction
+units**. A `+5%` day must produce `W = 1.05`, not `W = 6.0`. The unit conversion
+is therefore explicit and named:
+
+```
+RETURN_PCT_TO_FRACTION = 100.0       (named module-scope constant; M1 implementation surface)
+r_i^{policy} [fraction]  =  triggered_return_i [pct] / RETURN_PCT_TO_FRACTION
+W_i  =  max(WEALTH_ARG_FLOOR, 1 + r_i^{policy} [fraction])
+```
+
+This memo defines the formula in the **decimal-fraction frame**. The M1
+autotuner branch performs the percent→fraction conversion at the boundary
+between `_collect_sim_returns` (which emits a series of percent-unit per-day
+policy returns) and `compute_crra_eu_objective` (which consumes the
+decimal-fraction series). The M1 implementation surface owns the
+`RETURN_PCT_TO_FRACTION` constant; the W-H2 fixture's worked examples (§5 of
+`tests/fixtures/m1-wealth-argument/derivation-fixture.json`) are all in the
+decimal-fraction frame to match the formula domain.
+
+**Why this matters for A-4 consistency.** The Sortino branch operates entirely
+in percent and never converts; it consumes percent-unit `guard_alpha` directly
+(`autotuner.py:752-797` arithmetic). The CRRA branch converts at its boundary
+and the constants downstream (`WEALTH_ARG_FLOOR = 1e-3`, fixture values) are
+fraction-unit. Cross-branch unit drift is prevented by the explicit named
+conversion constant and a one-line documentation pin at the
+`compute_crra_eu_objective` entry — flagged in M1 plan "Risk callouts" as a
+named acceptance criterion.
 
 > **Why this is A-4 consistent.** Wherever CRRA is evaluated, `W` is the same
 > quantity: a positive per-period gross-return ratio. The Phase-1 autotuner branch
@@ -194,7 +247,8 @@ combination of two columns already present in the fold-day records.
 |---|---|---|
 | Functional form of `W` | per-period gross return `1 + r_t` | **THEORY** — Pratt (1964); Merton (1969); Samuelson (1969); Campbell-Viceira (2002) Ch. 2. CRRA + per-period gross return is the canonical pair. |
 | Units | dimensionless wealth ratio (≥ 0 by construction in the absence of leverage; `> 0` after the floor) | **THEORY** — CRRA's domain requires `W > 0`. |
-| Per-trial `r_i^{policy}` reconstruction | `guard_alpha_i + eod_return_i` | **STYLIZED_FACT** (codebase identity at `autotuner.py:137-143`); no new data required. |
+| Per-trial `r_i^{policy}` reconstruction | `r^{policy} ≡ triggered_return_i` (equivalently `guard_alpha_i + eod_return_i`) | **STYLIZED_FACT** (codebase identity at `autotuner.py:672-695` lines 673, 688, 692 and `autotuner.py:752-777` lines 753, 769, 777); no new data required. |
+| Unit-frame conversion | `r [fraction] = r [pct] / RETURN_PCT_TO_FRACTION`, `RETURN_PCT_TO_FRACTION = 100.0` | **STYLIZED_FACT** — `synthetic_history.py:355` writes `tick["return"] = agg_ret * 100.0` at the producer boundary; named conversion constant + project no-magic-numbers rule. |
 | Risk-free adjustment | NONE (`r_f = 0`) | **MANDATE** — operator decision PA-5 fixes `SORTINO_TARGET_RETURN = 0.0` (`autotuner.py:117-118`, citing Sortino & van der Meer 1991, *J. Portfolio Management*). Maintaining the same baseline across branches preserves A-4 consistency. |
 | Aggregation scope | one `U_i` per fold-day; mean over the `T` fold-days | **THEORY** — Merton-Samuelson per-period separability for CRRA; **STATISTICAL** — `T ≥ 2` required for the S-2 t-stat to be defined. |
 | Horizon | fold-day close-to-close (one trading day) | **MANDATE** — the autotuner already records one realized-return value per fold-day; matching that grid keeps `r_i^{policy}` directly observable without re-simulating intraday. |
@@ -214,7 +268,7 @@ combination of two columns already present in the fold-day records.
 - **Not terminal wealth.** Candidate D collapses `T → 1` and breaks S-2's
   t-stat construction.
 
-### §3.3 Restriction to the M1 autotuner branch only
+### §3.3 Restriction to the M1 autotuner branch only — and the persistent NN1 facet
 
 This derivation defines `W_i` **only** inside the M1 autotuner branch (i.e.
 inside `run_simulation` once `spec_bundle.objective_kind == "crra_eu"`).
@@ -224,9 +278,22 @@ inside `run_simulation` once `spec_bundle.objective_kind == "crra_eu"`).
   and is byte-identical to its current behavior (per M1 plan "Definition of Done"
   bullet on the `compute_sortino_tstat` regression).
 - A Phase-2 exit-branch CRRA evaluation (hold vs. exit at decision time) is
-  **out-of-scope** for Phase 1. If such a path is later added under Finalist B,
-  the A-4 binding requires the *same* `W = 1 + r^{policy}` formulation evaluated
-  on the relevant horizon — but Phase 1 ships only the autotuner-side branch.
+  **out-of-scope** for Phase 1.
+
+**The persistent NN1 facet is the DEFINITIONAL FORM, not the data source.** What
+is frozen by THEORY/MANDATE/STYLIZED_FACT and persisted across phases is:
+
+```
+W  =  max(WEALTH_ARG_FLOOR, 1 + r^{policy})       (definitional form — frozen)
+```
+
+In Phase 1, `r^{policy}` is the **realized** per-day return on the
+actually-triggered exit. In Phase 2 (if Finalist B unlocks), the hold-branch's
+`r^{policy}` is the **simulated** per-day return on the no-exit counterfactual
+path produced by `simulate_forward_paths` (`feature-plans/decision-science/phase-2/simulate-forward-paths/plan.md`).
+The form is identical; the input data source differs. A-4 consistency is
+satisfied because the form is the persistent NN1 facet, not the data source —
+a downstream reader does not need a new facet for Phase 2.
 
 ---
 
@@ -244,13 +311,18 @@ shrinks `sd(U)`, and inflates the t-stat — anti-conservative bias).
   trailing-stop layer can lose at most the gap-risk delta to the next tick.
   Within the AlphaBot architecture, the protective stop floor (the **safety floor**
   named in the README hazard table row "MC sentinel discipline (F-4 ★)") is
-  designed never to be disabled. STYLIZED_FACT — daily realized losses on US
-  equities under a trailing stop, even on gap-down opens, rarely exceed −30% in a
-  single trading day for the AlphaBot universe; the empirical 99.9th-percentile
-  worst single-day loss for similar trailing-stop-protected long-only US-equity
-  strategies is roughly −20% to −25% (Carver 2015, *Systematic Trading*, Ch. 9;
-  Chan 2013, *Algorithmic Trading*, Ch. 8). A **theoretical** worst case bounded
-  by `−1` (total loss) is the conservative envelope.
+  designed never to be disabled. STYLIZED_FACT — the practitioner literature on
+  systematic trailing-stop-protected long-only US-equity strategies (Carver
+  2015, *Systematic Trading*; Chan 2013, *Algorithmic Trading*) establishes
+  that in-distribution daily losses under such strategies do **not** approach
+  `-99%`; the empirical worst single-day loss envelope is far less than `-50%`,
+  leaving the `1e-3` floor (which corresponds to a `-99.9%` day) comfortably
+  below any realistic in-distribution loss day. A **theoretical** worst case
+  bounded by `−1` (total loss) is the conservative envelope; the floor's
+  purpose is to handle pathological replay/backtest inputs, not to model the
+  in-distribution loss distribution. (The specific percentile thresholds in
+  Carver and Chan are not pinpointed here because the load-bearing claim is
+  directional — `−99%` is not in-distribution — not a specific numerical bound.)
 - **Theoretical lower bound on `W`.** `W ≥ 1 + r^{policy}_{min} ≥ 1 − 1 = 0` in
   the limit of total loss. The CRRA evaluation `u(0)` is `−∞` for `γ ≥ 1`. The
   floor must therefore be **strictly positive** and selected to keep
@@ -281,30 +353,45 @@ the floor against `γ_max = 5` for safety (with margin to 10).
 
 ### §4.3 IEEE-754 representability constraint
 
-For `γ = 5`, `W^(1-γ) = W^(−4) = 1/W^4`. To keep `u(W) > -1e15` (well inside
-IEEE-754 double's ~1e308 dynamic range, with hundreds of orders of magnitude of
-slack against further multiplication / accumulation across `T` ≈ 25 fold-days),
-we require:
+For `γ = 5`, `W^(1-γ) = W^(−4) = 1/W^4`. IEEE-754 double has a finite dynamic
+range of ~1.8e308; the binding constraint is that `u(W)` and downstream
+accumulations across `T` ≈ 25 fold-days remain comfortably inside that range.
 
-```
-W^(−4) < 1e15
-⇒ W > (1e15)^(−1/4) = 10^(−15/4) ≈ 5.6e−4
-```
+At `WEALTH_ARG_FLOOR = 1e-3`:
 
-A factor-of-5 safety margin gives `W ≥ ~3e−3` — i.e. a wealth ratio ≥ 0.003,
-corresponding to a per-day realized return of `r_i^{policy} ≥ −99.7%`.
+| γ | `W^(1-γ)` at `W = 1e-3` | `u(WEALTH_ARG_FLOOR)` | IEEE-754 slack against 1.8e308 |
+|---|---|---|---|
+| 0.5 | 0.03162... | -1.937... | ~308 orders of magnitude |
+| 1.0 | (log branch) | ln(1e-3) = -6.907... | full |
+| 2.0 | 1000 | -999 | ~305 orders of magnitude |
+| 5.0 | 1e12 | -2.5e11 | ~296 orders of magnitude |
+| 10.0 (Mehra-Prescott cap) | 1e27 | ~-1.1e26 | ~282 orders of magnitude |
+
+At the prudential ceiling `γ = 5`, `u(1e-3)` is approximately `-2.5e11`, leaving
+~296 orders of magnitude of slack against IEEE-754 overflow. Even at the
+Mehra-Prescott implausible-prudential cap `γ = 10`, slack remains ~282 orders
+of magnitude. Numerical safety is not the binding constraint here — any
+`WEALTH_ARG_FLOOR` in `[1e-4, 1e-2]` is numerically safe at prudential `γ ≤ 10`;
+the operational rationale below selects the specific value.
 
 ### §4.4 Selected floor value: `WEALTH_ARG_FLOOR = 1e−3`
 
 **`WEALTH_ARG_FLOOR = 0.001`** (one tenth of one percent of pre-trade wealth
 remaining at end-of-day).
 
-**Justification (all three legs together):**
+**Three-leg justification (none alone load-bearing; all three concur):**
 
-1. **THEORY (IEEE-754 stability).** `WEALTH_ARG_FLOOR = 1e−3` keeps
-   `u(WEALTH_ARG_FLOOR)` representable for any prudential γ up to 10 (the
-   Mehra-Prescott upper bound), with ≥ 4 orders of magnitude of slack against
-   further accumulation across the fold.
+1. **THEORY (IEEE-754 stability has wide tolerance; the floor is well inside it).**
+   Per §4.3, the floor at `1e-3` leaves ≥ 282 orders of magnitude of IEEE-754
+   slack at the Mehra-Prescott prudential γ-ceiling of 10. A tighter floor
+   (`1e-4`) would consume one further order of magnitude; a looser floor
+   (`1e-2`) would give up most of the operational-impossibility coverage in
+   leg 2. The floor at `1e-3` is selected as the operationally meaningful
+   value that comfortably sits inside the IEEE-754 safety envelope. The
+   selection is **below** the analytic ceiling `(1e15)^(-1/4) ≈ 5.6e-4` (for
+   `γ=5` with `u(W) > -1e15`) so simulated catastrophic-day tests can land at
+   or below the floor without numerical blow-up; tighter selection would
+   leave less room for fixture catastrophic-day cases.
 2. **STYLIZED_FACT (operational impossibility region).** A realized per-day return
    of `r ≤ −99.9%` corresponds to a position whose end-of-day mark is essentially
    zero — a regime in which **the AlphaBot protective stop has, by construction,
@@ -313,7 +400,10 @@ remaining at end-of-day).
    table row MC sentinel discipline). Encountering `W < 1e−3` in production is a
    *catastrophic failure of the safety floor itself*, not an in-distribution
    risk; the floor exists for numerical correctness in *replay* and *backtest*
-   contexts where pathological synthetic days may be encountered.
+   contexts where pathological synthetic days may be encountered. In-distribution
+   single-day losses under a trailing-stop-protected long-only US-equity
+   strategy do not approach `-99%`; the floor at `1e-3` is well below any
+   realistic in-distribution loss day.
 3. **MANDATE (no-magic-numbers project rule).** The constant is named, sourced
    in-line per `.claude/CLAUDE.md` "Coding Standards (project additions)," and
    the source comment cites this memo plus evaluation §A.1 H-1.
@@ -402,6 +492,30 @@ does not close every adjacent question:
    beyond the stop) are out-of-distribution for the floor; in those regimes the
    floor merely prevents NaN, not loss.
 
+4. **Floor-hit trial t-stat information-collapse (W-H4-B, new residual).**
+   The floor preserves finiteness of `U` but **collapses the t-stat's
+   discriminating power within any trial that contains a floor-hit day.**
+   Mechanically: for `γ ≥ 2` and a floor-hit producing `U_floor ≈ -999` (γ=2)
+   or `U_floor ≈ -2.5e11` (γ=5), `|U_floor|` overwhelms the other 24 fold-day
+   utilities. Then `mean(U) ≈ U_floor / T` and `sd(U) ≈ |U_floor| / √(T-1)`,
+   so the t-stat `mean(U) / (sd(U)/√T) ≈ sign(U_floor) · √((T-1)/T) ≈ -1`
+   for any floor-hit trial regardless of the non-floor days' performance.
+   Downstream, `compute_haircut_pvalue(t ≈ -1)` produces `p_adj ≈ 1` → the
+   trial is dropped from BHY selection.
+
+   This is **arguably correct policy behavior** — a trial that catastrophically
+   lost on any day SHOULD be disqualified from selection — and is consistent
+   with the loss-averse spirit of the legacy Sortino-branch objective. We
+   document it explicitly as a residual rather than a bug. Mitigation paths
+   (e.g. a max-utility-magnitude clamp at the floor) are rejected because they
+   re-introduce the U-side floor anti-conservatism H-1 forbids.
+
+   This residual is distinct from W-H4 (numerical stability) and from W-H5
+   (serial-correlation anti-conservatism); we label it **W-H4-B
+   (information-collapse on floor-hit trials)**. M1 plan disposition:
+   disclose-and-accept; document in the autotuner docstring; no Phase-1
+   remediation.
+
 ### §6.2 Open questions (NOT blocking M1)
 
 - **OQ-W-H2-A — γ pre-registration value.** Selecting the actual `γ` to ship
@@ -466,7 +580,16 @@ hierarchy.
     §W-H2, §W-H4, "Definition of Done."
 17. **`feature-plans/decision-science/phase-1/red-test-2-m1-wealth-argument/plan.md`** —
     the RED test that will pin this derivation.
-18. **`autotuner.py:80-147`** — codebase grounding for the guard-alpha identity,
-    `SORTINO_TARGET_RETURN = 0.0`, and the per-fold-day grid.
-19. **`math_engine.py:30-54`** — `_reject_non_finite` policy that the
+18. **`autotuner.py:117-118`** — `SORTINO_TARGET_RETURN = 0.0` operator MANDATE
+    (PA-5) and its Sortino & van der Meer 1991 source comment.
+19. **`autotuner.py:97, 105, 108`** — `_PCT`-suffixed loss-aversion thresholds
+    confirming the codebase unit-frame is percent.
+20. **`autotuner.py:672-695`** — `_collect_sim_returns`: codebase identity for
+    `eod_return` (line 673), `triggered_return` (line 688), `guard_alpha = triggered_return − eod_return` (line 692).
+21. **`autotuner.py:752-777`** — `run_simulation`: same identity (lines 753, 769, 777).
+22. **`autotuner.py:154-159`** — `TRAIN_RATIO`/`VALIDATION_RATIO`/`FROZEN_EVAL_RATIO`
+    60/20/20 walk-forward split anchoring the per-trial T-count.
+23. **`synthetic_history.py:355`** — `tick["return"] = agg_ret * 100.0` producer
+    boundary establishing the codebase percent frame.
+24. **`math_engine.py:30-54`** — `_reject_non_finite` policy that the
     `WEALTH_ARG_FLOOR` guard upholds.
