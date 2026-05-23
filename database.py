@@ -9,6 +9,7 @@ import sqlite3
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 
 def _finite_or_none(x):
@@ -1221,6 +1222,70 @@ def record_shadow_observation(
         conn.close()
     except Exception as exc:
         logging.error("record_shadow_observation failed for %s: %s", symphony_id, exc)
+
+
+# --- H4: Telemetry write helper ---
+
+# Valid mode values — enforced at the call boundary (project rule 4 analogue:
+# every call site must state the mode explicitly, no default).
+_TELEMETRY_VALID_MODES = frozenset({"live", "replay"})
+
+
+def write_telemetry_row(
+    table_name: str,
+    row_dict: dict,
+    *,
+    mode: Literal["live", "replay"],
+) -> None:
+    """Write one telemetry row to table_name via a short-lived connection.
+
+    Opens its own sqlite3.connect() — does NOT join the cycle's save_state
+    transaction.  Connection pattern matches record_shadow_observation (:1171).
+
+    mode="live":   swallows sqlite3.Error; logs one WARNING with table_name,
+                   error type, and cycle_id only (gate 7 — no payload values).
+                   Returns None.  The cycle must never fail on telemetry.
+    mode="replay": lets sqlite3.Error propagate — a replay that cannot persist
+                   its row is loud-broken by design (H4 binding).
+
+    Raises ValueError for any mode value other than "live" or "replay".
+    Raises TypeError (from Python) if mode is omitted — it is keyword-only
+    with no default (H4 plan risk R4).
+    """
+    if mode not in _TELEMETRY_VALID_MODES:
+        raise ValueError(
+            f"write_telemetry_row: mode must be 'live' or 'replay'; got {mode!r}"
+        )
+
+    # Build the INSERT from the row_dict keys — order is determined by the
+    # dict; the VALUES tuple matches that same order.
+    columns = list(row_dict.keys())
+    placeholders = ", ".join("?" for _ in columns)
+    col_names = ", ".join(columns)
+    sql = f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders})"
+    values = tuple(row_dict[c] for c in columns)
+
+    if mode == "live":
+        try:
+            conn = sqlite3.connect(_db_file(), timeout=10.0)
+            conn.execute(sql, values)
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as exc:
+            # Gate 7: log only table_name, error type, and cycle_id — no
+            # financial payload values from row_dict.
+            cycle_id = row_dict.get("cycle_id")
+            logging.warning(
+                "write_telemetry_row failed for table=%s error=%s cycle_id=%s",
+                table_name,
+                type(exc).__name__,
+                cycle_id,
+            )
+    else:  # mode == "replay"
+        conn = sqlite3.connect(_db_file(), timeout=10.0)
+        conn.execute(sql, values)
+        conn.commit()
+        conn.close()
 
 
 def prune_old_shadow_history(retention_days: int) -> int:
