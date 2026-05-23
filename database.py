@@ -753,6 +753,7 @@ _MIGRATION_FILES = [
     "013_fleet_alert_tripped_symphonies.sql",
     "014_autotune_runs_selection_tstat.sql",
     "015_shadow_history_position_epoch.sql",
+    "016_spec_bundles.sql",
 ]
 
 
@@ -805,6 +806,156 @@ def run_migrations() -> None:
                 logging.error("run_migrations: failed to apply %s: %s", migration_name, exc)
 
     conn.close()
+
+
+# --- 016: Spec-Bundle Registry ---
+# Immutable hashed frozen-facet bundle registry.  The application layer exposes
+# only INSERT and SELECT — no UPDATE path — enforcing the NN1 spec-freeze
+# invariant at the code level (analogous to the llm_suggestions append-only
+# accessor surface at database.py:670-715).
+
+_VALID_FREEZE_DISCIPLINES: frozenset[str] = frozenset({
+    "THEORY",
+    "MANDATE",
+    "STYLIZED_FACT",
+    "CALIBRATION",
+    "BACKTEST_SELECTION",
+})
+
+_SPEC_BUNDLE_COLUMNS = [
+    "bundle_hash",
+    "frozen_at",
+    "facets_json",
+    "horizon_bars",
+    "cvar_alpha",
+    "generator_family",
+]
+
+_SPEC_FACET_COLUMNS = [
+    "id",
+    "bundle_hash",
+    "facet_name",
+    "facet_value",
+    "freeze_discipline",
+    "justification",
+    "calibration_evidence",
+]
+
+
+def canonicalize_facets_json(facets: dict) -> str:
+    """Deterministic JSON serialisation of a facets dict.
+
+    Sort keys and use compact separators so the same dict always yields the
+    same byte sequence across interpreter restarts (Gate-1 parity precondition).
+    """
+    return json.dumps(facets, sort_keys=True, separators=(",", ":"))
+
+
+def hash_facets_json(canonical_json: str) -> str:
+    """Return the hex-encoded SHA-256 digest of the canonical facets JSON bytes.
+
+    Reproducible at replay time: the same canonical_json string always yields
+    the same hex digest (plan §Risk callouts — non-reproducible hash fails
+    Gate-1 parity).
+    """
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def insert_spec_bundle(
+    *,
+    bundle_hash: str,
+    facets_json: str,
+    horizon_bars: "int | None" = None,
+    cvar_alpha: "float | None" = None,
+    generator_family: "str | None" = None,
+) -> None:
+    """Insert a new spec bundle row.
+
+    Idempotent: a duplicate bundle_hash is silently ignored (INSERT OR IGNORE).
+    INSERT OR REPLACE is explicitly NOT used — that would overwrite frozen_at,
+    destroying the original freeze-timestamp provenance record.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO spec_bundles "
+            "(bundle_hash, facets_json, horizon_bars, cvar_alpha, generator_family) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (bundle_hash, facets_json, horizon_bars, cvar_alpha, generator_family),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_spec_bundle(bundle_hash: str) -> "dict | None":
+    """Return the spec_bundles row for the given hash as a dict, or None."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_SPEC_BUNDLE_COLUMNS)
+            + " FROM spec_bundles WHERE bundle_hash = ?",
+            (bundle_hash,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return dict(zip(_SPEC_BUNDLE_COLUMNS, row))
+
+
+def insert_spec_bundle_facet(
+    *,
+    bundle_hash: str,
+    facet_name: str,
+    facet_value: str,
+    freeze_discipline: str,
+    justification: "str | None" = None,
+    calibration_evidence: "str | None" = None,
+) -> int:
+    """Insert a spec_facets row and return the new row id.
+
+    Raises ValueError for any freeze_discipline value outside the accepted enum
+    (THEORY / MANDATE / STYLIZED_FACT / CALIBRATION / BACKTEST_SELECTION).
+    Enforcement is at the application layer — consistent with the codebase's
+    app-level constraint pattern (no SQL CHECK constraint).
+    """
+    if freeze_discipline not in _VALID_FREEZE_DISCIPLINES:
+        raise ValueError(
+            f"freeze_discipline {freeze_discipline!r} is not a valid enum value. "
+            f"Accepted: {sorted(_VALID_FREEZE_DISCIPLINES)}"
+        )
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO spec_facets "
+            "(bundle_hash, facet_name, facet_value, freeze_discipline, "
+            "justification, calibration_evidence) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (bundle_hash, facet_name, facet_value, freeze_discipline,
+             justification, calibration_evidence),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_spec_facets_for_bundle(bundle_hash: str) -> "list[dict]":
+    """Return all spec_facets rows for the given bundle_hash, ordered by id.
+
+    Returns an empty list if none exist — never raises for an unknown hash.
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_SPEC_FACET_COLUMNS)
+            + " FROM spec_facets WHERE bundle_hash = ? ORDER BY id ASC",
+            (bundle_hash,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SPEC_FACET_COLUMNS, row)) for row in rows]
 
 
 # --- R1: Fleet Alert State Helpers ---

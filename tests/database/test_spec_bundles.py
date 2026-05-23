@@ -872,3 +872,277 @@ def test_get_spec_facets_for_bundle_returns_dicts_with_all_schema_columns(migrat
         assert not missing, (
             f"Facet dict missing columns: {missing}. Got: {sorted(facet.keys())}"
         )
+
+
+# ===========================================================================
+# spec-016 domain review gaps: T-1, T-5, T-6 orphan, no-init_db-mirror,
+# no-opt-DB (added after spec-016 review at HEAD 61f27e9)
+# ===========================================================================
+
+
+def test_016_migration_is_last_entry_in_migration_files_list():
+    """
+    T-1 (spec-016): '016_spec_bundles.sql' must be the LAST entry in
+    database._MIGRATION_FILES, not merely after 015.
+
+    The append-only contract means new migrations are always appended to the
+    tail. A mid-list insertion would silently re-order migration application
+    against already-applied migrations tracked in the schema_migrations table,
+    potentially skipping or double-applying entries.
+    """
+    assert "016_spec_bundles.sql" in db_module._MIGRATION_FILES, (
+        "'016_spec_bundles.sql' not in _MIGRATION_FILES — add it."
+    )
+    assert db_module._MIGRATION_FILES[-1] == "016_spec_bundles.sql", (
+        f"'016_spec_bundles.sql' must be the last entry in _MIGRATION_FILES; "
+        f"found at index {db_module._MIGRATION_FILES.index('016_spec_bundles.sql')} "
+        f"but last entry is {db_module._MIGRATION_FILES[-1]!r}. "
+        "The list is append-only — inserting mid-list re-orders migration application."
+    )
+
+
+def test_016_migration_sql_contains_no_create_trigger():
+    """
+    T-5 (spec-016): 016_spec_bundles.sql must NOT contain a CREATE TRIGGER
+    statement.
+
+    Bundle immutability is enforced at application code level (no-UPDATE-accessor
+    pattern from the llm_suggestions precedent, database.py:670-715). A SQL
+    trigger would be an out-of-pattern construct in this codebase and would
+    create hidden behavioural coupling that is invisible to readers of database.py.
+    """
+    assert _MIGRATION_PATH.is_file(), f"Migration file missing: {_MIGRATION_PATH}"
+    sql_upper = _MIGRATION_PATH.read_text(encoding="utf-8").upper()
+    assert "CREATE TRIGGER" not in sql_upper, (
+        "016_spec_bundles.sql must not contain CREATE TRIGGER. "
+        "Immutability is enforced at application level (accessor surface), "
+        "not via SQL triggers — consistent with llm_suggestions precedent."
+    )
+
+
+def test_spec_facets_orphan_insert_does_not_raise(migrated_db):
+    """
+    T-6 complement (spec-016): inserting a spec_facets row whose bundle_hash
+    has NO parent in spec_bundles must NOT raise.
+
+    SQLite foreign-key enforcement is off by default; the soft-FK is an
+    application-level invariant (get_spec_bundle returns None for orphans, not
+    an exception). The schema must not have an active FOREIGN KEY … REFERENCES
+    constraint with PRAGMA foreign_keys = ON implied by the migration. A test
+    for the valid-ref walk is already present (test_facet_bundle_hash_soft_fk_resolves_to_nonempty_row).
+    """
+    conn = sqlite3.connect(migrated_db)
+    try:
+        # Insert a facet referencing a bundle_hash that does not exist in spec_bundles
+        conn.execute(
+            "INSERT INTO spec_facets "
+            "(bundle_hash, facet_name, facet_value, freeze_discipline) "
+            "VALUES (?, ?, ?, ?)",
+            ("orphan-hash-does-not-exist", "some_facet", '"value"', "THEORY"),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        pytest.fail(
+            f"Orphan facet insert raised IntegrityError: {exc}. "
+            "spec_facets.bundle_hash is a soft FK (SQLite FK enforcement is off "
+            "by default). The migration must not activate PRAGMA foreign_keys "
+            "or use REFERENCES with ON DELETE/UPDATE in a way that makes the "
+            "INSERT fail. Application-level FK enforcement only."
+        )
+    finally:
+        conn.close()
+
+
+def test_init_db_does_not_create_spec_bundles_or_spec_facets():
+    """
+    spec-016 / plan §Deliverables #2: init_db() must NOT contain CREATE TABLE
+    statements for spec_bundles or spec_facets.
+
+    The dual-write rule (H1 migration plan §6) applies only to ALTER ADD COLUMN
+    migrations (migration 022's autotune_runs columns are the canonical example).
+    New-table migrations go through run_migrations() only. A spurious CREATE TABLE
+    in init_db() would shadow the migration runner and make future schema changes
+    invisible to operator deployments that call init_db() but not run_migrations().
+    """
+    import inspect  # noqa: PLC0415
+    source = inspect.getsource(db_module.init_db)
+    assert "spec_bundles" not in source, (
+        "init_db() must not contain 'spec_bundles'. "
+        "New-table migrations use run_migrations() only; "
+        "no dual-write (H1) needed for spec_bundles."
+    )
+    assert "spec_facets" not in source, (
+        "init_db() must not contain 'spec_facets'. "
+        "New-table migrations use run_migrations() only."
+    )
+
+
+def test_016_cycle_introduces_no_opt_db_writes(migrated_db):
+    """
+    spec-016 / architecture constraint 3 (Two-DB boundary, E-2 ★):
+    no function introduced in this cycle may open alphabot_opt.db or any
+    connection that is not DB_FILE / _db_file().
+
+    Strategy: inspect the source of the new accessor functions for any reference
+    to 'opt' in a database path context. This is a static guard; a runtime guard
+    would require mocking the sqlite3 module, which this codebase does not do.
+    """
+    import inspect  # noqa: PLC0415
+
+    new_accessors = [
+        "insert_spec_bundle",
+        "get_spec_bundle",
+        "insert_spec_bundle_facet",
+        "get_spec_facets_for_bundle",
+        "canonicalize_facets_json",
+        "hash_facets_json",
+    ]
+
+    for name in new_accessors:
+        if not hasattr(db_module, name):
+            continue  # not implemented yet — no source to inspect; RED is expected
+        source = inspect.getsource(getattr(db_module, name))
+        # Check for any explicit open of the opt DB by path pattern
+        assert "alphabot_opt" not in source, (
+            f"{name}() references 'alphabot_opt' — spec registry must live in "
+            "the state DB only (Two-DB boundary, E-2 ★, architecture constraint 3)."
+        )
+        assert "opt.db" not in source, (
+            f"{name}() references 'opt.db' — state DB only per council §3.7."
+        )
+
+
+# ===========================================================================
+# Sufficiency review: contracts a stub could satisfy but the real impl must not
+# ===========================================================================
+
+
+def test_insert_spec_bundle_persists_facets_json_retrievable_and_deserializable(migrated_db):
+    """
+    Sufficiency: get_spec_bundle() must return the facets_json that was stored,
+    and that string must be valid JSON deserializable to the original dict.
+
+    A stub returning a row dict with empty-string facets_json would pass all
+    shape tests. This test verifies the actual stored content round-trips.
+    """
+    from database import canonicalize_facets_json, get_spec_bundle, hash_facets_json, insert_spec_bundle  # noqa: PLC0415
+
+    facets = {"generator_family": "crra", "horizon_bars": 63, "cvar_alpha": 0.05}
+    canonical = canonicalize_facets_json(facets)
+    bundle_hash = hash_facets_json(canonical)
+
+    insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical)
+
+    row = get_spec_bundle(bundle_hash)
+    assert row is not None, "Precondition: row must be stored"
+
+    stored_json = row["facets_json"]
+    assert isinstance(stored_json, str) and len(stored_json) > 0, (
+        "facets_json stored as empty string or None — insert must persist content."
+    )
+
+    # Must deserialize cleanly
+    try:
+        recovered = json.loads(stored_json)
+    except json.JSONDecodeError as exc:
+        pytest.fail(f"facets_json stored is not valid JSON: {exc!r}; got {stored_json!r}")
+
+    assert isinstance(recovered, dict), (
+        f"facets_json must deserialize to a dict; got {type(recovered)}"
+    )
+    # Content must match the original facets (round-trip fidelity)
+    assert recovered == facets, (
+        f"facets_json round-trip failed: stored {stored_json!r}, "
+        f"recovered {recovered!r}, expected {facets!r}"
+    )
+
+
+def test_insert_spec_bundle_facet_persists_all_fields_retrievable(migrated_db):
+    """
+    Sufficiency: get_spec_facets_for_bundle() must return the facet row with
+    all stored field values intact — not a row of NULLs or empty strings.
+
+    A stub returning a list of empty dicts or a dict with only 'id' set would
+    pass the shape tests above. This verifies actual content persistence.
+    """
+    from database import (  # noqa: PLC0415
+        get_spec_facets_for_bundle,
+        insert_spec_bundle,
+        insert_spec_bundle_facet,
+    )
+
+    kwargs = _make_minimal_bundle_kwargs("persist-test")
+    insert_spec_bundle(**kwargs)
+
+    facet_value = json.dumps(42.0)
+    row_id = insert_spec_bundle_facet(
+        bundle_hash=kwargs["bundle_hash"],
+        facet_name="cvar_alpha",
+        facet_value=facet_value,
+        freeze_discipline="CALIBRATION",
+        justification="Calibrated from tail data.",
+        calibration_evidence="table_3_paper_XYZ",
+    )
+
+    facets = get_spec_facets_for_bundle(kwargs["bundle_hash"])
+    assert facets, "Precondition: facet must be returned"
+
+    stored = facets[0]
+    assert stored["id"] == row_id, (
+        f"Returned id {stored['id']} does not match insert return {row_id}."
+    )
+    assert stored["bundle_hash"] == kwargs["bundle_hash"], (
+        "Stored bundle_hash does not match inserted value."
+    )
+    assert stored["facet_name"] == "cvar_alpha", (
+        f"facet_name stored as {stored['facet_name']!r}, expected 'cvar_alpha'."
+    )
+    assert stored["facet_value"] == facet_value, (
+        f"facet_value stored as {stored['facet_value']!r}, expected {facet_value!r}."
+    )
+    assert stored["freeze_discipline"] == "CALIBRATION", (
+        f"freeze_discipline stored as {stored['freeze_discipline']!r}, expected 'CALIBRATION'."
+    )
+    assert stored["justification"] == "Calibrated from tail data.", (
+        "justification not stored correctly."
+    )
+    assert stored["calibration_evidence"] == "table_3_paper_XYZ", (
+        "calibration_evidence not stored correctly."
+    )
+
+
+def test_bundle_hash_is_consistent_with_canonical_json_content(migrated_db):
+    """
+    Sufficiency: the bundle_hash stored in spec_bundles must be reproducible
+    from the stored facets_json using the same canonicalize + hash pipeline.
+
+    This encodes the Gate-1 parity precondition: at replay time, re-hashing
+    the stored facets_json must yield the same bundle_hash. An implementation
+    that stores a random UUID as bundle_hash would fail this test.
+    """
+    from database import (  # noqa: PLC0415
+        canonicalize_facets_json,
+        get_spec_bundle,
+        hash_facets_json,
+        insert_spec_bundle,
+    )
+
+    facets = {"generator_family": "crra", "horizon_bars": 126}
+    canonical = canonicalize_facets_json(facets)
+    expected_hash = hash_facets_json(canonical)
+
+    insert_spec_bundle(bundle_hash=expected_hash, facets_json=canonical)
+    row = get_spec_bundle(expected_hash)
+
+    assert row is not None, "Precondition: bundle must be stored"
+
+    # Re-hash the stored facets_json — must equal the stored bundle_hash
+    stored_facets_json = row["facets_json"]
+    recomputed_hash = hash_facets_json(stored_facets_json)
+
+    assert recomputed_hash == row["bundle_hash"], (
+        f"Re-hashing stored facets_json {stored_facets_json!r} yielded "
+        f"{recomputed_hash!r} but bundle_hash is {row['bundle_hash']!r}. "
+        "Gate-1 parity requires that hash(stored_facets_json) == bundle_hash "
+        "at replay time."
+    )
