@@ -1,6 +1,7 @@
 import time
 import math
 import optuna
+import numpy as np
 from datetime import datetime, timedelta, timezone
 import database
 import math_engine
@@ -19,13 +20,57 @@ def _replay_grace_minutes() -> int:
     would be circular (alpha_bot_execution imports autotuner).
 
     Production suppresses VWAP-Breakdown and VWAP-Bleed-Cut for this many
-    minutes after the session open to avoid open-volatility false exits
-    (V2, AC-V2.1). On minute-bar replay ticks tick_idx 0 == session open, so
-    the faithful equivalent of production's datetime grace gate is
-    `tick_idx < _replay_grace_minutes()`.
+    minutes after EXECUTION_START_TIME to avoid open-volatility false exits
+    (V2, AC-V2.1). The replay's per-tick gate is implemented by
+    _replay_in_open_window_grace below.
     """
     import alpha_bot_execution
     return alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES
+
+
+def _replay_execution_start_time() -> str:
+    """Return the EXECUTION_START_TIME ('HH:MM' ET) the replay must use.
+
+    Shares production's single source of truth (alpha_bot_execution.EXECUTION_START_TIME)
+    so a non-default operator setting (e.g. '10:30' to avoid open-volatility
+    noise) flows through to both paths. AC-5 / N-3: pre-fix the replay's
+    grace gate was anchored at tick_idx 0 (session open at 09:30 ET) instead
+    of EXECUTION_START_TIME, mis-aligning the replay from production whenever
+    EXECUTION_START_TIME was non-default.
+    """
+    import alpha_bot_execution
+    return alpha_bot_execution.EXECUTION_START_TIME
+
+
+def _replay_in_open_window_grace(
+    tick_idx: int, execution_start_hhmm: str, grace_minutes: int
+) -> bool:
+    """Return True iff a replay tick falls inside the EXECUTION_START_TIME
+    open-window grace interval.
+
+    Mirrors production's is_in_open_window_grace gate. tick_idx 0 corresponds
+    to the SESSION OPEN at 09:30 ET (the data-phase loop runs from 09:30
+    onward — alpha_bot_execution.py:681); the grace window is the
+    grace_minutes-long interval that starts at EXECUTION_START_TIME, which
+    sits ``(h - 9) * 60 + (m - 30)`` minute-bars past 09:30. A tick is in
+    grace iff its 09:30-anchored offset is in
+    ``[start_offset, start_offset + grace_minutes)``.
+
+    Args:
+        tick_idx: minute-bar offset since 09:30 ET (the session-open anchor).
+        execution_start_hhmm: 'HH:MM' string, matches alpha_bot_execution.EXECUTION_START_TIME.
+        grace_minutes: production's VWAP_OPEN_WINDOW_GRACE_MINUTES.
+
+    Returns:
+        True iff the tick sits inside [EXECUTION_START_TIME, EXECUTION_START_TIME
+        + grace_minutes). AC-5 / N-3 — closes the replay-vs-production
+        grace-window misalignment.
+    """
+    h, m = execution_start_hhmm.split(":")
+    # The session opens at 09:30 ET; tick_idx 0 == 09:30. exec_start sits
+    # this many minutes past tick 0.
+    start_offset = (int(h) - 9) * 60 + (int(m) - 30)
+    return start_offset <= tick_idx < start_offset + grace_minutes
 
 # --- PORT-LEVEL REPLAY BLIND SPOT (AC-8 / plan D-C3b) ---
 # The autotuner replay (run_simulation / _collect_sim_returns /
@@ -276,29 +321,163 @@ def compute_sortino_ratio(returns: list, target: float = SORTINO_TARGET_RETURN) 
 # Policy dial — the operator may tighten/loosen the selection strictness here.
 HARVEY_LIU_FDR_Q = 0.05
 
-# Numerical-stability epsilon for the haircut p-value clamp. A large trial
-# t-statistic drives the one-sided p-value `1 - Φ(t)` to underflow to exactly 0.0
-# (and a large-negative t saturates it to exactly 1.0); a degenerate 0.0/1.0
-# p-value makes any downstream log / inverse-CDF non-finite. Every haircut p-value
-# is clamped into [_HAIRCUT_PVALUE_EPSILON, 1 - _HAIRCUT_PVALUE_EPSILON]. This is
-# a numerical-stability bound, NOT a policy dial. Source: IEEE-754 double-precision
-# Φ saturates for |t| beyond ~8.3; 1e-12 sits safely inside the representable range.
-_HAIRCUT_PVALUE_EPSILON = 1e-12
+# Per-symphony Optuna trial count. Named so the BHY clamp formula below can
+# reference it as N rather than duplicating the literal 500 (the same N
+# study.optimize uses at the per-symphony optimization call site). Source:
+# 500 trials is the standing per-symphony budget — the statistical-stability
+# floor for the TPE sampler at the V1 search-space width.
+MAX_OPTUNA_TRIALS = 500
+
+# Numerical-stability + BHY-scaling-floor epsilon for the haircut p-value clamp.
+# Two rationales — both must hold:
+#   (a) IEEE-754 stability — a large trial t-statistic drives the one-sided
+#       p-value `1 - Φ(t)` to underflow to exactly 0.0 (and a large-negative t
+#       saturates it to exactly 1.0); a degenerate 0.0/1.0 p-value makes any
+#       downstream log / inverse-CDF non-finite. The clamp must sit safely
+#       inside the IEEE-754 representable range (Φ saturates for |t| beyond
+#       ~8.3, so any value above ~1e-16 satisfies this floor).
+#   (b) BHY scaling-floor (math-audit-2 RM-M2) — the BHY step-up multiplies
+#       each raw p-value by N * c(N) / rank. At rank 1 the smallest reachable
+#       adjusted p-value is (N * c(N)) * eps. If eps is smaller than
+#       q / (N * c(N)) then a SINGLE trial whose t-stat saturates Φ produces
+#       an adjusted p-value far below q — the haircut silently collapses into
+#       a no-op and rubber-stamps every trial as significant.
+# Both rationales are satisfied by eps = q / (N * c(N)) with q = HARVEY_LIU_FDR_Q
+# and N = MAX_OPTUNA_TRIALS — approximately 1.5e-5 at N=500, q=0.05, well inside
+# the IEEE-754 range AND at the BHY floor so the worst-case adjusted p-value at
+# rank 1 lands at q (a strict-> q gate then rejects, as intended). c(N) =
+# sum_{j=1..N} 1/j is the N-th harmonic number (Yekutieli arbitrary-dependence
+# factor); same factor benjamini_hochberg_adjust uses below.
+_HAIRCUT_PVALUE_EPSILON = HARVEY_LIU_FDR_Q / (
+    MAX_OPTUNA_TRIALS * sum(1.0 / j for j in range(1, MAX_OPTUNA_TRIALS + 1))
+)
 
 
-def compute_sortino_tstat(sortino: float, T: int) -> float:
-    """Per-trial t-statistic for the Harvey & Liu haircut: ``sortino * sqrt(T)``.
+# Bootstrap parameters for the haircut Sortino-SE construction (Decision D10 /
+# RM-H1, risk-engine-specialist's binding design memo 2026-05-22).
+#
+# _BOOTSTRAP_RESAMPLES — nonparametric bootstrap resample count used to
+# estimate the Sortino's SE. Sources: Efron 1979 (Annals of Statistics
+# 7(1):1-26 — bootstrap SE convergence); Efron & Tibshirani 1986
+# (Statistical Science 1(1):54-77 — B=50-200 for SE point estimation, B>=1000
+# for p-value/CI calibration); Davidson & MacKinnon 2000 (Econometric
+# Reviews 19(1):55-68 — B=999 standard for test-statistic bootstrap). Here
+# the SE feeds a one-sided Φ p-value, then the BHY N·c(N)/k scaling — the
+# calibrating-use-case floor applies. B=2000 ≈ 2x the prescribed floor with
+# negligible per-trial cost.
+_BOOTSTRAP_RESAMPLES = 2000
 
-    The metric-neutral bridge from a ratio to a significance statistic is the
-    per-observation effect size scaled by the square root of the sample length.
-    ``T`` is the in-sample return-OBSERVATION count of the series the Sortino was
-    computed over (``len(daily_returns)``) — not a calendar-day count.
+# _BOOTSTRAP_MIN_T — minimum series length for which the nonparametric
+# bootstrap SE is trusted. Below this the resample combinatorics dominate
+# the underlying distribution and the SE estimator is degenerate.
+# Source: Efron 1979's implicit small-T floor; risk-engine-specialist's 5.
+_BOOTSTRAP_MIN_T = 5
 
-    Reference: Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013.
+# _BOOTSTRAP_MIN_VALID_RESAMPLES — floor on the count of non-sentinel
+# resampled Sortinos. The +1e6 sentinel emitted by compute_sortino_ratio for
+# an all-non-negative resample is not a real Sortino observation; resamples
+# yielding it are filtered out of the SE computation. Below this floor the
+# remaining sample is too small to estimate SE reliably and the helper
+# surfaces "unavailable" (None) rather than a degenerate SE. Source:
+# risk-engine-specialist's recommendation of 100.
+_BOOTSTRAP_MIN_VALID_RESAMPLES = 100
+
+
+def compute_sortino_se_bootstrap(
+    returns,
+    target: float = SORTINO_TARGET_RETURN,
+    B: int = _BOOTSTRAP_RESAMPLES,
+    seed: int = 0,
+):
+    """Nonparametric bootstrap standard error of the Sortino ratio (Efron 1979).
+
+    Standard nonparametric bootstrap (risk-engine-specialist's binding
+    design): draws ``B`` independent samples-with-replacement of length
+    ``T = len(returns)`` from the input series via
+    ``numpy.random.default_rng(seed).integers(0, T, size=T)``; computes the
+    Sortino on each resample; returns the sample standard deviation
+    (ddof=1, Efron 1979 convention) of the non-sentinel resampled Sortinos.
+
+    Returns ``None`` — the "SE unavailable" sentinel the t-stat path treats
+    as a conservative-rejection signal — when:
+      - T < _BOOTSTRAP_MIN_T (small-T regime; bootstrap unreliable);
+      - returns is a constant series (zero variance; SE degenerate);
+      - fewer than _BOOTSTRAP_MIN_VALID_RESAMPLES non-sentinel Sortinos
+        accumulated (sentinel-rich resample population).
+
+    Args:
+        returns: per-trial return observations.
+        target: minimum-acceptable return for the Sortino's downside
+            denominator; defaults to SORTINO_TARGET_RETURN (0.0).
+        B: bootstrap resample count.
+        seed: deterministic seed for the numpy default_rng; the haircut is
+            therefore reproducible under a fixed trial set.
+
+    Returns:
+        SE as a finite float >= 0, or None when SE is unavailable.
+
+    Reference: Efron, B. (1979). "Bootstrap Methods: Another Look at the
+    Jackknife", Annals of Statistics 7(1), 1-26.
     """
-    if T <= 0:
+    T = len(returns)
+    if T < _BOOTSTRAP_MIN_T:
+        return None
+    # Constant series: bootstrap SE is trivially zero (every resample equals
+    # the input). Surface as "unavailable" so the t-stat path treats the
+    # trial conservatively rather than dividing by zero.
+    first = returns[0]
+    if all(r == first for r in returns):
+        return None
+    rng = np.random.default_rng(seed)
+    sortinos: list = []
+    for _ in range(B):
+        idx = rng.integers(0, T, size=T)
+        resample = [returns[int(i)] for i in idx]
+        s = compute_sortino_ratio(resample, target=target)
+        # Filter +1e6 sentinel — an all-non-negative resample yields it and
+        # it is not a real Sortino observation.
+        if s != 1e6:
+            sortinos.append(s)
+    if len(sortinos) < _BOOTSTRAP_MIN_VALID_RESAMPLES:
+        return None
+    # ddof=1 sample stdev — Efron 1979 convention for the bootstrap SE.
+    return float(np.std(sortinos, ddof=1))
+
+
+def compute_sortino_tstat(returns, seed: int = 0) -> float:
+    """Per-trial t-statistic for the Harvey & Liu haircut.
+
+    Construction (Decision D10 / RM-H1, risk-engine-specialist's binding
+    design): the Sortino is computed on the per-day return series and divided
+    by a nonparametric bootstrap estimate of its standard error
+    (compute_sortino_se_bootstrap). The Sharpe-specific Wald scaling that
+    survived Cluster 4 is NOT used — the Sortino's asymptotic SE is driven
+    by downside deviation, not full std, so the Wald scaling mis-calibrates
+    the p-value (the M-3 category error this corrects).
+
+    Conservative fallback: when compute_sortino_se_bootstrap returns None
+    (small-T, zero variance, or sentinel-rich resample population), the
+    t-stat is 0.0. Downstream compute_haircut_pvalue(0.0) = 0.5, so the
+    trial fails the BHY FDR gate by default. Falling back to the Wald
+    scaling would defeat the RM-H1 fix.
+
+    Args:
+        returns: per-day return observations for the trial.
+        seed: deterministic seed forwarded to the bootstrap RNG; the haircut
+            decision is reproducible under a fixed trial set. The
+            _haircut_select caller derives it from the trial index.
+
+    Returns:
+        The t-statistic as a finite float. Returns 0.0 when the bootstrap SE
+        is unavailable (the conservative-rejection fallback).
+
+    Reference: Decision D10 (post-audit-hardening); Efron 1979 (bootstrap);
+    Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013 (the haircut framework).
+    """
+    se = compute_sortino_se_bootstrap(returns, seed=seed)
+    if se is None or se == 0.0:
         return 0.0
-    return sortino * math.sqrt(T)
+    return compute_sortino_ratio(returns) / se
 
 
 def compute_haircut_pvalue(t_stat: float) -> float:
@@ -434,7 +613,10 @@ def warn_port_mode_replay_blind_spot():
     )
 
 
-def _replay_exit_tick(state, tick, tick_idx, n_ticks, p, grace_minutes):
+def _replay_exit_tick(
+    state, tick, tick_idx, n_ticks, p, grace_minutes,
+    execution_start_hhmm: str = "09:30",
+):
     """Run ONE replay tick of the production exit path; mutate `state` in place.
 
     The SINGLE per-tick exit core — run_simulation, _collect_sim_returns and
@@ -574,11 +756,16 @@ def _replay_exit_tick(state, tick, tick_idx, n_ticks, p, grace_minutes):
         current_vwap_ticks=state["vwap_ticks"],
         current_vwap_bleed_ticks=state["vwap_bleed_ticks"],
     )
-    # Open-window grace: production suppresses BOTH VWAP signals for the first
-    # grace_minutes of the session (alpha_bot_execution.py 1321-1326). On
-    # minute-bar replay ticks, tick_idx 0 == session open, so the faithful
-    # equivalent of the datetime grace gate is tick_idx < grace_minutes (AC-2).
-    if tick_idx < grace_minutes:
+    # Open-window grace: production suppresses BOTH VWAP signals for the
+    # grace_minutes window AFTER EXECUTION_START_TIME (alpha_bot_execution.py
+    # 1321-1326). AC-5 / N-3 — pre-fix the replay anchored the grace gate at
+    # tick_idx 0 (session open), so a non-default EXECUTION_START_TIME ran
+    # the production gate at e.g. 10:30-10:45 while the replay's gate ran
+    # 09:30-09:44 — a complete misalignment. _replay_in_open_window_grace
+    # derives the (h - 9) * 60 + (m - 30) start_offset from
+    # execution_start_hhmm and gates on
+    # [start_offset, start_offset + grace_minutes).
+    if _replay_in_open_window_grace(tick_idx, execution_start_hhmm, grace_minutes):
         is_vwap_broken = False
         is_vwap_bleed_broken = False
 
@@ -632,9 +819,13 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
     state = _fresh_replay_state()
     n_ticks = len(ticks)
     out = []
+    # AC-5: resolve execution_start_hhmm at the call site so the grace gate
+    # honors EXECUTION_START_TIME (matches production).
+    execution_start_hhmm = _replay_execution_start_time()
     for tick_idx, tick in enumerate(ticks):
         reason = _replay_exit_tick(
-            state, tick, tick_idx, n_ticks, params, grace_minutes
+            state, tick, tick_idx, n_ticks, params, grace_minutes,
+            execution_start_hhmm=execution_start_hhmm,
         )
         out.append({"tick_idx": tick_idx, "exit_reason": reason})
         if reason is not None:
@@ -655,6 +846,7 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     """
     daily_returns = []
     grace_minutes = _replay_grace_minutes()  # shared with production; resolved once per run
+    execution_start_hhmm = _replay_execution_start_time()  # AC-5
 
     for sym_id in acc_sym_ids:
         dates_data = history_data.get(sym_id, {})
@@ -682,6 +874,7 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
                 reason_str = _replay_exit_tick(
                     day_state, tick, tick_idx, n_ticks, p,
                     grace_minutes,
+                    execution_start_hhmm=execution_start_hhmm,
                 )
                 if reason_str is not None:
                     penalty = deviation_dict.get(reason_str, -0.20)
@@ -701,7 +894,8 @@ def _haircut_select(completed_trials):
     Each completed trial must carry its in-sample validation return series under
     the ``daily_returns`` user-attr (persisted by the objective). The haircut, per
     trial i over the N sentinel-filtered trials:
-      1. t-statistic  t_i  = Sortino_i · sqrt(T_i),  T_i = len(daily_returns_i)
+      1. t-statistic  t_i  = Sortino_i / SE_bootstrap_i  (Decision D10 / RM-H1 —
+         bootstrap standard error from the daily_returns series; Efron 1979)
       2. one-sided p  p_i  = clamped 1 - Φ(t_i)
       3. BHY adjust   p_adj = benjamini_hochberg_adjust over the N raw p-values
       4. selection    winner = argmin p_adj, deployable iff p_adj <= HARVEY_LIU_FDR_Q
@@ -711,16 +905,19 @@ def _haircut_select(completed_trials):
     when no trial clears the FDR gate (the AI proposal must then fall through to
     the fallback/default cascade) or when fewer than 1 trial is available.
 
-    Reference: Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013.
+    Reference: Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013;
+    Efron 1979 (bootstrap SE).
     """
     if not completed_trials:
         return None, None, None
 
     tstats = []
-    for t in completed_trials:
+    for trial_idx, t in enumerate(completed_trials):
         series = t.user_attrs.get("daily_returns", []) if hasattr(t, "user_attrs") else []
-        T_i = len(series)
-        tstats.append(compute_sortino_tstat(t.value, T_i))
+        # Deterministic per-trial seed so re-running an identical study
+        # produces an identical haircut decision (AC-1 caller-side
+        # determinism pin). The trial index is a stable within-study key.
+        tstats.append(compute_sortino_tstat(series, seed=trial_idx))
     p_values = [compute_haircut_pvalue(ts) for ts in tstats]
     p_adj = benjamini_hochberg_adjust(p_values)
 
@@ -735,6 +932,7 @@ def _haircut_select(completed_trials):
 def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
     total_guard_alpha = 0.0
     grace_minutes = _replay_grace_minutes()  # shared with production; resolved once per run
+    execution_start_hhmm = _replay_execution_start_time()  # AC-5
 
     for sym_id in acc_sym_ids:
         dates_data = history_data.get(sym_id, {})
@@ -763,6 +961,7 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 reason_str = _replay_exit_tick(
                     day_state, tick, tick_idx, n_ticks, p,
                     grace_minutes,
+                    execution_start_hhmm=execution_start_hhmm,
                 )
                 if reason_str is not None:
                     penalty = deviation_dict.get(reason_str, -0.20)
@@ -1007,7 +1206,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         )
         study_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         study = optuna.create_study(study_name=f"{study_timestamp}__{normalized_name}", storage=storage, load_if_exists=False, direction="maximize")
-        study.optimize(objective, n_trials=500, n_jobs=-1)
+        study.optimize(objective, n_trials=MAX_OPTUNA_TRIALS, n_jobs=-1)
         
 
         
@@ -1151,6 +1350,17 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             for k, v in default_params.items():
                 current_params[k] = v
             baseline_decision = "Reset to Global Default"
+
+        # AC-3 / N-1: the frozen-eval Sortino was computed against the AI's
+        # best_p above. If the cascade demoted the AI proposal (Reverted to
+        # Fallback / Reset to Global Default) OR the proposal was rejected
+        # wholesale (haircut / schema-invalid), the DEPLOYED params are NOT
+        # the AI's — the operator-facing column must not carry a rejected
+        # proposal's frozen-eval metric as if it were the deployed set's.
+        # Null it here, symmetric with the selection_tstat + naive_sharpe
+        # reset above. The accepted "Adopted AI" branch preserves the value.
+        if baseline_decision != "Adopted AI":
+            frozen_eval_sharpe_value = None
 
         # Build Discord logs ensuring all original variables are shown
         optimization_results[normalized_name]["_baseline_chosen"] = baseline_decision

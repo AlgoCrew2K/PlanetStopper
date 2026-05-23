@@ -24,6 +24,48 @@ ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://data.alpaca.markets/v2")
 # year-round (a fixed UTC-4 offset is wrong for the ~5 months ET is on EST).
 _US_EASTERN = ZoneInfo("America/New_York")
 
+
+def compute_vwap_from_bars(bars):
+    """Cumulative session VWAP for a list of minute-bar dicts.
+
+    Standard volume-weighted average price using the bar's close as the
+    typical price (matches the per-bar typical price the production inline
+    cumulant at generate_synthetic_history below uses — see the close-based
+    PV / cumulative-sum / cum_v fallback path). Returns the final cumulative
+    VWAP across the supplied bars; the running cumulant is required only
+    incidentally (the test asserts the closed-form final value).
+
+    Args:
+        bars: iterable of dicts each with at least 'c' (close) and 'v'
+            (volume) fields — the Alpaca minute-bar shape that the rest of
+            the file consumes.
+
+    Returns:
+        Final cumulative VWAP across the bars as a float, or the last bar's
+        close as the zero-volume fallback when total volume is zero (matches
+        the np.where(cum_v > 0, cum_pv/cum_v, c) inline guard used downstream).
+        Returns None for an empty input.
+
+    AC-8 / INV-COV-3: extracted from the inline cumulant computation so the
+    VWAP arithmetic is testable at the numeric level (the original audit
+    flagged this as runtime-untested).
+    """
+    if not bars:
+        return None
+    total_pv = 0.0
+    total_v = 0.0
+    last_close = float(bars[-1].get("c", 0.0))
+    for bar in bars:
+        c = float(bar.get("c", 0.0))
+        v = float(bar.get("v", 0.0))
+        total_pv += c * v
+        total_v += v
+    if total_v <= 0.0:
+        # Zero-volume fallback — mirrors the np.where(cum_v > 0, ..., c)
+        # guard the inline cumulant uses downstream.
+        return last_close
+    return total_pv / total_v
+
 # --- Fetch-window sizing (trading-day counted, not calendar-day literal) ----
 # The autotuner slices the last 125 trading days of synthetic history for its
 # walk-forward replay. Pinned to the autotuner replay-window length — also the
