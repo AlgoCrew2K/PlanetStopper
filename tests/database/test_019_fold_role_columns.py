@@ -35,55 +35,46 @@ import database as db
 # Fixture — isolated DB with fold-partitioned table and four fold_role rows
 # ---------------------------------------------------------------------------
 
-# The fold-partitioned table name. The implementer may target a different
-# table; however, the plan identifies the backtest-replay rows as the current
-# candidate. The tests use a synthetic table name so they are not coupled to
-# the final table choice — the impl test must confirm the right table.
-_FOLD_TABLE = "backtest_replay_rows"
+# The fold-partitioned table name. spec-019 confirmed (and grep verified):
+# backtest_replay_rows does not exist in database.py init_db() or any migration.
+# autotune_runs is the correct target — it already exists in init_db(), already
+# holds fold-related columns (validation_sharpe, frozen_eval_sharpe from migration
+# 007), and is the table that holds per-run walk-forward data. The migration SQL
+# must use autotune_runs as the ALTER target.
+_FOLD_TABLE = "autotune_runs"
+
+# Column used as the surrogate "cycle_id" on autotune_runs for COALESCE filter tests.
+# autotune_runs has symphony_id + run_timestamp as identifiers; we use symphony_id.
+_FOLD_TABLE_ID_COL = "symphony_id"
 
 
 @pytest.fixture
 def fold_db(tmp_path):
-    """Isolated DB with init_db() + the 019 migration applied + a synthetic
-    fold-partitioned table populated with all four fold_role variants.
+    """Isolated DB with init_db() (which creates autotune_runs) + 019 migration
+    applied + four fold_role rows in autotune_runs covering all canonical values.
 
-    The fold-partitioned table is created here regardless of whether the
-    migration exists — this lets the schema and COALESCE filter tests run
-    against a known-good structure. The migration tests assert separately that
-    _MIGRATION_FILES lists the migration AND that it applies via run_migrations.
+    init_db() creates autotune_runs without fold_role; run_migrations() adds it
+    (once 019 is in _MIGRATION_FILES and the SQL file exists). The COALESCE
+    filter tests run against this real table shape.
     """
     db_path = str(tmp_path / "test_019.db")
     with patch.object(db, "DB_FILE", db_path):
-        db.init_db()
+        db.init_db()  # creates autotune_runs + runs migrations (adds fold_role if 019 is present)
 
         conn = sqlite3.connect(db_path)
-        conn.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {_FOLD_TABLE} (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                cycle_id  TEXT NOT NULL,
-                fold_role TEXT DEFAULT NULL
-            )
-            """
-        )
-        # Four canonical fold_role rows — one of each value the wall must handle.
-        conn.execute(
-            f"INSERT INTO {_FOLD_TABLE} (cycle_id, fold_role) VALUES (?, ?)",
+        # Insert four canonical fold_role rows — one of each value the wall must handle.
+        # autotune_runs requires run_timestamp (NOT NULL) and symphony_id (NOT NULL).
+        for symphony_id, fold_role in [
             ("cycle-train-1", "train"),
-        )
-        conn.execute(
-            f"INSERT INTO {_FOLD_TABLE} (cycle_id, fold_role) VALUES (?, ?)",
             ("cycle-val-1", "validation"),
-        )
-        conn.execute(
-            f"INSERT INTO {_FOLD_TABLE} (cycle_id, fold_role) VALUES (?, ?)",
             ("cycle-frozen-1", "frozen_eval"),
-        )
-        # NULL row — the legacy-row case; COALESCE must treat this as non-frozen.
-        conn.execute(
-            f"INSERT INTO {_FOLD_TABLE} (cycle_id, fold_role) VALUES (?, ?)",
-            ("cycle-legacy-1", None),
-        )
+            ("cycle-legacy-1", None),  # NULL — legacy row
+        ]:
+            conn.execute(
+                "INSERT INTO autotune_runs (run_timestamp, symphony_id, fold_role) "
+                "VALUES (?, ?, ?)",
+                ("2026-01-01T09:30:00", symphony_id, fold_role),
+            )
         conn.commit()
         conn.close()
 
@@ -144,34 +135,34 @@ def test_coalesce_filter_includes_null_fold_role_row(fold_db):
     try:
         # Correct COALESCE filter — the one the Advisor wall must use.
         correct_rows = conn.execute(
-            f"SELECT cycle_id FROM {_FOLD_TABLE} "
+            f"SELECT {_FOLD_TABLE_ID_COL} FROM {_FOLD_TABLE} "
             f"WHERE COALESCE(fold_role, '') != 'frozen_eval'"
         ).fetchall()
-        correct_cycle_ids = {r[0] for r in correct_rows}
+        correct_ids = {r[0] for r in correct_rows}
 
         # Buggy bare != filter — what a naive implementer might write.
         buggy_rows = conn.execute(
-            f"SELECT cycle_id FROM {_FOLD_TABLE} "
+            f"SELECT {_FOLD_TABLE_ID_COL} FROM {_FOLD_TABLE} "
             f"WHERE fold_role != 'frozen_eval'"
         ).fetchall()
-        buggy_cycle_ids = {r[0] for r in buggy_rows}
+        buggy_ids = {r[0] for r in buggy_rows}
     finally:
         conn.close()
 
     # The NULL row (cycle-legacy-1) must appear under COALESCE but not under bare !=.
-    assert "cycle-legacy-1" in correct_cycle_ids, (
+    assert "cycle-legacy-1" in correct_ids, (
         "COALESCE filter must include the NULL fold_role row (legacy train/val row). "
         "H3: NULL is not frozen_eval — COALESCE(fold_role,'') != 'frozen_eval' must be True."
     )
-    assert "cycle-legacy-1" not in buggy_cycle_ids, (
+    assert "cycle-legacy-1" not in buggy_ids, (
         "Bare fold_role != 'frozen_eval' should EXCLUDE the NULL row (SQL three-valued logic). "
         "This confirms H3 is a real hazard — the bare != hides the row."
     )
 
     # The row counts must differ by exactly 1 (the NULL row).
-    assert len(correct_cycle_ids) == len(buggy_cycle_ids) + 1, (
-        f"COALESCE result ({len(correct_cycle_ids)} rows) must be exactly 1 more than "
-        f"bare != result ({len(buggy_cycle_ids)} rows). "
+    assert len(correct_ids) == len(buggy_ids) + 1, (
+        f"COALESCE result ({len(correct_ids)} rows) must be exactly 1 more than "
+        f"bare != result ({len(buggy_ids)} rows). "
         "H3: the one extra row is the NULL fold_role legacy row."
     )
 
@@ -191,25 +182,25 @@ def test_frozen_eval_row_is_blocked_by_coalesce_wall_filter(fold_db):
     conn = sqlite3.connect(fold_db)
     try:
         rows = conn.execute(
-            f"SELECT cycle_id, fold_role FROM {_FOLD_TABLE} "
+            f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE} "
             f"WHERE COALESCE(fold_role, '') != 'frozen_eval'"
         ).fetchall()
     finally:
         conn.close()
 
-    result_by_cycle = {r[0]: r[1] for r in rows}
+    result_by_id = {r[0]: r[1] for r in rows}
 
-    assert "cycle-frozen-1" not in result_by_cycle, (
+    assert "cycle-frozen-1" not in result_by_id, (
         "Row with fold_role='frozen_eval' must NOT pass the COALESCE wall filter. "
         "The frozen-eval fold is the held-out evaluation set — Advisor must never see it."
     )
-    assert "cycle-train-1" in result_by_cycle, (
+    assert "cycle-train-1" in result_by_id, (
         "Row with fold_role='train' must pass the COALESCE filter (not over-blocked)."
     )
-    assert "cycle-val-1" in result_by_cycle, (
+    assert "cycle-val-1" in result_by_id, (
         "Row with fold_role='validation' must pass the COALESCE filter (not over-blocked)."
     )
-    assert "cycle-legacy-1" in result_by_cycle, (
+    assert "cycle-legacy-1" in result_by_id, (
         "Row with fold_role=NULL must pass the COALESCE filter (legacy row — safe default)."
     )
 
@@ -241,7 +232,7 @@ def test_wall_breach_tripwire_writes_observation_then_raises(fold_db_with_adviso
         # Deliberately bypass the COALESCE wall with OR 1=1 to smuggle a frozen_eval
         # row into the result set — this is the adversarial scenario the tripwire guards.
         adversarial_sql = (
-            f"SELECT id, cycle_id, fold_role FROM {_FOLD_TABLE} "
+            f"SELECT id, {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE} "
             f"WHERE COALESCE(fold_role, '') != 'frozen_eval' OR 1=1"
         )
 
@@ -455,7 +446,7 @@ def test_fold_role_column_present_and_all_role_values_representable(fold_db):
     conn = sqlite3.connect(fold_db)
     try:
         rows = conn.execute(
-            f"SELECT cycle_id, fold_role FROM {_FOLD_TABLE}"
+            f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE}"
         ).fetchall()
     finally:
         conn.close()
@@ -468,8 +459,8 @@ def test_fold_role_column_present_and_all_role_values_representable(fold_db):
             "Schema-validator requires all canonical role values representable."
         )
 
-    cycle_ids = {r[0] for r in rows}
-    assert "cycle-legacy-1" in cycle_ids, (
+    row_ids = {r[0] for r in rows}
+    assert "cycle-legacy-1" in row_ids, (
         "Fixture DB must contain a row with fold_role=NULL (legacy row — cycle-legacy-1). "
         "H3 test and tripwire test both require a NULL fold_role row present."
     )
@@ -596,28 +587,37 @@ def test_migration_file_targets_state_db_only():
 
 
 def test_fold_partitioned_table_fold_role_column_shape_after_run_migrations(tmp_path):
-    """R-4/R-10 (spec-019): After run_migrations() on a fresh DB that has the
-    fold-partitioned table pre-created, fold_role must appear on that table with:
+    """R-4/R-10 (spec-019): After run_migrations() on a fresh DB, autotune_runs
+    must have a fold_role column with:
       - type TEXT (or empty — SQLite is flexible)
       - notnull = 0 (NULLable)
 
-    Also asserts pre-existing rows (inserted before migration) have fold_role IS NULL
-    after migration (existing rows get the column DEFAULT, which is NULL).
+    Also asserts pre-existing autotune_runs rows (inserted before migration) have
+    fold_role IS NULL after migration (existing rows get the column DEFAULT, NULL).
 
-    The implementer determined the fold-partitioned table is backtest_replay_rows
-    (plan §Numbering: "current candidate is the backtest-replay rows"). This test
-    targets that table specifically. The _FOLD_TABLE constant at the top of this
-    file also uses backtest_replay_rows for consistency.
+    autotune_runs is the correct target: it exists in init_db(), already holds
+    per-fold data (validation_sharpe, frozen_eval_sharpe from migration 007), and
+    is the table that holds per-run walk-forward data. spec-019 confirmed that
+    backtest_replay_rows does not exist anywhere in database.py or any migration
+    outside the files written by this cycle — making autotune_runs the only
+    production-realistic target.
 
-    This is the authoritative PRAGMA check on the actual target table.
+    This is the authoritative PRAGMA check on the real production table.
     """
     assert "019_fold_role_columns.sql" in db._MIGRATION_FILES, (
         "'019_fold_role_columns.sql' missing from _MIGRATION_FILES — "
-        "cannot test run_migrations() effect on backtest_replay_rows."
+        "cannot test run_migrations() effect on autotune_runs."
     )
 
     db_path = str(tmp_path / "test_pragma.db")
     with patch.object(db, "DB_FILE", db_path):
+        # Bootstrap schema_migrations + autotune_runs WITHOUT fold_role by
+        # calling init_db() but then removing the 019 tracker entry so
+        # run_migrations() will re-apply it. This simulates a pre-migration
+        # DB that has autotune_runs rows but no fold_role column yet.
+        #
+        # Strategy: create the DB manually WITHOUT 019 applied, insert a
+        # pre-migration row, then call run_migrations().
         conn = sqlite3.connect(db_path)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
@@ -626,22 +626,31 @@ def test_fold_partitioned_table_fold_role_column_shape_after_run_migrations(tmp_
             "  applied_at     TEXT NOT NULL DEFAULT (datetime('now'))"
             ")"
         )
-        # Create the fold-partitioned table WITHOUT fold_role — simulating a pre-migration DB.
+        # Create autotune_runs WITHOUT fold_role (the pre-019 schema from init_db).
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS backtest_replay_rows (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                cycle_id  TEXT NOT NULL,
-                symphony_id TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS autotune_runs (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_timestamp       TEXT    NOT NULL,
+                symphony_id         TEXT    NOT NULL,
+                oos_alpha           REAL    DEFAULT NULL,
+                train_alpha         REAL    DEFAULT NULL,
+                baseline_decision   TEXT    DEFAULT NULL,
+                fallback_oos_alpha  REAL    DEFAULT NULL,
+                default_oos_alpha   REAL    DEFAULT NULL,
+                selection_tstat     REAL    DEFAULT NULL,
+                naive_sharpe        REAL    DEFAULT NULL,
+                validation_sharpe   REAL    DEFAULT NULL,
+                frozen_eval_sharpe  REAL    DEFAULT NULL
             )
             """
         )
         # Pre-migration row — no fold_role column yet.
         conn.execute(
-            "INSERT INTO backtest_replay_rows (cycle_id, symphony_id) VALUES (?, ?)",
-            ("cycle-pre-001", "test-symphony"),
+            "INSERT INTO autotune_runs (run_timestamp, symphony_id) VALUES (?, ?)",
+            ("2026-01-01T09:30:00", "pre-migration-symphony"),
         )
-        # Mark all prior migrations as already applied so only 019 is new.
+        # Mark all prior migrations applied so only 019 is new.
         prior = [
             "004_schema_migrations_tracker.sql",
             "005_exit_triggers.sql",
@@ -663,14 +672,14 @@ def test_fold_partitioned_table_fold_role_column_shape_after_run_migrations(tmp_
         conn.commit()
         conn.close()
 
-        # Now run_migrations — only 019 (and any 016/017/018 if present) should apply.
+        # run_migrations — only 019 (and any 016/017/018 if present) will apply.
         db.run_migrations()
 
-        # Check PRAGMA table_info on backtest_replay_rows.
+        # PRAGMA table_info on autotune_runs must show fold_role.
         conn = sqlite3.connect(db_path)
         try:
             columns = conn.execute(
-                "PRAGMA table_info(backtest_replay_rows)"
+                "PRAGMA table_info(autotune_runs)"
             ).fetchall()
             # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
             col_map = {row[1]: row for row in columns}
@@ -678,19 +687,20 @@ def test_fold_partitioned_table_fold_role_column_shape_after_run_migrations(tmp_
             conn.close()
 
     assert "fold_role" in col_map, (
-        "fold_role column missing from backtest_replay_rows after run_migrations(). "
-        "R-4/R-10: migration 019 must ADD COLUMN fold_role to the fold-partitioned table."
+        "fold_role column missing from autotune_runs after run_migrations(). "
+        "R-4/R-10: migration 019 must ALTER TABLE autotune_runs ADD COLUMN fold_role. "
+        "autotune_runs is the production table — backtest_replay_rows does not exist "
+        "in init_db() or any migration outside this cycle."
     )
 
     col_info = col_map["fold_role"]
-    # notnull = 0 means NULLable.
     assert col_info[3] == 0, (
-        f"fold_role must be NULLable (notnull=0) on backtest_replay_rows; got notnull={col_info[3]}. "
+        f"fold_role must be NULLable (notnull=0) on autotune_runs; got notnull={col_info[3]}. "
         "R-4: existing rows must be preserved with NULL (additive ALTER)."
     )
     col_type = col_info[2].upper()
     assert col_type in ("TEXT", ""), (
-        f"fold_role column type must be TEXT on backtest_replay_rows; found '{col_info[2]}'. "
+        f"fold_role column type must be TEXT on autotune_runs; found '{col_info[2]}'. "
         "R-10: plan §Deliverables 1 specifies TEXT DEFAULT NULL."
     )
 
@@ -698,19 +708,20 @@ def test_fold_partitioned_table_fold_role_column_shape_after_run_migrations(tmp_
     conn = sqlite3.connect(db_path)
     try:
         row = conn.execute(
-            "SELECT fold_role FROM backtest_replay_rows WHERE cycle_id = 'cycle-pre-001'"
+            "SELECT fold_role FROM autotune_runs "
+            "WHERE symphony_id = 'pre-migration-symphony'"
         ).fetchone()
     finally:
         conn.close()
 
     assert row is not None, (
-        "Pre-existing backtest_replay_rows row not found after migration — "
-        "the row must be preserved (additive ALTER does not delete rows)."
+        "Pre-existing autotune_runs row not found after migration — "
+        "additive ALTER must not delete rows."
     )
     assert row[0] is None, (
-        f"Pre-existing backtest_replay_rows row must have fold_role IS NULL after migration; "
+        f"Pre-existing autotune_runs row must have fold_role IS NULL after migration; "
         f"got fold_role={row[0]!r}. "
-        "R-4: existing rows get the column DEFAULT (NULL) — not any other value."
+        "R-4: existing rows get the column DEFAULT (NULL)."
     )
 
 
