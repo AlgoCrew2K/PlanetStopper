@@ -425,7 +425,19 @@ class TestHaircutSelectPassesReturnsAndSeed:
 @pytest.mark.slow
 class TestH0CalibrationProperty:
     """Under H0 the bootstrap-SE-based p-value CDF is approximately
-    uniform on [0,1]. KS distance to U[0,1] < 0.10."""
+    uniform on [0,1].
+
+    Tolerance per risk-engine-specialist F3: with 200 H0 series the
+    one-sample KS test's 95% null critical value (Massey table) is
+    ~0.094, so a strict `< 0.10` threshold is borderline-flaky. The test
+    uses `< 0.15` to leave headroom for the bootstrap-of-bootstrap
+    variance without softening the audit-required calibration claim. A
+    regression to Wald scaling would push KS far above 0.15 — empirical
+    runs of the Wald formula on the same H0 series yield KS ≈ 0.45.
+
+    Reference run from scripts/derive_h1_bootstrap_fixture.py produced
+    KS = 0.0640 — well under both 0.10 and 0.15.
+    """
 
     def test_h0_pvalues_are_approximately_uniform(self):
         rng = np.random.default_rng(99)
@@ -441,9 +453,12 @@ class TestH0CalibrationProperty:
             max(abs((i + 1) / n - p), abs(i / n - p))
             for i, p in enumerate(sorted_p)
         )
-        assert ks < 0.10, (
+        assert ks < 0.15, (
             f"AC-1 / RM-H1 CALIBRATION VIOLATED: KS distance to U[0,1] = "
-            f"{ks:.4f}; threshold < 0.10."
+            f"{ks:.4f}; threshold < 0.15 (per risk-engine F3 — 0.10 is "
+            "borderline at the 200-trial Massey critical value 0.094). "
+            "Reference run produced KS ≈ 0.064; a regression to Wald "
+            "scaling would push KS above 0.45."
         )
 
 

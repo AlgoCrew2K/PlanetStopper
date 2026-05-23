@@ -1090,6 +1090,54 @@ class TestB2WipeTransientStatePreservesLastHoldingsPositive:
             "wipe must not mutate the marker in either direction."
         )
 
+    def test_wipe_does_not_synthesize_last_holdings_positive_when_absent(self):
+        """B2 F4 — wipe must NOT synthesize last_holdings_positive on a
+        legacy state that lacks the key.
+
+        Risk-engine-specialist F4: the data-phase detector's
+        first-observation path relies on the key being absent (the
+        detector-handles-missing-marker contract test pins this). If
+        the wipe synthesizes the key with any default value, the
+        first-observation path would no longer recognise a new symphony
+        and could behave incorrectly. Pin the absence-survives-wipe
+        property.
+        """
+        state = {
+            "date": "2026-05-22",
+            "sym-legacy": {
+                "name": "LegacySym",
+                "triggered": True,
+                "breakeven_locked": False,
+                "high_water_mark": 1.0,
+                "shadow_hwm": 1.0,
+                "prev_return": 0.5,
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "hwm_hold_ticks": 0,
+                "below_stop_count": 0,
+                "above_tp_count": 0,
+                "vwap_ticks": 0,
+                "vwap_bleed_ticks": 0,
+                "mc_history": [],
+                "current_holdings": [{"ticker": "SPY"}],
+                # last_holdings_positive intentionally ABSENT — legacy
+                # state from before the AC-2 field was introduced.
+            },
+        }
+        assert "last_holdings_positive" not in state["sym-legacy"], (
+            "Fixture sanity: legacy state must start without the key."
+        )
+        database.wipe_transient_state(state)
+        assert "last_holdings_positive" not in state["sym-legacy"], (
+            "AC-2 / B2 F4 VIOLATED: wipe_transient_state synthesized "
+            "last_holdings_positive on a legacy state that lacked the "
+            "key. The first-observation detector path relies on the key "
+            "being absent — synthesizing a default breaks the "
+            "detector-handles-missing-marker contract. Got "
+            f"{state['sym-legacy'].get('last_holdings_positive')!r}."
+        )
+
 
 class TestB3StrictPositivitySemantics:
     """B3: the holdings-positive predicate uses STRICT
