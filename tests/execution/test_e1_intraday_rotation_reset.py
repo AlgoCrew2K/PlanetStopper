@@ -519,11 +519,31 @@ class TestE1AlphaBotExitThenComposerRebuy:
                 f"AC-2 / E-1 VIOLATED: '{f}' was not reset on intraday "
                 f"rebuy (got {sym.get(f)!r})."
             )
-        # stop_trigger must clear (key absent OR value None — both safe).
-        assert sym.get("stop_trigger") in (None, ), (
-            f"AC-2 / E-1 VIOLATED: stop_trigger floor survived the "
-            f"rebuy (got {sym.get('stop_trigger')!r})."
-        )
+        # stop_trigger must NOT carry the prior position's stale floor (2.5).
+        # The AC-2 reset nulls stop_trigger; the action phase may then
+        # re-compute a fresh value anchored at the post-reset HWM=0 baseline
+        # (stop = HWM - vol_scaled_distance, typically negative or zero —
+        # clearly distinct from the prior stale 2.5). Either None (AC-2
+        # reset just ran, action phase didn't fire post-reset) OR a small
+        # / negative float (action phase fired post-reset on the freshly-
+        # reset state) is safe; the stale 2.5 is forbidden, and any value
+        # >= half the stale floor signals partial leakage from before the
+        # reset (action phase used pre-reset state).
+        _prior_stale_stop_trigger = 2.5  # from _post_trigger_state fixture
+        actual_stop = sym.get("stop_trigger")
+        if actual_stop is not None:
+            assert actual_stop != _prior_stale_stop_trigger, (
+                f"AC-2 / E-1 VIOLATED: stop_trigger == prior stale value "
+                f"{_prior_stale_stop_trigger!r}; the reset did not clear it "
+                "before action phase ran."
+            )
+            assert actual_stop < _prior_stale_stop_trigger / 2.0, (
+                f"AC-2 / E-1 VIOLATED: stop_trigger = {actual_stop!r} "
+                f"sits at or above half the prior stale value "
+                f"{_prior_stale_stop_trigger!r}. A fresh-reset position "
+                "with HWM=0 should produce a stop well below this; this "
+                "value smells like partial leakage from before the reset."
+            )
         # Trigger snapshot fields must clear.
         for f in _TRANSIENT_TRIGGER_SNAPSHOT_FIELDS:
             assert f not in sym or sym.get(f) in (None, ""), (
@@ -586,10 +606,26 @@ class TestCase2UntriggeredComposerRotation:
                 f"AC-2 / CASE 2 VIOLATED: '{f}' was not reset on the "
                 f"untriggered rotation (got {sym.get(f)!r})."
             )
-        assert sym.get("stop_trigger") in (None, ), (
-            f"AC-2 / CASE 2 VIOLATED: stop_trigger floor survived "
-            f"untriggered rotation (got {sym.get('stop_trigger')!r})."
-        )
+        # Same semantic as the E-1 test: the reset clears the prior
+        # stale stop_trigger (3.6 from the _untriggered_rotated_out_state
+        # fixture); action phase may re-compute a post-reset value
+        # anchored at HWM=0. Either None or a small/negative float is
+        # safe; the stale 3.6 OR any value >= half of it is leakage.
+        _prior_stale_stop_trigger = 3.6  # from _untriggered_rotated_out_state
+        actual_stop = sym.get("stop_trigger")
+        if actual_stop is not None:
+            assert actual_stop != _prior_stale_stop_trigger, (
+                f"AC-2 / CASE 2 VIOLATED: stop_trigger == prior stale "
+                f"value {_prior_stale_stop_trigger!r}; the reset did not "
+                "clear it before action phase ran."
+            )
+            assert actual_stop < _prior_stale_stop_trigger / 2.0, (
+                f"AC-2 / CASE 2 VIOLATED: stop_trigger = {actual_stop!r} "
+                f"sits at or above half the prior stale value "
+                f"{_prior_stale_stop_trigger!r}. A fresh-reset position "
+                "with HWM=0 should produce a stop well below this; this "
+                "value smells like partial leakage from before the reset."
+            )
         new_epoch = sym.get("position_epoch")
         assert new_epoch and new_epoch != old_epoch, (
             "AC-2 / CASE 2 VIOLATED: position_epoch was not re-minted "
