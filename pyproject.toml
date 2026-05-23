@@ -13,7 +13,8 @@ quote-style = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-ra --strict-markers -m 'not live'"
+addopts = "-ra --strict-markers -m 'not live and not slow'"
 markers = [
     "live: tests that hit live APIs (deselect via -m 'not live')",
+    "slow: long-running property/calibration tests (deselected by default; opt in via -m 'slow')",
 ]

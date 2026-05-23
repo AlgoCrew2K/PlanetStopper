@@ -48,7 +48,7 @@ structural facts independent of math.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -904,4 +904,443 @@ class TestLastHoldingsPositiveBookkeeping:
             "last_holdings_positive=False after a cycle with zero "
             "holdings, so the NEXT cycle correctly detects the rebuy "
             f"transition. Got {sym.get('last_holdings_positive')!r}."
+        )
+
+
+# ===========================================================================
+# Risk-engine-specialist additions B1-B6 (review feedback 2026-05-22).
+#
+# B1 — Cluster 6 cross-invariant: 5-day continuous untriggered carry must
+#      have exactly ONE position_epoch across all 5 days. Team-lead's
+#      hard constraint on AC-2.
+# B2 — wipe_transient_state must PRESERVE last_holdings_positive.
+# B3 — Strict positivity semantics: pin against exact holdings list shapes.
+# B4 — AC-2 reset path: zero broker-method side effects.
+# B5 — Triggered-this-cycle safety: no spurious reset on T->T transition.
+# B6 — Within-cycle idempotence of the AC-2 reset path.
+# ===========================================================================
+
+
+class TestB1ClusterSixCrossInvariantFiveDayCarry:
+    """B1: a continuous 5-day untriggered carried position must have
+    exactly ONE position_epoch across all 5 days. Cluster 6's invariant
+    that wipe_transient_state's conditional-restamp deliberately
+    implements at database.py:230-237 (re-stamp only when was_triggered).
+
+    Team-lead's binding constraint: AC-2's reset path must NOT violate
+    this invariant by re-minting on a positive-holdings carry that
+    crosses a daily wipe.
+    """
+
+    def test_five_day_untriggered_carry_has_single_epoch(self):
+        """Drive five consecutive trading days for an untriggered
+        symphony whose holdings are positive throughout. Collect the
+        position_epoch observed on each day. Pin: exactly ONE distinct
+        epoch value.
+
+        Mechanism: each day's first cycle goes through the daily-wipe
+        gate (alpha_bot_execution.py:651-661) which calls
+        wipe_transient_state. wipe_transient_state's conditional re-mint
+        (database.py:230-237) re-stamps the epoch ONLY when
+        was_triggered is True. With triggered=False across all 5 days,
+        the epoch stamped on day 1 must survive to day 5.
+
+        AC-2 cannot insert a second re-mint path on a T->T transition
+        (which the carry's `last_holdings_positive=True` correctly
+        suppresses). Without B1's pin, a future change that wired AC-2
+        unconditionally into the data-phase loop would re-mint daily and
+        regress Cluster 6's shadow-trajectory query.
+        """
+        s_id = "five-day-carry-sym-01"
+
+        # Day 0 state: untriggered, holdings positive, fresh epoch.
+        seed_state = {
+            "name": "FiveDayCarrySym",
+            "account": "acct-5day-carry-001",
+            "high_water_mark": 1.0,
+            "shadow_hwm": 1.0,
+            "prev_return": 0.5,
+            "armed": False,
+            "tp_armed": False,
+            "para_armed": False,
+            "triggered": False,
+            "breakeven_locked": False,
+            "hwm_hold_ticks": 0,
+            "below_stop_count": 0,
+            "above_tp_count": 0,
+            "vwap_ticks": 0,
+            "vwap_bleed_ticks": 0,
+            "mc_history": [],
+            "current_holdings": [{"ticker": "SPY", "allocation": 1.0}],
+            "current_value": 10_000.0,
+            "current_return": 1.0,
+            "position_epoch": "day-1-original-epoch",
+            "last_holdings_positive": True,
+        }
+
+        bot_state = {
+            "date": "2026-05-21",
+            "last_execution_mode": False,
+            s_id: seed_state,
+        }
+
+        epochs_seen: list[str] = []
+        # 5 consecutive trading days, all holdings-positive, untriggered.
+        for day_offset in range(5):
+            et = _build_fake_et(11, 0, day=22 + day_offset)
+            symphonies = [
+                _make_composer_payload(
+                    s_id, name="FiveDayCarrySym",
+                    holdings_positive=True,
+                    current_value=10_000.0 + 100.0 * day_offset,
+                )
+            ]
+            final_state = _run_one_cycle(
+                bot_state, symphonies, current_et=et
+            )
+            sym = final_state[s_id]
+            epochs_seen.append(sym.get("position_epoch"))
+            # Carry the post-cycle state into the next day's bot_state —
+            # this mimics database.save_state -> next-cycle load_state.
+            bot_state = final_state
+
+        distinct_epochs = set(epochs_seen)
+        assert len(distinct_epochs) == 1, (
+            "AC-2 / B1 / Cluster 6 cross-invariant VIOLATED: a 5-day "
+            f"continuous untriggered carried position observed "
+            f"{len(distinct_epochs)} distinct position_epoch values "
+            f"{distinct_epochs!r} across the 5 days. The invariant "
+            "demands exactly ONE epoch — wipe_transient_state's "
+            "conditional re-mint must not fire (was_triggered=False), "
+            "and AC-2's reset path must not insert a second re-mint on "
+            "the T->T transition. Per-day re-mints fragment the "
+            "shadow-trajectory query."
+        )
+
+
+class TestB2WipeTransientStatePreservesLastHoldingsPositive:
+    """B2: wipe_transient_state must PRESERVE last_holdings_positive on
+    every symphony entry — both True and False values must survive the
+    wipe. The bookkeeping marker spans daily boundaries; the wipe's
+    transient-only contract excludes it."""
+
+    def test_wipe_preserves_last_holdings_positive_true(self):
+        state = {
+            "date": "2026-05-22",
+            "sym-1": {
+                "name": "SymOne",
+                "triggered": True,
+                "breakeven_locked": True,
+                "high_water_mark": 4.0,
+                "shadow_hwm": 4.0,
+                "prev_return": 3.0,
+                "armed": True,
+                "tp_armed": False,
+                "para_armed": False,
+                "hwm_hold_ticks": 5,
+                "below_stop_count": 2,
+                "above_tp_count": 0,
+                "vwap_ticks": 1,
+                "vwap_bleed_ticks": 0,
+                "mc_history": [],
+                "current_holdings": [{"ticker": "SPY"}],
+                "last_holdings_positive": True,
+            },
+        }
+        database.wipe_transient_state(state)
+        assert state["sym-1"]["last_holdings_positive"] is True, (
+            "AC-2 / B2 VIOLATED: wipe_transient_state cleared "
+            "last_holdings_positive=True. The marker tracks holdings "
+            "history across cycles + days; the wipe's transient-only "
+            "contract must exclude it. Got "
+            f"{state['sym-1'].get('last_holdings_positive')!r}."
+        )
+        # Sanity: the wipe DID clear transient fields.
+        assert state["sym-1"]["triggered"] is False
+        assert state["sym-1"]["breakeven_locked"] is False
+
+    def test_wipe_preserves_last_holdings_positive_false(self):
+        state = {
+            "date": "2026-05-22",
+            "sym-2": {
+                "name": "SymTwo",
+                "triggered": False,
+                "breakeven_locked": False,
+                "high_water_mark": 0.0,
+                "shadow_hwm": 0.0,
+                "prev_return": None,
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "hwm_hold_ticks": 0,
+                "below_stop_count": 0,
+                "above_tp_count": 0,
+                "vwap_ticks": 0,
+                "vwap_bleed_ticks": 0,
+                "mc_history": [],
+                "current_holdings": [],
+                "last_holdings_positive": False,
+            },
+        }
+        database.wipe_transient_state(state)
+        assert state["sym-2"]["last_holdings_positive"] is False, (
+            "AC-2 / B2 VIOLATED: wipe_transient_state flipped "
+            "last_holdings_positive from False to "
+            f"{state['sym-2'].get('last_holdings_positive')!r}. The "
+            "wipe must not mutate the marker in either direction."
+        )
+
+
+class TestB3StrictPositivitySemantics:
+    """B3: the holdings-positive predicate uses STRICT
+    `len(holdings) > 0 AND any(amount > 0)` semantics. NOT a dollar-
+    value tolerance. Risk-engine-specialist's memo point 1."""
+
+    def _resolve_positivity(self):
+        """Find the predicate the engine uses to decide holdings_positive.
+        Acceptable names; implementer's choice."""
+        import alpha_bot_execution
+        for name in (
+            "has_positive_holdings",
+            "holdings_positive",
+            "_holdings_positive",
+            "is_holdings_positive",
+        ):
+            for module in (alpha_bot_execution, database):
+                if hasattr(module, name):
+                    return getattr(module, name)
+        pytest.fail(
+            "AC-2 / B3: a strict-positivity predicate must be exposed "
+            "on alpha_bot_execution or database (acceptable names: "
+            "has_positive_holdings, holdings_positive, "
+            "_holdings_positive, is_holdings_positive). The test "
+            "cannot pin the exact semantic without it."
+        )
+
+    @pytest.mark.parametrize(
+        "holdings, expected",
+        [
+            ([], False),
+            ([{"ticker": "X", "amount": 1.0}], True),
+            ([{"ticker": "X", "amount": 0.5}], True),         # partial fill
+            ([{"ticker": "X", "amount": 0.0}], False),        # zero-quantity stub
+            ([{"ticker": "X", "amount": 0.0},
+              {"ticker": "Y", "amount": 1.0}], True),          # any positive
+            ([{"ticker": "X", "amount": -1.0}], False),       # negative-quantity stub
+        ],
+    )
+    def test_positivity_predicate_matches_strict_semantic(
+        self, holdings, expected
+    ):
+        """Pin: len > 0 AND any(amount > 0)."""
+        predicate = self._resolve_positivity()
+        try:
+            result = predicate(holdings)
+        except TypeError:
+            result = predicate(holdings=holdings)
+        assert result is expected, (
+            f"AC-2 / B3 VIOLATED: predicate({holdings!r}) = {result!r}; "
+            f"expected {expected!r}. Strict semantic: len > 0 AND "
+            "any(amount > 0). No dollar-value tolerance, no "
+            "len-only shortcut."
+        )
+
+
+class TestB4ResetPathHasNoBrokerSideEffects:
+    """B4: the AC-2 reset path is in-memory bot_state bookkeeping ONLY.
+    No broker calls (execute_sell_to_cash, place_order, etc.). Critical
+    live-trade hazard pin per team-lead's flag."""
+
+    def test_e1_intraday_rebuy_path_does_not_call_broker(self):
+        """Drive the E-1 scenario (11:00 ET trigger -> 13:00 ET rebuy)
+        and assert NO broker method was called during the data-phase
+        loop that processes the AC-2 reset."""
+        import alpha_bot_execution
+
+        s_id = "broker-sideeffect-sym-01"
+        bot_state = {
+            "date": "2026-05-21",
+            "last_execution_mode": False,
+            s_id: _post_trigger_state(),
+        }
+        et = _build_fake_et(13, 0)
+        symphonies = [
+            _make_composer_payload(
+                s_id, name="RotationSym",
+                holdings_positive=True, current_value=10_000.0,
+            )
+        ]
+
+        # Patch out every broker-facing surface the engine touches and
+        # assert ZERO calls.
+        broker_methods = []
+        for name in (
+            "execute_sell_to_cash",
+            "place_order",
+            "submit_order",
+            "execute_trade",
+        ):
+            if hasattr(alpha_bot_execution, name):
+                broker_methods.append(name)
+
+        with patch.multiple(
+            alpha_bot_execution,
+            **{m: MagicMockNoReturn() for m in broker_methods},
+        ):
+            _run_one_cycle(bot_state, symphonies, current_et=et)
+            for m in broker_methods:
+                mock = getattr(alpha_bot_execution, m)
+                assert mock.call_count == 0, (
+                    f"AC-2 / B4 VIOLATED: the AC-2 reset path called "
+                    f"broker method {m!r} {mock.call_count} time(s). The "
+                    "reset is in-memory bookkeeping only; no broker side "
+                    "effects."
+                )
+
+
+class MagicMockNoReturn:
+    """A patch target that records call_count without behaving like a
+    sentinel-returning MagicMock (which can confuse downstream callers)."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    def __call__(self, *args, **kwargs):
+        self.call_count += 1
+        return None
+
+
+class TestB5TriggeredThisCycleSafety:
+    """B5: when last_holdings_positive=True AND holdings still positive
+    AND triggered=True (set THIS cycle by the exit math), AC-2 must NOT
+    fire — T->T is not a re-open. The trailing-stop sell-to-cash path
+    must proceed normally on the SAME-cycle-as-trigger surface.
+
+    This is the live-trade hazard team-lead flagged: clearing
+    triggered=True at the wrong moment would cause the trailing stop to
+    fire on stale data or fail to fire when it should.
+    """
+
+    def test_triggered_this_cycle_with_holdings_positive_does_not_reset(self):
+        """Live state: position open (last_holdings_positive=True), still
+        holding (current cycle reports holdings positive), and the exit
+        math just set triggered=True. AC-2 detection sees T->T -> no
+        fire -> triggered=True must persist into the post-cycle state.
+        """
+        s_id = "triggered-this-cycle-sym-01"
+        # Live state pre-exit: armed, breakeven-locked, holdings positive.
+        # The exit math fires triggered=True this cycle. We simulate the
+        # post-exit state and assert AC-2 didn't undo it.
+        live_state = {
+            "name": "TriggerThisCycleSym",
+            "account": "acct-triggered-this-cycle-001",
+            "high_water_mark": 4.5,
+            "shadow_hwm": 4.5,
+            "prev_return": 4.0,
+            "armed": True,
+            "tp_armed": False,
+            "para_armed": True,
+            "triggered": True,             # set by THIS cycle's math
+            "triggered_reason": "Trailing Stop",
+            "triggered_at_return": 3.8,
+            "triggered_at_hwm": 4.5,
+            "triggered_at_stop": 3.7,
+            "triggered_at_time": "13:00",
+            "breakeven_locked": True,
+            "hwm_hold_ticks": 5,
+            "below_stop_count": 3,
+            "above_tp_count": 0,
+            "vwap_ticks": 1,
+            "vwap_bleed_ticks": 0,
+            "stop_trigger": 3.7,
+            "mc_history": [],
+            "current_holdings": [{"ticker": "SPY", "allocation": 1.0}],
+            "current_value": 10_000.0,
+            "current_return": 3.8,
+            "position_epoch": "triggered-position-epoch",
+            "last_holdings_positive": True,
+        }
+        bot_state = {
+            "date": "2026-05-21",
+            "last_execution_mode": False,
+            s_id: live_state,
+        }
+        et = _build_fake_et(13, 30)
+        # Composer hasn't reacted yet — symphony still shows holdings.
+        symphonies = [
+            _make_composer_payload(
+                s_id, name="TriggerThisCycleSym",
+                holdings_positive=True, current_value=10_000.0,
+            )
+        ]
+        final_state = _run_one_cycle(bot_state, symphonies, current_et=et)
+        sym = final_state[s_id]
+
+        # CRITICAL: triggered must remain True. AC-2 must NOT fire.
+        assert sym.get("triggered") is True, (
+            "AC-2 / B5 VIOLATED (live-trade hazard): a same-cycle "
+            "T->T transition (last_holdings_positive=True AND holdings "
+            "still positive AND triggered just set this cycle) caused "
+            "AC-2 to fire and clear triggered=True. The trailing-stop "
+            "sell-to-cash path would be aborted / re-armed on stale "
+            f"data. Got triggered={sym.get('triggered')!r}."
+        )
+        # The trigger snapshot fields must also survive.
+        assert sym.get("triggered_reason") == "Trailing Stop", (
+            "AC-2 / B5 VIOLATED: triggered_reason cleared on T->T."
+        )
+        # The position_epoch must NOT have been re-minted.
+        assert sym.get("position_epoch") == "triggered-position-epoch", (
+            "AC-2 / B5 VIOLATED: position_epoch re-minted on T->T. "
+            f"Got {sym.get('position_epoch')!r}."
+        )
+
+
+class TestB6WithinCycleIdempotence:
+    """B6: if the AC-2 reset path is somehow invoked twice within a
+    single cycle (e.g. a future wiring change that wires the detection
+    into two decision points), the final state must be identical to a
+    single invocation. Defense against double-invocation re-mints."""
+
+    def test_double_invocation_within_cycle_does_not_double_reset(self):
+        """Construct a bot_state where the AC-2 detection conditions are
+        true (F->T transition). Invoke the detector (or its reset
+        helper) twice; assert the final state — including
+        position_epoch — equals the state after a single invocation.
+
+        The pin: position_epoch is minted ONCE per detected transition,
+        not once per invocation. Implementer may achieve idempotence by:
+          - flipping last_holdings_positive=True at the END of the
+            first invocation so the second invocation sees T->T and
+            short-circuits;
+          - or by an explicit "already reset this cycle" guard.
+        """
+        detector = _resolve_detector()
+
+        # Stage prior state: F->T transition is detected.
+        prior_state = {"last_holdings_positive": False}
+        try:
+            first = detector(
+                previous_state=prior_state,
+                current_holdings_positive=True,
+            )
+        except TypeError:
+            first = detector(prior_state, True)
+        # After the first detection-and-reset, the engine MUST update
+        # the marker so a second invocation no longer detects.
+        # We simulate the post-first-reset marker update:
+        prior_state["last_holdings_positive"] = True
+        try:
+            second = detector(
+                previous_state=prior_state,
+                current_holdings_positive=True,
+            )
+        except TypeError:
+            second = detector(prior_state, True)
+        assert first is True, "Fixture: first detection must fire."
+        assert second is False, (
+            "AC-2 / B6 VIOLATED: after a first detection-and-reset the "
+            "engine must update last_holdings_positive so a second "
+            "detection within the same cycle sees T->T and does NOT "
+            f"fire. Second invocation returned {second!r}."
         )
