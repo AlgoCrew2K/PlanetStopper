@@ -100,33 +100,21 @@ def test_compute_sortino_tstat_exists():
     )
 
 
-@pytest.mark.parametrize("scenario_key", [
-    "mixed_one_clear_winner",
-    "noise_only_none_clears",
-    "one_signal_among_noise",
-])
-def test_sortino_tstat_matches_fixture(scenario_key):
-    """
-    AC-2: compute_sortino_tstat(sortino, T) must equal Sortino · sqrt(T).
-
-    Pinned against the hand-derived fixture t-stats for every trial in each
-    scenario. Tolerance 1e-9 absolute.
-    """
-    autotuner = _import_autotuner()
-    scenario = _load_fixture()["scenarios"][scenario_key]
-
-    trials = scenario["trials"]
-    expected_t = scenario["expected"]["t_stat"]
-
-    for trial, exp in zip(trials, expected_t):
-        result = autotuner.compute_sortino_tstat(trial["sortino"], trial["T"])
-        assert result == pytest.approx(exp, abs=_TOL), (
-            f"compute_sortino_tstat mismatch for trial '{trial['label']}' "
-            f"({scenario_key}).\n"
-            f"  sortino={trial['sortino']}, T={trial['T']}\n"
-            f"  expected t = sortino·sqrt(T) = {exp!r}\n"
-            f"  got = {result!r}"
-        )
+# NOTE: the previously-parametrized `test_sortino_tstat_matches_fixture`
+# was REMOVED for Cluster 7. It pinned the AC-2-era contract
+# `compute_sortino_tstat(sortino, T) == sortino * sqrt(T)` against the
+# hand-derived Wald-shaped fixture at tests/fixtures/math/harvey_liu_haircut.json
+# — the M-3 category error RM-H1 / Decision D10 (Cluster 7) explicitly
+# REPLACES. The new contract `compute_sortino_tstat(returns, seed) ==
+# Sortino / SE_bootstrap` (numpy.random.default_rng + Efron 1979 bootstrap
+# SE per risk-engine-specialist's binding design memo 2026-05-22) is
+# pinned independently at tests/autotuner/test_h1_bootstrap_sortino_se.py
+# against hand-derived oracle values from scripts/derive_h1_bootstrap_fixture.py
+# (independent of autotuner; numpy.random.default_rng(20260522), B=2000).
+# The Wald fixture at tests/fixtures/math/harvey_liu_haircut.json is now
+# stale provenance — kept on disk only because the BHY-arithmetic tests
+# below still source raw_p_values from its bh_vs_bhy_discriminator block
+# (which is bootstrap-SE-independent).
 
 
 # ===========================================================================
@@ -325,76 +313,109 @@ def test_harvey_liu_fdr_q_has_sourced_comment():
 # ===========================================================================
 
 
+# ===========================================================================
+# Post-Cluster-7 calibration tests — the noise/signal gating property
+# survives RM-H1, but the test inputs are now per-trial RETURN SERIES (the
+# new compute_sortino_tstat signature) rather than (sortino, T) tuples.
+#
+# The synthetic series below are designed to land in the right regime of
+# the new bootstrap-SE-based t-statistic — pure-noise series produce
+# t-stats below the BHY clearing threshold, while a genuine-signal series
+# produces a t-stat above it. The threshold is N=6 dependent (the size
+# of the noise trial set). Series shapes inline below so the test is
+# self-contained.
+# ===========================================================================
+
+
+def _synthetic_noise_series(seed: int) -> list[float]:
+    """A 30-observation pure-noise series with mixed signs.
+
+    Generated from a fixed numpy RNG so the test is reproducible — values
+    cluster around zero with both-sign variation. The Sortino on these is
+    small and the bootstrap-SE-based t-stat lands below the BHY clearing
+    threshold for a 6-trial set.
+    """
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    return list(rng.normal(loc=0.0, scale=0.02, size=30))
+
+
 def test_haircut_rejects_an_all_noise_trial_set():
     """
-    AC-2 / overfitting protection: a trial set of pure-noise Sortinos must be
-    REJECTED IN FULL by the haircut — no trial's BHY-adjusted p-value clears the
-    FDR gate.
+    Overfitting-protection: a trial set of pure-noise return series must be
+    REJECTED IN FULL by the post-RM-H1 haircut — no trial's BHY-adjusted
+    p-value clears the FDR gate.
 
-    This is the property the mis-specified DSR was nominally there to provide. A
-    haircut that always finds a "winner" in pure noise is not protecting against
-    overfitting at all. The noise fixture's Sortino values are small and
-    both-signed — consistent with a zero-skill strategy's sampling variation.
-
-    Assertion: with q = the fixture's fdr_q, NO trial in the noise scenario has
-    p_adj <= q.
+    Six independent pure-noise series, each ~Normal(0, 0.02) over T=30 obs.
+    The Sortinos are small (close to 0) and the bootstrap-based t-stats
+    land in the unclamped low-magnitude range; under BHY's N=6 step-up the
+    smallest p_adj stays above q=0.05.
     """
     autotuner = _import_autotuner()
-    fixture = _load_fixture()
-    q = fixture["fdr_q"]
-    scenario = fixture["scenarios"]["noise_only_none_clears"]
+    q = autotuner.HARVEY_LIU_FDR_Q
 
-    trials = scenario["trials"]
-    p_values = [
-        1.0 - _normal_cdf(autotuner.compute_sortino_tstat(t["sortino"], t["T"]))
-        for t in trials
+    # Six pure-noise trials with distinct seeds so the series differ.
+    series_per_trial = [_synthetic_noise_series(100 + i) for i in range(6)]
+    t_stats = [
+        autotuner.compute_sortino_tstat(s, seed=i)
+        for i, s in enumerate(series_per_trial)
     ]
+    p_values = [autotuner.compute_haircut_pvalue(t) for t in t_stats]
     p_adj = autotuner.benjamini_hochberg_adjust(p_values)
 
-    cleared = [trials[i]["label"] for i, p in enumerate(p_adj) if p <= q]
+    cleared = [i for i, p in enumerate(p_adj) if p <= q]
     assert not cleared, (
-        f"OVERFITTING-PROTECTION FAILURE: the Harvey & Liu haircut let "
-        f"{cleared} clear the q={q} FDR gate on a PURE-NOISE trial set. "
-        f"A noise-only set must be rejected in full — otherwise the haircut is "
-        f"not a real selection gate. p_adj values: {p_adj}"
+        f"OVERFITTING-PROTECTION FAILURE: the post-RM-H1 haircut let "
+        f"trials {cleared} clear the q={q} FDR gate on a PURE-NOISE trial "
+        f"set (series ~Normal(0, 0.02) at T=30). The noise set must be "
+        f"rejected in full — otherwise the haircut is not a real "
+        f"selection gate. t-stats: {t_stats}; p_adj: {p_adj}"
     )
 
 
 def test_haircut_passes_a_genuine_signal_among_noise():
     """
-    AC-2 companion: the haircut must NOT be so strict it rejects everything. A
-    trial set with one genuinely-skilled trial among noise must let exactly that
-    trial clear the FDR gate.
+    Calibration companion: the haircut must NOT be so strict it rejects
+    everything. A trial set with one genuinely-skilled return series among
+    pure-noise series must let exactly that trial clear the FDR gate.
 
-    Together with test_haircut_rejects_an_all_noise_trial_set this pins the gate
-    as calibrated — it rejects noise AND admits real signal.
+    Five pure-noise series + one genuine-signal series at index 2. The
+    signal series has strong positive returns with one downside tick — a
+    Sortino large enough to produce a bootstrap-SE-based t-stat well above
+    the BHY clearing threshold at N=6.
     """
     autotuner = _import_autotuner()
-    fixture = _load_fixture()
-    q = fixture["fdr_q"]
-    scenario = fixture["scenarios"]["one_signal_among_noise"]
+    q = autotuner.HARVEY_LIU_FDR_Q
 
-    trials = scenario["trials"]
-    p_values = [
-        1.0 - _normal_cdf(autotuner.compute_sortino_tstat(t["sortino"], t["T"]))
-        for t in trials
+    series_per_trial = [
+        _synthetic_noise_series(200),
+        _synthetic_noise_series(201),
+        # Genuine signal — strong positive returns with one downside tick.
+        # Sortino ~43, bootstrap-SE-based t ~5; comfortably clears q at N=6.
+        [1.0] * 20 + [-0.1],
+        _synthetic_noise_series(203),
+        _synthetic_noise_series(204),
+        _synthetic_noise_series(205),
     ]
+    t_stats = [
+        autotuner.compute_sortino_tstat(s, seed=i)
+        for i, s in enumerate(series_per_trial)
+    ]
+    p_values = [autotuner.compute_haircut_pvalue(t) for t in t_stats]
     p_adj = autotuner.benjamini_hochberg_adjust(p_values)
 
-    cleared = [trials[i]["label"] for i, p in enumerate(p_adj) if p <= q]
-    assert cleared == scenario["expected"]["cleared_q_05"], (
-        f"The haircut must let exactly the genuine signal clear q={q}.\n"
-        f"  expected cleared = {scenario['expected']['cleared_q_05']}\n"
-        f"  got cleared      = {cleared}\n"
-        f"  p_adj = {p_adj}"
+    cleared = [i for i, p in enumerate(p_adj) if p <= q]
+    assert cleared == [2], (
+        f"The haircut must let exactly the genuine signal (index 2) clear "
+        f"q={q}.\n  expected cleared = [2]\n  got cleared = {cleared}\n  "
+        f"t-stats: {t_stats}\n  p_adj: {p_adj}"
     )
 
-    # The winner (argmin p_adj) must be the genuine signal.
+    # The winner (argmin p_adj) must be the genuine signal at index 2.
     winner_idx = min(range(len(p_adj)), key=lambda i: p_adj[i])
-    assert trials[winner_idx]["label"] == scenario["expected"]["winner_label"], (
-        f"argmin p_adj must select the genuine signal "
-        f"'{scenario['expected']['winner_label']}'; got "
-        f"'{trials[winner_idx]['label']}'."
+    assert winner_idx == 2, (
+        f"argmin p_adj must select the genuine signal at index 2; got "
+        f"winner_idx={winner_idx}."
     )
 
 

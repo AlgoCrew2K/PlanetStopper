@@ -60,9 +60,14 @@ def test_extreme_positive_tstat_pvalue_is_clamped_above_zero():
     """
     autotuner = _import_autotuner()
 
-    # An extreme but realistic trial: a large Sortino over a full fold.
-    # t = 5.0 * sqrt(120) ~= 54.8 — Φ(t) saturates, raw 1-Φ(t) underflows to 0.0.
-    t_stat = autotuner.compute_sortino_tstat(5.0, 120)
+    # Post-AC-1 the compute_sortino_tstat signature is
+    # (returns, seed) using the bootstrap SE; the OLD (sortino, T) ->
+    # sortino * sqrt(T) signature is gone. AC-8's clamp concern is
+    # orthogonal to that — it pins that the haircut's t-stat -> p-value
+    # step clamps EXTREME t-values away from 0.0 / 1.0. Inline a known
+    # extreme t (>8.5 so 1-Φ(t) underflows in IEEE-754) directly rather
+    # than computing one via compute_sortino_tstat.
+    t_stat = 10.0
     assert t_stat > 8.5, (
         f"Test construction: t_stat must be large enough to underflow 1-Φ(t); "
         f"got {t_stat}."
@@ -96,7 +101,10 @@ def test_extreme_negative_tstat_pvalue_is_clamped_below_one():
     """
     autotuner = _import_autotuner()
 
-    t_stat = autotuner.compute_sortino_tstat(-5.0, 120)
+    # See note in the positive-extreme test above — post-AC-1 the
+    # tstat signature is (returns, seed), so inline a known extreme
+    # negative t directly instead of computing one.
+    t_stat = -10.0
     assert t_stat < -8.5, (
         f"Test construction: t_stat must be negative enough to saturate "
         f"1-Φ(t)→1.0; got {t_stat}."
@@ -123,11 +131,15 @@ def test_bhy_adjusted_pvalues_stay_finite_for_extreme_trial_set():
     """
     autotuner = _import_autotuner()
 
+    # Inline t-values across the relevant magnitude range so the test
+    # exercises the clamp at extremes AND the unclamped behaviour at
+    # moderate / null values. See the per-test notes above on why we
+    # don't go through compute_sortino_tstat post-AC-1.
     t_stats = [
-        autotuner.compute_sortino_tstat(5.0, 120),    # extreme positive
-        autotuner.compute_sortino_tstat(0.3, 50),     # moderate
-        autotuner.compute_sortino_tstat(-5.0, 120),   # extreme negative
-        autotuner.compute_sortino_tstat(0.0, 40),     # exactly null
+        10.0,     # extreme positive — Φ saturates, raw p underflows
+        0.3,      # moderate positive — well above the clamp
+        -10.0,    # extreme negative — 1-Φ saturates to 1.0
+        0.0,      # exactly null — raw p = 0.5
     ]
     p_values = [_haircut_pvalue(autotuner, t) for t in t_stats]
     p_adj = autotuner.benjamini_hochberg_adjust(p_values)

@@ -298,13 +298,29 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
 
     # A markedly stronger signal series vs a weaker one. Each MUST include at
     # least one downside observation so compute_sortino_ratio returns a finite
-    # ratio — an all-positive series hits the 1e6 zero-downside sentinel, which
-    # filter_sortino_sentinels then drops from the haircut set entirely (the
-    # trial would never reach selection). Both series here have one downside
-    # tick: strong Sortino ~14.4, weak ~2.4 — both finite, strong > weak, both
-    # large enough to clear the BHY FDR gate against the noise filler trials.
-    strong = [1.5, 1.4, 1.6, 1.5, 1.7, 1.4, 1.6, 1.5, 1.8, -0.3]
-    weak = [0.5, 0.4, 0.6, 0.5, 0.45, -0.3, 0.55, 0.5, 0.6, -0.35]
+    # ratio — an all-positive series hits the math_engine._SORTINO_SENTINEL
+    # (+1e6) zero-downside sentinel, which filter_sortino_sentinels then drops
+    # from the haircut set entirely (the trial would never reach selection).
+    #
+    # Post-AC-1 (Cluster 7 / RM-H1): the t-statistic is now Sortino /
+    # bootstrap-SE rather than Sortino*sqrt(T). The bootstrap SE is generally
+    # LARGER than the Wald-implied sqrt(T) for these short series — so the
+    # post-AC-1 t-stat is SMALLER and the corresponding p-value is LARGER.
+    # The pre-AC-1 "weak" series (Sortino ~2.4 over T=10) no longer clears
+    # the BHY FDR gate under bootstrap-SE, which is the correct conservative
+    # behaviour the audit asked for — but it breaks this test's premise that
+    # BOTH winners reach selection so the orientation assertion can fire.
+    #
+    # Strengthen both series with enough observations + signal magnitude
+    # to clear the gate under bootstrap SE, while preserving the strong>>weak
+    # ordering the test is verifying.
+    # Post-AC-1 calibration: with N=5 trials, the BHY-adjusted-p clearing
+    # threshold at rank 1 requires raw p < q / (N*c(N)) ~= 0.0044, i.e.
+    # bootstrap-based t > ~2.6. The strong fixture lands t ~= 5.0
+    # (Sortino ~43.4), the weak fixture lands t ~= 3.1 (Sortino ~18.5) —
+    # both clear the gate, ordering preserved, ratio test fires.
+    strong = [1.0] * 20 + [-0.1]                        # Sortino ~43.4
+    weak = [1.0] * 30 + [-0.2, -0.2]                    # Sortino ~18.5
 
     strong_value = _persisted_deflated_for(strong)
     weak_value = _persisted_deflated_for(weak)

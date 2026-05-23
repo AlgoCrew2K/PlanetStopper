@@ -66,6 +66,35 @@ import autotuner
 import math_engine
 
 
+@pytest.fixture(autouse=True)
+def _pin_execution_start_time_to_session_open(monkeypatch):
+    """Pin alpha_bot_execution.EXECUTION_START_TIME = "09:30" for every
+    parity test in this file.
+
+    Cluster 7 / AC-5 fixed the replay's grace gate to read
+    EXECUTION_START_TIME from env (the bug: replay hardcoded a "09:30"
+    anchor while production correctly anchored at EXECUTION_START_TIME).
+    The parity fixtures in tests/fixtures/autotuner/replay_parity/ were
+    authored under the legacy semantic "tick_idx 0 == 09:30 ET session
+    open" and the in-file `_production_exit_sequence` reference helper
+    hardcodes `session_open_hhmm="09:30"`. With AC-5 landed, if the
+    operator's env carries EXECUTION_START_TIME="10:31" (the
+    default-changed-by-operator case), the replay's grace window shifts
+    to tick_idx 60..74 while the production reference stays at 0..14
+    — the parity test then sees a real divergence on the grace-sensitive
+    fixture (`parity_vwap_grace_no_phantom.json`).
+
+    Pinning EXECUTION_START_TIME to "09:30" here makes the parity check
+    hermetic against the operator's env, matching the fixtures' baked-in
+    tick-anchoring AND the in-file production reference. The
+    non-default-EXECUTION_START_TIME behavior is exercised independently
+    by tests/autotuner/test_n3_replay_grace_execution_start_time.py.
+    """
+    monkeypatch.setattr(
+        "alpha_bot_execution.EXECUTION_START_TIME", "09:30", raising=False
+    )
+
+
 # ---------------------------------------------------------------------------
 # Constants sourced from the producers (never re-typed as bare literals).
 # ---------------------------------------------------------------------------

@@ -41,6 +41,31 @@ _AUTOTUNER_TREE = ast.parse(
 )
 
 
+@pytest.fixture(autouse=True)
+def _pin_execution_start_time_to_session_open(monkeypatch):
+    """Pin alpha_bot_execution.EXECUTION_START_TIME = "09:30" for every
+    test in this file.
+
+    Cluster 7 / AC-5 fixed the replay's grace gate to read
+    EXECUTION_START_TIME from env (the bug it corrected: the replay
+    hardcoded a "09:30" anchor while production correctly anchored at
+    EXECUTION_START_TIME). With that fix landed, this file's fixtures
+    — which were authored under the legacy semantic "tick_idx 0 ==
+    09:30 ET session open" — would otherwise see the replay's grace
+    window shift to tick_idx 60..74 when the operator's env carries
+    EXECUTION_START_TIME="10:31" (the default-changed-by-operator case).
+
+    Pinning EXECUTION_START_TIME to "09:30" for the test's duration
+    keeps the fixture's baked-in tick-anchoring honest AND tests the
+    replay's grace semantic at the env-default anchor. The AC-5 RED
+    suite (tests/autotuner/test_n3_replay_grace_execution_start_time.py)
+    independently exercises the NON-default-EXECUTION_START_TIME case.
+    """
+    monkeypatch.setattr(
+        "alpha_bot_execution.EXECUTION_START_TIME", "09:30", raising=False
+    )
+
+
 def _load_fixture(name: str) -> dict:
     with (_FIXTURE_DIR / name).open(encoding="utf-8") as fh:
         return json.load(fh)

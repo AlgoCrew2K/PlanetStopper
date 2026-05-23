@@ -177,41 +177,26 @@ def test_haircut_t_is_not_the_validation_calendar_day_count():
     )
 
 
-def test_haircut_t_stat_is_scaled_by_a_per_trial_observation_count():
-    """
-    AC-3: compute_sortino_tstat must scale the Sortino by sqrt of a per-trial
-    observation count.
-
-    Behavioural property: for a fixed Sortino, the t-statistic must be strictly
-    monotone increasing in `T` and equal to `Sortino · sqrt(T)`. A `T` that is a
-    fixed calendar-day count would make the t-stat independent of how many days
-    actually triggered — this test pins that `T` genuinely varies per trial.
-
-    Tolerance: 1e-9 absolute — `sortino * sqrt(T)` is exact arithmetic.
-    """
-    import math
-
-    autotuner = _import_autotuner()
-
-    assert hasattr(autotuner, "compute_sortino_tstat"), (
-        "autotuner.compute_sortino_tstat must exist (D3 haircut) — see "
-        "test_c4_harvey_liu_haircut.py."
-    )
-
-    sortino = 0.4
-    for T in (10, 25, 60, 120):
-        expected = sortino * math.sqrt(T)
-        got = autotuner.compute_sortino_tstat(sortino, T)
-        assert got == pytest.approx(expected, abs=1e-9), (
-            f"compute_sortino_tstat({sortino}, {T}) must equal "
-            f"sortino·sqrt(T) = {expected!r}; got {got!r}."
-        )
-
-    # Strictly monotone in T — proves T is a real per-trial count, not a constant.
-    t_small = autotuner.compute_sortino_tstat(sortino, 10)
-    t_large = autotuner.compute_sortino_tstat(sortino, 120)
-    assert t_large > t_small, (
-        "The haircut t-statistic must increase with the observation count T. "
-        "If T were a fixed calendar-day count the t-stat would not vary per "
-        "trial — AC-3 requires T = len(daily_returns), a genuine per-trial count."
-    )
+# NOTE: the previously-named
+# `test_haircut_t_stat_is_scaled_by_a_per_trial_observation_count` was
+# REMOVED for Cluster 7. It pinned the AC-3-era contract
+# `compute_sortino_tstat(sortino, T) == sortino * sqrt(T)` — the
+# Sharpe-Wald scaling. RM-H1 / Decision D10 (Cluster 7) explicitly
+# replaces that contract with a bootstrap-SE-based t-stat
+# `Sortino / SE_bootstrap` (per Efron 1979 + risk-engine-specialist's
+# binding design memo 2026-05-22), so the AC-3 "Sortino * sqrt(T)
+# scaling" property is no longer the right invariant. The valid
+# AC-3 concern that survives — "T must be the per-trial OBSERVATION
+# count, not a calendar-day count" — is now encoded structurally in
+# the new compute_sortino_tstat signature itself, which consumes
+# the per-trial return series directly (`returns`) rather than a
+# scalar `T`. That structural pin is enforced by
+# tests/autotuner/test_h1_bootstrap_sortino_se.py — see
+# TestBootstrapSortinoSeHelper (basic / sign / direction / oracle
+# fixtures all drive the new signature). The two remaining tests in
+# THIS file (`test_compute_dsr_t_function_is_deleted`,
+# `test_n_symphonies_t_inflation_is_not_reintroduced`,
+# `test_portmode_test_no_longer_references_compute_dsr_t`,
+# `test_haircut_t_is_not_the_validation_calendar_day_count`)
+# continue to pin AC-3's structural D4 / no-T-inflation invariants,
+# which are orthogonal to RM-H1 and remain in scope.
