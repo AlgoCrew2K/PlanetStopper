@@ -261,6 +261,101 @@ class TestHaircutPvalueEpsilonMeetsBhyScalingFloor:
                 f"window above the constant."
             )
 
+    def test_clamp_comment_does_not_revive_overstated_no_op_framing(self):
+        """Negative-guard against the audit's OVERSTATED RM-M2 framing
+        reviving in the clamp's source comment.
+
+        Team-lead's 2026-05-23 ruling explicitly noted the audit's
+        framing ("any SINGLE trial whose t-stat saturates Φ ... silently
+        collapses into a no-op and rubber-stamps every trial as
+        significant") was wrong on the BHY running-min direction. The
+        comment must NOT revive that signature phrasing.
+
+        Risk-engine-specialist's negative-guard request 2026-05-23:
+        substring-grep is imperfect but catches THIS specific class of
+        regression cheaply. The 'rubber-stamp' phrasing is the audit's
+        exact signature — the strongest pin. The paired 'any single
+        trial / saturates' phrase is the second-strongest. Looser
+        guards (bare 'no-op' appearing without 'benign' / 'naive
+        best-of-n' / 'intrinsic' nearby) catch weaker paraphrases
+        without false-positive risk on a legitimate use of 'no-op' as
+        a negative characterization.
+        """
+        import inspect
+        import re
+
+        source = inspect.getsource(autotuner)
+        lines = source.splitlines()
+        idx = next(
+            (i for i, line in enumerate(lines)
+             if "_HAIRCUT_PVALUE_EPSILON" in line and "=" in line
+             and "self." not in line),
+            None,
+        )
+        assert idx is not None, "Could not locate eps definition."
+        # Same 30-line window as the positive-content test, so the two
+        # tests examine the same comment block.
+        window = "\n".join(lines[max(0, idx - 30):idx + 1]).lower()
+
+        # Strongest signature — the audit's exact phrasing.
+        for needle in ("rubber-stamp", "rubber stamp"):
+            assert needle not in window, (
+                f"AC-4 / RM-M2 NEGATIVE-GUARD VIOLATED: the comment "
+                f"window above _HAIRCUT_PVALUE_EPSILON contains "
+                f"{needle!r} — the audit's overstated framing that "
+                "team-lead's 2026-05-23 ruling explicitly corrected. "
+                "Per the ruling: 'any SINGLE trial whose t-stat "
+                "saturates Φ ... rubber-stamps every trial as "
+                "significant' is wrong on BHY's running-min direction. "
+                "The clamp is an information-preservation floor; the "
+                "all-saturated residual is benign (collapses to naive "
+                "best-of-N), not a defect."
+            )
+
+        # Second-strongest: "any single trial" paired with "saturates"
+        # within a small window (signature of the overstated claim).
+        co_occurrence = re.search(
+            r"any\s+single\s+trial[\s\S]{0,200}saturat",
+            window,
+        )
+        assert co_occurrence is None, (
+            f"AC-4 / RM-M2 NEGATIVE-GUARD VIOLATED: the comment window "
+            f"contains 'any single trial ... saturat...' phrasing "
+            f"(matched: {co_occurrence.group(0)!r}) — signature of the "
+            "audit's overstated framing. Team-lead's ruling: the BHY "
+            "running-min locks every adjusted p at c(N)·eps (rank N, "
+            "the smallest scaled value), not at (N·c(N))·eps; the "
+            "all-saturated case is only operationally a no-op for the "
+            "WHOLE trial set when EVERY trial saturates, not for any "
+            "single one. Re-phrase honestly."
+        )
+
+        # Tertiary: bare "no-op" appearing WITHOUT a benign-framing
+        # qualifier in the same window. Legitimate uses of "no-op" as a
+        # negative characterization are accompanied by 'benign',
+        # 'intrinsic', 'naive best-of-n' (the qualifiers team-lead's
+        # ruling mandated). A bare 'no-op' signals the old framing.
+        if "no-op" in window or "no op" in window:
+            benign_qualifiers = (
+                "benign",
+                "intrinsic",
+                "naive best-of-n",
+                "naive best of n",
+                "pre-cluster-4",
+            )
+            assert any(q in window for q in benign_qualifiers), (
+                f"AC-4 / RM-M2 NEGATIVE-GUARD VIOLATED: the comment "
+                "window above _HAIRCUT_PVALUE_EPSILON contains 'no-op' "
+                "without any of the benign-framing qualifiers "
+                f"{benign_qualifiers!r}. Per team-lead's 2026-05-23 "
+                "ruling: the all-saturated residual case is a BENIGN "
+                "intrinsic property of multi-test correction at "
+                "saturation, NOT a fix-as-shipped defect. If the "
+                "comment uses the term 'no-op', it MUST also frame "
+                "the residual as benign / intrinsic / 'collapses to "
+                "naive best-of-N'."
+            )
+
 
 # ---------------------------------------------------------------------------
 # 3 — Behavioural pin: all-high-t-stat trials still get at least one
