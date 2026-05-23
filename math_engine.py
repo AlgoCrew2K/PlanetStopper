@@ -270,7 +270,7 @@ def compute_breakeven_update(
     only ratchet in the resolved stop level. When is_triggered=True the stop
     is the committed-exit sentinel TRIGGERED_OVERRIDE_LEVEL (-999.0).
 
-    Trailing-stop construction reference: Fu, M.C. & Zhang, H. (2012),
+    Trailing-stop construction reference: Fu, Y.B. & Zhang, Z.G. (2012),
     Int. J. Operations Research 9(3), 129-140.
 
     Pure. No I/O. No state. Caller assigns the returned new_hold_ticks and
