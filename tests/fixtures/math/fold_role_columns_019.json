@@ -1,0 +1,38 @@
+{
+  "name": "fold_role_columns_019",
+  "layer": "fold_role_wall",
+  "description": "Golden fixture for migration 019_fold_role_columns.sql — the structural frozen-eval Advisor wall. Defines the fold_role values that the wall must handle, the COALESCE filter semantics, and the expected column shape on the fold-partitioned table. Provenance: schema-derived from plan 019 + README §1 hazard table H3. No producer-computed values; all assertions are structural/behavioural.",
+  "fold_role_values": {
+    "train": "train",
+    "validation": "validation",
+    "frozen_eval": "frozen_eval",
+    "null_legacy": null
+  },
+  "wall_filter": {
+    "correct_sql_fragment": "COALESCE(fold_role, '') != 'frozen_eval'",
+    "buggy_sql_fragment": "fold_role != 'frozen_eval'",
+    "semantics": {
+      "null_row_under_correct_filter": "included — NULL is not frozen_eval under COALESCE",
+      "null_row_under_buggy_filter": "excluded — SQL three-valued logic evaluates NULL != X as NULL/falsy",
+      "frozen_eval_row_under_correct_filter": "excluded — the wall works",
+      "frozen_eval_row_under_buggy_filter": "excluded — coincidentally correct but only by accident"
+    },
+    "h3_hazard": "A bare fold_role != 'frozen_eval' evaluates NULL to NULL (falsy) and silently hides legitimate train/validation rows from the Advisor. The COALESCE is mandatory."
+  },
+  "migration": {
+    "filename": "019_fold_role_columns.sql",
+    "column_spec": {
+      "name": "fold_role",
+      "type": "TEXT",
+      "default": "NULL",
+      "nullable": true
+    },
+    "idempotent": true,
+    "duplicate_column_swallow": "run_migrations swallows 'duplicate column name' — re-applying is safe"
+  },
+  "advisor_ro_query": {
+    "description": "The only entry the Advisor uses to read from state DB. Any caller SQL touching fold_role must use the COALESCE filter; a bare != is rejected before execution.",
+    "bare_predicate_rejection": "ValueError raised on bare fold_role != 'frozen_eval' in caller SQL",
+    "wall_breach_tripwire": "If a frozen_eval row appears in results, writes WALL_BREACH to advisor_observations then raises"
+  }
+}
