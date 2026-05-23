@@ -4,7 +4,8 @@
 **Council:** decision-science-council — risk-architect, tuning-architect, persistence-architect, skeptic, critic
 **Date:** 2026-05-22
 **Branch:** design/decision-science-council
-**Status:** CONVERGED — critic's CONVERGE gate PASSED (all 9 binding conditions verified carried); all five council members signed off; cleared for delivery to the PM
+**Status:** CONVERGED — critic's CONVERGE gate PASSED (all 9 binding conditions verified carried); all five council members signed off; cleared for delivery to the PM.
+**Doc-sweep:** corrections H-1, H-3, H-4, H-5, H-7, H-8 applied inline on 2026-05-23 per the v3-and-divergence evaluation (`docs/handoff/decision-science-v3-and-divergence-evaluation.md`). H-9 closed by §0.1 below (and mirrored in `feature-plans/decision-science/README.md` §0.1). Doc edits are tagged inline with their `H-N correction` reference.
 
 ---
 
@@ -53,6 +54,16 @@ AlphaBot's data scale. A powered joint VaR-ES coverage backtest
 (Acerbi-Székely / Fissler-Ziegel) needs ~1,000 tail-relevant observations;
 AlphaBot accrues ~6 tail days per 125-day fold, ~37 per 3 years. A trigger that
 cannot be validated must not go live. This applies to **every** candidate.
+
+---
+
+## 0.1 Why two finalists, not three (H-9 — the Finalist-C exclusion, argued in-body per H-9 correction)
+
+The evaluation flagged v3 as having argued the Finalist-C exclusion **only** in §10 (compliance index), never in the body. Per the H-9 correction, the argument is restated here once, in the body where a reader of the two-finalist structure naturally looks (the same argument is mirrored in `feature-plans/decision-science/README.md` §0.1):
+
+**There is no coherent standalone third finalist.** The only candidate "third path" — pre-committing to the evidence-gated Phase-2 roadmap — is **not a separate architecture; it is Finalist B**. Finalist A is the terminal-acceptable floor; Finalist B is *Finalist A plus the evidence-gated Phase-2 roadmap*; "pre-commit to Phase 2" is therefore a **choice within Finalist B's framing**, not a distinct third architecture. The genuine decision space is **two finalists plus the user's pre-commit choice** — and the user has made that choice (scaffold Phase 2 now, evidence-gate execution). The roadmap structure is two finalists, with Phase 2's gating preconditions making the user's pre-commit visible and reversible.
+
+A second candidate sometimes raised — *"Finalist A + a permanent diagnostic-grade CVaR layer that never moves money"* — collapses into Finalist A by inspection: M2 already ships that diagnostic-grade layer (§3.1). It is not a separate architecture; it is what Finalist A delivers.
 
 ---
 
@@ -114,7 +125,7 @@ offline (autotuner only), with a single pre-registered risk-aversion parameter
   The haircut runs on `mean(u(g_i))`; the audit displays `CE` in return units.
 - **Binding correctness requirement S-2 (critic condition 3):** the per-trial
   BHY significance statistic is a **genuine one-sample t-stat**,
-  `t = mean(U) / (sd(U)/√T)` on the CRRA-transformed bounded series `U` —
+  `t = mean(U) / (sd(U)/√T)` on the CRRA-transformed series `U` (kept finite by the named `WEALTH_ARG_FLOOR > 0` on the input wealth argument `W` — H-1 correction; CRRA is unbounded below as `W → 0⁺` for `γ ≥ 1`, so "bounded" without the floor is false) —
   **NOT** `effect_size·√T`. A new `compute_crra_eu_tstat` replaces
   `compute_sortino_tstat` for this objective. Silently reusing the Sortino
   t-stat would be the exact "H-6 category error" the code already fixed once
@@ -247,7 +258,7 @@ delivery of the defensibility upgrade.
 | Component | What it is | Live impact |
 |---|---|---|
 | **M1** | CRRA-EU autotuner objective replacing 5 loss-aversion constants. `gamma` pre-registered, frozen by theory, NOT Optuna-searched. Per-trial t-stat re-derived (S-2). | Offline (autotuner only). Changes which parameter set the autotuner *selects*; changes no exit logic. |
-| **M2** | A 5% CVaR **diagnostic** computed single-day from the kNN pool `run_monte_carlo` already builds (Rockafellar-Uryasev general-distribution estimator). Logged every cycle under the **four-part S-3 display contract** (§4). | **Zero.** Drives no decision. A wrong M2 number misleads a human reading a dashboard; it never moves money — *which is why the S-3 bias warning is mandatory* (see below). |
+| **M2** | A 5% CVaR **operator-instrumentation diagnostic** (H-4 re-label — distinct from M1's defensibility win; **Phase-2 kill-switch only**, never a stepping-stone, per §3.9 W-H1) computed single-day from the kNN pool `run_monte_carlo` already builds (Rockafellar-Uryasev general-distribution estimator). Logged every cycle under the **four-part S-3 display contract** (§4). | **Zero decision impact, non-zero non-blocking I/O cost** (H-3 correction — M2 writes one `cvar_diagnostics` row per cycle via the H4 `live|replay` telemetry helper, benchmarked vs the minute budget). Drives no decision. A wrong M2 number misleads a human reading a dashboard; it never moves money — *which is why the S-3 bias warning is mandatory* (see below). |
 
 **M2's display contract (S-3, binding — §4).** M2's diagnostic display must
 carry **all four** of: (a) an uncertainty band / standard error; (b) the
@@ -284,9 +295,7 @@ exists; it does not replace.
 
 ### 3.3 HARDEN's honest claim (critic condition 4 — the precise un-flattering version)
 
-HARDEN **removes the three documented provenance gaps** the code itself flags
-(R1 time-squeeze curve, R2 VWAP System-A gate — both via M3; R3 the hand-tuned
-loss-aversion multipliers — via M1). In exchange it:
+**The Phase-1 floor removes R3 only** (the hand-tuned loss-aversion multipliers — via M1; H-5 correction — the earlier "removes three" wording conflated Phase 1 with Phase 1.5). **R1 (time-squeeze curve) and R2 (VWAP System-A gate) are removed in Phase 1.5 via M3** — a recommended fast-follow, NOT the Phase-1 floor. HARDEN's total provenance closure across Phase 1 + Phase 1.5 is R1 + R2 + R3. In exchange it:
 
 - **adds three specification facets** — the `gamma` value, the utility *family*
   (CRRA, chosen over CARA / skew-aware), and the **wealth argument** fed to
@@ -316,7 +325,9 @@ un-freezable cleanly.
 - BHY haircut **preserved unchanged**; search space stays 6-D (gamma frozen,
   not added).
 - The 60/20/20 train/validation/frozen-eval split is **preserved** — M1's
-  CRRA-mean objective is a sample mean of a bounded transform, **small-sample-
+  CRRA-mean objective is a sample mean of a finite-on-the-floored-domain
+  transform (the named `WEALTH_ARG_FLOOR > 0` on input `W` keeps `U` finite —
+  H-1 correction; CRRA itself is unbounded below as `W → 0⁺`), **small-sample-
   estimable** on the ~4-5-day frozen fold (the standard error of a mean is
   merely *wide* at n≈5, not undefined). **No rolling k-fold needed.** This is
   H-3 PASS and it also closes the NN2 question: NN2's route-(a)/(b) dilemma
@@ -342,15 +353,18 @@ un-freezable cleanly.
 
 Per persistence-architect's converged migration plan
 (`council-converged-migration-plan.md`, commit `bb0c480`). The Phase-1 schema
-is **5 new state-DB tables + 2 additive ALTER migrations** — stated as cost,
-not hidden, and **not** "1 column":
+is **4 or 5 new state-DB tables + 2 additive ALTER migrations** (H-8 A2 correction
+— single consistent count statement: 5 in the recommended `spec_bundles + spec_facets`
+shape; 4 if the implementing team collapses `spec_facets` into a JSON column on
+`spec_bundles` per the apparatus-sizing latitude documented below) — stated as
+cost, not hidden, and **not** "1 column":
 
 | Migration | Contents | Kind |
 |---|---|---|
 | `015_spec_bundles.sql` | `spec_bundles` + `spec_facets` | 2 new tables |
 | `019_advisor_observations.sql` | `advisor_observations` (thin) | 1 new table |
 | `020_researcher_dof_ledger.sql` | `researcher_dof_ledger` | 1 new table |
-| `021_fold_role_columns.sql` | `fold_role` + the structural wall | 1 ALTER |
+| `021_fold_role.sql` | `fold_role` + the structural wall (H-8 A1 correction — canonical filename has NO `_columns` suffix; a mismatch between the literal file on disk and the `_MIGRATION_FILES` list at `database.py` silently swallows the FileNotFoundError, leaves the migration un-applied, and re-attempts every startup) | 1 ALTER |
 | `022_autotune_runs_eut.sql` | `autotune_runs` EUT audit columns | 1 ALTER |
 | `023_cvar_diagnostics.sql` | `cvar_diagnostics` (M2's home) | 1 new table |
 
@@ -380,7 +394,10 @@ diverge. H3 — the frozen-eval wall filter must be
 `COALESCE(fold_role,'') != 'frozen_eval'` (a bare `!=` silently hides
 train/validation rows). H4 — the telemetry write helper takes an explicit
 `live|replay` mode (live swallows, replay raises); Gate-1 parity asserts
-decision-content columns only, excluding `id`/`ts_utc`.
+decision-content columns only. **The named non-decision parity-exclusion list
+is exactly `id` (autoincrement primary key) and `ts_utc` (wall-clock insertion
+timestamp); no other columns are excluded** (H-8 A3 correction — exclusion list
+fully named, not under-specified).
 
 **Phase-1 apparatus sizing (bounded team's-choice, not a council mandate).**
 tuning-architect notes that for HARDEN's *single* tunable frozen facet (gamma),
@@ -681,11 +698,18 @@ the user before any implementation cycle begins.
 ## 8. RED golden-fixture regression spec (for the Phase-1 implementing team)
 
 The debate specified these as the verifiability spec for HARDEN-core's binding
-conditions — they make S-2 / W-H2 / S-3 / replay-determinism *verifiable*, not
-asserted (skeptic, on the record):
+conditions — they **PIN** the formulas and wiring for S-2 / W-H2 / S-3 /
+replay-determinism (H-7 correction — "PINS" the implementation, **not**
+"verifies" or "validates" the statistical correctness of the underlying methods;
+these tests confirm the code matches the specified formula, not that the
+method is statistically correct on its own merits):
 
-1. The CRRA t-stat test — a known `U`-series with `sd(U) ≠ 1`; assert
-   `t == mean(U)/(sd(U)/√T)` AND `t ≠ effect_size·√T`.
+1. The CRRA t-stat test — **pins the formula (wiring), does not validate the
+   statistic.** A known `U`-series with `sd(U) ≠ 1`; assert
+   `t == mean(U)/(sd(U)/√T)` AND `t ≠ effect_size·√T`. Discriminating power:
+   the two formulas diverge exactly when `sd(U) ≠ 1`, so the test fails if
+   the implementation silently reuses the Sortino effect-size form (H-6
+   category error).
 2. The M1 wealth-argument test — once W-H2's argument is derived.
 3. M2's CVaR-on-a-known-pool golden fixture + an assertion the bias warning is
    present on the display surface.
