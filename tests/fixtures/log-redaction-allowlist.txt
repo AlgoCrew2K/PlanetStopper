@@ -1,0 +1,38 @@
+# Log-redaction allowlist — Phase-1 logging (overlay gate 7)
+#
+# These are the ONLY fields permitted in any log line emitted by a
+# Phase-1 logging path (H4 telemetry helper warning, M2 NaN-guard log,
+# Advisor render log, or any new Composer/Alpaca client wrapper log).
+#
+# Adding a field here requires quant-code-reviewer sign-off (R2 from the
+# logging-redaction plan).  New fields MUST appear here before they appear
+# in any log call.  Fields NOT listed here are forbidden in log output.
+#
+# Format: one field name per line; lines beginning with # are comments.
+# Blank lines are ignored.
+#
+# Source-of-truth: feature-plans/decision-science/phase-1/logging-redaction/plan.md
+# Binding refs: council-attack-rubric.md gate 7; README.md §1 cross-cutting hazards.
+
+# Structural identifiers — correlation handles, not financial data
+table_name
+cycle_id
+error_type
+error_message_class
+
+# ---- EXPLICITLY FORBIDDEN (document here so reviewers see the intent) ----
+# The following fields MUST NOT appear in any Phase-1 log line:
+#   account_id          — Alpaca/Composer account identifier (PII / credential class)
+#   position_qty        — financial position data
+#   webhook_url         — Discord webhook URL (secret)
+#   cvar_5pct           — financial computation output
+#   cvar_5pct_stderr    — financial computation output
+#   cvar_5pct_long      — financial computation output
+#   cvar_n_tail         — count derived from financial data
+#   cvar_n_tail_long    — count derived from financial data
+#   symphony_id         — routing identifier (not a permitted correlation handle)
+#   bearer_token        — API authentication credential
+#   api_key_id          — API authentication credential
+#   api_secret          — API authentication credential
+#   response_body       — raw API response (any vendor)
+#   error_args          — raw exception .args (may include response body fragments)
