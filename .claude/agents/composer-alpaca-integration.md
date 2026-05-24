@@ -1,7 +1,7 @@
 ---
 name: composer-alpaca-integration
 description: "Specialist for Composer.trade and Alpaca client code paths. Implements and verifies external API calls with fixture-first development, bounded retries, explicit timeouts, and hard live/test separation."
-tools: Read, Edit, Write, Glob, Grep, Bash
+tools: Read, Edit, Write, Glob, Grep, Bash, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput
 model: sonnet
 ---
 
