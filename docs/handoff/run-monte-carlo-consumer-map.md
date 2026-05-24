@@ -63,12 +63,26 @@ mutates the call signature at any of these sites is out of scope and blocked.
 
 | Line | Consumer pattern | Sentinel handling |
 |------|-----------------|-------------------|
-| 463 | `mc = tick.get("mc_prob", 50.0)` | Reads from tick dict — NOTE: `.get(key, default)` returns None when key exists with None value (not the default); `mc_available = mc is not None` guards downstream |
+| 463 | `mc = tick.get("mc_prob", 50.0)` | Reads from tick dict — NOTE: `.get(key, default)` returns None when key exists with None value (not the default 50.0); `mc_available = mc is not None` guards downstream |
 | 464 | `mc_available = mc is not None` | Guard — all downstream branches read `mc_available` |
 | 491 | `if mc_available and take_profit_mc <= mc < trigger_threshold` | Arm gate — gated |
 | 495 | `if mc_available and mc > (trigger_threshold * 2) and ret > 0.0` | Disarm gate — gated |
 | 535 | `prob_beating=mc` (passed to `compute_exit_confirmation`) | `compute_exit_confirmation` accepts None; fail-safe |
 | 547 | `prob_beating=mc` (passed to `compute_tp_confirmation`) | TP function gated via `mc_available` |
+
+### `app.py`
+
+| Line | Consumer pattern | Sentinel handling |
+|------|-----------------|-------------------|
+| 833–836 | `s.get("mc_prob") if s.get("mc_prob") is not None else -999.0` | Sort key None guard — sentinel mapped to -999.0 for sort stability |
+| 932 | `"mc_prob": None` | Initial state — default None for new symphonies (sentinel is the correct initial value) |
+| 1171–1173 | `key=lambda s: s.get("mc_prob") if s.get("mc_prob") is not None else -999.0` | Sort key None guard (second sort path) |
+
+### `engine/dual_altitude.py`
+
+| Line | Consumer pattern | Sentinel handling |
+|------|-----------------|-------------------|
+| 96 | `"mc_prob": None` | Initial state — default None in the dual-altitude engine's initial symphony state |
 
 ---
 
@@ -80,11 +94,13 @@ mutates the call signature at any of these sites is out of scope and blocked.
 | `synthetic_history.py` | 1 (line 340) | 2 sites (lines 340, 356) |
 | `autotuner.py` | 0 (reads from tick dict) | 7 sites (lines 463–547) |
 | `reporting.py` | 0 (receives `prob_beating` argument) | 3 sites (lines 498–522) |
-| **Total** | **2 direct calls** | **27 consumer references** |
+| `app.py` | 0 (reads from bot_state dict) | 3 sites (lines 833–1173) |
+| `engine/dual_altitude.py` | 0 (initial state only) | 1 site (line 96) |
+| **Total** | **2 direct calls** | **31 consumer references** |
 
 **Blast-radius conclusion:** any change to `run_monte_carlo`'s return type or
-signature touches 2 direct call sites and propagates through 27 downstream
-consumer references across 4 files. The Phase-1 freeze (enforced by
+signature touches 2 direct call sites and propagates through 31 downstream
+consumer references across 6 files. The Phase-1 freeze (enforced by
 `tests/math_engine/test_run_monte_carlo_signature_frozen.py`) is non-negotiable
 until last-symphony Phase-2 cutover.
 
