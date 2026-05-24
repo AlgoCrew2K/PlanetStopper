@@ -137,11 +137,11 @@ def fetch_symphony_stats(account_id):
             try:
                 return response.json().get("symphonies", [])
             except ValueError as e:
-                print(f"Error parsing Composer response JSON: HTTP {response.status_code} - {e}")
+                print(f"Error parsing Composer response JSON: HTTP {response.status_code}")
                 return []
-        print(f"Error fetching account {account_id}: HTTP {response.status_code}")
+        print(f"Error fetching symphony stats: HTTP {response.status_code}")
     except requests.RequestException as e:
-        print(f"Exception fetching account {account_id}: {e}")
+        print(f"Exception fetching symphony stats: {type(e).__name__}")
     return []
 
 
@@ -243,7 +243,7 @@ def execute_sell_to_cash(actual_symphony_id, account_id):
             time.sleep(1.5)
             return False
         except requests.RequestException as e:
-            print(f"     !!! [API CRASH]: {str(e)}")
+            print(f"     !!! [API CRASH]: {type(e).__name__}")
             if attempt < len(backoff_intervals):
                 delay = backoff_intervals[attempt]
                 print(f"     -> Retrying in {delay}s due to transient network spike...")
@@ -309,7 +309,7 @@ def fetch_alpaca_history(tickers, current_date_str):
             try:
                 data = response.json()
             except ValueError as e:
-                print(f"Error parsing Alpaca response JSON: HTTP {response.status_code} - {e}")
+                print(f"Error parsing Alpaca response JSON: HTTP {response.status_code}")
                 break
             if "bars" in data:
                 for symbol, bars in data["bars"].items():
