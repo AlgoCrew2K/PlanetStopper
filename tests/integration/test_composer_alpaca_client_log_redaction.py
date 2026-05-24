@@ -368,3 +368,56 @@ def test_get_composer_headers_bearer_token_does_not_leak_on_request_exception(ca
         f"Gate 7 S6 violation: Bearer token pattern found in operator output. "
         f"Full output: {all_output!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# S7: fetch_symphony_stats Composer JSON parse error must not print exception
+#     message (same gap as S5 for Alpaca, now closed for Composer path)
+# ---------------------------------------------------------------------------
+
+def test_fetch_symphony_stats_json_parse_error_does_not_print_exception_message(capsys, caplog):
+    """Gate 7 S7 (REVISE): when fetch_symphony_stats receives a 200 response
+    whose JSON cannot be parsed, the ValueError (JSONDecodeError) message must
+    not appear in operator output.
+
+    alpha_bot_execution.py:140 currently prints:
+        print(f"Error parsing Composer response JSON: HTTP {response.status_code} - {e}")
+
+    Python's json.JSONDecodeError.__str__() includes a fragment of the input
+    document.  If the Composer response body contained account_id, position
+    values, or bearer token fragments, those appear in the exception string
+    and thus in stdout.
+
+    This test was identified as a gap in the REVISE pass (S5 covered only the
+    Alpaca JSON parse path at line 312; S7 covers the Composer path at line 140).
+    """
+    account_id_in_body = "a1b2c3d4-e5f6-7890-abcd-ef9988776655"  # Composer UUID format
+    raw_body_with_account = (
+        f'{{"symphonies": [], "account_id": "{account_id_in_body}", '
+        f'"balance": "54321.99"'
+        # intentionally malformed — missing closing brace
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.side_effect = ValueError(
+        f"Expecting '}}' delimiter: line 1 column 180 (char 179) in: {raw_body_with_account}"
+    )
+
+    import logging
+    with patch("requests.get", return_value=mock_response):
+        with caplog.at_level(logging.DEBUG):
+            abe.fetch_symphony_stats("ACCT_S7_TEST")
+
+    captured = capsys.readouterr()
+    all_output = _all_output(captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records))
+
+    assert account_id_in_body not in all_output, (
+        f"Gate 7 S7 violation: Composer account UUID from response body found in output. "
+        f"fetch_symphony_stats JSON parse error must not echo the exception message. "
+        f"Full output: {all_output!r}"
+    )
+    assert "54321.99" not in all_output, (
+        f"Gate 7 S7 violation: balance value from Composer response body found in output. "
+        f"Full output: {all_output!r}"
+    )
