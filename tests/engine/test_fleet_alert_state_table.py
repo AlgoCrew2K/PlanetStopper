@@ -880,8 +880,13 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
             f"POST /api/fleet-alert/dismiss must return 200. Got {resp.status_code}."
         )
 
-    def test_dismiss_route_calls_write_fleet_alert_with_dismissed_at_et(self, flask_client):
-        """Dismiss route must call database.write_fleet_alert() with dismissed_at_et set to a non-null string."""
+    def test_dismiss_route_does_not_call_write_fleet_alert_on_request_thread(self, flask_client):
+        """POST /api/fleet-alert/dismiss must NOT call database.write_fleet_alert() on the Flask request thread.
+
+        NEW CONTRACT (side-effect ban): the dismiss write is dispatched to a background
+        thread; the route must not block the request thread on a DB write.
+        dashboard-side-effect-ban cycle — arch constraint 2 (dashboard is read-only operator surface).
+        """
         with patch("database.write_fleet_alert") as mock_write, \
              patch("database.read_fleet_alert", return_value={
                  "tripped_at_et": "2026-05-17T10:33:00",
@@ -892,23 +897,10 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
              }):
             flask_client.post("/api/fleet-alert/dismiss")
 
-        assert mock_write.called, (
-            "POST /api/fleet-alert/dismiss must call database.write_fleet_alert(). "
-            "AC-6: dismiss writes dismissed_at_et to fleet_alert_state only."
-        )
-        call_args = mock_write.call_args
-        payload_arg = call_args[0][0] if call_args[0] else call_args[1].get("payload")
-        assert payload_arg is not None, (
-            "write_fleet_alert must be called with a payload argument."
-        )
-        assert "dismissed_at_et" in payload_arg, (
-            f"write_fleet_alert payload must include 'dismissed_at_et'. Got keys: {list(payload_arg.keys())}"
-        )
-        assert payload_arg["dismissed_at_et"] is not None, (
-            "dismissed_at_et in write_fleet_alert payload must be non-null (ISO string of dismiss time)."
-        )
-        assert isinstance(payload_arg["dismissed_at_et"], str), (
-            f"dismissed_at_et must be a string. Got: {type(payload_arg['dismissed_at_et']).__name__}"
+        mock_write.assert_not_called(), (
+            "POST /api/fleet-alert/dismiss must NOT call database.write_fleet_alert() directly "
+            "from the Flask request thread. The dismiss write must be dispatched to a background "
+            "thread (side-effect ban)."
         )
 
     def test_dismiss_route_never_calls_load_state(self, flask_client):

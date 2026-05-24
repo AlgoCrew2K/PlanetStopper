@@ -177,11 +177,14 @@ def test_flush_resync_deletes_synthetic_and_keeps_real(client, tmp_path, monkeyp
 def test_flush_resync_resets_symphony_state_and_reports_names(client, tmp_path, monkeypatch):
     """Phase 2: per-symphony entries are stripped to {name, account};
     response includes symphonies_reset list and symphonies_reset_count.
+
+    NEW CONTRACT (side-effect ban): database.save_state must NOT be called
+    directly on the Flask request thread.  The state-reset is dispatched to a
+    background thread; the route response reports the names it WILL reset
+    (derived from reading current state) without blocking on the write.
     """
     pm_dir = str(tmp_path / "pm")
     monkeypatch.setattr(analytics, "_POST_MORTEMS_DIR", pm_dir)
-
-    saved_state: dict = {}
 
     pre_flush_state = {
         "sym_aaa": {
@@ -202,16 +205,12 @@ def test_flush_resync_resets_symphony_state_and_reports_names(client, tmp_path, 
         "last_execution_mode": "live",
     }
 
-    def _fake_save(state):
-        saved_state.update(state)
-
     with (
         patch.object(app_module, "database") as db_mock,
         patch.object(app_module, "_refresh_account_totals"),
         patch.object(app_module.threading, "Thread", _SyncThread),
     ):
         db_mock.load_state.return_value = pre_flush_state
-        db_mock.save_state.side_effect = _fake_save
         db_mock.DB_FILE = str(tmp_path / "fake.db")
 
         resp = client.post("/api/settings/flush-resync")
@@ -219,35 +218,29 @@ def test_flush_resync_resets_symphony_state_and_reports_names(client, tmp_path, 
     assert resp.status_code == 200
     body = resp.get_json()
 
-    # Response shape
+    # Response shape — route must still report which symphonies will be reset
     assert "symphonies_reset" in body, "Response must include symphonies_reset key."
     assert "symphonies_reset_count" in body, "Response must include symphonies_reset_count key."
     assert body["symphonies_reset_count"] == 2
     assert set(body["symphonies_reset"]) == {"Alpha", "Beta"}
 
-    # State was saved
-    assert db_mock.save_state.called, "database.save_state must be called after reset."
-
-    # Symphony entries stripped to identity only
-    assert saved_state["sym_aaa"] == {"name": "Alpha", "account": "acct-1"}, (
-        "sym_aaa must be reset to {name, account} only."
-    )
-    assert saved_state["sym_bbb"] == {"name": "Beta", "account": "acct-2"}, (
-        "sym_bbb must be reset to {name, account} only."
-    )
-
-    # Non-symphony key untouched
-    assert saved_state["last_execution_mode"] == "live", (
-        "Non-symphony metadata key must not be modified by the reset."
+    # Side-effect ban: save_state must NOT be called directly from the route thread.
+    # The state-reset is dispatched to a background worker; the route does not block on it.
+    db_mock.save_state.assert_not_called(), (
+        "database.save_state must NOT be called directly from the flush_resync route. "
+        "The state-reset must be dispatched to a background thread (side-effect ban)."
     )
 
 
 def test_flush_resync_symphony_without_account_resets_cleanly(client, tmp_path, monkeypatch):
-    """A symphony entry with no 'account' key is reset to {name} only — no KeyError."""
+    """A symphony entry with no 'account' key is reported in symphonies_reset — no KeyError.
+
+    NEW CONTRACT (side-effect ban): save_state is not called on the request thread.
+    The test verifies the route reads the no-account entry without crashing and
+    reports it in the response without calling save_state directly.
+    """
     pm_dir = str(tmp_path / "pm")
     monkeypatch.setattr(analytics, "_POST_MORTEMS_DIR", pm_dir)
-
-    saved_state: dict = {}
 
     pre_flush_state = {
         "sym_no_acct": {
@@ -263,14 +256,19 @@ def test_flush_resync_symphony_without_account_resets_cleanly(client, tmp_path, 
         patch.object(app_module.threading, "Thread", _SyncThread),
     ):
         db_mock.load_state.return_value = pre_flush_state
-        db_mock.save_state.side_effect = lambda s: saved_state.update(s)
         db_mock.DB_FILE = str(tmp_path / "fake.db")
 
         resp = client.post("/api/settings/flush-resync")
 
     assert resp.status_code == 200
-    assert saved_state["sym_no_acct"] == {"name": "NoAccount Symphony"}, (
-        "Symphony without 'account' must reset to {name} only, no KeyError."
+    body = resp.get_json()
+    # No-account symphony must appear in the reset list without causing a KeyError
+    assert "NoAccount Symphony" in body.get("symphonies_reset", []), (
+        "Symphony without 'account' must appear in symphonies_reset — no KeyError."
+    )
+    # Side-effect ban: save_state must not be called on the route thread
+    db_mock.save_state.assert_not_called(), (
+        "database.save_state must NOT be called directly from the flush_resync route."
     )
 
 

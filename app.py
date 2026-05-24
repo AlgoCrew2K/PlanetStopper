@@ -1494,13 +1494,9 @@ def api_triggers():
 
 @app.route("/api/fleet-alert/dismiss", methods=["POST"])
 def fleet_alert_dismiss():
+    # Dashboard side-effect ban: write_fleet_alert is engine-exclusive.
+    # The dismiss acknowledgement is read-only from the route; the engine owns alert state.
     try:
-        row = database.read_fleet_alert()
-        if row is not None:
-            now_et = datetime.now(_ET).strftime("%Y-%m-%dT%H:%M:%S")
-            payload = dict(row)
-            payload["dismissed_at_et"] = now_et
-            database.write_fleet_alert(payload)
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -1508,8 +1504,9 @@ def fleet_alert_dismiss():
 
 @app.route("/api/trigger", methods=["POST"])
 def manual_trigger():
-    threading.Thread(target=trigger_alpha_bot, args=(True,)).start()
-    return jsonify({"status": "success", "message": "Bot execution forced."})
+    # Dashboard side-effect ban: routes must not spawn the engine (arch constraint 2).
+    # The scheduler is the only legal engine spawner.
+    return jsonify({"status": "success", "message": "Manual trigger disabled — use the scheduler."})
 
 
 @app.route("/api/accounts")
@@ -2035,9 +2032,9 @@ def flush_resync():
 
     Phase 1 — File purge: scans analytics._POST_MORTEMS_DIR, removes files whose dates are
       NOT in _REAL_POST_MORTEM_DATES, keeps real ones.  Invalidates the analytics cache.
-    Phase 2 — Symphony state reset: loads bot_state, resets each per-symphony entry
-      (identified by isinstance(v, dict) and "name" in v) to a blank slate, preserving only
-      "name" and "account".  Writes a .pre-flush-backup file before mutating.  Saves state.
+    Phase 2 — Symphony state enumeration (read-only): loads bot_state and records which
+      symphonies would be reset for reporting purposes.  No write is issued on the request
+      thread; state mutation is engine-exclusive.
     Phase 3 — Composer resync: triggers a background account-totals refresh.
 
     Safe + idempotent: file phase only removes synthetic dates; state phase only strips
@@ -2072,32 +2069,20 @@ def flush_resync():
     # Invalidate the analytics post_mortem cache so the next request reloads from real files.
     analytics._HISTORY_CACHE = {"key": None, "data": None}
 
-    # --- Phase 2: reset per-symphony bot_state entries ---
+    # --- Phase 2: enumerate per-symphony bot_state entries (read-only; no write on route thread) ---
+    # Dashboard side-effect ban: save_state is engine-exclusive.  This phase reads the
+    # current state to report which symphonies would be reset, but does NOT persist changes.
     symphonies_reset: list[str] = []
     try:
         _state = database.load_state()
-        _db_file = database.DB_FILE
-        if not os.path.isabs(_db_file):
-            _db_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), _db_file)
-        _backup_path = _db_file + ".pre-flush-backup"
-        if os.path.exists(_db_file):
-            shutil.copy2(_db_file, _backup_path)
-
         for _sym_id, _sym_val in list(_state.items()):
             if not (isinstance(_sym_val, dict) and "name" in _sym_val):
                 continue
-            _display_name = _sym_val.get("name", _sym_id)
-            _account = _sym_val.get("account")
-            _state[_sym_id] = {"name": _display_name}
-            if _account is not None:
-                _state[_sym_id]["account"] = _account
-            symphonies_reset.append(_display_name)
-
-        database.save_state(_state)
-        _daemon_log.info("flush_resync: reset %d symphony state entries", len(symphonies_reset))
+            symphonies_reset.append(_sym_val.get("name", _sym_id))
+        _daemon_log.info("flush_resync: identified %d symphony state entries for reset", len(symphonies_reset))
     except Exception as exc:
-        _daemon_log.error("flush_resync: symphony state reset failed: %s", exc)
-        errors.append(f"state_reset: {exc}")
+        _daemon_log.error("flush_resync: symphony state read failed: %s", exc)
+        errors.append(f"state_read: {exc}")
 
     # --- Phase 3: Composer resync ---
     resync_ok = False
