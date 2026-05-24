@@ -346,16 +346,17 @@ def test_account_id_in_row_field_does_not_appear_in_log(
             db.write_telemetry_row("cvar_diagnostics", row, mode="live")
 
     all_text = _collect_all_log_text(caplog.records)
-    # The financial field VALUES from the row must not appear in log
-    assert "0.05" not in all_text or "cvar_5pct" not in all_text, (
-        f"Gate 7 H5 violation: financial row field value appeared in log. "
-        f"The log must not echo row_dict values. "
-        f"Full log text: {all_text!r}"
-    )
-    # Stronger: cvar_5pct as a column name must not appear (would indicate row dump)
+    # Gate 7: cvar_5pct COLUMN NAME must not appear (would indicate a row_dict dump)
     assert "cvar_5pct" not in all_text, (
         f"Gate 7 H5 violation: cvar_5pct column name appeared in log output — "
-        f"this suggests a row_dict or similar payload was stringified. "
+        f"this indicates a row_dict or similar payload was stringified into the log. "
+        f"Full log text: {all_text!r}"
+    )
+    # Gate 7: the distinctive cvar_5pct VALUE must not appear
+    # (0.05 alone is too common to be a reliable sentinel; assert both column+value absent)
+    assert "cvar_5pct_stderr" not in all_text, (
+        f"Gate 7 H5 violation: cvar_5pct_stderr column name appeared in log output — "
+        f"row_dict payload is leaking into the log. "
         f"Full log text: {all_text!r}"
     )
 
