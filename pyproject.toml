@@ -13,7 +13,8 @@ quote-style = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-ra --strict-markers -m 'not live'"
+addopts = "-ra --strict-markers -m 'not live and not perf'"
 markers = [
     "live: tests that hit live APIs (deselect via -m 'not live')",
+    "perf: wall-clock latency benchmarks; excluded from default run (opt-in: pytest -m perf)",
 ]
