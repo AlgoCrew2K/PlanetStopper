@@ -1,4 +1,9 @@
-# Feature: M1 — CRRA-EU Autotuner Objective (with W-H2 wealth-argument derivation + W-H4 WEALTH_ARG_FLOOR)
+# Feature: M1 — CRRA-EU Autotuner Objective (canonical integration plan)
+
+**Supersedes (collapsed per README §4 option ii):**
+- `phase-1/m1-crra-eu-objective/plan.md` — CRRA-EU deployment-side objective (SUPERSEDED — see §"Deliverables — CRRA-EU objective slice" below)
+- `phase-1/m1-crra-eu-tstat/plan.md` — re-derived per-trial t-stat `compute_crra_eu_tstat` (SUPERSEDED — see §"Deliverables — S-2 t-stat slice" below)
+- `phase-1/m1-bhy-haircut-preservation/plan.md` — BHY haircut preservation under CRRA (SUPERSEDED — see §"Deliverables — BHY haircut preservation slice" below)
 
 **Phase / Lane:** Phase 1 — HARDEN-core floor (the defensibility win — replaces R3, the five hand-tuned loss-aversion multipliers).
 **Owner agent-type:** `risk-engine-specialist` (implementer) + `quant-test-writer` (RED) + `optuna-specialist` (autotuner-side wiring) + `quant-code-reviewer` (review). Standing Quad team for math-layer work.
@@ -60,6 +65,116 @@ Additional regression tests in this cycle:
 - `autotuner.py:289-301` neighbours: a new comment block stating WHICH `compute_*_tstat` is selected by WHICH `objective_kind`, plus an inline note pointing at `autotuner.py:266-271`'s H-6 precedent (a future reader must SEE that the precedent governs THIS choice).
 - The new `WEALTH_ARG_FLOOR` named constant carries the project-rule source comment plus a one-line evaluation-§A.1 H-1 mathematical justification.
 
+---
+
+## Deliverables — CRRA-EU objective slice (folded from `m1-crra-eu-objective/plan.md`)
+
+This section captures the additive deliverable detail from the deployment-side objective slice. The canonical plan above covers the high-level requirements; this section adds binding implementation constraints that the above does not specify.
+
+### Objective slice — function signatures and caller discipline
+
+- **`compute_crra_utility(W: float, gamma: float) -> float`** — the CRRA transform with the following binding constraints from the slice:
+  - `W` must be floored at `WEALTH_ARG_FLOOR` **by the caller** before being passed in; the function does NOT silently re-floor. Failing to apply the floor returns `-inf` for `gamma >= 1`, which `compute_crra_eu_tstat` must propagate, not swallow (the H-1 NaN-poisoning surface). This separation-of-concerns applies everywhere the function is called.
+  - `gamma != 1`: `u(W) = (W ** (1.0 - gamma)) / (1.0 - gamma)`.
+  - `gamma == 1`: `u(W) = log(W)` (log-utility limit).
+
+- **`derive_wealth_argument(guard_alpha_series, eod_baseline)` → `float`** — W-H2 derivation details:
+  - Choice between **growth factor** (`1 + guard_alpha`) and **explicit-baseline reconstruction** (`(triggered_total + baseline) / (eod_total + baseline)`) is **delegated to the implementing `risk-engine-specialist`**.
+  - Whichever shape ships: it is a single-source-of-truth function in `math_engine.py`; its derivation is commented with the W-H2 reference; its output is a strictly positive float **before** flooring — the function does NOT floor, the caller does (derivation vs stability are separate concerns).
+
+- **`WEALTH_ARG_FLOOR: float`** named constant — binding source comment text: *"Lower floor on the wealth argument `W` fed to CRRA. CRRA is unbounded below as `W → 0+` for `gamma >= 1`; an unfloored `W` produces a non-finite `u(W)` that NaN-poisons `mean(U)`, `sd(U)`, and the BHY haircut running-min (`autotuner.py:349-354`). The floor goes on the **input `W`**, NEVER on the output `U` — flooring `U` compresses the lower tail of `U`, artificially shrinks `sd(U)`, and inflates the t-stat `mean(U)/(sd(U)/√T)`, re-introducing an anti-conservative bias the haircut cannot correct."* Floor value pre-registered (recommended: `0.5` — a 50% intra-day loss is the worst case any rational guard-alpha series should produce). Exact value is the team's call subject to the near-floor sub-case in §8 test 1 producing a finite `t` and a finite `sd(U)`.
+
+### Objective slice — `gamma` pre-registration (binding constraint)
+
+`gamma` is **NOT in the Optuna search space** in Phase 1 (council synthesis §3.5 — "search space stays 6-D, gamma frozen, not added"). It is a frozen theory-chosen scalar persisted as a `spec_facets` row with `freeze_discipline = 'THEORY'` and `evidence_source = 'THEORY'` (migrations 015 / 020).
+
+**Binding constraint:** a named constant `CRRA_GAMMA` in `autotuner.py` does NOT satisfy the persistence-architect's "immutable + content-hashed + `frozen_at`" constraint (council synthesis §3.7 last paragraph). A source-code named constant fails on all three counts. `gamma` MUST live in `spec_bundles`/`spec_facets` from Phase-1 day 1; the autotuner reads it through that surface.
+
+Test `T-gamma-provenance` (from the slice): assert that `objective(trial)` reads `gamma` from `spec_bundles`/`spec_facets`, NOT from a module-level constant. Implementation: monkeypatch the `spec_bundles` accessor and assert the trial value tracks the patched gamma. Catches a future "let me just hard-code gamma in autotuner.py" drift.
+
+### Objective slice — `run_simulation_crra_eu` and `objective(trial)` wiring
+
+- **Function name:** `run_simulation_crra_eu(p, history_data, acc_sym_ids, current_date_str, deviation_dict, *, gamma)` returns `mean(U)` over the CRRA-transformed series, where each `U_i = compute_crra_utility(derive_wealth_argument(g_i, ...), gamma)`. The trial objective value is `mean(U)`, NOT the CE in return units — CE (`u⁻¹(mean(U))`) is a monotone transform with identical trial rankings (synthesis §2.1) and is computed separately for the audit display only (`ce_metric` column).
+- **Five loss-aversion constants DELETED:** `MISSED_UPSIDE_PENALTY_MULT`, `MISSED_UPSIDE_THRESHOLD_PCT`, `DRAWDOWN_PENALTY_MULT`, `DRAWDOWN_THRESHOLD_PCT`, `DRAWDOWN_MIN_GAIN_PCT`, `NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT` are **deleted in the same commit** as the objective swap — not left as dead code, per project CLAUDE.md "no backwards-compatibility hacks — if something is unused, delete it." The implementing team must sweep the test tree for references to all six constant names before GREEN. If the legacy Sortino branch must be retained for a transition window, `run_simulation` is renamed to `run_simulation_sortino_legacy`; default plan is delete.
+- **`objective(trial)` stores raw guard-alpha, NOT `U`:** `trial.set_user_attr("daily_returns", daily_returns)` records the raw guard-alpha series. Reason: storing `U` would mean a future gamma re-pre-registration would render the persisted user-attr inconsistent with the active gamma — a silent drift surface. The haircut's per-trial t-stat re-transforms `daily_returns` through `derive_wealth_argument` and `compute_crra_utility` in one place.
+
+### Objective slice — additional tests (RED before GREEN)
+
+| Test | What must exist before GREEN |
+|---|---|
+| T3 — End-to-end objective on a frozen guard-alpha series | Fixture: a frozen ~25-day daily guard-alpha series. Assert `run_simulation_crra_eu(...)` returns `mean(U)` matching a hand-computed reference (test re-derives via independent NumPy-mean path, so a typo in the SUT's reduction is caught). |
+| T5 — `gamma` provenance | Monkeypatch the `spec_bundles` accessor; assert `objective(trial)` tracks the patched gamma. Catches hard-coded gamma drift. |
+| T6 — Five-constant deletion regression | Static-analysis assertion: all six loss-aversion constant names no longer exist in `autotuner.py`. Tripwire against re-introduction. |
+
+---
+
+## Deliverables — S-2 t-stat slice (folded from `m1-crra-eu-tstat/plan.md`)
+
+This section captures the additive implementation detail from the t-stat slice. The canonical plan specifies `compute_crra_eu_tstat` at a high level; this section adds binding precision.
+
+### T-stat slice — function signature and implementation constraints
+
+**`compute_crra_eu_tstat(daily_returns: list[float], gamma: float) -> float`** — binding implementation constraints from the slice:
+
+- **Signature:** takes the raw guard-alpha series + gamma (NOT a pre-computed U-series). Internally calls `derive_wealth_argument` and `compute_crra_utility` from `math_engine` — single source of truth. Applies `WEALTH_ARG_FLOOR` to each wealth argument **before** the CRRA transform. NEVER floors `U` (H-1).
+- **`statistics.stdev` (sample, n-1):** the one-sample t-stat denominator is the **sample** standard deviation. Using `pstdev` (population) or `numpy.std()` without `ddof=1` would silently inflate `t` by `sqrt(n/(n-1))` and shift the haircut calibration. Test T3 pins this distinction.
+- **Degenerate-series guard:** if `sd(U) == 0.0` (constant series), returns `0.0`, not `float('inf')`. The haircut ranks the trial last via `argmin p_adj` naturally; degenerate-trial detection is the haircut's job, not the t-stat's.
+- **Returns `0.0` for `T <= 1`** (fewer than 2 observations — sd is undefined).
+- Pure: no side effects, no logging, no DB writes.
+
+### T-stat slice — call-site and companion changes
+
+- **`_haircut_select` parametrization:** `_haircut_select` receives an explicit `tstat_fn: Callable[[Trial], float]` parameter (default = `compute_sortino_tstat` for backward-compatibility with retained Sortino sweeps). The CRRA-EU path's `run_autotuner` caller passes `tstat_fn=compute_crra_eu_tstat` AND threads the active `gamma` through (closure or `functools.partial`). The rest of `_haircut_select` — `compute_haircut_pvalue`, `benjamini_hochberg_adjust`, `argmin` selection, the `HARVEY_LIU_FDR_Q` gate, the `None`-return branch — is byte-identical to today's.
+- **`compute_sortino_tstat` retention + warning:** `compute_sortino_tstat` is NOT deleted. Its docstring gains: *"WARNING: appropriate ONLY for the Sortino objective (a ratio). For a mean-valued objective (e.g. CRRA-EU), use compute_crra_eu_tstat; reusing this function for a mean is the H-6 category error (autotuner.py:266-271)."*
+- **Inline comment update at `autotuner.py:266-271`:** the existing H-6 comment is extended: *"The H-6 category error was a Sharpe-derived deflation applied to a Sortino. Since 2026, the same category-discipline applies between compute_sortino_tstat (Sortino objective) and compute_crra_eu_tstat (CRRA-EU objective) — a mean-valued functional needs the one-sample t-stat, not effect_size·√T."*
+- **`compute_crra_eu_tstat` location:** placed in `autotuner.py` as a sibling of `compute_sortino_tstat` (not in `math_engine.py`).
+
+### T-stat slice — additional tests (RED before GREEN)
+
+| Test | What must exist before GREEN |
+|---|---|
+| T3 — Sample vs population stdev pin | Fixture: `T=5` series with known sample and population stdev differing by `sqrt(5/4) ≈ 1.118`. Assert `compute_crra_eu_tstat` matches the **sample-stdev** computation, not the population one. Catches a future `pstdev` swap. |
+| T4 — Degenerate-series guard | Fixture: constant `U`-series (`sd(U)==0`). Assert returns `0.0`, not `inf`, not NaN. |
+| T5 — Per-objective routing in `_haircut_select` | Small synthetic Optuna trial set. Run `_haircut_select` with each `tstat_fn`. Assert the two routings produce **different** winner rankings AND that swapping is the explicit caller's choice (not auto-detected). Catches a "let me just always use the CRRA t-stat" silent drift. |
+| T6 — H-6 negative-pin regression | Static-analysis: assert `compute_crra_eu_tstat` source does NOT contain `effect_size * sqrt(T)` or `value * sqrt(T)`. Tripwire against a "simplification" back to the H-6 shape. |
+
+---
+
+## Deliverables — BHY haircut preservation slice (folded from `m1-bhy-haircut-preservation/plan.md`)
+
+This section captures the additive implementation detail from the BHY haircut preservation slice. The canonical plan specifies "100% preserved, single call-site swap" at a high level; this section adds the binding line-level and semantic constraints.
+
+### BHY slice — zero-change preservation requirements (binding)
+
+The following code is **byte-identical unchanged** after M1 ships. The line references are binding:
+
+- `autotuner.py:262-356` — the entire haircut block (including `compute_haircut_pvalue` and `benjamini_hochberg_adjust`)
+- `autotuner.py:272-286` — `HARVEY_LIU_FDR_Q = 0.05` and `_HAIRCUT_PVALUE_EPSILON = 1e-12`
+- `autotuner.py:345` — the Yekutieli `c(N) = sum(1.0/j for j in range(1, n+1))` line
+
+No signature change, no defaulting change, no reordering, no "minor cleanup" on any of these. Test T1's `diff-empty` DoD step verifies the textual form; T1's numerical pin catches the numerical form.
+
+### BHY slice — Sortino-sentinel filter preservation (binding)
+
+`autotuner.py:1041-1043` filters out trials whose value equals `math_engine._SORTINO_SENTINEL` (the 1e6 zero-downside sentinel). This filter stays — it is a no-op under CRRA-EU (mean-valued objective has no zero-downside-divide-by-zero hazard) but harmless, and is load-bearing for any retained Sortino-objective sweep. The implementing team does NOT delete the filter in M1's cycle. No new "CRRA degenerate-series sentinel" is introduced: the `sd(U)==0` branch's `0.0` return (see S-2 t-stat slice) ranks the trial last via `argmin p_adj` naturally.
+
+### BHY slice — `selection_tstat` column semantics
+
+The `autotune_runs` row's `selection_tstat` column (the winner's t-statistic) continues to be the winner's significance scalar. Under the CRRA objective that is `compute_crra_eu_tstat(winner.daily_returns, gamma)`, NOT `compute_sortino_tstat(study.best_value, T)` (which would be the H-6 category error: using a Sortino-shape statistic on a CRRA-objective value). Test T4 catches this at the `_haircut_select` level; the column's semantic stays "higher-is-better significance scalar."
+
+### BHY slice — additional tests (RED before GREEN)
+
+| Test | What must exist before GREEN |
+|---|---|
+| T1 — `benjamini_hochberg_adjust` byte-identical pin | Fixture: frozen N=10 p-value vector with hand-derived expected adjusted p-values. Assert exact match to `1e-15`. Tripwire against any future "cleanup" of the step-up direction or running-min order. |
+| T2 — Yekutieli c(N) closed-form pin | Assert `c(N) == harmonic_number(N)` for `N in [1, 5, 10, 100, 500]` to `1e-15`. Catches log-approximation drift (`c(N) ≈ ln(N) + γ`). For `N=500`: `ln(500) ≈ 6.21` vs `c(500) ≈ 6.79` — a ~10% under-correction. |
+| T3 — Clamp boundary pin | Assert `compute_haircut_pvalue(10.0)` returns exactly `_HAIRCUT_PVALUE_EPSILON` (Φ saturates beyond ~8.3) and `compute_haircut_pvalue(-10.0)` returns `1 - _HAIRCUT_PVALUE_EPSILON`. Catches a future loosening of the clamp. |
+| T4 — End-to-end haircut under both objectives | Fixture: ~20 fake trials each carrying `daily_returns` user-attr. Two runs: (1) `_haircut_select(trials, tstat_fn=compute_sortino_tstat_wrapper)`, (2) `_haircut_select(trials, tstat_fn=compute_crra_eu_tstat_wrapper(gamma=2.0))`. Assert both runs reach the same `benjamini_hochberg_adjust` call count; the `HARVEY_LIU_FDR_Q` gate consulted exactly once per run; the winner's `selection_tstat` matches the `tstat_fn(winner)` output (not re-derived from `trial.value` post-hoc). |
+| T5 — Sortino-sentinel filter retention | Fixture: trial list including a trial with `value == math_engine._SORTINO_SENTINEL`. Assert it is filtered out under BOTH `tstat_fn` choices. Tripwire against "this filter is dead code, delete it." |
+| T6 — Replay parity (Gate 1) — haircut bit-identical | Run `run_autotuner` on a deterministic seed under CRRA-EU. Assert `selection_tstat`, `p_adj`, and `winner_params` in the `autotune_runs` row match a committed frozen reference, bit-identical. Catches numerical-reduction-order changes. |
+
+---
+
 ## Dependencies
 
 - **Blocks:** every subsequent Phase-1 plan that consumes `autotune_runs.gamma` / `n_effective` / `spec_bundle_id` (notably M2's `cvar_diagnostics` is sibling, not dependent; the AI Advisor's Overfitting Conscience consumes the EUT columns, but Phase-1 ledger work is upstream of Advisor work).
@@ -86,13 +201,16 @@ Mapping to council synthesis §8:
 ## Definition of Done
 
 - All RED tests above land first (RED before GREEN, project Agent-Teams discipline).
-- GREEN: every RED test passes; full-tree pytest run quoted with HEAD SHA + count + zero errors per `feedback_full_suite_means_genuine_full_tree`.
+- GREEN: every RED test passes; `pytest tests/autotuner/ tests/engine/ tests/execution/` all pass (per `feedback_run_execution_engine_suites_for_alpha_bot_execution_changes` — math_engine additions break tests mocking `math_engine` wholesale; run all three suites before GREEN handoff). Full-tree pytest quoted with HEAD SHA + count + zero errors per `feedback_full_suite_means_genuine_full_tree`.
 - `WEALTH_ARG_FLOOR` and `CRRA_LOG_UTILITY_GAMMA_TOL` are named module-scope constants with source-comment justifications (no-magic-numbers project rule).
 - `compute_crra_eu_tstat` is wired into `autotuner.py:706-728` conditionally on `spec_bundle.objective_kind == "crra_eu"`; `compute_sortino_tstat` is unchanged for the legacy branch.
 - Migration 022 columns appear in BOTH `_MIGRATION_FILES` (via `022_autotune_runs_eut.sql`) AND `init_db()`'s `CREATE TABLE autotune_runs` (H1).
 - `spec_bundle_id` is wired into the autotuner so the deployed gamma is recorded as a frozen facet with a `frozen_at` timestamp and a content hash (the persistence-architect binding constraint — a source-code named constant is NOT acceptable as the spec record; the table is). If the team collapses `spec_facets` to a JSON column on `spec_bundles`, the binding constraint still holds.
 - Word "**bounded**" is **struck** everywhere it appears in v3 — replaced with "bounded by construction below by `WEALTH_ARG_FLOOR` applied to `W`" or the equivalent. The synthesis edit is in scope of the documentation sweep, not this code cycle.
 - The Phase-1 honest claim (synthesis §3.3) is restated in the autotuner's docstring exactly: **3 facets + 1 new validated statistical component + D_spec=1 conditional on the gamma sensitivity check** — never "adds 1 facet."
+- **From objective slice:** the six loss-aversion constants are deleted from `autotuner.py`; `spec_bundles` + `spec_facets` populated with the `gamma` facet (`freeze_discipline='THEORY'`, `evidence_source='THEORY'`, `frozen_at`-stamped, content-hashed); `autotune_runs` row writes `spec_bundle_id`, `gamma`, `ce_metric`, `d_spec=1`, `n_effective=n_optuna`, `overfitting_verdict`; a walk-forward replay produces a bit-identical decision record (Gate 1).
+- **From t-stat slice:** `compute_crra_eu_tstat` lives in `autotuner.py` as a sibling of `compute_sortino_tstat`; `_haircut_select` signature gains exactly one new parameter (`tstat_fn`), no other field changes; inline H-6 comment at `autotuner.py:266-271` updated.
+- **From BHY haircut slice:** `autotuner.py:262-356` and `:272-286` are **diff-empty** in the M1 commit (verified by diff inspection in the PR review); `_haircut_select`'s `tstat_fn` default is `compute_sortino_tstat` (backward-compatible).
 
 ## Risk callouts / hazards
 
