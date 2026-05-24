@@ -33,7 +33,7 @@ mutates the call signature at any of these sites is out of scope and blocked.
 | 1159 | `f"MC Prob {prob_beating:.1f}%"` | Format only reached inside `mc_available` guard |
 | 1174–1175 | `if mc_available and prob_beating > (acc_TRIGGER_THRESHOLD_PCT * 2)` | Disarm gate — gated on `mc_available` |
 | 1184–1187 | `if mc_available: bot_state[...]["mc_history"].append(prob_beating)` | History append — None excluded by `mc_available` guard |
-| 1263 | `prob_beating=prob_beating` (passed to `compute_exit_confirmation`) | `compute_exit_confirmation` accepts `float \| None`; None → MC gate bypassed (fail-safe) |
+| 1258 | `prob_beating=prob_beating` (passed to `compute_exit_confirmation`) | `compute_exit_confirmation` accepts `float \| None`; None → MC gate bypassed (fail-safe) |
 | 1292–1293 | `mc_available=mc_available, prob_beating=prob_beating` (passed to `compute_tp_confirmation`) | TP function gated on `mc_available` |
 | 1307, 1311 | `f"...MC Prob {prob_beating:.1f}%..."` | Format inside TP-arm block, which is inside `mc_available` guard via `compute_tp_confirmation` |
 | 1359 | `f"{prob_beating:.1f}%" if mc_available else "N/A"` | Sentinel-safe conditional format |
