@@ -602,27 +602,29 @@ def test_resend_discord_calls_send_eod_discord_post(client, mock_database, monke
 # ---------------------------------------------------------------------------
 
 
-def test_manual_trigger_returns_success_and_spawns_thread(client, monkeypatch):
-    """POST /api/trigger returns 200 success and dispatches trigger_alpha_bot with force=True."""
-    started = []
+def test_manual_trigger_does_not_spawn_engine(client, monkeypatch):
+    """POST /api/trigger must NOT call trigger_alpha_bot (side-effect ban / arch constraint 2).
 
-    class StubThread:
-        def __init__(self, target=None, args=(), kwargs=None, daemon=None):
-            started.append((target, args, kwargs))
+    OLD CONTRACT: the route spawned trigger_alpha_bot(force=True) in a thread.
+    NEW CONTRACT (dashboard side-effect ban): the dashboard is a read-only operator
+    surface.  Routes must not spawn the engine.  The /api/trigger route must be
+    removed or replaced with a non-engine-spawning mechanism.
 
-        def start(self):
-            pass
+    This test pins the new contract: trigger_alpha_bot is never called from the
+    route.  The implementer removes the route body's Thread dispatch.
+    """
+    trigger_calls: list = []
 
-    monkeypatch.setattr(app_module.threading, "Thread", StubThread)
+    def _spy(force=False):
+        trigger_calls.append(force)
+
+    monkeypatch.setattr(app_module, "trigger_alpha_bot", _spy)
     resp = client.post("/api/trigger")
-    assert resp.status_code == 200
-    body = resp.get_json()
-    assert body["status"] == "success"
-    assert len(started) == 1
-    target, args, _ = started[0]
-    assert target is app_module.trigger_alpha_bot
-    # force=True is the manual-trigger contract
-    assert args == (True,)
+
+    assert trigger_calls == [], (
+        f"POST /api/trigger must not call trigger_alpha_bot. "
+        f"Called {len(trigger_calls)} time(s) — dashboard action-surface violation."
+    )
 
 
 def test_api_logs_returns_database_logs(client, mock_database):
