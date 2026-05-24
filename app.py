@@ -2032,9 +2032,9 @@ def flush_resync():
 
     Phase 1 — File purge: scans analytics._POST_MORTEMS_DIR, removes files whose dates are
       NOT in _REAL_POST_MORTEM_DATES, keeps real ones.  Invalidates the analytics cache.
-    Phase 2 — Symphony state reset: loads bot_state, resets each per-symphony entry
-      (identified by isinstance(v, dict) and "name" in v) to a blank slate, preserving only
-      "name" and "account".  Writes a .pre-flush-backup file before mutating.  Saves state.
+    Phase 2 — Symphony state enumeration (read-only): loads bot_state and records which
+      symphonies would be reset for reporting purposes.  No write is issued on the request
+      thread; state mutation is engine-exclusive.
     Phase 3 — Composer resync: triggers a background account-totals refresh.
 
     Safe + idempotent: file phase only removes synthetic dates; state phase only strips
