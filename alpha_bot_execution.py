@@ -137,7 +137,7 @@ def fetch_symphony_stats(account_id):
             try:
                 return response.json().get("symphonies", [])
             except ValueError as e:
-                print(f"Error parsing Composer response JSON: HTTP {response.status_code} - {e}")
+                print(f"Error parsing Composer response JSON: HTTP {response.status_code}")
                 return []
         print(f"Error fetching symphony stats: HTTP {response.status_code}")
     except requests.RequestException as e:
