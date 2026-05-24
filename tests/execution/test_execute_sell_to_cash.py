@@ -348,9 +348,18 @@ class TestSecretsHygiene:
         )
 
     def test_response_text_not_echoed_on_network_exception(self, sym_and_account):
-        """The exception branch logs ``str(e)`` but never touches
-        ``response.text`` (no response exists). Pin: even the exception
-        string is the only thing surfaced — no body."""
+        """Gate 7: on RequestException, only the exception CLASS NAME is surfaced.
+
+        The exception message text is NOT printed — it may contain the full
+        request URL (which includes account_id in the path) or auth headers
+        with bearer tokens.  Gate-7 redaction (logging-redaction plan §S3)
+        requires stripping str(e) entirely; only type(e).__name__ is permitted.
+
+        Positive pin: 'RequestException' (the class name) DOES appear so
+        operators can identify the failure class.
+        Negative pin: the sentinel message text does NOT appear — confirms
+        gate-7 redaction is applied and over-surfacing is prevented.
+        """
         sym, acct = sym_and_account
         buf = io.StringIO()
         sentinel = "EXC_MSG_NOT_A_BODY"
@@ -360,7 +369,16 @@ class TestSecretsHygiene:
             with redirect_stdout(buf):
                 result = alpha_bot_execution.execute_sell_to_cash(sym, acct)
         assert result is False
-        # The exception message IS logged (it's not a secret body — it's an
-        # error string from the client). This is a positive pin to detect
-        # over-redaction regressions.
-        assert sentinel in buf.getvalue()
+        captured = buf.getvalue()
+        # Positive pin: exception class name must appear for operator triage.
+        assert "RequestException" in captured, (
+            f"Exception class name missing from stdout; operators need it. "
+            f"Captured: {captured!r}"
+        )
+        # Negative pin (gate 7): exception message text must NOT appear —
+        # it may carry account_id via URL or bearer token via auth header.
+        assert sentinel not in captured, (
+            f"Gate 7 violation: exception message text found in stdout. "
+            f"Only type(e).__name__ is permitted, not str(e). "
+            f"Captured: {captured!r}"
+        )
