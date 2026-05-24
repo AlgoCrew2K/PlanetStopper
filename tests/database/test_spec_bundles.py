@@ -880,24 +880,44 @@ def test_get_spec_facets_for_bundle_returns_dicts_with_all_schema_columns(migrat
 # ===========================================================================
 
 
-def test_016_migration_is_last_entry_in_migration_files_list():
+def test_016_migration_present_and_after_015_append_pattern():
     """
-    T-1 (spec-016): '016_spec_bundles.sql' must be the LAST entry in
-    database._MIGRATION_FILES, not merely after 015.
+    T-1 (spec-016): append-only contract — 016 must be appended after 015, and
+    the contract is preserved as new migrations append after 016.
 
-    The append-only contract means new migrations are always appended to the
-    tail. A mid-list insertion would silently re-order migration application
-    against already-applied migrations tracked in the schema_migrations table,
-    potentially skipping or double-applying entries.
+    Verifies:
+      (a) '016_spec_bundles.sql' is present in _MIGRATION_FILES.
+      (b) '016_spec_bundles.sql' appears at a higher index than
+          '015_shadow_history_position_epoch.sql' (its immediate predecessor
+          when 016 was authored).
+      (c) The pair ['015_shadow_history_position_epoch.sql',
+          '016_spec_bundles.sql'] appears as a contiguous subsequence — 016 was
+          appended directly after 015, never inserted at an earlier position.
+
+    The CURRENT last entry is intentionally NOT pinned here.  Pinning the tail
+    would re-introduce the same fragile assertion that broke when cycle 019
+    appended its own migration after 016.
     """
-    assert "016_spec_bundles.sql" in db_module._MIGRATION_FILES, (
+    migrations = db_module._MIGRATION_FILES
+    assert "016_spec_bundles.sql" in migrations, (
         "'016_spec_bundles.sql' not in _MIGRATION_FILES — add it."
     )
-    assert db_module._MIGRATION_FILES[-1] == "016_spec_bundles.sql", (
-        f"'016_spec_bundles.sql' must be the last entry in _MIGRATION_FILES; "
-        f"found at index {db_module._MIGRATION_FILES.index('016_spec_bundles.sql')} "
-        f"but last entry is {db_module._MIGRATION_FILES[-1]!r}. "
-        "The list is append-only — inserting mid-list re-orders migration application."
+    assert "015_shadow_history_position_epoch.sql" in migrations, (
+        "'015_shadow_history_position_epoch.sql' not in _MIGRATION_FILES — "
+        "required predecessor for the 016 append-order check."
+    )
+    idx_015 = migrations.index("015_shadow_history_position_epoch.sql")
+    idx_016 = migrations.index("016_spec_bundles.sql")
+    assert idx_016 > idx_015, (
+        f"'016_spec_bundles.sql' (index {idx_016}) must appear after "
+        f"'015_shadow_history_position_epoch.sql' (index {idx_015}) — "
+        "append-only contract violated: 016 was inserted before its predecessor."
+    )
+    assert idx_016 == idx_015 + 1, (
+        f"'016_spec_bundles.sql' (index {idx_016}) must be the entry immediately "
+        f"after '015_shadow_history_position_epoch.sql' (index {idx_015}). "
+        "A gap indicates another migration was inserted between them, violating "
+        "the contiguous-append contract."
     )
 
 
