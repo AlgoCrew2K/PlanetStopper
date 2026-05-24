@@ -1,0 +1,20 @@
+-- Migration 019: add fold_role column to autotune_runs.
+--
+-- fold_role identifies which walk-forward partition a row belongs to:
+--   'train'       — in-sample training fold
+--   'validation'  — held-out validation fold
+--   'frozen_eval' — the final held-out evaluation fold; the Advisor wall blocks
+--                   all Advisor reads from rows with this value
+--   NULL          — legacy rows; treated as non-frozen by the Advisor wall
+--                   (COALESCE(fold_role,'') != 'frozen_eval' evaluates to TRUE)
+--
+-- autotune_runs is the production fold-partitioned table. It already holds
+-- per-fold metrics (validation_sharpe, frozen_eval_sharpe from migration 007);
+-- fold_role makes the partition assignment explicit and machine-readable.
+--
+-- Idempotent: run_migrations swallows 'duplicate column name' errors — safe to
+-- apply on a DB that already has the column (e.g. from a future init_db dual-write).
+--
+-- Reversibility: ALTER ADD COLUMN is abandon-in-place only. Reversal means
+-- removing the accessor + the writer, NOT dropping this column.
+ALTER TABLE autotune_runs ADD COLUMN fold_role TEXT DEFAULT NULL;
