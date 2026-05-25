@@ -399,11 +399,22 @@ def test_cvar_insert_failure_logs_warning_not_error(tmp_path, caplog):
 
     The cycle must never fail on telemetry — this is the non-blocking contract
     at the execution-path level.
+
+    Failure is triggered by dropping the cvar_diagnostics table after init_db()
+    creates it — this keeps the test independent of whether the migration has
+    been applied (both states lead to an absent table at write time).
     """
     db_path = str(tmp_path / "warn_log.db")
     with patch.object(db, "DB_FILE", db_path):
         db.init_db()
-        # Do NOT create cvar_diagnostics table — insert will fail with OperationalError
+        # Drop the table after init to reliably trigger OperationalError regardless
+        # of whether 021_cvar_diagnostics.sql is registered in _MIGRATION_FILES.
+        drop_conn = sqlite3.connect(db_path)
+        try:
+            drop_conn.execute("DROP TABLE IF EXISTS cvar_diagnostics")
+            drop_conn.commit()
+        finally:
+            drop_conn.close()
 
         with caplog.at_level(logging.WARNING):
             db.record_cvar_diagnostic(
@@ -453,7 +464,14 @@ def test_cvar_insert_failure_log_does_not_echo_payload_values(tmp_path, caplog):
 
     with patch.object(db, "DB_FILE", db_path):
         db.init_db()
-        # Do NOT create cvar_diagnostics — insert will fail
+        # Drop the table after init to reliably trigger OperationalError regardless
+        # of whether 021_cvar_diagnostics.sql is registered in _MIGRATION_FILES.
+        drop_conn = sqlite3.connect(db_path)
+        try:
+            drop_conn.execute("DROP TABLE IF EXISTS cvar_diagnostics")
+            drop_conn.commit()
+        finally:
+            drop_conn.close()
 
         with caplog.at_level(logging.WARNING):
             db.record_cvar_diagnostic(
