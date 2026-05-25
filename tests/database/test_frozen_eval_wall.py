@@ -709,3 +709,98 @@ def test_advisor_ro_query_bare_predicate_guard_fires_on_string_concat_predicate(
         "even when the caller assembles the SQL via string concatenation. "
         "The guard inspects the final string value — the construction method is irrelevant."
     )
+
+
+# ---------------------------------------------------------------------------
+# BLOCK-S2: advisor_observations migration must exist and be registered
+# (rev-wall finding — production wall-breach writes silently fail without it)
+# ---------------------------------------------------------------------------
+
+
+def test_advisor_observations_migration_is_registered_in_migration_files():
+    """BLOCK-S2 (rev-wall): _write_wall_breach_observation INSERTs into
+    advisor_observations, but that table has no registered migration file.
+    On a production DB, the INSERT fails silently (exception swallowed at
+    database.py _write_wall_breach_observation catch block) — the audit trail
+    is a permanent no-op until the migration lands.
+
+    This test asserts that a migration file for advisor_observations is listed
+    in _MIGRATION_FILES AND appears after 016_spec_bundles.sql (which is the
+    last migration before this feature area was added).
+
+    The canonical name per team convention is '017_advisor_observations.sql'
+    (referenced in test_019_fold_role_columns.py:86 as 'migration 017').
+
+    Discriminating-power: a test suite that never runs _write_wall_breach_observation
+    against a production-schema DB will not catch this gap.  This test fails
+    until the migration file is created and registered.
+    """
+    migration_list = db._MIGRATION_FILES
+
+    assert "017_advisor_observations.sql" in migration_list, (
+        "'017_advisor_observations.sql' is missing from database._MIGRATION_FILES. "
+        "BLOCK-S2: _write_wall_breach_observation inserts into advisor_observations "
+        "which does not exist on production DBs until this migration runs. "
+        "The wall-breach audit trail is silently a no-op on every production deployment. "
+        "Add migrations/017_advisor_observations.sql with the table DDL and register it "
+        "in _MIGRATION_FILES after '016_spec_bundles.sql'."
+    )
+
+    # Ordering: 017 must follow 016.
+    assert "016_spec_bundles.sql" in migration_list, (
+        "'016_spec_bundles.sql' unexpectedly absent — cannot verify ordering."
+    )
+    idx_016 = migration_list.index("016_spec_bundles.sql")
+    idx_017 = migration_list.index("017_advisor_observations.sql")
+    assert idx_017 > idx_016, (
+        f"'017_advisor_observations.sql' (index {idx_017}) must appear AFTER "
+        f"'016_spec_bundles.sql' (index {idx_016}). "
+        "Migration list is append-only in dependency order."
+    )
+
+
+def test_advisor_observations_table_exists_after_run_migrations(tmp_path):
+    """BLOCK-S2 (rev-wall): After run_migrations() on a fresh DB, the
+    advisor_observations table must exist with the correct schema.
+
+    Asserts PRAGMA table_info columns: id, created_at, advisor_role,
+    subject_type, subject_id, verdict, raw_response, is_advisory_only,
+    spec_bundle_id.
+
+    Discriminating-power: a migration that creates a differently-named table
+    or omits required columns fails this test.
+    """
+    assert "017_advisor_observations.sql" in db._MIGRATION_FILES, (
+        "'017_advisor_observations.sql' missing from _MIGRATION_FILES — "
+        "cannot test table existence after run_migrations()."
+    )
+
+    db_path = str(tmp_path / "test_017.db")
+    with patch.object(db, "DB_FILE", db_path):
+        db.init_db()
+
+        conn = sqlite3.connect(db_path)
+        try:
+            columns = conn.execute(
+                "PRAGMA table_info(advisor_observations)"
+            ).fetchall()
+        finally:
+            conn.close()
+
+    col_names = {row[1] for row in columns}
+
+    assert col_names, (
+        "advisor_observations table not found after run_migrations(). "
+        "BLOCK-S2: the migration must create the table."
+    )
+
+    required_cols = {
+        "id", "created_at", "advisor_role", "subject_type",
+        "subject_id", "verdict", "raw_response", "is_advisory_only",
+    }
+    missing = required_cols - col_names
+    assert not missing, (
+        f"advisor_observations is missing columns: {sorted(missing)}. "
+        "BLOCK-S2: the table schema must match the contract used by "
+        "_write_wall_breach_observation (see database.py INSERT statement)."
+    )
