@@ -835,7 +835,7 @@ def get_advisor_observations_for_subject(
 
 def get_advisor_observations_for_role(
     advisor_role: str,
-    limit: int = 100,
+    limit: int = 50,
 ) -> list[dict]:
     """Return advisor_observations rows for a given role, newest-first.
 
