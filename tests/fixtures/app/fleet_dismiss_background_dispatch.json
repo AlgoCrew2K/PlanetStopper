@@ -1,0 +1,47 @@
+{
+  "_provenance": "schema-derived from Option-A implementation contract (background-thread dispatch). No producer-computed values. Each entry describes a behavioral invariant asserted by tests/app/test_fleet_dismiss_background_dispatch.py.",
+  "description": "Invariants for the background-thread dismiss contract: handler returns fast, background write lands, side-effect ban on request thread is preserved.",
+
+  "handler_latency_ms": {
+    "_note": "Upper bound on acceptable synchronous handler duration. The background thread owns the I/O; the handler must return before the write completes.",
+    "max_ms": 50
+  },
+
+  "background_dispatch": {
+    "_note": "The handler must dispatch write_fleet_alert to a background thread, not call it directly.",
+    "expected_direct_calls_on_request_thread": 0,
+    "dispatch_must_occur": true
+  },
+
+  "durable_write": {
+    "_note": "After the background thread completes, dismissed_at_et must be non-null. Assertions use a synchronization Event with a bounded timeout so tests are deterministic.",
+    "wait_timeout_seconds": 2,
+    "dismissed_at_et_must_be_non_null": true
+  },
+
+  "error_resilience": {
+    "_note": "If write_fleet_alert raises (DB locked, full disk), the handler must still return 200. Failure is logged; the operator UI must not degrade on transient DB errors.",
+    "expected_status_on_write_failure": 200
+  },
+
+  "idempotency": {
+    "_note": "Two rapid dismiss POSTs must both return 200. The effective write is idempotent (dismissed_at_et remains set; no crash on double-dismiss).",
+    "rapid_post_count": 2,
+    "all_must_return_200": true
+  },
+
+  "rapid_post_latency": {
+    "_note": "Handler latency must remain stable across N rapid POSTs — no blocking accumulation from background threads.",
+    "post_count": 10,
+    "max_ms_per_request": 50
+  },
+
+  "sample_alert_row": {
+    "_note": "A representative active alert row (not dismissed). Test setup uses this shape. Values are illustrative strings — not producer-computed.",
+    "tripped_at_et": "2026-05-17T10:33:00-04:00",
+    "triggered_reason": "Trailing Stop",
+    "tripped_count": 6,
+    "active_count": 10,
+    "dismissed_at_et": null
+  }
+}
