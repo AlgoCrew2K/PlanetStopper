@@ -481,6 +481,7 @@ def test_compute_quantstats_metrics_happy_path_returns_all_keys_finite_floats():
     its risk-free-rate default, annualization basis, etc. across versions).
     Instead we assert shape + finite + plausible-range.
     """
+    pytest.importorskip("quantstats", reason="quantstats is an optional dep — skip when absent")
     from analytics import compute_quantstats_metrics
 
     # Deterministic synthetic series: small positive drift with realistic noise.
@@ -579,6 +580,7 @@ def test_compute_quantstats_metrics_handles_nan_and_inf_without_corruption():
     over-constrain the implementer; the invariant 'no NaN/Inf in output' is
     the operator-visible contract.)
     """
+    pytest.importorskip("quantstats", reason="quantstats is an optional dep — skip when absent")
     from analytics import compute_quantstats_metrics
 
     series_with_nan = [0.001, float("nan"), 0.002, -0.001, 0.003,
