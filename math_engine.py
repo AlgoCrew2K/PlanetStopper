@@ -1,3 +1,4 @@
+import dataclasses
 import hashlib
 import math
 
@@ -84,6 +85,47 @@ MC_DEFAULT_NEIGHBOR_K = (
 # prior comment mischaracterised; at 2^64 it falls to ~2.6e-19, i.e. negligible.
 # numpy's default_rng / SeedSequence accept the full 64-bit space.
 MC_SEED_MODULUS = 2**64
+
+
+# Phase-2 CVaR typed result (defined in Phase 1 so the M2 schema migration and
+# Phase-2 simulate_forward_paths cutover have a stable single-import target).
+# Phase-1 rule: ZERO production consumers permitted — tests only.
+# Fail-safe invariant: cvar_pct is None IMPLIES breach is False.
+# Enforcement: __post_init__ raises ValueError on the illegal combination.
+@dataclasses.dataclass(frozen=True)
+class CVaRAssessment:
+    """Typed result for the Phase-2 forward-path CVaR co-signal.
+
+    cvar_pct: 5th-percentile CVaR as a percentage (negative = loss).
+              None is the out-of-band insufficient sentinel (mirrors
+              MC_INSUFFICIENT_HISTORY_SENTINEL). None here means the simulator
+              could not produce an estimate; the heuristic floor still protects.
+    breach:   True when CVaR exceeds the operator breach threshold.
+              MUST be False when cvar_pct is None (fail-safe).
+    tail_obs_count: tail observations used for the CVaR estimate; 0 when None.
+    insufficient_reason: human-readable explanation when cvar_pct is None.
+    """
+
+    cvar_pct: float | None
+    breach: bool
+    tail_obs_count: int
+    insufficient_reason: str | None
+
+    def __post_init__(self) -> None:
+        # Fail-safe: an absent CVaR estimate is never a breach signal.
+        if self.cvar_pct is None and self.breach:
+            raise ValueError(
+                "CVaRAssessment: cvar_pct is None but breach is True — fail-safe violated. "
+                "An absent CVaR estimate must not trigger a breach; the heuristic floor "
+                "(trailing stop) remains the safety backstop."
+            )
+        # Contract: no tail observations exist when the estimate is absent.
+        if self.cvar_pct is None and self.tail_obs_count != 0:
+            raise ValueError(
+                f"CVaRAssessment: cvar_pct is None but tail_obs_count is "
+                f"{self.tail_obs_count} (must be 0 for an insufficient sentinel)."
+            )
+
 
 # Time-squeeze decay constants (drives intraday tightening of trailing stops)
 # Rationale (AC-7 / M-4): the log10(1 + 9*t) curve is concave — it tightens the

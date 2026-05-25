@@ -1,0 +1,44 @@
+{
+  "name": "run_monte_carlo_signature_baseline",
+  "description": "Phase-1 baseline signature for run_monte_carlo. Any PR that adds, removes, or renames a parameter fails the freeze test. The return-type contract is also pinned: the function returns float | None (out-of-band insufficient sentinel is None; valid probability is a scalar in [0, 100]).",
+  "function": "math_engine.run_monte_carlo",
+  "provenance": "Captured from math_engine.py at fork-point 5f44060 via inspect.signature(). Every field is a structural invariant — not a value produced by running the function.",
+  "frozen_parameters": [
+    {
+      "name": "holdings",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "has_default": false
+    },
+    {
+      "name": "historical_data",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "has_default": false
+    },
+    {
+      "name": "spy_today_return",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "has_default": false
+    },
+    {
+      "name": "simulation_paths",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "has_default": true,
+      "default_constant_name": "MC_DEFAULT_SIMULATION_PATHS"
+    },
+    {
+      "name": "neighbor_k",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "has_default": true,
+      "default_constant_name": "MC_DEFAULT_NEIGHBOR_K"
+    },
+    {
+      "name": "seed",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "has_default": true,
+      "default_value": null
+    }
+  ],
+  "return_type_contract": "float | None — None is the out-of-band insufficient-history sentinel (MC_INSUFFICIENT_HISTORY_SENTINEL); a valid result is a scalar float in [0.0, 100.0]. Never NaN, never a negative value, never a value > 100.",
+  "phase": "1",
+  "rationale": "Freezing the signature is the project's primary blast-radius defence (G-1). A keyword-only argument addition, positional reorder, or rename breaks 7+ consumer sites across alpha_bot_execution.py, reporting.py, synthetic_history.py, and autotuner.py. Any such change must wait for the last-symphony Phase-2 cutover ceremony (council-converged-migration-plan.md §6 H6/H7)."
+}
