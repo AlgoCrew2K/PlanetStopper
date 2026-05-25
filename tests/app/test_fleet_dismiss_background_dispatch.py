@@ -28,14 +28,19 @@ Fixture provenance:
 
 Mocking strategy:
   - Network: never called.
-  - database.write_fleet_alert: mocked at the `app` import boundary via
-    patch("app.database.write_fleet_alert") to intercept synchronous calls on
-    the request thread.  For thread-completion tests, a threading.Event inside
-    the mock lets us wait for the background call to land.
+  - database.write_fleet_alert: patched via patch("database.write_fleet_alert").
+    IMPORTANT: the implementation uses a module-level ThreadPoolExecutor
+    (_DISMISS_EXECUTOR).  The executor's worker thread runs AFTER the Flask
+    handler returns — after the `with patch(...)` block would normally exit.
+    Any test that needs to observe the background write MUST call
+    write_completed.wait() INSIDE the `with patch(...)` block, not after it.
+    Tests that assert the mock is NOT called (side-effect ban tests) exit
+    immediately after post() returns — the mock hasn't been called yet, which
+    is the correct assertion.
   - database.read_fleet_alert: patched to return the fixture sample row.
   - database.load_state / database.save_state: patched and asserted NOT called.
-  - Time: not mocked — handler latency tests use wall-clock time.real and
-    assert < ceiling from fixture.  Tolerance comment on each assertion.
+  - Time: not mocked — handler latency tests use wall-clock time and assert
+    < ceiling from fixture.  Tolerance comment on each assertion.
 
 Anti-patterns avoided:
   - Never mock the threading machinery itself (assert BEHAVIOR, not implementation).
@@ -179,6 +184,10 @@ class TestDismissDispatchesToBackgroundThread:
         """write_fleet_alert must be invoked from a thread other than the request thread.
 
         Asserts dispatch occurs (not handler no-op) AND that dispatch is async.
+
+        The wait must be inside the patch context — with a module-level executor the
+        worker thread runs after the handler returns, and the mock must remain active
+        until the worker calls through it.
         """
         request_thread_id = threading.current_thread().ident
         write_thread_ids: list[int] = []
@@ -191,10 +200,12 @@ class TestDismissDispatchesToBackgroundThread:
         with patch("database.read_fleet_alert", return_value=_active_row()), \
              patch("database.write_fleet_alert", side_effect=_capture_thread):
             flask_client.post("/api/fleet-alert/dismiss")
+            # Wait inside the patch context so the mock is still active when the
+            # executor's worker thread picks up the task and calls write_fleet_alert.
+            dispatched = write_completed.wait(
+                timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"]
+            )
 
-        dispatched = write_completed.wait(
-            timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"]
-        )
         assert dispatched, (
             "write_fleet_alert was never called within the wait timeout. "
             "The handler must dispatch write_fleet_alert to a background thread — "
@@ -213,11 +224,13 @@ class TestDismissDispatchesToBackgroundThread:
 
         The handler returns 200 before the background thread executes the write.
         If the mock is called synchronously (blocking the handler), this fails.
-        """
-        write_called_before_return = threading.Event()
-        handler_returned = threading.Event()
 
+        The wait must be inside the patch context (executor worker runs after handler
+        returns; mock must remain active until the worker calls through it).
+        """
+        handler_returned = threading.Event()
         call_order: list[str] = []
+        write_called = threading.Event()
 
         def _write_with_order(_payload):
             # Record whether handler had returned before this was called.
@@ -225,17 +238,16 @@ class TestDismissDispatchesToBackgroundThread:
                 call_order.append("write_after_return")
             else:
                 call_order.append("write_before_return")
+            write_called.set()
 
         with patch("database.read_fleet_alert", return_value=_active_row()), \
              patch("database.write_fleet_alert", side_effect=_write_with_order):
             flask_client.post("/api/fleet-alert/dismiss")
-            # Mark that the handler has returned.
+            # Mark that the handler has returned BEFORE waiting for background write.
             handler_returned.set()
-
-        # Allow background write to proceed.
-        deadline = time.monotonic() + _FIXTURE["durable_write"]["wait_timeout_seconds"]
-        while not call_order and time.monotonic() < deadline:
-            time.sleep(0.01)
+            # Wait inside the patch context so the mock is still active when the
+            # executor worker picks up the task.
+            write_called.wait(timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"])
 
         if not call_order:
             pytest.fail(
@@ -266,6 +278,9 @@ class TestDismissBackgroundWriteCompletesWithDismissedTimestamp:
 
         Uses a threading.Event to wait for the write with a bounded timeout so
         the test is deterministic and does not rely on sleep.
+
+        The wait must be inside the patch context — with a module-level executor the
+        worker thread runs after the handler returns; the mock must still be active.
         """
         written_payloads: list[dict] = []
         write_completed = threading.Event()
@@ -277,12 +292,14 @@ class TestDismissBackgroundWriteCompletesWithDismissedTimestamp:
         with patch("database.read_fleet_alert", return_value=_active_row()), \
              patch("database.write_fleet_alert", side_effect=_capture_payload):
             resp = flask_client.post("/api/fleet-alert/dismiss")
+            # Wait inside the patch context so the mock is still active when the
+            # executor's worker thread picks up the task and calls write_fleet_alert.
+            dispatched = write_completed.wait(
+                timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"]
+            )
 
         assert resp.status_code == 200
 
-        dispatched = write_completed.wait(
-            timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"]
-        )
         assert dispatched, (
             "Background write did not complete within "
             f"{_FIXTURE['durable_write']['wait_timeout_seconds']} s. "
@@ -313,8 +330,8 @@ class TestDismissBackgroundWriteCompletesWithDismissedTimestamp:
         with patch("database.read_fleet_alert", return_value=_active_row()), \
              patch("database.write_fleet_alert", side_effect=_capture):
             flask_client.post("/api/fleet-alert/dismiss")
-
-        write_completed.wait(timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"])
+            # Wait inside the patch context — executor worker runs after handler returns.
+            write_completed.wait(timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"])
 
         assert written_payloads, "write_fleet_alert not called."
         dismissed_at = written_payloads[0].get("dismissed_at_et")
@@ -341,8 +358,8 @@ class TestDismissBackgroundWriteCompletesWithDismissedTimestamp:
         with patch("database.read_fleet_alert", return_value=original_row), \
              patch("database.write_fleet_alert", side_effect=_capture):
             flask_client.post("/api/fleet-alert/dismiss")
-
-        write_completed.wait(timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"])
+            # Wait inside the patch context — executor worker runs after handler returns.
+            write_completed.wait(timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"])
 
         assert written_payloads
         payload = written_payloads[0]
