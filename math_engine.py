@@ -86,6 +86,11 @@ MC_DEFAULT_NEIGHBOR_K = (
 # numpy's default_rng / SeedSequence accept the full 64-bit space.
 MC_SEED_MODULUS = 2**64
 
+# CVaR tail percentile for compute_portfolio_cvar (M2 Phase-1 anchor).
+# CVaR at 5% = expected shortfall = mean return in the worst 5% of simulated paths.
+# Source: decision-science-council-synthesis.md §2.6 / council-attack-rubric.md M-2.
+CVAR_TAIL_PCT = 0.05  # 5th-percentile tail — worst 5% of simulation paths
+
 
 # Phase-2 CVaR typed result (defined in Phase 1 so the M2 schema migration and
 # Phase-2 simulate_forward_paths cutover have a stable single-import target).
@@ -965,3 +970,170 @@ def calculate_14d_atr_pct(holdings, historical_data):
 
     portfolio_atr_pct = atr_pct_array.dot(weights)
     return float(portfolio_atr_pct)
+
+
+def compute_portfolio_cvar(
+    cycle_id: str,
+    holdings: list,
+    historical_data: dict,
+    spy_today_return: float,
+    simulation_paths: int = MC_DEFAULT_SIMULATION_PATHS,
+    neighbor_k: int = MC_DEFAULT_NEIGHBOR_K,
+    *,
+    mode: "str | None" = None,
+) -> "CVaRAssessment":
+    """M2 Phase-1 CVaR diagnostic — 5th-percentile expected shortfall.
+
+    Computes the CVaR (Expected Shortfall) at CVAR_TAIL_PCT (5%) for the
+    portfolio using the same kNN regime-matching pool as run_monte_carlo.
+    The seed is exclusively derive_cycle_mc_seed(cycle_id) fed into an
+    isolated np.random.default_rng — never the global RNG (plan risk R3).
+
+    Phase-1 anchor: this is the SINGLE replay-determinism anchor (§3.7).
+    Same (cycle_id, holdings, historical_data) → bit-identical cvar_pct and
+    tail_obs_count across independent calls (Gate-1 / §3.8).
+
+    mode: when "live" or "replay", persists the row via database.record_cvar_diagnostic
+          (the H4 helper — never a raw INSERT). When None, computes and returns
+          only (determinism tests omit mode to stay DB-free). The mode parameter
+          has no default at the H4 helper call site; callers in production always
+          pass it explicitly (plan risk R4 / arch constraint 4).
+
+    Returns CVaRAssessment. Zero broker-order symbols in this function body
+    or its call-chain (rubric M-2 / live-mode-audit.csv M2 rows = 0).
+    """
+    _reject_non_finite(spy_today_return=spy_today_return)
+    for day_data in historical_data.values():
+        for ticker_data in day_data.values():
+            _reject_non_finite_in_records([ticker_data], "daily_ret")
+    for h in holdings:
+        _reject_non_finite(
+            last_percent_change=h.get("last_percent_change", 0.0),
+            allocation=h.get("allocation", 0.0),
+        )
+
+    valid_dates = sorted(list(historical_data.keys()))
+    # Eligible pool mirrors run_monte_carlo: first MC_VOL_WINDOW_DAYS - 1 days
+    # are excluded (short-sample vol bias), so sufficiency is checked on the
+    # eligible count, not the raw history count.
+    eligible_days = len(valid_dates) - (MC_VOL_WINDOW_DAYS - 1)
+    if eligible_days < MC_MIN_HISTORY_DAYS:
+        result = CVaRAssessment(
+            cvar_pct=None,
+            breach=False,
+            tail_obs_count=0,
+            insufficient_reason=(
+                f"Insufficient history: {eligible_days} eligible days "
+                f"< MC_MIN_HISTORY_DAYS ({MC_MIN_HISTORY_DAYS}). "
+                "CVaR estimate unavailable."
+            ),
+        )
+        if mode is not None:
+            import database as _db  # lazy import — math_engine is pure-math at module level
+            _db.record_cvar_diagnostic(
+                cycle_id=cycle_id,
+                symphony_id="",
+                cvar_5pct=None,
+                cvar_5pct_stderr=None,
+                cvar_n_tail=0,
+                cvar_5pct_long=None,
+                cvar_n_tail_long=None,
+                mode=mode,
+            )
+        return result
+
+    # 1. SPY return and rolling-vol arrays (identical to run_monte_carlo)
+    spy_returns = np.array(
+        [historical_data[date].get("SPY", {}).get("daily_ret", 0.0) for date in valid_dates]
+    )
+    spy_vols = np.zeros_like(spy_returns)
+    for i in range(len(spy_returns)):
+        start_idx = max(0, i - (MC_VOL_WINDOW_DAYS - 1))
+        if i > 0:
+            spy_vols[i] = np.std(spy_returns[start_idx : i + 1])
+        else:
+            spy_vols[i] = 0.0
+
+    spy_today_ret_dec = spy_today_return / PCT_SCALAR
+    today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1) :], spy_today_ret_dec))
+
+    # Exclude early-window candidates (same logic as run_monte_carlo)
+    candidate_idx = np.arange(MC_VOL_WINDOW_DAYS - 1, len(spy_returns))
+    cand_returns = spy_returns[candidate_idx]
+    cand_vols = spy_vols[candidate_idx]
+
+    # Standardized kNN features
+    ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
+    vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
+
+    def _z(values, mean, std):
+        if std == 0.0:
+            return np.zeros_like(values, dtype=float)
+        return (values - mean) / std
+
+    cand_returns_z = _z(cand_returns, ret_mean, ret_std)
+    cand_vols_z = _z(cand_vols, vol_mean, vol_std)
+    today_ret_z = 0.0 if ret_std == 0.0 else (spy_today_ret_dec - ret_mean) / ret_std
+    today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
+
+    distances = np.sqrt(
+        (cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2
+    )
+
+    if len(distances) <= neighbor_k:
+        nearest_pool_indices = np.arange(len(distances))
+    else:
+        nearest_pool_indices = np.argpartition(distances, neighbor_k)[:neighbor_k]
+
+    nearest_days = [valid_dates[candidate_idx[i]] for i in nearest_pool_indices]
+
+    # 2. Portfolio return matrix (K days x N tickers)
+    tickers = [h["ticker"] for h in holdings]
+    weights = np.array([h.get("allocation", 0.0) for h in holdings])
+
+    returns_matrix = np.zeros((len(nearest_days), len(tickers)))
+    for i, date in enumerate(nearest_days):
+        day_data = historical_data[date]
+        spy_ret = day_data.get("SPY", {}).get("daily_ret", 0.0)
+        for j, ticker in enumerate(tickers):
+            if ticker in day_data:
+                returns_matrix[i, j] = day_data[ticker].get("daily_ret", 0.0)
+            else:
+                returns_matrix[i, j] = spy_ret
+
+    nearest_day_returns = returns_matrix.dot(weights) * PCT_SCALAR
+
+    # 3. Isolated RNG — derive_cycle_mc_seed(cycle_id) is the ONLY entropy source.
+    # np.random.default_rng never touches the numpy global RNG (plan risk R3).
+    seed = derive_cycle_mc_seed(cycle_id)
+    rng = np.random.default_rng(seed)
+    sim_paths = rng.choice(nearest_day_returns, size=simulation_paths)
+    sim_paths.sort()
+
+    # 4. CVaR at CVAR_TAIL_PCT (5th-percentile expected shortfall)
+    tail_cut = max(1, int(CVAR_TAIL_PCT * simulation_paths))
+    tail_obs = sim_paths[:tail_cut]
+    tail_obs_count = int(tail_cut)
+    cvar_pct_val = float(np.mean(tail_obs))
+
+    result = CVaRAssessment(
+        cvar_pct=cvar_pct_val,
+        breach=False,  # Phase-1: no breach threshold defined; breach is always False
+        tail_obs_count=tail_obs_count,
+        insufficient_reason=None,
+    )
+
+    if mode is not None:
+        import database as _db  # lazy import — math_engine is pure-math at module level
+        _db.record_cvar_diagnostic(
+            cycle_id=cycle_id,
+            symphony_id="",
+            cvar_5pct=cvar_pct_val,
+            cvar_5pct_stderr=None,
+            cvar_n_tail=tail_obs_count,
+            cvar_5pct_long=None,
+            cvar_n_tail_long=None,
+            mode=mode,
+        )
+
+    return result

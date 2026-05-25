@@ -1,0 +1,7 @@
+file,function,call_to_order_symbol,is_live_guard_location,notes
+# This file maps every Phase-1 new code path that could reach submit_order / place_order /
+# cancel_order / liquidate to the line that gates it (if is_live:).
+# M2 (compute_portfolio_cvar / cvar_diagnostics writer) produces ZERO rows here — that empty
+# row count is itself the assertion (plan deliverable 1).
+# CI fails if any new path appears without a row. Populate this file as new order-capable
+# paths are added in subsequent phases.
