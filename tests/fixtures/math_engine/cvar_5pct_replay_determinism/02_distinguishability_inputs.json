@@ -1,6 +1,6 @@
 {
   "name": "cvar_5pct_distinguishability_inputs",
-  "description": "Inputs for test_different_cycle_ids_produce_different_cvar_5pct. Uses explicit pre-computed continuous daily returns (Gaussian, seeded rng=20240101, stored as literals) so different cycle_id-derived seeds produce statistically distinguishable tail means. kNN pool has 80 days of continuous variation.",
+  "description": "Inputs for test_different_cycle_ids_produce_different_cvar_5pct. Uses explicit pre-computed continuous daily returns (Gaussian, seeded rng=20240101, stored as literals). simulation_paths=50 so tail_cut=2 — seed variation is observable (LLN does NOT dominate at n=2). neighbor_k=20 for a diverse pool. Continuous values ensure each neighbor has a unique portfolio return.",
   "function": "compute_portfolio_cvar",
   "notes": "PA-18: no expected cvar_5pct or cvar_n_tail literals. Inequality asserted as run_a != run_b. Values pre-computed once \u2014 fixture is deterministic. Continuous variation ensures sample mean of tail observations differs between seeds.",
   "inputs": {
@@ -422,8 +422,8 @@
       ]
     },
     "spy_today_return": 0.001,
-    "simulation_paths": 2000,
-    "neighbor_k": 10
+    "simulation_paths": 50,
+    "neighbor_k": 20
   },
-  "derivation": "80 days Gaussian returns (rng seed=20240101, rounded to 8dp). With neighbor_k=10 and continuous values, 10 nearest SPY neighbors all have distinct AAA/BBB values. 2000 paths from 10 continuous-valued neighbors: sample mean of bottom 5% (100 obs) differs between seeds. spy_today_return=0.001 is near distribution center."
+  "derivation": "80 days Gaussian returns (rng seed=20240101, rounded to 8dp). simulation_paths=50 is deliberately small: tail_cut = max(1, int(0.05 * 50)) = 2, so CVaR is the mean of only 2 randomly drawn tail observations. With 20 continuous-valued neighbors, the 2-sample mean differs between seeds. LLN does NOT dominate at n=2 — seed variation is observable. neighbor_k=20 ensures a diverse pool for the 2 tail draws. Note: simulation_paths=50 is below production default (5000); this fixture tests seed-distinguishability only, not CVaR accuracy."
 }
