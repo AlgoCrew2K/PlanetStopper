@@ -1,0 +1,80 @@
+{
+  "_provenance": "PA-18: Schema-derived with runtime validator. Column set and constraints authored from feature-plans/decision-science/phase-1/018-researcher-dof-ledger/plan.md §Deliverables, cross-checked against docs/handoff/decision-science-council-synthesis.md §2.2 (additive N_effective = N_optuna + S), §2.5 (NN1 spec-freeze / evidence_source enum), and docs/handoff/decision-science-v3-and-divergence-evaluation.md §A.0 Defect 2 (sub-sweep sum binding). No producer-computed values are captured; all assertions are shape/presence/constraint checks.",
+  "scenario": "researcher_dof_ledger_schema_validation",
+  "description": "Expected schema shape for researcher_dof_ledger table after migration 018_researcher_dof_ledger.sql is applied. Used by the fixture-refresh schema-validator test and the Phase-1 seed-row presence test.",
+
+  "researcher_dof_ledger": {
+    "table_name": "researcher_dof_ledger",
+    "columns": {
+      "id":                  { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
+      "created_at":          { "notnull": true,  "has_default": true,  "type_affinity": "TEXT" },
+      "facet_name":          { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "facet_category":      { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "decision_type":       { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "evidence_source":     { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "n_configs_searched":  { "notnull": true,  "has_default": true,  "type_affinity": "INTEGER" },
+      "touched_frozen_eval": { "notnull": true,  "has_default": true,  "type_affinity": "INTEGER" },
+      "spec_bundle_id":      { "notnull": false, "has_default": false, "type_affinity": "TEXT" },
+      "justification":       { "notnull": false, "has_default": false, "type_affinity": "TEXT" }
+    },
+    "facet_category_enum": ["specification", "parameter"],
+    "decision_type_enum":  ["FIXED", "SEARCHED", "REVISED", "OOS_PEEK"],
+    "evidence_source_enum": [
+      "THEORY",
+      "MANDATE",
+      "STYLIZED_FACT",
+      "CALIBRATION",
+      "BACKTEST_SELECTION",
+      "OOS"
+    ],
+    "evidence_source_notes": {
+      "s_accumulator_sources": ["BACKTEST_SELECTION"],
+      "zero_s_sources":        ["THEORY", "MANDATE", "STYLIZED_FACT", "CALIBRATION", "OOS"],
+      "_note": "S = SUM(n_configs_searched) WHERE evidence_source = 'BACKTEST_SELECTION'. Sources not in s_accumulator_sources do NOT contribute to S, so N_effective = N_optuna + 0 = N_optuna in the honest Phase-1 case (council §2.2 property 1)."
+    }
+  },
+
+  "phase1_seed_rows": {
+    "_note": "Three theory-frozen seed rows from council §3.3 / plan §Deliverables #3. Tests assert their presence after run_migrations(). Tests do NOT assert exact column values — only that the row exists and that evidence_source is NOT 'BACKTEST_SELECTION' (so S remains 0).",
+    "rows": [
+      {
+        "facet_name": "gamma",
+        "evidence_source": "THEORY",
+        "decision_type": "FIXED",
+        "n_configs_searched": 1,
+        "contributes_to_s": false,
+        "_note": "CRRA risk-aversion parameter. Frozen by theory. n_configs_searched=1 is the default; no P&L-toured search was conducted."
+      },
+      {
+        "facet_name": "utility_family",
+        "evidence_source_one_of": ["THEORY", "MANDATE"],
+        "decision_type": "FIXED",
+        "n_configs_searched": 1,
+        "contributes_to_s": false,
+        "_note": "CRRA utility family. Frozen by theory or mandate. The plan notes THEORY or MANDATE — either is acceptable for Phase-1."
+      },
+      {
+        "facet_name": "wealth_argument",
+        "evidence_source": "CALIBRATION",
+        "decision_type": "FIXED",
+        "n_configs_searched": 1,
+        "contributes_to_s": false,
+        "_note": "Wealth argument (W-H2 derivation). Frozen by calibration — the W-H2 derivation result (docs/handoff/w-h2-wealth-argument-derivation.md)."
+      }
+    ],
+    "invariant_s_equals_zero": "All three rows have evidence_source != 'BACKTEST_SELECTION', so count_dof_backtest_selections() must return 0 after seeding only these rows. This is the council §2.2 property-1 byte-identity assertion."
+  },
+
+  "sub_sweep_accounting": {
+    "_note": "Defect 2 binding: a single P&L-toured spec with n_configs_searched=K contributes K to S, not 1. The accumulator is SUM(n_configs_searched), not COUNT(DISTINCT spec_bundle_id). See docs/handoff/decision-science-v3-and-divergence-evaluation.md §A.0 Defect 2.",
+    "example": {
+      "rows": [
+        { "evidence_source": "BACKTEST_SELECTION", "n_configs_searched": 4 },
+        { "evidence_source": "BACKTEST_SELECTION", "n_configs_searched": 2 }
+      ],
+      "expected_s_sum": 6,
+      "expected_s_distinct_bundles": 2,
+      "_note": "SUM=6 is the binding conservative upper bound. COUNT(DISTINCT)=2 would undercount when any bundle has n_configs_searched > 1."
+    }
+  }
+}
