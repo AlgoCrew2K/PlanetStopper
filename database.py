@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -1481,6 +1482,57 @@ def record_shadow_observation(
 # every call site must state the mode explicitly, no default).
 _TELEMETRY_VALID_MODES = frozenset({"live", "replay"})
 
+# CC-002: allowlist of tables that write_telemetry_row may target.
+# Expand this set whenever a new legitimate Phase-N consumer is added.
+# table_name arguments not in this set are rejected before any SQL is built —
+# preventing f-string interpolation of attacker-controlled identifiers.
+_WRITE_TELEMETRY_TABLES = frozenset({
+    "cvar_diagnostics",   # M2 Phase-1 consumer (record_cvar_diagnostic)
+})
+
+# CC-002: column identifier must be a safe SQLite identifier before f-string
+# interpolation.  Matches lowercase letters, digits, and underscores only.
+_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _write_telemetry_row_unsafe(table_name: str, row_dict: dict) -> None:
+    """Validate identifiers and execute the INSERT.  Not safe to call directly
+    from production — always go through write_telemetry_row which enforces the
+    mode contract (live-swallow / replay-raise) around this function.
+
+    Raises ValueError if table_name is not in _WRITE_TELEMETRY_TABLES or if
+    any column name fails the safe-identifier pattern (CC-002).
+    Raises sqlite3.Error on DB failures — callers decide whether to swallow.
+    """
+    # CC-002: validate table_name before any f-string interpolation.
+    if table_name not in _WRITE_TELEMETRY_TABLES:
+        raise ValueError(
+            f"write_telemetry_row: table_name {table_name!r} is not in the "
+            f"telemetry allowlist; add it to _WRITE_TELEMETRY_TABLES if it is "
+            f"a legitimate consumer"
+        )
+
+    # CC-002: validate every column name before f-string interpolation.
+    columns = list(row_dict.keys())
+    for col in columns:
+        if not _IDENTIFIER_RE.match(col):
+            raise ValueError(
+                f"write_telemetry_row: column name {col!r} is not a valid "
+                f"SQLite identifier (must match ^[a-z_][a-z0-9_]*$)"
+            )
+
+    # Build the INSERT — table_name and column names are provably safe after
+    # the validations above; VALUES are still parameterized.
+    placeholders = ", ".join("?" for _ in columns)
+    col_names = ", ".join(columns)
+    sql = f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders})"
+    values = tuple(row_dict[c] for c in columns)
+
+    conn = sqlite3.connect(_db_file(), timeout=10.0)
+    conn.execute(sql, values)
+    conn.commit()
+    conn.close()
+
 
 def write_telemetry_row(
     table_name: str,
@@ -1493,13 +1545,19 @@ def write_telemetry_row(
     Opens its own sqlite3.connect() — does NOT join the cycle's save_state
     transaction.  Connection pattern matches record_shadow_observation (:1171).
 
-    mode="live":   swallows sqlite3.Error; logs one WARNING with table_name,
-                   error type, and cycle_id only (gate 7 — no payload values).
-                   Returns None.  The cycle must never fail on telemetry.
-    mode="replay": lets sqlite3.Error propagate — a replay that cannot persist
-                   its row is loud-broken by design (H4 binding).
+    mode="live":   swallows sqlite3.Error and ValueError; logs one WARNING
+                   with table_name, error type, and cycle_id only (gate 7 —
+                   no payload values).  Returns None.  The cycle must never
+                   fail on telemetry.
+    mode="replay": lets sqlite3.Error and ValueError propagate — a replay
+                   that cannot persist its row is loud-broken by design
+                   (H4 binding).
 
     Raises ValueError for any mode value other than "live" or "replay".
+    Raises ValueError if table_name is not in _WRITE_TELEMETRY_TABLES
+        (CC-002: prevents f-string interpolation of arbitrary identifiers).
+    Raises ValueError if any column name in row_dict does not match the
+        safe-identifier pattern ^[a-z_][a-z0-9_]*$ (CC-002).
     Raises TypeError (from Python) if mode is omitted — it is keyword-only
     with no default (H4 plan risk R4).
     """
@@ -1508,21 +1566,10 @@ def write_telemetry_row(
             f"write_telemetry_row: mode must be 'live' or 'replay'; got {mode!r}"
         )
 
-    # Build the INSERT from the row_dict keys — order is determined by the
-    # dict; the VALUES tuple matches that same order.
-    columns = list(row_dict.keys())
-    placeholders = ", ".join("?" for _ in columns)
-    col_names = ", ".join(columns)
-    sql = f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders})"
-    values = tuple(row_dict[c] for c in columns)
-
     if mode == "live":
         try:
-            conn = sqlite3.connect(_db_file(), timeout=10.0)
-            conn.execute(sql, values)
-            conn.commit()
-            conn.close()
-        except sqlite3.Error as exc:
+            _write_telemetry_row_unsafe(table_name, row_dict)
+        except (sqlite3.Error, ValueError) as exc:
             # Gate 7: log only table_name, error type, and cycle_id — no
             # financial payload values from row_dict.
             cycle_id = row_dict.get("cycle_id")
@@ -1533,10 +1580,7 @@ def write_telemetry_row(
                 cycle_id,
             )
     else:  # mode == "replay"
-        conn = sqlite3.connect(_db_file(), timeout=10.0)
-        conn.execute(sql, values)
-        conn.commit()
-        conn.close()
+        _write_telemetry_row_unsafe(table_name, row_dict)
 
 
 def record_cvar_diagnostic(

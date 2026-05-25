@@ -215,27 +215,41 @@ def test_live_mode_log_does_not_leak_row_payload_values(
 
 
 def test_replay_mode_raises_on_db_error(db_with_cvar_table, telemetry_fixture):
-    """Replay mode: sqlite3.Error propagates — a replay that cannot persist
-    its decision row is loud-broken (H4 binding; replay-mode-raise contract).
+    """Replay mode: errors propagate — a replay that cannot persist its
+    decision row is loud-broken (H4 binding; replay-mode-raise contract).
+
+    CC-002: an unknown table_name now raises ValueError (allowlist check) rather
+    than sqlite3.OperationalError.  The contract is satisfied by either: replay
+    mode propagates rather than swallowing.
     """
     row = dict(telemetry_fixture["row_dict"])
 
-    with pytest.raises(sqlite3.Error):
+    with pytest.raises((sqlite3.Error, ValueError)):
         db.write_telemetry_row("nonexistent_table", row, mode="replay")
 
 
-def test_replay_mode_raises_operational_error_specifically(
+def test_replay_mode_raises_on_db_integrity_error(
     db_with_cvar_table, telemetry_fixture
 ):
-    """Replay mode: sqlite3.OperationalError (the most common DB failure) propagates.
+    """Replay mode: sqlite3.IntegrityError propagates for a bad write to an
+    allowlisted table that exists in the DB.
 
-    Confirms the helper does not catch only the base class — it must let all
-    sqlite3.Error subclasses propagate in replay mode.
+    Uses cvar_diagnostics (in _WRITE_TELEMETRY_TABLES) with a NULL value in the
+    NOT NULL cycle_id column to force IntegrityError — confirming that DB-level
+    errors (distinct from allowlist ValueError) also propagate in replay mode.
     """
-    row = dict(telemetry_fixture["row_dict"])
+    row = {
+        "cycle_id": None,        # NOT NULL violation → IntegrityError
+        "symphony_id": "SYM_REPLAY_ERR_001",
+        "cvar_5pct": None,
+        "cvar_5pct_stderr": None,
+        "cvar_n_tail": None,
+        "cvar_5pct_long": None,
+        "cvar_n_tail_long": None,
+    }
 
-    with pytest.raises(sqlite3.OperationalError):
-        db.write_telemetry_row("nonexistent_table", row, mode="replay")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.write_telemetry_row("cvar_diagnostics", row, mode="replay")
 
 
 def test_replay_mode_does_not_log_swallow_warning(
@@ -246,11 +260,14 @@ def test_replay_mode_does_not_log_swallow_warning(
     The live-mode swallow emits a WARNING; the replay-mode raise must not
     emit the same message (which would imply the exception was caught then
     re-raised — an anti-pattern that could mask call-stack information).
+
+    CC-002: unknown table_name raises ValueError from the allowlist check;
+    the no-swallow-WARNING contract still holds.
     """
     row = dict(telemetry_fixture["row_dict"])
 
     with caplog.at_level(logging.WARNING, logger="database"):
-        with pytest.raises(sqlite3.Error):
+        with pytest.raises((sqlite3.Error, ValueError)):
             db.write_telemetry_row("nonexistent_table", row, mode="replay")
 
     swallow_warnings = [

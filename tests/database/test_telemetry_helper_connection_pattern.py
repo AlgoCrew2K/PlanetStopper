@@ -82,20 +82,29 @@ def test_write_telemetry_row_does_not_use_isolation_level_none():
 
 
 def test_write_telemetry_row_uses_timeout_10():
-    """Source guard: write_telemetry_row must pass timeout=10.0.
+    """Source guard: write_telemetry_row (or its internal helper) must pass timeout=10.0.
 
     The record_shadow_observation precedent at database.py:1199 uses
     timeout=10.0 — the same timeout as all other write-connection opens
     in this codebase.  Omitting it would use the default (5.0 s) and
     diverge from the established contract without justification.
+
+    CC-002: the sqlite3.connect call was moved into _write_telemetry_row_unsafe;
+    we also accept timeout=10.0 in that helper's source.
     """
     assert hasattr(db, "write_telemetry_row"), (
         "write_telemetry_row not found — implement it first"
     )
     source = inspect.getsource(db.write_telemetry_row)
-    assert "timeout=10.0" in source, (
-        "write_telemetry_row must use timeout=10.0 in sqlite3.connect, "
-        "matching the record_shadow_observation precedent."
+    # CC-002: sqlite3.connect lives in the private helper; check both
+    helper_source = (
+        inspect.getsource(db._write_telemetry_row_unsafe)
+        if hasattr(db, "_write_telemetry_row_unsafe")
+        else ""
+    )
+    assert "timeout=10.0" in source or "timeout=10.0" in helper_source, (
+        "write_telemetry_row (or its internal helper) must use timeout=10.0 "
+        "in sqlite3.connect, matching the record_shadow_observation precedent."
     )
 
 
@@ -208,20 +217,23 @@ def test_live_mode_swallows_integrity_error_null_column(tmp_path, monkeypatch):
     not crash the live cycle.
 
     spec-h4 Finding 5: tests the swallow covers IntegrityError explicitly.
+
+    CC-002: table_name must be in _WRITE_TELEMETRY_TABLES; uses cvar_diagnostics
+    (cycle_id is NOT NULL) to force the IntegrityError path.
     """
     db_path = str(tmp_path / "integrity_test.db")
     monkeypatch.setenv("DB_PATH", db_path)
     db.init_db()
 
-    # Create a table with a NOT NULL column to force IntegrityError
+    # Create cvar_diagnostics with a NOT NULL cycle_id to force IntegrityError
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS strict_telemetry (
+            CREATE TABLE IF NOT EXISTS cvar_diagnostics (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 cycle_id  TEXT NOT NULL,
-                required  TEXT NOT NULL    -- no DEFAULT — NULL will violate this
+                symphony_id TEXT NOT NULL
             )
             """
         )
@@ -231,12 +243,12 @@ def test_live_mode_swallows_integrity_error_null_column(tmp_path, monkeypatch):
 
     # Pass None for the NOT NULL column — this should cause IntegrityError
     row = {
-        "cycle_id": "CYCLE_INTEGRITY_001",
-        "required": None,  # violates NOT NULL constraint
+        "cycle_id": None,        # violates NOT NULL constraint
+        "symphony_id": "SYM_INTEGRITY_001",
     }
 
     # Must not raise — live mode swallows ALL sqlite3.Error subclasses
-    result = db.write_telemetry_row("strict_telemetry", row, mode="live")
+    result = db.write_telemetry_row("cvar_diagnostics", row, mode="live")
 
     assert result is None, (
         "write_telemetry_row(mode='live') must return None even when "
@@ -249,6 +261,9 @@ def test_replay_mode_propagates_integrity_error(tmp_path, monkeypatch):
 
     A replay that writes None into a NOT NULL column has a schema mismatch —
     it must fail loud so the replay harness can detect the error.
+
+    CC-002: table_name must be in _WRITE_TELEMETRY_TABLES; uses cvar_diagnostics
+    (cycle_id is NOT NULL) to force the IntegrityError path.
     """
     db_path = str(tmp_path / "integrity_replay.db")
     monkeypatch.setenv("DB_PATH", db_path)
@@ -258,10 +273,10 @@ def test_replay_mode_propagates_integrity_error(tmp_path, monkeypatch):
     try:
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS strict_telemetry (
+            CREATE TABLE IF NOT EXISTS cvar_diagnostics (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 cycle_id  TEXT NOT NULL,
-                required  TEXT NOT NULL
+                symphony_id TEXT NOT NULL
             )
             """
         )
@@ -270,12 +285,12 @@ def test_replay_mode_propagates_integrity_error(tmp_path, monkeypatch):
         conn.close()
 
     row = {
-        "cycle_id": "CYCLE_INTEGRITY_REPLAY_001",
-        "required": None,
+        "cycle_id": None,        # violates NOT NULL constraint
+        "symphony_id": "SYM_INTEGRITY_REPLAY_001",
     }
 
     with pytest.raises(sqlite3.IntegrityError):
-        db.write_telemetry_row("strict_telemetry", row, mode="replay")
+        db.write_telemetry_row("cvar_diagnostics", row, mode="replay")
 
 
 # ---------------------------------------------------------------------------
