@@ -1571,6 +1571,73 @@ def record_cvar_diagnostic(
     write_telemetry_row("cvar_diagnostics", row_dict, mode=mode)
 
 
+# --- Replay-determinism anchor: Gate-1 parity column classification ---
+#
+# Non-persistence decision: the MC seed is a pure function of cycle_id via
+# derive_cycle_mc_seed (math_engine.py) — persisting it would create a drift
+# surface where a stored seed diverges from the re-derived value without any
+# observable error. A replay re-derives the seed from cycle_id; storing it
+# is redundant. See plan: feature-plans/decision-science/phase-1/
+# replay-determinism-anchor/plan.md §Why and §Risk callouts.
+#
+# _PARITY_DECISION_COLUMNS: the five decision-content columns Gate-1 asserts
+#   on — must be bit-identical across two replays of the same cycle_id.
+#   Includes second-window residue (cvar_5pct_long, cvar_n_tail_long) per
+#   council §B.6 and synthesis §A.8 A3 binding.
+#
+# _PARITY_EXCLUDE_COLUMNS: columns legitimately different across replays —
+#   id (AUTOINCREMENT, replay inserts a new row), ts_utc (wall-clock stamp),
+#   cycle_id and symphony_id (the lookup key pair, not parity targets).
+#   Together with _PARITY_DECISION_COLUMNS these cover every column in
+#   cvar_diagnostics; the anti-drift fence test enforces full classification.
+
+_PARITY_DECISION_COLUMNS: tuple[str, ...] = (
+    "cvar_5pct",
+    "cvar_5pct_stderr",
+    "cvar_n_tail",
+    "cvar_5pct_long",
+    "cvar_n_tail_long",
+)
+
+_PARITY_EXCLUDE_COLUMNS: tuple[str, ...] = (
+    "id",
+    "ts_utc",
+    "cycle_id",
+    "symphony_id",
+)
+
+
+def read_cvar_diagnostic_for_cycle(
+    cycle_id: str,
+    symphony_id: str,
+) -> "dict | None":
+    """Return the most-recent cvar_diagnostics row for (cycle_id, symphony_id).
+
+    Uses get_ro_connection() — read-only enforcement at the driver level,
+    consistent with the dashboard read pattern (architecture constraint 5).
+
+    Returns None when no row exists for the given pair — the replay harness
+    treats None as "no prior run to compare against" and skips parity assertion.
+
+    The returned dict includes at minimum the _PARITY_DECISION_COLUMNS keys;
+    callers that need the full row may inspect all returned keys.
+    """
+    conn = get_ro_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM cvar_diagnostics "
+            "WHERE cycle_id = ? AND symphony_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (cycle_id, symphony_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return dict(row)
+
+
 def prune_old_shadow_history(retention_days: int) -> int:
     """Delete shadow_history rows older than retention_days. Returns total rows deleted.
 
