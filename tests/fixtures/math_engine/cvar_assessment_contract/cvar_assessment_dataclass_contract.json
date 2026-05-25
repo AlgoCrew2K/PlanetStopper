@@ -1,4 +1,5 @@
 {
+  "pm_ruling_2026-05-24": "Structural-contract fixtures satisfy the golden-fixture rule for a computation-free frozen dataclass. No identity fixture required. The genuine drift surface for a dataclass is its schema (field set + types + __post_init__ invariants), which these fixtures pin. (PM ruling, mc-sentinel-blast-radius cycle, BLOCK-1 resolution.)",
   "name": "cvar_assessment_dataclass_contract",
   "description": "Phase-1 contract for the CVaRAssessment dataclass. Exact field set, types, fail-safe invariant (cvar_pct=None implies breach=False), and the Phase-1 production-consumer prohibition. This fixture is the source of truth for the structural tests — the implementer must match it exactly.",
   "function": "math_engine.CVaRAssessment",

@@ -548,3 +548,125 @@ def test_autotuner_tick_mc_prob_key_absent_yields_mc_available_true() -> None:
         f"50.0). An absent-key tick must be treated as mc_available=True (backward "
         f"compatibility with pre-sentinel tick data)."
     )
+
+
+# ---------------------------------------------------------------------------
+# R-4b. F-4 sentinel path: compute_exit_confirmation fires when MC is sentinel
+#        and below-stop condition is met (protective stop always fires)
+# ---------------------------------------------------------------------------
+
+def test_exit_confirmation_fires_when_mc_sentinel_and_below_stop() -> None:
+    """
+    R-4b — F-4 plan scope item 1: "protective stop always fires on ticks-below-stop
+    alone in every sentinel branch."
+
+    compute_exit_confirmation with prob_beating=None (MC sentinel) and the below-
+    stop condition met must:
+      * Increment below_stop_count each qualifying tick.
+      * Return is_trailing_stop_hit=True once below_stop_count reaches EXIT_CONFIRM_TICKS.
+
+    This is the primary F-4 fail-safe path. The MC sanity gate evaluates as
+    ``mc_sanity_ok = prob_beating is None or prob_beating < MC_SANITY_THRESHOLD``,
+    so None → mc_sanity_ok=True → the below-stop condition is gated only on the
+    return magnitude, not the MC opinion. The protective stop must not be suppressed
+    by insufficient MC history.
+
+    RED trigger: changing the mc_sanity_ok expression to
+    ``mc_sanity_ok = prob_beating is not None and prob_beating < MC_SANITY_THRESHOLD``
+    (removing the None pass-through), which would make the sentinel BLOCK the
+    protective stop — the pre-fix fail-dangerous behavior this cycle exists to pin.
+    """
+    # Set up a below-stop scenario: current_return well below the stop trigger.
+    # We choose values such that the below_stop_condition is True regardless of
+    # MAGNITUDE_FLOOR_PCT — using a large negative gap so the test is not fragile
+    # to constant changes.
+    stop_trigger_level = -2.0  # e.g. stop is at -2% drawdown
+    # Return is 1 full percentage point below the threshold (MAGNITUDE_FLOOR_PCT is 0.10).
+    current_return = stop_trigger_level - (math_engine.MAGNITUDE_FLOOR_PCT + 1.0)
+
+    # Drive below_stop_count from 0 up to EXIT_CONFIRM_TICKS - 1 and check no early
+    # hit, then deliver the final tick and confirm is_trailing_stop_hit=True.
+    below_stop_count = 0
+    for tick_num in range(1, math_engine.EXIT_CONFIRM_TICKS + 1):
+        new_count, is_hit = math_engine.compute_exit_confirmation(
+            armed=True,
+            is_triggered=False,
+            current_return=current_return,
+            stop_trigger_level=stop_trigger_level,
+            prob_beating=None,  # MC sentinel — insufficient history
+            current_below_stop_count=below_stop_count,
+        )
+        assert new_count == tick_num, (
+            f"Tick {tick_num}: expected below_stop_count={tick_num}, "
+            f"got {new_count}. compute_exit_confirmation must increment the count "
+            f"on each qualifying tick when prob_beating=None (MC sentinel). "
+            f"The sentinel must not reset or suppress the count."
+        )
+        if tick_num < math_engine.EXIT_CONFIRM_TICKS:
+            assert is_hit is False, (
+                f"Tick {tick_num}: is_trailing_stop_hit=True before reaching "
+                f"EXIT_CONFIRM_TICKS ({math_engine.EXIT_CONFIRM_TICKS}). "
+                f"The stop must require the full confirmation window."
+            )
+        else:
+            assert is_hit is True, (
+                f"Tick {tick_num} (= EXIT_CONFIRM_TICKS={math_engine.EXIT_CONFIRM_TICKS}): "
+                f"is_trailing_stop_hit=False. The protective stop must fire once the "
+                f"confirmation window is saturated. MC sentinel (prob_beating=None) "
+                f"must not suppress the exit."
+            )
+        below_stop_count = new_count
+
+
+def test_exit_confirmation_mc_sentinel_does_not_suppress_stop_when_mc_would_have_blocked() -> None:
+    """
+    R-4b hostile variant: prob_beating=None with a value that, if it WERE a real
+    float, would exceed MC_SANITY_THRESHOLD and block the stop.
+
+    Concretely: if prob_beating were 99.0 (well above MC_SANITY_THRESHOLD=60.0),
+    mc_sanity_ok would be False and the stop would be suppressed. But because
+    prob_beating is None (sentinel), mc_sanity_ok must be True (fail-safe) and
+    the stop must still fire.
+
+    This is the sharpest regression test: it proves that None is treated as
+    "MC unavailable → do not block" and not as "extreme bullishness → always block."
+
+    RED trigger: any expression that maps prob_beating=None to mc_sanity_ok=False,
+    such as ``mc_sanity_ok = prob_beating is not None and prob_beating < MC_SANITY_THRESHOLD``.
+    """
+    stop_trigger_level = -2.0
+    current_return = stop_trigger_level - (math_engine.MAGNITUDE_FLOOR_PCT + 1.0)
+
+    # Confirm that a real high prob_beating DOES block the stop (sanity check that
+    # the test is testing the right thing).
+    _count, blocked = math_engine.compute_exit_confirmation(
+        armed=True,
+        is_triggered=False,
+        current_return=current_return,
+        stop_trigger_level=stop_trigger_level,
+        prob_beating=math_engine.MC_SANITY_THRESHOLD + 10.0,  # well above threshold
+        current_below_stop_count=math_engine.EXIT_CONFIRM_TICKS - 1,
+    )
+    assert blocked is False, (
+        f"Sanity check failed: a high prob_beating ({math_engine.MC_SANITY_THRESHOLD + 10.0}) "
+        f"did not block the stop. The MC sanity gate must veto when prob_beating >= "
+        f"MC_SANITY_THRESHOLD ({math_engine.MC_SANITY_THRESHOLD})."
+    )
+
+    # Now confirm that None (sentinel) does NOT block — even though the equivalent
+    # high float would.
+    _count, sentinel_fires = math_engine.compute_exit_confirmation(
+        armed=True,
+        is_triggered=False,
+        current_return=current_return,
+        stop_trigger_level=stop_trigger_level,
+        prob_beating=None,  # sentinel — "MC unavailable"
+        current_below_stop_count=math_engine.EXIT_CONFIRM_TICKS - 1,  # one tick from firing
+    )
+    assert sentinel_fires is True, (
+        f"compute_exit_confirmation(prob_beating=None) at EXIT_CONFIRM_TICKS-1 "
+        f"returned is_trailing_stop_hit=False. The MC sentinel must not block the "
+        f"protective stop. The fail-safe is: None → mc_sanity_ok=True → stop fires "
+        f"on magnitude alone. A real high prob_beating would have blocked; None "
+        f"must not recapitulate that suppression."
+    )

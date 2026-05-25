@@ -61,6 +61,8 @@ FIXTURE_DIR = (
 )
 
 # Production modules that must NOT import CVaRAssessment in Phase 1.
+# engine/dual_altitude.py is included so any Phase-1 CVaRAssessment reference
+# there is caught (BLOCK-3 fix, rev-mc review).
 _PRODUCTION_MODULES = [
     "alpha_bot_execution.py",
     "reporting.py",
@@ -68,6 +70,7 @@ _PRODUCTION_MODULES = [
     "autotuner.py",
     "app.py",
     "database.py",
+    "engine/dual_altitude.py",
 ]
 
 _PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent
