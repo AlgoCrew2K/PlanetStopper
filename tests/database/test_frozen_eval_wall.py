@@ -541,62 +541,97 @@ def test_bare_fold_role_predicate_tuple_covers_both_inequality_operators():
 
 
 # ---------------------------------------------------------------------------
-# Additional hostile scenario — wall-breach write survives caller-swallowed exception
+# Additional scenario — _write_wall_breach_observation write-then-swallow contract
 # ---------------------------------------------------------------------------
 
 
-def test_wall_breach_write_survives_caller_swallowing_exception(walled_db):
-    """Plan §Risk callouts: the WALL_BREACH audit row must be written to
-    advisor_observations BEFORE the RuntimeError is raised.
+def test_write_wall_breach_observation_writes_audit_row_and_swallows_own_exceptions(
+    walled_db, tmp_path
+):
+    """Plan §Risk callouts: _write_wall_breach_observation must:
+      (a) Commit a WALL_BREACH row to advisor_observations when the table exists.
+      (b) Swallow its own internal exceptions (log, never raise) when the write
+          fails — so the caller's raise is never suppressed by a write-side error.
 
-    This test verifies the write-then-raise contract by:
-      1. Issuing an adversarial OR 1=1 bypass that smuggles a frozen_eval row.
-      2. Catching and swallowing the RuntimeError (as a rogue caller might).
-      3. Querying advisor_observations and asserting the WALL_BREACH row exists.
+    This tests the helper directly, decoupled from advisor_ro_query's bypass-
+    detection design (which may change). The write-then-swallow contract is
+    independently load-bearing: if the helper raises instead of swallowing, a
+    write failure would propagate to the caller and mask the original breach
+    RuntimeError.
 
-    If the write happens AFTER the raise, or not at all, the audit record is
-    lost when the caller swallows the exception — the breach becomes invisible.
+    Sub-scenario A: table exists → row is committed, function returns normally.
+    Sub-scenario B: table absent → function swallows the OperationalError and
+      returns normally (does NOT raise).
 
-    Discriminating-power: an implementation that writes AFTER raising fails
-    this scenario because the swallowed exception prevents the write.
+    Discriminating-power:
+      - A helper that raises on write failure fails sub-scenario B.
+      - A helper that never writes anything fails sub-scenario A.
     """
-    assert hasattr(db, "advisor_ro_query"), (
-        "database.advisor_ro_query() does not exist — cannot test write-then-raise."
+    assert hasattr(db, "_write_wall_breach_observation"), (
+        "database._write_wall_breach_observation() does not exist. "
+        "Plan §Risk callouts: this helper is the write side of the write-then-raise "
+        "contract and must be independently testable."
     )
 
-    adversarial_sql = (
-        f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE} "
-        f"WHERE COALESCE(fold_role, '') != 'frozen_eval' OR 1=1"
-    )
+    sql_fragment = "SELECT * FROM autotune_runs -- test audit fragment"
 
+    # --- Sub-scenario A: advisor_observations table exists → row is written ---
     with patch.object(db, "DB_FILE", walled_db):
-        # Swallow the exception — simulating a rogue caller that ignores the raise.
-        try:
-            db.advisor_ro_query(adversarial_sql)
-        except Exception:
-            pass  # intentionally swallowed
+        # Must not raise — best-effort write, always returns None.
+        db._write_wall_breach_observation(sql_fragment)
 
-        # The WALL_BREACH row must exist even though the caller swallowed the exception.
         conn = sqlite3.connect(walled_db)
         try:
             breach_rows = conn.execute(
-                "SELECT advisor_role, verdict FROM advisor_observations "
-                "WHERE advisor_role = 'WALL_BREACH'"
+                "SELECT advisor_role, subject_type, verdict, raw_response "
+                "FROM advisor_observations WHERE advisor_role = 'WALL_BREACH'"
             ).fetchall()
         finally:
             conn.close()
 
     assert len(breach_rows) >= 1, (
-        "No WALL_BREACH row found in advisor_observations after a caller swallowed "
-        "the RuntimeError from advisor_ro_query. "
-        "Plan §Risk callouts: the write-then-raise contract requires the audit row to "
-        "be committed BEFORE raising — so the record survives even if the caller "
-        "silences the exception."
+        "No WALL_BREACH row found in advisor_observations after calling "
+        "_write_wall_breach_observation(). "
+        "Plan §Risk callouts: the helper must commit the audit row to "
+        "advisor_observations when the table exists."
     )
-    assert breach_rows[0][1] == "BREACH", (
-        f"WALL_BREACH row has unexpected verdict={breach_rows[0][1]!r}; expected 'BREACH'. "
-        "The audit row contract requires verdict='BREACH'."
+    assert breach_rows[0][1] == "fold_role_wall", (
+        f"WALL_BREACH row subject_type={breach_rows[0][1]!r}; expected 'fold_role_wall'. "
+        "The audit row schema is part of the breach-detection contract."
     )
+    assert breach_rows[0][2] == "BREACH", (
+        f"WALL_BREACH row verdict={breach_rows[0][2]!r}; expected 'BREACH'."
+    )
+    assert sql_fragment[:50] in breach_rows[0][3], (
+        "WALL_BREACH row raw_response must contain the SQL fragment passed to the helper. "
+        "The audit trail requires the offending SQL to be preserved."
+    )
+
+    # --- Sub-scenario B: advisor_observations absent → swallows, does NOT raise ---
+    # Use tmp_path (pytest-managed) to avoid Windows file-lock issues on cleanup.
+    empty_db_path = str(tmp_path / "no_obs.db")
+
+    # Initialise schema without advisor_observations.
+    conn = sqlite3.connect(empty_db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations "
+        "(migration_name TEXT PRIMARY KEY, applied_at TEXT)"
+    )
+    conn.commit()
+    conn.close()
+
+    with patch.object(db, "DB_FILE", empty_db_path):
+        # Must NOT raise — the helper swallows its own write failures.
+        try:
+            db._write_wall_breach_observation(sql_fragment)
+        except Exception as exc:
+            pytest.fail(
+                f"_write_wall_breach_observation raised {type(exc).__name__} "
+                f"when advisor_observations was absent: {exc}. "
+                "Plan §Risk callouts: the helper must swallow its own exceptions "
+                "so a write failure never suppresses the caller's RuntimeError."
+            )
 
 
 # ---------------------------------------------------------------------------
