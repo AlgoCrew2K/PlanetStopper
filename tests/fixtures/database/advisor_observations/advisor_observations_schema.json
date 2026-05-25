@@ -1,0 +1,60 @@
+{
+  "table": "advisor_observations",
+  "description": "Schema fixture for migration 017_advisor_observations.sql. Each entry describes one column's constraints. Used by test_advisor_observations_schema_fixture_matches_live_db to cross-check PRAGMA table_info against this declared expectation.",
+  "columns": [
+    {
+      "name": "id",
+      "notnull": 0,
+      "has_default": false,
+      "note": "INTEGER PRIMARY KEY AUTOINCREMENT — SQLite does not mark PK as notnull in PRAGMA table_info"
+    },
+    {
+      "name": "created_at",
+      "notnull": 1,
+      "has_default": true,
+      "note": "DEFAULT (datetime('now')) — server-side default, notnull enforced"
+    },
+    {
+      "name": "advisor_role",
+      "notnull": 1,
+      "has_default": false,
+      "note": "Discriminator: OVERFITTING_CONSCIENCE | SPEC_CRITIC | DIVERGENCE_EXPLAINER | NARRATOR | WALL_BREACH"
+    },
+    {
+      "name": "subject_type",
+      "notnull": 1,
+      "has_default": false,
+      "note": "e.g. autotune_run, cvar_diagnostic, shadow_decision, fold_role_wall"
+    },
+    {
+      "name": "subject_id",
+      "notnull": 1,
+      "has_default": false,
+      "note": "Soft FK into the subject table — not enforced by SQLite"
+    },
+    {
+      "name": "verdict",
+      "notnull": 0,
+      "has_default": false,
+      "note": "Nullable — computed verdict label or NULL for placeholder rows"
+    },
+    {
+      "name": "raw_response",
+      "notnull": 1,
+      "has_default": true,
+      "note": "DEFAULT '{}' — JSON blob; empty dict for computed rows, populated for LLM-authored rows"
+    },
+    {
+      "name": "is_advisory_only",
+      "notnull": 1,
+      "has_default": true,
+      "note": "DEFAULT 1 — hard-wired structural declaration; accessor enforces value=1 always"
+    },
+    {
+      "name": "spec_bundle_id",
+      "notnull": 0,
+      "has_default": false,
+      "note": "Soft FK to spec_bundles.bundle_hash; NULL when not applicable"
+    }
+  ]
+}

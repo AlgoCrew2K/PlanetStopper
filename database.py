@@ -735,6 +735,127 @@ def get_suggestions_for_session(session_id: str) -> list[dict]:
     return [_parse_llm_suggestion_row(row, _LLM_SUGGESTION_COLUMNS) for row in rows]
 
 
+# --- 017: Advisor Observations ---
+
+_ADVISOR_OBSERVATION_COLUMNS = [
+    "id",
+    "created_at",
+    "advisor_role",
+    "subject_type",
+    "subject_id",
+    "verdict",
+    "raw_response",
+    "is_advisory_only",
+    "spec_bundle_id",
+]
+
+
+def _parse_advisor_observation_row(row: tuple, columns: list[str]) -> dict:
+    """Convert a raw advisor_observations tuple into a typed dict.
+
+    raw_response is a JSON blob column and is deserialised to a Python dict so
+    callers receive the original object rather than a raw JSON string — consistent
+    with the llm_suggestions precedent (database.py:653-676).
+    """
+    result = {}
+    for col, val in zip(columns, row):
+        if col == "raw_response" and val is not None:
+            result[col] = json.loads(val)
+        else:
+            result[col] = val
+    return result
+
+
+def insert_advisor_observation(
+    *,
+    advisor_role: str,
+    subject_type: str,
+    subject_id: str,
+    verdict: str | None = None,
+    raw_response: "dict | str | None" = None,
+    spec_bundle_id: str | None = None,
+    **kwargs,
+) -> int:
+    """Insert an advisor observation row; return the new row id.
+
+    Append-only: no update or delete accessor exists — existing rows are immutable
+    (same pattern as llm_suggestions; council plan §3.1 row 019).
+
+    is_advisory_only is always stored as 1 regardless of any caller-supplied value
+    in **kwargs — the Advisor never moves money.  raw_response defaults to '{}'
+    for computed rows that carry no LLM output.
+    """
+    # Serialise raw_response; None and empty dict both become '{}'.
+    if raw_response is None:
+        raw_response_str = "{}"
+    elif isinstance(raw_response, dict):
+        raw_response_str = json.dumps(raw_response)
+    else:
+        # Accept a pre-serialised JSON string as-is.
+        raw_response_str = raw_response
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO advisor_observations "
+        "(advisor_role, subject_type, subject_id, verdict, raw_response, is_advisory_only, spec_bundle_id) "
+        "VALUES (?, ?, ?, ?, ?, 1, ?)",
+        (advisor_role, subject_type, subject_id, verdict, raw_response_str, spec_bundle_id),
+    )
+    conn.commit()
+    row_id = cursor.lastrowid
+    conn.close()
+    return row_id
+
+
+def get_advisor_observations_for_subject(
+    subject_type: str,
+    subject_id: str,
+) -> list[dict]:
+    """Return all advisor_observations rows for a given subject, oldest-first.
+
+    Returns an empty list when no rows match — never raises for an unknown subject.
+    raw_response is deserialised from JSON so callers receive a Python dict.
+    Uses get_ro_connection() per architecture constraint 5 (dashboard read-only)
+    and Advisor scope-boundary integrity I-3 — read paths are structurally isolated
+    from the write path.
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT "
+        + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+        + " FROM advisor_observations WHERE subject_type = ? AND subject_id = ? ORDER BY id ASC",
+        (subject_type, subject_id),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS) for row in rows]
+
+
+def get_advisor_observations_for_role(
+    advisor_role: str,
+    limit: int = 50,
+) -> list[dict]:
+    """Return advisor_observations rows for a given role, newest-first.
+
+    Returns an empty list when no rows match — never raises for an unknown role.
+    raw_response is deserialised from JSON so callers receive a Python dict.
+    Uses get_ro_connection() — read-only at the driver level (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT "
+        + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+        + " FROM advisor_observations WHERE advisor_role = ? ORDER BY id DESC LIMIT ?",
+        (advisor_role, limit),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS) for row in rows]
+
+
 # --- H1: Schema Migration Runner ---
 
 _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
@@ -756,6 +877,7 @@ _MIGRATION_FILES = [
     "015_shadow_history_position_epoch.sql",
     "016_spec_bundles.sql",
     "019_fold_role_columns.sql",
+    "017_advisor_observations.sql",
 ]
 
 
