@@ -876,6 +876,7 @@ _MIGRATION_FILES = [
     "014_autotune_runs_selection_tstat.sql",
     "015_shadow_history_position_epoch.sql",
     "016_spec_bundles.sql",
+    "018_researcher_dof_ledger.sql",
     "019_fold_role_columns.sql",
     "017_advisor_observations.sql",
 ]
@@ -1081,6 +1082,170 @@ def get_spec_facets_for_bundle(bundle_hash: str) -> "list[dict]":
     finally:
         conn.close()
     return [dict(zip(_SPEC_FACET_COLUMNS, row)) for row in rows]
+
+
+# --- 018: Researcher DOF Ledger ---
+# Append-only degrees-of-freedom ledger for the NN1 multiple-testing haircut.
+# Records every facet evaluated on a strategy P&L / strategy-return basis.
+# Consumer: autotuner.py reads count_dof_backtest_selections() to compute S
+# and writes N_effective = N_optuna + S into autotune_runs.n_effective (plan 020).
+#
+# S accumulator = SUM(n_configs_searched) WHERE evidence_source = 'BACKTEST_SELECTION'
+# This is the sub-sweep sum (v3-evaluation §A.0 Defect 2 binding), NOT
+# COUNT(DISTINCT spec_bundle_id) — the binding conservative-upper-bound property.
+#
+# Accessor surface: INSERT + SELECT only.  No UPDATE or DELETE path — the same
+# append-only immutability contract enforced for llm_suggestions and
+# advisor_observations (database.py:670-715 and advisor section below).
+
+_VALID_DOF_FACET_CATEGORIES: frozenset[str] = frozenset({
+    "specification",
+    "parameter",
+})
+
+_VALID_DOF_DECISION_TYPES: frozenset[str] = frozenset({
+    "FIXED",
+    "SEARCHED",
+    "REVISED",
+    "OOS_PEEK",
+})
+
+_VALID_DOF_EVIDENCE_SOURCES: frozenset[str] = frozenset({
+    "THEORY",
+    "MANDATE",
+    "STYLIZED_FACT",
+    "CALIBRATION",
+    "BACKTEST_SELECTION",
+    "OOS",
+})
+
+_DOF_LEDGER_COLUMNS = [
+    "id",
+    "created_at",
+    "facet_name",
+    "facet_category",
+    "decision_type",
+    "evidence_source",
+    "n_configs_searched",
+    "touched_frozen_eval",
+    "spec_bundle_id",
+    "justification",
+]
+
+
+def insert_dof_ledger_row(
+    *,
+    facet_name: str,
+    facet_category: str,
+    decision_type: str,
+    evidence_source: str,
+    n_configs_searched: int = 1,
+    touched_frozen_eval: int = 0,
+    spec_bundle_id: "str | None" = None,
+    justification: "str | None" = None,
+) -> int:
+    """Append one row to researcher_dof_ledger. Returns the new row id.
+
+    Raises ValueError for any enum column value outside the accepted set.
+    Enforcement is at the application layer — consistent with the codebase's
+    app-level constraint pattern (no SQL CHECK constraint).
+
+    This is the only write path — there is no update or delete accessor.
+    The DOF ledger is immutable by design (tripwire, not a routine ledger).
+    """
+    if facet_category not in _VALID_DOF_FACET_CATEGORIES:
+        raise ValueError(
+            f"facet_category {facet_category!r} is not valid. "
+            f"Accepted: {sorted(_VALID_DOF_FACET_CATEGORIES)}"
+        )
+    if decision_type not in _VALID_DOF_DECISION_TYPES:
+        raise ValueError(
+            f"decision_type {decision_type!r} is not valid. "
+            f"Accepted: {sorted(_VALID_DOF_DECISION_TYPES)}"
+        )
+    if evidence_source not in _VALID_DOF_EVIDENCE_SOURCES:
+        raise ValueError(
+            f"evidence_source {evidence_source!r} is not valid. "
+            f"Accepted: {sorted(_VALID_DOF_EVIDENCE_SOURCES)}"
+        )
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO researcher_dof_ledger "
+            "(facet_name, facet_category, decision_type, evidence_source, "
+            "n_configs_searched, touched_frozen_eval, spec_bundle_id, justification) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                facet_name,
+                facet_category,
+                decision_type,
+                evidence_source,
+                n_configs_searched,
+                touched_frozen_eval,
+                spec_bundle_id,
+                justification,
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_dof_ledger_for_bundle(spec_bundle_id: str) -> "list[dict]":
+    """Return all researcher_dof_ledger rows for the given spec_bundle_id, ordered by id.
+
+    Uses a read-only connection — this accessor is called from the Advisor and
+    dashboard surfaces where writes are prohibited (charter Operating Rule 3).
+    Returns an empty list if no rows exist for the bundle.
+    """
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS)
+            + " FROM researcher_dof_ledger WHERE spec_bundle_id = ? ORDER BY id ASC",
+            (spec_bundle_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_DOF_LEDGER_COLUMNS, row)) for row in rows]
+
+
+def count_dof_backtest_selections(spec_bundle_id: "str | None" = None) -> int:
+    """Return S = SUM(n_configs_searched) for BACKTEST_SELECTION rows.
+
+    This is the S accumulator in N_effective = N_optuna + S.
+
+    When spec_bundle_id is provided, S is scoped to that bundle.
+    When None, S is the global sum across all bundles (pre-bundle call sites).
+
+    The binding consumer reading is the sub-sweep SUM, NOT COUNT(DISTINCT
+    spec_bundle_id) — a single P&L-toured spec that received its own sub-sweep
+    contributes its full sub-sweep count (council §2.2 / v3-evaluation §A.0
+    Defect 2). A deliberately conservative upper bound: can reject a genuine
+    signal, never pass a spurious one (council §2.2 property 2).
+
+    Uses a read-only connection — the autotuner's read path must never hold a
+    write lock while computing the haircut.
+    """
+    conn = get_ro_connection()
+    try:
+        if spec_bundle_id is not None:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(n_configs_searched), 0) "
+                "FROM researcher_dof_ledger "
+                "WHERE evidence_source = 'BACKTEST_SELECTION' AND spec_bundle_id = ?",
+                (spec_bundle_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(n_configs_searched), 0) "
+                "FROM researcher_dof_ledger "
+                "WHERE evidence_source = 'BACKTEST_SELECTION'",
+            ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row and row[0] is not None else 0
 
 
 # --- Advisor Wall: frozen-eval access guard ---
