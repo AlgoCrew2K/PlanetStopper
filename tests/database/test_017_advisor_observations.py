@@ -58,7 +58,7 @@ Accessor signatures expected from the GREEN implementer (modelled on llm_suggest
 
     get_advisor_observations_for_role(
         advisor_role: str,
-        limit: int = 100,
+        limit: int = 50,
     ) -> list[dict]                  # empty list if no rows; newest-first
 """
 
@@ -1173,3 +1173,30 @@ def test_get_advisor_observations_for_role_does_not_reference_optimization_db():
             f"get_advisor_observations_for_role must not reference {forbidden!r}. "
             "Two-DB boundary: advisory reads come from the state DB only."
         )
+
+
+# ---------------------------------------------------------------------------
+# REVISE: get_advisor_observations_for_role default limit must be 50
+# ---------------------------------------------------------------------------
+
+
+def test_get_advisor_observations_for_role_default_limit_is_50():
+    """get_advisor_observations_for_role must default limit to 50, not any other value.
+
+    The spec (spec-017 accessor signature) specifies limit: int = 50. The RED
+    test suite originally encoded 100 in the docstring helper — that was an
+    error caught during REVISE. This test asserts the contract via inspect so
+    the default is verified against the live signature, not just called behavior.
+    """
+    import inspect as _inspect  # noqa: PLC0415 — local import for clarity
+
+    sig = _inspect.signature(db_module.get_advisor_observations_for_role)
+    limit_param = sig.parameters.get("limit")
+    assert limit_param is not None, (
+        "get_advisor_observations_for_role must have a 'limit' parameter."
+    )
+    assert limit_param.default == 50, (
+        f"get_advisor_observations_for_role default limit must be 50; "
+        f"got {limit_param.default!r}. "
+        "The spec (spec-017) specifies limit: int = 50."
+    )
