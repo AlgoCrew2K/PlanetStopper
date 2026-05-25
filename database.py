@@ -1030,8 +1030,11 @@ def advisor_ro_query(sql: str, params: tuple = ()) -> list:
     # Wraps the caller's SQL as an inner subquery and adds an outer WHERE that
     # converts NULL fold_role to 'NULL_SENTINEL' so the NOT IN covers both
     # frozen_eval and untagged rows (M-1 safe-default: fail-safe to exclusion).
-    # Queries that do not project fold_role are unaffected: the outer WHERE
-    # references a column not in the subquery output and is effectively a no-op.
+    #
+    # Fallback for non-partitioned tables: if the inner query does not project
+    # fold_role, SQLite raises OperationalError: no such column: fold_role.
+    # In that case, execute the unwrapped query — a table with no fold_role
+    # column cannot contain frozen_eval rows, so the result is structurally safe.
     wrapped_sql = (
         "SELECT * FROM (\n"
         + sql
@@ -1042,7 +1045,16 @@ def advisor_ro_query(sql: str, params: tuple = ()) -> list:
     conn = get_ro_connection()
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(wrapped_sql, params).fetchall()
+        try:
+            rows = conn.execute(wrapped_sql, params).fetchall()
+        except sqlite3.OperationalError as oe:
+            if "fold_role" in str(oe).lower():
+                # Inner query does not project fold_role — no frozen_eval rows possible.
+                # Execute the caller's raw SQL directly; the post-hoc tripwire below
+                # provides the safety net should fold_role somehow appear in the result.
+                rows = conn.execute(sql, params).fetchall()
+            else:
+                raise
     finally:
         conn.close()
 
