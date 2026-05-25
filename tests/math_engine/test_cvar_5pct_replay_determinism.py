@@ -66,14 +66,29 @@ def _date_key(i: int) -> str:
 def _build_history(spec: dict) -> dict:
     """Expand historical_data_spec into the shape expected by compute_portfolio_cvar.
 
-    Supports two kinds:
-      "alternating"  — two-level ±amplitude pattern (good for reproducibility tests)
-      "multi_level"  — cycles through N level dicts (good for distinguishability tests;
-                       prevents tail saturation to a single constant value)
+    Supports three kinds:
+      "alternating"  — two-level ±amplitude pattern (reproducibility tests)
+      "multi_level"  — cycles through N level dicts (discrete tiers, limited use)
+      "explicit"     — pre-computed list of {spy, aaa, bbb} dicts stored in the
+                       fixture as literals. Required for distinguishability tests
+                       because kNN selection is deterministic on the pool; with
+                       continuous-valued explicit returns, different seeds draw
+                       different tail samples and produce distinguishable CVaR means.
     """
     kind = spec["kind"]
-    num_days = spec["num_days"]
     history: dict = {}
+
+    if kind == "explicit":
+        # days is a list of {spy, aaa, bbb} dicts with pre-computed continuous returns.
+        for i, day in enumerate(spec["days"]):
+            history[_date_key(i)] = {
+                "SPY": {"daily_ret": day["spy"]},
+                "AAA": {"daily_ret": day["aaa"]},
+                "BBB": {"daily_ret": day["bbb"]},
+            }
+        return history
+
+    num_days = spec["num_days"]
 
     if kind == "multi_level":
         levels = spec["levels"]
