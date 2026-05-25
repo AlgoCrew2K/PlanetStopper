@@ -81,55 +81,70 @@ def test_write_telemetry_row_does_not_use_isolation_level_none():
     )
 
 
-def test_write_telemetry_row_live_path_uses_timeout_0_for_fail_fast():
-    """Source guard: write_telemetry_row live path must use timeout=0.0.
+def test_write_telemetry_row_uses_timeout_10_on_both_paths():
+    """Source guard: write_telemetry_row must use timeout=10.0 on both live and replay paths.
 
-    Live mode is on the 1-minute execution-path cadence — any lock contention
-    must fail immediately so the live-mode swallow fires without waiting.
-    Using timeout=10.0 (the codebase standard) on the live path would block
-    the cycle for up to 10 s on a locked DB, a 10× violation of the H-3
-    non-blocking contract.
+    The shadow-logging-pattern plan §Risk callouts explicitly states:
+      "The 10-second sqlite3.connect(timeout=...) default at database.py:53,60 is the
+       worst-case M2 latency on a held write-lock. 10 seconds is inside the 1-minute
+       cadence budget; the live-mode-swallow returns immediately on the eventual
+       OperationalError."
 
-    timeout=0.0 was introduced by the shadow-logging-pattern cycle (H-3 fix)
-    after the perf test test_cvar_write_live_mode_swallows_locked_db_within_budget
-    confirmed the 10-second wait violated the 1,000 ms non-blocking budget.
+    The non-blocking guarantee is provided by the try/except swallow in live mode,
+    NOT by a short timeout.  Using timeout=0.0 on the live path causes data loss:
+    transient sub-millisecond WAL locks that would resolve in microseconds are
+    treated as permanent failures, silently dropping CVaR rows.
 
-    spec-shadow BLOCK finding — cycle shadow-logging-pattern.
+    Both paths must use timeout=10.0 matching the record_shadow_observation precedent
+    (database.py:1147-1194) and the codebase-wide standard at database.py:53,60.
+
+    Uses AST inspection to count sqlite3.connect() calls with timeout=10.0 — avoids
+    false positives from comments that mention the value.
+
+    rev-shadow BLOCK — shadow-logging-pattern cycle.
     """
     assert hasattr(db, "write_telemetry_row"), (
         "write_telemetry_row not found — implement it first"
     )
-    source = inspect.getsource(db.write_telemetry_row)
-    assert "timeout=0.0" in source, (
-        "write_telemetry_row live path must use timeout=0.0 (fail-fast). "
-        "H-3 non-blocking contract: live-mode swallow must fire immediately on "
-        "lock contention, not wait up to 10 s. "
-        "spec-shadow BLOCK — shadow-logging-pattern cycle."
+    import ast as _ast
+    import database as _db_module
+    import pathlib as _pathlib
+
+    db_src = _pathlib.Path(_db_module.__file__).read_text(encoding="utf-8")
+    tree = _ast.parse(db_src)
+
+    # Find all sqlite3.connect() calls inside write_telemetry_row and collect their
+    # timeout= keyword argument values.
+    connect_timeouts: list = []
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.FunctionDef) and node.name == "write_telemetry_row":
+            for child in _ast.walk(node):
+                if isinstance(child, _ast.Call):
+                    func = child.func
+                    is_connect = (
+                        (isinstance(func, _ast.Attribute) and func.attr == "connect") or
+                        (isinstance(func, _ast.Name) and func.id == "connect")
+                    )
+                    if is_connect:
+                        for kw in child.keywords:
+                            if kw.arg == "timeout":
+                                if isinstance(kw.value, _ast.Constant):
+                                    connect_timeouts.append(kw.value.value)
+
+    # Both the live branch connect() and the replay branch connect() must use 10.0.
+    non_10_timeouts = [t for t in connect_timeouts if t != 10.0]
+    assert not non_10_timeouts, (
+        f"write_telemetry_row has sqlite3.connect() call(s) with timeout != 10.0: "
+        f"{non_10_timeouts}. "
+        "The plan explicitly specifies timeout=10.0 as the intended contract; "
+        "the non-blocking guarantee is the try/except swallow, not a short timeout. "
+        "A zero-timeout on the live path causes unnecessary data loss on transient locks. "
+        "rev-shadow BLOCK — shadow-logging-pattern cycle."
     )
-
-
-def test_write_telemetry_row_replay_path_uses_timeout_10():
-    """Source guard: write_telemetry_row replay path must use timeout=10.0.
-
-    Replay mode runs outside the live execution cadence (autotuner walk-forward,
-    synthetic history replay).  It uses the codebase-standard timeout=10.0
-    matching record_shadow_observation and all other write-connection opens.
-    A replay that cannot persist its row should wait the standard interval
-    before raising — a loud failure is correct for replay (H4 binding).
-
-    This test is distinct from the live-path timeout test because the two paths
-    have intentionally different contracts: live=fail-fast (0.0), replay=standard (10.0).
-
-    spec-shadow BLOCK finding — cycle shadow-logging-pattern.
-    """
-    assert hasattr(db, "write_telemetry_row"), (
-        "write_telemetry_row not found — implement it first"
-    )
-    source = inspect.getsource(db.write_telemetry_row)
-    assert "timeout=10.0" in source, (
-        "write_telemetry_row replay path must use timeout=10.0 (codebase standard). "
-        "Replay is not on the live execution cadence — it may wait for the lock. "
-        "spec-shadow BLOCK — shadow-logging-pattern cycle."
+    assert len(connect_timeouts) >= 2, (
+        f"Expected at least 2 sqlite3.connect() calls in write_telemetry_row "
+        f"(one per branch), found {len(connect_timeouts)}. "
+        "Both live and replay branches must open their own connection with timeout=10.0."
     )
 
 
