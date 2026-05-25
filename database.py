@@ -755,7 +755,9 @@ _MIGRATION_FILES = [
     "014_autotune_runs_selection_tstat.sql",
     "015_shadow_history_position_epoch.sql",
     "016_spec_bundles.sql",
+    "017_advisor_observations.sql",
     "019_fold_role_columns.sql",
+    "021_fold_role.sql",
 ]
 
 
@@ -963,11 +965,24 @@ def get_spec_facets_for_bundle(bundle_hash: str) -> "list[dict]":
 
 # --- Advisor Wall: frozen-eval access guard ---
 
-# Bare fold_role inequality patterns that the Advisor wall must reject.
-# Both SQL inequality operators (!=  and  <>) have identical H3 NULL trap semantics —
-# neither coerces NULL to a non-match, so both silently hide legacy rows.
-# Callers must use COALESCE(fold_role, '') != 'frozen_eval'.
-_BARE_FOLD_ROLE_PREDICATES = ("fold_role !=", "fold_role <>")
+# SQL bypass and bare fold_role predicate patterns that the Advisor wall must reject.
+#
+#   fold_role !=  / fold_role <>
+#     H3 SQL-NULL trap: NULL rows are silently excluded by SQL three-valued logic.
+#     Both forms evaluate NULL != 'frozen_eval' to NULL (falsy), not TRUE.
+#
+#   OR 1=1
+#     Classic tautology injection that defeats any WHERE clause predicate, including
+#     COALESCE-wrapped fold_role predicates.  A caller-supplied predicate such as
+#     COALESCE(fold_role,'') != 'frozen_eval' is rendered meaningless when followed
+#     by OR 1=1 — the entire WHERE becomes always TRUE and all rows are returned,
+#     including frozen_eval rows.  Any Advisor SQL containing OR 1=1 is a structural
+#     bypass attempt and must be rejected.
+#
+# Callers supply the inner SELECT; the helper wraps it automatically with the
+# outer COALESCE filter.  COALESCE(fold_role...) in the caller's WHERE is accepted
+# when not combined with a bypass (the outer wrap provides defence-in-depth).
+_BARE_FOLD_ROLE_PREDICATES = ("fold_role !=", "fold_role <>", "OR 1=1")
 
 
 def advisor_ro_query(sql: str, params: tuple = ()) -> list:
@@ -980,49 +995,77 @@ def advisor_ro_query(sql: str, params: tuple = ()) -> list:
 
     Caller contract
     ---------------
-    - Any predicate that filters on fold_role MUST use the COALESCE form:
-          COALESCE(fold_role, '') != 'frozen_eval'
-      A bare ``fold_role != ...`` is rejected with ValueError before execution.
-    - The query must never return a row with fold_role = 'frozen_eval'.  If one
-      slips through (e.g. the caller constructed an OR 1=1 bypass), the
-      wall-breach tripwire writes a WALL_BREACH row to advisor_observations and
-      then raises — ensuring the audit record survives even if the caller
-      swallows the exception.
+    - Any predicate that filters on fold_role MUST NOT use a bare inequality:
+          fold_role != 'frozen_eval'  (H3 NULL trap — silently hides NULL rows)
+          fold_role <> 'frozen_eval'  (SQL-standard form, same trap)
+      Both forms are rejected with ValueError before execution.
+    - The helper wraps the caller's SQL as a subquery and appends a
+      COALESCE(fold_role,'NULL_SENTINEL') NOT IN ('frozen_eval','NULL_SENTINEL')
+      predicate.  This filters frozen_eval rows AND untagged (NULL fold_role)
+      rows at the SQL level before they ever reach Python.
+      (M-1 safe-default: a forgotten fold_role tag must fail-safe to exclusion.)
+    - If a frozen_eval row slips through despite the wrap (e.g. the caller
+      constructed an OR 1=1 bypass), the wall-breach tripwire writes a
+      WALL_BREACH row to advisor_observations BEFORE raising — the audit record
+      survives even if the caller swallows the exception (plan §Risk callouts).
 
     Returns a list of sqlite3.Row objects.
     """
-    # --- Predicate guard: reject bare fold_role != / <> before touching the DB ---
+    # --- Predicate guard: reject fold_role predicates in caller SQL ---
+    # Callers must NOT filter on fold_role themselves.  The helper applies the
+    # COALESCE wrap at the outer-query level.  A caller-supplied fold_role
+    # predicate is a bypass attempt — write a WALL_BREACH audit row first
+    # (write-then-raise contract: the record must survive caller-swallowed exceptions),
+    # then raise ValueError.
     if any(pat in sql for pat in _BARE_FOLD_ROLE_PREDICATES):
+        _write_wall_breach_observation(sql)
         raise ValueError(
-            "advisor_ro_query: bare 'fold_role !=' predicate detected in caller SQL. "
-            "Use COALESCE(fold_role, '') != 'frozen_eval' to avoid the H3 SQL-NULL trap "
-            "(NULL rows are silently excluded by the bare form)."
+            "advisor_ro_query: fold_role predicate detected in caller SQL. "
+            "Bare != / <> carry the H3 SQL-NULL trap; COALESCE forms may be defeated "
+            "by OR 1=1 bypass.  The helper wraps the query with a COALESCE predicate "
+            "automatically — callers must not add a fold_role filter to their SQL."
         )
+
+    # --- COALESCE wrap: exclude frozen_eval AND untagged (NULL) rows at the DB level ---
+    # Wraps the caller's SQL as an inner subquery and adds an outer WHERE that
+    # converts NULL fold_role to 'NULL_SENTINEL' so the NOT IN covers both
+    # frozen_eval and untagged rows (M-1 safe-default: fail-safe to exclusion).
+    # Queries that do not project fold_role are unaffected: the outer WHERE
+    # references a column not in the subquery output and is effectively a no-op.
+    wrapped_sql = (
+        "SELECT * FROM (\n"
+        + sql
+        + "\n) AS _advisor_inner_query"
+        + " WHERE COALESCE(fold_role,'NULL_SENTINEL') NOT IN ('frozen_eval','NULL_SENTINEL')"
+    )
 
     conn = get_ro_connection()
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(sql, params).fetchall()
+        rows = conn.execute(wrapped_sql, params).fetchall()
     finally:
         conn.close()
 
-    # --- Wall-breach tripwire: detect frozen_eval rows in the result set ---
+    # --- Post-hoc tripwire: detect frozen_eval rows that bypassed the wrap ---
+    # Under correct operation this check never fires: the outer COALESCE filters
+    # frozen_eval at the SQL level.  If a frozen_eval row appears in the final
+    # result (e.g. an outer-wrap-defeating injection not caught by the predicate
+    # guard), write the audit row first (write-then-raise contract) then raise.
     for row in rows:
         try:
             role = row["fold_role"]
         except (IndexError, KeyError):
-            # This row does not project fold_role — skip it and inspect the next.
+            # Row does not project fold_role — cannot verify; skip.
             # Must be `continue`, not `break`: a break would silently skip all
             # remaining rows, letting a frozen_eval row in a later position escape.
             continue
         if role == "frozen_eval":
-            # Write the audit record first, then raise — the write must survive
-            # even if the caller swallows the exception (plan §Risk callouts).
             _write_wall_breach_observation(sql)
             raise RuntimeError(
                 "advisor_ro_query: WALL_BREACH — a frozen_eval row reached the Advisor "
-                "result set.  The frozen-eval fold is the held-out evaluation partition; "
-                "Advisor reads must never touch it.  SQL fragment logged to advisor_observations."
+                "result set despite the COALESCE wrap.  The frozen-eval fold is the held-out "
+                "evaluation partition; Advisor reads must never touch it.  "
+                "SQL fragment logged to advisor_observations."
             )
 
     return list(rows)
@@ -1057,6 +1100,35 @@ def _write_wall_breach_observation(sql_fragment: str) -> None:
         conn.close()
     except Exception as exc:  # noqa: BLE001
         logging.error("_write_wall_breach_observation: failed to write audit row: %s", exc)
+
+
+def query_wall_breach_tripwire() -> list:
+    """Return researcher_dof_ledger rows that represent a post-freeze frozen_eval touch.
+
+    A wall breach is defined as: a researcher_dof_ledger row with
+    fold_role = 'frozen_eval' AND created_at > spec_bundles.frozen_at for the
+    associated spec bundle.  Any non-empty result is a hard CI failure (M-1 ★).
+
+    Returns a list of sqlite3.Row objects; empty list means the wall held.
+    An OperationalError is raised (not swallowed) if researcher_dof_ledger or
+    spec_bundles does not exist — this surfaces a missing-migration failure
+    rather than returning a false-clean empty result.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT r.id, r.spec_bundle_id, r.fold_role, r.created_at,"
+            "       r.observation_type, r.payload_json,"
+            "       b.frozen_at, b.bundle_hash"
+            "  FROM researcher_dof_ledger r"
+            "  JOIN spec_bundles b ON r.spec_bundle_id = b.id"
+            " WHERE r.fold_role = 'frozen_eval'"
+            "   AND r.created_at > b.frozen_at"
+        ).fetchall()
+    finally:
+        conn.close()
+    return list(rows)
 
 
 # --- R1: Fleet Alert State Helpers ---
