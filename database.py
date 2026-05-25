@@ -756,6 +756,7 @@ _MIGRATION_FILES = [
     "015_shadow_history_position_epoch.sql",
     "016_spec_bundles.sql",
     "019_fold_role_columns.sql",
+    "021_cvar_diagnostics.sql",
 ]
 
 
@@ -1518,7 +1519,10 @@ def write_telemetry_row(
 
     if mode == "live":
         try:
-            conn = sqlite3.connect(_db_file(), timeout=10.0)
+            # Zero timeout for live mode: fail immediately on any lock so the
+            # live-mode swallow fires without waiting (H-3 non-blocking contract).
+            # Replay mode uses timeout=10.0 (the codebase-wide standard).
+            conn = sqlite3.connect(_db_file(), timeout=0.0)
             conn.execute(sql, values)
             conn.commit()
             conn.close()
