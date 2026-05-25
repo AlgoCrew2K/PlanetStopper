@@ -40,6 +40,7 @@ import ast
 import importlib
 import inspect
 import sys
+import threading
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
@@ -104,16 +105,20 @@ def _get_route_functions() -> list[tuple[str, str]]:
 
 
 def _parse_route_body_names(func_name: str, source_path: Path) -> set[str]:
-    """Extract all Name and Attribute call targets within a function body.
+    """Extract call targets from the TOP-LEVEL body of a route function.
 
-    Walks the AST of the function to collect every identifier appearing as the
-    callee of a Call node.  This catches both bare calls (save_state(...)) and
-    attribute calls (database.save_state(...)).
+    Walks only the direct statements of the named function — it does NOT descend
+    into nested FunctionDef or AsyncFunctionDef nodes (e.g. background-thread
+    closures like _dismiss_async).  Calls inside nested functions are dispatched
+    off the request thread and are not synchronous side-effects of the route.
+
+    This catches both bare calls (save_state(...)) and attribute calls
+    (database.save_state(...)) made directly by the route frame.
     """
     source = source_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
-    # Locate the function definition
+    # Locate the top-level function definition by name.
     target_func = None
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -125,12 +130,28 @@ def _parse_route_body_names(func_name: str, source_path: Path) -> set[str]:
         return set()
 
     names: set[str] = set()
-    for node in ast.walk(target_func):
-        if isinstance(node, ast.Call):
+
+    class _TopLevelCallVisitor(ast.NodeVisitor):
+        """Visit Call nodes but do not descend into nested function definitions."""
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            # Skip nested function bodies — they run off the request thread.
+            if node is target_func:
+                self.generic_visit(node)
+            # else: do not recurse into nested defs
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if node is target_func:
+                self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
             if isinstance(node.func, ast.Name):
                 names.add(node.func.id)
             elif isinstance(node.func, ast.Attribute):
                 names.add(node.func.attr)
+            self.generic_visit(node)
+
+    _TopLevelCallVisitor().visit(target_func)
     return names
 
 
@@ -303,12 +324,18 @@ class TestMutatorSpiesNeverCalledOnGetRoutes:
         mock_db.save_state.assert_not_called()
         mock_db.record_autotune_run.assert_not_called()
 
-    def test_fleet_alert_dismiss_is_a_write_route_and_must_be_redesigned(self, flask_client):
-        """POST /api/fleet-alert/dismiss currently calls write_fleet_alert — this must change.
+    def test_fleet_alert_dismiss_dispatches_write_to_background_thread(self, flask_client):
+        """POST /api/fleet-alert/dismiss must dispatch write_fleet_alert to a background thread.
 
-        This test asserts that the route does NOT call write_fleet_alert after the
-        side-effect ban is implemented.  It will be RED until the implementer
-        moves the dismiss action out of a synchronous route write.
+        The redesign (Option A — background-thread dispatch via _DISMISS_EXECUTOR) is
+        now implemented.  The new contract:
+          - write_fleet_alert is NOT called synchronously on the Flask request thread.
+          - write_fleet_alert IS called by the background executor worker (off-thread).
+          - The handler returns 200 immediately before the write completes.
+
+        Assertion strategy: use a threading.Event inside the mock so we wait for
+        the background write inside the patch.object context.  This is the same
+        pattern as test_fleet_banner.py::test_dismiss_route_clears_alert_in_state.
         """
         mock_db = _make_safe_db_mock()
         mock_db.read_fleet_alert.return_value = {
@@ -318,11 +345,24 @@ class TestMutatorSpiesNeverCalledOnGetRoutes:
             "payload": "{}",
         }
 
+        write_completed = threading.Event()
+
+        def _capture_write(payload):
+            write_completed.set()
+
+        mock_db.write_fleet_alert.side_effect = _capture_write
+
         with patch.object(app_module, "database", mock_db):
             flask_client.post("/api/fleet-alert/dismiss")
+            # Wait inside the patch context — the executor worker runs after the handler
+            # returns; the mock must remain active when it fires.
+            write_completed.wait(timeout=2)
 
-        mock_db.write_fleet_alert.assert_not_called(), (
-            "POST /api/fleet-alert/dismiss calls database.write_fleet_alert() directly. "
-            "This is a dashboard write path and violates the side-effect ban. "
-            "The dismiss action must be routed through a non-dashboard write path."
+        assert mock_db.write_fleet_alert.called, (
+            "POST /api/fleet-alert/dismiss must call database.write_fleet_alert() via "
+            "a background thread.  The executor worker did not call the mock within 2 s."
+        )
+        written_payload = mock_db.write_fleet_alert.call_args[0][0]
+        assert written_payload.get("dismissed_at_et") is not None, (
+            "Background write payload must include a non-null dismissed_at_et timestamp."
         )

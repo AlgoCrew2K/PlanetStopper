@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import threading
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -238,6 +239,10 @@ class TestFleetAlertDismissRoute:
         """
         POST /api/fleet-alert/dismiss must set dismissed_at_et via write_fleet_alert().
         R1: dismiss writes ONLY to fleet_alert_state — never calls load_state/save_state.
+
+        Option-A contract: write_fleet_alert is dispatched to a background thread.
+        The assertion waits up to 2 s for the background write to land before
+        checking mock_write.called — deterministic, not reliant on sleep.
         """
         existing_row = {
             "tripped_at_et": "2026-05-16T10:33:00",
@@ -247,14 +252,25 @@ class TestFleetAlertDismissRoute:
             "dismissed_at_et": None,
         }
 
+        write_completed = threading.Event()
+
+        def _write_and_signal(payload):
+            write_completed.set()
+
         with patch("database.read_fleet_alert", return_value=existing_row), \
-             patch("database.write_fleet_alert") as mock_write:
+             patch("database.write_fleet_alert", side_effect=_write_and_signal) as mock_write:
             resp = flask_client.post("/api/fleet-alert/dismiss")
+            # Wait inside the patch context so the mock remains active while
+            # the background thread runs.  Timeout of 2 s is well above the
+            # background write latency (local SQLite, sub-millisecond).
+            write_completed.wait(timeout=2)
 
         assert resp.status_code == 200
         assert mock_write.called, (
             "dismiss route must call database.write_fleet_alert() to set dismissed_at_et. "
-            "R1: alert state is owned by fleet_alert_state, not bot_state."
+            "R1: alert state is owned by fleet_alert_state, not bot_state. "
+            "Option-A: write is dispatched to a background thread — mock must be called "
+            "within the 2 s wait window."
         )
         written_payload = mock_write.call_args[0][0]
         assert written_payload.get("dismissed_at_et") is not None, (

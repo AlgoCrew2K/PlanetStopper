@@ -1,6 +1,7 @@
 """Flask application for AlphaBot Control Center with Account-Level settings."""
 
 import atexit
+import concurrent.futures
 import io
 import logging
 import os
@@ -56,6 +57,12 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
+
+# Single-worker executor for dashboard background writes (fleet alert dismiss).
+# A persistent worker thread owns the I/O so Flask request handlers return
+# immediately without blocking on SQLite.  Single-worker is intentional:
+# serialises writes so no two dismiss tasks race on fleet_alert_state.
+_DISMISS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 _daemon_log = logging.getLogger("alphabot")
 _daemon_log.setLevel(logging.DEBUG)
@@ -1494,12 +1501,20 @@ def api_triggers():
 
 @app.route("/api/fleet-alert/dismiss", methods=["POST"])
 def fleet_alert_dismiss():
-    # Dashboard side-effect ban: write_fleet_alert is engine-exclusive.
-    # The dismiss acknowledgement is read-only from the route; the engine owns alert state.
-    try:
-        return jsonify({"status": "ok"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    # Side-effect ban: write_fleet_alert must not block the request thread.
+    # Submit to the module-level executor so the handler returns immediately
+    # while the dismissed_at_et write still lands durably in fleet_alert_state.
+    def _dismiss_async():
+        try:
+            row = database.read_fleet_alert()
+            if row is not None:
+                row["dismissed_at_et"] = datetime.now(_ET).isoformat()
+                database.write_fleet_alert(row)
+        except Exception:
+            logging.error("fleet_alert_dismiss: background write failed", exc_info=True)
+
+    _DISMISS_EXECUTOR.submit(_dismiss_async)
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/trigger", methods=["POST"])
