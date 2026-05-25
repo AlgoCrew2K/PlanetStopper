@@ -126,6 +126,7 @@ class TestQuantstatsMetricsKeepsNegativeConventionInternally:
     NOT to flip this producer; it is converted at the consumer boundary."""
 
     def test_quantstats_max_drawdown_is_non_positive_for_a_real_loss(self):
+        pytest.importorskip("quantstats", reason="quantstats is an optional dep — skip when absent")
         returns_pct = [1.0, -25.0, 5.0, 3.0]
         metrics = compute_quantstats_metrics(returns_pct)
         assert metrics["max_drawdown"] is not None
