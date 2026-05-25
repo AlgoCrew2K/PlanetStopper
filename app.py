@@ -63,6 +63,8 @@ log.setLevel(logging.ERROR)
 # immediately without blocking on SQLite.  Single-worker is intentional:
 # serialises writes so no two dismiss tasks race on fleet_alert_state.
 _DISMISS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+# CC-003: register shutdown so in-flight dismiss writes are not abandoned on exit.
+atexit.register(_DISMISS_EXECUTOR.shutdown, wait=True)
 
 _daemon_log = logging.getLogger("alphabot")
 _daemon_log.setLevel(logging.DEBUG)
