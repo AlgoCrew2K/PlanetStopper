@@ -81,21 +81,55 @@ def test_write_telemetry_row_does_not_use_isolation_level_none():
     )
 
 
-def test_write_telemetry_row_uses_timeout_10():
-    """Source guard: write_telemetry_row must pass timeout=10.0.
+def test_write_telemetry_row_live_path_uses_timeout_0_for_fail_fast():
+    """Source guard: write_telemetry_row live path must use timeout=0.0.
 
-    The record_shadow_observation precedent at database.py:1199 uses
-    timeout=10.0 — the same timeout as all other write-connection opens
-    in this codebase.  Omitting it would use the default (5.0 s) and
-    diverge from the established contract without justification.
+    Live mode is on the 1-minute execution-path cadence — any lock contention
+    must fail immediately so the live-mode swallow fires without waiting.
+    Using timeout=10.0 (the codebase standard) on the live path would block
+    the cycle for up to 10 s on a locked DB, a 10× violation of the H-3
+    non-blocking contract.
+
+    timeout=0.0 was introduced by the shadow-logging-pattern cycle (H-3 fix)
+    after the perf test test_cvar_write_live_mode_swallows_locked_db_within_budget
+    confirmed the 10-second wait violated the 1,000 ms non-blocking budget.
+
+    spec-shadow BLOCK finding — cycle shadow-logging-pattern.
+    """
+    assert hasattr(db, "write_telemetry_row"), (
+        "write_telemetry_row not found — implement it first"
+    )
+    source = inspect.getsource(db.write_telemetry_row)
+    assert "timeout=0.0" in source, (
+        "write_telemetry_row live path must use timeout=0.0 (fail-fast). "
+        "H-3 non-blocking contract: live-mode swallow must fire immediately on "
+        "lock contention, not wait up to 10 s. "
+        "spec-shadow BLOCK — shadow-logging-pattern cycle."
+    )
+
+
+def test_write_telemetry_row_replay_path_uses_timeout_10():
+    """Source guard: write_telemetry_row replay path must use timeout=10.0.
+
+    Replay mode runs outside the live execution cadence (autotuner walk-forward,
+    synthetic history replay).  It uses the codebase-standard timeout=10.0
+    matching record_shadow_observation and all other write-connection opens.
+    A replay that cannot persist its row should wait the standard interval
+    before raising — a loud failure is correct for replay (H4 binding).
+
+    This test is distinct from the live-path timeout test because the two paths
+    have intentionally different contracts: live=fail-fast (0.0), replay=standard (10.0).
+
+    spec-shadow BLOCK finding — cycle shadow-logging-pattern.
     """
     assert hasattr(db, "write_telemetry_row"), (
         "write_telemetry_row not found — implement it first"
     )
     source = inspect.getsource(db.write_telemetry_row)
     assert "timeout=10.0" in source, (
-        "write_telemetry_row must use timeout=10.0 in sqlite3.connect, "
-        "matching the record_shadow_observation precedent."
+        "write_telemetry_row replay path must use timeout=10.0 (codebase standard). "
+        "Replay is not on the live execution cadence — it may wait for the lock. "
+        "spec-shadow BLOCK — shadow-logging-pattern cycle."
     )
 
 
