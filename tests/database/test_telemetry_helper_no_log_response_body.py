@@ -243,11 +243,14 @@ def test_live_error_log_does_not_dump_entire_row_dict(caplog, tmp_path, monkeypa
 def test_replay_mode_error_emits_no_warning_log(
     telemetry_fixture, caplog, tmp_path, monkeypatch
 ):
-    """Replay mode: on DB error, no WARNING is logged before the exception.
+    """Replay mode: on error, no WARNING is logged before the exception.
 
     If the helper logs-then-raises, the log would contain financial payload
     under gate 7 scrutiny AND would reveal implementation detail about the
     exception path.  The replay contract is: raise directly, no log.
+
+    CC-002: an unknown table_name now raises ValueError (allowlist check) before
+    any DB interaction; the no-log contract still holds for ValueError too.
     """
     import sqlite3
 
@@ -258,7 +261,7 @@ def test_replay_mode_error_emits_no_warning_log(
     row = dict(telemetry_fixture["row_dict"])
 
     with caplog.at_level(logging.DEBUG, logger="database"):
-        with pytest.raises(sqlite3.Error):
+        with pytest.raises((sqlite3.Error, ValueError)):
             db.write_telemetry_row("nonexistent_gate7e", row, mode="replay")
 
     warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]

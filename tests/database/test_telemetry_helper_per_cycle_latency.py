@@ -205,13 +205,13 @@ def test_benchmark_is_reproducible_within_tolerance(perf_db, telemetry_fixture):
 
 
 def test_live_mode_swallowed_error_within_budget(perf_db):
-    """Live-mode swallow latency: even on DB error, write_telemetry_row returns
+    """Live-mode swallow latency: even on error, write_telemetry_row returns
     within the budget (the swallow must not wait for a lock timeout).
 
-    The sqlite3.connect timeout default is 10 s; a live-mode swallow on a
-    non-existent table raises OperationalError immediately — no lock wait.
-    This test asserts the swallow path is fast (<200 ms) so a broken table
-    does not stall the execution path.
+    CC-002: an unknown table_name now raises ValueError (allowlist check) before
+    any DB I/O — the swallow path is even faster than the pre-CC-002 OperationalError
+    path.  This test still asserts the swallow path is fast (<200 ms) so a broken
+    or disallowed table does not stall the execution path.
     """
     row = {
         "cycle_id": "CYCLE_SWALLOW_BENCH_001",
