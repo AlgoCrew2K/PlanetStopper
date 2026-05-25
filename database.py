@@ -880,6 +880,7 @@ _MIGRATION_FILES = [
     "018_researcher_dof_ledger.sql",
     "019_fold_role_columns.sql",
     "017_advisor_observations.sql",
+    "021_cvar_diagnostics.sql",
 ]
 
 

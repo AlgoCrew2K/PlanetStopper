@@ -1460,6 +1460,23 @@ def main():
                     }
                 )
 
+                # M2: per-cycle CVaR diagnostic telemetry (Phase-1 — all cvar_* values are
+                # None sentinels; Phase-2 will populate them from forward-path simulation).
+                # Non-blocking: write_telemetry_row opens its own connection, swallows
+                # OperationalError in live mode (H4 helper; shadow-logging-pattern plan).
+                # Unconditional — fires in both live and dry-run modes (telemetry is never
+                # gated on LIVE_EXECUTION; architecture constraint 4 analogue for telemetry).
+                database.record_cvar_diagnostic(
+                    cycle_id=current_et.isoformat(),
+                    symphony_id=symphony_id,
+                    cvar_5pct=None,
+                    cvar_5pct_stderr=None,
+                    cvar_n_tail=None,
+                    cvar_5pct_long=None,
+                    cvar_n_tail_long=None,
+                    mode="live",
+                )
+
                 if (
                     is_trailing_stop_hit
                     or tp_triggered_now

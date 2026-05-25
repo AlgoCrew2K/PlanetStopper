@@ -89,6 +89,12 @@ def test_write_telemetry_row_uses_timeout_10():
     in this codebase.  Omitting it would use the default (5.0 s) and
     diverge from the established contract without justification.
 
+    The shadow-logging-pattern plan §Risk callouts (rev-shadow BLOCK) explicitly
+    rejects timeout=0.0 on the live path — the non-blocking guarantee is provided
+    by the try/except swallow, not by a short timeout. timeout=0.0 causes data loss:
+    transient sub-millisecond WAL locks that would resolve in microseconds get
+    treated as permanent failures, silently dropping CVaR rows.
+
     CC-002: the sqlite3.connect call was moved into _write_telemetry_row_unsafe;
     we also accept timeout=10.0 in that helper's source.
     """
