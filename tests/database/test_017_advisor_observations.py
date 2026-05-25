@@ -839,3 +839,337 @@ def test_get_advisor_observations_for_subject_returns_all_expected_keys():
         f"get_advisor_observations_for_subject returned a row missing columns: {missing}. "
         "The accessor must return all schema columns."
     )
+
+
+# ---------------------------------------------------------------------------
+# F-3 (gap): raw_response DEFAULT fires when caller omits the argument
+# ---------------------------------------------------------------------------
+
+
+def test_raw_response_default_fires_when_omitted():
+    """Inserting without raw_response must store '{}' via the SQL DEFAULT.
+
+    The plan §Deliverables #1 declares DEFAULT '{}'. When the accessor omits
+    the column from the INSERT (relying on the DEFAULT), the stored value must
+    deserialise to an empty dict — not None, not an empty string.
+    """
+    import json as _json  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    from database import insert_advisor_observation  # noqa: PLC0415
+
+    # Call with only the required positional fields — no raw_response.
+    row_id = insert_advisor_observation(
+        advisor_role="OVERFITTING_CONSCIENCE",
+        subject_type="autotune_run",
+        subject_id="run-default-test",
+        verdict="D_spec=1",
+        # raw_response intentionally omitted
+    )
+    assert isinstance(row_id, int) and row_id > 0
+
+    db_path = os.environ["DB_PATH"]
+    conn = sqlite3.connect(db_path)
+    raw = conn.execute(
+        "SELECT raw_response FROM advisor_observations WHERE id = ?", (row_id,)
+    ).fetchone()[0]
+    conn.close()
+
+    assert raw is not None, (
+        "raw_response must not be NULL when omitted — the DEFAULT '{}' must fire."
+    )
+    # Must deserialise cleanly as an empty dict.
+    parsed = _json.loads(raw)
+    assert parsed == {}, (
+        f"raw_response DEFAULT must deserialise to {{}}; got {parsed!r}. "
+        "The SQL DEFAULT '{{}}' was not stored or was corrupted."
+    )
+
+
+# ---------------------------------------------------------------------------
+# F-4 (gap): extend mutation-prefix scan to cover set_* symbols
+# ---------------------------------------------------------------------------
+
+
+def test_no_set_advisor_observation_symbol_in_database_module():
+    """database.py must not export any set_advisor_* function.
+
+    The existing test covers update_/edit_/modify_/delete_/remove_ prefixes.
+    This test adds set_* to close the gap spec-017 identified.
+    """
+    exposed = [
+        name
+        for name, obj in inspect.getmembers(db_module, inspect.isfunction)
+        if name.startswith("set_advisor")
+    ]
+    assert not exposed, (
+        "database.py must not export set_advisor_* mutation accessors; "
+        f"found: {exposed}. "
+        "The observation log is append-only — all mutation paths are forbidden."
+    )
+
+
+# ---------------------------------------------------------------------------
+# F-7: init_db() source must NOT contain "advisor_observations"
+# ---------------------------------------------------------------------------
+
+
+def test_init_db_source_does_not_mention_advisor_observations():
+    """init_db() must not contain a CREATE TABLE for advisor_observations.
+
+    New-table migrations go through run_migrations() only — no dual-write is
+    needed here (unlike autotune_runs which has a dual-write requirement per
+    H1 migration plan §6 H1). If init_db() creates the table directly, it
+    bypasses the migration tracker and breaks idempotency guarantees.
+    """
+    source = inspect.getsource(db_module.init_db)
+    assert "advisor_observations" not in source, (
+        "init_db() must not reference 'advisor_observations'. "
+        "The table is created exclusively via migrations/017_advisor_observations.sql "
+        "through run_migrations() — no dual-write needed."
+    )
+
+
+# ---------------------------------------------------------------------------
+# F-8: read accessors must use get_ro_connection, not get_connection
+# ---------------------------------------------------------------------------
+
+
+def test_get_advisor_observations_for_subject_uses_ro_connection():
+    """get_advisor_observations_for_subject must use get_ro_connection.
+
+    Read-only query paths use get_ro_connection() (mode=ro at SQLite driver level)
+    per architecture constraint 5 and Advisor scope-boundary integrity I-3 ★.
+    Using get_connection() on a read path would allow accidental writes through
+    the same code path.
+    """
+    source = inspect.getsource(db_module.get_advisor_observations_for_subject)
+    assert "get_ro_connection" in source, (
+        "get_advisor_observations_for_subject must use get_ro_connection(), not get_connection(). "
+        "Read paths must be enforced at the driver level."
+    )
+    assert "get_connection()" not in source, (
+        "get_advisor_observations_for_subject must not call get_connection() — "
+        "use get_ro_connection() for all read-only query paths."
+    )
+
+
+def test_get_advisor_observations_for_role_uses_ro_connection():
+    """get_advisor_observations_for_role must use get_ro_connection.
+
+    Same rationale as get_advisor_observations_for_subject — read-only paths
+    must be structurally isolated from the write path.
+    """
+    source = inspect.getsource(db_module.get_advisor_observations_for_role)
+    assert "get_ro_connection" in source, (
+        "get_advisor_observations_for_role must use get_ro_connection(), not get_connection(). "
+        "Read paths must be enforced at the driver level."
+    )
+    assert "get_connection()" not in source, (
+        "get_advisor_observations_for_role must not call get_connection()."
+    )
+
+
+def test_insert_advisor_observation_uses_rw_connection():
+    """insert_advisor_observation must use get_connection() (read-write), not get_ro_connection.
+
+    Writes require a read-write connection. Using get_ro_connection for an INSERT
+    would silently fail or raise — this test confirms the accessor uses the right
+    connection type for its direction.
+    """
+    source = inspect.getsource(db_module.insert_advisor_observation)
+    assert "get_connection" in source, (
+        "insert_advisor_observation must call get_connection() for its write path."
+    )
+
+
+# ---------------------------------------------------------------------------
+# F-10 (gap): _write_wall_breach_observation stores is_advisory_only=1
+# ---------------------------------------------------------------------------
+
+
+def test_write_wall_breach_observation_stores_is_advisory_only_1():
+    """_write_wall_breach_observation must store is_advisory_only=1 in the written row.
+
+    The raw INSERT in _write_wall_breach_observation (database.py:1041-1057) passes
+    is_advisory_only=1 explicitly. This test verifies that the stored value is 1
+    — not 0, not NULL — after the migration has created the table with the right schema.
+    """
+    import os  # noqa: PLC0415
+
+    db_module._write_wall_breach_observation("SELECT 1")
+
+    db_path = os.environ["DB_PATH"]
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT advisor_role, verdict, is_advisory_only, spec_bundle_id, created_at "
+        "FROM advisor_observations WHERE advisor_role = 'WALL_BREACH'"
+    ).fetchone()
+    conn.close()
+
+    assert row is not None, "WALL_BREACH row not found after _write_wall_breach_observation"
+    advisor_role, verdict, is_advisory_only, spec_bundle_id, created_at = row
+
+    assert is_advisory_only == 1, (
+        f"is_advisory_only must be 1 in a WALL_BREACH row; got {is_advisory_only!r}. "
+        "The raw INSERT passes 1 explicitly; the schema DEFAULT is also 1."
+    )
+    assert verdict == "BREACH", (
+        f"verdict must be 'BREACH'; got {verdict!r}"
+    )
+    # spec_bundle_id omitted from the raw INSERT — must be NULL via column DEFAULT (no default → NULL)
+    assert spec_bundle_id is None, (
+        f"spec_bundle_id must be NULL in a WALL_BREACH row (column omitted from INSERT); "
+        f"got {spec_bundle_id!r}"
+    )
+    # created_at omitted from the raw INSERT — must be non-NULL via DEFAULT (datetime('now'))
+    assert created_at is not None, (
+        "created_at must be non-NULL — the DEFAULT (datetime('now')) must fire "
+        "when the column is omitted from the INSERT."
+    )
+
+
+# ---------------------------------------------------------------------------
+# F-11: schema fixture JSON exists and matches live PRAGMA table_info
+# ---------------------------------------------------------------------------
+
+_SCHEMA_FIXTURE_PATH = (
+    Path(__file__).parents[2]
+    / "tests"
+    / "fixtures"
+    / "database"
+    / "advisor_observations"
+    / "advisor_observations_schema.json"
+)
+
+
+def test_schema_fixture_file_exists():
+    """The schema fixture JSON must exist on disk.
+
+    Fixture provenance (D-2 ★): schema-derived with runtime validator.
+    The fixture is the declared expectation; the live PRAGMA is the evidence.
+    """
+    assert _SCHEMA_FIXTURE_PATH.is_file(), (
+        f"Schema fixture not found: {_SCHEMA_FIXTURE_PATH}. "
+        "Create tests/fixtures/database/advisor_observations/advisor_observations_schema.json."
+    )
+
+
+def test_advisor_observations_schema_fixture_matches_live_db():
+    """Live PRAGMA table_info must match every constraint declared in the schema fixture.
+
+    For each column in the fixture, check notnull and has_default against
+    the actual table schema. This is the runtime-validator half of the D-2 ★
+    fixture-provenance contract.
+    """
+    import json as _json  # noqa: PLC0415
+    import os  # noqa: PLC0415
+
+    assert _SCHEMA_FIXTURE_PATH.is_file(), (
+        f"Schema fixture missing: {_SCHEMA_FIXTURE_PATH}"
+    )
+    fixture = _json.loads(_SCHEMA_FIXTURE_PATH.read_text(encoding="utf-8"))
+
+    db_path = os.environ["DB_PATH"]
+    conn = sqlite3.connect(db_path)
+    pragma_rows = conn.execute("PRAGMA table_info(advisor_observations)").fetchall()
+    conn.close()
+
+    assert pragma_rows, "advisor_observations does not exist — migration not applied."
+
+    # Build a map: column_name -> {notnull, has_default}
+    live = {
+        row[1]: {"notnull": row[3], "has_default": row[4] is not None}
+        for row in pragma_rows
+    }
+
+    for col_spec in fixture["columns"]:
+        name = col_spec["name"]
+        assert name in live, (
+            f"Fixture declares column {name!r} but it is absent from advisor_observations. "
+            "Either the fixture is wrong or the migration is missing the column."
+        )
+        expected_notnull = col_spec["notnull"]
+        actual_notnull = live[name]["notnull"]
+        assert actual_notnull == expected_notnull, (
+            f"Column {name!r}: fixture expects notnull={expected_notnull}, "
+            f"live schema has notnull={actual_notnull}."
+        )
+        expected_has_default = col_spec["has_default"]
+        actual_has_default = live[name]["has_default"]
+        assert actual_has_default == expected_has_default, (
+            f"Column {name!r}: fixture expects has_default={expected_has_default}, "
+            f"live schema has has_default={actual_has_default}."
+        )
+
+
+# ---------------------------------------------------------------------------
+# F-14 (gap): is_advisory_only notnull=1 in PRAGMA table_info
+# ---------------------------------------------------------------------------
+
+
+def test_is_advisory_only_is_not_null_in_schema():
+    """PRAGMA table_info must show notnull=1 for is_advisory_only.
+
+    The existing test checks dflt_value='1'. This test adds the notnull=1
+    constraint — the column must be declared NOT NULL in the migration DDL,
+    not just have a default.
+    """
+    import os  # noqa: PLC0415
+
+    db_path = os.environ["DB_PATH"]
+    conn = sqlite3.connect(db_path)
+    cols = {
+        row[1]: {"notnull": row[3], "dflt_value": row[4]}
+        for row in conn.execute("PRAGMA table_info(advisor_observations)").fetchall()
+    }
+    conn.close()
+
+    assert "is_advisory_only" in cols, (
+        "is_advisory_only column not found in advisor_observations"
+    )
+    notnull = cols["is_advisory_only"]["notnull"]
+    assert notnull == 1, (
+        f"is_advisory_only must be NOT NULL (notnull=1); got notnull={notnull}. "
+        "The column declaration must include INTEGER NOT NULL DEFAULT 1."
+    )
+
+
+# ---------------------------------------------------------------------------
+# F-15: Two-DB boundary guard — accessors must not reference optimization DB
+# ---------------------------------------------------------------------------
+
+
+def test_insert_advisor_observation_does_not_reference_optimization_db():
+    """insert_advisor_observation source must not reference alphabot_opt or opt.db.
+
+    Architecture constraint 3: Two-DB pattern — state DB owns live positions/decisions;
+    optimization DB owns Optuna studies. Decision-science migrations land in the
+    state DB only. Referencing the optimization DB from an advisor accessor would
+    violate the architectural boundary.
+    """
+    source = inspect.getsource(db_module.insert_advisor_observation)
+    for forbidden in ("alphabot_opt", "opt.db"):
+        assert forbidden not in source, (
+            f"insert_advisor_observation must not reference {forbidden!r}. "
+            "Advisor observations land in the state DB only — Two-DB boundary violation."
+        )
+
+
+def test_get_advisor_observations_for_subject_does_not_reference_optimization_db():
+    """get_advisor_observations_for_subject must not reference alphabot_opt or opt.db."""
+    source = inspect.getsource(db_module.get_advisor_observations_for_subject)
+    for forbidden in ("alphabot_opt", "opt.db"):
+        assert forbidden not in source, (
+            f"get_advisor_observations_for_subject must not reference {forbidden!r}. "
+            "Two-DB boundary: advisory reads come from the state DB only."
+        )
+
+
+def test_get_advisor_observations_for_role_does_not_reference_optimization_db():
+    """get_advisor_observations_for_role must not reference alphabot_opt or opt.db."""
+    source = inspect.getsource(db_module.get_advisor_observations_for_role)
+    for forbidden in ("alphabot_opt", "opt.db"):
+        assert forbidden not in source, (
+            f"get_advisor_observations_for_role must not reference {forbidden!r}. "
+            "Two-DB boundary: advisory reads come from the state DB only."
+        )
