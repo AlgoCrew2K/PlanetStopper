@@ -1,0 +1,26 @@
+{
+  "name": "cvar_5pct_distinguishability_inputs",
+  "description": "Inputs for test_different_cycle_ids_produce_different_cvar_5pct. Uses a multi-level alternating distribution (4 distinct amplitude tiers) so the 5th-percentile CVaR is not saturated to a constant value. Different seeds must produce statistically distinguishable cvar_5pct estimates.",
+  "function": "compute_portfolio_cvar",
+  "notes": "PA-18: no expected cvar_5pct or cvar_n_tail literals. Inequality is asserted as run_a != run_b. The multi-level kind produces 4 distinct portfolio-return magnitudes so the tail is not degenerate. simulation_paths=2000 + neighbor_k=5 keeps the kNN pool diverse across seeds.",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 0.6, "last_percent_change": 0.0},
+      {"ticker": "BBB", "allocation": 0.4, "last_percent_change": 0.0}
+    ],
+    "historical_data_spec": {
+      "kind": "multi_level",
+      "num_days": 60,
+      "levels": [
+        {"spy": 0.012, "aaa": 0.018, "bbb": 0.009},
+        {"spy": 0.006, "aaa": 0.009, "bbb": 0.004},
+        {"spy": -0.005, "aaa": -0.007, "bbb": -0.003},
+        {"spy": -0.014, "aaa": -0.020, "bbb": -0.010}
+      ]
+    },
+    "spy_today_return": 0.003,
+    "simulation_paths": 2000,
+    "neighbor_k": 5
+  },
+  "derivation": "60 days > MC_MIN_HISTORY_DAYS=20 + (VOL_WINDOW-1) so eligible pool is non-empty. 4 distinct return-level tiers (2 positive, 2 negative) with different magnitudes prevent tail saturation: the 5th percentile can land on either of the two negative tiers depending on which neighbors are selected by each seed's random draw, giving seeds room to produce statistically distinguishable cvar_5pct values. simulation_paths=2000 makes collision probability negligible. neighbor_k=5 (vs 10) keeps the kNN pool tighter so seed differences propagate more clearly into the tail. spy_today_return=0.003 biases the reference slightly positive so the kNN does not trivially select all the worst days."
+}

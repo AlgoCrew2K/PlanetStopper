@@ -20,8 +20,9 @@ Binding refs:
   - Plan risk R3: global RNG bleed (np.random.seed or np.random.choice = fail)
   - Plan risk R4: mode= default disallowed
 
-Fixture:
-  tests/fixtures/math_engine/cvar_5pct_replay_determinism/01_standard_inputs.json
+Fixtures:
+  tests/fixtures/math_engine/cvar_5pct_replay_determinism/01_standard_inputs.json  (reproducibility tests)
+  tests/fixtures/math_engine/cvar_5pct_replay_determinism/02_distinguishability_inputs.json  (seed-distinguishability test)
 
 PA-18: no cvar_5pct or cvar_n_tail literals anywhere. Bit-equality is asserted
 as run_a == run_b, never against a hardcoded expected value.
@@ -63,10 +64,28 @@ def _date_key(i: int) -> str:
 
 
 def _build_history(spec: dict) -> dict:
-    """Expand historical_data_spec into the shape expected by compute_portfolio_cvar."""
+    """Expand historical_data_spec into the shape expected by compute_portfolio_cvar.
+
+    Supports two kinds:
+      "alternating"  — two-level ±amplitude pattern (good for reproducibility tests)
+      "multi_level"  — cycles through N level dicts (good for distinguishability tests;
+                       prevents tail saturation to a single constant value)
+    """
     kind = spec["kind"]
     num_days = spec["num_days"]
     history: dict = {}
+
+    if kind == "multi_level":
+        levels = spec["levels"]
+        n = len(levels)
+        for i in range(num_days):
+            lvl = levels[i % n]
+            history[_date_key(i)] = {
+                "SPY": {"daily_ret": lvl["spy"]},
+                "AAA": {"daily_ret": lvl["aaa"]},
+                "BBB": {"daily_ret": lvl["bbb"]},
+            }
+        return history
 
     if kind == "alternating":
         spy_amp = spec["spy_amplitude"]
@@ -259,15 +278,22 @@ def test_different_cycle_ids_produce_different_cvar_5pct():
     """Two different cycle_ids must (probabilistically) produce different cvar_5pct.
 
     This guards against an implementation that ignores cycle_id and always
-    uses a fixed or global seed. With 1000 paths and a balanced history, the
-    chance of two different seeds producing identical results is negligible.
+    uses a fixed or global seed. With 2000 paths and a multi-level distribution,
+    the chance of two different seeds producing identical 5th-percentile CVaR is
+    negligible.
+
+    Uses 02_distinguishability_inputs.json (multi_level kind) instead of the
+    standard fixture — the alternating ±amplitude pattern in 01_standard_inputs.json
+    produces only two distinct return values, which saturates the 5th percentile to
+    the same constant regardless of seed (fixture saturation). The multi_level kind
+    has 4 distinct tiers so seed differences propagate into the tail.
 
     PA-18: no expected literals. Inequality is asserted as run_a != run_b.
     """
     if not hasattr(math_engine, "compute_portfolio_cvar"):
         pytest.fail("compute_portfolio_cvar not found.")
 
-    fixture = _load_fixture("01_standard_inputs.json")
+    fixture = _load_fixture("02_distinguishability_inputs.json")
     holdings = fixture["inputs"]["holdings"]
     history = _build_history(fixture["inputs"]["historical_data_spec"])
 
