@@ -2047,9 +2047,11 @@ def flush_resync():
 
     Phase 1 — File purge: scans analytics._POST_MORTEMS_DIR, removes files whose dates are
       NOT in _REAL_POST_MORTEM_DATES, keeps real ones.  Invalidates the analytics cache.
-    Phase 2 — Symphony state enumeration (read-only): loads bot_state and records which
-      symphonies would be reset for reporting purposes.  No write is issued on the request
-      thread; state mutation is engine-exclusive.
+    Phase 2 — Symphony state reset (background): loads bot_state, enumerates per-symphony
+      entries (isinstance(v, dict) and "name" in v), strips runtime tracking fields (stop
+      levels, returns, trigger flags), preserves "name" and "account".  Read happens on the
+      request thread for the response; write is dispatched to _DISMISS_EXECUTOR so the
+      handler returns immediately.  Exceptions are logged, not propagated.
     Phase 3 — Composer resync: triggers a background account-totals refresh.
 
     Safe + idempotent: file phase only removes synthetic dates; state phase only strips
@@ -2084,9 +2086,12 @@ def flush_resync():
     # Invalidate the analytics post_mortem cache so the next request reloads from real files.
     analytics._HISTORY_CACHE = {"key": None, "data": None}
 
-    # --- Phase 2: enumerate per-symphony bot_state entries (read-only; no write on route thread) ---
-    # Dashboard side-effect ban: save_state is engine-exclusive.  This phase reads the
-    # current state to report which symphonies would be reset, but does NOT persist changes.
+    # --- Phase 2: enumerate per-symphony bot_state entries; dispatch reset to background thread ---
+    # Dashboard side-effect ban: save_state must not block the request thread.
+    # We read current state here to enumerate symphony names for the response, then
+    # submit the actual write (strip tracking fields, preserve name+account) to
+    # _DISMISS_EXECUTOR so the handler returns immediately.  Same pattern as
+    # fleet_alert_dismiss / _DISMISS_EXECUTOR.
     symphonies_reset: list[str] = []
     try:
         _state = database.load_state()
@@ -2098,6 +2103,24 @@ def flush_resync():
     except Exception as exc:
         _daemon_log.error("flush_resync: symphony state read failed: %s", exc)
         errors.append(f"state_read: {exc}")
+
+    def _flush_state_async():
+        try:
+            state = database.load_state()
+            for sym_id, sym_val in list(state.items()):
+                if not (isinstance(sym_val, dict) and "name" in sym_val):
+                    continue
+                display_name = sym_val.get("name", sym_id)
+                account = sym_val.get("account")
+                state[sym_id] = {"name": display_name}
+                if account is not None:
+                    state[sym_id]["account"] = account
+            database.save_state(state)
+            _daemon_log.info("flush_resync: background reset wrote %d symphony state entries", len(symphonies_reset))
+        except Exception:
+            logging.error("flush_resync: background state reset failed", exc_info=True)
+
+    _DISMISS_EXECUTOR.submit(_flush_state_async)
 
     # --- Phase 3: Composer resync ---
     resync_ok = False
