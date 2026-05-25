@@ -804,3 +804,67 @@ def test_advisor_observations_table_exists_after_run_migrations(tmp_path):
         "BLOCK-S2: the table schema must match the contract used by "
         "_write_wall_breach_observation (see database.py INSERT statement)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Gap test — COALESCE wrap must not break queries on tables without fold_role
+# ---------------------------------------------------------------------------
+
+
+def test_advisor_ro_query_succeeds_on_table_without_fold_role_column(walled_db):
+    """Structural correctness: advisor_ro_query must return results for a query
+    against a table that has no fold_role column.
+
+    The COALESCE outer-wrap appends:
+      WHERE COALESCE(fold_role,'NULL_SENTINEL') NOT IN ('frozen_eval','NULL_SENTINEL')
+    to every query.  If the inner subquery does not project fold_role, SQLite
+    raises OperationalError: no such column: fold_role — the Advisor cannot read
+    any non-partitioned table (spec_bundles, schema_migrations, fleet_alert_state,
+    advisor_observations itself, etc.).
+
+    This is a correctness defect: the COALESCE predicate must be conditional on
+    whether fold_role is in the projected columns, or the outer wrap must only
+    be applied when the queried table has a fold_role column.
+
+    Discriminating-power:
+      - The current COALESCE-wrap implementation raises OperationalError here.
+      - A correct implementation returns the spec_bundles row without error.
+
+    GREEN requires: advisor_ro_query('SELECT bundle_hash FROM spec_bundles')
+    returns the seeded row and does NOT raise any exception.
+
+    Reference: database.advisor_ro_query docstring comment (incorrect):
+      'Queries that do not project fold_role are unaffected: the outer WHERE
+       references a column not in the subquery output and is effectively a no-op.'
+    SQLite does NOT silently ignore a missing column in an outer WHERE — it
+    raises OperationalError.  The comment is wrong; the implementation must be fixed.
+    """
+    with patch.object(db, "DB_FILE", walled_db):
+        # spec_bundles exists after init_db() — it has no fold_role column.
+        # This query must succeed and return at least the schema_migrations row
+        # (init_db() always creates schema_migrations).
+        try:
+            rows = db.advisor_ro_query(
+                "SELECT migration_name FROM schema_migrations LIMIT 5"
+            )
+        except Exception as exc:
+            pytest.fail(
+                f"advisor_ro_query raised {type(exc).__name__} on a query against "
+                f"schema_migrations (no fold_role column): {exc}. "
+                "The COALESCE outer-wrap blindly appends "
+                "WHERE COALESCE(fold_role,'NULL_SENTINEL') NOT IN (...) to every query. "
+                "When fold_role is not in the subquery output, SQLite raises "
+                "OperationalError: no such column: fold_role. "
+                "Fix: only apply the COALESCE predicate when the inner query projects "
+                "fold_role, or query the table's column list before wrapping."
+            )
+
+    # Result shape: list of sqlite3.Row; must not be empty (schema_migrations always
+    # has at least one row after init_db()).
+    assert isinstance(rows, list), (
+        "advisor_ro_query must return a list of sqlite3.Row objects."
+    )
+    assert len(rows) >= 1, (
+        "schema_migrations must have at least one row after init_db(). "
+        "If 0 rows: init_db() did not apply any migrations — fixture setup failed."
+    )
