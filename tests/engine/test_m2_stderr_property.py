@@ -247,7 +247,14 @@ def test_m2_tail_obs_count_field_matches_distinct_count(pool: list[float]):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=30, derandomize=True, suppress_health_check=[HealthCheck.too_slow])
+@settings(
+    max_examples=30,
+    derandomize=True,
+    # data_too_large: suppressed because generating two pools of up to N=1000 each
+    # legitimately exceeds hypothesis's default entropy budget. The large pool size
+    # is required for k>=40 (statistical soundness at 3.5-sigma) — see docstring.
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
+)
 @given(
     base_pool=synthetic_knn_pool(),
     extra_pool=synthetic_knn_pool(),
