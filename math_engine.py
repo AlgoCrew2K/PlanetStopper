@@ -1301,24 +1301,20 @@ def compute_portfolio_cvar(
 
     nearest_day_returns = returns_matrix.dot(weights) * PCT_SCALAR
 
-    # 3. Isolated RNG — derive_cycle_mc_seed(cycle_id) is the ONLY entropy source.
-    # np.random.default_rng never touches the numpy global RNG (plan risk R3).
-    seed = derive_cycle_mc_seed(cycle_id)
-    rng = np.random.default_rng(seed)
-    sim_paths = rng.choice(nearest_day_returns, size=simulation_paths)
-    sim_paths.sort()
-
-    # 4. CVaR at CVAR_TAIL_PCT (5th-percentile expected shortfall)
-    tail_cut = max(1, int(CVAR_TAIL_PCT * simulation_paths))
-    tail_obs = sim_paths[:tail_cut]
-    tail_obs_count = int(tail_cut)
-    cvar_pct_val = float(np.mean(tail_obs))
+    # 3. CVaR via Rockafellar-Uryasev general-distribution estimator on the DISTINCT
+    # kNN pool (nearest_day_returns, N≈neighbor_k). The simulation_paths parameter
+    # belongs to run_monte_carlo (bootstrap MC); CVaR uses the pool directly so that
+    # tail_obs_count reflects genuine distinct observations (~8), not a resample
+    # fraction (5%*5000=250). H-2 binding: denominator is the pool's k+atom count.
+    pool = nearest_day_returns.tolist()
+    cvar_estimate = compute_cvar_5pct_general_distribution(pool, alpha=CVAR_ALPHA_DEFAULT)
+    cvar_5pct_stderr = compute_cvar_stderr_distinct_tail(pool, alpha=CVAR_ALPHA_DEFAULT)
 
     result = CVaRAssessment(
-        cvar_pct=cvar_pct_val,
+        cvar_pct=cvar_estimate.cvar_pct,
         breach=False,  # Phase-1: no breach threshold defined; breach is always False
-        tail_obs_count=tail_obs_count,
-        insufficient_reason=None,
+        tail_obs_count=cvar_estimate.tail_obs_count,
+        insufficient_reason=cvar_estimate.insufficient_reason,
     )
 
     if mode is not None:
@@ -1326,9 +1322,9 @@ def compute_portfolio_cvar(
         _db.record_cvar_diagnostic(
             cycle_id=cycle_id,
             symphony_id="",
-            cvar_5pct=cvar_pct_val,
-            cvar_5pct_stderr=None,
-            cvar_n_tail=tail_obs_count,
+            cvar_5pct=cvar_estimate.cvar_pct,
+            cvar_5pct_stderr=cvar_5pct_stderr,
+            cvar_n_tail=cvar_estimate.tail_obs_count,
             cvar_5pct_long=None,
             cvar_n_tail_long=None,
             mode=mode,
