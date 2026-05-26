@@ -847,3 +847,47 @@ class TestNoCvarDivergenceColumnOrDisplayValue:
         assert "regime_recency_weight" not in db_source.lower(), (
             "database.py contains 'regime_recency_weight' — FORBIDDEN by §B.6 binding."
         )
+
+    def test_migration_cvar_n_tail_is_not_null_default_zero(self):
+        """
+        spec-m2 BLOCK 6: cvar_n_tail must be NOT NULL DEFAULT 0, not DEFAULT NULL.
+
+        With DEFAULT NULL a sentinel-path write (tail_obs_count=0) stores NULL rather
+        than 0, making the column semantically ambiguous between 'insufficient history'
+        and 'zero distinct tail observations' (both legitimate states). The NOT NULL
+        constraint enforces the F-4 sentinel discipline at the schema layer:
+        cvar_n_tail=0 is the unambiguous insufficient sentinel, never NULL.
+
+        A NULLable cvar_n_tail also means the S-3 (b) display (tail_obs_count) can
+        receive NULL from the DB read and render an absent count — violating the
+        "tail_obs_count visible" requirement.
+        """
+        import re
+        migration_sql = (_MIGRATIONS / "021_cvar_diagnostics.sql").read_text(encoding="utf-8")
+
+        # Find the cvar_n_tail column definition line
+        n_tail_line_match = re.search(
+            r"cvar_n_tail\s+INTEGER[^\n,)]*",
+            migration_sql,
+            re.IGNORECASE,
+        )
+        assert n_tail_line_match is not None, (
+            "cvar_n_tail column definition not found in 021_cvar_diagnostics.sql"
+        )
+
+        col_definition = n_tail_line_match.group(0)
+
+        # Must have NOT NULL
+        assert "NOT NULL" in col_definition.upper(), (
+            f"cvar_n_tail must be NOT NULL in 021_cvar_diagnostics.sql; "
+            f"got: {col_definition!r}. "
+            "spec-m2 BLOCK 6: NOT NULL enforces F-4 sentinel discipline at schema level; "
+            "DEFAULT NULL permits ambiguous NULL writes that bypass the 0-sentinel contract."
+        )
+
+        # Must have DEFAULT 0 (or equivalent)
+        assert re.search(r"DEFAULT\s+0\b", col_definition, re.IGNORECASE), (
+            f"cvar_n_tail must have DEFAULT 0 in 021_cvar_diagnostics.sql; "
+            f"got: {col_definition!r}. "
+            "DEFAULT 0 ensures fresh rows land with the unambiguous insufficient-sentinel value."
+        )

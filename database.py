@@ -890,12 +890,12 @@ _MIGRATION_FILES = [
     "014_autotune_runs_selection_tstat.sql",
     "015_shadow_history_position_epoch.sql",
     "016_spec_bundles.sql",
+    "017_advisor_observations.sql",
     "018_researcher_dof_ledger.sql",
     "019_fold_role_columns.sql",
-    "017_advisor_observations.sql",
     "021_cvar_diagnostics.sql",
-    "020_autotune_runs_eut.sql",
     "022_spec_bundles_add_id.sql",
+    "020_autotune_runs_eut.sql",
 ]
 
 
