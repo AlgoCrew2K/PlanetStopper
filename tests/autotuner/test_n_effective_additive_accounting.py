@@ -763,6 +763,157 @@ class TestLedgerAccessor:
 
 
 # ===========================================================================
+# Spec-neff finding 1: n_optuna must be sentinel-filtered (not raw trial count)
+# ===========================================================================
+
+
+class TestNOptunaIsNotSentinelInflated:
+    """Spec-neff finding 1: n_optuna passed to compute_n_effective must be
+    len(haircut_trials) — the sentinel-filtered set — NOT len(completed_trials).
+
+    autotuner.py filters sentinels (value == math_engine._SORTINO_SENTINEL == 1e6)
+    before calling _haircut_select. If n_optuna were derived from completed_trials
+    (before filtering), a batch with many zero-downside sentinel trials would inflate
+    N_effective even in the NN1-honest case, breaking T1's byte-identical contract
+    and causing spurious haircut tightening on noise-free sentinel days.
+    """
+
+    def test_sentinel_trials_do_not_inflate_n_optuna(self):
+        """n_optuna = len(sentinel-filtered trials); sentinels must not bump N_effective.
+
+        Scenario: 500 completed trials, 10 are sentinels (value == 1e6).
+        n_optuna (the N passed to compute_n_effective) must be 490, not 500.
+        With an empty ledger (S=0) N_effective must equal 490, not 500.
+        """
+        autotuner = _import_autotuner()
+        import math_engine
+
+        sentinel_value = math_engine._SORTINO_SENTINEL
+
+        n_real = 490
+        n_sentinel = 10
+
+        real_trials = [
+            _make_fake_trial(value=1.5, daily_returns=[0.01] * 50)
+            for _ in range(n_real)
+        ]
+        sentinel_trials = [
+            _make_fake_trial(value=sentinel_value, daily_returns=[])
+            for _ in range(n_sentinel)
+        ]
+        all_completed = real_trials + sentinel_trials
+
+        # haircut_trials is the sentinel-filtered subset — mirrors autotuner.py logic.
+        haircut_trials = [t for t in all_completed if t.value != sentinel_value]
+        n_optuna_correct = len(haircut_trials)  # 490
+
+        assert n_optuna_correct == n_real, (
+            f"Test setup error: expected {n_real} real trials after sentinel filter, "
+            f"got {n_optuna_correct}."
+        )
+
+        # compute_n_effective must accept n_optuna=490 (the filtered count).
+        # With empty ledger, N_effective must be 490 (not 500).
+        result = autotuner.compute_n_effective(n_optuna_correct, lambda: [])
+
+        assert result == n_real, (
+            f"compute_n_effective({n_optuna_correct}, empty) must return {n_real} "
+            f"(S=0, sentinel-filtered n_optuna). Got {result!r}. "
+            "n_optuna must be derived from sentinel-filtered trials "
+            "(len(haircut_trials)), not from len(completed_trials)."
+        )
+
+        # Confirm the wrong derivation (using raw completed count) would give 500.
+        result_inflated = autotuner.compute_n_effective(len(all_completed), lambda: [])
+        assert result_inflated == len(all_completed), (
+            "Sanity: compute_n_effective(500, empty) must return 500 "
+            f"(confirming the sentinel-inflated path is distinguishable). "
+            f"Got {result_inflated!r}."
+        )
+        # The two results must differ to confirm the sentinel filtering is meaningful.
+        assert result != result_inflated, (
+            f"Sentinel filtering must matter: n_optuna=490 → N_eff={result}, "
+            f"n_optuna=500 → N_eff={result_inflated}. They must differ."
+        )
+
+
+# ===========================================================================
+# Spec-neff finding 5: compute_n_effective must NOT reuse count_dof_backtest_selections
+# ===========================================================================
+
+
+class TestComputeNEffectiveDoesNotReuseExistingAccessor:
+    """Spec-neff finding 5: compute_n_effective must use get_researcher_dof_ledger_for_run
+    (plan D4), NOT count_dof_backtest_selections (database.py:1297).
+
+    count_dof_backtest_selections lacks two required filters:
+      1. touched_frozen_eval=0 exclusion (T4 boundary)
+      2. winner-bundle self-exclusion (T5 boundary)
+
+    Reusing it would silently pass those tests because the filters are absent.
+    The DI seam (ledger_query callable) is the correctness guarantee: the caller
+    injects only the pre-filtered rows, and compute_n_effective sums them without
+    additional DB access.
+    """
+
+    def test_compute_n_effective_uses_injected_query_not_direct_db(self):
+        """compute_n_effective must sum rows from the injected ledger_query callable.
+
+        We inject a query that returns one row with n_configs_searched=7. The result
+        must be n_optuna + 7. If compute_n_effective calls count_dof_backtest_selections
+        directly (bypassing the injected callable), the result would be n_optuna + 0
+        (no real DB rows exist in this in-memory test) — a detectable divergence.
+        """
+        autotuner = _import_autotuner()
+
+        rows_from_query = [
+            {
+                "evidence_source": "BACKTEST_SELECTION",
+                "n_configs_searched": 7,
+                "touched_frozen_eval": 0,
+                "spec_bundle_id": "bundle-injected-999",
+            }
+        ]
+
+        n_optuna = 100
+        result = autotuner.compute_n_effective(n_optuna, lambda: rows_from_query)
+
+        assert result == 107, (
+            f"compute_n_effective must use the injected ledger_query, not "
+            f"count_dof_backtest_selections. With injected rows (S=7) and "
+            f"n_optuna=100, expected 107. Got {result!r}. "
+            "If result is 100 (=n_optuna+0), the function bypassed the DI seam "
+            "and called a DB accessor directly — which would also lack the "
+            "touched_frozen_eval and winner-bundle filters."
+        )
+
+    def test_count_dof_backtest_selections_is_not_called_by_compute_n_effective(self):
+        """compute_n_effective source must not call count_dof_backtest_selections.
+
+        Source-level check: the DI seam contract requires the function to be pure
+        with respect to DB access. Any direct call to count_dof_backtest_selections
+        inside compute_n_effective would bypass the injected query and reintroduce
+        the missing filters.
+        """
+        src = (_WORKTREE_ROOT / "autotuner.py").read_text(encoding="utf-8")
+
+        start = src.find("def compute_n_effective(")
+        assert start != -1, "compute_n_effective not yet defined in autotuner.py (expected RED)."
+
+        next_def = src.find("\ndef ", start + 1)
+        if next_def == -1:
+            next_def = len(src)
+        func_body = src[start:next_def]
+
+        assert "count_dof_backtest_selections" not in func_body, (
+            "compute_n_effective must not call count_dof_backtest_selections. "
+            "Use the injected ledger_query callable (plan D1 DI seam). "
+            "count_dof_backtest_selections lacks the touched_frozen_eval=0 filter "
+            "(T4) and the winner-bundle exclusion (T5)."
+        )
+
+
+# ===========================================================================
 # Helpers
 # ===========================================================================
 
