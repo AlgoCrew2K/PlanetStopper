@@ -1089,9 +1089,9 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
 
         The exception-swallow test patches "logging.error" globally.  If the production
         handler ever migrates to logging.getLogger(__name__).error(...), that patch target
-        would silently stop intercepting and test_dismiss_background_exception_is_logged_not_propagated
-        would pass spuriously (0 >= 1 would fail, but that's the right direction — the guard
-        catches the source change *before* the exception test becomes invalid).
+        would silently stop intercepting — the exception-swallow test would then fail
+        (mock_log_error.call_count stays 0, assertion 0 >= 1 fails).  This guard catches
+        the source change first, making the failure site obvious rather than cryptic.
 
         This test inspects the source of _dismiss_async to confirm it uses `logging.error`
         (module-level call) and not a getLogger instance call.  Rev-t17 identified this
