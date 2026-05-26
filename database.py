@@ -2055,11 +2055,12 @@ def record_cvar_diagnostic(
     write_telemetry_row: every call site states the mode explicitly.
     """
     # F-4 sentinel discipline: cvar_n_tail is NOT NULL DEFAULT 0.
-    # SQLite only substitutes the DEFAULT when the column is omitted from the INSERT;
-    # passing Python None explicitly raises IntegrityError. Coerce here so the
-    # constraint is satisfied at the call site, not silently swallowed downstream.
+    # SQLite only substitutes the DEFAULT when the column is absent from the statement;
+    # passing Python None explicitly raises IntegrityError (NOT NULL constraint violation).
+    # Coerce here so the constraint is satisfied at the call site, not swallowed downstream.
+    # cvar_n_tail_long is INTEGER DEFAULT NULL — NULL is the correct Phase-1 sentinel
+    # (no long window computed); do NOT coerce it.
     cvar_n_tail = 0 if cvar_n_tail is None else cvar_n_tail
-    cvar_n_tail_long = 0 if cvar_n_tail_long is None else cvar_n_tail_long
     row_dict = {
         "cycle_id": cycle_id,
         "symphony_id": symphony_id,
