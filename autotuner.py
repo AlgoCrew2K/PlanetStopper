@@ -138,27 +138,27 @@ _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
 # Multiplier on missed upside (best intraday return forgone by exiting early).
 # 1.5 > 1.0: forgone upside is penalised harder than realised guard-alpha — an
 # early exit that leaves a run on the table is a real opportunity cost.
-MISSED_UPSIDE_PENALTY_MULT = 1.5
+RUN_SIM_MISSED_UPSIDE_MULT = 1.5
 # Missed upside is only penalised once it exceeds this many percent — a small
 # forgone move is execution noise, not a policy defect.
-MISSED_UPSIDE_THRESHOLD_PCT = 1.0
+RUN_SIM_MISSED_UPSIDE_THRESHOLD = 1.0
 
 # Multiplier on peak-to-exit drawdown (profit given back from the intraday high).
 # 0.75 < 1.0: giving back profit is penalised, but more leniently than missed
 # upside — some give-back is unavoidable in any trailing-stop policy.
-DRAWDOWN_PENALTY_MULT = 0.75
+RUN_SIM_DRAWDOWN_MULT = 0.75
 # Peak-to-exit drawdown is only penalised once it exceeds this many percent —
 # a give-back smaller than this is within normal trailing-stop slack.
-DRAWDOWN_THRESHOLD_PCT = 1.5
+RUN_SIM_DRAWDOWN_THRESHOLD = 1.5
 # The drawdown penalty applies only after a position reached at least this gain;
 # below it there is no meaningful profit to "give back".
-DRAWDOWN_MIN_GAIN_PCT = 1.0
+RUN_SIM_DRAWDOWN_MIN_GAIN = 1.0
 
 # Loss-aversion multiplier on NEGATIVE guard-alpha (the policy exited worse than
 # simply holding to EOD). 2.0 > 1.0 makes the objective asymmetric: a loss of
 # guard-alpha hurts twice as much as an equal gain helps — the core loss-averse
 # term of the utility.
-NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT = 2.0
+RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT = 2.0
 
 # Target return for Sortino denominator: capital preservation baseline (0 = break-even).
 # Operator decision PA-5; Sortino & van der Meer 1991, J. Portfolio Management.
@@ -953,19 +953,19 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 # no recency-decay weight (Decision D5 — walk-forward CV already
                 # supplies recency relevance, an in-objective weight double-counts it).
                 # 1. Penalize missed upside (exiting too early before a run).
-                if missed_upside > MISSED_UPSIDE_THRESHOLD_PCT:
-                    total_guard_alpha -= missed_upside * MISSED_UPSIDE_PENALTY_MULT
+                if missed_upside > RUN_SIM_MISSED_UPSIDE_THRESHOLD:
+                    total_guard_alpha -= missed_upside * RUN_SIM_MISSED_UPSIDE_MULT
 
                 # 2. Penalize peak-to-exit drawdown (giving back too much profit)
                 # — only for positions that reached a meaningful gain.
-                if (safe_hwm > DRAWDOWN_MIN_GAIN_PCT
-                        and drawdown_from_peak > DRAWDOWN_THRESHOLD_PCT):
-                    total_guard_alpha -= drawdown_from_peak * DRAWDOWN_PENALTY_MULT
+                if (safe_hwm > RUN_SIM_DRAWDOWN_MIN_GAIN
+                        and drawdown_from_peak > RUN_SIM_DRAWDOWN_THRESHOLD):
+                    total_guard_alpha -= drawdown_from_peak * RUN_SIM_DRAWDOWN_MULT
 
                 # 3. Apply standard EOD-based guard alpha; negative guard-alpha
                 # is penalised by the loss-aversion multiplier (asymmetry).
                 if guard_alpha < 0:
-                    total_guard_alpha += guard_alpha * NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT
+                    total_guard_alpha += guard_alpha * RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT
                 else:
                     total_guard_alpha += guard_alpha
 
