@@ -93,7 +93,8 @@ def test_fixture_constants_match_sut_constants():
     fixture = _load_wh2_fixture()
 
     # WEALTH_ARG_FLOOR — plan §Deliverables: 'Module-scope constants in math_engine.py:
-    # WEALTH_ARG_FLOOR'. A placement in autotuner.py is also accepted (transition).
+    # WEALTH_ARG_FLOOR'. A placement in autotuner.py is also accepted if it is an
+    # import re-export from math_engine (not an independent definition).
     has_floor = hasattr(math_engine, "WEALTH_ARG_FLOOR") or hasattr(autotuner, "WEALTH_ARG_FLOOR")
     assert has_floor, (
         "WEALTH_ARG_FLOOR not found in math_engine or autotuner. "
@@ -106,6 +107,23 @@ def test_fixture_constants_match_sut_constants():
         f"WEALTH_ARG_FLOOR = {sut_floor!r} differs from "
         f"the W-H2 fixture value {fixture_floor!r}. Update the fixture or the constant."
     )
+
+    # BLOCK-3 fix (spec-m1): WEALTH_ARG_FLOOR must be a single source of truth.
+    # If both modules export the constant, it must be the SAME object (identity),
+    # not two independent copies with equal values. An independent copy in autotuner.py
+    # creates a silent drift risk: a future change to math_engine.WEALTH_ARG_FLOOR
+    # would not propagate to autotuner's copy.
+    # Canonical form: autotuner.py does 'from math_engine import WEALTH_ARG_FLOOR'
+    # so autotuner.WEALTH_ARG_FLOOR is math_engine.WEALTH_ARG_FLOOR (same float object).
+    if hasattr(math_engine, "WEALTH_ARG_FLOOR") and hasattr(autotuner, "WEALTH_ARG_FLOOR"):
+        assert autotuner.WEALTH_ARG_FLOOR is math_engine.WEALTH_ARG_FLOOR, (
+            "autotuner.WEALTH_ARG_FLOOR and math_engine.WEALTH_ARG_FLOOR are two "
+            "independent objects with equal values — silent drift risk.\n"
+            "autotuner.py must import WEALTH_ARG_FLOOR from math_engine "
+            "('from math_engine import WEALTH_ARG_FLOOR') so both names refer to\n"
+            "the same object. This prevents a future math_engine change from leaving\n"
+            "autotuner's floor silently stale."
+        )
 
     # RETURN_PCT_TO_FRACTION
     assert hasattr(autotuner, "RETURN_PCT_TO_FRACTION"), (
