@@ -95,20 +95,33 @@ def init_db():
     """)
 
     # P1: Per-run Optuna validation metrics — durable audit trail for Claude context-assembly
+    # H1 DUAL-WRITE: the nine EUT audit columns below are also added by migration
+    # 020_autotune_runs_eut.sql via ALTER TABLE.  The duplicate-column-name swallow in
+    # run_migrations() (database.py:921-932) reconciles the overlap: fresh DBs have
+    # the columns here; upgraded DBs get them from the ALTER.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS autotune_runs (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_timestamp       TEXT    NOT NULL,
-            symphony_id         TEXT    NOT NULL,
-            oos_alpha           REAL    DEFAULT NULL,
-            train_alpha         REAL    DEFAULT NULL,
-            baseline_decision   TEXT    DEFAULT NULL,
-            fallback_oos_alpha  REAL    DEFAULT NULL,
-            default_oos_alpha   REAL    DEFAULT NULL,
-            selection_tstat     REAL    DEFAULT NULL,
-            naive_sharpe        REAL    DEFAULT NULL,
-            validation_sharpe   REAL    DEFAULT NULL,
-            frozen_eval_sharpe  REAL    DEFAULT NULL
+            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_timestamp             TEXT    NOT NULL,
+            symphony_id               TEXT    NOT NULL,
+            oos_alpha                 REAL    DEFAULT NULL,
+            train_alpha               REAL    DEFAULT NULL,
+            baseline_decision         TEXT    DEFAULT NULL,
+            fallback_oos_alpha        REAL    DEFAULT NULL,
+            default_oos_alpha         REAL    DEFAULT NULL,
+            selection_tstat           REAL    DEFAULT NULL,
+            naive_sharpe              REAL    DEFAULT NULL,
+            validation_sharpe         REAL    DEFAULT NULL,
+            frozen_eval_sharpe        REAL    DEFAULT NULL,
+            spec_bundle_id            TEXT    DEFAULT NULL,
+            d_spec                    INTEGER DEFAULT NULL,
+            n_effective               INTEGER DEFAULT NULL,
+            ce_metric                 REAL    DEFAULT NULL,
+            cvar_feasible             INTEGER DEFAULT NULL,
+            gamma                     REAL    DEFAULT NULL,
+            lambda_budget             REAL    DEFAULT NULL,
+            overfitting_verdict       TEXT    DEFAULT NULL,
+            paired_heuristic_study_name TEXT  DEFAULT NULL
         )
     """)
 
@@ -881,6 +894,7 @@ _MIGRATION_FILES = [
     "019_fold_role_columns.sql",
     "017_advisor_observations.sql",
     "021_cvar_diagnostics.sql",
+    "020_autotune_runs_eut.sql",
 ]
 
 
