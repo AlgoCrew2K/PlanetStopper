@@ -1032,6 +1032,57 @@ def insert_spec_bundle(
         conn.close()
 
 
+def get_or_create_phase1_theory_bundle_id() -> int:
+    """Return the integer id for the canonical Phase-1 all-THEORY spec bundle.
+
+    Idempotent: INSERT OR IGNORE means repeated calls return the same id.
+    The Phase-1 bundle encodes the three theory-frozen facets (gamma, utility_family,
+    wealth_argument) with freeze_discipline='THEORY' per council synthesis §2.5.
+
+    Called by live run_autotuner sites (alpha_bot_execution.py, app.py) to satisfy
+    the NN1 Phase-1 strict spec_bundle_id requirement without requiring an explicit
+    operator-registered bundle (Phase-2 wiring deferred).
+    """
+    _canon_facets = {
+        "gamma": "2.0",
+        "utility_family": "CRRA",
+        "wealth_argument": "compounded_return",
+    }
+    canonical_json = canonicalize_facets_json(_canon_facets)
+    bundle_hash = hash_facets_json(canonical_json)
+    insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
+
+    # Fetch the id backfilled by insert_spec_bundle (trigger or UPDATE).
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or row[0] is None:
+        raise RuntimeError(
+            f"get_or_create_phase1_theory_bundle_id: id is NULL for bundle_hash={bundle_hash!r} "
+            "after insert — run_migrations() may not have applied migration 022."
+        )
+    bundle_id: int = row[0]
+
+    # Ensure the three canonical facets are registered.
+    existing = get_spec_facets_for_bundle(bundle_hash)
+    existing_names = {r["facet_name"] for r in existing}
+    for name, value in _canon_facets.items():
+        if name not in existing_names:
+            insert_spec_bundle_facet(
+                bundle_hash=bundle_hash,
+                facet_name=name,
+                facet_value=value,
+                freeze_discipline="THEORY",
+                justification="Phase-1 canonical bundle — council synthesis §2.5 hard gate",
+            )
+
+    return bundle_id
+
+
 def get_spec_bundle(bundle_hash: str) -> "dict | None":
     """Return the spec_bundles row for the given hash as a dict, or None."""
     conn = get_connection()

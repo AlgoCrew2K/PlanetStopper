@@ -1582,7 +1582,7 @@ def force_eod():
             )
             autotuner_changes = autotuner.run_autotuner(
                 bot_state, prev_date_str, account_uuids, is_forced=True,
-                spec_bundle_id=None,  # TODO: wire active bundle registry (NN1 Phase-2)
+                spec_bundle_id=database.get_or_create_phase1_theory_bundle_id(),
             )
             reporting.send_eod_discord_post(
                 prev_date_str,
