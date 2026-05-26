@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import inspect as _inspect
 import json
 import math
 import pathlib
@@ -57,6 +58,16 @@ def _load_fixture(filename: str) -> dict:
 def _import_autotuner():
     import autotuner  # noqa: PLC0415
     return autotuner
+
+
+def _spec_bundle_kwarg() -> dict:
+    """Return {spec_bundle_id: <id>} if run_autotuner accepts that parameter."""
+    import autotuner as _at
+    sig = _inspect.signature(_at.run_autotuner)
+    if "spec_bundle_id" not in sig.parameters:
+        return {}
+    from tests.autotuner.conftest import make_phase1_theory_bundle
+    return {"spec_bundle_id": make_phase1_theory_bundle()}
 
 
 # ===========================================================================
@@ -528,7 +539,7 @@ def test_objective_signature_compat_with_optuna_trial():
               side_effect=vwap_always_triggers),
         contextlib.redirect_stdout(buf),
     ):
-        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
     assert len(objective_call_results) == 1, (
         f"Expected objective() to be called exactly once via study.optimize; "
@@ -798,7 +809,7 @@ def test_optuna_study_direction_is_maximize():
               side_effect=lambda **kw: (0, 0, False, False)),
         contextlib.redirect_stdout(buf),
     ):
-        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
     assert len(create_study_calls) == 1, (
         f"Expected exactly one create_study call per symphony; "
@@ -903,7 +914,7 @@ def test_train_alpha_log_line_does_not_label_sortino_as_percent():
               side_effect=lambda **kw: (0, 0, False, False)),
         contextlib.redirect_stdout(buf),
     ):
-        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
     stdout = buf.getvalue()
 

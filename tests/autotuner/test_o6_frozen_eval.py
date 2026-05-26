@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import inspect as _inspect
 import io
 import json
 import math
@@ -86,6 +87,24 @@ def _find_module_level_assignments(tree: ast.Module) -> dict[str, Any]:
 def _import_autotuner():
     import autotuner
     return autotuner
+
+
+def _make_bundle() -> int:
+    """Insert an all-THEORY Phase-1 spec bundle and return its id.
+
+    Mirrors the conftest helper; idempotent within a single isolated DB.
+    """
+    from tests.autotuner.conftest import make_phase1_theory_bundle
+    return make_phase1_theory_bundle()
+
+
+def _spec_bundle_kwarg() -> dict:
+    """Return {spec_bundle_id: <id>} if run_autotuner accepts that parameter."""
+    import autotuner as _at
+    sig = _inspect.signature(_at.run_autotuner)
+    if "spec_bundle_id" not in sig.parameters:
+        return {}
+    return {"spec_bundle_id": _make_bundle()}
 
 
 def _default_params() -> dict:
@@ -233,7 +252,7 @@ class TestSplitIs60_20_20:
         with _autotuner_patches(params, history, save_autotune_run_calls=calls):
             with patch("autotuner.run_simulation", side_effect=spy_run_simulation):
                 with contextlib.redirect_stdout(buf):
-                    _import_autotuner().run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+                    _import_autotuner().run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
         # The key assertion: after O6 is implemented, save_autotune_run must be
         # called with both validation_sharpe and frozen_eval_sharpe kwargs.
@@ -409,7 +428,7 @@ class TestValidationUsedForSelection:
         with _autotuner_patches(params, history, save_autotune_run_calls=calls):
             with patch("autotuner._collect_sim_returns", side_effect=spy_collect):
                 with contextlib.redirect_stdout(buf):
-                    at.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+                    at.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
         if not objective_date_sets:
             pytest.fail(
@@ -519,7 +538,7 @@ class TestFrozenEvalNeverConsumedInSelection:
                 patch("autotuner.run_simulation", side_effect=spy_run_sim),
             ):
                 with contextlib.redirect_stdout(buf):
-                    at.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+                    at.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
         leaked = dates_seen_in_objective & frozen_dates
         assert not leaked, (
@@ -592,7 +611,7 @@ class TestFrozenEvalConsumedOncePostSelection:
                 patch("autotuner.run_simulation", side_effect=spy_run_sim),
             ):
                 with contextlib.redirect_stdout(buf):
-                    at.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+                    at.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
         # Count _collect_sim_returns calls that included frozen-eval dates.
         frozen_eval_invocations = [
@@ -675,7 +694,7 @@ class TestFrozenEvalConsumedOncePostSelection:
                 patch("autotuner.run_simulation", side_effect=spy_run_sim),
             ):
                 with contextlib.redirect_stdout(buf):
-                    at.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+                    at.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
         assert len(all_frozen_reads) >= 1, (
             "The frozen-eval fold must be read at least once post-selection "
@@ -1071,7 +1090,7 @@ class TestAutotuneRunsRecordsBothMetrics:
         buf = io.StringIO()
         with _autotuner_patches(params, history, save_autotune_run_calls=calls):
             with contextlib.redirect_stdout(buf):
-                _import_autotuner().run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+                _import_autotuner().run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
         assert len(calls) >= 1, (
             "run_autotuner must call save_autotune_run at least once (per symphony)."

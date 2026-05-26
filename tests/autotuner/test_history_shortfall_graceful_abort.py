@@ -51,12 +51,22 @@ catch and the intraday-guard consistency. pytest.approx is not relevant.
 from __future__ import annotations
 
 import ast
+import inspect as _inspect
 import pathlib
 
 import pytest
 
 import autotuner
 import synthetic_history
+
+
+def _spec_bundle_kwarg() -> dict:
+    """Return {spec_bundle_id: <id>} if run_autotuner accepts that parameter."""
+    sig = _inspect.signature(autotuner.run_autotuner)
+    if "spec_bundle_id" not in sig.parameters:
+        return {}
+    from tests.autotuner.conftest import make_phase1_theory_bundle
+    return {"spec_bundle_id": make_phase1_theory_bundle()}
 
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -181,7 +191,7 @@ def test_run_autotuner_does_not_propagate_a_history_shortfall(monkeypatch) -> No
     # Must NOT raise — run_autotuner converts the shortfall to a graceful abort.
     try:
         result = autotuner.run_autotuner(
-            _minimal_bot_state(), "2026-05-10", ["acc-1"]
+            _minimal_bot_state(), "2026-05-10", ["acc-1"], **_spec_bundle_kwarg()
         )
     except exc_type as e:  # pragma: no cover - this is the RED failure path
         pytest.fail(
@@ -225,7 +235,7 @@ def test_run_autotuner_abort_carries_the_shortfall_reason(monkeypatch) -> None:
     )
 
     result = autotuner.run_autotuner(
-        _minimal_bot_state(), "2026-05-10", ["acc-1"]
+        _minimal_bot_state(), "2026-05-10", ["acc-1"], **_spec_bundle_kwarg()
     )
 
     # The abort return must NOT be a bare falsy None — that is the silent-abort
@@ -311,7 +321,7 @@ def test_run_autotuner_abort_return_differs_from_a_normal_no_change_run(
         _raise_shortfall,
     )
     shortfall_result = autotuner.run_autotuner(
-        _minimal_bot_state(), "2026-05-10", ["acc-1"]
+        _minimal_bot_state(), "2026-05-10", ["acc-1"], **_spec_bundle_kwarg()
     )
 
     # Pre-existing empty-history graceful return (NOT a shortfall — a different
@@ -322,7 +332,7 @@ def test_run_autotuner_abort_return_differs_from_a_normal_no_change_run(
         _empty_history,
     )
     empty_result = autotuner.run_autotuner(
-        _minimal_bot_state(), "2026-05-10", ["acc-1"]
+        _minimal_bot_state(), "2026-05-10", ["acc-1"], **_spec_bundle_kwarg()
     )
 
     assert shortfall_result != empty_result, (

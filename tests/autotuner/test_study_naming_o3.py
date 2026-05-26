@@ -117,11 +117,16 @@ def _autotuner_patches(captured_study_names: list, captured_load_if_exists: list
 
 def _run_autotuner(symphony_name: str, captured_names: list, captured_flags: list):
     import autotuner
+    import inspect
+    from tests.autotuner.conftest import make_phase1_theory_bundle
     bot_state = _build_bot_state(symphony_name)
     buf = io.StringIO()
+    spec_bundle_id = make_phase1_theory_bundle()
+    sig = inspect.signature(autotuner.run_autotuner)
+    extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
     with _autotuner_patches(captured_names, captured_flags):
         with contextlib.redirect_stdout(buf):
-            autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+            autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **extra)
 
 
 # ===========================================================================

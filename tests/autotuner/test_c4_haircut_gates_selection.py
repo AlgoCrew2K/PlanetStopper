@@ -135,6 +135,12 @@ def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
         }
     }
 
+    import inspect as _inspect
+    from tests.autotuner.conftest import make_phase1_theory_bundle as _make_bundle
+    _spec_id = _make_bundle()
+    _sig = _inspect.signature(autotuner.run_autotuner)
+    _extra = {"spec_bundle_id": _spec_id} if "spec_bundle_id" in _sig.parameters else {}
+
     with (
         patch("autotuner.optuna.create_study", return_value=fake_study),
         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
@@ -162,7 +168,7 @@ def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
               side_effect=lambda **kw: (0, 0, True, False)),
         contextlib.redirect_stdout(io.StringIO()),
     ):
-        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_extra)
 
     assert bhy_calls, (
         "run_autotuner did not call benjamini_hochberg_adjust. AC-2: the Harvey "
@@ -257,6 +263,12 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
             }
         }
 
+        import inspect as _inspect2
+        from tests.autotuner.conftest import make_phase1_theory_bundle as _make_bundle2
+        _spec_id2 = _make_bundle2()
+        _sig2 = _inspect2.signature(autotuner.run_autotuner)
+        _extra2 = {"spec_bundle_id": _spec_id2} if "spec_bundle_id" in _sig2.parameters else {}
+
         with (
             patch("autotuner.optuna.create_study", return_value=fake_study),
             patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
@@ -284,7 +296,7 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
                   side_effect=lambda **kw: (0, 0, True, False)),
             contextlib.redirect_stdout(io.StringIO()),
         ):
-            autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+            autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_extra2)
 
         assert captured, "run_autotuner did not persist an autotune_run row."
         # D3 resolution (a) renamed the column deflated_sharpe -> selection_tstat;
