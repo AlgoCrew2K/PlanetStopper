@@ -1265,7 +1265,7 @@ def validate_nn1_compliance(spec_bundle_id: int) -> "tuple[bool, list[str]]":
     # Check researcher_dof_ledger for OOS-peek entries on this bundle.
     # OOS evidence_source means a facet was chosen by looking at frozen-eval returns —
     # a stricter violation than BACKTEST_SELECTION (synthesis §2.5 NN1-VIOLATION hierarchy).
-    ledger_rows = database.get_dof_ledger_for_bundle(str(spec_bundle_id))
+    ledger_rows = database.get_dof_ledger_for_bundle(bundle_hash)
     for ledger_row in ledger_rows:
         if ledger_row.get("evidence_source") == "OOS":
             facet_name = ledger_row.get("facet_name", "unknown")
