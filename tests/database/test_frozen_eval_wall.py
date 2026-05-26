@@ -587,6 +587,113 @@ def test_write_wall_breach_observation_writes_audit_row_and_swallows_own_excepti
 
 
 # ---------------------------------------------------------------------------
+# REQ-SQLITE-1 — query_wall_breach_tripwire must find breaches written by
+# validate_nn1_compliance (str(int_id) mismatch defect)
+# ---------------------------------------------------------------------------
+
+
+def test_tripwire_detects_breach_when_spec_bundle_id_stored_as_str_integer(tmp_path):
+    """REQ-SQLITE-1 (spec-theory mandatory RED):  query_wall_breach_tripwire() must
+    return at least one row when a researcher_dof_ledger row was written with
+    spec_bundle_id=str(integer_id) by validate_nn1_compliance.
+
+    Defect: validate_nn1_compliance (autotuner.py) calls insert_dof_ledger_row
+    with spec_bundle_id=str(spec_bundle_id) — e.g. '1' for integer id 1.
+    query_wall_breach_tripwire (database.py) JOINs:
+        researcher_dof_ledger r JOIN spec_bundles b ON r.spec_bundle_id = b.bundle_hash
+    The bundle_hash is a 64-char hex digest; '1' never equals it, so the JOIN
+    produces zero rows regardless of the breach flag — a silent false-clean.
+
+    This test is RED on any implementation where validate_nn1_compliance stores
+    str(int_id) (or any non-hash string) in the spec_bundle_id column:
+
+        RED condition:  '1' != '<64-char-hex>'  →  JOIN returns 0  →  assertion fails.
+        GREEN condition: validate_nn1_compliance stores bundle_hash (or the JOIN key
+                         is updated to match whatever is stored) → assertion passes.
+
+    Fix guidance for impl-theory:
+        In autotuner.validate_nn1_compliance, change:
+            spec_bundle_id=str(spec_bundle_id)
+        to:
+            spec_bundle_id=bundle_hash
+        (bundle_hash is already resolved at the line
+         `bundle_hash = row[0]` just above the facet loop.)
+
+    Discriminating-power: a trivially-passing implementation that stores bundle_hash
+    correctly passes this test, but a naive implementation that stores str(int_id)
+    fails because the JOIN match is structurally impossible.
+
+    Canonical bundle hash used: _SEED_BUNDLE_HASH (same as existing tripwire_db seed).
+    """
+    db_path = str(tmp_path / "req_sqlite1_test.db")
+
+    with patch.object(db, "DB_FILE", db_path):
+        db.init_db()
+
+        conn = sqlite3.connect(db_path)
+        try:
+            # Seed one spec_bundles row; obtain its ROWID as the integer id that
+            # validate_nn1_compliance would pass as str(spec_bundle_id).
+            conn.execute(
+                "INSERT OR IGNORE INTO spec_bundles "
+                "(bundle_hash, frozen_at, facets_json, horizon_bars, cvar_alpha, generator_family) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    _SEED_BUNDLE_HASH,
+                    "2026-01-15T12:00:00",  # T0 — freeze point
+                    '{"generator_family":"crra-seed","horizon_bars":63}',
+                    63,
+                    0.05,
+                    "crra-seed",
+                ),
+            )
+            row = conn.execute(
+                "SELECT id FROM spec_bundles WHERE bundle_hash = ?",
+                (_SEED_BUNDLE_HASH,),
+            ).fetchone()
+            integer_id = row[0]
+
+            # Insert the breach row exactly as validate_nn1_compliance does it:
+            # spec_bundle_id = str(integer_id) — NOT the bundle_hash.
+            # touched_frozen_eval = 1 (a post-freeze wall-breach scenario).
+            # created_at is after frozen_at so the date filter also matches if the
+            # JOIN were working.
+            conn.execute(
+                "INSERT INTO researcher_dof_ledger "
+                "(spec_bundle_id, facet_name, facet_category, decision_type, "
+                " evidence_source, n_configs_searched, touched_frozen_eval, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(integer_id),          # REQ-SQLITE-1: str(int_id), NOT bundle_hash
+                    "exit_threshold",
+                    "parameter",
+                    "SEARCHED",
+                    "BACKTEST_SELECTION",
+                    3,
+                    1,                        # touched_frozen_eval=1: breach flag set
+                    "2026-01-20T09:00:00",    # after frozen_at 2026-01-15: date filter passes
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        breaches = db.query_wall_breach_tripwire()
+
+    assert len(breaches) >= 1, (
+        f"query_wall_breach_tripwire() returned {len(breaches)} rows; expected >= 1. "
+        "REQ-SQLITE-1: a researcher_dof_ledger row was inserted with "
+        f"spec_bundle_id='{integer_id}' (str(int_id)) and touched_frozen_eval=1 "
+        f"after frozen_at. The bundle_hash is '{_SEED_BUNDLE_HASH}'. "
+        "The tripwire JOIN (r.spec_bundle_id = b.bundle_hash) cannot match because "
+        f"'{integer_id}' != '{_SEED_BUNDLE_HASH}' — the wall breach is invisible. "
+        "Fix: in autotuner.validate_nn1_compliance, change "
+        "spec_bundle_id=str(spec_bundle_id) to spec_bundle_id=bundle_hash "
+        "(bundle_hash is already resolved at `bundle_hash = row[0]` in that function)."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Additional hostile scenario — nested subquery with fold_role from different alias
 # ---------------------------------------------------------------------------
 
