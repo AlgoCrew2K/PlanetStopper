@@ -349,23 +349,15 @@ def test_only_advisor_ro_query_is_an_advisor_read_path():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Task #24: tests the wall cycle's destructive migrations/021_fold_role.sql "
-        "that PM rejected during merge (DROP+SWAP on spec_bundles violated additive-first "
-        "rule + duplicated cycle 018's researcher_dof_ledger). Canonical schema has "
-        "spec_bundles.bundle_hash TEXT PK (no INTEGER id) and "
-        "researcher_dof_ledger.touched_frozen_eval INTEGER (not fold_role TEXT). "
-        "Adapt query_wall_breach_tripwire + this test to the canonical schema in a "
-        "future cycle."
-    ),
-    strict=False,
-)
 def test_wall_breach_tripwire_query_detects_post_freeze_frozen_eval_touch(
     tripwire_db,
 ):
-    """M-1 tripwire: a researcher_dof_ledger row with fold_role='frozen_eval'
+    """M-1 tripwire: a researcher_dof_ledger row with touched_frozen_eval=1
     AND created_at > spec_bundles.frozen_at must be returned by the tripwire query.
+
+    Uses canonical schema (migration 018):
+      - spec_bundle_id TEXT soft FK to spec_bundles.bundle_hash
+      - touched_frozen_eval INTEGER boolean (1 = post-freeze wall-breach)
 
     Sub-scenario A: seed contains the breach row → query returns exactly 1 row.
     Sub-scenario B: seed does NOT contain the breach row → query returns 0 rows.
@@ -377,7 +369,7 @@ def test_wall_breach_tripwire_query_detects_post_freeze_frozen_eval_touch(
     clean) fails sub-scenario A.  A tripwire whose filter is inverted (always fires,
     noise) fails sub-scenario B.  Both sub-scenarios must be asserted.
 
-    Prerequisite: researcher_dof_ledger table must exist (migration 021).
+    Prerequisite: researcher_dof_ledger table must exist (migration 018).
     If the table is missing, the INSERT raises OperationalError with a clear
     message identifying the missing table.
     """
@@ -388,43 +380,41 @@ def test_wall_breach_tripwire_query_detects_post_freeze_frozen_eval_touch(
     )
 
     with patch.object(db, "DB_FILE", tripwire_db):
-        # Resolve the spec_bundle id so we can insert researcher_dof_ledger rows.
-        conn = sqlite3.connect(tripwire_db)
-        try:
-            bundle_row = conn.execute(
-                "SELECT id FROM spec_bundles WHERE bundle_hash = ?",
-                (_SEED_BUNDLE_HASH,),
-            ).fetchone()
-        finally:
-            conn.close()
-
-        assert bundle_row is not None, (
-            "spec_bundles seed row not found — fixture setup failed. "
-            "The walled_db fixture must insert the bundle before this test runs."
-        )
-        bundle_id = bundle_row[0]
-
         # --- Sub-scenario A: post-freeze breach row present ---
         conn = sqlite3.connect(tripwire_db)
         try:
-            # Row A: pre-freeze honest read — must NOT fire tripwire.
+            # Row A: pre-freeze honest evaluation — touched_frozen_eval=0, must NOT fire.
             conn.execute(
                 "INSERT INTO researcher_dof_ledger "
-                "(spec_bundle_id, fold_role, created_at, observation_type, payload_json) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (bundle_id, "train", "2026-01-10T08:00:00", "TRAIN_READ", "{}"),
-            )
-            # Row B: post-freeze breach — fold_role='frozen_eval' after frozen_at.
-            conn.execute(
-                "INSERT INTO researcher_dof_ledger "
-                "(spec_bundle_id, fold_role, created_at, observation_type, payload_json) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "(spec_bundle_id, facet_name, facet_category, decision_type, "
+                " evidence_source, n_configs_searched, touched_frozen_eval, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    bundle_id,
-                    "frozen_eval",
+                    _SEED_BUNDLE_HASH,
+                    "gamma",
+                    "parameter",
+                    "FIXED",
+                    "THEORY",
+                    1,
+                    0,  # not a wall breach
+                    "2026-01-10T08:00:00",  # before frozen_at 2026-01-15
+                ),
+            )
+            # Row B: post-freeze wall breach — touched_frozen_eval=1, after frozen_at.
+            conn.execute(
+                "INSERT INTO researcher_dof_ledger "
+                "(spec_bundle_id, facet_name, facet_category, decision_type, "
+                " evidence_source, n_configs_searched, touched_frozen_eval, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    _SEED_BUNDLE_HASH,
+                    "exit_threshold",
+                    "parameter",
+                    "REVISED",
+                    "BACKTEST_SELECTION",
+                    5,
+                    1,  # wall-breach tripwire fired
                     "2026-01-20T09:00:00",  # after frozen_at 2026-01-15
-                    "FROZEN_EVAL_READ",
-                    "{}",
                 ),
             )
             conn.commit()
@@ -436,19 +426,19 @@ def test_wall_breach_tripwire_query_detects_post_freeze_frozen_eval_touch(
     assert len(breaches_a) == 1, (
         f"Tripwire query returned {len(breaches_a)} rows with one seeded breach; "
         "expected exactly 1. "
-        "M-1: the tripwire must detect the post-freeze frozen_eval row and only it. "
-        "If 0: the JOIN is broken or the filter is wrong. "
-        "If >1: the pre-freeze honest row is also being returned (date filter incorrect)."
+        "M-1: the tripwire must detect the post-freeze touched_frozen_eval=1 row and only it. "
+        "If 0: the JOIN is broken (check spec_bundle_id TEXT = bundle_hash TEXT) or filter wrong. "
+        "If >1: the pre-freeze row is also being returned (date filter or flag filter incorrect)."
     )
 
     # --- Sub-scenario B: no breach row → zero results ---
     with patch.object(db, "DB_FILE", tripwire_db):
         conn = sqlite3.connect(tripwire_db)
         try:
-            # Remove the breach row.
+            # Remove the breach row; leave the honest pre-freeze row.
             conn.execute(
                 "DELETE FROM researcher_dof_ledger "
-                "WHERE fold_role = 'frozen_eval'"
+                "WHERE touched_frozen_eval = 1"
             )
             conn.commit()
         finally:
@@ -459,67 +449,8 @@ def test_wall_breach_tripwire_query_detects_post_freeze_frozen_eval_touch(
     assert len(breaches_b) == 0, (
         f"Tripwire query returned {len(breaches_b)} rows after breach row was removed; "
         "expected 0. "
-        "M-1: the tripwire must return empty when no post-freeze frozen_eval rows exist. "
-        "The pre-freeze train row must NOT match the tripwire criteria."
-    )
-
-
-# ---------------------------------------------------------------------------
-# Scenario 6 — canonical migration name is 021_fold_role.sql
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.xfail(
-    reason=(
-        "Task #24: pins the rejected migrations/021_fold_role.sql in _MIGRATION_FILES. "
-        "PM rejected that migration during wall-cycle merge — destructive DROP+SWAP "
-        "violated additive-first project rule. Canonical _MIGRATION_FILES has 021_cvar_diagnostics "
-        "instead (from shadow cycle)."
-    ),
-    strict=False,
-)
-def test_canonical_migration_name_is_021_fold_role_sql():
-    """H-8 A1 (drafting defect guard): _MIGRATION_FILES must list
-    '021_fold_role.sql', the canonical name per council-converged-migration-plan.
-
-    A name mismatch ('021_fold_role_columns.sql' or any other variant) causes
-    a silent migration skip: run_migrations() catches FileNotFoundError and logs
-    it but does not raise — the migration is silently never applied, and the
-    column never exists.
-
-    Two assertions:
-      (a) '021_fold_role.sql' IS in _MIGRATION_FILES.
-      (b) No variant of '021_fold_role_columns.sql' appears (would indicate
-          the v3-draft-mis-quoted name was used instead of the canonical one).
-
-    Reference: docs/handoff/decision-science-v3-and-divergence-evaluation.md
-    §A.8 A1; test-frozen-eval-wall-tripwire plan §D3 Scenario 6.
-    """
-    migration_list = db._MIGRATION_FILES
-
-    assert "021_fold_role.sql" in migration_list, (
-        "'021_fold_role.sql' is missing from database._MIGRATION_FILES. "
-        "H-8 A1: this is the canonical migration name per the council-converged plan. "
-        "A missing or mis-named entry causes a silent skip on every daemon startup — "
-        "the fold_role column on researcher_dof_ledger is never added."
-    )
-
-    assert "021_fold_role_columns.sql" not in migration_list, (
-        "'021_fold_role_columns.sql' is present in _MIGRATION_FILES. "
-        "H-8 A1: this is the v3-draft-mis-quoted name — use '021_fold_role.sql'. "
-        "A file with this name will silently fail on FileNotFoundError every startup."
-    )
-
-    # Ordering guard: 021 must appear after 019.
-    assert "019_fold_role_columns.sql" in migration_list, (
-        "'019_fold_role_columns.sql' unexpectedly absent — cannot verify ordering."
-    )
-    idx_019 = migration_list.index("019_fold_role_columns.sql")
-    idx_021 = migration_list.index("021_fold_role.sql")
-    assert idx_021 > idx_019, (
-        f"'021_fold_role.sql' (index {idx_021}) must appear AFTER "
-        f"'019_fold_role_columns.sql' (index {idx_019}). "
-        "Migration list is append-only in dependency order."
+        "M-1: the tripwire must return empty when no post-freeze touched_frozen_eval=1 rows exist. "
+        "The pre-freeze honest row must NOT match the tripwire criteria."
     )
 
 

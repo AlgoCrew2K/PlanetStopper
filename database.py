@@ -1564,8 +1564,12 @@ def query_wall_breach_tripwire() -> list:
     """Return researcher_dof_ledger rows that represent a post-freeze frozen_eval touch.
 
     A wall breach is defined as: a researcher_dof_ledger row with
-    fold_role = 'frozen_eval' AND created_at > spec_bundles.frozen_at for the
+    touched_frozen_eval = 1 AND created_at > spec_bundles.frozen_at for the
     associated spec bundle.  Any non-empty result is a hard CI failure (M-1 ★).
+
+    Uses canonical schema (migration 018):
+      - spec_bundle_id TEXT soft FK to spec_bundles.bundle_hash (not integer id)
+      - touched_frozen_eval INTEGER boolean (1 = wall-breach tripwire fired)
 
     Returns a list of sqlite3.Row objects; empty list means the wall held.
     An OperationalError is raised (not swallowed) if researcher_dof_ledger or
@@ -1576,12 +1580,12 @@ def query_wall_breach_tripwire() -> list:
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
-            "SELECT r.id, r.spec_bundle_id, r.fold_role, r.created_at,"
-            "       r.observation_type, r.payload_json,"
+            "SELECT r.id, r.spec_bundle_id, r.touched_frozen_eval, r.created_at,"
+            "       r.facet_name, r.evidence_source,"
             "       b.frozen_at, b.bundle_hash"
             "  FROM researcher_dof_ledger r"
-            "  JOIN spec_bundles b ON r.spec_bundle_id = b.id"
-            " WHERE r.fold_role = 'frozen_eval'"
+            "  JOIN spec_bundles b ON r.spec_bundle_id = b.bundle_hash"
+            " WHERE r.touched_frozen_eval = 1"
             "   AND r.created_at > b.frozen_at"
         ).fetchall()
     finally:
