@@ -1,0 +1,125 @@
+{
+  "_provenance": "Hand-derived from council synthesis §2.2 and plan D1-D3 contracts. S values are plain integers. BHY adjusted p-values are computed by hand from the step-up formula: p_adj_(k) = min_{j>=k}[(N·c(N)/j)·p_(j)], clamp [0,1], where N = n_optuna + S, c(N) = sum_{j=1}^{N} 1/j. No producer-computed rates/dollars/percents pinned.",
+  "_council_refs": ["synthesis §2.2", "v3-and-divergence-evaluation §A.0 bullet-3 + §B.3 route-2", "council-converged-migration-plan §5"],
+
+  "scenarios": {
+    "nn1_honest_s0": {
+      "_description": "T1 — NN1-honest no-op: empty researcher_dof_ledger, S=0, N_effective=N_optuna. Byte-identical to pre-M1 haircut.",
+      "n_optuna": 500,
+      "ledger_rows": [],
+      "expected_s": 0,
+      "expected_n_effective": 500,
+      "overfitting_verdict_prefix": "NN1_HONEST"
+    },
+
+    "single_pnl_toured_facet": {
+      "_description": "T2 — tripwire fires: one BACKTEST_SELECTION row with n_configs_searched=3, S=3, N_effective=503.",
+      "n_optuna": 500,
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 3,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-other-001",
+          "_note": "spec_bundle_id differs from winning bundle so it is NOT excluded"
+        }
+      ],
+      "expected_s": 3,
+      "expected_n_effective": 503,
+      "overfitting_verdict_prefix": "NN1_VIOLATION_TRIPWIRE"
+    },
+
+    "defect2_subsweep_counting": {
+      "_description": "T3 — Defect-2: one row with n_configs_searched=7. S must be 7 (SUM), not 1 (COUNT). N_effective=507.",
+      "n_optuna": 500,
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 7,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-other-002",
+          "_note": "Full sub-sweep count contributes to S, not just presence of the row"
+        }
+      ],
+      "expected_s": 7,
+      "expected_n_effective": 507,
+      "expected_d_spec": 1,
+      "_defect2_wrong_s": 1,
+      "_defect2_wrong_n_effective": 501
+    },
+
+    "frozen_eval_tainted_excluded": {
+      "_description": "T4 — touched_frozen_eval=1 rows are excluded from S. Separate OOS_PEEK alarm path; this accounting must not double-fire.",
+      "n_optuna": 500,
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 5,
+          "touched_frozen_eval": 1,
+          "spec_bundle_id": "bundle-other-003",
+          "_note": "touched_frozen_eval=1 — excluded from S accumulator per plan D4 constraints"
+        }
+      ],
+      "expected_s": 0,
+      "expected_n_effective": 500
+    },
+
+    "winner_bundle_self_excluded": {
+      "_description": "T5 — ledger row whose spec_bundle_id matches the winning bundle is excluded (already counted in n_optuna via the sweep that selected it).",
+      "n_optuna": 500,
+      "winning_spec_bundle_id": "bundle-winner-100",
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 4,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-winner-100",
+          "_note": "Same bundle as winning — excluded to prevent double-count"
+        }
+      ],
+      "expected_s": 0,
+      "expected_n_effective": 500
+    },
+
+    "multiple_rows_sum_not_count": {
+      "_description": "Three qualifying rows with n_configs_searched 3, 5, 7. S=15 (SUM), d_spec=3 (COUNT DISTINCT bundles). N_effective=515.",
+      "n_optuna": 500,
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 3,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-other-010"
+        },
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 5,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-other-011"
+        },
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 7,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-other-012"
+        }
+      ],
+      "expected_s": 15,
+      "expected_d_spec": 3,
+      "expected_n_effective": 515
+    }
+  },
+
+  "shape_a_padding": {
+    "_description": "T6 — Shape-A: benjamini_hochberg_adjust(p + [1.0]*0) == benjamini_hochberg_adjust(p). Empty padding is a no-op.",
+    "_note": "S=0 means no padding appended; the call is byte-identical to today's",
+    "s_zero_padding_is_noop": true
+  },
+
+  "bhy_tightening_property": {
+    "_description": "T7 — Conservative upper-bound property: for any p-vector and S in [0,5], adjusted p-values with S extra 1.0 placeholders are element-wise >= unadjusted. Confirms 'errs safe'.",
+    "s_range": [0, 1, 2, 3, 4, 5],
+    "n_trials_for_property_test": 20,
+    "_rationale": "The Yekutieli c(N) factor is strictly increasing in N (adding 1/N+1 > 0). Padding raises N, raises c(N), raises every BHY factor N*c(N)/k, which inflates every adjusted p-value monotonically."
+  }
+}
