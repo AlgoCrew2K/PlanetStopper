@@ -1581,7 +1581,8 @@ def force_eod():
                 discord_webhook_url=discord_webhook,
             )
             autotuner_changes = autotuner.run_autotuner(
-                bot_state, prev_date_str, account_uuids, is_forced=True
+                bot_state, prev_date_str, account_uuids, is_forced=True,
+                spec_bundle_id=None,  # TODO: wire active bundle registry (NN1 Phase-2)
             )
             reporting.send_eod_discord_post(
                 prev_date_str,

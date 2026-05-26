@@ -939,6 +939,13 @@ def validate_nn1_compliance(spec_bundle_id: int) -> "tuple[bool, list[str]]":
     violations: list[str] = []
 
     # Resolve bundle_hash from integer id — spec_bundle_id is the PK, not the hash.
+    # Guard: id is nullable on DBs that applied migration 016 before 022 backfilled
+    # rowid into the id column. On such DBs, WHERE id = ? returns no rows even for
+    # existing bundles. insert_spec_bundle now backfills id immediately on every
+    # INSERT (post-022 behaviour) so this path is closed for new rows; for pre-backfill
+    # rows migration 022 runs UPDATE spec_bundles SET id = rowid WHERE id IS NULL.
+    # If id IS NULL (pre-backfill state) the lookup returns nothing and we treat
+    # it as "bundle not found" — the operator must re-run run_migrations() to backfill.
     conn = database.get_connection()
     try:
         row = conn.execute(
@@ -948,7 +955,10 @@ def validate_nn1_compliance(spec_bundle_id: int) -> "tuple[bool, list[str]]":
         conn.close()
 
     if row is None:
-        violations.append(f"spec_bundle_id {spec_bundle_id}: bundle not found")
+        violations.append(
+            f"spec_bundle_id {spec_bundle_id}: bundle not found "
+            f"(id column may be NULL pre-migration-022 backfill — run run_migrations())"
+        )
         return False, violations
 
     bundle_hash = row[0]

@@ -881,6 +881,7 @@ _MIGRATION_FILES = [
     "019_fold_role_columns.sql",
     "017_advisor_observations.sql",
     "021_cvar_diagnostics.sql",
+    "022_spec_bundles_add_id.sql",
 ]
 
 
@@ -1005,6 +1006,11 @@ def insert_spec_bundle(
     Idempotent: a duplicate bundle_hash is silently ignored (INSERT OR IGNORE).
     INSERT OR REPLACE is explicitly NOT used — that would overwrite frozen_at,
     destroying the original freeze-timestamp provenance record.
+
+    The id column (added by migration 022) is backfilled from SQLite's implicit
+    rowid immediately after INSERT so that callers can do
+    SELECT id FROM spec_bundles WHERE bundle_hash = ? and always get a non-NULL
+    integer — including rows inserted after migration 022 has already run once.
     """
     conn = get_connection()
     try:
@@ -1013,6 +1019,13 @@ def insert_spec_bundle(
             "(bundle_hash, facets_json, horizon_bars, cvar_alpha, generator_family) "
             "VALUES (?, ?, ?, ?, ?)",
             (bundle_hash, facets_json, horizon_bars, cvar_alpha, generator_family),
+        )
+        # Backfill id from rowid for the just-inserted row (or any row that still
+        # has id IS NULL, e.g. rows inserted on a DB that was at migration 016 state).
+        # This is a no-op for rows already backfilled by migration 022.
+        conn.execute(
+            "UPDATE spec_bundles SET id = rowid WHERE bundle_hash = ? AND id IS NULL",
+            (bundle_hash,),
         )
         conn.commit()
     finally:

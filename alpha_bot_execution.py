@@ -965,7 +965,8 @@ def main():
                     f"  -> {'Weekend/Force' if current_et.weekday() >= 5 else 'Friday'} Detected. Starting autotune..."
                 )
                 autotuner_changes = autotuner.run_autotuner(
-                    bot_state, current_date_str, ACCOUNT_UUIDS, is_forced=force_run
+                    bot_state, current_date_str, ACCOUNT_UUIDS, is_forced=force_run,
+                    spec_bundle_id=None,  # TODO: wire active bundle registry (NN1 Phase-2)
                 )
                 # run_autotuner returns a reason-carrying abort marker on a
                 # graceful history-shortfall abort — pass it straight through

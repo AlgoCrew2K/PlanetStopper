@@ -5,8 +5,7 @@
 -- State DB only — zero optimization-DB placement (council §3.7 / architecture constraint 3).
 
 CREATE TABLE IF NOT EXISTS spec_bundles (
-    id                INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, -- surrogate integer PK (validate_nn1_compliance consumer)
-    bundle_hash       TEXT NOT NULL UNIQUE,                    -- SHA-256 hex of canonical facets_json
+    bundle_hash       TEXT NOT NULL PRIMARY KEY,               -- SHA-256 hex of canonical facets_json
     frozen_at         TEXT NOT NULL DEFAULT (datetime('now')), -- freeze timestamp; set once on INSERT
     facets_json       TEXT NOT NULL,                           -- canonical-serialised JSON blob
     horizon_bars      INTEGER,                                  -- optional: horizon convention (bars)
