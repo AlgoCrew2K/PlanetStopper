@@ -16,3 +16,13 @@ CREATE TABLE IF NOT EXISTS cvar_diagnostics (
     cvar_5pct_long   REAL    DEFAULT NULL,                       -- long-window 5th-pct CVaR (Phase 2 §B.6)
     cvar_n_tail_long INTEGER DEFAULT NULL                        -- long-window tail obs count (Phase 2 §B.6)
 );
+
+-- idx_cvar_diag_cycle: supports replay-determinism lookups by (cycle_id, symphony_id)
+-- via read_cvar_diagnostic_for_cycle (Gate-1 parity assertion).
+CREATE INDEX IF NOT EXISTS idx_cvar_diag_cycle
+    ON cvar_diagnostics (cycle_id);
+
+-- idx_cvar_diag_symphony_ts: supports dashboard reads of the latest row per symphony
+-- via read_cvar_diagnostic_for_symphony (S-3 CVaR display panel, rendered each page load).
+CREATE INDEX IF NOT EXISTS idx_cvar_diag_symphony_ts
+    ON cvar_diagnostics (symphony_id, ts_utc DESC);

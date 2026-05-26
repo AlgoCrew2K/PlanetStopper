@@ -389,8 +389,8 @@ def dashboard():
             None,
         )
         if _first_sym_id:
-            cvar_diagnostic = database.read_cvar_diagnostic_for_cycle(
-                _first_sym_id, _first_sym_id
+            cvar_diagnostic = database.read_cvar_diagnostic_for_symphony(
+                _first_sym_id
             )
     except Exception:
         pass  # non-blocking: dashboard renders without CVaR if the read fails
