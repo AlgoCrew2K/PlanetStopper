@@ -253,7 +253,11 @@ def test_m2_tail_obs_count_field_matches_distinct_count(pool: list[float]):
     # data_too_large: suppressed because generating two pools of up to N=1000 each
     # legitimately exceeds hypothesis's default entropy budget. The large pool size
     # is required for k>=40 (statistical soundness at 3.5-sigma) — see docstring.
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
+    # filter_too_much: suppressed because assume(n_tail_n >= 40) requires N>=800,
+    # which is only ~21% of the [50,1000] pool-size range. hypothesis treats this
+    # as excessive filtering, but the precondition is intentional and statistically
+    # necessary — draws with k<40 are genuinely out-of-scope for this property.
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large, HealthCheck.filter_too_much],
 )
 @given(
     base_pool=synthetic_knn_pool(),
