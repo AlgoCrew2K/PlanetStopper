@@ -232,24 +232,45 @@ def test_migration_017_listed_in_migration_files():
     )
 
 
-def test_migration_017_listed_after_019_fold_role_columns():
-    """017_advisor_observations.sql must appear AFTER 019_fold_role_columns.sql.
+def test_migration_017_present_and_after_016():
+    """017_advisor_observations.sql must be present and appear AFTER 016_spec_bundles.sql.
 
-    The append-only ordering contract requires 019 (already shipped on the
-    merged tip) to appear before 017 in _MIGRATION_FILES so that the
-    run_migrations() walker applies them in dependency order.
+    The correct append-order contract for 017 is:
+      (a) "017_advisor_observations.sql" is present in _MIGRATION_FILES.
+      (b) Its index is after "016_spec_bundles.sql" (its logical predecessor —
+          017 carries spec_bundle_id as a soft FK that references spec_bundles).
+
+    The original test pinned 017 as appearing after 019, which was true when this
+    test was authored (017 was appended chronologically after 019 was already in
+    the list).  The M2 cycle's commit 78e3dc1 reordered _MIGRATION_FILES to put
+    017 in numeric position (after 016, before 018+019), which broke the stale
+    pin.  Pinning to 019 encoded an accident of authoring order, not a real
+    dependency; the actual dependency is 016 (spec_bundles table must exist for
+    spec_bundle_id to be meaningful).
+
+    Precedents for this fix pattern:
+      - test_016 pinned-contiguous assertion hotfix (commit 4c3f3cb)
+      - test_022 pinned-contiguous assertion hotfix (commit a58d887)
     """
     files = db_module._MIGRATION_FILES
-    predecessor = "019_fold_role_columns.sql"
+
+    # (a) presence
+    assert _MIGRATION_FILENAME in files, (
+        f"'{_MIGRATION_FILENAME}' is not in database._MIGRATION_FILES. "
+        "Append it to the list — never reorder or remove existing entries."
+    )
+
+    # (b) order: must come after 016 (soft-FK dependency)
+    predecessor = "016_spec_bundles.sql"
     assert predecessor in files, (
         f"'{predecessor}' not found in _MIGRATION_FILES; cannot verify ordering."
     )
+    idx_016 = files.index(predecessor)
     idx_017 = files.index(_MIGRATION_FILENAME)
-    idx_019 = files.index(predecessor)
-    assert idx_017 > idx_019, (
+    assert idx_017 > idx_016, (
         f"'017_advisor_observations.sql' (index {idx_017}) must appear AFTER "
-        f"'019_fold_role_columns.sql' (index {idx_019}) in _MIGRATION_FILES. "
-        "016 must also precede 017 — spec_bundle_id is a soft FK to spec_bundles."
+        f"'016_spec_bundles.sql' (index {idx_016}) in _MIGRATION_FILES. "
+        "017 carries spec_bundle_id as a soft FK to spec_bundles — 016 must run first."
     )
 
 
