@@ -1,0 +1,29 @@
+{
+  "name": "crra_tstat_near_floor_wealth",
+  "purpose": "Pins the W-H4 contract: floor applied to W (input), NOT to U (output). A floor-hitting day (r_policy_pct = -99.99%) produces W_raw = 0.0001 < WEALTH_ARG_FLOOR = 0.001. The W-side floor clamps W to 0.001 before CRRA, yielding U_floor_day = crra(0.001, gamma=2.0) = -999.0. A U-side floor at -10 would clip U_floor_day to -10.0 (different) and shrink sd(U) from ~377 to ~3.78 -- catching the anti-conservative inflation. The t-stat computed on the W-side-floored series is finite.",
+  "provenance": "Non-circular: W_raw derived from r_policy_pct via W = 1 + r/100. W_floored = max(WEALTH_ARG_FLOOR, W_raw). U = crra(W_floored, gamma=2.0) = (W^(1-2) - 1)/(1-2) = 1 - 1/W. All arithmetic done by hand from the W-H2 formula; no SUT output used.",
+  "WEALTH_ARG_FLOOR": 0.001,
+  "RETURN_PCT_TO_FRACTION": 100.0,
+  "gamma": 2.0,
+  "r_policy_pct": [1.0, -0.5, 2.0, -99.99, 0.5, 1.5, -1.0],
+  "T": 7,
+  "W_raw": [1.01, 0.995, 1.02, 0.00010000000000010001, 1.005, 1.015, 0.99],
+  "W_floored": [1.01, 0.995, 1.02, 0.001, 1.005, 1.015, 0.99],
+  "floor_applied_indices": [3],
+  "U_series": [0.00990099009900991, -0.005025125628140614, 0.019607843137254943, -999.0, 0.004975124378109319, 0.01477832512315258, -0.010101010101010166],
+  "expected": {
+    "U_floor_day": -999.0,
+    "U_floor_day_formula": "crra(WEALTH_ARG_FLOOR, gamma=2.0) = 1 - 1/0.001 = -999.0",
+    "sd_U_wside": 377.58865905673184,
+    "sd_U_naive_yside_floor_at_minus10": 3.7818096202957983,
+    "mean_U": -142.70940912185594,
+    "t_stat": -0.999960134471819,
+    "t_finite": true,
+    "discriminating_note": "W-side floor: U[3] = crra(0.001) = -999.0, sd(U) = 377.6. A U-side floor at -10 clips U[3] to -10 and shrinks sd to 3.78 -- a ~100x difference. The test asserts U[3] == crra(WEALTH_ARG_FLOOR, gamma) exactly, proving the floor was on W."
+  },
+  "tolerance_notes": {
+    "U_floor_day": "exact equality (-999.0 is an exact IEEE-754 double)",
+    "sd_U_wside": "rel=1e-9",
+    "t_stat": "rel=1e-9"
+  }
+}
