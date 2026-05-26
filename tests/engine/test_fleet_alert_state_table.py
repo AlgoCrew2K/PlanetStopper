@@ -1084,6 +1084,46 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
             "No deduplication at the route layer — SQLite last-write-wins handles idempotency."
         )
 
+    def test_dismiss_background_exception_logging_uses_top_level_logging_not_named_logger(self):
+        """fleet_alert_dismiss must use the top-level logging.error call, not a named logger.
+
+        The exception-swallow test patches "logging.error" globally.  If the production
+        handler ever migrates to logging.getLogger(__name__).error(...), that patch target
+        would silently stop intercepting and test_dismiss_background_exception_is_logged_not_propagated
+        would pass spuriously (0 >= 1 would fail, but that's the right direction — the guard
+        catches the source change *before* the exception test becomes invalid).
+
+        This test inspects the source of _dismiss_async to confirm it uses `logging.error`
+        (module-level call) and not a getLogger instance call.  Rev-t17 identified this
+        fragility; encoding it as a source guard prevents silent patch-target drift.
+        """
+        try:
+            import app
+        except ImportError:
+            pytest.fail("app not importable.")
+
+        fn = getattr(app, "fleet_alert_dismiss", None)
+        if fn is None:
+            pytest.fail("fleet_alert_dismiss not found in app.")
+
+        fn_src = inspect.getsource(fn)
+        # Confirm the closure uses logging.error (the top-level logging module call).
+        assert "logging.error" in fn_src, (
+            "fleet_alert_dismiss must call logging.error(...) from the top-level logging module. "
+            "The exception-swallow test patches 'logging.error' globally; if the handler "
+            "uses a named logger (logging.getLogger(__name__).error), the patch target must "
+            "be updated to match. This guard test enforces the source contract so patch drift "
+            "is caught at the source level, not as a silent spurious pass."
+        )
+        # Confirm it does NOT use a getLogger instance in the dismiss closure — that would
+        # invalidate the patch("logging.error") approach used in the exception-swallow test.
+        assert "getLogger" not in fn_src, (
+            "fleet_alert_dismiss must not use logging.getLogger() inside its body. "
+            "If a named logger is introduced, update the patch target in "
+            "test_dismiss_background_exception_is_logged_not_propagated to match, "
+            "then remove this assertion."
+        )
+
     def test_dismiss_route_never_calls_load_state(self, flask_client):
         """
         POST /api/fleet-alert/dismiss must NEVER call database.load_state().
