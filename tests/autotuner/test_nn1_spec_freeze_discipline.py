@@ -806,10 +806,14 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
     """validate_search_space_nn1 must be invoked at the top of run_autotuner,
     before optuna.create_study, so any leaked frozen facet is caught at runtime.
 
-    Stubs synthetic_history.generate_synthetic_history to return a minimal valid
-    stub so execution reaches optuna.create_study — without the stub, run_autotuner
-    short-circuits on empty history before create_study is ever called, making the
-    ordering assertion unreachable.
+    Two stubs are required to reach optuna.create_study:
+    1. generate_synthetic_history returns a multi-date stub so run_autotuner
+       does not short-circuit on total_days < 2.
+    2. bot_state includes a symphony whose key matches the stub history key
+       so the per-symphony for-loop body executes and create_study is reached.
+
+    The test intercepts create_study to abort early (StopIteration), then
+    asserts validate_search_space_nn1 appeared in the call_log before create_study.
     """
     at = _import_autotuner()
 
@@ -834,19 +838,27 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
         call_log.append("create_study")
         raise StopIteration("abort after guard check")
 
-    # Stub synthetic history so run_autotuner does not short-circuit on empty
-    # history before reaching optuna.create_study. The stub returns a minimal
-    # valid shape: one symphony with one day of bar data. The exact values are
-    # irrelevant — the test only checks call ordering, not output.
-    _stub_history = {"stub_sym": {"2026-01-01": {"open": 100.0, "close": 101.0}}}
+    # Stub synthetic history: key "stub_sym" matches bot_state below.
+    # Two dates so total_days >= 2 (avoids the "Need at least 2 days" early-return).
+    _stub_history = {
+        "stub_sym": {
+            "2026-01-02": {"open": 100.0, "close": 101.0},
+            "2026-01-03": {"open": 101.0, "close": 102.0},
+        }
+    }
+
+    # bot_state must contain the same symphony key as the stub history so the
+    # per-symphony for-loop body executes and reaches optuna.create_study.
+    _bot_state = {"stub_sym": {"name": "stub_sym", "account_uuid": "acc-1"}}
 
     import inspect
     sig = inspect.signature(at.run_autotuner)
     call_kwargs = (
-        {"bot_state": {}, "current_date_str": "2026-01-01",
-         "account_uuids": [], "spec_bundle_id": bundle_id}
+        {"bot_state": _bot_state, "current_date_str": "2026-01-03",
+         "account_uuids": ["acc-1"], "spec_bundle_id": bundle_id}
         if "spec_bundle_id" in sig.parameters
-        else {"bot_state": {}, "current_date_str": "2026-01-01", "account_uuids": []}
+        else {"bot_state": _bot_state, "current_date_str": "2026-01-03",
+              "account_uuids": ["acc-1"]}
     )
 
     with patch.object(at.synthetic_history, "generate_synthetic_history",
