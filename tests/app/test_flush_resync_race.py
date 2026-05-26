@@ -62,121 +62,133 @@ def client(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — Engine save is NOT clobbered by a concurrent flush
+# Test 1 — Flush closure acquires _FLUSH_STATE_LOCK around load+modify+save
 # ---------------------------------------------------------------------------
 
 
-def test_engine_save_not_clobbered_by_concurrent_flush(client):
-    """CC-NEW-001: engine's save_state update must be the last write when it
-    races a concurrent flush.
+def test_flush_closure_acquires_lock_around_load_modify_save(client):
+    """CC-NEW-001: _flush_state_async must acquire app._FLUSH_STATE_LOCK before
+    load_state() and hold it until after save_state() returns.
 
-    Without a lock the sequence is:
-      T=0  flush thread: load_state() → stale base state
-      T=1  engine thread: save_state(engine_updated_state)   ← engine writes
-      T=2  flush thread: save_state(stripped stale state)    ← clobbers engine
+    This test injects a spy lock as app._FLUSH_STATE_LOCK and verifies:
+      (a) the lock is acquired at least once during the flush background task, and
+      (b) the lock is held CONTINUOUSLY across the load_state → save_state sequence
+          (i.e. load_state is called while the lock is held, and save_state is also
+          called while the lock is held — not released between them).
 
-    Final DB = stale stripped state.  Engine's update is lost.
+    Mechanism: a spy wrapper around threading.Lock records acquire/release calls
+    and their ordering relative to database.load_state and database.save_state.
 
-    With a lock the flush holds the lock for its entire load+modify+save triple.
-    The engine must wait for the lock before it can write.  Sequence becomes:
-      T=0  flush acquires lock, load_state(), modify, save_state(stripped)
-      T=1  flush releases lock
-      T=2  engine acquires lock, save_state(engine_updated_state)
+    RED (unpatched): _flush_state_async never acquires _FLUSH_STATE_LOCK →
+    spy records zero acquisitions → assertion (a) fails.
 
-    Final DB = engine_updated_state.  Engine's update is NOT clobbered.
-
-    Barrier design:
-      - flush_holding_lock: flush signals after acquiring the lock, before
-        saving.  Engine thread waits on this before attempting its write.
-      - flush_may_save: test releases after verifying the engine is queued,
-        allowing the flush to complete its save and release the lock.
-
-    The assertion: saved_states[-1] == engine_updated_state.  The engine's
-    write must be the last write; the flush's stripped save must come first.
-
-    On unpatched code (no lock) the flush's stripped save is last →
-    saved_states[-1] != engine_updated_state → test FAILS.
+    GREEN (patched): _flush_state_async acquires the lock before load_state and
+    releases it after save_state → spy records ≥1 acquisition bracketing both
+    database calls → both assertions pass.
     """
-    # flush signals it has acquired the lock (or started its write region)
-    flush_holding_lock = threading.Event()
-    # test releases flush to complete save_state (controls ordering)
-    flush_may_save = threading.Event()
-    # engine signals it has completed its save
-    engine_wrote = threading.Event()
+    write_completed = threading.Event()
 
-    all_saved = threading.Event()
-    saved_states: list[dict] = []
+    # Ordered call log: each entry is a string naming the operation
+    call_log: list[str] = []
+    lock_held = threading.local()  # per-thread flag: is the spy lock currently held?
 
-    base_state = {"sym_a": {"name": "Alpha", "account": "acct-1", "triggered": True}}
-    engine_updated_state = {"sym_a": {"name": "Alpha", "account": "acct-1", "stop": -5.0}}
+    class _SpyLock:
+        """Wraps a real threading.Lock; records acquire/release in call_log."""
+
+        def __init__(self):
+            self._lock = threading.Lock()
+            self.acquire_count = 0
+
+        def acquire(self, blocking=True, timeout=-1):
+            result = self._lock.acquire(blocking=blocking, timeout=timeout)
+            if result:
+                self.acquire_count += 1
+                call_log.append("lock.acquire")
+                lock_held.value = True
+            return result
+
+        def release(self):
+            lock_held.value = False
+            call_log.append("lock.release")
+            self._lock.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *_):
+            self.release()
+
+    spy_lock = _SpyLock()
+
+    pre_flush_state = {
+        "sym_a": {"name": "Alpha", "account": "acct-1", "triggered": True},
+    }
 
     load_call_count = 0
 
-    def _controlled_load():
+    def _spy_load():
         nonlocal load_call_count
         load_call_count += 1
         if load_call_count == 1:
-            # Request-thread enumeration — return base state immediately
-            return base_state.copy()
-        # Background-thread load inside _flush_state_async.
-        # Signal that the flush is now inside its critical section, then
-        # wait until the test allows it to proceed (engine is queued).
-        flush_holding_lock.set()
-        flush_may_save.wait(timeout=2)
-        return base_state.copy()
+            return pre_flush_state.copy()
+        # Background-thread load — record whether the lock is held at this point
+        held = getattr(lock_held, "value", False)
+        call_log.append(f"load_state(lock_held={held})")
+        return pre_flush_state.copy()
 
-    def _controlled_save(state):
-        saved_states.append(state.copy() if isinstance(state, dict) else state)
-        if len(saved_states) >= 2:
-            all_saved.set()
-
-    def _simulate_engine_write():
-        # Wait until flush is in its critical section, then try to write.
-        # Without a lock this write races and may complete before flush's save.
-        # With a lock this write must wait for the flush to release → engine
-        # save lands AFTER flush save → engine's state is the final DB state.
-        flush_holding_lock.wait(timeout=2)
-        app_module.database.save_state(engine_updated_state)
-        engine_wrote.set()
+    def _spy_save(state):
+        held = getattr(lock_held, "value", False)
+        call_log.append(f"save_state(lock_held={held})")
+        write_completed.set()
 
     with (
         patch.object(app_module, "database") as db_mock,
         patch.object(app_module, "_refresh_account_totals"),
+        patch.object(app_module, "_FLUSH_STATE_LOCK", spy_lock, create=True),
     ):
-        db_mock.load_state.side_effect = _controlled_load
-        db_mock.save_state.side_effect = _controlled_save
-
-        engine_thread = threading.Thread(target=_simulate_engine_write, daemon=True)
-        engine_thread.start()
+        db_mock.load_state.side_effect = _spy_load
+        db_mock.save_state.side_effect = _spy_save
 
         resp = client.post("/api/settings/flush-resync")
-
-        # Give flush time to reach flush_holding_lock.set(), then release it
-        flush_holding_lock.wait(timeout=2)
-        flush_may_save.set()
-
-        # Wait for both saves inside the patch context
-        all_saved.wait(timeout=3)
-        engine_thread.join(timeout=2)
+        write_completed.wait(timeout=2)
 
     assert resp.status_code == 200
-    assert len(saved_states) == 2, (
-        f"Expected exactly 2 save_state calls (flush + engine); got {len(saved_states)}.  "
-        "Both the flush closure and the engine thread must call save_state."
+
+    # (a) The lock must have been acquired at least once by the flush closure.
+    assert spy_lock.acquire_count >= 1, (
+        f"app._FLUSH_STATE_LOCK was never acquired during the flush background task.  "
+        f"call_log={call_log!r}.  "
+        "Fix: _flush_state_async must acquire app._FLUSH_STATE_LOCK before "
+        "load_state() so that concurrent engine save_state calls are serialized."
     )
 
-    # The engine write must be the LAST write (saved_states[-1]).
-    # If the flush wrote last (no lock), it clobbered the engine's update.
-    last_saved = saved_states[-1]
-    assert last_saved == engine_updated_state, (
-        f"Last save_state call was {last_saved!r}, expected engine_updated_state "
-        f"{engine_updated_state!r}.  "
-        "The flush's stripped save must come FIRST; the engine's write must be LAST.  "
-        "Without a lock the flush races ahead and its stale stripped state is the "
-        "final DB write, clobbering the engine's per-minute update.  "
-        "Fix: hold app._FLUSH_STATE_LOCK around the flush closure's load+modify+save "
-        "so the engine can only write after the flush releases — making the engine "
-        "write the final (authoritative) state."
+    # (b) Both load_state and save_state must have been called while the lock
+    # was held (lock.acquire appears before both; lock.release appears after both).
+    bg_load = next(
+        (e for e in call_log if e.startswith("load_state")), None
+    )
+    bg_save = next(
+        (e for e in call_log if e.startswith("save_state")), None
+    )
+    assert bg_load is not None and "lock_held=True" in bg_load, (
+        f"load_state was called without the lock held.  call_log={call_log!r}.  "
+        "Fix: acquire _FLUSH_STATE_LOCK BEFORE calling load_state() in "
+        "_flush_state_async."
+    )
+    assert bg_save is not None and "lock_held=True" in bg_save, (
+        f"save_state was called without the lock held.  call_log={call_log!r}.  "
+        "Fix: hold _FLUSH_STATE_LOCK continuously through save_state() — do not "
+        "release the lock between load_state and save_state."
+    )
+    # acquire must precede both database calls in the log
+    acq_idx = call_log.index("lock.acquire")
+    load_idx = next(i for i, e in enumerate(call_log) if e.startswith("load_state"))
+    save_idx = next(i for i, e in enumerate(call_log) if e.startswith("save_state"))
+    assert acq_idx < load_idx < save_idx, (
+        f"Expected lock.acquire < load_state < save_state in call_log.  "
+        f"call_log={call_log!r}.  "
+        "The lock must bracket the entire load+modify+save sequence."
     )
 
 
