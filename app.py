@@ -388,6 +388,13 @@ def dashboard():
     # M2 CVaR diagnostic — read the latest diagnostic row for the first symphony.
     # Dashboard is a read-only observer (arch constraint 2); this is a pure DB read.
     # Sentinel: cvar_diagnostic=None when the table has no row yet (Phase-1 warm-up).
+    #
+    # CVAR-001 Phase-1 scope limit (sprint-2-audit a6e4d9f8): only the FIRST symphony's
+    # CVaR diagnostic is surfaced on the dashboard. Multi-symphony portfolios silently
+    # omit other symphonies' diagnostics. This is intentional for Phase-1 — the M2
+    # CVaR diagnostic is a proof-of-concept single-symphony display. Phase-2 will expand
+    # this to a per-symphony dict passed to the template for multi-row rendering.
+    # TODO(Phase-2): replace _first_sym_id with a full dict keyed by symphony_id.
     cvar_diagnostic = None
     try:
         _first_sym_id = next(
