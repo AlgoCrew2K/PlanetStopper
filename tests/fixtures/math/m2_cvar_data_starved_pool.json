@@ -1,0 +1,36 @@
+{
+  "_provenance": "Schema-derived fixture with hand-computed R-U reference values for the data-starved case. Pool constructed manually with N=60, giving k=floor(0.05*60)=3 distinct tail observations. fractional_weight = 0.05*60 - 3 = 0.0 (no atom partial contribution). See m2_cvar_known_pool.derivation.md for the R-U formula. Non-circular: reference values computed from closed form, not from the SUT.",
+  "_layer": "math",
+  "_binding_plan": "feature-plans/decision-science/phase-1/red-test-3-m2-cvar-known-pool/plan.md Scenario 4",
+  "_notes": {
+    "pool_design": "N=60. k=floor(0.05*60)=3 (exactly, fractional_weight=0.0). 3 values strictly below VaR, 1 atom at VaR, 56 above. When fractional_weight=0 the atom contributes ZERO to the CVaR. n_tail_distinct=3 (strictly below only). This is the data-starved case that proves M2 surfaces n=3 to the operator.",
+    "purpose": "Proves that M2 displays the genuine small-n tail count (3) to the operator and uses it as the stderr denominator — not the resample count. A small pool (N=60) with only 3 tail observations is 'data-starved' for CVaR estimation purposes."
+  },
+  "cycle_id": "20260525_1431",
+  "pool_size": 60,
+  "pool_distinct_returns": [
+    -0.06, -0.04, -0.02, -0.015,
+    0.002, 0.004, 0.006, 0.008, 0.01, 0.012, 0.014, 0.016, 0.018, 0.02,
+    0.022, 0.024, 0.026, 0.028, 0.03, 0.032, 0.034, 0.036, 0.038, 0.04,
+    0.042, 0.044, 0.046, 0.048, 0.05, 0.052, 0.054, 0.056, 0.058, 0.06,
+    0.062, 0.064, 0.066, 0.068, 0.07, 0.072, 0.074, 0.076, 0.078, 0.08,
+    0.082, 0.084, 0.086, 0.088, 0.09, 0.092, 0.094, 0.096, 0.098, 0.1,
+    0.102, 0.104, 0.106, 0.108, 0.11, 0.112
+  ],
+  "pool_tail_5pct": {
+    "alpha": 0.05,
+    "n_tail_distinct": 3,
+    "_note": "k=floor(0.05*60)=3. fractional_weight=3.0-3=0.0 so the atom at sorted_pool[3]=-0.015 contributes zero weight. n_tail_distinct=3 (the 3 values strictly below VaR).",
+    "tail_values": [-0.06, -0.04, -0.02]
+  },
+  "expected": {
+    "var_5pct": -0.015,
+    "_var_derivation": "sorted_pool[3] = -0.015 (the 4th-smallest of 60 values).",
+    "cvar_5pct": -0.039999999999999994,
+    "_cvar_derivation": "R-U: (1/0.05)*(1/60)*(-0.06+(-0.04)+(-0.02)+0*(-0.015)) = 20*(1/60)*(-0.12) = -0.04. Equivalent to mean of k=3 below-VaR values because fractional_weight=0.",
+    "cvar_5pct_stderr_correct": 0.011547005383792516,
+    "_stderr_correct_derivation": "std([-0.06,-0.04,-0.02], ddof=1)/sqrt(3) = 0.02/sqrt(3) = 0.011547.",
+    "n_tail_displayed": 3
+  },
+  "discriminating_power": "n_tail_distinct=3 (not 5000). An implementation using the resample count would give stderr = std/sqrt(5000) = 0.011547/sqrt(5000) = 0.0001633, a 70x understatement. The test asserts the displayed value matches the n=3 value."
+}

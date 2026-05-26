@@ -1,0 +1,15 @@
+{
+  "_provenance": "Schema-derived from project architecture constants and production-typical symphony count. realistic_symphony_count is a realistic upper-bound derived from the AlphaBot operational context (a single Alpaca account may carry 5-15 symphonies). cycle_budget_ms is a conservative fraction of the 60-second cycle budget that remains after core engine work. p99_latency_ms_target is derived as cycle_budget_ms / realistic_symphony_count.",
+  "_layer": "benchmark",
+  "_binding_plan": "feature-plans/decision-science/phase-1/test-m2-write-latency/plan.md",
+  "_notes": {
+    "cycle_budget_ms": "60_000 ms total cycle. The engine's core MC + decision logic is benchmarked at ~200ms at typical portfolio size. We allocate 5% of the remaining budget (59_800ms) to telemetry writes = ~2990ms total for telemetry. Divided by 20 symphonies gives ~150ms per symphony. Using 50ms as the conservative p99 target per symphony adds CI noise headroom.",
+    "realistic_symphony_count": "20 symphonies is the design ceiling for a single-account AlphaBot deployment; this is the worst-case denominator for the per-symphony latency target.",
+    "p99_target_rationale": "50ms per-symphony p99 is 3.3x less than the 150ms per-symphony budget allocation, providing CI noise headroom. A disk SQLite INSERT with WAL mode typically completes in 1-5ms; the 50ms target gives 10-50x margin for CI overhead."
+  },
+  "realistic_symphony_count": 20,
+  "cycle_budget_ms": 60000,
+  "telemetry_budget_fraction": 0.05,
+  "telemetry_budget_ms": 2990,
+  "p99_latency_ms_target": 50.0
+}
