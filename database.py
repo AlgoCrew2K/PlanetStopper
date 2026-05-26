@@ -898,6 +898,7 @@ _MIGRATION_FILES = [
     "020_autotune_runs_eut.sql",
     "022_spec_bundles_add_id.sql",
     "023_autotune_runs_s_count.sql",
+    "024_spec_facets_unique_constraint.sql",
 ]
 
 
@@ -1048,21 +1049,54 @@ def insert_spec_bundle(
         conn.close()
 
 
+# Process-local cache for the canonical Phase-1 theory bundle id.
+# Tuple of (db_path, bundle_id) so the cache automatically misses if the DB path
+# changes between calls (e.g. per-test isolation via DB_FILE monkeypatching).
+# Value is None until the first call for a given DB path completes.
+# W-H2 derivation: docs/decision-science/w-h2-wealth-argument-derivation.md §3.1
+_phase1_theory_bundle_id_cache: "tuple[str, int] | None" = None
+
+# Canonical Phase-1 theory facet values (W-H2 derivation, council synthesis §2.5).
+# gamma: risk-aversion coefficient — 2.0 is the canonical Phase-1 value per council §2.5
+#   (most risk-averse value in the W-H2 fixture set {0.5, 1.0, 2.0}).
+# utility_family: CRRA — the functional form, sourced from derivation-fixture.json
+#   crra_utility_formula section (W-H2 memo §1).
+# wealth_argument: "compounded_return" — canonical alias for per_period_gross_wealth_ratio
+#   per derivation-fixture.json selected_wealth_argument_formula.name mapping
+#   (W-H2 memo §3; test fixture FORMULA_NAME_TO_FACET_VALUE mapping).
+PHASE1_THEORY_GAMMA: str = "2.0"
+PHASE1_THEORY_UTILITY_FAMILY: str = "CRRA"
+PHASE1_THEORY_WEALTH_ARGUMENT_FORMULA: str = "compounded_return"
+
+
 def get_or_create_phase1_theory_bundle_id() -> int:
     """Return the integer id for the canonical Phase-1 all-THEORY spec bundle.
 
     Idempotent: INSERT OR IGNORE means repeated calls return the same id.
     The Phase-1 bundle encodes the three theory-frozen facets (gamma, utility_family,
     wealth_argument) with freeze_discipline='THEORY' per council synthesis §2.5.
+    W-H2 derivation: docs/decision-science/w-h2-wealth-argument-derivation.md
 
     Called by live run_autotuner sites (alpha_bot_execution.py, app.py) to satisfy
     the NN1 Phase-1 strict spec_bundle_id requirement without requiring an explicit
     operator-registered bundle (Phase-2 wiring deferred).
+
+    Process-local cache: the second and subsequent calls within the same process
+    return immediately without touching the DB (sub-microsecond; H-3 budget).
     """
+    global _phase1_theory_bundle_id_cache
+    current_db = _db_file()
+    if _phase1_theory_bundle_id_cache is not None:
+        cached_db, cached_id = _phase1_theory_bundle_id_cache
+        if cached_db == current_db:
+            return cached_id
+        # DB path changed (test isolation); fall through to re-compute.
+        _phase1_theory_bundle_id_cache = None
+
     _canon_facets = {
-        "gamma": "2.0",
-        "utility_family": "CRRA",
-        "wealth_argument": "compounded_return",
+        "gamma": PHASE1_THEORY_GAMMA,
+        "utility_family": PHASE1_THEORY_UTILITY_FAMILY,
+        "wealth_argument": PHASE1_THEORY_WEALTH_ARGUMENT_FORMULA,
     }
     canonical_json = canonicalize_facets_json(_canon_facets)
     bundle_hash = hash_facets_json(canonical_json)
@@ -1084,6 +1118,8 @@ def get_or_create_phase1_theory_bundle_id() -> int:
     bundle_id: int = row[0]
 
     # Ensure the three canonical facets are registered.
+    # INSERT OR IGNORE in insert_spec_bundle_facet makes this concurrent-safe
+    # (migration 024 adds UNIQUE(bundle_hash, facet_name) to spec_facets).
     existing = get_spec_facets_for_bundle(bundle_hash)
     existing_names = {r["facet_name"] for r in existing}
     for name, value in _canon_facets.items():
@@ -1093,9 +1129,10 @@ def get_or_create_phase1_theory_bundle_id() -> int:
                 facet_name=name,
                 facet_value=value,
                 freeze_discipline="THEORY",
-                justification="Phase-1 canonical bundle — council synthesis §2.5 hard gate",
+                justification="Phase-1 canonical bundle — W-H2 derivation + council synthesis §2.5 hard gate",
             )
 
+    _phase1_theory_bundle_id_cache = (current_db, bundle_id)
     return bundle_id
 
 
@@ -1173,8 +1210,12 @@ def insert_spec_bundle_facet(
         )
     conn = get_connection()
     try:
+        # INSERT OR IGNORE: if the (bundle_hash, facet_name) pair already exists
+        # (UNIQUE constraint from migration 024), the insert is silently skipped.
+        # This makes concurrent calls to get_or_create_phase1_theory_bundle_id()
+        # safe — duplicate facet inserts are idempotent.
         cursor = conn.execute(
-            "INSERT INTO spec_facets "
+            "INSERT OR IGNORE INTO spec_facets "
             "(bundle_hash, facet_name, facet_value, freeze_discipline, "
             "justification, calibration_evidence) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -1182,7 +1223,14 @@ def insert_spec_bundle_facet(
              justification, calibration_evidence),
         )
         conn.commit()
-        return cursor.lastrowid
+        if cursor.lastrowid:
+            return cursor.lastrowid
+        # Row already existed (INSERT was ignored); return its id.
+        row = conn.execute(
+            "SELECT id FROM spec_facets WHERE bundle_hash = ? AND facet_name = ?",
+            (bundle_hash, facet_name),
+        ).fetchone()
+        return row[0]
     finally:
         conn.close()
 
