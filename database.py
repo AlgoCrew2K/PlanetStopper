@@ -121,7 +121,8 @@ def init_db():
             gamma                     REAL    DEFAULT NULL,
             lambda_budget             REAL    DEFAULT NULL,
             overfitting_verdict       TEXT    DEFAULT NULL,
-            paired_heuristic_study_name TEXT  DEFAULT NULL
+            paired_heuristic_study_name TEXT  DEFAULT NULL,
+            s_count                   INTEGER DEFAULT NULL
         )
     """)
 
@@ -896,6 +897,7 @@ _MIGRATION_FILES = [
     "021_cvar_diagnostics.sql",
     "020_autotune_runs_eut.sql",
     "022_spec_bundles_add_id.sql",
+    "023_autotune_runs_s_count.sql",
 ]
 
 
@@ -1329,6 +1331,47 @@ def count_dof_backtest_selections(spec_bundle_id: "str | None" = None) -> int:
     finally:
         conn.close()
     return int(row[0]) if row and row[0] is not None else 0
+
+
+def get_researcher_dof_ledger_for_run(
+    run_timestamp: str,
+    winning_spec_bundle_id: "str | None" = None,
+) -> "list[dict]":
+    """Return researcher_dof_ledger rows whose evidence_source is BACKTEST_SELECTION
+    for the active autotune run window, excluding frozen-eval-tainted rows and
+    the winning bundle (plan D4).
+
+    Filters:
+      - evidence_source = 'BACKTEST_SELECTION'
+      - COALESCE(touched_frozen_eval, 0) = 0  (frozen-eval rows handled by OOS_PEEK alarm)
+      - spec_bundle_id != winning_spec_bundle_id  (winner already counted in n_optuna)
+
+    Returns 0 rows in the NN1-honest case → S = 0.
+    Uses a read-only connection.
+    """
+    conn = get_ro_connection()
+    try:
+        if winning_spec_bundle_id is not None:
+            rows = conn.execute(
+                "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS)
+                + " FROM researcher_dof_ledger"
+                " WHERE evidence_source = 'BACKTEST_SELECTION'"
+                "   AND COALESCE(touched_frozen_eval, 0) = 0"
+                "   AND (spec_bundle_id IS NULL OR spec_bundle_id != ?)"
+                " ORDER BY id ASC",
+                (winning_spec_bundle_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS)
+                + " FROM researcher_dof_ledger"
+                " WHERE evidence_source = 'BACKTEST_SELECTION'"
+                "   AND COALESCE(touched_frozen_eval, 0) = 0"
+                " ORDER BY id ASC",
+            ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_DOF_LEDGER_COLUMNS, row)) for row in rows]
 
 
 # --- Advisor Wall: frozen-eval access guard ---

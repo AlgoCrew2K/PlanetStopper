@@ -402,6 +402,54 @@ def benjamini_hochberg_adjust(p_values: list[float]) -> list[float]:
     return adjusted
 
 
+# NN1 (synthesis hard gate — council §2.5): the generator family and the
+# horizon convention may NEVER be frozen by P&L / backtest selection.
+# This function ENFORCES NN1 STRUCTURALLY: a P&L-frozen facet appears as
+# a researcher_dof_ledger row with evidence_source='BACKTEST_SELECTION',
+# which bumps S, which inflates N_effective, which inflates the Yekutieli
+# c(N) factor, which inflates every adjusted p-value, which raises the
+# FDR-gate bar — making the haircut harder to clear. NN1-honest case
+# (S=0) → byte-identical to today's haircut.
+
+
+def compute_n_effective(
+    n_optuna: int,
+    ledger_query,
+    winning_spec_bundle_id: "str | None" = None,
+) -> int:
+    """Return the honest multiple-testing count for the BHY haircut.
+
+    N_effective = N_optuna + S, where S is the sum of n_configs_searched
+    over researcher_dof_ledger rows whose evidence_source is
+    BACKTEST_SELECTION, touched_frozen_eval is falsy, and spec_bundle_id
+    does not match the winning bundle (council synthesis §2.2; v3-and-
+    divergence-evaluation §B.3 route 2).
+
+    NN1-honest case: every facet is theory/mandate/calibration-frozen so
+    no row has evidence_source='BACKTEST_SELECTION' → S = 0 →
+    N_effective = N_optuna and the haircut is byte-identical to today's.
+
+    The accounting is a conservative upper bound (errs safe — rejects a
+    genuine signal, never passes a spurious one) and a tripwire that
+    enforces NN1 structurally.
+
+    `ledger_query` is a callable returning the list of relevant ledger
+    rows; injected for testability and to keep compute_n_effective
+    pure with respect to its DB read.
+    """
+    rows = ledger_query()
+    s = 0
+    for row in rows:
+        # Exclude frozen-eval-tainted rows — handled by the OOS_PEEK alarm path.
+        if row.get("touched_frozen_eval"):
+            continue
+        # Exclude the winner bundle — already counted in n_optuna via the sweep.
+        if winning_spec_bundle_id is not None and row.get("spec_bundle_id") == winning_spec_bundle_id:
+            continue
+        s += int(row.get("n_configs_searched", 1))
+    return n_optuna + s
+
+
 def calculate_historical_deviation(current_date_str):
     """
     Scans local directory for post_mortem_*.json from the last 45 calendar days.
@@ -741,7 +789,7 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     return daily_returns
 
 
-def _haircut_select(completed_trials):
+def _haircut_select(completed_trials, n_effective: "int | None" = None):
     """Apply the Harvey & Liu selection-bias haircut to a set of completed trials.
 
     Each completed trial must carry its in-sample validation return series under
@@ -749,8 +797,15 @@ def _haircut_select(completed_trials):
     trial i over the N sentinel-filtered trials:
       1. t-statistic  t_i  = Sortino_i · sqrt(T_i),  T_i = len(daily_returns_i)
       2. one-sided p  p_i  = clamped 1 - Φ(t_i)
-      3. BHY adjust   p_adj = benjamini_hochberg_adjust over the N raw p-values
-      4. selection    winner = argmin p_adj, deployable iff p_adj <= HARVEY_LIU_FDR_Q
+      3. BHY adjust   p_adj = benjamini_hochberg_adjust over the N_effective p-values
+                       (Shape A: append S = n_effective - len(p_values) copies of 1.0
+                        so the Yekutieli c(N) is computed over the honest N; plan D3)
+      4. selection    winner = argmin p_adj over original trials only, deployable
+                       iff p_adj <= HARVEY_LIU_FDR_Q
+
+    ``n_effective`` is the honest multiple-testing count from compute_n_effective.
+    When None (default), it falls back to len(completed_trials) — preserving backward
+    compatibility with the NN1-honest steady-state where S=0 (plan D2).
 
     Returns ``(winner_trial, winner_p_adj, winner_tstat)`` — the BHY-winning
     trial, its adjusted p-value, and its t-statistic. ``winner_trial`` is None
@@ -768,7 +823,19 @@ def _haircut_select(completed_trials):
         T_i = len(series)
         tstats.append(compute_sortino_tstat(t.value, T_i))
     p_values = [compute_haircut_pvalue(ts) for ts in tstats]
-    p_adj = benjamini_hochberg_adjust(p_values)
+
+    # Shape A: pad the p-value list with S copies of 1.0 (at-the-cap = "tested and
+    # rejected at no significance") so the Yekutieli c(N) factor is computed over
+    # the honest N_effective rather than just len(p_values).  Zero change to
+    # benjamini_hochberg_adjust itself — BHY preservation contract (plan D3).
+    n_trials = len(p_values)
+    effective_n = n_trials if n_effective is None else n_effective
+    s = max(0, effective_n - n_trials)
+    padded = p_values + [1.0] * s
+
+    p_adj_all = benjamini_hochberg_adjust(padded)
+    # The winner is selected over the original n_trials, not the padded tail.
+    p_adj = p_adj_all[:n_trials]
 
     winner_idx = min(range(len(p_adj)), key=lambda i: p_adj[i])
     if p_adj[winner_idx] > HARVEY_LIU_FDR_Q:
