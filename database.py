@@ -416,6 +416,12 @@ def save_autotune_run(
     naive_sharpe=None,
     validation_sharpe=None,
     frozen_eval_sharpe=None,
+    # ARCH-001: EUT audit columns from migration 020 (all Phase-1 nullable).
+    spec_bundle_id=None,
+    n_effective=None,
+    d_spec=None,
+    gamma=None,
+    overfitting_verdict=None,
 ) -> None:
     """Persist one row of per-run Optuna validation metrics to autotune_runs.
 
@@ -436,6 +442,13 @@ def save_autotune_run(
                           trial selection. Selection truth; visible to operator for audit.
       frozen_eval_sharpe: Sortino on the frozen-eval fold (final 20% of history); consumed once
                           post-selection for honest performance reporting (López de Prado 2018 Ch. 7.4).
+
+    EUT audit columns (migration 020 — ARCH-001 fix):
+      spec_bundle_id:     bundle_hash TEXT of the spec bundle active during this run.
+      n_effective:        N_optuna + S (honest multiple-testing count from compute_n_effective).
+      d_spec:             COUNT DISTINCT BACKTEST_SELECTION spec_bundle_ids in researcher_dof_ledger.
+      gamma:              Frozen CRRA risk-aversion coefficient from spec_facets.
+      overfitting_verdict: Human-readable Overfitting Conscience summary string.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -444,8 +457,9 @@ def save_autotune_run(
         INSERT INTO autotune_runs
             (run_timestamp, symphony_id, oos_alpha, train_alpha,
              baseline_decision, fallback_oos_alpha, default_oos_alpha,
-             selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
+             spec_bundle_id, n_effective, d_spec, gamma, overfitting_verdict)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_timestamp,
@@ -459,6 +473,11 @@ def save_autotune_run(
             naive_sharpe,
             validation_sharpe,
             frozen_eval_sharpe,
+            spec_bundle_id,
+            n_effective,
+            d_spec,
+            gamma,
+            overfitting_verdict,
         ),
     )
     conn.commit()

@@ -890,7 +890,7 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     return daily_returns
 
 
-def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn=compute_sortino_tstat):
+def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn=compute_sortino_tstat, gamma: "float | None" = None):
     """Apply the Harvey & Liu selection-bias haircut to a set of completed trials.
 
     Each completed trial must carry its in-sample validation return series under
@@ -913,6 +913,11 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn
     with the Sortino objective branch. Pass ``compute_crra_eu_tstat`` for the CRRA-EU
     objective path. Swapping ``tstat_fn`` is the ONLY permitted change to this function
     per the BHY slice binding — all other haircut machinery is byte-identical.
+
+    ``gamma`` is the CRRA risk-aversion coefficient used for the U-transform in the
+    CRRA-EU branch. Required when tstat_fn is compute_crra_eu_tstat; ignored for the
+    Sortino branch. When None and the CRRA-EU branch is active, defaults to 2.0
+    (prudential Phase-1 value) — callers should always pass the bundle-frozen gamma.
 
     Sentinel filter: trials with ``value == math_engine._SORTINO_SENTINEL`` (1e6) are
     excluded before the haircut regardless of ``tstat_fn``. The filter is a no-op for
@@ -937,6 +942,13 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn
     if not filtered_trials:
         return None, None, None
 
+    # CRRA-001 fix: U-transform daily_returns before calling tstat_fn in the CRRA-EU
+    # branch. The docstring contract at run_simulation_crra_eu:1083-1084 specifies
+    # that the haircut re-transforms via derive_floored_wealth_argument +
+    # compute_crra_utility. Raw percent returns passed to compute_crra_eu_tstat
+    # compute mean(r)/sd(r)*sqrt(T) — the H-6 Sharpe-like category error.
+    _crra_gamma = gamma if gamma is not None else 2.0
+
     tstats = []
     for t in filtered_trials:
         series = t.user_attrs.get("daily_returns", []) if hasattr(t, "user_attrs") else []
@@ -944,8 +956,18 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn
             # Sortino branch: t-stat is sortino * sqrt(T), T = len(series)
             tstats.append(compute_sortino_tstat(t.value, len(series)))
         else:
-            # CRRA-EU (or any custom) branch: t-stat from the returns series directly
-            tstats.append(tstat_fn(series))
+            # CRRA-EU branch: U-transform raw percent returns to utility values before
+            # calling tstat_fn. daily_returns stores percent values (e.g. 1.5 = 1.5%);
+            # divide by RETURN_PCT_TO_FRACTION to get a fraction, apply W-H4 floor,
+            # then compute CRRA utility. This implements the documented contract.
+            u_series = [
+                math_engine.compute_crra_utility(
+                    derive_floored_wealth_argument(r / RETURN_PCT_TO_FRACTION),
+                    _crra_gamma,
+                )
+                for r in series
+            ]
+            tstats.append(tstat_fn(u_series))
     p_values = [compute_haircut_pvalue(ts) for ts in tstats]
 
     # Shape A: pad the p-value list with S copies of 1.0 (at-the-cap = "tested and
@@ -1533,6 +1555,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         # selection key, surfaced only in logs.
         selection_tstat_value: float | None = None
         haircut_rejected_proposal = False
+        # ARCH-001: EUT audit values — initialized here so they are always defined
+        # for save_autotune_run even when the haircut_trials block is skipped.
+        n_eff: int = 0
+        d_spec: int = 0
         try:
             completed_trials = [t for t in study.trials if t.value is not None]
         except TypeError:
@@ -1555,7 +1581,28 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
                 _tstat_fn = compute_crra_eu_tstat
             else:
                 _tstat_fn = compute_sortino_tstat
-            winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials, tstat_fn=_tstat_fn)
+            # NEFF-001 + ARCH-001 fix: wire compute_n_effective before _haircut_select
+            # and capture n_eff + d_spec for the EUT audit trail (save_autotune_run).
+            # In the NN1-honest case S=0 → n_eff == len(haircut_trials) → byte-identical
+            # to the pre-wiring behavior (plan D2 backward-compatibility contract).
+            _ledger_rows = database.get_researcher_dof_ledger_for_run(
+                run_timestamp,
+                winning_spec_bundle_id=stored_hash,
+            )
+            n_eff = compute_n_effective(
+                n_optuna=len(haircut_trials),
+                ledger_query=lambda: _ledger_rows,
+            )
+            # d_spec: COUNT DISTINCT spec_bundle_ids from BACKTEST_SELECTION rows
+            # (council §5; differs from S which is SUM(n_configs_searched)).
+            d_spec = len({
+                row.get("spec_bundle_id")
+                for row in _ledger_rows
+                if row.get("spec_bundle_id") is not None
+            })
+            winner_trial, winner_p_adj, winner_tstat = _haircut_select(
+                haircut_trials, n_effective=n_eff, tstat_fn=_tstat_fn, gamma=_gamma
+            )
             if winner_trial is not None:
                 best_params = winner_trial.params
                 best_alpha_train = winner_trial.value
@@ -1695,6 +1742,16 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         # higher-is-better significance scalar); naive_sharpe is the raw Optuna best.
         # O6: validation_sharpe (selection metric) and frozen_eval_sharpe (honest post-selection
         # metric, consumed once from the withheld final 20% fold).
+        # ARCH-001: assemble the overfitting_verdict string from EUT audit values.
+        # Format mirrors plan D5: "NN1_HONEST n_optuna=N d_spec=D n_effective=E"
+        # or "NN1_VIOLATION_TRIPWIRE ..." when d_spec > 0.
+        _n_optuna_for_verdict = len(haircut_trials) if haircut_trials else 0
+        _verdict_prefix = "NN1_HONEST" if d_spec == 0 else "NN1_VIOLATION_TRIPWIRE"
+        _overfitting_verdict = (
+            f"{_verdict_prefix} n_optuna={_n_optuna_for_verdict} "
+            f"D_spec={d_spec} n_effective={n_eff}"
+        )
+
         database.save_autotune_run(
             run_timestamp=run_timestamp,
             symphony_id=normalized_name,
@@ -1707,6 +1764,12 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             naive_sharpe=naive_sharpe_value,
             validation_sharpe=validation_sharpe_value,
             frozen_eval_sharpe=frozen_eval_sharpe_value,
+            # ARCH-001: EUT audit columns from migration 020.
+            spec_bundle_id=stored_hash,
+            n_effective=n_eff,
+            d_spec=d_spec,
+            gamma=_gamma,
+            overfitting_verdict=_overfitting_verdict,
         )
 
     print("  -> Autotuner finished all symphonies.")
@@ -1835,7 +1898,17 @@ def run_calibration_sweep(
         if not haircut_trials:
             haircut_outcome = "not_run"
         else:
-            winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials)
+            # NEFF-001 fix: compute n_effective before _haircut_select.
+            # run_calibration_sweep does not persist to DB and lacks bundle context,
+            # so the ledger query returns empty → S=0 → n_eff == len(haircut_trials),
+            # which is byte-identical to the pre-wiring behavior (plan D2).
+            n_eff_cal = compute_n_effective(
+                n_optuna=len(haircut_trials),
+                ledger_query=lambda: [],
+            )
+            winner_trial, winner_p_adj, winner_tstat = _haircut_select(
+                haircut_trials, n_effective=n_eff_cal
+            )
             if winner_trial is not None:
                 best_params = winner_trial.params
                 naive_sharpe_value = winner_trial.value
