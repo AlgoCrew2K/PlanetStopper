@@ -713,108 +713,198 @@ def test_wh5_documentation_plain_sqrt_t_is_known_anticonservative():
 
 
 # ---------------------------------------------------------------------------
-# BLOCK-1: objective_kind discriminator wiring in run_autotuner
+# BLOCK-1: objective_kind discriminator wiring — behavioral call-interception
 # ---------------------------------------------------------------------------
 
 
-def test_run_autotuner_crra_branch_exists_for_objective_kind():
-    """Pins that run_autotuner contains an objective_kind discriminator that
-    routes crra_eu bundles to compute_crra_eu_objective, NOT compute_sortino_ratio.
+def test_run_simulation_crra_eu_calls_compute_crra_eu_objective():
+    """Behavioral call-interception: run_simulation_crra_eu must call
+    math_engine.compute_crra_eu_objective with a fraction-frame series.
 
-    spec-m1 BLOCK-1: the objective(trial) closure in run_autotuner currently calls
-    compute_sortino_ratio unconditionally. The plan §Deliverables requires an
-    objective_kind discriminator:
+    rev-m1 F-M1: source-string-presence checks do not verify routing. This test
+    intercepts math_engine.compute_crra_eu_objective via unittest.mock.patch and
+    asserts it is actually called by run_simulation_crra_eu — a pure behavioral check.
 
-        if spec_facets.objective_kind == 'crra_eu':
-            objective_value = math_engine.compute_crra_eu_objective(
-                daily_returns_fraction, gamma
-            )
-        else:
-            objective_value = compute_sortino_ratio(daily_returns)
+    A SUT that calls compute_sortino_ratio instead of compute_crra_eu_objective would
+    cause this test to fail: the mock would not be called and assert_called_once
+    would raise AssertionError.
 
-    This test is RED until that discriminator is implemented.
+    Method:
+    1. Patch math_engine.compute_crra_eu_objective with a spy that records its call.
+    2. Patch autotuner._collect_sim_returns to return a known percent-frame series.
+    3. Call run_simulation_crra_eu directly with a minimal parameter dict.
+    4. Assert the spy was called once with the fraction-frame conversion applied.
 
-    Method: monkeypatch database.get_spec_facets_for_bundle to return a CRRA-EU
-    bundle with objective_kind='crra_eu' and gamma=2.0. Then monkeypatch
-    _collect_sim_returns to return a known short series. Assert that:
-    1. math_engine.compute_crra_eu_objective is called (not compute_sortino_ratio).
-    2. The objective value returned by the crra_eu path differs from the sortino path
-       on the same return series (verifying routing, not just that both exist).
+    Tolerance rel=1e-12: exact double-precision arithmetic (division by 100.0).
     """
     import autotuner
     import math_engine
+    from unittest.mock import patch
 
     test_returns_pct = [0.5, -0.25, 1.0, -0.5, 0.75, 0.4, -0.15]  # percent-frame
+    sentinel_return = -0.12345
+    gamma = 2.0
 
-    # Expected CRRA-EU objective: convert to fraction, compute mean(U).
-    rptf = autotuner.RETURN_PCT_TO_FRACTION  # 100.0
-    returns_fraction = [r / rptf for r in test_returns_pct]
-    crra_expected = math_engine.compute_crra_eu_objective(returns_fraction, gamma=2.0)
+    with patch.object(
+        math_engine, "compute_crra_eu_objective", return_value=sentinel_return
+    ) as mock_crra_obj, patch(
+        "autotuner._collect_sim_returns", return_value=test_returns_pct
+    ):
+        result = autotuner.run_simulation_crra_eu(
+            {}, {}, [], "2026-05-26", {}, gamma=gamma
+        )
 
-    # Expected Sortino objective: would be computed from percent-frame returns
-    # (Sortino is unit-independent for ranking, but the formula differs from CRRA mean(U)).
-    # We just verify the two values are different, not the exact Sortino value.
-    assert crra_expected != pytest.approx(0.0, abs=1e-6), (
-        "compute_crra_eu_objective on the test series returned ~0.0 — fixture may be bad."
+    mock_crra_obj.assert_called_once()
+
+    call_args, call_kwargs = mock_crra_obj.call_args
+    actual_returns_arg = call_args[0] if call_args else call_kwargs.get("daily_returns")
+    actual_gamma_arg = call_args[1] if len(call_args) > 1 else call_kwargs.get("gamma")
+
+    expected_fraction = [r / autotuner.RETURN_PCT_TO_FRACTION for r in test_returns_pct]
+    assert len(actual_returns_arg) == len(expected_fraction), (
+        f"compute_crra_eu_objective called with {len(actual_returns_arg)} returns; "
+        f"expected {len(expected_fraction)}."
+    )
+    for i, (got, exp) in enumerate(zip(actual_returns_arg, expected_fraction)):
+        assert got == pytest.approx(exp, rel=1e-12), (
+            f"returns[{i}] passed to compute_crra_eu_objective = {got!r}; "
+            f"expected fraction-frame value {exp!r} (= {test_returns_pct[i]!r} / "
+            f"{autotuner.RETURN_PCT_TO_FRACTION!r}).\n"
+            f"The CRRA-EU branch must divide percent-frame returns by RETURN_PCT_TO_FRACTION."
+        )
+
+    assert actual_gamma_arg == pytest.approx(gamma, rel=1e-12), (
+        f"compute_crra_eu_objective called with gamma={actual_gamma_arg!r}; "
+        f"expected gamma={gamma!r}."
     )
 
-    # The discriminator check: assert run_autotuner accepts an objective_kind parameter
-    # or reads it from spec_facets. A function with no crra_eu routing cannot be GREEN.
-    import inspect
-    src = _AUTOTUNER_SRC.read_text(encoding="utf-8")
-    assert "objective_kind" in src or "crra_eu" in src, (
-        "autotuner.py contains no reference to 'objective_kind' or 'crra_eu'.\n"
-        "The objective(trial) closure must route on objective_kind per plan §Deliverables.\n"
-        "Add: if spec_facets['objective_kind'] == 'crra_eu': use compute_crra_eu_objective."
-    )
-
-    # Confirm run_autotuner exists and is callable.
-    assert callable(getattr(autotuner, "run_autotuner", None)), (
-        "autotuner.run_autotuner is not callable. It must exist as the Optuna entry point."
+    assert result == sentinel_return, (
+        f"run_simulation_crra_eu returned {result!r}; "
+        f"expected the raw return value from compute_crra_eu_objective ({sentinel_return!r})."
     )
 
 
-def test_run_autotuner_crra_branch_calls_crra_eu_tstat_not_sortino():
-    """Pins that the CRRA-EU branch in run_autotuner calls _haircut_select with
-    tstat_fn=compute_crra_eu_tstat, NOT the default compute_sortino_tstat.
+def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
+    """Behavioral routing: when objective_kind='crra_eu', the objective(trial) closure
+    inside run_autotuner must call math_engine.compute_crra_eu_objective, NOT
+    compute_sortino_ratio.
 
-    spec-m1 BLOCK-1 (wiring requirement): the haircut stat for a CRRA-EU trial
-    must use compute_crra_eu_tstat (mean(U)/sd(U)*sqrt(T)), not compute_sortino_tstat
-    (sortino * sqrt(T)). Using sortino_tstat on CRRA-EU trials is the H-6 category
-    error documented in compute_sortino_tstat's docstring.
+    rev-m1 F-M1 (required behavioral test): intercept compute_crra_eu_objective
+    during an Optuna trial callback when spec_facets return objective_kind='crra_eu'.
 
-    This test verifies the routing by confirming that the autotuner source code
-    explicitly passes tstat_fn=compute_crra_eu_tstat to _haircut_select inside
-    the crra_eu branch.
+    Method:
+    1. Monkeypatch database.get_spec_facets_for_bundle to return objective_kind='crra_eu'.
+    2. Monkeypatch autotuner._collect_sim_returns to return a known percent-frame series.
+    3. Monkeypatch optuna.create_study().optimize to call objective(trial) exactly once
+       with a MagicMock trial satisfying the suggest_float/suggest_int/set_user_attr interface.
+    4. Assert math_engine.compute_crra_eu_objective was called (routing occurred).
+    5. Assert compute_sortino_ratio was NOT called (no fallback to Sortino path).
 
-    Method: static source check — 'compute_crra_eu_tstat' must appear in autotuner.py
-    in a context referencing '_haircut_select'. RED until BLOCK-1 wiring is implemented.
+    RED: fails if objective(trial) calls compute_sortino_ratio unconditionally.
+    GREEN: the discriminator `if _objective_kind == 'crra_eu':` routes correctly.
     """
-    src = _AUTOTUNER_SRC.read_text(encoding="utf-8")
+    import autotuner
+    import math_engine
+    from unittest.mock import patch, MagicMock
 
-    assert "compute_crra_eu_tstat" in src, (
-        "autotuner.py does not reference compute_crra_eu_tstat.\n"
-        "The CRRA-EU haircut branch must call _haircut_select(tstat_fn=compute_crra_eu_tstat).\n"
-        "Using the default (compute_sortino_tstat) for CRRA-EU trials is the H-6 error."
-    )
+    test_returns_pct = [0.5, -0.25, 1.0, -0.5, 0.75, 0.4, -0.15]
+    sentinel_crra_result = -0.444
 
-    # The tstat routing must appear near _haircut_select — verify both names co-occur
-    # in the same source vicinity (within 20 lines of each other).
-    lines = src.splitlines()
-    crra_tstat_lines = {i for i, l in enumerate(lines) if "compute_crra_eu_tstat" in l}
-    haircut_lines = {i for i, l in enumerate(lines) if "_haircut_select" in l}
-
-    close_pairs = [
-        (ct, hs)
-        for ct in crra_tstat_lines
-        for hs in haircut_lines
-        if abs(ct - hs) <= 20
+    crra_facets = [
+        {"facet_name": "objective_kind", "facet_value": "crra_eu"},
+        {"facet_name": "gamma", "facet_value": "2.0"},
+        {"facet_name": "utility_family", "facet_value": "CRRA"},
     ]
 
-    assert close_pairs, (
-        "compute_crra_eu_tstat and _haircut_select do not appear within 20 lines of each\n"
-        "other in autotuner.py. The crra_eu branch must pass tstat_fn=compute_crra_eu_tstat\n"
-        "as an argument to _haircut_select — these two references must be co-located."
+    mock_trial = MagicMock()
+    mock_trial.suggest_float.return_value = 0.5
+    mock_trial.suggest_int.return_value = 2
+    mock_trial.set_user_attr.return_value = None
+
+    crra_obj_calls = []
+    sortino_calls = []
+
+    def _fake_crra_eu_objective(daily_returns_fraction, gamma):
+        crra_obj_calls.append((daily_returns_fraction, gamma))
+        return sentinel_crra_result
+
+    def _fake_sortino_ratio(daily_returns):
+        sortino_calls.append(daily_returns)
+        return 99.0
+
+    mock_study = MagicMock()
+    mock_study.best_value = sentinel_crra_result
+    mock_study.best_params = {
+        "TAKE_PROFIT_MC_PCT": 0.5, "VWAP_CROSS_HWM_PCT": 0.5,
+        "VWAP_BLEED_MULTIPLIER": 0.5, "VWAP_BLEED_TICKS": 2,
+        "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.5,
+    }
+    mock_study.trials = []
+
+    def _fake_optimize(objective_fn, n_trials=500, n_jobs=-1):
+        val = objective_fn(mock_trial)
+        mock_study.best_value = val
+
+    mock_study.optimize = _fake_optimize
+
+    fake_bot_state = {"acc123__sym456": {"name": "TestSymphony", "is_live": False}}
+    fake_strat_data = {"locked_vars": [], "params": {
+        "TAKE_PROFIT_MC_PCT": 0.5, "VWAP_CROSS_HWM_PCT": 0.5,
+        "VWAP_BLEED_MULTIPLIER": 0.5, "VWAP_BLEED_TICKS": 2,
+        "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.5,
+    }}
+
+    with patch("autotuner.database") as mock_db, \
+         patch("autotuner._collect_sim_returns", return_value=test_returns_pct), \
+         patch.object(math_engine, "compute_crra_eu_objective",
+                      side_effect=_fake_crra_eu_objective), \
+         patch("autotuner.compute_sortino_ratio", side_effect=_fake_sortino_ratio), \
+         patch("autotuner.optuna") as mock_optuna, \
+         patch("autotuner._apply_optuna_archive_migration_if_needed"), \
+         patch("autotuner.validate_nn1_compliance", return_value=(True, [])):
+
+        mock_db.get_spec_bundle_for_symphony.return_value = {
+            "bundle_hash": "fakehash123", "frozen_at": "2026-05-26T00:00:00Z",
+        }
+        mock_db.get_spec_facets_for_bundle.return_value = crra_facets
+        mock_db.get_symphony_strategy.return_value = fake_strat_data
+        mock_db.normalize_name.side_effect = lambda x: x.lower().replace(" ", "_")
+        mock_db.get_history_data_125d.return_value = {}
+        mock_db.record_autotune_run.return_value = None
+        mock_db.update_symphony_strategy.return_value = None
+
+        mock_optuna.create_study.return_value = mock_study
+        mock_optuna.logging.WARNING = 30
+        mock_optuna.logging.set_verbosity = MagicMock()
+        mock_optuna.storages.RDBStorage.return_value = MagicMock()
+
+        autotuner.run_autotuner(
+            fake_bot_state, "2026-05-26", ["acc123"],
+            is_forced=True, spec_bundle_id=1,
+        )
+
+    assert crra_obj_calls, (
+        "math_engine.compute_crra_eu_objective was NOT called during the Optuna trial.\n"
+        "When objective_kind='crra_eu' is in spec_facets, the objective(trial) closure\n"
+        "must route to compute_crra_eu_objective. The discriminator is missing or broken."
+    )
+
+    assert not sortino_calls, (
+        f"compute_sortino_ratio was called {len(sortino_calls)} time(s) when "
+        f"objective_kind='crra_eu'. The discriminator must suppress the Sortino branch."
+    )
+
+    # Verify fraction-frame conversion in the routed call.
+    returned_fractions, returned_gamma = crra_obj_calls[0]
+    expected_fractions = [r / autotuner.RETURN_PCT_TO_FRACTION for r in test_returns_pct]
+    for i, (got, exp) in enumerate(zip(returned_fractions, expected_fractions)):
+        assert got == pytest.approx(exp, rel=1e-12), (
+            f"compute_crra_eu_objective called with returns[{i}]={got!r}; "
+            f"expected fraction-frame {exp!r}. RETURN_PCT_TO_FRACTION conversion missing."
+        )
+
+    assert returned_gamma == pytest.approx(2.0, rel=1e-12), (
+        f"compute_crra_eu_objective called with gamma={returned_gamma!r}; expected 2.0."
     )
 
 
