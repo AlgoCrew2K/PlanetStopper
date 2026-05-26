@@ -1250,33 +1250,16 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             "no implicit bundle defaults are permitted."
         )
 
-    # Bundle integrity: verify stored bundle_hash matches hash computed from facets_json.
-    conn = database.get_connection()
-    try:
-        bundle_row = conn.execute(
-            "SELECT bundle_hash, facets_json FROM spec_bundles WHERE id = ?",
-            (spec_bundle_id,),
-        ).fetchone()
-    finally:
-        conn.close()
-
+    # Bundle integrity: fetch the row and verify stored hash matches facets_json.
+    # get_spec_bundle_by_id encapsulates both the SELECT and the hash-integrity gate
+    # so this call site stays clean and testable via database-module mocking.
+    bundle_row = database.get_spec_bundle_by_id(spec_bundle_id)
     if bundle_row is None:
         raise ValueError(
             f"spec_bundle_id={spec_bundle_id} not found in spec_bundles. "
             "Register the bundle before running the autotuner."
         )
-    stored_hash, facets_json = bundle_row
-    canonical_json = database.canonicalize_facets_json(
-        json.loads(facets_json)
-    )
-    computed_hash = database.hash_facets_json(canonical_json)
-    if stored_hash != computed_hash:
-        raise ValueError(
-            f"spec_bundle_id={spec_bundle_id} hash mismatch: "
-            f"stored bundle_hash={stored_hash!r} does not match "
-            f"computed hash={computed_hash!r} from facets_json. "
-            "The bundle may have been tampered with after frozen_at — integrity check failed."
-        )
+    stored_hash = bundle_row["bundle_hash"]
 
     # NN1 compliance: refuse to start if any load-bearing facet is BACKTEST_SELECTION.
     is_honest, violations = validate_nn1_compliance(spec_bundle_id)
