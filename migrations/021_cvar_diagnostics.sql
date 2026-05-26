@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS cvar_diagnostics (
     symphony_id      TEXT    NOT NULL,                           -- Composer symphony identifier
     cvar_5pct        REAL    DEFAULT NULL,                       -- 5th-percentile CVaR (Phase 2)
     cvar_5pct_stderr REAL    DEFAULT NULL,                       -- CVaR bootstrap std error (Phase 2)
-    cvar_n_tail      INTEGER DEFAULT NULL,                       -- tail observation count (Phase 2)
+    cvar_n_tail      INTEGER NOT NULL DEFAULT 0,                 -- tail observation count; 0 = insufficient sentinel (F-4 ★)
     cvar_5pct_long   REAL    DEFAULT NULL,                       -- long-window 5th-pct CVaR (Phase 2 §B.6)
     cvar_n_tail_long INTEGER DEFAULT NULL                        -- long-window tail obs count (Phase 2 §B.6)
 );

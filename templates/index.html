@@ -1254,6 +1254,54 @@
     </div>
   </aside>
 
+  {# M2 CVaR diagnostic panel — S-3 four-part display contract (read-only, arch constraint 2). #}
+  {# All four S-3 elements are required: (a) stderr, (b) tail_obs_count, (c) diagnostic label, (d) bias warning. #}
+  {% if cvar_diagnostic %}
+  <section
+    id="cvar-diagnostic-panel"
+    aria-label="CVaR Diagnostic (M2)"
+    style="margin:24px 32px;padding:18px 24px;border:1px solid var(--studio-rule);border-radius:10px;background:var(--studio-paper);font-family:var(--studio-sans);font-size:13px;color:var(--studio-ink);"
+  >
+    <div style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--studio-ink-faint);margin-bottom:10px;">
+      CVaR Diagnostic &mdash; 5th-Percentile Expected Shortfall
+    </div>
+    <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:baseline;">
+      {# S-3 element (a): stderr / uncertainty band #}
+      <span>
+        CVaR (5%):
+        {% if cvar_diagnostic.cvar_5pct is not none %}
+          {{ "%.4f"|format(cvar_diagnostic.cvar_5pct) }}
+          &nbsp;
+          <span
+            data-cvar-stderr="{{ cvar_diagnostic.cvar_5pct_stderr }}"
+            style="color:var(--studio-ink-faint);"
+          >
+            &plusmn;{{ "%.4f"|format(cvar_diagnostic.cvar_5pct_stderr) if cvar_diagnostic.cvar_5pct_stderr is not none else "&mdash;" }} stderr
+          </span>
+        {% else %}
+          <span style="color:var(--studio-ink-faint);">—</span>
+        {% endif %}
+      </span>
+      {# S-3 element (b): tail_obs_count (n=N distinct tail observations) #}
+      <span>
+        Tail obs:
+        <span
+          data-cvar-n-tail="{{ cvar_diagnostic.cvar_n_tail }}"
+          style="font-weight:500;"
+        >n={{ cvar_diagnostic.cvar_n_tail }}</span>
+      </span>
+    </div>
+    {# S-3 element (c): load-bearing safety label — do not trade on this #}
+    <div style="margin-top:8px;color:var(--studio-ink-faint);font-size:11px;">
+      diagnostic, not a signal &mdash; do not trade on this
+    </div>
+    {# S-3 element (d): bias warning — must be verbatim for the tripwire test #}
+    <div style="margin-top:4px;color:var(--studio-ink-faint);font-size:11px;">
+      known-low-biased LOWER BOUND on tail severity, not a point estimate
+    </div>
+  </section>
+  {% endif %}
+
   <script>
     function pctColor(v) {
       if (v == null) return 'text-slate-400';

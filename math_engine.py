@@ -91,6 +91,14 @@ MC_SEED_MODULUS = 2**64
 # Source: decision-science-council-synthesis.md §2.6 / council-attack-rubric.md M-2.
 CVAR_TAIL_PCT = 0.05  # 5th-percentile tail — worst 5% of simulation paths
 
+# M2 diagnostic constants (plan §Deliverables 'Constants').
+# CVAR_ALPHA_DEFAULT: tail probability for compute_cvar_5pct_general_distribution.
+# Source: decision-science-council-synthesis.md §2.6 / H-2 binding.
+CVAR_ALPHA_DEFAULT = 0.05  # 5th-percentile expected shortfall (CVaR at 5%)
+# CVAR_MIN_TAIL_OBS: minimum distinct tail observations required to produce a
+# non-sentinel estimate. At k=0 the R-U formula degenerates; guard returns sentinel.
+CVAR_MIN_TAIL_OBS = 1  # require at least 1 genuine below-VaR (or atom) observation
+
 
 # Phase-2 CVaR typed result (defined in Phase 1 so the M2 schema migration and
 # Phase-2 simulate_forward_paths cutover have a stable single-import target).
@@ -970,6 +978,196 @@ def calculate_14d_atr_pct(holdings, historical_data):
 
     portfolio_atr_pct = atr_pct_array.dot(weights)
     return float(portfolio_atr_pct)
+
+
+@dataclasses.dataclass(frozen=True)
+class CVaREstimate:
+    """Result type for compute_cvar_5pct_general_distribution (M2 H-2 / R-U estimator).
+
+    Distinct from CVaRAssessment: carries .stderr (H-2 binding) and is the return
+    type of the pure-math kNN-pool estimator. CVaRAssessment is the typed result
+    for the Phase-2 forward-path co-signal (different call chain).
+
+    cvar_pct: Rockafellar-Uryasev general-distribution CVaR. None when the pool
+              is empty or has fewer than CVAR_MIN_TAIL_OBS genuine tail observations.
+    tail_obs_count: distinct tail observations used (k_below + 1 if atom contributes,
+                    else k_below). This is the H-2 stderr denominator — NOT the
+                    resample count. Auditable via the persisted cvar_n_tail column.
+    stderr: std(tail_values, ddof=1)/sqrt(tail_obs_count). None when sentinel.
+    insufficient_reason: human-readable explanation when cvar_pct is None.
+    """
+
+    cvar_pct: "float | None"
+    tail_obs_count: int
+    stderr: "float | None"
+    insufficient_reason: "str | None"
+
+
+def compute_cvar_stderr_distinct_tail(
+    returns: list,
+    alpha: float = CVAR_ALPHA_DEFAULT,
+) -> "float | None":
+    """Compute CVaR stderr using the DISTINCT GENUINE tail observation count.
+
+    H-2 binding: the denominator is the number of real tail observations (k_below
+    if fractional_weight=0, else k_below+1 including the atom). This is never the
+    resample count (5000), which would understate the stderr by sqrt(5000/k)≈25x.
+
+    Returns None when the pool is empty or has fewer than CVAR_MIN_TAIL_OBS tail obs.
+    Raises ValueError on non-finite inputs (A-2 closure).
+
+    Source: decision-science-council-synthesis.md H-2; plan §Deliverables Code.
+    """
+    if not returns:
+        return None
+    # A-2 closure: reject non-finite before any arithmetic
+    for v in returns:
+        if not math.isfinite(v):
+            raise ValueError(
+                f"NaN input not allowed: value={v!r} in returns passed to "
+                "compute_cvar_stderr_distinct_tail"
+            )
+    sorted_pool = sorted(returns)
+    n = len(sorted_pool)
+    k = int(alpha * n)  # floor(alpha * N) — number of strictly-below-VaR values
+    fractional_weight = alpha * n - k  # how much of the VaR atom contributes
+
+    if k < CVAR_MIN_TAIL_OBS:
+        return None
+
+    # Distinct tail obs: k below-VaR values + 1 if atom has non-zero weight
+    n_tail_distinct = k + (1 if fractional_weight > 0 else 0)
+
+    tail_values = sorted_pool[: k + (1 if fractional_weight > 0 else 0)]
+
+    if len(tail_values) < 2:
+        # ddof=1 requires at least 2 observations; return None (sentinel).
+        return None
+
+    mean_tail = sum(tail_values) / len(tail_values)
+    variance = sum((v - mean_tail) ** 2 for v in tail_values) / (len(tail_values) - 1)
+    if variance == 0.0:
+        # Degenerate pool: all tail values identical; stderr undefined.
+        return None
+    std_tail = math.sqrt(variance)
+    return std_tail / math.sqrt(n_tail_distinct)
+
+
+def compute_cvar_5pct_general_distribution(
+    returns: list,
+    alpha: float = CVAR_ALPHA_DEFAULT,
+) -> CVaREstimate:
+    """Rockafellar-Uryasev (2002) general-distribution CVaR on a discrete pool.
+
+    Implements the R-U general-distribution formula with correct atom handling:
+      CVaR = (1/alpha) * (1/N) * (sum_below + fractional_weight * VaR)
+    where:
+      k                = floor(alpha * N)         — count strictly below VaR
+      VaR              = sorted_pool[k]            — alpha-quantile atom
+      fractional_weight = alpha*N - k             — atom partial weight [0, 1)
+      sum_below        = sum(sorted_pool[:k])
+
+    The naive estimator (mean of k strictly-below-VaR values) omits the atom
+    contribution, producing a ~4% upward bias in the N=150 fixture.
+
+    stderr uses the DISTINCT GENUINE tail count as denominator (H-2 binding).
+    tail_obs_count = k + 1 if fractional_weight > 0 else k.
+
+    Returns CVaREstimate with cvar_pct=None (sentinel) when:
+      - pool is empty
+      - n_tail_distinct < CVAR_MIN_TAIL_OBS
+
+    Raises ValueError on non-finite inputs (A-2 closure).
+
+    Source: Rockafellar & Uryasev (2002), Optimization of Conditional Value-at-Risk;
+            decision-science-council-synthesis.md §2.6; plan §Deliverables Code.
+    """
+    if not returns:
+        return CVaREstimate(
+            cvar_pct=None,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason="Empty pool: no return observations to estimate CVaR.",
+        )
+
+    # A-2 closure: reject non-finite before sort or arithmetic
+    for v in returns:
+        if not math.isfinite(v):
+            raise ValueError(
+                f"NaN input not allowed: value={v!r} in returns passed to "
+                "compute_cvar_5pct_general_distribution"
+            )
+
+    sorted_pool = sorted(returns)
+    n = len(sorted_pool)
+    k = int(alpha * n)  # floor(alpha * N)
+    fractional_weight = alpha * n - k  # atom partial weight
+
+    # Sentinel guard: k=0 means no strictly-below-VaR values exist.
+    # A pool with no genuine below-VaR entries cannot produce a meaningful CVaR
+    # (the VaR atom alone is all positive returns — no tail severity to estimate).
+    # CVAR_MIN_TAIL_OBS guards on k, not on k + atom — consistent with the
+    # "data-starved" operator signal: we need at least one strictly-below-VaR observation.
+    if k < CVAR_MIN_TAIL_OBS:
+        return CVaREstimate(
+            cvar_pct=None,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason=(
+                f"Insufficient tail observations: k={k} strictly-below-VaR entries "
+                f"< CVAR_MIN_TAIL_OBS ({CVAR_MIN_TAIL_OBS}). "
+                "Pool has no genuine sub-alpha-quantile entries."
+            ),
+        )
+
+    # Distinct tail obs count (H-2 denominator): strictly-below + atom if it contributes.
+    n_tail_distinct = k + (1 if fractional_weight > 0 else 0)
+
+    var_atom = sorted_pool[k]  # alpha-quantile atom (VaR)
+    sum_below = sum(sorted_pool[:k])
+
+    # H-2 stderr on distinct tail count (never the resample count)
+    tail_values = sorted_pool[: k + (1 if fractional_weight > 0 else 0)]
+
+    if len(tail_values) < 2:
+        # Single-observation tail: std undefined; return sentinel.
+        return CVaREstimate(
+            cvar_pct=None,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason=(
+                f"Degenerate tail: only {len(tail_values)} tail observation(s); "
+                "stderr requires at least 2 distinct observations."
+            ),
+        )
+
+    mean_tail = sum(tail_values) / len(tail_values)
+    variance = sum((v - mean_tail) ** 2 for v in tail_values) / (len(tail_values) - 1)
+
+    if variance == 0.0:
+        # All tail observations are identical — degenerate pool. The CVaR is the common
+        # value but stderr = 0, violating the sentinel discipline (stderr must be positive
+        # for a non-sentinel estimate). Return sentinel so the display layer skips.
+        return CVaREstimate(
+            cvar_pct=None,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason=(
+                "Degenerate tail: all tail observations are identical "
+                "(std=0); stderr undefined for this pool."
+            ),
+        )
+
+    # R-U general-distribution formula
+    cvar_val = (1.0 / alpha) * (1.0 / n) * (sum_below + fractional_weight * var_atom)
+    stderr_val = math.sqrt(variance) / math.sqrt(n_tail_distinct)
+
+    return CVaREstimate(
+        cvar_pct=cvar_val,
+        tail_obs_count=n_tail_distinct,
+        stderr=stderr_val,
+        insufficient_reason=None,
+    )
 
 
 def compute_portfolio_cvar(

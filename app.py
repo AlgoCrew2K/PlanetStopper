@@ -379,6 +379,22 @@ def dashboard():
         if _k:
             accounts_map[_k] = _lbl
 
+    # M2 CVaR diagnostic — read the latest diagnostic row for the first symphony.
+    # Dashboard is a read-only observer (arch constraint 2); this is a pure DB read.
+    # Sentinel: cvar_diagnostic=None when the table has no row yet (Phase-1 warm-up).
+    cvar_diagnostic = None
+    try:
+        _first_sym_id = next(
+            (k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v),
+            None,
+        )
+        if _first_sym_id:
+            cvar_diagnostic = database.read_cvar_diagnostic_for_cycle(
+                _first_sym_id, _first_sym_id
+            )
+    except Exception:
+        pass  # non-blocking: dashboard renders without CVaR if the read fails
+
     return render_template(
         "index.html",
         vars_locked_count=vars_locked_count,
@@ -389,6 +405,7 @@ def dashboard():
         active_syms=active_syms,
         standby_syms=standby_syms,
         accounts_map=accounts_map,
+        cvar_diagnostic=cvar_diagnostic,
     )
 
 
