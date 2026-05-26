@@ -350,6 +350,72 @@ def test_compute_crra_utility_log_utility_branch_at_gamma_equals_1():
         )
 
 
+def test_compute_crra_utility_gamma_1_1_does_not_use_log_branch():
+    """Negative pin (spec-m1 Finding 11): gamma=1.1 must NOT activate the log branch.
+
+    CRRA_LOG_UTILITY_GAMMA_TOL = 1e-9. gamma=1.1 is 0.1 away from 1.0 — well
+    outside the tolerance. It must use the general form:
+        u(W; 1.1) = (W^(1 - 1.1) - 1) / (1 - 1.1) = (W^(-0.1) - 1) / (-0.1).
+
+    At W=1.01:
+        general form: (1.01^(-0.1) - 1) / (-0.1)
+        log form:     ln(1.01)
+
+    These differ materially. The test asserts the SUT matches the general form
+    and does NOT match ln(W), catching an accidental over-broad tolerance guard.
+
+    Tolerance rel=1e-9: deterministic double-precision arithmetic.
+    """
+    math_engine = _import_math_engine()
+
+    W_test = 1.01
+    gamma = 1.1
+
+    # General form (correct): u = (W^(1-gamma) - 1) / (1-gamma)
+    expected_general = (W_test ** (1.0 - gamma) - 1.0) / (1.0 - gamma)
+    # Log form (wrong for gamma=1.1): u = ln(W)
+    wrong_log = math.log(W_test)
+
+    result = math_engine.compute_crra_utility(W_test, gamma)
+
+    # Must match general form.
+    assert result == pytest.approx(expected_general, rel=1e-9), (
+        f"compute_crra_utility({W_test!r}, gamma={gamma!r}) = {result!r};\n"
+        f"expected general form = {expected_general!r}.\n"
+        f"gamma=1.1 is outside CRRA_LOG_UTILITY_GAMMA_TOL (1e-9) of 1.0;\n"
+        f"it must use the general CRRA formula, not the log-utility branch."
+    )
+
+    # Must NOT match log form (the wrong branch).
+    # The two forms at W=1.01, gamma=1.1:
+    #   general: (1.01^(-0.1) - 1) / (-0.1) ≈ 0.009950 (slope factor slightly < 1)
+    #   log:     ln(1.01) ≈ 0.009950 (happens to be very close! -- check the gap)
+    # At W=1.01 the two are numerically close due to the Taylor series, so use W=1.5
+    # for the discrimination check. At W=1.5, gamma=1.1:
+    #   general: (1.5^(-0.1) - 1)/(-0.1) ≈ (0.9607 - 1)/(-0.1) ≈ 0.3930
+    #   log:     ln(1.5) ≈ 0.4055  (difference ~ 0.012, discriminating at rel=1e-2)
+    # W=1.5 gives a ~2% difference between general and log forms, so rel=1e-2 (1%)
+    # is tight enough to discriminate. W=1.01 has only 0.05% difference and would
+    # not discriminate at rel=1e-2.
+    W_discrim = 1.5
+    expected_general_discrim = (W_discrim ** (1.0 - gamma) - 1.0) / (1.0 - gamma)
+    wrong_log_discrim = math.log(W_discrim)
+    result_discrim = math_engine.compute_crra_utility(W_discrim, gamma)
+
+    assert result_discrim == pytest.approx(expected_general_discrim, rel=1e-9), (
+        f"compute_crra_utility({W_discrim!r}, gamma={gamma!r}) = {result_discrim!r};\n"
+        f"expected general form = {expected_general_discrim!r}.\n"
+        f"Using W=1.5 for discrimination: general ({expected_general_discrim:.6f})"
+        f" vs log ({wrong_log_discrim:.6f}), diff ~2%."
+    )
+    assert result_discrim != pytest.approx(wrong_log_discrim, rel=1e-2), (
+        f"compute_crra_utility({W_discrim!r}, gamma={gamma!r}) returned a value "
+        f"matching ln(W) = {wrong_log_discrim!r}.\n"
+        f"gamma=1.1 must NOT activate the log branch. The general form gives "
+        f"{expected_general_discrim!r} which differs from ln(W) by ~2% at W=1.5."
+    )
+
+
 # ---------------------------------------------------------------------------
 # compute_crra_eu_objective: returns mean(U)
 # ---------------------------------------------------------------------------

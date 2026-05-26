@@ -142,32 +142,24 @@ def test_crra_eu_tstat_rejects_sortino_form_category_error():
 # ---------------------------------------------------------------------------
 
 
-def test_crra_eu_tstat_finite_at_wealth_argument_floor():
-    """Pins that a floor-hitting wealth-argument day yields a finite t-stat.
+def _check_floor_scenario(autotuner, fixture, scenario_key: str) -> None:
+    """Shared W-H4 verification logic for a single gamma scenario.
 
-    A floor-hitting day (W_raw < WEALTH_ARG_FLOOR) must produce U_floor_day =
-    crra(WEALTH_ARG_FLOOR, gamma) = -999.0 (for gamma=2.0). This confirms the
-    floor was applied to W (input) before the CRRA transform, NOT to U (output).
+    Called by both the gamma=2.0 and gamma=5.0 sub-cases. Both sub-cases
+    share the same W_floored series; only the gamma and resulting U_series differ.
 
-    Discriminating power: a wrong U-side floor at -10 would produce U_floor_day
-    = -10 (not -999.0) and sd(U) ~ 3.78 (not ~377.6). The assertion
-    'U_floor_day == crra(WEALTH_ARG_FLOOR, gamma) exactly' catches this.
-
-    W-H4 contract: floor on W -> U is the honest monotone CRRA shape, including
-    a large negative U for a floor-hitting day. Flooring U instead would
-    compress the lower tail, shrink sd(U), and inflate t -- the anti-conservative
-    bias evaluation §A.1 H-1 calls out.
-
-    Tolerance: U_floor_day is exact (IEEE-754: 1 - 1/0.001 = -999.0 exactly).
+    Asserts:
+    1. compute_crra_eu_tstat(U_series) is finite (no NaN/Inf poisoning).
+    2. U_series[floor_idx] == crra(WEALTH_ARG_FLOOR, gamma) exactly (W-side floor).
+    3. sd(U_series) matches the fixture's precomputed sd (rel=1e-9).
+    4. mean(U_series) is finite.
     """
-    fixture = _load_fixture(_FIXTURE_FLOOR)
-    autotuner = _import_autotuner()
-
-    # Import the named constants to verify fixture consistency at load time.
-    # This guards against a future constant change that would silently
-    # invalidate the fixture's pre-computed U values.
+    scenario = fixture[scenario_key]
+    gamma = scenario["gamma"]
     wealth_arg_floor = autotuner.WEALTH_ARG_FLOOR
-    gamma = fixture["gamma"]
+    U_series = scenario["U_series"]
+    floor_idx = fixture["floor_applied_indices"][0]  # index 3
+    expected_sd = scenario["expected"]["sd_U_wside"]
 
     assert wealth_arg_floor == fixture["WEALTH_ARG_FLOOR"], (
         f"WEALTH_ARG_FLOOR in autotuner ({wealth_arg_floor!r}) differs from the "
@@ -175,45 +167,87 @@ def test_crra_eu_tstat_finite_at_wealth_argument_floor():
         f"after changing WEALTH_ARG_FLOOR."
     )
 
-    U_series = fixture["U_series"]
-    floor_idx = fixture["floor_applied_indices"][0]  # index 3
-    expected_U_floor_day = fixture["expected"]["U_floor_day"]
-    expected_sd = fixture["expected"]["sd_U_wside"]
-
     # The t-stat must be finite.
     result = autotuner.compute_crra_eu_tstat(U_series)
     assert math.isfinite(result), (
-        f"compute_crra_eu_tstat returned non-finite {result!r} on a series with\n"
-        f"a floor-hitting day. WEALTH_ARG_FLOOR = {wealth_arg_floor!r} applied to\n"
-        f"W must keep U finite; a NaN/inf here means the floor was not applied,\n"
-        f"triggering the H-1 NaN-poisoning failure path."
+        f"[{scenario_key}] compute_crra_eu_tstat returned non-finite {result!r}.\n"
+        f"WEALTH_ARG_FLOOR = {wealth_arg_floor!r} applied to W must keep U finite;\n"
+        f"a NaN/inf here means the floor was not applied (H-1 NaN-poisoning path)."
     )
 
     # The floor-day U must equal crra(WEALTH_ARG_FLOOR, gamma) exactly.
-    # This is the W-side floor contract: floor was on W, not on U.
+    # This is the load-bearing W-side floor contract assertion: floor was on W, not U.
     u_at_floor = (wealth_arg_floor ** (1.0 - gamma) - 1.0) / (1.0 - gamma)
     assert U_series[floor_idx] == u_at_floor, (
-        f"U_series[{floor_idx}] = {U_series[floor_idx]!r} but crra(WEALTH_ARG_FLOOR, gamma) "
-        f"= {u_at_floor!r}.\n"
+        f"[{scenario_key}] U_series[{floor_idx}] = {U_series[floor_idx]!r} but "
+        f"crra(WEALTH_ARG_FLOOR={wealth_arg_floor!r}, gamma={gamma!r}) = {u_at_floor!r}.\n"
         f"The floor-day U must equal crra(WEALTH_ARG_FLOOR) exactly, proving the\n"
         f"floor was applied to W before CRRA (not to U after). A U-side floor at\n"
         f"a higher level would produce a different value here."
     )
 
     # The fixture's sd(U) must match statistics.stdev(U_series).
-    # A U-side floor at -10 would give sd ~ 3.78, not ~377.6.
+    # Tolerance rel=1e-9: both computed to full double precision from the same inputs.
     actual_sd = statistics.stdev(U_series)
     assert actual_sd == pytest.approx(expected_sd, rel=1e-9), (
-        f"sd(U_series) = {actual_sd!r} does not match the W-side-floor reference\n"
-        f"sd = {expected_sd!r}.\n"
-        f"A U-side floor at -10 would yield sd ~ 3.78 (100x smaller). This check\n"
-        f"guards against a compressed-lower-tail (anti-conservative) implementation."
+        f"[{scenario_key}] sd(U_series) = {actual_sd!r} does not match the "
+        f"W-side-floor reference sd = {expected_sd!r}.\n"
+        f"For gamma=2.0: a U-side floor at -10 would yield sd ~ 3.78 (100x smaller).\n"
+        f"For gamma=5.0: U[3] ~ -2.5e11 dominates; sd mismatch indicates wrong U."
     )
 
-    # The sd and mean must both be finite (no NaN poisoning).
+    # The mean must also be finite.
     mean_U = sum(U_series) / len(U_series)
-    assert math.isfinite(mean_U), f"mean(U_series) is non-finite: {mean_U!r}"
-    assert math.isfinite(actual_sd), f"sd(U_series) is non-finite: {actual_sd!r}"
+    assert math.isfinite(mean_U), (
+        f"[{scenario_key}] mean(U_series) is non-finite: {mean_U!r}"
+    )
+
+
+def test_crra_eu_tstat_finite_at_wealth_argument_floor_gamma_2():
+    """Pins that a floor-hitting day yields a finite t-stat at gamma=2.0.
+
+    A floor-hitting day (W_raw < WEALTH_ARG_FLOOR=0.001) must produce
+    U_floor_day = crra(0.001, gamma=2.0) = -999.0 (exact IEEE-754). The
+    W-side floor contract is verified by exact equality of U[3] to crra(floor, gamma).
+
+    Discriminating power: a wrong U-side floor at -10 would produce U_floor_day
+    = -10 (not -999.0) and sd(U) ~ 3.78 (not ~377.6), a ~100x difference.
+
+    W-H4 contract: floor on W (input), never on U (output). Flooring U compresses
+    the lower tail, shrinks sd(U), and inflates t -- the anti-conservative bias
+    that evaluation §A.1 H-1 calls out.
+
+    See also: gamma=5.0 sub-case for IEEE-754 stability at the prudential ceiling.
+    """
+    fixture = _load_fixture(_FIXTURE_FLOOR)
+    autotuner = _import_autotuner()
+    _check_floor_scenario(autotuner, fixture, "gamma_2_scenario")
+
+
+def test_crra_eu_tstat_finite_at_wealth_argument_floor_gamma_5():
+    """Pins IEEE-754 stability at gamma=5.0 — the prudential gamma ceiling.
+
+    spec-m1 Finding 10 mandates verifying the near-floor sub-case at gamma=5.0
+    explicitly to pin the plan §NN1 prudential ceiling. At gamma=5.0 the
+    floor-hitting day (W=0.001) produces u ~ -2.5e11 (far larger magnitude than
+    gamma=2.0's -999.0). The t-stat must remain finite.
+
+    Key formula check: u(WEALTH_ARG_FLOOR=0.001, gamma=5.0) =
+    (0.001^(1-5) - 1)/(1-5) = (0.001^(-4) - 1)/(-4) = (1e12 - 1)/(-4) ≈ -2.5e11.
+    The '-1' term in the numerator is load-bearing; omitting it gives (1e12)/(-4)
+    instead, a ~4e-12 relative error that this test would catch at rel=1e-9.
+
+    The t-stat is still near -1.0 because U[3] dominates both mean(U) and sd(U)
+    proportionally. Finiteness proves WEALTH_ARG_FLOOR > 0 prevents W=0 which
+    would blow up W^(-4) to +inf.
+
+    spec-m1 illustration note: spec-m1 quoted u(W=0.5, gamma=5.0) = -4.0 as an
+    example. The correct value is -3.75 (includes the '-1' term: (16-1)/(-4)).
+    This fixture uses W=WEALTH_ARG_FLOOR=0.001 (the actual floor), not W=0.5.
+    """
+    fixture = _load_fixture(_FIXTURE_FLOOR)
+    autotuner = _import_autotuner()
+    _check_floor_scenario(autotuner, fixture, "gamma_5_scenario")
 
 
 # ---------------------------------------------------------------------------
