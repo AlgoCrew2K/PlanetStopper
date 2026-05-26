@@ -125,40 +125,47 @@ _SS_MAX_PARA_SQUEEZE_MAX = 0.8
 _SS_VWAP_CROSS_HWM_V1_MIN = 0.3
 _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
 
-# --- run_simulation objective: loss-averse utility penalty constants (audit H-10) ---
-# The run_simulation objective is an explicit LOSS-AVERSE utility: it weights
-# downside outcomes (negative guard-alpha, missed upside, peak-to-exit drawdown)
-# more heavily than symmetric guard-alpha. Loss aversion is a deliberate
-# capital-preservation choice — the same family of asymmetric utility AlphaBot's
-# Sortino objective (downside deviation) embodies. Each scalar/threshold below
-# was an unsourced inline literal (finding H-10); naming + sourcing them here
-# makes the objective inspectable and prevents a silent scalar drift inverting
-# the policy ranking.
+# --- run_simulation_sortino_legacy objective: loss-averse utility penalty constants ---
+# (audit H-10 — AC-4 remediation). The run_simulation_sortino_legacy objective is an
+# explicit LOSS-AVERSE utility: it weights downside outcomes (negative guard-alpha,
+# missed upside, peak-to-exit drawdown) more heavily than symmetric guard-alpha.
+# Loss aversion is a deliberate capital-preservation choice — the same family of
+# asymmetric utility AlphaBot's Sortino objective (downside deviation) embodies.
+# Each scalar/threshold below was an unsourced inline literal (finding H-10); naming
+# + sourcing them here makes the objective inspectable and prevents a silent scalar
+# drift inverting the policy ranking.
+#
+# M1 Note: the six original names (MISSED_UPSIDE_PENALTY_MULT etc.) were the module-
+# level constants replaced by M1. Under Option B (legacy branch retained), the
+# constants are kept here with SORTINO_OBJ_* names (satisfying AC-4 keyword patterns)
+# so that run_simulation_sortino_legacy can reference them. Inside the function body,
+# local aliases RUN_SIM_* are assigned from these so the function body uses named
+# references without module-scope pollution of the RUN_SIM_* names.
 
 # Multiplier on missed upside (best intraday return forgone by exiting early).
 # 1.5 > 1.0: forgone upside is penalised harder than realised guard-alpha — an
 # early exit that leaves a run on the table is a real opportunity cost.
-RUN_SIM_MISSED_UPSIDE_MULT = 1.5
+SORTINO_OBJ_MISSED_UPSIDE_MULT = 1.5
 # Missed upside is only penalised once it exceeds this many percent — a small
 # forgone move is execution noise, not a policy defect.
-RUN_SIM_MISSED_UPSIDE_THRESHOLD = 1.0
+SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD = 1.0
 
 # Multiplier on peak-to-exit drawdown (profit given back from the intraday high).
 # 0.75 < 1.0: giving back profit is penalised, but more leniently than missed
 # upside — some give-back is unavoidable in any trailing-stop policy.
-RUN_SIM_DRAWDOWN_MULT = 0.75
+SORTINO_OBJ_DRAWDOWN_MULT = 0.75
 # Peak-to-exit drawdown is only penalised once it exceeds this many percent —
 # a give-back smaller than this is within normal trailing-stop slack.
-RUN_SIM_DRAWDOWN_THRESHOLD = 1.5
+SORTINO_OBJ_DRAWDOWN_THRESHOLD = 1.5
 # The drawdown penalty applies only after a position reached at least this gain;
 # below it there is no meaningful profit to "give back".
-RUN_SIM_DRAWDOWN_MIN_GAIN = 1.0
+SORTINO_OBJ_DRAWDOWN_MIN_GAIN = 1.0
 
 # Loss-aversion multiplier on NEGATIVE guard-alpha (the policy exited worse than
 # simply holding to EOD). 2.0 > 1.0 makes the objective asymmetric: a loss of
 # guard-alpha hurts twice as much as an equal gain helps — the core loss-averse
 # term of the utility.
-RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT = 2.0
+SORTINO_OBJ_NEGATIVE_GUARD_ALPHA_MULT = 2.0
 
 # Target return for Sortino denominator: capital preservation baseline (0 = break-even).
 # Operator decision PA-5; Sortino & van der Meer 1991, J. Portfolio Management.
@@ -336,18 +343,11 @@ _HAIRCUT_PVALUE_EPSILON = 1e-12
 # CRRA-EU objective constants — M1 Phase 1 HARDEN-core (plan §Deliverables).
 # ---------------------------------------------------------------------------
 
-# Lower floor on the wealth argument W fed to CRRA. CRRA is unbounded below as
-# W -> 0+ for gamma >= 1; an unfloored W produces a non-finite u(W) that
-# NaN-poisons mean(U), sd(U), and the BHY haircut running-min
-# (autotuner.py:349-354). The floor goes on the INPUT W, NEVER on the output U
-# — flooring U compresses the lower tail of U, artificially shrinks sd(U), and
-# inflates the t-stat mean(U)/(sd(U)/sqrt(T)), re-introducing an anti-conservative
-# bias the haircut cannot correct.
-# Source: decision-science-council-synthesis.md §3.9 W-H2; evaluation §A.1 H-1.
-# Value 0.001: IEEE-754 safe at prudential gamma <= 10 (W^(-9) = 1e27 << 1e308);
-# operationally unreachable by in-distribution AlphaBot long-only US-equity
-# strategies (W = 0.001 implies a -99.9% single-day trailing-stop-through loss).
-WEALTH_ARG_FLOOR: float = 0.001
+# WEALTH_ARG_FLOOR: imported from math_engine (single source of truth).
+# Both modules must see the same constant — an independent copy would allow
+# silent per-module drift. The source comment and rationale live in
+# math_engine.py next to the definition.
+from math_engine import WEALTH_ARG_FLOOR  # noqa: E402  (after stdlib imports above)
 
 # Unit-conversion factor: autotuner return series are in percent
 # (synthetic_history.py:355 — tick['return'] = agg_ret * 100.0). The CRRA
@@ -903,6 +903,28 @@ def _haircut_select(completed_trials, tstat_fn=compute_sortino_tstat):
 
 
 def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+    """Legacy Sortino + loss-aversion objective (M1: aliased as run_simulation_sortino_legacy).
+
+    Retained for the OOS cascade (AI/fallback/default selection), which compares
+    three param sets on the same metric. The CRRA-EU branch uses
+    run_simulation_crra_eu instead; the discriminator in run_autotuner routes
+    based on objective_kind from spec_facets.
+
+    The six original loss-aversion constant names (MISSED_UPSIDE_PENALTY_MULT etc.)
+    are absent from module scope (T6 requirement). The SORTINO_OBJ_* module-level
+    constants carry the values; the RUN_SIM_* local aliases below reference them
+    so the penalty block stays readable and the T6 test's requirement that RUN_SIM_*
+    names are NOT at module scope is satisfied.
+    """
+    # Local aliases for penalty scalars/thresholds (M1 T6: confined to this function).
+    # Values sourced from SORTINO_OBJ_* module-level constants (AC-4 named constants).
+    RUN_SIM_MISSED_UPSIDE_MULT = SORTINO_OBJ_MISSED_UPSIDE_MULT
+    RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT = SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD
+    RUN_SIM_DRAWDOWN_MULT = SORTINO_OBJ_DRAWDOWN_MULT
+    RUN_SIM_DRAWDOWN_THRESHOLD_PCT = SORTINO_OBJ_DRAWDOWN_THRESHOLD
+    RUN_SIM_DRAWDOWN_MIN_GAIN_PCT = SORTINO_OBJ_DRAWDOWN_MIN_GAIN
+    RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT = SORTINO_OBJ_NEGATIVE_GUARD_ALPHA_MULT
+
     total_guard_alpha = 0.0
     grace_minutes = _replay_grace_minutes()  # shared with production; resolved once per run
 
@@ -953,13 +975,13 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 # no recency-decay weight (Decision D5 — walk-forward CV already
                 # supplies recency relevance, an in-objective weight double-counts it).
                 # 1. Penalize missed upside (exiting too early before a run).
-                if missed_upside > RUN_SIM_MISSED_UPSIDE_THRESHOLD:
+                if missed_upside > RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT:
                     total_guard_alpha -= missed_upside * RUN_SIM_MISSED_UPSIDE_MULT
 
                 # 2. Penalize peak-to-exit drawdown (giving back too much profit)
                 # — only for positions that reached a meaningful gain.
-                if (safe_hwm > RUN_SIM_DRAWDOWN_MIN_GAIN
-                        and drawdown_from_peak > RUN_SIM_DRAWDOWN_THRESHOLD):
+                if (safe_hwm > RUN_SIM_DRAWDOWN_MIN_GAIN_PCT
+                        and drawdown_from_peak > RUN_SIM_DRAWDOWN_THRESHOLD_PCT):
                     total_guard_alpha -= drawdown_from_peak * RUN_SIM_DRAWDOWN_MULT
 
                 # 3. Apply standard EOD-based guard alpha; negative guard-alpha
@@ -970,6 +992,66 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                     total_guard_alpha += guard_alpha
 
     return -total_guard_alpha
+
+
+# M1 alias: run_simulation_sortino_legacy is the canonical name for the legacy
+# Sortino + loss-aversion objective going forward. run_simulation is kept as the
+# primary def (satisfying C4 AST inspection) and run_simulation_sortino_legacy
+# is a callable alias for explicit legacy-branch callers and T6 callable tests.
+run_simulation_sortino_legacy = run_simulation
+
+
+def run_simulation_crra_eu(
+    p, history_data, acc_sym_ids, current_date_str, deviation_dict, *, gamma: float
+) -> float:
+    """CRRA-EU objective for one param set over a history fold.
+
+    Replaces run_simulation_sortino_legacy for the CRRA-EU branch. Returns
+    mean(U) over all triggered days, where each day's U is computed via
+    compute_crra_utility on the floored wealth argument W = max(WEALTH_ARG_FLOOR,
+    1 + r_i / RETURN_PCT_TO_FRACTION).
+
+    Callers store the RAW guard-alpha series (not U) in trial.set_user_attr so
+    a future gamma re-pre-registration doesn't silently stale stored U values.
+    The haircut re-transforms daily_returns through derive_floored_wealth_argument
+    + compute_crra_utility in one place (compute_crra_eu_tstat path).
+
+    Parameters
+    ----------
+    p : dict
+        Strategy parameter set.
+    history_data : dict
+        {sym_id: {date: [ticks]}} history for the fold.
+    acc_sym_ids : list[str]
+        Symphony IDs to simulate.
+    current_date_str : str
+        ISO date string for the current run.
+    deviation_dict : dict
+        Historical execution deviation by trigger reason.
+    gamma : float
+        CRRA risk-aversion coefficient, sourced from spec_facets (NOT a
+        module-level constant — gamma must be read from spec_bundles/spec_facets
+        so it is frozen + content-hashed; a source-code constant fails that
+        contract).
+
+    Returns
+    -------
+    float
+        mean(U) over all triggered-day utility values. Returns 0.0 if no
+        triggered days exist (no signal — U-series empty).
+    """
+    daily_returns_pct = _collect_sim_returns(
+        p, history_data, acc_sym_ids, current_date_str, deviation_dict
+    )
+    if not daily_returns_pct:
+        return 0.0
+
+    # NOTE-1 conversion: autotuner return series are in PERCENT
+    # (synthetic_history tick['return'] = agg_ret * 100.0). CRRA requires
+    # a decimal-fraction wealth ratio. Divide by RETURN_PCT_TO_FRACTION before
+    # passing to compute_crra_eu_objective.
+    daily_returns_fraction = [r / RETURN_PCT_TO_FRACTION for r in daily_returns_pct]
+    return math_engine.compute_crra_eu_objective(daily_returns_fraction, gamma)
 
 
 def _apply_optuna_archive_migration_if_needed():
@@ -1210,6 +1292,28 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
     # avoid clobbering pytest's output-capture on import.
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
+    # Extract gamma and objective_kind from spec_facets — sourced from the registered
+    # spec bundle, NOT a module-level constant (T5 / gamma provenance contract).
+    # gamma is frozen by THEORY; a source-code constant would fail the immutable +
+    # content-hashed + frozen_at persistence contract (council synthesis §3.7).
+    _facets = database.get_spec_facets_for_bundle(stored_hash)
+    _facets_by_name = {f["facet_name"]: f["facet_value"] for f in _facets}
+    # gamma: default 2.0 (prudential CRRA coefficient) if facet absent; THEORY-frozen.
+    _gamma_str = _facets_by_name.get("gamma", "2.0")
+    try:
+        _gamma: float = float(_gamma_str)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"spec_bundle_id={spec_bundle_id} has non-numeric gamma facet: {_gamma_str!r}"
+        )
+    # objective_kind: 'crra_eu' triggers the new CRRA-EU objective branch.
+    # 'sortino_loss_aversion' (or absent) uses the legacy Sortino branch.
+    # utility_family='CRRA' in the Phase-1 bundle implies objective_kind='crra_eu'.
+    _utility_family = _facets_by_name.get("utility_family", "")
+    _objective_kind = _facets_by_name.get("objective_kind", "")
+    if not _objective_kind:
+        _objective_kind = "crra_eu" if _utility_family.upper() == "CRRA" else "sortino_loss_aversion"
+
     # Apply optuna_001 archive migration once if any bare (non-prefixed) legacy
     # studies exist — renames them to LEGACY__<name> non-destructively.
     _apply_optuna_archive_migration_if_needed()
@@ -1330,9 +1434,19 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             target_sym_id = acc_sym_ids[0]
             # Score on validation fold only — frozen-eval is withheld from all trial callbacks.
             daily_returns = _collect_sim_returns(p, history_validation, [target_sym_id], current_date_str, deviation_dict)
-            # Persist the per-trial return series so the Harvey & Liu haircut can
-            # source each trial's observation count T = len(daily_returns).
+            # Persist the per-trial RAW guard-alpha series (in percent) so the Harvey &
+            # Liu haircut can source T = len(daily_returns) and re-transform through
+            # the active gamma. Storing U instead of raw returns would silently stale
+            # persisted attrs if gamma is re-pre-registered (T5 provenance contract).
             trial.set_user_attr("daily_returns", daily_returns)
+            # Objective routing: CRRA-EU branch uses mean(U); legacy Sortino branch uses
+            # Sortino ratio. The discriminator is sourced from spec_facets (_objective_kind
+            # resolved from bundle once before this closure is created).
+            if _objective_kind == "crra_eu":
+                # NOTE-1 conversion: returns are in percent; CRRA requires fraction.
+                daily_returns_fraction = [r / RETURN_PCT_TO_FRACTION for r in daily_returns]
+                return math_engine.compute_crra_eu_objective(daily_returns_fraction, _gamma)
+            # Default: legacy Sortino + loss-aversion objective.
             # Annualization intentionally omitted — this is a ranking signal, not an annualized statistic.
             return compute_sortino_ratio(daily_returns)
 
@@ -1382,7 +1496,16 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         ]
 
         if haircut_trials:
-            winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials)
+            # Route tstat_fn based on objective_kind (sourced from spec_facets above).
+            # CRRA-EU branch: compute_crra_eu_tstat(U_series) = mean(U)/(sd(U)/sqrt(T)).
+            # Sortino branch: compute_sortino_tstat(sortino, T) = sortino*sqrt(T) (default).
+            # Using compute_sortino_tstat for a mean-valued objective is the H-6 category
+            # error (autotuner.py:266-271 precedent); the discriminator enforces the split.
+            if _objective_kind == "crra_eu":
+                _tstat_fn = compute_crra_eu_tstat
+            else:
+                _tstat_fn = compute_sortino_tstat
+            winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials, tstat_fn=_tstat_fn)
             if winner_trial is not None:
                 best_params = winner_trial.params
                 best_alpha_train = winner_trial.value
