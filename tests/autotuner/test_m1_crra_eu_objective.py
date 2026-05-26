@@ -854,6 +854,13 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
         "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.5,
     }}
 
+    # Minimal history: one sym with one date-tick so the fold machinery
+    # produces non-empty sets and the symphony loop iterates once.
+    fake_sym_id = "acc123__sym456"
+    fake_history = {
+        fake_sym_id: {f"2026-05-{d:02d}": [{"return": 0.5}] for d in range(1, 30)}
+    }
+
     with patch("autotuner.database") as mock_db, \
          patch("autotuner._collect_sim_returns", return_value=test_returns_pct), \
          patch.object(math_engine, "compute_crra_eu_objective",
@@ -861,17 +868,30 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
          patch("autotuner.compute_sortino_ratio", side_effect=_fake_sortino_ratio), \
          patch("autotuner.optuna") as mock_optuna, \
          patch("autotuner._apply_optuna_archive_migration_if_needed"), \
-         patch("autotuner.validate_nn1_compliance", return_value=(True, [])):
+         patch("autotuner.validate_nn1_compliance", return_value=(True, [])), \
+         patch("autotuner.validate_search_space_nn1"), \
+         patch("autotuner.calculate_historical_deviation", return_value={}), \
+         patch("autotuner.synthetic_history") as mock_synth:
 
-        mock_db.get_spec_bundle_for_symphony.return_value = {
-            "bundle_hash": "fakehash123", "frozen_at": "2026-05-26T00:00:00Z",
+        # Bundle row: get_spec_bundle_by_id returns the row dict that run_autotuner
+        # reads bundle_hash from. Must be configured (not left as MagicMock default)
+        # or `stored_hash = bundle_row["bundle_hash"]` will KeyError.
+        mock_db.get_spec_bundle_by_id.return_value = {
+            "bundle_hash": "fakehash123",
+            "frozen_at": "2026-05-26T00:00:00Z",
         }
         mock_db.get_spec_facets_for_bundle.return_value = crra_facets
         mock_db.get_symphony_strategy.return_value = fake_strat_data
         mock_db.normalize_name.side_effect = lambda x: x.lower().replace(" ", "_")
-        mock_db.get_history_data_125d.return_value = {}
+        mock_db.load_chart_history.return_value = {}
+        mock_db.save_chart_archive.return_value = None
         mock_db.record_autotune_run.return_value = None
         mock_db.update_symphony_strategy.return_value = None
+
+        # synthetic_history must return non-empty history so the fold machinery
+        # produces non-empty date sets and the symphony loop body executes.
+        mock_synth.generate_synthetic_history.return_value = fake_history
+        mock_synth.HistoryShortfallError = Exception  # sentinel class for the except clause
 
         mock_optuna.create_study.return_value = mock_study
         mock_optuna.logging.WARNING = 30
