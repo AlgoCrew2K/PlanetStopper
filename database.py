@@ -913,6 +913,12 @@ _MIGRATION_FILES = [
     "017_advisor_observations.sql",
     "018_researcher_dof_ledger.sql",
     "019_fold_role_columns.sql",
+    # ARCH-002 (sprint-2-audit a6e4d9f8): 021 is listed before 020 — intentional.
+    # 021_cvar_diagnostics.sql was applied to production DBs before 020_autotune_runs_eut.sql
+    # was accidentally dropped and later restored (defect-37 restoration hotfix).
+    # Reordering to numeric sequence would attempt to re-apply 021 on live DBs that already
+    # have it, causing a duplicate-column/table error. The two migrations are independent
+    # (different tables), so the out-of-order application is functionally correct.
     "021_cvar_diagnostics.sql",
     "020_autotune_runs_eut.sql",
     "022_spec_bundles_add_id.sql",
