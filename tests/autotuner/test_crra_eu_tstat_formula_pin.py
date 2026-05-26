@@ -57,6 +57,25 @@ def _load_fixture(path: pathlib.Path) -> dict:
         return json.load(fh)
 
 
+def _get_wealth_arg_floor():
+    """Return WEALTH_ARG_FLOOR from whichever module exports it.
+
+    Plan §Deliverables: 'Module-scope constants in math_engine.py: WEALTH_ARG_FLOOR'.
+    A transitional placement in autotuner.py is also accepted. Raises clearly if
+    neither module exports the constant.
+    """
+    import autotuner
+    import math_engine
+    if hasattr(math_engine, "WEALTH_ARG_FLOOR"):
+        return math_engine.WEALTH_ARG_FLOOR
+    if hasattr(autotuner, "WEALTH_ARG_FLOOR"):
+        return autotuner.WEALTH_ARG_FLOOR
+    raise AttributeError(
+        "WEALTH_ARG_FLOOR not found in math_engine or autotuner. "
+        "Plan §Deliverables requires this constant in math_engine.py."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Scenario 1: pins t = mean(U) / (sd(U) / sqrt(T))  [positive identity]
 # ---------------------------------------------------------------------------
@@ -156,13 +175,13 @@ def _check_floor_scenario(autotuner, fixture, scenario_key: str) -> None:
     """
     scenario = fixture[scenario_key]
     gamma = scenario["gamma"]
-    wealth_arg_floor = autotuner.WEALTH_ARG_FLOOR
+    wealth_arg_floor = _get_wealth_arg_floor()
     U_series = scenario["U_series"]
     floor_idx = fixture["floor_applied_indices"][0]  # index 3
     expected_sd = scenario["expected"]["sd_U_wside"]
 
     assert wealth_arg_floor == fixture["WEALTH_ARG_FLOOR"], (
-        f"WEALTH_ARG_FLOOR in autotuner ({wealth_arg_floor!r}) differs from the "
+        f"WEALTH_ARG_FLOOR ({wealth_arg_floor!r}) differs from the "
         f"fixture ({fixture['WEALTH_ARG_FLOOR']!r}). Re-generate the fixture "
         f"after changing WEALTH_ARG_FLOOR."
     )

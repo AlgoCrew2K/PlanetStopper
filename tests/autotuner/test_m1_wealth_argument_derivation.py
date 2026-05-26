@@ -49,6 +49,27 @@ def _load_wh2_fixture() -> dict:
         return json.load(fh)
 
 
+def _get_wealth_arg_floor():
+    """Return WEALTH_ARG_FLOOR from whichever module exports it.
+
+    The plan §Deliverables says 'Module-scope constants in math_engine.py:
+    WEALTH_ARG_FLOOR'. A transitional or alternative placement in autotuner.py
+    is also accepted. This accessor checks both, preferring math_engine to
+    match the plan's canonical location, and raises clearly if neither exports it.
+    """
+    import autotuner
+    import math_engine
+    if hasattr(math_engine, "WEALTH_ARG_FLOOR"):
+        return math_engine.WEALTH_ARG_FLOOR
+    if hasattr(autotuner, "WEALTH_ARG_FLOOR"):
+        return autotuner.WEALTH_ARG_FLOOR
+    raise AttributeError(
+        "WEALTH_ARG_FLOOR not found in math_engine or autotuner. "
+        "Plan §Deliverables: 'Module-scope constants in math_engine.py: WEALTH_ARG_FLOOR'. "
+        "The constant must be defined in at least one of these modules."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Constant-provenance check: fixture constants match SUT at import time
 # (binding requirement from red-test-2 plan §Definition of Done bullet 4)
@@ -68,16 +89,21 @@ def test_fixture_constants_match_sut_constants():
     by the downstream tests.
     """
     autotuner = _import_autotuner()
+    import math_engine
     fixture = _load_wh2_fixture()
 
-    # WEALTH_ARG_FLOOR
-    assert hasattr(autotuner, "WEALTH_ARG_FLOOR"), (
-        "autotuner.py must export WEALTH_ARG_FLOOR as a named module-scope constant "
-        "(W-H4 + project no-magic-numbers rule)."
+    # WEALTH_ARG_FLOOR — plan §Deliverables: 'Module-scope constants in math_engine.py:
+    # WEALTH_ARG_FLOOR'. A placement in autotuner.py is also accepted (transition).
+    has_floor = hasattr(math_engine, "WEALTH_ARG_FLOOR") or hasattr(autotuner, "WEALTH_ARG_FLOOR")
+    assert has_floor, (
+        "WEALTH_ARG_FLOOR not found in math_engine or autotuner. "
+        "Plan §Deliverables requires this constant in math_engine.py (or autotuner.py "
+        "as a transitional placement). W-H4 + project no-magic-numbers rule."
     )
+    sut_floor = _get_wealth_arg_floor()
     fixture_floor = fixture["WEALTH_ARG_FLOOR"]["value"]
-    assert autotuner.WEALTH_ARG_FLOOR == pytest.approx(fixture_floor, rel=1e-12), (
-        f"autotuner.WEALTH_ARG_FLOOR = {autotuner.WEALTH_ARG_FLOOR!r} differs from "
+    assert sut_floor == pytest.approx(fixture_floor, rel=1e-12), (
+        f"WEALTH_ARG_FLOOR = {sut_floor!r} differs from "
         f"the W-H2 fixture value {fixture_floor!r}. Update the fixture or the constant."
     )
 
@@ -93,7 +119,6 @@ def test_fixture_constants_match_sut_constants():
     )
 
     # CRRA_LOG_UTILITY_GAMMA_TOL (may live in math_engine instead of autotuner)
-    import math_engine
     has_tol = hasattr(autotuner, "CRRA_LOG_UTILITY_GAMMA_TOL") or hasattr(
         math_engine, "CRRA_LOG_UTILITY_GAMMA_TOL"
     )
@@ -168,6 +193,7 @@ def test_wealth_argument_floors_input_W_at_constant():
     """
     autotuner = _import_autotuner()
     fixture = _load_wh2_fixture()
+    wealth_arg_floor = _get_wealth_arg_floor()
 
     # Ex5: floor-hitting day
     ex5 = next(ex for ex in fixture["worked_examples"] if ex["floor_applied"])
@@ -176,9 +202,9 @@ def test_wealth_argument_floors_input_W_at_constant():
 
     W_floored = autotuner.derive_floored_wealth_argument(r_policy_ex5)
 
-    assert W_floored == autotuner.WEALTH_ARG_FLOOR, (
+    assert W_floored == wealth_arg_floor, (
         f"derive_floored_wealth_argument for a floor-hitting day must return exactly "
-        f"WEALTH_ARG_FLOOR = {autotuner.WEALTH_ARG_FLOOR!r}.\n"
+        f"WEALTH_ARG_FLOOR = {wealth_arg_floor!r}.\n"
         f"  r_policy (decimal-fraction) = {r_policy_ex5!r}\n"
         f"  expected W_floored = {expected_W_floored!r}\n"
         f"  got W_floored = {W_floored!r}\n"
@@ -186,9 +212,9 @@ def test_wealth_argument_floors_input_W_at_constant():
     )
 
     # Verify fixture ex5 value matches WEALTH_ARG_FLOOR constant.
-    assert expected_W_floored == autotuner.WEALTH_ARG_FLOOR, (
+    assert expected_W_floored == wealth_arg_floor, (
         f"Fixture ex5.W_floored ({expected_W_floored!r}) != WEALTH_ARG_FLOOR "
-        f"({autotuner.WEALTH_ARG_FLOOR!r}). The fixture is stale; re-generate."
+        f"({wealth_arg_floor!r}). The fixture is stale; re-generate."
     )
 
     # Non-floor examples: derive_floored_wealth_argument must equal derive_wealth_argument.
@@ -223,6 +249,7 @@ def test_floor_is_applied_to_W_not_to_U():
     autotuner = _import_autotuner()
     import math_engine
     fixture = _load_wh2_fixture()
+    wealth_arg_floor = _get_wealth_arg_floor()
 
     ex5 = next(ex for ex in fixture["worked_examples"] if ex["floor_applied"])
     gamma_str = "gamma_2.0"
@@ -231,10 +258,10 @@ def test_floor_is_applied_to_W_not_to_U():
     tol = ex5["U_by_gamma"][gamma_str]["tolerance_for_test"]
 
     # U must equal crra(WEALTH_ARG_FLOOR, gamma) when floor was applied.
-    u_at_floor = math_engine.compute_crra_utility(autotuner.WEALTH_ARG_FLOOR, gamma)
+    u_at_floor = math_engine.compute_crra_utility(wealth_arg_floor, gamma)
 
     assert u_at_floor == pytest.approx(expected_U_ex5, abs=tol), (
-        f"compute_crra_utility(WEALTH_ARG_FLOOR, gamma=2.0) = {u_at_floor!r}, "
+        f"compute_crra_utility(WEALTH_ARG_FLOOR={wealth_arg_floor!r}, gamma=2.0) = {u_at_floor!r}, "
         f"expected (W-H2 fixture ex5) = {expected_U_ex5!r} (tol abs={tol!r}).\n"
         f"Formula: u(W; 2.0) = (W^(-1) - 1)/(-1) = 1 - 1/W. "
         f"At W=0.001: u = 1 - 1000 = -999.0."
@@ -316,12 +343,14 @@ def test_no_floor_applied_when_all_W_above_floor():
     normal_examples = [ex for ex in fixture["worked_examples"] if not ex["floor_applied"]]
     assert len(normal_examples) >= 4, "Fixture must have >= 4 non-floor examples."
 
+    wealth_arg_floor = _get_wealth_arg_floor()
+
     for ex in normal_examples:
         r_policy = ex["inputs"]["r_policy"]
         W_raw = autotuner.derive_wealth_argument(r_policy)
         W_floored = autotuner.derive_floored_wealth_argument(r_policy)
 
-        assert W_raw > autotuner.WEALTH_ARG_FLOOR, (
+        assert W_raw > wealth_arg_floor, (
             f"Test construction: ex {ex['id']!r} should have W_raw > WEALTH_ARG_FLOOR. "
             f"W_raw = {W_raw!r}"
         )
@@ -331,7 +360,7 @@ def test_no_floor_applied_when_all_W_above_floor():
             f"from derive_wealth_argument = {W_raw!r} even though W > WEALTH_ARG_FLOOR.\n"
             f"  ex = {ex['id']!r}\n"
             f"  An always-on floor would set W = WEALTH_ARG_FLOOR = "
-            f"{autotuner.WEALTH_ARG_FLOOR!r} regardless."
+            f"{wealth_arg_floor!r} regardless."
         )
 
 
@@ -374,3 +403,69 @@ def test_fixture_u_values_match_crra_formula():
                 f"  got U = {computed_U!r}\n"
                 f"  tolerance abs={tol!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Caller-discipline documentation (spec-m1 Finding 2, scoped per rev-m1)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_crra_utility_unfloored_near_zero_returns_large_negative():
+    """Documents caller discipline: compute_crra_utility does NOT re-floor W.
+
+    An unfloored near-zero W (e.g. W=0.0001, below WEALTH_ARG_FLOOR=0.001) must
+    return a large-magnitude finite negative value — NOT -inf and NOT the same
+    value as crra(WEALTH_ARG_FLOOR, gamma).
+
+    Scope clarification per rev-m1: -inf only occurs at exactly W=0.0. At
+    W=0.0001 and gamma=2.0, the result is (0.0001^(-1) - 1)/(-1) = 1 - 10000
+    = -9999.0 (finite, large-magnitude). The test asserts:
+    1. result is finite (not -inf, not NaN)
+    2. result < -100.0 (large-magnitude negative — the expected CRRA penalty)
+    3. result != crra(WEALTH_ARG_FLOOR, gamma) (proves the function does NOT
+       silently re-floor W to WEALTH_ARG_FLOOR before computing)
+
+    If compute_crra_utility silently re-floored W=0.0001 to WEALTH_ARG_FLOOR=0.001,
+    it would return crra(0.001, 2.0) = -999.0. Assertion 3 catches this.
+    The caller MUST apply WEALTH_ARG_FLOOR before calling this function.
+
+    This test is in RED because the NaN-guard series (test_compute_crra_utility_
+    rejects_nan_input etc.) only verifies that NaN/Inf inputs are rejected.
+    This test verifies that a small-but-valid W produces the right large-negative
+    value (the unsafe caller discipline path — intentionally unsafe, not guarded).
+    """
+    import math_engine
+
+    W_unfloored = 0.0001  # below WEALTH_ARG_FLOOR=0.001; valid float > 0
+    gamma = 2.0
+
+    result = math_engine.compute_crra_utility(W_unfloored, gamma)
+
+    # 1. Must be finite (not -inf — W=0.0001 > 0 so CRRA is defined and finite).
+    assert math.isfinite(result), (
+        f"compute_crra_utility({W_unfloored!r}, gamma={gamma!r}) = {result!r}; "
+        f"expected a finite large-negative value. "
+        f"W=0.0001 is a valid positive float; -inf only occurs at W=0.0. "
+        f"A non-finite result here means the function incorrectly extrapolates to W<=0."
+    )
+
+    # 2. Must be a large-magnitude negative (CRRA penalty for near-zero wealth).
+    # At W=0.0001, gamma=2.0: u = (0.0001^(-1) - 1)/(-1) = 1 - 10000 = -9999.0
+    assert result < -100.0, (
+        f"compute_crra_utility({W_unfloored!r}, gamma={gamma!r}) = {result!r}; "
+        f"expected < -100.0 (specifically ~ -9999.0). "
+        f"Formula: u = (W^(-1) - 1)/(-1) = 1 - 1/W = 1 - 10000 = -9999.0. "
+        f"A U-side floor clipping at -10 would return -10.0 and fail this assertion."
+    )
+
+    # 3. Must NOT equal crra(WEALTH_ARG_FLOOR, gamma): proves no silent re-flooring.
+    # crra(0.001, 2.0) = -999.0; crra(0.0001, 2.0) = -9999.0. These differ by 10x.
+    wealth_arg_floor = _get_wealth_arg_floor()
+    floor_U = math_engine.compute_crra_utility(wealth_arg_floor, gamma)
+    assert result != pytest.approx(floor_U, rel=1e-3), (
+        f"compute_crra_utility({W_unfloored!r}, gamma={gamma!r}) = {result!r} "
+        f"matches crra(WEALTH_ARG_FLOOR={wealth_arg_floor!r}, gamma={gamma!r}) = {floor_U!r}.\n"
+        f"These should differ by ~10x. A result matching floor_U means the function "
+        f"silently re-floors W to WEALTH_ARG_FLOOR before computing (caller discipline violated).\n"
+        f"The caller MUST apply the floor; compute_crra_utility must NOT."
+    )
