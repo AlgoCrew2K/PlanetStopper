@@ -66,6 +66,12 @@ _DISMISS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 # CC-003: register shutdown so in-flight dismiss writes are not abandoned on exit.
 atexit.register(_DISMISS_EXECUTOR.shutdown, wait=True)
 
+# CC-NEW-001: serializes flush_resync background load+modify+save against engine
+# save_state writes.  Both flush_resync (_flush_state_async) and the engine's
+# save_state call sites in alpha_bot_execution.py must acquire this lock before
+# touching the state DB to prevent the flush from clobbering per-minute updates.
+_FLUSH_STATE_LOCK = threading.Lock()
+
 _daemon_log = logging.getLogger("alphabot")
 _daemon_log.setLevel(logging.DEBUG)
 _daemon_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
@@ -2126,17 +2132,23 @@ def flush_resync():
 
     def _flush_state_async():
         try:
-            state = database.load_state()
-            for sym_id, sym_val in list(state.items()):
-                if not (isinstance(sym_val, dict) and "name" in sym_val):
-                    continue
-                display_name = sym_val.get("name", sym_id)
-                account = sym_val.get("account")
-                state[sym_id] = {"name": display_name}
-                if account is not None:
-                    state[sym_id]["account"] = account
-            database.save_state(state)
-            _daemon_log.info("flush_resync: background reset wrote %d symphony state entries", len(symphonies_reset))
+            with _FLUSH_STATE_LOCK:
+                state = database.load_state()
+                # LATENT-001: count resets from this thread's own iteration, not
+                # the closed-over request-thread list (which may differ if the
+                # engine wrote between the two load_state calls).
+                _reset_count = 0
+                for sym_id, sym_val in list(state.items()):
+                    if not (isinstance(sym_val, dict) and "name" in sym_val):
+                        continue
+                    display_name = sym_val.get("name", sym_id)
+                    account = sym_val.get("account")
+                    state[sym_id] = {"name": display_name}
+                    if account is not None:
+                        state[sym_id]["account"] = account
+                    _reset_count += 1
+                database.save_state(state)
+            _daemon_log.info("flush_resync: background reset wrote %d symphony state entries", _reset_count)
         except Exception:
             logging.error("flush_resync: background state reset failed", exc_info=True)
 
