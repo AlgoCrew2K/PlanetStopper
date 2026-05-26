@@ -21,7 +21,7 @@ import statistics
 import pytest
 
 try:
-    from hypothesis import given, settings, HealthCheck
+    from hypothesis import given, settings, HealthCheck, assume
     from hypothesis import strategies as st
     _HYPOTHESIS_AVAILABLE = True
 except ImportError:
@@ -279,6 +279,13 @@ def test_m2_stderr_decreases_monotonically_with_pool_growth(
     if n_tail_n < 2 or n_tail_2n < 2:
         return  # too few tail obs for the property to be meaningful
 
+    # Monotonicity is only defined when the base pool has a non-zero tail variance.
+    # A degenerate base pool (all identical tail values → stderr=0.0) is a valid
+    # implementation output but lies outside the scope of this property: any positive
+    # result_2n.stderr would violate result_2n <= 0.0 * 1.05, even though the
+    # implementation is correct. Discard such draws via assume().
+    assume(result_n.stderr > 0.0)
+
     # The 5% slop: in expectation stderr shrinks as 1/sqrt(n_tail), but at small n
     # the sample std can be larger for the bigger pool (random variation).
     # 1.05 factor allows a 5% overshoot without failing.
@@ -316,7 +323,10 @@ def test_m2_stderr_is_finite_for_any_non_degenerate_pool(pool: list[float]):
         )
         return
 
-    # Sufficient pool: stderr must be a finite positive float
+    # Sufficient pool: stderr must be a finite non-negative float.
+    # stderr=0.0 is a valid, correct result when all tail values are identical
+    # (zero sample variance = infinite precision for the CVaR estimate).
+    # The invariant is >= 0.0 (non-negative), not > 0.0 (positive).
     assert result.stderr is not None, (
         f"Sufficient pool (n_tail={result.tail_obs_count}) must have non-None stderr"
     )
@@ -325,7 +335,9 @@ def test_m2_stderr_is_finite_for_any_non_degenerate_pool(pool: list[float]):
             f"stderr must be finite; got {result.stderr} "
             f"(pool_size={len(pool)}, n_tail={result.tail_obs_count})"
         )
-        assert result.stderr > 0.0, (
-            f"stderr must be positive; got {result.stderr} "
-            f"(pool_size={len(pool)}, n_tail={result.tail_obs_count})"
+        assert result.stderr >= 0.0, (
+            f"stderr must be non-negative; got {result.stderr} "
+            f"(pool_size={len(pool)}, n_tail={result.tail_obs_count}). "
+            "stderr=0.0 is valid for all-identical tail values (zero variance); "
+            "negative stderr is never valid."
         )
