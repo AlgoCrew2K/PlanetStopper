@@ -1018,13 +1018,14 @@ class TestEndToEndAutotunerEutAuditTrail:
         conn = db_module.get_connection()
         row = conn.execute(
             "SELECT spec_bundle_id, n_effective, d_spec, gamma, overfitting_verdict "
-            "FROM autotune_runs WHERE symphony_id = 'test_symphony_a'"
+            "FROM autotune_runs WHERE symphony_id = 'test symphony a'"
         ).fetchone()
         conn.close()
 
         assert row is not None, (
             "No autotune_runs row found after a complete run.\n"
-            "  Expected a row for symphony_id='test_symphony_a'."
+            "  Expected a row for symphony_id='test symphony a' "
+            "(normalize_name lowercases with spaces, not underscores)."
         )
 
         spec_bundle_id_db, n_effective_db, d_spec_db, gamma_db, verdict_db = row
