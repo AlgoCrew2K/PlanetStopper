@@ -891,9 +891,9 @@ _MIGRATION_FILES = [
     "014_autotune_runs_selection_tstat.sql",
     "015_shadow_history_position_epoch.sql",
     "016_spec_bundles.sql",
+    "017_advisor_observations.sql",
     "018_researcher_dof_ledger.sql",
     "019_fold_role_columns.sql",
-    "017_advisor_observations.sql",
     "021_cvar_diagnostics.sql",
     "020_autotune_runs_eut.sql",
     "022_spec_bundles_add_id.sql",
@@ -2136,6 +2136,13 @@ def record_cvar_diagnostic(
     mode= is required (keyword-only, no default) — same contract as
     write_telemetry_row: every call site states the mode explicitly.
     """
+    # F-4 sentinel discipline: cvar_n_tail is NOT NULL DEFAULT 0.
+    # SQLite only substitutes the DEFAULT when the column is absent from the statement;
+    # passing Python None explicitly raises IntegrityError (NOT NULL constraint violation).
+    # Coerce here so the constraint is satisfied at the call site, not swallowed downstream.
+    # cvar_n_tail_long is INTEGER DEFAULT NULL — NULL is the correct Phase-1 sentinel
+    # (no long window computed); do NOT coerce it.
+    cvar_n_tail = 0 if cvar_n_tail is None else cvar_n_tail
     row_dict = {
         "cycle_id": cycle_id,
         "symphony_id": symphony_id,
@@ -2207,6 +2214,32 @@ def read_cvar_diagnostic_for_cycle(
             "WHERE cycle_id = ? AND symphony_id = ? "
             "ORDER BY id DESC LIMIT 1",
             (cycle_id, symphony_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def read_cvar_diagnostic_for_symphony(symphony_id: str) -> "dict | None":
+    """Return the most-recent cvar_diagnostics row for symphony_id, or None.
+
+    Uses get_ro_connection() — read-only enforcement at the driver level,
+    consistent with the dashboard read pattern (architecture constraint 5).
+
+    Ordered by ts_utc DESC so the latest cycle's row wins when a symphony
+    has been diagnosed multiple times. idx_cvar_diag_symphony_ts covers
+    the (symphony_id, ts_utc DESC) lookup (migration 021).
+    """
+    conn = get_ro_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM cvar_diagnostics "
+            "WHERE symphony_id = ? "
+            "ORDER BY ts_utc DESC LIMIT 1",
+            (symphony_id,),
         ).fetchone()
     finally:
         conn.close()
