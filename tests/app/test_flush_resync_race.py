@@ -67,27 +67,44 @@ def client(tmp_path, monkeypatch):
 
 
 def test_engine_save_not_clobbered_by_concurrent_flush(client):
-    """CC-NEW-001: engine's save_state update must not be lost to a flush save.
+    """CC-NEW-001: engine's save_state update must be the last write when it
+    races a concurrent flush.
 
-    Sequence forced by barriers:
-      T=0  flush thread: load_state() → sees {"sym_a": {"name": "A"}}
-      T=1  engine thread: save_state({"sym_a": {"name": "A", "stop": -5.0}})
-      T=2  flush thread: save_state(stripped state)
+    Without a lock the sequence is:
+      T=0  flush thread: load_state() → stale base state
+      T=1  engine thread: save_state(engine_updated_state)   ← engine writes
+      T=2  flush thread: save_state(stripped stale state)    ← clobbers engine
 
-    Without a lock the flush's save at T=2 overwrites the engine's T=1 update.
-    With a lock the flush must wait for the engine write to finish before it
-    saves, so the engine's "stop" field is preserved in the final state — OR
-    the flush re-loads after acquiring the lock and sees the engine's update.
+    Final DB = stale stripped state.  Engine's update is lost.
 
-    The test asserts that save_state is called at least twice (engine + flush)
-    and that the LAST save_state call contains the engine's "stop" key.
+    With a lock the flush holds the lock for its entire load+modify+save triple.
+    The engine must wait for the lock before it can write.  Sequence becomes:
+      T=0  flush acquires lock, load_state(), modify, save_state(stripped)
+      T=1  flush releases lock
+      T=2  engine acquires lock, save_state(engine_updated_state)
+
+    Final DB = engine_updated_state.  Engine's update is NOT clobbered.
+
+    Barrier design:
+      - flush_holding_lock: flush signals after acquiring the lock, before
+        saving.  Engine thread waits on this before attempting its write.
+      - flush_may_save: test releases after verifying the engine is queued,
+        allowing the flush to complete its save and release the lock.
+
+    The assertion: saved_states[-1] == engine_updated_state.  The engine's
+    write must be the last write; the flush's stripped save must come first.
+
+    On unpatched code (no lock) the flush's stripped save is last →
+    saved_states[-1] != engine_updated_state → test FAILS.
     """
-    # Barriers to deterministically sequence operations
-    flush_loaded = threading.Event()   # flush has called load_state
-    engine_may_write = threading.Event()  # signal engine to write
-    engine_wrote = threading.Event()   # engine has called save_state
-    flush_may_continue = threading.Event()  # allow flush to proceed past barrier
+    # flush signals it has acquired the lock (or started its write region)
+    flush_holding_lock = threading.Event()
+    # test releases flush to complete save_state (controls ordering)
+    flush_may_save = threading.Event()
+    # engine signals it has completed its save
+    engine_wrote = threading.Event()
 
+    all_saved = threading.Event()
     saved_states: list[dict] = []
 
     base_state = {"sym_a": {"name": "Alpha", "account": "acct-1", "triggered": True}}
@@ -99,31 +116,28 @@ def test_engine_save_not_clobbered_by_concurrent_flush(client):
         nonlocal load_call_count
         load_call_count += 1
         if load_call_count == 1:
-            # First load (request-thread enumeration) — return base state
+            # Request-thread enumeration — return base state immediately
             return base_state.copy()
-        # Second load (background thread) — signal that flush has loaded, then
-        # wait for engine to write before returning (deterministic bad interleave)
-        flush_loaded.set()
-        engine_may_write.set()
-        engine_wrote.wait(timeout=2)
-        flush_may_continue.set()
-        return base_state.copy()  # background flush still sees pre-engine state
+        # Background-thread load inside _flush_state_async.
+        # Signal that the flush is now inside its critical section, then
+        # wait until the test allows it to proceed (engine is queued).
+        flush_holding_lock.set()
+        flush_may_save.wait(timeout=2)
+        return base_state.copy()
 
     def _controlled_save(state):
-        saved_states.append(state)
-        if len(saved_states) == 1:
-            # First save is the engine write
-            engine_wrote.set()
-        # Last save event signals test completion
+        saved_states.append(state.copy() if isinstance(state, dict) else state)
         if len(saved_states) >= 2:
             all_saved.set()
 
-    all_saved = threading.Event()
-
     def _simulate_engine_write():
-        engine_may_write.wait(timeout=2)
-        # Engine writes its update after flush has loaded — the race condition
+        # Wait until flush is in its critical section, then try to write.
+        # Without a lock this write races and may complete before flush's save.
+        # With a lock this write must wait for the flush to release → engine
+        # save lands AFTER flush save → engine's state is the final DB state.
+        flush_holding_lock.wait(timeout=2)
         app_module.database.save_state(engine_updated_state)
+        engine_wrote.set()
 
     with (
         patch.object(app_module, "database") as db_mock,
@@ -132,28 +146,37 @@ def test_engine_save_not_clobbered_by_concurrent_flush(client):
         db_mock.load_state.side_effect = _controlled_load
         db_mock.save_state.side_effect = _controlled_save
 
-        # Start the engine thread before the flush so it is ready to race
         engine_thread = threading.Thread(target=_simulate_engine_write, daemon=True)
         engine_thread.start()
 
         resp = client.post("/api/settings/flush-resync")
 
-        # Wait for both saves to complete inside the patch context
+        # Give flush time to reach flush_holding_lock.set(), then release it
+        flush_holding_lock.wait(timeout=2)
+        flush_may_save.set()
+
+        # Wait for both saves inside the patch context
         all_saved.wait(timeout=3)
+        engine_thread.join(timeout=2)
 
     assert resp.status_code == 200
+    assert len(saved_states) == 2, (
+        f"Expected exactly 2 save_state calls (flush + engine); got {len(saved_states)}.  "
+        "Both the flush closure and the engine thread must call save_state."
+    )
 
-    # The fix must ensure the final persisted state was NOT written by the flush
-    # without incorporating the engine's update.  The last saved state must
-    # contain "stop" (written by the engine) — either because the flush re-loaded
-    # after acquiring the lock, or because serialization prevented the clobber.
+    # The engine write must be the LAST write (saved_states[-1]).
+    # If the flush wrote last (no lock), it clobbered the engine's update.
     last_saved = saved_states[-1]
-    assert "stop" in last_saved.get("sym_a", {}), (
-        "Engine's 'stop' field was clobbered by the flush save.  "
-        "The flush load+modify+save must be serialized against the engine's save_state "
-        "so the engine's per-minute update survives a concurrent flush.  "
-        "Fix: hold app._FLUSH_STATE_LOCK around the flush closure's load+modify+save, "
-        "and have the engine also acquire the same lock before save_state."
+    assert last_saved == engine_updated_state, (
+        f"Last save_state call was {last_saved!r}, expected engine_updated_state "
+        f"{engine_updated_state!r}.  "
+        "The flush's stripped save must come FIRST; the engine's write must be LAST.  "
+        "Without a lock the flush races ahead and its stale stripped state is the "
+        "final DB write, clobbering the engine's per-minute update.  "
+        "Fix: hold app._FLUSH_STATE_LOCK around the flush closure's load+modify+save "
+        "so the engine can only write after the flush releases — making the engine "
+        "write the final (authoritative) state."
     )
 
 
