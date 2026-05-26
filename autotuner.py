@@ -1553,9 +1553,14 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         default_params = database.DEFAULT_STRATEGY.copy()
         default_oos_alpha = -run_simulation(default_params, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
 
-        # Validation-fold Sortino (selection truth — what Optuna actually optimized against).
+        # Validation-fold metric (selection truth — what Optuna actually optimized against).
+        # For CRRA-EU bundles, the Sortino ratio is not the selection metric — compute_crra_eu_objective
+        # was used. Sortino is suppressed (None) for CRRA-EU to avoid misleading reporting.
         validation_returns = _collect_sim_returns(best_p, history_validation, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
-        validation_sharpe_value = compute_sortino_ratio(validation_returns) if validation_returns else None
+        if _objective_kind == "crra_eu":
+            validation_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
+        else:
+            validation_sharpe_value = compute_sortino_ratio(validation_returns) if validation_returns else None
 
         # Frozen-eval: consumed exactly once post-selection on the held-out final 20% fold.
         # This is the honest performance metric — not seen by any Optuna trial callback.
@@ -1563,7 +1568,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         # Single read via _collect_sim_returns; no separate run_simulation call so the
         # "consumed once" invariant holds across all frozen-fold access paths.
         frozen_eval_returns = _collect_sim_returns(best_p, history_frozen, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
-        frozen_eval_sharpe_value = compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
+        if _objective_kind == "crra_eu":
+            frozen_eval_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
+        else:
+            frozen_eval_sharpe_value = compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
 
         # Calculate daily averages for better understanding
         train_days_count = len(train_dates)
