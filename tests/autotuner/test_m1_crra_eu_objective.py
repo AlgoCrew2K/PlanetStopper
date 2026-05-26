@@ -897,6 +897,19 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
         mock_db.save_chart_archive.return_value = None
         mock_db.record_autotune_run.return_value = None
         mock_db.update_symphony_strategy.return_value = None
+        # DEFAULT_STRATEGY is a module-level dict attribute on database, not a callable.
+        # With autotuner.database as a MagicMock, DEFAULT_STRATEGY is a MagicMock object;
+        # .copy() returns a MagicMock and .get(...) ignores the default, returning a
+        # MagicMock that breaks compute_para_arm_decision's numeric comparisons.
+        # Assign a real dict to make .copy().get(...) return actual numeric defaults.
+        mock_db.DEFAULT_STRATEGY = {
+            "TAKE_PROFIT_MC_PCT": 0.5,
+            "VWAP_CROSS_HWM_PCT": 0.5,
+            "VWAP_BLEED_MULTIPLIER": 0.5,
+            "VWAP_BLEED_TICKS": 2,
+            "PARABOLIC_VELOCITY_THRESHOLD": 0.5,
+            "MAX_PARABOLIC_SQUEEZE": 0.5,
+        }
 
         mock_optuna.create_study.return_value = mock_study
         mock_optuna.logging.WARNING = 30
