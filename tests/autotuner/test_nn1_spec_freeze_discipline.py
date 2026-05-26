@@ -998,3 +998,76 @@ def test_insert_spec_bundle_facet_accepts_politis_white_and_cadence_end_to_end()
             f"Persisted freeze_discipline {rows[0]['freeze_discipline']!r} != {discipline!r}; "
             f"the value was not stored correctly"
         )
+
+
+# ---------------------------------------------------------------------------
+# T28/T29 — live call sites must not pass spec_bundle_id=None
+# (spec-nn1 review gap: alpha_bot_execution.py:967 and app.py:1583 both pass
+#  spec_bundle_id=None, which raises ValueError at runtime per T13)
+# ---------------------------------------------------------------------------
+
+
+def test_alpha_bot_execution_run_autotuner_call_does_not_pass_none_spec_bundle_id():
+    """alpha_bot_execution.py's run_autotuner call must not pass spec_bundle_id=None.
+
+    The Phase-1 strict guard (T13) raises ValueError immediately when
+    spec_bundle_id=None. The live call site at alpha_bot_execution.py:967 passes
+    spec_bundle_id=None with a TODO comment — that will crash the autotuner at
+    every live invocation. The call site must be updated to pass a real
+    spec_bundle_id (e.g., the canonical Phase-1 THEORY bundle's integer id)
+    before this cycle ships.
+
+    This is a static inspection test: it reads the source of
+    alpha_bot_execution.py and verifies no 'spec_bundle_id=None' literal appears
+    at the run_autotuner call site.
+    """
+    import pathlib  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    src_path = pathlib.Path(__file__).parents[2] / "alpha_bot_execution.py"
+    assert src_path.is_file(), f"alpha_bot_execution.py not found at {src_path}"
+    source = src_path.read_text(encoding="utf-8")
+
+    # Find each run_autotuner call block (up to 10 lines after the function name)
+    # and check if spec_bundle_id=None appears in context with it.
+    lines = source.splitlines()
+    for i, line in enumerate(lines):
+        if "run_autotuner(" in line:
+            # Capture up to 8 lines of the call (handles multi-line calls)
+            call_block = "\n".join(lines[i : i + 8])
+            assert "spec_bundle_id=None" not in call_block, (
+                f"alpha_bot_execution.py line {i + 1}: run_autotuner call passes "
+                f"spec_bundle_id=None. This will raise ValueError at every live "
+                f"autotuner invocation (T13 contract). "
+                f"Replace spec_bundle_id=None with the canonical Phase-1 THEORY "
+                f"bundle id (e.g., database.get_or_create_phase1_theory_bundle_id())."
+            )
+
+
+def test_app_py_run_autotuner_call_does_not_pass_none_spec_bundle_id():
+    """app.py's run_autotuner call must not pass spec_bundle_id=None.
+
+    Same issue as T28 — the dashboard-triggered manual autotuner call at
+    app.py:1583 passes spec_bundle_id=None with a TODO comment. This will raise
+    ValueError when the operator triggers a manual autotuner run from the
+    dashboard. The call site must be updated to pass a real spec_bundle_id.
+
+    Static inspection: same pattern as T28.
+    """
+    import pathlib  # noqa: PLC0415
+
+    src_path = pathlib.Path(__file__).parents[2] / "app.py"
+    assert src_path.is_file(), f"app.py not found at {src_path}"
+    source = src_path.read_text(encoding="utf-8")
+
+    lines = source.splitlines()
+    for i, line in enumerate(lines):
+        if "run_autotuner(" in line:
+            call_block = "\n".join(lines[i : i + 8])
+            assert "spec_bundle_id=None" not in call_block, (
+                f"app.py line {i + 1}: run_autotuner call passes spec_bundle_id=None. "
+                f"This will raise ValueError when the operator triggers a manual "
+                f"autotuner run (T13 contract). "
+                f"Replace spec_bundle_id=None with the canonical Phase-1 THEORY "
+                f"bundle id (e.g., database.get_or_create_phase1_theory_bundle_id())."
+            )
