@@ -537,7 +537,22 @@ def compute_n_effective(
     `ledger_query` is a callable returning the list of relevant ledger
     rows; injected for testability and to keep compute_n_effective
     pure with respect to its DB read.
+
+    TYPE-002 (sprint-2-audit a6e4d9f8): `winning_spec_bundle_id` is the
+    64-char TEXT bundle_hash (researcher_dof_ledger.spec_bundle_id column
+    is TEXT). Callers MUST pass a string or None — never an integer primary
+    key. The production path (run_autotuner) pre-filters via
+    get_researcher_dof_ledger_for_run(winning_spec_bundle_id=stored_hash)
+    and does not pass this param here; the assert below guards direct callers.
     """
+    # TYPE-002: guard against callers passing integer PK instead of bundle hash.
+    assert winning_spec_bundle_id is None or isinstance(
+        winning_spec_bundle_id, str
+    ), (
+        f"compute_n_effective: winning_spec_bundle_id must be str (bundle_hash) "
+        f"or None, got {type(winning_spec_bundle_id).__name__!r}. "
+        f"Pass the 64-char bundle_hash, not the integer spec_bundles.id."
+    )
     rows = ledger_query()
     s = 0
     for row in rows:
@@ -1299,7 +1314,7 @@ def validate_nn1_compliance(spec_bundle_id: int) -> "tuple[bool, list[str]]":
     return is_honest, violations
 
 
-def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, spec_bundle_id=None):
+def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, spec_bundle_id: "int | None" = None):  # TYPE-001 (sprint-2-audit a6e4d9f8)
     """
     Runs walk-forward optimization using Bayesian Optimization (Optuna) per symphony.
     Implements a three-fold walk-forward split (60/20/20): train / validation / frozen-eval.
