@@ -250,12 +250,17 @@ def _autotuner_patches(best_params: dict, fallback: dict, default: dict,
 
 def _run_and_capture(best_params, fallback, default, vwap_side_effect):
     import autotuner  # local import — see module docstring on lazy import.
+    import inspect
+    from tests.autotuner.conftest import make_phase1_theory_bundle
 
     bot_state = _build_bot_state()
     buf = io.StringIO()
+    spec_bundle_id = make_phase1_theory_bundle()
+    sig = inspect.signature(autotuner.run_autotuner)
+    extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
     with _autotuner_patches(best_params, fallback, default, vwap_side_effect) as ctx, \
          contextlib.redirect_stdout(buf):
-        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **extra)
     return buf.getvalue(), ctx
 
 
@@ -480,7 +485,12 @@ def test_run_autotuner_aborts_cleanly_when_synthetic_history_empty():
          patch("autotuner.database.save_symphony_strategy",
                side_effect=lambda *a, **kw: captured.append(a)):
         import autotuner  # local import — see module docstring on lazy import.
-        result = autotuner.run_autotuner(_build_bot_state(), "2026-05-10", ["acc-1"])
+        import inspect
+        from tests.autotuner.conftest import make_phase1_theory_bundle
+        _spec_id = make_phase1_theory_bundle()
+        _sig = inspect.signature(autotuner.run_autotuner)
+        _extra = {"spec_bundle_id": _spec_id} if "spec_bundle_id" in _sig.parameters else {}
+        result = autotuner.run_autotuner(_build_bot_state(), "2026-05-10", ["acc-1"], **_extra)
 
     assert result is None, "Expected early-return None on empty history"
     assert captured == [], (

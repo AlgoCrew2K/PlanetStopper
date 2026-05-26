@@ -192,16 +192,63 @@ def _autotuner_patches(best_params: dict, fallback: dict,
         yield {"fake_study": fake_study}
 
 
+def _make_phase1_spec_bundle() -> int:
+    """Insert a minimal all-THEORY Phase-1 spec bundle and return its integer id.
+
+    Required since run_autotuner now demands an explicit spec_bundle_id (NN1
+    spec-freeze discipline — Phase-1 strict, no implicit defaults). This helper
+    is called by _run_autotuner_via_patches so existing persistence tests remain
+    valid without weakening the None-refusal guard.
+    """
+    import database as _db
+
+    canon_facets = {
+        "gamma": "2.0",
+        "utility_family": "CRRA",
+        "wealth_argument": "compounded_return",
+    }
+    canonical_json = _db.canonicalize_facets_json(canon_facets)
+    bundle_hash = _db.hash_facets_json(canonical_json)
+    _db.insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
+
+    import sqlite3
+    conn = _db.get_connection()
+    bundle_id = conn.execute(
+        "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
+    ).fetchone()[0]
+    conn.close()
+
+    for name, value in canon_facets.items():
+        _db.insert_spec_bundle_facet(
+            bundle_hash=bundle_hash,
+            facet_name=name,
+            facet_value=value,
+            freeze_discipline="THEORY",
+            justification="Phase-1 test fixture — all-THEORY bundle",
+        )
+    return bundle_id
+
+
 def _run_autotuner_via_patches(best_params, fallback, vwap_side_effect=None):
-    """Run run_autotuner through the patch harness; suppress stdout noise."""
+    """Run run_autotuner through the patch harness; suppress stdout noise.
+
+    Creates a minimal all-THEORY spec bundle so the NN1 spec-freeze guard
+    (spec_bundle_id required, BACKTEST_SELECTION → hard fail) is satisfied.
+    """
     import autotuner  # lazy import
+    import inspect
 
     bot_state = _build_bot_state()
+    spec_bundle_id = _make_phase1_spec_bundle()
     buf = io.StringIO()
+
+    sig = inspect.signature(autotuner.run_autotuner)
+    extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
+
     with _autotuner_patches(best_params, fallback,
                              vwap_side_effect=vwap_side_effect):
         with contextlib.redirect_stdout(buf):
-            result = autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+            result = autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **extra)
     return result, buf.getvalue()
 
 

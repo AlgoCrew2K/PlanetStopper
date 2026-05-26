@@ -895,6 +895,7 @@ _MIGRATION_FILES = [
     "017_advisor_observations.sql",
     "021_cvar_diagnostics.sql",
     "020_autotune_runs_eut.sql",
+    "022_spec_bundles_add_id.sql",
 ]
 
 
@@ -960,11 +961,14 @@ _VALID_FREEZE_DISCIPLINES: frozenset[str] = frozenset({
     "THEORY",
     "MANDATE",
     "STYLIZED_FACT",
+    "POLITIS_WHITE",
+    "CADENCE",
     "CALIBRATION",
     "BACKTEST_SELECTION",
 })
 
 _SPEC_BUNDLE_COLUMNS = [
+    "id",
     "bundle_hash",
     "frozen_at",
     "facets_json",
@@ -1016,6 +1020,11 @@ def insert_spec_bundle(
     Idempotent: a duplicate bundle_hash is silently ignored (INSERT OR IGNORE).
     INSERT OR REPLACE is explicitly NOT used — that would overwrite frozen_at,
     destroying the original freeze-timestamp provenance record.
+
+    The id column (added by migration 022) is backfilled from SQLite's implicit
+    rowid immediately after INSERT so that callers can do
+    SELECT id FROM spec_bundles WHERE bundle_hash = ? and always get a non-NULL
+    integer — including rows inserted after migration 022 has already run once.
     """
     conn = get_connection()
     try:
@@ -1025,9 +1034,67 @@ def insert_spec_bundle(
             "VALUES (?, ?, ?, ?, ?)",
             (bundle_hash, facets_json, horizon_bars, cvar_alpha, generator_family),
         )
+        # Backfill id from rowid for the just-inserted row (or any row that still
+        # has id IS NULL, e.g. rows inserted on a DB that was at migration 016 state).
+        # This is a no-op for rows already backfilled by migration 022.
+        conn.execute(
+            "UPDATE spec_bundles SET id = rowid WHERE bundle_hash = ? AND id IS NULL",
+            (bundle_hash,),
+        )
         conn.commit()
     finally:
         conn.close()
+
+
+def get_or_create_phase1_theory_bundle_id() -> int:
+    """Return the integer id for the canonical Phase-1 all-THEORY spec bundle.
+
+    Idempotent: INSERT OR IGNORE means repeated calls return the same id.
+    The Phase-1 bundle encodes the three theory-frozen facets (gamma, utility_family,
+    wealth_argument) with freeze_discipline='THEORY' per council synthesis §2.5.
+
+    Called by live run_autotuner sites (alpha_bot_execution.py, app.py) to satisfy
+    the NN1 Phase-1 strict spec_bundle_id requirement without requiring an explicit
+    operator-registered bundle (Phase-2 wiring deferred).
+    """
+    _canon_facets = {
+        "gamma": "2.0",
+        "utility_family": "CRRA",
+        "wealth_argument": "compounded_return",
+    }
+    canonical_json = canonicalize_facets_json(_canon_facets)
+    bundle_hash = hash_facets_json(canonical_json)
+    insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
+
+    # Fetch the id backfilled by insert_spec_bundle (trigger or UPDATE).
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or row[0] is None:
+        raise RuntimeError(
+            f"get_or_create_phase1_theory_bundle_id: id is NULL for bundle_hash={bundle_hash!r} "
+            "after insert — run_migrations() may not have applied migration 022."
+        )
+    bundle_id: int = row[0]
+
+    # Ensure the three canonical facets are registered.
+    existing = get_spec_facets_for_bundle(bundle_hash)
+    existing_names = {r["facet_name"] for r in existing}
+    for name, value in _canon_facets.items():
+        if name not in existing_names:
+            insert_spec_bundle_facet(
+                bundle_hash=bundle_hash,
+                facet_name=name,
+                facet_value=value,
+                freeze_discipline="THEORY",
+                justification="Phase-1 canonical bundle — council synthesis §2.5 hard gate",
+            )
+
+    return bundle_id
 
 
 def get_spec_bundle(bundle_hash: str) -> "dict | None":

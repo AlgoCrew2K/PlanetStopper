@@ -55,6 +55,52 @@ OPTUNA_SEARCH_SPACE_KEYS = frozenset({
     "PARABOLIC_VELOCITY_THRESHOLD", "MAX_PARABOLIC_SQUEEZE",
 })
 
+# NN1 (synthesis hard gate — council §2.5): the following facets MUST NEVER
+# appear in OPTUNA_SEARCH_SPACE_KEYS — they are frozen OUTSIDE the search
+# space by the spec_bundles registry:
+#   - gamma                 (THEORY)
+#   - utility_family        (THEORY)
+#   - wealth_argument       (THEORY)
+#   - generator_family      (STYLIZED_FACT)  [Phase 2]
+#   - horizon_convention    (CADENCE)        [Phase 2]
+#   - lambda (CVaR budget)  (MANDATE)        [Phase 2]
+#   - regime_bucket_thresh  (CALIBRATION)    [Phase 2]
+# Adding any of the above to OPTUNA_SEARCH_SPACE_KEYS is a structural NN1
+# violation — the Yekutieli c(N) factor would see only the trial-sweep,
+# not the spec-facet tour, and the haircut would silently understate its
+# effective N. Adding a NEW name here without classifying it in this
+# block is a Gate-1 review fail.
+
+# --- NN1 spec-freeze discipline constants (D1) ---
+# Single source of truth for the autotuner-side NN1 consumer.
+# BACKTEST_SELECTION is the NN1-violation tripwire — present in the enum so
+# the violation has a name; never silently as a fallback for unclassifiable rows.
+# Reference: council synthesis §2.5, §3.7.
+FREEZE_DISCIPLINE_THEORY               = "THEORY"
+FREEZE_DISCIPLINE_MANDATE              = "MANDATE"
+FREEZE_DISCIPLINE_STYLIZED_FACT        = "STYLIZED_FACT"
+FREEZE_DISCIPLINE_POLITIS_WHITE        = "POLITIS_WHITE"
+FREEZE_DISCIPLINE_CADENCE              = "CADENCE"
+FREEZE_DISCIPLINE_CALIBRATION          = "CALIBRATION"
+FREEZE_DISCIPLINE_BACKTEST_SELECTION   = "BACKTEST_SELECTION"  # NN1 VIOLATION
+
+# Frozenset of disciplines that do NOT constitute an NN1 violation.
+# Default-deny: any freeze_discipline NOT in this set is treated as a violation.
+NN1_HONEST_DISCIPLINES: frozenset = frozenset({
+    FREEZE_DISCIPLINE_THEORY,
+    FREEZE_DISCIPLINE_MANDATE,
+    FREEZE_DISCIPLINE_STYLIZED_FACT,
+    FREEZE_DISCIPLINE_POLITIS_WHITE,
+    FREEZE_DISCIPLINE_CADENCE,
+    FREEZE_DISCIPLINE_CALIBRATION,
+})
+
+EVIDENCE_SOURCE_THEORY               = "THEORY"
+EVIDENCE_SOURCE_MANDATE              = "MANDATE"
+EVIDENCE_SOURCE_STYLIZED_FACT        = "STYLIZED_FACT"
+EVIDENCE_SOURCE_BACKTEST_SELECTION   = "BACKTEST_SELECTION"  # NN1 VIOLATION
+EVIDENCE_SOURCE_OOS                  = "OOS"                 # WORSE: frozen-eval peek
+
 # Optuna search space bounds — named so the search space is inspectable via
 # optuna-compare without re-parsing logs, and to satisfy the no-magic-numbers rule.
 _SS_TAKE_PROFIT_MC_MIN = 2.0
@@ -841,7 +887,124 @@ def _apply_optuna_archive_migration_if_needed():
         print(f"  -> WARNING: optuna_001 archive migration failed (non-fatal): {exc}")
 
 
-def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
+def validate_search_space_nn1() -> None:
+    """Fail-loud if OPTUNA_SEARCH_SPACE_KEYS contains a known-frozen facet name.
+
+    Last-line defence against a future PR that adds e.g. 'gamma' to the search
+    space without removing the spec_bundles registration. Called at the top of
+    run_autotuner BEFORE optuna.create_study (D5 wiring).
+
+    Reference: council synthesis §2.5; plan D5.
+    """
+    _forbidden_in_search_space = frozenset({
+        "gamma", "utility_family", "wealth_argument",
+        "generator_family", "horizon_convention", "lambda",
+        "regime_bucket_thresh",
+    })
+    leaked = OPTUNA_SEARCH_SPACE_KEYS & _forbidden_in_search_space
+    if leaked:
+        raise RuntimeError(
+            f"NN1 VIOLATION: search space contains theory-frozen facet(s) "
+            f"{sorted(leaked)} — see council synthesis §2.5 and the "
+            f"NN1 disclosure block in autotuner.py. Refusing to start."
+        )
+
+
+def validate_nn1_compliance(spec_bundle_id: int) -> "tuple[bool, list[str]]":
+    """Return (is_nn1_honest, violations).
+
+    Reads spec_facets rows for the bundle AND researcher_dof_ledger rows for
+    the same spec_bundle_id. NN1-honest iff:
+      (a) every spec_facets.freeze_discipline is in NN1_HONEST_DISCIPLINES, AND
+      (b) no researcher_dof_ledger row has evidence_source='OOS' for this bundle.
+
+    Violation (b) is the stricter frozen-eval peek — a facet frozen after OOS
+    inspection is a correctness defect regardless of its freeze_discipline label.
+    Both queries are state-DB only (architecture constraint 3 compliant).
+
+    Default-deny: any freeze_discipline NOT in NN1_HONEST_DISCIPLINES is treated
+    as a violation, including unknown/forward-compat values (plan risk callout —
+    silent fall-through is forbidden).
+
+    On detecting BACKTEST_SELECTION facets, each is written to
+    researcher_dof_ledger via database.insert_dof_ledger_row with
+    evidence_source='BACKTEST_SELECTION' so the +S contribution to N_effective
+    is recorded for the BHY haircut.
+
+    OOS-peek violations are labelled distinctly so operators see the severity
+    gradient (OOS is worse than BACKTEST_SELECTION per synthesis §2.5).
+
+    Reference: council synthesis §2.5; plan D2.
+    """
+    violations: list[str] = []
+
+    # Resolve bundle_hash from integer id — spec_bundle_id is the PK, not the hash.
+    # Guard: id is nullable on DBs that applied migration 016 before 022 backfilled
+    # rowid into the id column. On such DBs, WHERE id = ? returns no rows even for
+    # existing bundles. insert_spec_bundle now backfills id immediately on every
+    # INSERT (post-022 behaviour) so this path is closed for new rows; for pre-backfill
+    # rows migration 022 runs UPDATE spec_bundles SET id = rowid WHERE id IS NULL.
+    # If id IS NULL (pre-backfill state) the lookup returns nothing and we treat
+    # it as "bundle not found" — the operator must re-run run_migrations() to backfill.
+    conn = database.get_connection()
+    try:
+        row = conn.execute(
+            "SELECT bundle_hash FROM spec_bundles WHERE id = ?", (spec_bundle_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        violations.append(
+            f"spec_bundle_id {spec_bundle_id}: bundle not found "
+            f"(id column may be NULL pre-migration-022 backfill — run run_migrations())"
+        )
+        return False, violations
+
+    bundle_hash = row[0]
+
+    # Check spec_facets discipline for each facet — default-deny.
+    facets = database.get_spec_facets_for_bundle(bundle_hash)
+    for facet in facets:
+        discipline = facet["freeze_discipline"]
+        name = facet["facet_name"]
+        if discipline not in NN1_HONEST_DISCIPLINES:
+            if discipline == FREEZE_DISCIPLINE_BACKTEST_SELECTION:
+                violations.append(f"{name}: BACKTEST_SELECTION")
+                # Write this violation to researcher_dof_ledger (+S contribution).
+                database.insert_dof_ledger_row(
+                    facet_name=name,
+                    facet_category="specification",
+                    decision_type="SEARCHED",
+                    evidence_source="BACKTEST_SELECTION",
+                    n_configs_searched=1,
+                    touched_frozen_eval=0,
+                    spec_bundle_id=str(spec_bundle_id),
+                    justification=(
+                        f"NN1 violation detected by validate_nn1_compliance: "
+                        f"{name} was frozen by BACKTEST_SELECTION (council §2.5 hard gate)"
+                    ),
+                )
+            else:
+                # Unknown/forward-compat value — default-deny with the raw value named.
+                violations.append(f"{name}: {discipline} (unrecognised discipline — default-deny)")
+
+    # Check researcher_dof_ledger for OOS-peek entries on this bundle.
+    # OOS evidence_source means a facet was chosen by looking at frozen-eval returns —
+    # a stricter violation than BACKTEST_SELECTION (synthesis §2.5 NN1-VIOLATION hierarchy).
+    ledger_rows = database.get_dof_ledger_for_bundle(str(spec_bundle_id))
+    for ledger_row in ledger_rows:
+        if ledger_row.get("evidence_source") == "OOS":
+            facet_name = ledger_row.get("facet_name", "unknown")
+            violations.append(
+                f"{facet_name}: OOS evidence_source (frozen-eval peek — stricter than BACKTEST_SELECTION)"
+            )
+
+    is_honest = len(violations) == 0
+    return is_honest, violations
+
+
+def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, spec_bundle_id=None):
     """
     Runs walk-forward optimization using Bayesian Optimization (Optuna) per symphony.
     Implements a three-fold walk-forward split (60/20/20): train / validation / frozen-eval.
@@ -867,6 +1030,58 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
       OOS reporting. Future workstream: expand history window or use purged k-fold CV (rolling
       folds) to recover statistical power.
     """
+    # NN1 spec-freeze hard gate (D5 wiring — council §2.5).
+    # validate_search_space_nn1 must run BEFORE optuna.create_study so any
+    # leaked frozen facet is caught at runtime, not silently toured by Optuna.
+    validate_search_space_nn1()
+
+    # Phase-1 strict: every run requires an explicit pinned spec bundle.
+    # No implicit defaults — a missing bundle_id is a configuration error.
+    if spec_bundle_id is None:
+        raise ValueError(
+            "run_autotuner requires an explicit spec_bundle_id (NN1 Phase-1 strict). "
+            "Every autotuner run must be pinned to a registered spec bundle — "
+            "no implicit bundle defaults are permitted."
+        )
+
+    # Bundle integrity: verify stored bundle_hash matches hash computed from facets_json.
+    conn = database.get_connection()
+    try:
+        bundle_row = conn.execute(
+            "SELECT bundle_hash, facets_json FROM spec_bundles WHERE id = ?",
+            (spec_bundle_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if bundle_row is None:
+        raise ValueError(
+            f"spec_bundle_id={spec_bundle_id} not found in spec_bundles. "
+            "Register the bundle before running the autotuner."
+        )
+    stored_hash, facets_json = bundle_row
+    canonical_json = database.canonicalize_facets_json(
+        json.loads(facets_json)
+    )
+    computed_hash = database.hash_facets_json(canonical_json)
+    if stored_hash != computed_hash:
+        raise ValueError(
+            f"spec_bundle_id={spec_bundle_id} hash mismatch: "
+            f"stored bundle_hash={stored_hash!r} does not match "
+            f"computed hash={computed_hash!r} from facets_json. "
+            "The bundle may have been tampered with after frozen_at — integrity check failed."
+        )
+
+    # NN1 compliance: refuse to start if any load-bearing facet is BACKTEST_SELECTION.
+    is_honest, violations = validate_nn1_compliance(spec_bundle_id)
+    if not is_honest:
+        raise RuntimeError(
+            f"NN1 VIOLATION: spec_bundle_id={spec_bundle_id} contains "
+            f"BACKTEST_SELECTION or other NN1-violating facets — "
+            f"the BHY haircut would silently undercount N. Refusing to start. "
+            f"Violations: {violations}"
+        )
+
     # Suppress Optuna's per-trial log noise; set here (not at module level) to
     # avoid clobbering pytest's output-capture on import.
     optuna.logging.set_verbosity(optuna.logging.WARNING)
