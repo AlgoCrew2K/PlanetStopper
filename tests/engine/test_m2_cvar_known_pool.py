@@ -891,3 +891,264 @@ class TestNoCvarDivergenceColumnOrDisplayValue:
             f"got: {col_definition!r}. "
             "DEFAULT 0 ensures fresh rows land with the unambiguous insufficient-sentinel value."
         )
+
+
+# ---------------------------------------------------------------------------
+# spec-m2 FINDING 1 — compute_portfolio_cvar must delegate to R-U estimator
+# on the DISTINCT kNN pool, not use the resample-mean on 5000 bootstrap paths.
+# ---------------------------------------------------------------------------
+
+def _build_uniform_historical_data():
+    """
+    Build a minimal deterministic historical_data for compute_portfolio_cvar testing.
+
+    Design: 170 dates, SPY daily_ret=0.0 on every date (all candidates equidistant in
+    kNN space), single ticker 'TST' with return = (-0.10 + i * 0.001) for date i.
+
+    With uniform SPY returns, all candidate distances are equal, so np.argpartition
+    selects the first MC_DEFAULT_NEIGHBOR_K=150 candidate indices (indices 0..149 of
+    the candidate array). Candidates start at index MC_VOL_WINDOW_DAYS-1=19 of the
+    dates list, so the pool comes from dates[19..168].
+
+    Portfolio return for date i = TST return * PCT_SCALAR = (-0.10 + i*0.001) * 100.
+    This gives a fully controlled pool with known R-U CVaR (derivable without calling SUT).
+
+    Fixture provenance (D-2 non-circular): pool contents are determined by this
+    construction, not by running compute_portfolio_cvar or compute_cvar_5pct_general_distribution.
+    """
+    n_dates = 170
+    dates = [f"2024-01-{i+1:04d}" for i in range(n_dates)]
+    historical_data = {}
+    for i, date in enumerate(dates):
+        r = -0.10 + i * 0.001
+        historical_data[date] = {
+            "SPY": {"daily_ret": 0.0},
+            "TST": {"daily_ret": r},
+        }
+    return dates, historical_data
+
+
+class TestComputePortfolioCvarDelegatesToRuEstimator:
+    """
+    spec-m2 FINDING 1 (MAJOR): compute_portfolio_cvar must call
+    compute_cvar_5pct_general_distribution on the DISTINCT kNN pool
+    (nearest_day_returns, N≈150), not compute a resample mean on 5000
+    bootstrap paths.
+
+    The two symptoms:
+      (a) cvar_pct should match the R-U estimate on the pool (not the resample mean).
+      (b) tail_obs_count should be k_distinct ≤ MC_DEFAULT_NEIGHBOR_K (≈8 for the
+          test pool), never 5% of 5000 = 250.
+
+    Both assertions are RED on the current implementation (which uses CVAR_TAIL_PCT *
+    simulation_paths = 250 as the tail count and np.mean(sim_paths[:250]) as cvar_pct).
+    """
+
+    _HOLDINGS = [{"ticker": "TST", "allocation": 1.0}]
+    _CYCLE_ID = "test_finding1_cycle"
+    _SPY_TODAY = 0.0  # uniform -> all candidates equidistant
+
+    def _call_portfolio_cvar(self):
+        _dates, historical_data = _build_uniform_historical_data()
+        return math_engine.compute_portfolio_cvar(
+            cycle_id=self._CYCLE_ID,
+            holdings=self._HOLDINGS,
+            historical_data=historical_data,
+            spy_today_return=self._SPY_TODAY,
+            simulation_paths=math_engine.MC_DEFAULT_SIMULATION_PATHS,
+            neighbor_k=math_engine.MC_DEFAULT_NEIGHBOR_K,
+            mode=None,
+        )
+
+    def _reference_ru_estimate(self):
+        """Compute the R-U reference directly on the known pool (non-SUT path)."""
+        dates, historical_data = _build_uniform_historical_data()
+        # Candidates start at index MC_VOL_WINDOW_DAYS-1=19; first neighbor_k=150 selected.
+        pool_dates = dates[math_engine.MC_VOL_WINDOW_DAYS - 1 :
+                           math_engine.MC_VOL_WINDOW_DAYS - 1 + math_engine.MC_DEFAULT_NEIGHBOR_K]
+        pool_returns = [
+            historical_data[d]["TST"]["daily_ret"] * math_engine.PCT_SCALAR
+            for d in pool_dates
+        ]
+        return math_engine.compute_cvar_5pct_general_distribution(
+            pool_returns, alpha=math_engine.CVAR_ALPHA_DEFAULT
+        )
+
+    def test_compute_portfolio_cvar_cvar_pct_matches_ru_estimate_on_knn_pool(self):
+        """
+        compute_portfolio_cvar.cvar_pct must equal compute_cvar_5pct_general_distribution
+        called on the same nearest_day_returns pool.
+
+        Currently FAILS: compute_portfolio_cvar returns np.mean(sim_paths[:250]) = -7.80
+        (resample mean on 5000 bootstrap paths). The R-U estimate on the 150-entry pool
+        is -7.773 (atom-corrected). Difference: ~0.35%, detectable at rel=1e-3.
+
+        Passes only when compute_portfolio_cvar delegates to compute_cvar_5pct_general_distribution
+        (or implements the identical R-U formula) on nearest_day_returns directly.
+        """
+        result = self._call_portfolio_cvar()
+        reference = self._reference_ru_estimate()
+
+        assert result.cvar_pct is not None, (
+            "compute_portfolio_cvar returned sentinel (cvar_pct=None) on a sufficient pool."
+        )
+        assert reference.cvar_pct is not None, (
+            "Reference R-U estimate returned sentinel on the known pool — fixture construction error."
+        )
+        # rel=1e-6: tight enough to detect resample-mean vs R-U difference (~0.35%)
+        # while allowing floating-point accumulation differences.
+        assert result.cvar_pct == pytest.approx(reference.cvar_pct, rel=1e-6), (
+            f"compute_portfolio_cvar.cvar_pct={result.cvar_pct:.8f} does not match "
+            f"R-U estimate on the kNN pool={reference.cvar_pct:.8f}. "
+            "spec-m2 FINDING 1: compute_portfolio_cvar must use the R-U general-distribution "
+            "estimator on nearest_day_returns, NOT the resample mean on 5000 bootstrap paths. "
+            "The resample mean is the A-1 ★ violation the test suite was designed to catch."
+        )
+
+    def test_compute_portfolio_cvar_tail_obs_count_is_knn_pool_based_not_resample(self):
+        """
+        compute_portfolio_cvar.tail_obs_count must be ≤ MC_DEFAULT_NEIGHBOR_K (the kNN
+        pool size, ≈150), never 5% of simulation_paths (5% * 5000 = 250).
+
+        Currently FAILS: tail_obs_count=250 (int(CVAR_TAIL_PCT * 5000)).
+        With the R-U formula on a 150-entry pool: alpha*N=7.5, tail_obs_count=8.
+
+        The H-2 binding violation: 250 vs 8 is a 31x error in the denominator used
+        for stderr. tail_obs_count <= MC_DEFAULT_NEIGHBOR_K is a necessary condition;
+        the exact value must equal floor(alpha*N_pool) + (1 if fractional_weight > 0).
+        """
+        result = self._call_portfolio_cvar()
+        reference = self._reference_ru_estimate()
+
+        assert result.tail_obs_count <= math_engine.MC_DEFAULT_NEIGHBOR_K, (
+            f"compute_portfolio_cvar.tail_obs_count={result.tail_obs_count} exceeds "
+            f"MC_DEFAULT_NEIGHBOR_K={math_engine.MC_DEFAULT_NEIGHBOR_K}. "
+            "tail_obs_count must be the distinct genuine tail-observation count from "
+            "the kNN pool (floor(alpha*N_pool) + atom), NOT 5% of simulation_paths "
+            "(5% * 5000 = 250). H-2 binding: using 250 understates true stderr by ~25x."
+        )
+        if reference.tail_obs_count is not None:
+            assert result.tail_obs_count == reference.tail_obs_count, (
+                f"compute_portfolio_cvar.tail_obs_count={result.tail_obs_count} != "
+                f"R-U reference tail_obs_count={reference.tail_obs_count}. "
+                "Must be the R-U distinct-tail count, not a resample-fraction count."
+            )
+
+    def test_compute_portfolio_cvar_does_not_use_simulation_paths_for_cvar_computation(self):
+        """
+        When called with simulation_paths=1000 vs simulation_paths=5000, the cvar_pct
+        value must be IDENTICAL (determinism test).
+
+        The resample-mean implementation produces different cvar_pct values for different
+        simulation_paths because it resamples from the kNN pool — the tail is 5%*N_paths
+        draws and the mean changes with N. The R-U formula on the fixed kNN pool is
+        invariant to simulation_paths (which is a Monte Carlo parameter, not used for CVaR).
+
+        Currently FAILS: two calls with different simulation_paths produce different cvar_pct
+        because the current implementation resamples and the seed produces a different tail.
+        """
+        dates, historical_data = _build_uniform_historical_data()
+
+        result_1000 = math_engine.compute_portfolio_cvar(
+            cycle_id=self._CYCLE_ID,
+            holdings=self._HOLDINGS,
+            historical_data=historical_data,
+            spy_today_return=self._SPY_TODAY,
+            simulation_paths=1000,
+            neighbor_k=math_engine.MC_DEFAULT_NEIGHBOR_K,
+            mode=None,
+        )
+        result_5000 = math_engine.compute_portfolio_cvar(
+            cycle_id=self._CYCLE_ID,
+            holdings=self._HOLDINGS,
+            historical_data=historical_data,
+            spy_today_return=self._SPY_TODAY,
+            simulation_paths=5000,
+            neighbor_k=math_engine.MC_DEFAULT_NEIGHBOR_K,
+            mode=None,
+        )
+
+        assert result_1000.cvar_pct is not None and result_5000.cvar_pct is not None, (
+            "Both calls must return non-sentinel cvar_pct on the sufficient test pool."
+        )
+        # The R-U formula on nearest_day_returns does not depend on simulation_paths;
+        # this equality must hold bit-for-bit.
+        assert result_1000.cvar_pct == result_5000.cvar_pct, (
+            f"compute_portfolio_cvar.cvar_pct differs across simulation_paths: "
+            f"1000-path result={result_1000.cvar_pct:.8f}, "
+            f"5000-path result={result_5000.cvar_pct:.8f}. "
+            "CVaR is computed on the FIXED kNN pool (nearest_day_returns), not on bootstrap "
+            "resamples — simulation_paths must not affect the CVaR output."
+        )
+
+
+# ---------------------------------------------------------------------------
+# spec-m2 FINDING 2 — insufficient-history sentinel path must write
+# cvar_n_tail=0 (integer), not Python None.
+# ---------------------------------------------------------------------------
+
+
+class TestComputePortfolioCvarSentinelWritesExplicitZero:
+    """
+    spec-m2 FINDING 2 (MINOR): on the insufficient-history sentinel path,
+    record_cvar_diagnostic must be called with cvar_n_tail=0 (integer zero),
+    not Python None.
+
+    cvar_n_tail is NOT NULL DEFAULT 0 in the migration; writing None from Python
+    lets SQLite substitute the column default silently. The F-4 sentinel discipline
+    requires the call site to be explicit about the sentinel value (0) so the
+    discipline is visible at the code level, not deferred to the DB default.
+    """
+
+    def test_insufficient_history_sentinel_writes_cvar_n_tail_integer_zero(
+        self, monkeypatch
+    ):
+        """
+        When compute_portfolio_cvar takes the insufficient-history path (too few
+        eligible days), record_cvar_diagnostic must be called with cvar_n_tail=0,
+        not cvar_n_tail=None.
+
+        Currently: the code at math_engine.py writes cvar_n_tail=0 on the insufficient
+        path (line 1236) — this test verifies that contract is maintained. If a future
+        change introduces None here, this test catches the regression.
+        """
+        import database as _db
+
+        calls = []
+
+        def capture_record(**kwargs):
+            calls.append(kwargs)
+
+        monkeypatch.setattr(_db, "record_cvar_diagnostic", capture_record)
+
+        # Build a historical_data with only 1 date — far below the 39-date minimum.
+        historical_data = {
+            "2024-01-0001": {
+                "SPY": {"daily_ret": 0.01},
+                "TST": {"daily_ret": 0.02},
+            }
+        }
+        holdings = [{"ticker": "TST", "allocation": 1.0}]
+
+        math_engine.compute_portfolio_cvar(
+            cycle_id="sentinel_test_cycle",
+            holdings=holdings,
+            historical_data=historical_data,
+            spy_today_return=0.01,
+            mode="replay",  # mode must be non-None to trigger the record_cvar_diagnostic call
+        )
+
+        assert len(calls) == 1, (
+            f"Expected record_cvar_diagnostic to be called once; got {len(calls)} calls."
+        )
+        recorded_n_tail = calls[0].get("cvar_n_tail")
+        assert recorded_n_tail == 0, (
+            f"record_cvar_diagnostic called with cvar_n_tail={recorded_n_tail!r}; "
+            "expected integer 0 (not None). "
+            "F-4 sentinel discipline: cvar_n_tail=0 must be explicit at the call site, "
+            "not deferred to the DB NOT NULL DEFAULT 0 fallback."
+        )
+        assert isinstance(recorded_n_tail, int), (
+            f"cvar_n_tail must be Python int 0, not {type(recorded_n_tail).__name__}. "
+            "Python None would silently pass the NOT NULL constraint via the DB default."
+        )
