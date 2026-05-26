@@ -467,7 +467,9 @@ def test_validate_nn1_compliance_oos_evidence_source_is_stricter_violation():
     # Insert a DOF ledger row with evidence_source=OOS for a bundle that
     # otherwise looks clean (THEORY freeze_discipline). The validate_nn1_compliance
     # function must detect this OOS ledger entry and treat it as a stricter violation.
-    _, bundle_id = _make_all_theory_bundle(_db)
+    # spec_bundle_id must use bundle_hash (canonical key) — str(bundle_id) is wrong
+    # after Fix A (validate_nn1_compliance reads via get_dof_ledger_for_bundle(bundle_hash)).
+    bundle_hash, bundle_id = _make_all_theory_bundle(_db)
     _db.insert_dof_ledger_row(
         facet_name="gamma",
         facet_category="specification",
@@ -475,7 +477,7 @@ def test_validate_nn1_compliance_oos_evidence_source_is_stricter_violation():
         evidence_source="OOS",
         n_configs_searched=1,
         touched_frozen_eval=1,
-        spec_bundle_id=str(bundle_id),
+        spec_bundle_id=bundle_hash,
         justification="test: OOS-peek violation scenario",
     )
 
@@ -580,16 +582,18 @@ def test_validate_nn1_compliance_writes_backtest_selection_to_dof_ledger():
     import database as _db
     at = _import_autotuner()
 
-    _, bundle_id = _make_single_backtest_selection_bundle(_db)
+    bundle_hash, bundle_id = _make_single_backtest_selection_bundle(_db)
 
-    # Baseline: no DOF rows yet
-    s_before = _db.count_dof_backtest_selections(str(bundle_id))
+    # Baseline: no DOF rows yet.
+    # Query by bundle_hash — canonical key after Fix 1 (write path) and Fix A (read path).
+    # str(bundle_id) is the wrong key and would silently return 0 on both sides.
+    s_before = _db.count_dof_backtest_selections(bundle_hash)
 
     at.validate_nn1_compliance(bundle_id)
 
-    s_after = _db.count_dof_backtest_selections(str(bundle_id))
+    s_after = _db.count_dof_backtest_selections(bundle_hash)
     assert s_after > s_before, (
-        f"count_dof_backtest_selections({bundle_id}) did not increase after "
+        f"count_dof_backtest_selections(bundle_hash={bundle_hash!r}) did not increase after "
         f"validate_nn1_compliance detected a BACKTEST_SELECTION facet; "
         f"before={s_before}, after={s_after}. "
         f"The +S contribution is required for BHY haircut integrity."
@@ -604,15 +608,16 @@ def test_validate_nn1_compliance_all_theory_bundle_writes_zero_dof_rows():
     import database as _db
     at = _import_autotuner()
 
-    _, bundle_id = _make_all_theory_bundle(_db)
-    s_before = _db.count_dof_backtest_selections(str(bundle_id))
+    bundle_hash, bundle_id = _make_all_theory_bundle(_db)
+    # Query by bundle_hash — canonical key after Fix 1 + Fix A.
+    s_before = _db.count_dof_backtest_selections(bundle_hash)
 
     at.validate_nn1_compliance(bundle_id)
 
-    s_after = _db.count_dof_backtest_selections(str(bundle_id))
+    s_after = _db.count_dof_backtest_selections(bundle_hash)
     assert s_after == s_before, (
-        f"count_dof_backtest_selections increased for an all-THEORY bundle; "
-        f"before={s_before}, after={s_after}. "
+        f"count_dof_backtest_selections(bundle_hash={bundle_hash!r}) increased for an "
+        f"all-THEORY bundle; before={s_before}, after={s_after}. "
         f"An honest bundle must contribute S=0 to the haircut."
     )
 
