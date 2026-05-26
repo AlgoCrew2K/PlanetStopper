@@ -871,7 +871,17 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
          patch("autotuner.validate_nn1_compliance", return_value=(True, [])), \
          patch("autotuner.validate_search_space_nn1"), \
          patch("autotuner.calculate_historical_deviation", return_value={}), \
-         patch("autotuner.synthetic_history") as mock_synth:
+         patch("autotuner.synthetic_history.generate_synthetic_history",
+               return_value=fake_history), \
+         patch("autotuner.synthetic_history.HistoryShortfallError", Exception):
+        # NOTE: targeting generate_synthetic_history and HistoryShortfallError as
+        # two separate attribute-level patches rather than patching the module object.
+        # Patching the whole module (`patch("autotuner.synthetic_history")`) produces
+        # a MagicMock for the module but the attribute assignments on the mock do not
+        # intercept calls made through the module reference already bound in autotuner's
+        # namespace — the real function still runs. Targeting the attribute directly via
+        # "autotuner.synthetic_history.generate_synthetic_history" replaces the live
+        # function object on the module, which is what autotuner sees at call time.
 
         # Bundle row: get_spec_bundle_by_id returns the row dict that run_autotuner
         # reads bundle_hash from. Must be configured (not left as MagicMock default)
@@ -887,11 +897,6 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
         mock_db.save_chart_archive.return_value = None
         mock_db.record_autotune_run.return_value = None
         mock_db.update_symphony_strategy.return_value = None
-
-        # synthetic_history must return non-empty history so the fold machinery
-        # produces non-empty date sets and the symphony loop body executes.
-        mock_synth.generate_synthetic_history.return_value = fake_history
-        mock_synth.HistoryShortfallError = Exception  # sentinel class for the except clause
 
         mock_optuna.create_study.return_value = mock_study
         mock_optuna.logging.WARNING = 30
