@@ -1022,11 +1022,16 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
     """
     # Local aliases for penalty scalars/thresholds (M1 T6: confined to this function).
     # Values sourced from SORTINO_OBJ_* module-level constants (AC-4 named constants).
+    # NAME-002 (sprint-2-audit a6e4d9f8): the three _PCT suffixes are inconsistent with
+    # the module-level SORTINO_OBJ_* names (which carry no _PCT suffix). They cannot be
+    # renamed here because tests/autotuner/test_m1_crra_eu_objective.py T6 pins these
+    # exact names as the contractual RUN_SIM_* set (test_run_sim_constants_not_at_module_scope).
+    # A rename would require a coordinated test update — out of scope for this hotfix pass.
     RUN_SIM_MISSED_UPSIDE_MULT = SORTINO_OBJ_MISSED_UPSIDE_MULT
-    RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT = SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD
+    RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT = SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD  # _PCT suffix: T6 contract
     RUN_SIM_DRAWDOWN_MULT = SORTINO_OBJ_DRAWDOWN_MULT
-    RUN_SIM_DRAWDOWN_THRESHOLD_PCT = SORTINO_OBJ_DRAWDOWN_THRESHOLD
-    RUN_SIM_DRAWDOWN_MIN_GAIN_PCT = SORTINO_OBJ_DRAWDOWN_MIN_GAIN
+    RUN_SIM_DRAWDOWN_THRESHOLD_PCT = SORTINO_OBJ_DRAWDOWN_THRESHOLD  # _PCT suffix: T6 contract
+    RUN_SIM_DRAWDOWN_MIN_GAIN_PCT = SORTINO_OBJ_DRAWDOWN_MIN_GAIN  # _PCT suffix: T6 contract
     RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT = SORTINO_OBJ_NEGATIVE_GUARD_ALPHA_MULT
 
     total_guard_alpha = 0.0
@@ -1102,6 +1107,11 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
 # Sortino + loss-aversion objective going forward. run_simulation is kept as the
 # primary def (satisfying C4 AST inspection) and run_simulation_sortino_legacy
 # is a callable alias for explicit legacy-branch callers and T6 callable tests.
+# NAME-001 (sprint-2-audit a6e4d9f8): "sortino" and "legacy" embed change history
+# rather than behavior. The auditor recommends run_simulation_sortino_guard_alpha
+# or reverting to run_simulation. Cannot rename here: T6 contract test
+# test_run_simulation_sortino_legacy_function_exists in test_m1_crra_eu_objective.py
+# pins this exact name. A rename requires a coordinated test update.
 run_simulation_sortino_legacy = run_simulation
 
 
