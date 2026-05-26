@@ -803,17 +803,18 @@ def test_run_autotuner_refuses_to_start_when_bundle_contains_backtest_selection_
 # ---------------------------------------------------------------------------
 
 def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
-    """validate_search_space_nn1 must be invoked at the top of run_autotuner,
-    before optuna.create_study, so any leaked frozen facet is caught at runtime.
+    """validate_search_space_nn1 must be invoked inside run_autotuner before
+    optuna.create_study, so any leaked frozen facet is caught at runtime.
 
-    Two stubs are required to reach optuna.create_study:
-    1. generate_synthetic_history returns a multi-date stub so run_autotuner
-       does not short-circuit on total_days < 2.
-    2. bot_state includes a symphony whose key matches the stub history key
-       so the per-symphony for-loop body executes and create_study is reached.
+    Reaching optuna.create_study requires three conditions:
+    1. generate_synthetic_history returns >= 2 dates (avoids total_days < 2 guard).
+    2. bot_state has a symphony whose normalize_name(data["name"]) appears as a
+       history key — so the per-symphony loop body executes.
+    3. Supporting patches (get_symphony_strategy, RDBStorage, load_chart_history)
+       so the code between the loop entry and create_study does not fail first.
 
-    The test intercepts create_study to abort early (StopIteration), then
-    asserts validate_search_space_nn1 appeared in the call_log before create_study.
+    _abort_create_study raises StopIteration when create_study is reached;
+    pytest.raises catches it; the call_log ordering assertion then runs.
     """
     at = _import_autotuner()
 
@@ -833,25 +834,29 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
         call_log.append("validate_search_space_nn1")
         original_validate()
 
-    # Abort the run early once create_study is reached, before real Optuna work.
+    # Abort once create_study is reached, before real Optuna work.
     def _abort_create_study(*args, **kwargs):
         call_log.append("create_study")
         raise StopIteration("abort after guard check")
 
-    # Stub synthetic history: key "stub_sym" matches bot_state below.
-    # Two dates so total_days >= 2 (avoids the "Need at least 2 days" early-return).
+    # Stub history: key "stub_sym" = normalize_name("stub_sym") = "stub_sym".
+    # Two dates so total_days=2 passes the "Need at least 2 days" guard.
+    # Tick shape matches the fields _collect_sim_returns reads.
+    _stub_tick = {"return": 0.0, "mc_prob": 50.0, "vol": 1.0,
+                  "vwap_diff": 0.0, "base_atr_pct": 1.0, "valid_vwap_weight": 1.0}
     _stub_history = {
         "stub_sym": {
-            "2026-01-02": {"open": 100.0, "close": 101.0},
-            "2026-01-03": {"open": 101.0, "close": 102.0},
+            "2026-01-02": _stub_tick,
+            "2026-01-03": _stub_tick,
         }
     }
 
-    # bot_state must contain the same symphony key as the stub history so the
-    # per-symphony for-loop body executes and reaches optuna.create_study.
-    _bot_state = {"stub_sym": {"name": "stub_sym", "account_uuid": "acc-1"}}
+    # bot_state key "acc-stub" has name="stub_sym" so normalize_name produces
+    # "stub_sym" — matching the history key above.
+    _bot_state = {"acc-stub": {"name": "stub_sym", "account_uuid": "acc-1"}}
 
     import inspect
+    from unittest.mock import MagicMock
     sig = inspect.signature(at.run_autotuner)
     call_kwargs = (
         {"bot_state": _bot_state, "current_date_str": "2026-01-03",
@@ -861,13 +866,21 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
               "account_uuids": ["acc-1"]}
     )
 
+    import optuna as _optuna
     with patch.object(at.synthetic_history, "generate_synthetic_history",
                       return_value=_stub_history):
         with patch.object(at, "validate_search_space_nn1", _recording_validate):
-            import optuna
-            with patch.object(optuna, "create_study", _abort_create_study):
-                with pytest.raises((StopIteration, RuntimeError, ValueError, TypeError)):
-                    at.run_autotuner(**call_kwargs)
+            with patch.object(at.database, "get_symphony_strategy",
+                              return_value={"params": {}, "locked_vars": []}):
+                with patch.object(at.database, "load_chart_history", return_value={}):
+                    with patch.object(_optuna.storages, "RDBStorage",
+                                      return_value=MagicMock()):
+                        with patch.object(_optuna, "create_study",
+                                          side_effect=_abort_create_study):
+                            with pytest.raises(
+                                (StopIteration, RuntimeError, ValueError, TypeError)
+                            ):
+                                at.run_autotuner(**call_kwargs)
 
     # validate_search_space_nn1 must have been called before create_study.
     if "validate_search_space_nn1" in call_log and "create_study" in call_log:
