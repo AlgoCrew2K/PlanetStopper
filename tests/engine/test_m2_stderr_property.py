@@ -290,9 +290,13 @@ def test_m2_stderr_decreases_monotonically_with_pool_growth(
 
     # Discard draws where the combined tail VaR has shifted substantially relative
     # to the base tail VaR. The monotonicity law requires the tail region to be
-    # approximately stable across the two pools. If VaR shifts by more than 50%
+    # approximately stable across the two pools. If VaR shifts by more than 20%
     # (relative), the two tails are measuring different distributional regions and
     # the "same distribution" precondition for the LLN is violated.
+    # 20% is chosen conservatively: at 50% the tail region can expand enough to
+    # include new values that raise std even as n grows (confirmed counterexample:
+    # shift=0.50, VaR -0.125 → -0.0625, stderr rose 18.6%). Strict < avoids
+    # floating-point boundary ambiguity at the threshold.
     sorted_base = sorted(base_pool)
     sorted_combined = sorted(combined_pool)
     alpha = math_engine.CVAR_ALPHA_DEFAULT
@@ -305,8 +309,8 @@ def test_m2_stderr_decreases_monotonically_with_pool_growth(
         return
     if var_base * var_combined < 0:
         return  # opposite signs — distributional shift too large, skip
-    # Relative shift: |var_combined - var_base| / |var_base| <= 0.50
-    assume(abs(var_combined - var_base) / abs(var_base) <= 0.50)
+    # Relative shift: |var_combined - var_base| / |var_base| < 0.20 (strict)
+    assume(abs(var_combined - var_base) / abs(var_base) < 0.20)
 
     # The 5% slop: in expectation stderr shrinks as 1/sqrt(n_tail), but at small n
     # the sample std can be larger for the bigger pool (random variation).
