@@ -946,11 +946,14 @@ _VALID_FREEZE_DISCIPLINES: frozenset[str] = frozenset({
     "THEORY",
     "MANDATE",
     "STYLIZED_FACT",
+    "POLITIS_WHITE",
+    "CADENCE",
     "CALIBRATION",
     "BACKTEST_SELECTION",
 })
 
 _SPEC_BUNDLE_COLUMNS = [
+    "id",
     "bundle_hash",
     "frozen_at",
     "facets_json",
