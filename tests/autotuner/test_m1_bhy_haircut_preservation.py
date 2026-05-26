@@ -282,9 +282,11 @@ def test_haircut_select_accepts_tstat_fn_parameter():
         # (derive_floored_wealth_argument + compute_crra_utility) before calling
         # tstat_fn.  expected_tstat must be computed from the U-series, not from
         # raw daily_returns, to match the corrected behavior.
+        # Note: compute_crra_utility lives in math_engine, not autotuner.
+        import math_engine as _math_engine
         _gamma = 2.0
         u_series = [
-            autotuner.compute_crra_utility(
+            _math_engine.compute_crra_utility(
                 autotuner.derive_floored_wealth_argument(
                     r / autotuner.RETURN_PCT_TO_FRACTION
                 ),
