@@ -1,0 +1,92 @@
+{
+  "name": "crra_haircut_u_transform_contract",
+  "purpose": "Pins the _haircut_select CRRA-EU branch contract: daily_returns (raw percent) must be U-transformed before being passed to compute_crra_eu_tstat. Provides two scenarios: (1) a contract scenario with a tail-heavy return distribution for the CRRA-001 characterization test; (2) a divergence scenario with extreme losses for the Sharpe-vs-CRRA divergence test. Both scenarios demonstrate that t_from_raw_pct materially differs from t_crra_eu.",
+  "provenance": "Non-circular: all values derived by closed-form arithmetic from the CRRA utility formula U(W;gamma) = (W^(1-gamma)-1)/(1-gamma) with W = max(WEALTH_ARG_FLOOR, 1 + r/RETURN_PCT_TO_FRACTION). No autotuner or SUT output was used. Recipe verifiable by evaluating the closed-form expressions at the given r_pct values.",
+  "constants": {
+    "gamma": 2.0,
+    "WEALTH_ARG_FLOOR": 0.001,
+    "RETURN_PCT_TO_FRACTION": 100.0,
+    "crra_formula": "U(W; gamma) = (W^(1-gamma) - 1) / (1-gamma) for gamma != 1; ln(W) for gamma==1",
+    "wealth_formula": "W_i = max(WEALTH_ARG_FLOOR, 1 + r_i / RETURN_PCT_TO_FRACTION)"
+  },
+  "scenario_contract": {
+    "description": "Tail-heavy distribution: mixed large losses and moderate gains. No WEALTH_ARG_FLOOR hit. Chosen so t_crra_eu and t_from_raw_pct differ by ~52% relative, ensuring that a broken implementation (passing raw percent to compute_crra_eu_tstat) cannot accidentally produce the correct value.",
+    "r_pct": [-50.0, 20.0, -30.0, 25.0, 10.0, -40.0, 15.0, 5.0],
+    "W_series": [0.5, 1.2, 0.7, 1.25, 1.1, 0.6, 1.15, 1.05],
+    "U_series": [
+      -1.0,
+      0.16666666666666663,
+      -0.4285714285714286,
+      0.19999999999999996,
+      0.09090909090909094,
+      -0.6666666666666667,
+      0.13043478260869557,
+      0.04761904761904767
+    ],
+    "T": 8,
+    "expected": {
+      "mean_U": -0.18245106342932432,
+      "sd_U": 0.45624771408559045,
+      "t_crra_eu": -1.131073144720413,
+      "mean_r_pct": -5.625,
+      "sd_r_pct": 29.57285193261839,
+      "t_from_raw_pct": -0.5379901340914958,
+      "relative_divergence": 0.5243542501183863,
+      "discriminating_note": "t_crra_eu and t_from_raw_pct differ by ~52% relative. A broken implementation that passes raw percent values to compute_crra_eu_tstat would return t_from_raw_pct (-0.538), not t_crra_eu (-1.131). The two values cannot be within rel=0.05 of each other."
+    },
+    "W_derivation_check": {
+      "-50.0%": "W = max(0.001, 1 - 0.5) = 0.5; U = (0.5^(-1) - 1)/(-1) = (2-1)/(-1) = -1.0",
+      "-30.0%": "W = max(0.001, 0.70) = 0.70; U = (0.70^(-1) - 1)/(-1) = (1.4286-1)/(-1) = -0.4286",
+      "-40.0%": "W = max(0.001, 0.60) = 0.60; U = (0.60^(-1) - 1)/(-1) = (1.6667-1)/(-1) = -0.6667",
+      "+20.0%": "W = max(0.001, 1.20) = 1.20; U = (1.20^(-1) - 1)/(-1) = (0.8333-1)/(-1) = 0.1667",
+      "+25.0%": "W = max(0.001, 1.25) = 1.25; U = (1.25^(-1) - 1)/(-1) = (0.80-1)/(-1) = 0.200"
+    }
+  },
+  "scenario_divergence": {
+    "description": "Ranking-divergence scenario: two competing trial distributions where raw-percent ranking and CRRA-EU ranking materially differ. Trial A has one extreme loss + moderate gains; Trial B has uniform moderate losses. CRRA penalizes the extreme loss in Trial A more than the Sharpe-like form does, leading to a larger divergence in t-stats.",
+    "trial_a": {
+      "r_pct": [-95.0, 10.0, 8.0, 12.0, 9.0],
+      "W_series": [0.05, 1.1, 1.08, 1.12, 1.09],
+      "U_series": [
+        -18.999999999999982,
+        0.09090909090909094,
+        0.07407407407407418,
+        0.1071428571428572,
+        0.0825688073394496
+      ],
+      "T": 5,
+      "expected": {
+        "t_crra_eu": -0.9767722146994187,
+        "t_from_raw_pct": -0.5343399553399673,
+        "relative_divergence": 0.45295336282226326,
+        "note": "t_crra is ~83% more negative than t_raw; extreme CRRA penalty from W=0.05 on day 0."
+      }
+    },
+    "trial_b": {
+      "r_pct": [-2.0, -1.0, -3.0, -1.5, -2.5],
+      "W_series": [0.98, 0.99, 0.97, 0.985, 0.975],
+      "U_series": [
+        -0.020408163265306145,
+        -0.010101010101010166,
+        -0.030927835051546504,
+        -0.015228426395939021,
+        -0.025641025641025772
+      ],
+      "T": 5,
+      "expected": {
+        "t_crra_eu": -5.55755598957622,
+        "t_from_raw_pct": -5.65685424949238
+      }
+    },
+    "ranking_check": {
+      "crra_ranks_a_above_b": true,
+      "raw_ranks_a_above_b": true,
+      "rankings_differ": false,
+      "note": "Rankings happen to agree for this pair, but the t-stat magnitudes differ materially (trial A: crra=-0.977 vs raw=-0.534). The divergence test asserts the returned value matches the crra form, not the raw form."
+    }
+  },
+  "tolerance_notes": {
+    "contract_test": "rel=1e-9 on t_crra_eu — deterministic double-precision arithmetic on fixed inputs; only last-bit rounding allowed.",
+    "divergence_test": "rel=0.05 separator — the two t-stat values differ by >50% relative; a broken implementation returning t_from_raw_pct cannot be within 5% of t_crra_eu."
+  }
+}

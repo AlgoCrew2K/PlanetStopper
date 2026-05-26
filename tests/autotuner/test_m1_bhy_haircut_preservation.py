@@ -278,11 +278,28 @@ def test_haircut_select_accepts_tstat_fn_parameter():
     # The critical check: the returned tstat must match crra_tstat_fn(winner)
     # when winner is not None.
     if winner is not None:
-        expected_tstat = crra_tstat_fn(winner.user_attrs["daily_returns"])
+        # CRRA-001 fix: _haircut_select now applies the U-transform internally
+        # (derive_floored_wealth_argument + compute_crra_utility) before calling
+        # tstat_fn.  expected_tstat must be computed from the U-series, not from
+        # raw daily_returns, to match the corrected behavior.
+        # Note: compute_crra_utility lives in math_engine, not autotuner.
+        import math_engine as _math_engine
+        _gamma = 2.0
+        u_series = [
+            _math_engine.compute_crra_utility(
+                autotuner.derive_floored_wealth_argument(
+                    r / autotuner.RETURN_PCT_TO_FRACTION
+                ),
+                _gamma,
+            )
+            for r in winner.user_attrs["daily_returns"]
+        ]
+        expected_tstat = crra_tstat_fn(u_series)
         assert tstat == pytest.approx(expected_tstat, rel=1e-9), (
             f"_haircut_select tstat = {tstat!r} does not match "
-            f"compute_crra_eu_tstat(winner.daily_returns) = {expected_tstat!r}.\n"
-            f"The winner's tstat must be derived from tstat_fn, not from trial.value."
+            f"compute_crra_eu_tstat(u_series) = {expected_tstat!r}.\n"
+            f"The winner's tstat must be derived from tstat_fn applied to the "
+            f"U-transformed series (CRRA-001 fix), not from raw daily_returns."
         )
 
     # Call with default (Sortino branch) -- must not raise and must produce
