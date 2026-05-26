@@ -1071,3 +1071,147 @@ def test_app_py_run_autotuner_call_does_not_pass_none_spec_bundle_id():
                 f"Replace spec_bundle_id=None with the canonical Phase-1 THEORY "
                 f"bundle id (e.g., database.get_or_create_phase1_theory_bundle_id())."
             )
+
+
+# ---------------------------------------------------------------------------
+# REQ-SQLITE-1 read-path consistency — canonical key is bundle_hash throughout
+# ---------------------------------------------------------------------------
+
+
+def test_dof_ledger_read_path_uses_bundle_hash_not_str_int_id():
+    """REQ-SQLITE-1 read-path (rev-theory BLOCK on d56ddaa):
+    get_dof_ledger_for_bundle must be called with bundle_hash, not str(integer_id).
+
+    After Fix 1 (validate_nn1_compliance stores spec_bundle_id=bundle_hash),
+    all read-side calls that previously passed str(integer_id) silently return
+    empty results — they are now using the wrong key.
+
+    Specifically, autotuner.validate_nn1_compliance line ~1268 calls:
+        database.get_dof_ledger_for_bundle(str(spec_bundle_id))
+    where spec_bundle_id is the INTEGER argument. After Fix 1, rows are stored
+    under bundle_hash (64-char hex), not str(integer_id). This call misses them.
+
+    This test seeds a bundle with a BACKTEST_SELECTION facet, runs
+    validate_nn1_compliance, then:
+      (a) asserts get_dof_ledger_for_bundle(bundle_hash) finds the written row
+      (b) asserts get_dof_ledger_for_bundle(str(bundle_id)) returns nothing —
+          confirming the canonical key is bundle_hash, not str(integer_id)
+      (c) injects an OOS row under bundle_hash and asserts validate_nn1_compliance
+          detects it — proving the OOS-peek read path also uses bundle_hash
+
+    RED condition (c): autotuner.py:~1268 still calls
+        get_dof_ledger_for_bundle(str(spec_bundle_id))
+    so the OOS row stored under bundle_hash is invisible and the OOS check
+    always returns no violations — a silent false-clean.
+
+    GREEN condition: autotuner.py:~1268 changed to
+        get_dof_ledger_for_bundle(bundle_hash)
+    (bundle_hash is already resolved at `bundle_hash = row[0]` in that function.)
+
+    Discriminating-power: a read path using str(int_id) always returns empty for
+    OOS rows stored under bundle_hash, making the OOS-peek vacuously pass. This
+    test makes that invisible failure visible by asserting a positive detection.
+    """
+    import database as _db
+    at = _import_autotuner()
+
+    bundle_hash, bundle_id = _make_single_backtest_selection_bundle(_db)
+
+    # Run validate_nn1_compliance — writes BACKTEST_SELECTION row with bundle_hash key.
+    at.validate_nn1_compliance(bundle_id)
+
+    # Assert (a): get_dof_ledger_for_bundle(bundle_hash) finds the written row.
+    rows_by_hash = _db.get_dof_ledger_for_bundle(bundle_hash)
+    assert len(rows_by_hash) >= 1, (
+        f"get_dof_ledger_for_bundle(bundle_hash={bundle_hash!r}) returned 0 rows "
+        f"after validate_nn1_compliance ran on bundle_id={bundle_id}. "
+        "Fix 1 requires validate_nn1_compliance to store spec_bundle_id=bundle_hash. "
+        "If this returns 0, Fix 1 is not applied or the bundle_hash is wrong."
+    )
+
+    # Assert (b): str(integer_id) key must return nothing — it is not canonical.
+    rows_by_int_id = _db.get_dof_ledger_for_bundle(str(bundle_id))
+    assert len(rows_by_int_id) == 0, (
+        f"get_dof_ledger_for_bundle(str(bundle_id)='{bundle_id}') returned "
+        f"{len(rows_by_int_id)} rows; expected 0. "
+        "REQ-SQLITE-1: rows must be stored under bundle_hash, not str(integer_id). "
+        "If this returns > 0, Fix 1 was reverted or was not applied."
+    )
+
+    # Assert (c): OOS-peek path in validate_nn1_compliance must use bundle_hash.
+    # Inject an OOS row directly under bundle_hash and assert it is detected.
+    _db.insert_dof_ledger_row(
+        facet_name="exit_threshold",
+        facet_category="parameter",
+        decision_type="SEARCHED",
+        evidence_source="OOS",
+        n_configs_searched=1,
+        touched_frozen_eval=0,
+        spec_bundle_id=bundle_hash,  # canonical key
+        justification="Synthetic OOS row to probe OOS-peek read-path key",
+    )
+
+    is_honest, violations = at.validate_nn1_compliance(bundle_id)
+    oos_violations = [v for v in violations if "OOS" in v]
+    assert len(oos_violations) >= 1, (
+        f"validate_nn1_compliance did not detect the OOS ledger row for bundle_id={bundle_id}. "
+        f"Violations found: {violations}. "
+        "REQ-SQLITE-1 read-path: autotuner.validate_nn1_compliance line ~1268 calls "
+        "get_dof_ledger_for_bundle(str(spec_bundle_id)) — this passes str(integer_id) as key "
+        "but rows are stored under bundle_hash. Change to get_dof_ledger_for_bundle(bundle_hash) "
+        "where bundle_hash is already resolved at `bundle_hash = row[0]` in that function."
+    )
+
+
+def test_count_dof_backtest_selections_returns_positive_when_queried_by_bundle_hash():
+    """REQ-SQLITE-1 read-path: count_dof_backtest_selections must be called with
+    bundle_hash, not str(integer_id), to find rows written by validate_nn1_compliance.
+
+    After Fix 1, validate_nn1_compliance stores spec_bundle_id=bundle_hash.
+    The existing test test_validate_nn1_compliance_writes_backtest_selection_to_dof_ledger
+    calls count_dof_backtest_selections(str(bundle_id)) — str(integer_id) — which now
+    returns 0 because no row is stored under that key. That test must be updated to
+    use bundle_hash.
+
+    This test explicitly verifies the canonical query direction:
+      count_dof_backtest_selections(bundle_hash) > 0 after BACKTEST_SELECTION write.
+
+    RED condition: existing call sites still use str(bundle_id); the impl has not
+    yet updated them to use bundle_hash — so the BHY haircut S-accumulator is broken.
+
+    GREEN condition: all count_dof_backtest_selections call sites updated to pass
+    bundle_hash, AND the write path (Fix 1) is in place.
+
+    Discriminating-power: the existing broken test (using str(bundle_id)) would
+    falsely pass if Fix 1 were reverted. This test fails if Fix 1 is not applied
+    (count by hash returns 0) AND if the read path still uses str(int_id) (count
+    by str returns > 0, triggering the consistency assertion).
+    """
+    import database as _db
+    at = _import_autotuner()
+
+    bundle_hash, bundle_id = _make_single_backtest_selection_bundle(_db)
+
+    s_before_hash = _db.count_dof_backtest_selections(bundle_hash)
+    s_before_str = _db.count_dof_backtest_selections(str(bundle_id))
+
+    at.validate_nn1_compliance(bundle_id)
+
+    s_after_hash = _db.count_dof_backtest_selections(bundle_hash)
+    s_after_str = _db.count_dof_backtest_selections(str(bundle_id))
+
+    # Primary assertion: bundle_hash query must find the row (Fix 1 in place).
+    assert s_after_hash > s_before_hash, (
+        f"count_dof_backtest_selections(bundle_hash={bundle_hash!r}) did not increase "
+        f"after validate_nn1_compliance; before={s_before_hash}, after={s_after_hash}. "
+        "Fix 1 stores the row under bundle_hash — querying by bundle_hash must find it. "
+        "If 0: Fix 1 is not applied."
+    )
+
+    # Consistency assertion: str(integer_id) must NOT find the row.
+    assert s_after_str == s_before_str, (
+        f"count_dof_backtest_selections(str(bundle_id)='{bundle_id}') returned "
+        f"{s_after_str} (was {s_before_str}); expected unchanged. "
+        "REQ-SQLITE-1: rows are stored under bundle_hash. str(integer_id) is the wrong key "
+        "and must return 0. If this increases, Fix 1 was reverted or not applied."
+    )
