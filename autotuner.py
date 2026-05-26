@@ -1,5 +1,6 @@
 import time
 import math
+import statistics
 import optuna
 from datetime import datetime, timedelta, timezone
 import database
@@ -331,6 +332,100 @@ HARVEY_LIU_FDR_Q = 0.05
 # Φ saturates for |t| beyond ~8.3; 1e-12 sits safely inside the representable range.
 _HAIRCUT_PVALUE_EPSILON = 1e-12
 
+# ---------------------------------------------------------------------------
+# CRRA-EU objective constants — M1 Phase 1 HARDEN-core (plan §Deliverables).
+# ---------------------------------------------------------------------------
+
+# Lower floor on the wealth argument W fed to CRRA. CRRA is unbounded below as
+# W -> 0+ for gamma >= 1; an unfloored W produces a non-finite u(W) that
+# NaN-poisons mean(U), sd(U), and the BHY haircut running-min
+# (autotuner.py:349-354). The floor goes on the INPUT W, NEVER on the output U
+# — flooring U compresses the lower tail of U, artificially shrinks sd(U), and
+# inflates the t-stat mean(U)/(sd(U)/sqrt(T)), re-introducing an anti-conservative
+# bias the haircut cannot correct.
+# Source: decision-science-council-synthesis.md §3.9 W-H2; evaluation §A.1 H-1.
+# Value 0.001: IEEE-754 safe at prudential gamma <= 10 (W^(-9) = 1e27 << 1e308);
+# operationally unreachable by in-distribution AlphaBot long-only US-equity
+# strategies (W = 0.001 implies a -99.9% single-day trailing-stop-through loss).
+WEALTH_ARG_FLOOR: float = 0.001
+
+# Unit-conversion factor: autotuner return series are in percent
+# (synthetic_history.py:355 — tick['return'] = agg_ret * 100.0). The CRRA
+# formula requires a decimal-fraction wealth ratio (W = 1.05 for +5%, not
+# W = 105%). This constant converts percent -> fraction at the autotuner boundary.
+# Source: W-H2 fixture unit_conversion_constant; W-H2 derivation memo §A4_consistency.
+RETURN_PCT_TO_FRACTION: float = 100.0
+
+
+def derive_wealth_argument(r_policy_fraction: float) -> float:
+    """Derive the per-period gross wealth ratio from a per-day policy return.
+
+    W_i = 1 + r_i_policy_fraction
+
+    where r_i_policy_fraction is the triggered policy return in decimal-fraction
+    units (r_policy_fraction = r_policy_pct / RETURN_PCT_TO_FRACTION).
+
+    This is the W-H2 formula (per_period_gross_wealth_ratio). The output is
+    the raw W BEFORE the floor is applied — the caller decides whether to floor.
+    Flooring is a separate stability concern (W-H4) from derivation (W-H2).
+
+    Reference: decision-science-council-synthesis.md §3.9 W-H2;
+               tests/fixtures/m1-wealth-argument/derivation-fixture.json.
+    """
+    return 1.0 + r_policy_fraction
+
+
+def derive_floored_wealth_argument(r_policy_fraction: float) -> float:
+    """Derive the per-period gross wealth ratio with the W-H4 floor applied.
+
+    W_i = max(WEALTH_ARG_FLOOR, 1 + r_i_policy_fraction)
+
+    This is the W-H2 formula plus the W-H4 floor. This is the function to call
+    when computing CRRA utility: derive the raw W, then clamp to WEALTH_ARG_FLOOR.
+    The floor is on the INPUT W — NEVER apply the floor to the output U.
+
+    Reference: decision-science-v3-and-divergence-evaluation.md §A.1 H-1 (W-H4);
+               WEALTH_ARG_FLOOR source comment above.
+    """
+    W_raw = derive_wealth_argument(r_policy_fraction)
+    return max(WEALTH_ARG_FLOOR, W_raw)
+
+
+def compute_crra_eu_tstat(U_series: list[float]) -> float:
+    """Per-trial t-statistic for the CRRA-EU objective: mean(U) / (sd(U) / sqrt(T)).
+
+    This is the one-sample t-statistic for a mean-valued objective. It replaces
+    compute_sortino_tstat for the CRRA-EU branch. Using compute_sortino_tstat
+    (which returns sortino*sqrt(T)) for a mean-valued objective is the H-6
+    category error — autotuner.py:266-271 named this error once for the
+    Sharpe-derived deflation; the same discipline applies here.
+
+    H-6 / W-H5 category discipline (see autotuner.py:266-271 precedent):
+        The H-6 category error was a Sharpe-derived deflation applied to a Sortino.
+        Since 2026, the same category-discipline applies between
+        compute_sortino_tstat (Sortino objective) and compute_crra_eu_tstat
+        (CRRA-EU objective) — a mean-valued functional needs the one-sample
+        t-stat, NOT effect_size*sqrt(T).
+
+    Implementation constraints:
+        - statistics.stdev (sample, ddof=1, Bessel-corrected). Using pstdev
+          would inflate t by sqrt(T/(T-1)) and shift haircut calibration.
+        - Returns 0.0 for T <= 1 (sd undefined for n < 2).
+        - Returns 0.0 for a constant series (sd=0). Degenerate trials rank last
+          via argmin(p_adj) — no sentinel needed.
+        - Pure: no side effects, no logging, no DB writes.
+
+    Reference: S-2 binding condition; decision-science-council-synthesis.md §4.
+    """
+    T = len(U_series)
+    if T <= 1:
+        return 0.0
+    mean_U = sum(U_series) / T
+    sd_U = statistics.stdev(U_series)  # sample stdev, ddof=1
+    if sd_U == 0.0:
+        return 0.0
+    return mean_U / (sd_U / math.sqrt(T))
+
 
 def compute_sortino_tstat(sortino: float, T: int) -> float:
     """Per-trial t-statistic for the Harvey & Liu haircut: ``sortino * sqrt(T)``.
@@ -339,6 +434,12 @@ def compute_sortino_tstat(sortino: float, T: int) -> float:
     per-observation effect size scaled by the square root of the sample length.
     ``T`` is the in-sample return-OBSERVATION count of the series the Sortino was
     computed over (``len(daily_returns)``) — not a calendar-day count.
+
+    WARNING: appropriate ONLY for the Sortino objective (a ratio). For a
+    mean-valued objective (e.g. CRRA-EU), use compute_crra_eu_tstat; reusing
+    this function for a mean is the H-6 category error — the Sortino form
+    ``sortino * sqrt(T)`` applies the wrong normalisation for a mean-valued
+    objective whose correct t-stat is ``mean(U) / (sd(U) / sqrt(T))``.
 
     Reference: Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013.
     """
@@ -741,16 +842,26 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     return daily_returns
 
 
-def _haircut_select(completed_trials):
+def _haircut_select(completed_trials, tstat_fn=compute_sortino_tstat):
     """Apply the Harvey & Liu selection-bias haircut to a set of completed trials.
 
     Each completed trial must carry its in-sample validation return series under
     the ``daily_returns`` user-attr (persisted by the objective). The haircut, per
     trial i over the N sentinel-filtered trials:
-      1. t-statistic  t_i  = Sortino_i · sqrt(T_i),  T_i = len(daily_returns_i)
+      1. t-statistic  t_i  = tstat_fn(daily_returns_i)
       2. one-sided p  p_i  = clamped 1 - Φ(t_i)
       3. BHY adjust   p_adj = benjamini_hochberg_adjust over the N raw p-values
       4. selection    winner = argmin p_adj, deployable iff p_adj <= HARVEY_LIU_FDR_Q
+
+    ``tstat_fn`` must accept a ``list[float]`` of daily returns and return a float
+    t-statistic. The default is ``compute_sortino_tstat`` for backward compatibility
+    with the Sortino objective branch. Pass ``compute_crra_eu_tstat`` for the CRRA-EU
+    objective path. Swapping ``tstat_fn`` is the ONLY permitted change to this function
+    per the BHY slice binding — all other haircut machinery is byte-identical.
+
+    Sentinel filter: trials with ``value == math_engine._SORTINO_SENTINEL`` (1e6) are
+    excluded before the haircut regardless of ``tstat_fn``. The filter is a no-op for
+    the CRRA-EU path but must remain for legacy Sortino sweeps.
 
     Returns ``(winner_trial, winner_p_adj, winner_tstat)`` — the BHY-winning
     trial, its adjusted p-value, and its t-statistic. ``winner_trial`` is None
@@ -762,11 +873,24 @@ def _haircut_select(completed_trials):
     if not completed_trials:
         return None, None, None
 
+    # Sentinel filter: exclude zero-downside degenerate trials regardless of objective.
+    # A sentinel's magnitude would dominate the cross-trial distribution in the Sortino
+    # path; the filter is a no-op for CRRA-EU but must remain for both paths.
+    filtered_trials = [
+        t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
+    ]
+    if not filtered_trials:
+        return None, None, None
+
     tstats = []
-    for t in completed_trials:
+    for t in filtered_trials:
         series = t.user_attrs.get("daily_returns", []) if hasattr(t, "user_attrs") else []
-        T_i = len(series)
-        tstats.append(compute_sortino_tstat(t.value, T_i))
+        if tstat_fn is compute_sortino_tstat:
+            # Sortino branch: t-stat is sortino * sqrt(T), T = len(series)
+            tstats.append(compute_sortino_tstat(t.value, len(series)))
+        else:
+            # CRRA-EU (or any custom) branch: t-stat from the returns series directly
+            tstats.append(tstat_fn(series))
     p_values = [compute_haircut_pvalue(ts) for ts in tstats]
     p_adj = benjamini_hochberg_adjust(p_values)
 
@@ -775,7 +899,7 @@ def _haircut_select(completed_trials):
         # No trial clears the FDR gate — the trial set is statistically
         # indistinguishable from noise; reject the AI proposal in full.
         return None, p_adj[winner_idx], tstats[winner_idx]
-    return completed_trials[winner_idx], p_adj[winner_idx], tstats[winner_idx]
+    return filtered_trials[winner_idx], p_adj[winner_idx], tstats[winner_idx]
 
 
 def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):

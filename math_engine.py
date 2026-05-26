@@ -69,6 +69,18 @@ PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes
 # could not run" from a genuine probability. compute_exit_confirmation treats
 # None as "MC confirmation unavailable" — it does NOT veto the protective stop,
 # which still fires on the ticks-below-stop condition alone (fail-safe).
+# CRRA utility constants — Phase-1 HARDEN-core (M1 plan §Deliverables, W-H4 + W-H2).
+# Tolerance around gamma == 1 for the log-utility branch. Avoids 1/(1-gamma) blow-up
+# near gamma=1. The gamma->1 limit of (W^(1-gamma) - 1)/(1-gamma) is ln(W)
+# (L'Hopital; Merton 1969 / Samuelson 1969).
+# Named constant: no-magic-numbers rule (project CLAUDE.md).
+CRRA_LOG_UTILITY_GAMMA_TOL: float = 1e-9
+# Floor applied to the wealth argument W_i = max(WEALTH_ARG_FLOOR, 1 + r_i) before
+# compute_crra_utility. Prevents log(0) / W^(1-gamma) blow-up for catastrophic returns
+# (-100% or near). Floor is on INPUT W; never on output U (W-H4 contract).
+# Source: decision-science-council-synthesis.md §3.9 W-H4.
+WEALTH_ARG_FLOOR: float = 0.001
+
 MC_INSUFFICIENT_HISTORY_SENTINEL = None
 MC_MIN_HISTORY_DAYS = (
     20  # Minimum history rows for MC simulation to run; below this we short-circuit
@@ -1137,3 +1149,62 @@ def compute_portfolio_cvar(
         )
 
     return result
+
+
+def compute_crra_utility(W: float, gamma: float) -> float:
+    """CRRA utility transform for the M1 autotuner objective.
+
+    Computes u(W; gamma) where:
+        gamma != 1: u(W) = (W^(1 - gamma) - 1) / (1 - gamma)
+        gamma == 1: u(W) = ln(W)  (log-utility limit, L'Hopital)
+
+    The '-1' numerator term MUST be present. The canonical form and the form
+    without '-1' are monotone-equivalent for argmax, but NOT mean-equivalent:
+    mean(U) is the M1 trial objective and the haircut t-stat numerator; the
+    missing '-1' would shift mean(U) by -1/(1-gamma). Fixture W-H2 uses this
+    exact form; tests validate bit-identical agreement.
+
+    W is the FLOORED wealth argument (W >= WEALTH_ARG_FLOOR). This function
+    validates that W is finite at entry via _reject_non_finite; the floor must
+    be applied by the caller (autotuner.derive_floored_wealth_argument) BEFORE
+    calling this function. Flooring inside this function would silently hide a
+    caller contract violation.
+
+    References:
+      - decision-science-council-synthesis.md §3.9 W-H2 (wealth argument)
+      - decision-science-v3-and-divergence-evaluation.md §A.1 H-1 (W-H4 floor)
+      - math_engine.py CRRA_LOG_UTILITY_GAMMA_TOL (gamma==1 branch tolerance)
+    """
+    _reject_non_finite(W=W, gamma=gamma)
+    if abs(gamma - 1.0) < CRRA_LOG_UTILITY_GAMMA_TOL:
+        # Log-utility limit: gamma -> 1  =>  u(W) = ln(W)
+        return math.log(W)
+    return (W ** (1.0 - gamma) - 1.0) / (1.0 - gamma)
+
+
+def compute_crra_eu_objective(daily_returns: list[float], gamma: float) -> float:
+    """CRRA expected-utility objective for the M1 autotuner: mean(U) over the fold.
+
+    For each daily return r_i (decimal fraction, e.g. 0.01 = 1%):
+      1. Reject non-finite r_i via _reject_non_finite (A-2 star NaN closure).
+      2. Derive floored wealth argument: W_i = max(WEALTH_ARG_FLOOR, 1 + r_i).
+         Floor is on INPUT W; never on output U (W-H4 contract).
+      3. Compute CRRA utility: U_i = compute_crra_utility(W_i, gamma).
+    Returns mean(U) = sum(U) / T. Returns 0.0 for an empty series.
+
+    The trial objective is mean(U), NOT the certainty-equivalent in return units.
+    CE = ((1 + (1-gamma)*mean(U))^(1/(1-gamma)) - 1) is a monotone transform with
+    identical trial rankings; it is computed separately for the audit display only.
+
+    References:
+      - decision-science-council-synthesis.md §3.9 W-H2 / W-H4
+      - council-attack-rubric.md A-2 (NaN-propagation closure)
+    """
+    if not daily_returns:
+        return 0.0
+    U_values = []
+    for r in daily_returns:
+        _reject_non_finite(r=r)
+        W = max(WEALTH_ARG_FLOOR, 1.0 + r)
+        U_values.append(compute_crra_utility(W, gamma))
+    return sum(U_values) / len(U_values)
