@@ -1,0 +1,123 @@
+{
+  "_comment": "Golden fixture for migration 020_autotune_runs_eut.sql (plan §Deliverables #4-5). Provenance: schema-derived from plan §Deliverables #1 column spec + council §3.5/§3.7. Not derived from producer output — asserts column presence, nullability, and fixture row shapes only.",
+  "migration_file": "020_autotune_runs_eut.sql",
+  "target_table": "autotune_runs",
+  "new_columns": [
+    {
+      "name": "spec_bundle_id",
+      "type": "TEXT",
+      "nullable": true,
+      "default": null,
+      "phase": 1,
+      "description": "Soft FK to spec_bundles.bundle_hash — links the EUT study to its paired spec bundle."
+    },
+    {
+      "name": "d_spec",
+      "type": "INTEGER",
+      "nullable": true,
+      "default": null,
+      "phase": 1,
+      "description": "Bundle-distinct count of BACKTEST_SELECTION rows in researcher_dof_ledger for this bundle. S=0 for honest Phase-1."
+    },
+    {
+      "name": "n_effective",
+      "type": "INTEGER",
+      "nullable": true,
+      "default": null,
+      "phase": 1,
+      "description": "Additive haircut count N_optuna + S. When S=0: n_effective == the row's historical N_optuna."
+    },
+    {
+      "name": "ce_metric",
+      "type": "REAL",
+      "nullable": true,
+      "default": null,
+      "phase": 1,
+      "description": "Certainty-equivalent in return units — display-time inverse of mean(U)."
+    },
+    {
+      "name": "cvar_feasible",
+      "type": "INTEGER",
+      "nullable": true,
+      "default": null,
+      "phase": "2_surface_persisted_null_phase1",
+      "description": "Phase-2 surface. Phase-1: persisted NULL. No CVaR trigger path in Phase 1 (council §3.4)."
+    },
+    {
+      "name": "gamma",
+      "type": "REAL",
+      "nullable": true,
+      "default": null,
+      "phase": 1,
+      "description": "The frozen risk-aversion parameter for this run. Not the WEALTH_ARG_FLOOR (that is a math_engine constant)."
+    },
+    {
+      "name": "lambda_budget",
+      "type": "REAL",
+      "nullable": true,
+      "default": null,
+      "phase": "2_only_persisted_null_phase1",
+      "description": "Phase-2 only (HARDEN has no lambda; council §3.6). Phase-1: persisted NULL."
+    },
+    {
+      "name": "overfitting_verdict",
+      "type": "TEXT",
+      "nullable": true,
+      "default": null,
+      "phase": 1,
+      "description": "e.g. 'D_spec=1,N_effective=N_optuna,no_violations'. Human-readable Overfitting Conscience output."
+    },
+    {
+      "name": "paired_heuristic_study_name",
+      "type": "TEXT",
+      "nullable": true,
+      "default": null,
+      "phase": 1,
+      "description": "Lets optuna-compare diff an EUT study against its paired heuristic study by exact name."
+    }
+  ],
+  "fixture_rows": {
+    "eut_shape": {
+      "description": "An EUT-path autotune run row — all nine new columns populated (except Phase-2 nulls).",
+      "spec_bundle_id": "seed-bundle-hash-016-abc123",
+      "d_spec": 1,
+      "n_effective_equals_n_optuna_when_s_zero": true,
+      "ce_metric_is_positive_float": true,
+      "cvar_feasible_is_null": true,
+      "gamma_is_positive_float": true,
+      "lambda_budget_is_null": true,
+      "overfitting_verdict_is_nonempty_string": true,
+      "paired_heuristic_study_name": "my_heuristic_study"
+    },
+    "legacy_shape": {
+      "description": "A legacy autotune run row (pre-EUT, heuristic path) — all nine new columns are NULL.",
+      "spec_bundle_id": null,
+      "d_spec": null,
+      "n_effective": null,
+      "ce_metric": null,
+      "cvar_feasible": null,
+      "gamma": null,
+      "lambda_budget": null,
+      "overfitting_verdict": null,
+      "paired_heuristic_study_name": null
+    }
+  },
+  "h1_dual_write_contract": {
+    "description": "Fresh DB (init_db() only) and upgraded DB (run_migrations()) must both have all 9 columns on autotune_runs. The duplicate-column-name swallow reconciles the overlap.",
+    "fresh_db_must_have_nine_columns": true,
+    "upgraded_db_must_have_nine_columns": true,
+    "dual_write_no_schema_delta": true,
+    "schema_migrations_records_020_as_applied": true,
+    "duplicate_column_swallow_info_logged": true
+  },
+  "phase2_null_columns": ["cvar_feasible", "lambda_budget"],
+  "phase1_populated_columns": [
+    "spec_bundle_id",
+    "d_spec",
+    "n_effective",
+    "ce_metric",
+    "gamma",
+    "overfitting_verdict",
+    "paired_heuristic_study_name"
+  ]
+}
