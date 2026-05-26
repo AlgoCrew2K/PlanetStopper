@@ -242,7 +242,7 @@ class TestDashboardUsesSymphonyBasedCvarRead:
         conn.commit()
         conn.close()
 
-        with patch.object(_db, "_STATE_DB_PATH", str(db_path)):
+        with patch.object(_db, "DB_FILE", str(db_path)):
             result = _db.read_cvar_diagnostic_for_symphony("symphony-abc")
 
         assert result is not None, (
