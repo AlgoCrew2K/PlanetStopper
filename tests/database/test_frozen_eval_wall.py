@@ -592,104 +592,117 @@ def test_write_wall_breach_observation_writes_audit_row_and_swallows_own_excepti
 # ---------------------------------------------------------------------------
 
 
-def test_tripwire_detects_breach_when_spec_bundle_id_stored_as_str_integer(tmp_path):
-    """REQ-SQLITE-1 (spec-theory mandatory RED):  query_wall_breach_tripwire() must
-    return at least one row when a researcher_dof_ledger row was written with
-    spec_bundle_id=str(integer_id) by validate_nn1_compliance.
+def test_validate_nn1_compliance_stores_bundle_hash_not_str_int_id(tmp_path):
+    """REQ-SQLITE-1 (spec-theory mandatory RED): validate_nn1_compliance must
+    pass bundle_hash (64-char hex) — not str(integer_id) — to insert_dof_ledger_row.
 
-    Defect: validate_nn1_compliance (autotuner.py) calls insert_dof_ledger_row
-    with spec_bundle_id=str(spec_bundle_id) — e.g. '1' for integer id 1.
-    query_wall_breach_tripwire (database.py) JOINs:
-        researcher_dof_ledger r JOIN spec_bundles b ON r.spec_bundle_id = b.bundle_hash
-    The bundle_hash is a 64-char hex digest; '1' never equals it, so the JOIN
-    produces zero rows regardless of the breach flag — a silent false-clean.
+    Defect: validate_nn1_compliance (autotuner.py) previously called
+    insert_dof_ledger_row with spec_bundle_id=str(spec_bundle_id), where
+    spec_bundle_id is the integer PK argument.  This stored e.g. '1' instead
+    of the 64-char hex bundle_hash.  query_wall_breach_tripwire JOINs on
+    r.spec_bundle_id = b.bundle_hash, so stored str(int_id) rows are never
+    matched — wall breaches become silently invisible.
 
-    This test is RED on any implementation where validate_nn1_compliance stores
-    str(int_id) (or any non-hash string) in the spec_bundle_id column:
+    This test captures the spec_bundle_id argument actually passed to
+    insert_dof_ledger_row at the database layer and asserts it equals
+    bundle_hash (not str(int_id)):
 
-        RED condition:  '1' != '<64-char-hex>'  →  JOIN returns 0  →  assertion fails.
-        GREEN condition: validate_nn1_compliance stores bundle_hash (or the JOIN key
-                         is updated to match whatever is stored) → assertion passes.
+        RED condition:  spec_bundle_id=str(integer_id) is passed
+                        → captured value != bundle_hash → assertion fails.
+        GREEN condition: spec_bundle_id=bundle_hash is passed
+                        → captured value == bundle_hash → assertion passes.
 
-    Fix guidance for impl-theory:
-        In autotuner.validate_nn1_compliance, change:
-            spec_bundle_id=str(spec_bundle_id)
-        to:
-            spec_bundle_id=bundle_hash
-        (bundle_hash is already resolved at the line
-         `bundle_hash = row[0]` just above the facet loop.)
+    The test seeds a spec_bundle with one BACKTEST_SELECTION facet and calls
+    validate_nn1_compliance end-to-end so the real write path is exercised.
+    insert_dof_ledger_row is wrapped (not replaced) to capture call kwargs
+    while still executing the real insert — preserving full integration fidelity.
 
-    Discriminating-power: a trivially-passing implementation that stores bundle_hash
-    correctly passes this test, but a naive implementation that stores str(int_id)
-    fails because the JOIN match is structurally impossible.
-
-    Canonical bundle hash used: _SEED_BUNDLE_HASH (same as existing tripwire_db seed).
+    Discriminating-power: a trivially-passing implementation that passes bundle_hash
+    passes this test; one that passes str(int_id) fails regardless of any JOIN
+    compensating hack in the query layer.  The query layer must NOT be widened
+    (via OR CAST or similar) to mask this defect — the write path must be fixed.
     """
-    db_path = str(tmp_path / "req_sqlite1_test.db")
+    import autotuner
+
+    db_path = str(tmp_path / "req_sqlite1_write_test.db")
 
     with patch.object(db, "DB_FILE", db_path):
         db.init_db()
 
+        # Seed a spec_bundle whose integer id will differ from the bundle_hash.
+        db.insert_spec_bundle(
+            bundle_hash=_SEED_BUNDLE_HASH,
+            facets_json='{"generator_family":"crra-seed","horizon_bars":63}',
+        )
+        # Obtain the integer id assigned to this bundle.
         conn = sqlite3.connect(db_path)
         try:
-            # Seed one spec_bundles row; obtain its ROWID as the integer id that
-            # validate_nn1_compliance would pass as str(spec_bundle_id).
-            conn.execute(
-                "INSERT OR IGNORE INTO spec_bundles "
-                "(bundle_hash, frozen_at, facets_json, horizon_bars, cvar_alpha, generator_family) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    _SEED_BUNDLE_HASH,
-                    "2026-01-15T12:00:00",  # T0 — freeze point
-                    '{"generator_family":"crra-seed","horizon_bars":63}',
-                    63,
-                    0.05,
-                    "crra-seed",
-                ),
-            )
             row = conn.execute(
                 "SELECT id FROM spec_bundles WHERE bundle_hash = ?",
                 (_SEED_BUNDLE_HASH,),
             ).fetchone()
             integer_id = row[0]
-
-            # Insert the breach row exactly as validate_nn1_compliance does it:
-            # spec_bundle_id = str(integer_id) — NOT the bundle_hash.
-            # touched_frozen_eval = 1 (a post-freeze wall-breach scenario).
-            # created_at is after frozen_at so the date filter also matches if the
-            # JOIN were working.
-            conn.execute(
-                "INSERT INTO researcher_dof_ledger "
-                "(spec_bundle_id, facet_name, facet_category, decision_type, "
-                " evidence_source, n_configs_searched, touched_frozen_eval, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    str(integer_id),          # REQ-SQLITE-1: str(int_id), NOT bundle_hash
-                    "exit_threshold",
-                    "parameter",
-                    "SEARCHED",
-                    "BACKTEST_SELECTION",
-                    3,
-                    1,                        # touched_frozen_eval=1: breach flag set
-                    "2026-01-20T09:00:00",    # after frozen_at 2026-01-15: date filter passes
-                ),
-            )
-            conn.commit()
         finally:
             conn.close()
 
-        breaches = db.query_wall_breach_tripwire()
+        # Register one BACKTEST_SELECTION facet so validate_nn1_compliance has
+        # a violation to write.  BACKTEST_SELECTION is a valid freeze_discipline
+        # enum value so insert_spec_bundle_facet accepts it.
+        db.insert_spec_bundle_facet(
+            bundle_hash=_SEED_BUNDLE_HASH,
+            facet_name="exit_threshold",
+            facet_value="0.05",
+            freeze_discipline="BACKTEST_SELECTION",
+        )
 
-    assert len(breaches) >= 1, (
-        f"query_wall_breach_tripwire() returned {len(breaches)} rows; expected >= 1. "
-        "REQ-SQLITE-1: a researcher_dof_ledger row was inserted with "
-        f"spec_bundle_id='{integer_id}' (str(int_id)) and touched_frozen_eval=1 "
-        f"after frozen_at. The bundle_hash is '{_SEED_BUNDLE_HASH}'. "
-        "The tripwire JOIN (r.spec_bundle_id = b.bundle_hash) cannot match because "
-        f"'{integer_id}' != '{_SEED_BUNDLE_HASH}' — the wall breach is invisible. "
-        "Fix: in autotuner.validate_nn1_compliance, change "
-        "spec_bundle_id=str(spec_bundle_id) to spec_bundle_id=bundle_hash "
-        "(bundle_hash is already resolved at `bundle_hash = row[0]` in that function)."
+        # Wrap insert_dof_ledger_row to capture the spec_bundle_id kwarg without
+        # replacing the real implementation (full integration is preserved).
+        captured_calls: list[dict] = []
+        real_insert = db.insert_dof_ledger_row
+
+        def _capturing_insert(**kwargs):
+            captured_calls.append(dict(kwargs))
+            return real_insert(**kwargs)
+
+        with patch.object(db, "insert_dof_ledger_row", side_effect=_capturing_insert):
+            result = autotuner.validate_nn1_compliance(integer_id)
+
+    # validate_nn1_compliance must have found the BACKTEST_SELECTION violation
+    # and attempted to write a ledger row.
+    assert len(captured_calls) >= 1, (
+        "validate_nn1_compliance did not call insert_dof_ledger_row for the "
+        "BACKTEST_SELECTION facet. "
+        "REQ-SQLITE-1 test requires at least one ledger row to be written so "
+        "the spec_bundle_id argument can be inspected. "
+        "Check that insert_spec_bundle_facet successfully registered the facet "
+        "and that validate_nn1_compliance detects BACKTEST_SELECTION discipline."
+    )
+
+    # The spec_bundle_id stored in every call must be the bundle_hash, not str(int_id).
+    for i, call_kwargs in enumerate(captured_calls):
+        stored_id = call_kwargs.get("spec_bundle_id")
+        assert stored_id == _SEED_BUNDLE_HASH, (
+            f"insert_dof_ledger_row call #{i} received "
+            f"spec_bundle_id={stored_id!r}; expected bundle_hash={_SEED_BUNDLE_HASH!r}. "
+            f"The integer id for this bundle is {integer_id}. "
+            "REQ-SQLITE-1: validate_nn1_compliance must pass bundle_hash, not "
+            "str(spec_bundle_id), to insert_dof_ledger_row. "
+            "query_wall_breach_tripwire JOINs on r.spec_bundle_id = b.bundle_hash — "
+            "storing str(int_id) makes every breach written by this path invisible. "
+            "Fix: change spec_bundle_id=str(spec_bundle_id) to spec_bundle_id=bundle_hash "
+            "in autotuner.validate_nn1_compliance (bundle_hash is already resolved at "
+            "`bundle_hash = row[0]` in that function). "
+            "Do NOT widen the query_wall_breach_tripwire JOIN with OR CAST — "
+            "that masks the defect rather than fixing the write path."
+        )
+
+    # Confirm the function detected the violation (sanity-check that the test
+    # reached the write path for the right reason).
+    is_compliant, violations = result
+    assert not is_compliant, (
+        "validate_nn1_compliance returned compliant=True for a bundle with a "
+        "BACKTEST_SELECTION facet. The facet should have been detected as a violation. "
+        "Check that insert_spec_bundle_facet persisted the facet correctly."
     )
 
 
