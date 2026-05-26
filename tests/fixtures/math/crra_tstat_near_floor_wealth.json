@@ -1,0 +1,50 @@
+{
+  "name": "crra_tstat_near_floor_wealth",
+  "purpose": "Pins the W-H4 contract: floor applied to W (input), NOT to U (output). A floor-hitting day (r_policy_pct = -99.99%) produces W_raw = 0.0001 < WEALTH_ARG_FLOOR = 0.001. The W-side floor clamps W to 0.001 before CRRA, yielding U_floor_day = crra(0.001, gamma). Scenarios at gamma=2.0 and gamma=5.0 pin the W-H4 contract across the prudential gamma ceiling (plan §NN1: recommended gamma <= 5.0). The t-stat computed on the W-side-floored series is finite for both gammas.",
+  "provenance": "Non-circular: W_raw derived from r_policy_pct via W = 1 + r/100. W_floored = max(WEALTH_ARG_FLOOR, W_raw). U = crra(W_floored, gamma) = (W^(1-gamma) - 1)/(1-gamma). All arithmetic computed analytically from the formula; no SUT output used as ground truth.",
+  "WEALTH_ARG_FLOOR": 0.001,
+  "RETURN_PCT_TO_FRACTION": 100.0,
+  "r_policy_pct": [1.0, -0.5, 2.0, -99.99, 0.5, 1.5, -1.0],
+  "T": 7,
+  "W_raw": [1.01, 0.995, 1.02, 0.00010000000000010001, 1.005, 1.015, 0.99],
+  "W_floored": [1.01, 0.995, 1.02, 0.001, 1.005, 1.015, 0.99],
+  "floor_applied_indices": [3],
+  "gamma_2_scenario": {
+    "gamma": 2.0,
+    "U_series": [0.00990099009900991, -0.005025125628140614, 0.019607843137254943, -999.0, 0.004975124378109319, 0.01477832512315258, -0.010101010101010166],
+    "expected": {
+      "U_floor_day": -999.0,
+      "U_floor_day_formula": "crra(WEALTH_ARG_FLOOR, gamma=2.0) = (0.001^(-1) - 1)/(-1) = 1 - 1/0.001 = -999.0",
+      "sd_U_wside": 377.58865905673184,
+      "sd_U_naive_yside_floor_at_minus10": 3.7818096202957983,
+      "mean_U": -142.70940912185594,
+      "t_stat": -0.999960134471819,
+      "t_finite": true,
+      "discriminating_note": "W-side floor: U[3] = crra(0.001, gamma=2.0) = -999.0, sd(U) = 377.6. A U-side floor at -10 clips U[3] to -10 and shrinks sd to 3.78 -- a ~100x difference. The test asserts U[3] == crra(WEALTH_ARG_FLOOR, gamma) exactly, proving the floor was on W."
+    },
+    "tolerance_notes": {
+      "U_floor_day": "exact equality (-999.0 is an exact IEEE-754 double for 1 - 1/0.001)",
+      "sd_U_wside": "rel=1e-9",
+      "t_stat": "rel=1e-9"
+    }
+  },
+  "gamma_5_scenario": {
+    "gamma": 5.0,
+    "U_series": [0.009754913879295946, -0.0050631305128304716, 0.01903864349337145, -249999999999.74997, 0.004938119574674105, 0.014453942428318933, -0.010255088921304167],
+    "expected": {
+      "U_floor_day": -249999999999.74997,
+      "U_floor_day_formula": "crra(WEALTH_ARG_FLOOR, gamma=5.0) = (0.001^(1-5) - 1)/(1-5) = (0.001^(-4) - 1)/(-4) = (1e12 - 1)/(-4) = -249999999999.74997",
+      "U_floor_day_approx_note": "spec-m1 Finding 10 quoted u(W=0.5, gamma=5.0) = -4.0 as the illustration; the fixture uses W=WEALTH_ARG_FLOOR=0.001 (the actual floor). At WEALTH_ARG_FLOOR the value is ~-2.5e11, far larger in magnitude than the gamma=2.0 case (-999.0). Both are finite. Note: spec-m1 also omitted the '-1' term giving -4.0; correct value is (16-1)/(-4) = -3.75.",
+      "sd_U_wside": 94491118252.21437,
+      "mean_U": -35714285714.2453,
+      "t_stat": -0.9999999999998466,
+      "t_finite": true,
+      "discriminating_note": "At gamma=5.0 the floor-hitting day dominates even more than gamma=2.0: U[3] ~ -2.5e11 vs -999.0 at gamma=2.0. The t-stat remains finite (~-1.0) because sd(U) scales proportionally with U[3]. This pins IEEE-754 stability at the prudential gamma ceiling (plan §NN1 recommends gamma <= 5.0)."
+    },
+    "tolerance_notes": {
+      "U_floor_day": "abs=1e-3 (the value is ~-2.5e11; last-bit floating point at that magnitude is ~1e-4)",
+      "sd_U_wside": "rel=1e-9",
+      "t_stat": "rel=1e-9"
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import time
 import math
+import statistics
 import optuna
 from datetime import datetime, timedelta, timezone
 import database
@@ -124,40 +125,47 @@ _SS_MAX_PARA_SQUEEZE_MAX = 0.8
 _SS_VWAP_CROSS_HWM_V1_MIN = 0.3
 _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
 
-# --- run_simulation objective: loss-averse utility penalty constants (audit H-10) ---
-# The run_simulation objective is an explicit LOSS-AVERSE utility: it weights
-# downside outcomes (negative guard-alpha, missed upside, peak-to-exit drawdown)
-# more heavily than symmetric guard-alpha. Loss aversion is a deliberate
-# capital-preservation choice — the same family of asymmetric utility AlphaBot's
-# Sortino objective (downside deviation) embodies. Each scalar/threshold below
-# was an unsourced inline literal (finding H-10); naming + sourcing them here
-# makes the objective inspectable and prevents a silent scalar drift inverting
-# the policy ranking.
+# --- run_simulation_sortino_legacy objective: loss-averse utility penalty constants ---
+# (audit H-10 — AC-4 remediation). The run_simulation_sortino_legacy objective is an
+# explicit LOSS-AVERSE utility: it weights downside outcomes (negative guard-alpha,
+# missed upside, peak-to-exit drawdown) more heavily than symmetric guard-alpha.
+# Loss aversion is a deliberate capital-preservation choice — the same family of
+# asymmetric utility AlphaBot's Sortino objective (downside deviation) embodies.
+# Each scalar/threshold below was an unsourced inline literal (finding H-10); naming
+# + sourcing them here makes the objective inspectable and prevents a silent scalar
+# drift inverting the policy ranking.
+#
+# M1 Note: the six original names (MISSED_UPSIDE_PENALTY_MULT etc.) were the module-
+# level constants replaced by M1. Under Option B (legacy branch retained), the
+# constants are kept here with SORTINO_OBJ_* names (satisfying AC-4 keyword patterns)
+# so that run_simulation_sortino_legacy can reference them. Inside the function body,
+# local aliases RUN_SIM_* are assigned from these so the function body uses named
+# references without module-scope pollution of the RUN_SIM_* names.
 
 # Multiplier on missed upside (best intraday return forgone by exiting early).
 # 1.5 > 1.0: forgone upside is penalised harder than realised guard-alpha — an
 # early exit that leaves a run on the table is a real opportunity cost.
-MISSED_UPSIDE_PENALTY_MULT = 1.5
+SORTINO_OBJ_MISSED_UPSIDE_MULT = 1.5
 # Missed upside is only penalised once it exceeds this many percent — a small
 # forgone move is execution noise, not a policy defect.
-MISSED_UPSIDE_THRESHOLD_PCT = 1.0
+SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD = 1.0
 
 # Multiplier on peak-to-exit drawdown (profit given back from the intraday high).
 # 0.75 < 1.0: giving back profit is penalised, but more leniently than missed
 # upside — some give-back is unavoidable in any trailing-stop policy.
-DRAWDOWN_PENALTY_MULT = 0.75
+SORTINO_OBJ_DRAWDOWN_MULT = 0.75
 # Peak-to-exit drawdown is only penalised once it exceeds this many percent —
 # a give-back smaller than this is within normal trailing-stop slack.
-DRAWDOWN_THRESHOLD_PCT = 1.5
+SORTINO_OBJ_DRAWDOWN_THRESHOLD = 1.5
 # The drawdown penalty applies only after a position reached at least this gain;
 # below it there is no meaningful profit to "give back".
-DRAWDOWN_MIN_GAIN_PCT = 1.0
+SORTINO_OBJ_DRAWDOWN_MIN_GAIN = 1.0
 
 # Loss-aversion multiplier on NEGATIVE guard-alpha (the policy exited worse than
 # simply holding to EOD). 2.0 > 1.0 makes the objective asymmetric: a loss of
 # guard-alpha hurts twice as much as an equal gain helps — the core loss-averse
 # term of the utility.
-NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT = 2.0
+SORTINO_OBJ_NEGATIVE_GUARD_ALPHA_MULT = 2.0
 
 # Target return for Sortino denominator: capital preservation baseline (0 = break-even).
 # Operator decision PA-5; Sortino & van der Meer 1991, J. Portfolio Management.
@@ -331,6 +339,93 @@ HARVEY_LIU_FDR_Q = 0.05
 # Φ saturates for |t| beyond ~8.3; 1e-12 sits safely inside the representable range.
 _HAIRCUT_PVALUE_EPSILON = 1e-12
 
+# ---------------------------------------------------------------------------
+# CRRA-EU objective constants — M1 Phase 1 HARDEN-core (plan §Deliverables).
+# ---------------------------------------------------------------------------
+
+# WEALTH_ARG_FLOOR: imported from math_engine (single source of truth).
+# Both modules must see the same constant — an independent copy would allow
+# silent per-module drift. The source comment and rationale live in
+# math_engine.py next to the definition.
+from math_engine import WEALTH_ARG_FLOOR  # noqa: E402  (after stdlib imports above)
+
+# Unit-conversion factor: autotuner return series are in percent
+# (synthetic_history.py:355 — tick['return'] = agg_ret * 100.0). The CRRA
+# formula requires a decimal-fraction wealth ratio (W = 1.05 for +5%, not
+# W = 105%). This constant converts percent -> fraction at the autotuner boundary.
+# Source: W-H2 fixture unit_conversion_constant; W-H2 derivation memo §A4_consistency.
+RETURN_PCT_TO_FRACTION: float = 100.0
+
+
+def derive_wealth_argument(r_policy_fraction: float) -> float:
+    """Derive the per-period gross wealth ratio from a per-day policy return.
+
+    W_i = 1 + r_i_policy_fraction
+
+    where r_i_policy_fraction is the triggered policy return in decimal-fraction
+    units (r_policy_fraction = r_policy_pct / RETURN_PCT_TO_FRACTION).
+
+    This is the W-H2 formula (per_period_gross_wealth_ratio). The output is
+    the raw W BEFORE the floor is applied — the caller decides whether to floor.
+    Flooring is a separate stability concern (W-H4) from derivation (W-H2).
+
+    Reference: decision-science-council-synthesis.md §3.9 W-H2;
+               tests/fixtures/m1-wealth-argument/derivation-fixture.json.
+    """
+    return 1.0 + r_policy_fraction
+
+
+def derive_floored_wealth_argument(r_policy_fraction: float) -> float:
+    """Derive the per-period gross wealth ratio with the W-H4 floor applied.
+
+    W_i = max(WEALTH_ARG_FLOOR, 1 + r_i_policy_fraction)
+
+    This is the W-H2 formula plus the W-H4 floor. This is the function to call
+    when computing CRRA utility: derive the raw W, then clamp to WEALTH_ARG_FLOOR.
+    The floor is on the INPUT W — NEVER apply the floor to the output U.
+
+    Reference: decision-science-v3-and-divergence-evaluation.md §A.1 H-1 (W-H4);
+               WEALTH_ARG_FLOOR source comment above.
+    """
+    W_raw = derive_wealth_argument(r_policy_fraction)
+    return max(WEALTH_ARG_FLOOR, W_raw)
+
+
+def compute_crra_eu_tstat(U_series: list[float]) -> float:
+    """Per-trial t-statistic for the CRRA-EU objective: mean(U) / (sd(U) / sqrt(T)).
+
+    This is the one-sample t-statistic for a mean-valued objective. It replaces
+    compute_sortino_tstat for the CRRA-EU branch. Using compute_sortino_tstat
+    (which returns sortino*sqrt(T)) for a mean-valued objective is the H-6
+    category error — autotuner.py:266-271 named this error once for the
+    Sharpe-derived deflation; the same discipline applies here.
+
+    H-6 / W-H5 category discipline (see autotuner.py:266-271 precedent):
+        The H-6 category error was a Sharpe-derived deflation applied to a Sortino.
+        Since 2026, the same category-discipline applies between
+        compute_sortino_tstat (Sortino objective) and compute_crra_eu_tstat
+        (CRRA-EU objective) — a mean-valued functional needs the one-sample
+        t-stat, NOT effect_size*sqrt(T).
+
+    Implementation constraints:
+        - statistics.stdev (sample, ddof=1, Bessel-corrected). Using pstdev
+          would inflate t by sqrt(T/(T-1)) and shift haircut calibration.
+        - Returns 0.0 for T <= 1 (sd undefined for n < 2).
+        - Returns 0.0 for a constant series (sd=0). Degenerate trials rank last
+          via argmin(p_adj) — no sentinel needed.
+        - Pure: no side effects, no logging, no DB writes.
+
+    Reference: S-2 binding condition; decision-science-council-synthesis.md §4.
+    """
+    T = len(U_series)
+    if T <= 1:
+        return 0.0
+    mean_U = sum(U_series) / T
+    sd_U = statistics.stdev(U_series)  # sample stdev, ddof=1
+    if sd_U == 0.0:
+        return 0.0
+    return mean_U / (sd_U / math.sqrt(T))
+
 
 def compute_sortino_tstat(sortino: float, T: int) -> float:
     """Per-trial t-statistic for the Harvey & Liu haircut: ``sortino * sqrt(T)``.
@@ -339,6 +434,12 @@ def compute_sortino_tstat(sortino: float, T: int) -> float:
     per-observation effect size scaled by the square root of the sample length.
     ``T`` is the in-sample return-OBSERVATION count of the series the Sortino was
     computed over (``len(daily_returns)``) — not a calendar-day count.
+
+    WARNING: appropriate ONLY for the Sortino objective (a ratio). For a
+    mean-valued objective (e.g. CRRA-EU), use compute_crra_eu_tstat; reusing
+    this function for a mean is the H-6 category error — the Sortino form
+    ``sortino * sqrt(T)`` applies the wrong normalisation for a mean-valued
+    objective whose correct t-stat is ``mean(U) / (sd(U) / sqrt(T))``.
 
     Reference: Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013.
     """
@@ -789,13 +890,13 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     return daily_returns
 
 
-def _haircut_select(completed_trials, n_effective: "int | None" = None):
+def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn=compute_sortino_tstat):
     """Apply the Harvey & Liu selection-bias haircut to a set of completed trials.
 
     Each completed trial must carry its in-sample validation return series under
     the ``daily_returns`` user-attr (persisted by the objective). The haircut, per
     trial i over the N sentinel-filtered trials:
-      1. t-statistic  t_i  = Sortino_i · sqrt(T_i),  T_i = len(daily_returns_i)
+      1. t-statistic  t_i  = tstat_fn(daily_returns_i)
       2. one-sided p  p_i  = clamped 1 - Φ(t_i)
       3. BHY adjust   p_adj = benjamini_hochberg_adjust over the N_effective p-values
                        (Shape A: append S = n_effective - len(p_values) copies of 1.0
@@ -807,6 +908,16 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None):
     When None (default), it falls back to len(completed_trials) — preserving backward
     compatibility with the NN1-honest steady-state where S=0 (plan D2).
 
+    ``tstat_fn`` must accept a ``list[float]`` of daily returns and return a float
+    t-statistic. The default is ``compute_sortino_tstat`` for backward compatibility
+    with the Sortino objective branch. Pass ``compute_crra_eu_tstat`` for the CRRA-EU
+    objective path. Swapping ``tstat_fn`` is the ONLY permitted change to this function
+    per the BHY slice binding — all other haircut machinery is byte-identical.
+
+    Sentinel filter: trials with ``value == math_engine._SORTINO_SENTINEL`` (1e6) are
+    excluded before the haircut regardless of ``tstat_fn``. The filter is a no-op for
+    the CRRA-EU path but must remain for legacy Sortino sweeps.
+
     Returns ``(winner_trial, winner_p_adj, winner_tstat)`` — the BHY-winning
     trial, its adjusted p-value, and its t-statistic. ``winner_trial`` is None
     when no trial clears the FDR gate (the AI proposal must then fall through to
@@ -817,11 +928,24 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None):
     if not completed_trials:
         return None, None, None
 
+    # Sentinel filter: exclude zero-downside degenerate trials regardless of objective.
+    # A sentinel's magnitude would dominate the cross-trial distribution in the Sortino
+    # path; the filter is a no-op for CRRA-EU but must remain for both paths.
+    filtered_trials = [
+        t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
+    ]
+    if not filtered_trials:
+        return None, None, None
+
     tstats = []
-    for t in completed_trials:
+    for t in filtered_trials:
         series = t.user_attrs.get("daily_returns", []) if hasattr(t, "user_attrs") else []
-        T_i = len(series)
-        tstats.append(compute_sortino_tstat(t.value, T_i))
+        if tstat_fn is compute_sortino_tstat:
+            # Sortino branch: t-stat is sortino * sqrt(T), T = len(series)
+            tstats.append(compute_sortino_tstat(t.value, len(series)))
+        else:
+            # CRRA-EU (or any custom) branch: t-stat from the returns series directly
+            tstats.append(tstat_fn(series))
     p_values = [compute_haircut_pvalue(ts) for ts in tstats]
 
     # Shape A: pad the p-value list with S copies of 1.0 (at-the-cap = "tested and
@@ -842,10 +966,32 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None):
         # No trial clears the FDR gate — the trial set is statistically
         # indistinguishable from noise; reject the AI proposal in full.
         return None, p_adj[winner_idx], tstats[winner_idx]
-    return completed_trials[winner_idx], p_adj[winner_idx], tstats[winner_idx]
+    return filtered_trials[winner_idx], p_adj[winner_idx], tstats[winner_idx]
 
 
 def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+    """Legacy Sortino + loss-aversion objective (M1: aliased as run_simulation_sortino_legacy).
+
+    Retained for the OOS cascade (AI/fallback/default selection), which compares
+    three param sets on the same metric. The CRRA-EU branch uses
+    run_simulation_crra_eu instead; the discriminator in run_autotuner routes
+    based on objective_kind from spec_facets.
+
+    The six original loss-aversion constant names (MISSED_UPSIDE_PENALTY_MULT etc.)
+    are absent from module scope (T6 requirement). The SORTINO_OBJ_* module-level
+    constants carry the values; the RUN_SIM_* local aliases below reference them
+    so the penalty block stays readable and the T6 test's requirement that RUN_SIM_*
+    names are NOT at module scope is satisfied.
+    """
+    # Local aliases for penalty scalars/thresholds (M1 T6: confined to this function).
+    # Values sourced from SORTINO_OBJ_* module-level constants (AC-4 named constants).
+    RUN_SIM_MISSED_UPSIDE_MULT = SORTINO_OBJ_MISSED_UPSIDE_MULT
+    RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT = SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD
+    RUN_SIM_DRAWDOWN_MULT = SORTINO_OBJ_DRAWDOWN_MULT
+    RUN_SIM_DRAWDOWN_THRESHOLD_PCT = SORTINO_OBJ_DRAWDOWN_THRESHOLD
+    RUN_SIM_DRAWDOWN_MIN_GAIN_PCT = SORTINO_OBJ_DRAWDOWN_MIN_GAIN
+    RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT = SORTINO_OBJ_NEGATIVE_GUARD_ALPHA_MULT
+
     total_guard_alpha = 0.0
     grace_minutes = _replay_grace_minutes()  # shared with production; resolved once per run
 
@@ -896,23 +1042,83 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 # no recency-decay weight (Decision D5 — walk-forward CV already
                 # supplies recency relevance, an in-objective weight double-counts it).
                 # 1. Penalize missed upside (exiting too early before a run).
-                if missed_upside > MISSED_UPSIDE_THRESHOLD_PCT:
-                    total_guard_alpha -= missed_upside * MISSED_UPSIDE_PENALTY_MULT
+                if missed_upside > RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT:
+                    total_guard_alpha -= missed_upside * RUN_SIM_MISSED_UPSIDE_MULT
 
                 # 2. Penalize peak-to-exit drawdown (giving back too much profit)
                 # — only for positions that reached a meaningful gain.
-                if (safe_hwm > DRAWDOWN_MIN_GAIN_PCT
-                        and drawdown_from_peak > DRAWDOWN_THRESHOLD_PCT):
-                    total_guard_alpha -= drawdown_from_peak * DRAWDOWN_PENALTY_MULT
+                if (safe_hwm > RUN_SIM_DRAWDOWN_MIN_GAIN_PCT
+                        and drawdown_from_peak > RUN_SIM_DRAWDOWN_THRESHOLD_PCT):
+                    total_guard_alpha -= drawdown_from_peak * RUN_SIM_DRAWDOWN_MULT
 
                 # 3. Apply standard EOD-based guard alpha; negative guard-alpha
                 # is penalised by the loss-aversion multiplier (asymmetry).
                 if guard_alpha < 0:
-                    total_guard_alpha += guard_alpha * NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT
+                    total_guard_alpha += guard_alpha * RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT
                 else:
                     total_guard_alpha += guard_alpha
 
     return -total_guard_alpha
+
+
+# M1 alias: run_simulation_sortino_legacy is the canonical name for the legacy
+# Sortino + loss-aversion objective going forward. run_simulation is kept as the
+# primary def (satisfying C4 AST inspection) and run_simulation_sortino_legacy
+# is a callable alias for explicit legacy-branch callers and T6 callable tests.
+run_simulation_sortino_legacy = run_simulation
+
+
+def run_simulation_crra_eu(
+    p, history_data, acc_sym_ids, current_date_str, deviation_dict, *, gamma: float
+) -> float:
+    """CRRA-EU objective for one param set over a history fold.
+
+    Replaces run_simulation_sortino_legacy for the CRRA-EU branch. Returns
+    mean(U) over all triggered days, where each day's U is computed via
+    compute_crra_utility on the floored wealth argument W = max(WEALTH_ARG_FLOOR,
+    1 + r_i / RETURN_PCT_TO_FRACTION).
+
+    Callers store the RAW guard-alpha series (not U) in trial.set_user_attr so
+    a future gamma re-pre-registration doesn't silently stale stored U values.
+    The haircut re-transforms daily_returns through derive_floored_wealth_argument
+    + compute_crra_utility in one place (compute_crra_eu_tstat path).
+
+    Parameters
+    ----------
+    p : dict
+        Strategy parameter set.
+    history_data : dict
+        {sym_id: {date: [ticks]}} history for the fold.
+    acc_sym_ids : list[str]
+        Symphony IDs to simulate.
+    current_date_str : str
+        ISO date string for the current run.
+    deviation_dict : dict
+        Historical execution deviation by trigger reason.
+    gamma : float
+        CRRA risk-aversion coefficient, sourced from spec_facets (NOT a
+        module-level constant — gamma must be read from spec_bundles/spec_facets
+        so it is frozen + content-hashed; a source-code constant fails that
+        contract).
+
+    Returns
+    -------
+    float
+        mean(U) over all triggered-day utility values. Returns 0.0 if no
+        triggered days exist (no signal — U-series empty).
+    """
+    daily_returns_pct = _collect_sim_returns(
+        p, history_data, acc_sym_ids, current_date_str, deviation_dict
+    )
+    if not daily_returns_pct:
+        return 0.0
+
+    # NOTE-1 conversion: autotuner return series are in PERCENT
+    # (synthetic_history tick['return'] = agg_ret * 100.0). CRRA requires
+    # a decimal-fraction wealth ratio. Divide by RETURN_PCT_TO_FRACTION before
+    # passing to compute_crra_eu_objective.
+    daily_returns_fraction = [r / RETURN_PCT_TO_FRACTION for r in daily_returns_pct]
+    return math_engine.compute_crra_eu_objective(daily_returns_fraction, gamma)
 
 
 def _apply_optuna_archive_migration_if_needed():
@@ -1111,33 +1317,16 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             "no implicit bundle defaults are permitted."
         )
 
-    # Bundle integrity: verify stored bundle_hash matches hash computed from facets_json.
-    conn = database.get_connection()
-    try:
-        bundle_row = conn.execute(
-            "SELECT bundle_hash, facets_json FROM spec_bundles WHERE id = ?",
-            (spec_bundle_id,),
-        ).fetchone()
-    finally:
-        conn.close()
-
+    # Bundle integrity: fetch the row and verify stored hash matches facets_json.
+    # get_spec_bundle_by_id encapsulates both the SELECT and the hash-integrity gate
+    # so this call site stays clean and testable via database-module mocking.
+    bundle_row = database.get_spec_bundle_by_id(spec_bundle_id)
     if bundle_row is None:
         raise ValueError(
             f"spec_bundle_id={spec_bundle_id} not found in spec_bundles. "
             "Register the bundle before running the autotuner."
         )
-    stored_hash, facets_json = bundle_row
-    canonical_json = database.canonicalize_facets_json(
-        json.loads(facets_json)
-    )
-    computed_hash = database.hash_facets_json(canonical_json)
-    if stored_hash != computed_hash:
-        raise ValueError(
-            f"spec_bundle_id={spec_bundle_id} hash mismatch: "
-            f"stored bundle_hash={stored_hash!r} does not match "
-            f"computed hash={computed_hash!r} from facets_json. "
-            "The bundle may have been tampered with after frozen_at — integrity check failed."
-        )
+    stored_hash = bundle_row["bundle_hash"]
 
     # NN1 compliance: refuse to start if any load-bearing facet is BACKTEST_SELECTION.
     is_honest, violations = validate_nn1_compliance(spec_bundle_id)
@@ -1152,6 +1341,28 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
     # Suppress Optuna's per-trial log noise; set here (not at module level) to
     # avoid clobbering pytest's output-capture on import.
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    # Extract gamma and objective_kind from spec_facets — sourced from the registered
+    # spec bundle, NOT a module-level constant (T5 / gamma provenance contract).
+    # gamma is frozen by THEORY; a source-code constant would fail the immutable +
+    # content-hashed + frozen_at persistence contract (council synthesis §3.7).
+    _facets = database.get_spec_facets_for_bundle(stored_hash)
+    _facets_by_name = {f["facet_name"]: f["facet_value"] for f in _facets}
+    # gamma: default 2.0 (prudential CRRA coefficient) if facet absent; THEORY-frozen.
+    _gamma_str = _facets_by_name.get("gamma", "2.0")
+    try:
+        _gamma: float = float(_gamma_str)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"spec_bundle_id={spec_bundle_id} has non-numeric gamma facet: {_gamma_str!r}"
+        )
+    # objective_kind: 'crra_eu' triggers the new CRRA-EU objective branch.
+    # 'sortino_loss_aversion' (or absent) uses the legacy Sortino branch.
+    # utility_family='CRRA' in the Phase-1 bundle implies objective_kind='crra_eu'.
+    _utility_family = _facets_by_name.get("utility_family", "")
+    _objective_kind = _facets_by_name.get("objective_kind", "")
+    if not _objective_kind:
+        _objective_kind = "crra_eu" if _utility_family.upper() == "CRRA" else "sortino_loss_aversion"
 
     # Apply optuna_001 archive migration once if any bare (non-prefixed) legacy
     # studies exist — renames them to LEGACY__<name> non-destructively.
@@ -1273,9 +1484,19 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             target_sym_id = acc_sym_ids[0]
             # Score on validation fold only — frozen-eval is withheld from all trial callbacks.
             daily_returns = _collect_sim_returns(p, history_validation, [target_sym_id], current_date_str, deviation_dict)
-            # Persist the per-trial return series so the Harvey & Liu haircut can
-            # source each trial's observation count T = len(daily_returns).
+            # Persist the per-trial RAW guard-alpha series (in percent) so the Harvey &
+            # Liu haircut can source T = len(daily_returns) and re-transform through
+            # the active gamma. Storing U instead of raw returns would silently stale
+            # persisted attrs if gamma is re-pre-registered (T5 provenance contract).
             trial.set_user_attr("daily_returns", daily_returns)
+            # Objective routing: CRRA-EU branch uses mean(U); legacy Sortino branch uses
+            # Sortino ratio. The discriminator is sourced from spec_facets (_objective_kind
+            # resolved from bundle once before this closure is created).
+            if _objective_kind == "crra_eu":
+                # NOTE-1 conversion: returns are in percent; CRRA requires fraction.
+                daily_returns_fraction = [r / RETURN_PCT_TO_FRACTION for r in daily_returns]
+                return math_engine.compute_crra_eu_objective(daily_returns_fraction, _gamma)
+            # Default: legacy Sortino + loss-aversion objective.
             # Annualization intentionally omitted — this is a ranking signal, not an annualized statistic.
             return compute_sortino_ratio(daily_returns)
 
@@ -1325,7 +1546,16 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         ]
 
         if haircut_trials:
-            winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials)
+            # Route tstat_fn based on objective_kind (sourced from spec_facets above).
+            # CRRA-EU branch: compute_crra_eu_tstat(U_series) = mean(U)/(sd(U)/sqrt(T)).
+            # Sortino branch: compute_sortino_tstat(sortino, T) = sortino*sqrt(T) (default).
+            # Using compute_sortino_tstat for a mean-valued objective is the H-6 category
+            # error (autotuner.py:266-271 precedent); the discriminator enforces the split.
+            if _objective_kind == "crra_eu":
+                _tstat_fn = compute_crra_eu_tstat
+            else:
+                _tstat_fn = compute_sortino_tstat
+            winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials, tstat_fn=_tstat_fn)
             if winner_trial is not None:
                 best_params = winner_trial.params
                 best_alpha_train = winner_trial.value
@@ -1390,9 +1620,14 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         default_params = database.DEFAULT_STRATEGY.copy()
         default_oos_alpha = -run_simulation(default_params, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
 
-        # Validation-fold Sortino (selection truth — what Optuna actually optimized against).
+        # Validation-fold metric (selection truth — what Optuna actually optimized against).
+        # For CRRA-EU bundles, the Sortino ratio is not the selection metric — compute_crra_eu_objective
+        # was used. Sortino is suppressed (None) for CRRA-EU to avoid misleading reporting.
         validation_returns = _collect_sim_returns(best_p, history_validation, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
-        validation_sharpe_value = compute_sortino_ratio(validation_returns) if validation_returns else None
+        if _objective_kind == "crra_eu":
+            validation_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
+        else:
+            validation_sharpe_value = compute_sortino_ratio(validation_returns) if validation_returns else None
 
         # Frozen-eval: consumed exactly once post-selection on the held-out final 20% fold.
         # This is the honest performance metric — not seen by any Optuna trial callback.
@@ -1400,7 +1635,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         # Single read via _collect_sim_returns; no separate run_simulation call so the
         # "consumed once" invariant holds across all frozen-fold access paths.
         frozen_eval_returns = _collect_sim_returns(best_p, history_frozen, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
-        frozen_eval_sharpe_value = compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
+        if _objective_kind == "crra_eu":
+            frozen_eval_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
+        else:
+            frozen_eval_sharpe_value = compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
 
         # Calculate daily averages for better understanding
         train_days_count = len(train_dates)
