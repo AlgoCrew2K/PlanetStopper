@@ -896,3 +896,70 @@ def test_nn1_disclosure_block_exists_in_autotuner_source():
         "NN1 disclosure block is not found within 50 lines of OPTUNA_SEARCH_SPACE_KEYS — "
         "the disclosure must appear immediately adjacent to the search space definition (D4)"
     )
+
+
+# ---------------------------------------------------------------------------
+# T18 — POLITIS_WHITE and CADENCE accepted end-to-end by database layer
+#        (spec-nn1 gap: these two values are in NN1_HONEST_DISCIPLINES per plan D1
+#        but are NOT yet in database._VALID_FREEZE_DISCIPLINES; insert_spec_bundle_facet
+#        raises ValueError for any unrecognised value — the implementer must extend
+#        database._VALID_FREEZE_DISCIPLINES to match the full D1 enum set)
+# ---------------------------------------------------------------------------
+
+def test_database_valid_freeze_disciplines_includes_politis_white_and_cadence():
+    """database._VALID_FREEZE_DISCIPLINES must include POLITIS_WHITE and CADENCE.
+
+    Plan D1 names both as honest disciplines in NN1_HONEST_DISCIPLINES. If the
+    database enum is not extended, insert_spec_bundle_facet will raise ValueError
+    whenever a Phase-2 bundle uses these disciplines — breaking the end-to-end
+    insert path silently after the autotuner layer is green.
+
+    spec-nn1 confirmed the current set is {THEORY, MANDATE, STYLIZED_FACT,
+    CALIBRATION, BACKTEST_SELECTION} — POLITIS_WHITE and CADENCE are absent.
+    """
+    import database as _db
+
+    for discipline in ("POLITIS_WHITE", "CADENCE"):
+        assert discipline in _db._VALID_FREEZE_DISCIPLINES, (
+            f"database._VALID_FREEZE_DISCIPLINES is missing {discipline!r}. "
+            f"Plan D1 names it as an honest discipline in NN1_HONEST_DISCIPLINES; "
+            f"insert_spec_bundle_facet will raise ValueError for any bundle that uses it. "
+            f"The implementer must extend _VALID_FREEZE_DISCIPLINES to include all D1 values."
+        )
+
+
+def test_insert_spec_bundle_facet_accepts_politis_white_and_cadence_end_to_end():
+    """insert_spec_bundle_facet must accept POLITIS_WHITE and CADENCE without raising.
+
+    A facet with freeze_discipline='POLITIS_WHITE' or 'CADENCE' must persist
+    successfully and be readable back from spec_facets. This pins the full
+    round-trip, not just the enum membership check above.
+    """
+    import database as _db
+
+    for discipline in ("POLITIS_WHITE", "CADENCE"):
+        canon_facets = {"test_facet": "some_value", "discipline_under_test": discipline}
+        canonical_json = _db.canonicalize_facets_json(canon_facets)
+        bundle_hash = _db.hash_facets_json(canonical_json + discipline)  # unique per discipline
+        _db.insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
+
+        # This must NOT raise ValueError — previously it would because the value
+        # was absent from _VALID_FREEZE_DISCIPLINES.
+        row_id = _db.insert_spec_bundle_facet(
+            bundle_hash=bundle_hash,
+            facet_name="test_facet",
+            facet_value="some_value",
+            freeze_discipline=discipline,
+            justification=f"end-to-end test for {discipline}",
+        )
+        assert isinstance(row_id, int) and row_id > 0, (
+            f"insert_spec_bundle_facet returned {row_id!r} for discipline={discipline!r}; "
+            f"expected a positive integer rowid"
+        )
+
+        rows = _db.get_spec_facets_for_bundle(bundle_hash)
+        assert len(rows) == 1
+        assert rows[0]["freeze_discipline"] == discipline, (
+            f"Persisted freeze_discipline {rows[0]['freeze_discipline']!r} != {discipline!r}; "
+            f"the value was not stored correctly"
+        )
