@@ -215,37 +215,43 @@ def test_022_migration_file_exists():
 
 
 # ===========================================================================
-# T21 — 022 appears in _MIGRATION_FILES after 021
+# T21 — 022 appears in _MIGRATION_FILES after its logical predecessor (016)
 # ===========================================================================
 
 
-def test_022_is_in_migration_files_after_021():
+def test_022_migration_present_and_after_016():
     """
     '022_spec_bundles_add_id.sql' must appear in database._MIGRATION_FILES
-    after '021_cvar_diagnostics.sql'.
+    after '016_spec_bundles.sql'.
 
-    Append-only contract: 021 is the current tail. 022 must be the next entry.
+    Append-only contract: 022 is an additive migration on spec_bundles (created
+    by 016), so it must come after its logical predecessor. The contiguous-position
+    assertion ("comes immediately after 021") that this replaced was a pinned-tail
+    assertion — the same pattern that broke test_016 when cycle 019 landed (fixed
+    in commit 4c3f3cb). Cycle n-effective appended 020 between 021 and 022, which
+    broke the old pinned assertion because out-of-numeric-order appends are a
+    deliberate convention in this codebase (append-chronological, not numeric order).
+
+    Correct contract: 022 is present AND its index comes after 016 (its schema
+    dependency). No mid-list-insertion claim — append-only means 022 was appended
+    at some time after 016, not necessarily immediately after any given migration.
     """
     migrations = db_module._MIGRATION_FILES
     assert "022_spec_bundles_add_id.sql" in migrations, (
         "'022_spec_bundles_add_id.sql' not found in database._MIGRATION_FILES. "
-        "Append it after '021_cvar_diagnostics.sql'."
+        "Append it to the migration list (after '016_spec_bundles.sql')."
     )
-    assert "021_cvar_diagnostics.sql" in migrations, (
-        "'021_cvar_diagnostics.sql' not in _MIGRATION_FILES — required predecessor "
-        "for the 022 append-order check."
+    assert "016_spec_bundles.sql" in migrations, (
+        "'016_spec_bundles.sql' not in _MIGRATION_FILES — required logical predecessor "
+        "for the 022 order check (022 adds a column to the spec_bundles table "
+        "created by 016)."
     )
-    idx_021 = migrations.index("021_cvar_diagnostics.sql")
+    idx_016 = migrations.index("016_spec_bundles.sql")
     idx_022 = migrations.index("022_spec_bundles_add_id.sql")
-    assert idx_022 > idx_021, (
+    assert idx_022 > idx_016, (
         f"'022_spec_bundles_add_id.sql' (index {idx_022}) must appear after "
-        f"'021_cvar_diagnostics.sql' (index {idx_021}). "
-        "Append-only contract violated."
-    )
-    assert idx_022 == idx_021 + 1, (
-        f"'022_spec_bundles_add_id.sql' (index {idx_022}) must be the entry "
-        f"immediately after '021_cvar_diagnostics.sql' (index {idx_021}). "
-        "Another migration was inserted between them — violates contiguous-append."
+        f"'016_spec_bundles.sql' (index {idx_016}). "
+        "022 depends on spec_bundles existing — it must come after its creator."
     )
 
 
