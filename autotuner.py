@@ -1252,7 +1252,7 @@ def validate_nn1_compliance(spec_bundle_id: int) -> "tuple[bool, list[str]]":
                     evidence_source="BACKTEST_SELECTION",
                     n_configs_searched=1,
                     touched_frozen_eval=0,
-                    spec_bundle_id=str(spec_bundle_id),
+                    spec_bundle_id=bundle_hash,
                     justification=(
                         f"NN1 violation detected by validate_nn1_compliance: "
                         f"{name} was frozen by BACKTEST_SELECTION (council §2.5 hard gate)"

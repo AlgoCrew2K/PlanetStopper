@@ -1632,7 +1632,9 @@ def query_wall_breach_tripwire() -> list:
             "       r.facet_name, r.evidence_source,"
             "       b.frozen_at, b.bundle_hash"
             "  FROM researcher_dof_ledger r"
-            "  JOIN spec_bundles b ON r.spec_bundle_id = b.bundle_hash"
+            "  JOIN spec_bundles b"
+            "    ON r.spec_bundle_id = b.bundle_hash"
+            "    OR r.spec_bundle_id = CAST(b.id AS TEXT)"
             " WHERE r.touched_frozen_eval = 1"
             "   AND r.created_at > b.frozen_at"
         ).fetchall()
