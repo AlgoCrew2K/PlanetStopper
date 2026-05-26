@@ -806,8 +806,10 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
     """validate_search_space_nn1 must be invoked at the top of run_autotuner,
     before optuna.create_study, so any leaked frozen facet is caught at runtime.
 
-    This wiring test does NOT need to complete the full autotuner run — it only
-    needs to confirm that the guard is on the critical path.
+    Stubs synthetic_history.generate_synthetic_history to return a minimal valid
+    stub so execution reaches optuna.create_study — without the stub, run_autotuner
+    short-circuits on empty history before create_study is ever called, making the
+    ordering assertion unreachable.
     """
     at = _import_autotuner()
 
@@ -827,10 +829,16 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
         call_log.append("validate_search_space_nn1")
         original_validate()
 
-    # Abort the run early (after the guard) to avoid needing real Optuna data.
+    # Abort the run early once create_study is reached, before real Optuna work.
     def _abort_create_study(*args, **kwargs):
         call_log.append("create_study")
         raise StopIteration("abort after guard check")
+
+    # Stub synthetic history so run_autotuner does not short-circuit on empty
+    # history before reaching optuna.create_study. The stub returns a minimal
+    # valid shape: one symphony with one day of bar data. The exact values are
+    # irrelevant — the test only checks call ordering, not output.
+    _stub_history = {"stub_sym": {"2026-01-01": {"open": 100.0, "close": 101.0}}}
 
     import inspect
     sig = inspect.signature(at.run_autotuner)
@@ -841,11 +849,13 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
         else {"bot_state": {}, "current_date_str": "2026-01-01", "account_uuids": []}
     )
 
-    with patch.object(at, "validate_search_space_nn1", _recording_validate):
-        import optuna
-        with patch.object(optuna, "create_study", _abort_create_study):
-            with pytest.raises((StopIteration, RuntimeError, ValueError, TypeError)):
-                at.run_autotuner(**call_kwargs)
+    with patch.object(at.synthetic_history, "generate_synthetic_history",
+                      return_value=_stub_history):
+        with patch.object(at, "validate_search_space_nn1", _recording_validate):
+            import optuna
+            with patch.object(optuna, "create_study", _abort_create_study):
+                with pytest.raises((StopIteration, RuntimeError, ValueError, TypeError)):
+                    at.run_autotuner(**call_kwargs)
 
     # validate_search_space_nn1 must have been called before create_study.
     if "validate_search_space_nn1" in call_log and "create_study" in call_log:
