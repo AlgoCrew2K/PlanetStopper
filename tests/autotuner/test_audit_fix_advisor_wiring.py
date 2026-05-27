@@ -184,13 +184,31 @@ def _fetch_advisor_observations(role: str) -> list[tuple]:
     return rows
 
 
+def _normalized(symphony_name: str) -> str:
+    """Apply the same lower-strip normalisation run_autotuner uses internally.
+
+    run_autotuner calls database.normalize_name(...) on the bot_state symphony
+    name before saving (autotuner.py:1456 binds normalized_name = lower+strip).
+    The autotune_runs row carries the normalized form; readers and seeders in
+    this test file must use the same form or queries miss every row.
+    """
+    import database as _db
+    return _db.normalize_name(symphony_name)
+
+
 def _fetch_autotune_runs_for_symphony(symphony_id: str) -> list[tuple]:
+    """Return autotune_runs rows for the (normalized) symphony_id.
+
+    Normalises the argument so callers can pass the user-facing name
+    ("DefensiveAlpha") and the WHERE clause still matches the stored
+    lowercased PK value.
+    """
     import os
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     rows = conn.execute(
         "SELECT id, symphony_id FROM autotune_runs WHERE symphony_id = ? ORDER BY id ASC",
-        (symphony_id,),
+        (_normalized(symphony_id),),
     ).fetchall()
     conn.close()
     return rows
@@ -305,17 +323,20 @@ def test_oc_prior_runs_supplied_so_drift_indicator_can_fire():
     import os
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
+    # Seed with the NORMALIZED symphony_id so the autotuner's prior_runs SELECT
+    # (which filters by normalized_name internally) finds these rows.
+    _norm = _normalized("DefensiveAlpha")
     conn.execute(
         "INSERT INTO autotune_runs (run_timestamp, symphony_id, oos_alpha, "
         "train_alpha, baseline_decision, fallback_oos_alpha, default_oos_alpha, "
         "s_count, math_mode) VALUES (?, ?, 0, 0, 'Adopted AI', 0, 0, ?, 'per_symphony')",
-        ("2026-05-08T00:00:00Z", "DefensiveAlpha", 1),
+        ("2026-05-08T00:00:00Z", _norm, 1),
     )
     conn.execute(
         "INSERT INTO autotune_runs (run_timestamp, symphony_id, oos_alpha, "
         "train_alpha, baseline_decision, fallback_oos_alpha, default_oos_alpha, "
         "s_count, math_mode) VALUES (?, ?, 0, 0, 'Adopted AI', 0, 0, ?, 'per_symphony')",
-        ("2026-05-09T00:00:00Z", "DefensiveAlpha", 2),
+        ("2026-05-09T00:00:00Z", _norm, 2),
     )
     conn.commit()
     conn.close()
