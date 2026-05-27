@@ -207,10 +207,15 @@ def run_spec_critic(
     spec_bundle_id: str,
     spec_facets_rows: list[dict],
     _now: "datetime.datetime | None" = None,
+    symphony_id: str | None = None,
 ) -> int:
     """Compute the spec observation and persist it via insert_advisor_observation.
 
     Returns the new advisor_observations row id.
+
+    symphony_id (S3-AUDIT-004): the calling symphony name, forwarded to
+    insert_advisor_observation so the /api/advisor-observations?symphony_id=
+    filter can locate Spec Critic rows by symphony rather than bundle_hash.
 
     DB reads (if any) must go through database.advisor_ro_query — this function
     does not open connections directly (wall integrity contract).
@@ -223,5 +228,6 @@ def run_spec_critic(
         verdict=obs["verdict"],
         raw_response=obs["raw_response"],
         spec_bundle_id=obs["spec_bundle_id"],
+        symphony_id=symphony_id,
     )
     return row_id
