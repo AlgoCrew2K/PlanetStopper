@@ -483,7 +483,10 @@ def request_suggestions(
 
     # Call Claude's structured-output endpoint. anthropic 0.85.0 exposes
     # client.messages.parse(..., output_format=<PydanticModel>) which returns
-    # an SDK response whose .parsed attribute is the validated model instance.
+    # an SDK response whose .content list carries one or more ParsedTextBlocks;
+    # each ParsedTextBlock has a .parsed_output field holding the validated
+    # Pydantic instance. We walk content and take the first non-None
+    # .parsed_output (see the extraction loop below).
     try:
         sdk_response = client.messages.parse(
             model=_CLAUDE_MODEL,
