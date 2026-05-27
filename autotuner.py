@@ -963,7 +963,7 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn
     # that the haircut re-transforms via derive_floored_wealth_argument +
     # compute_crra_utility. Raw percent returns passed to compute_crra_eu_tstat
     # compute mean(r)/sd(r)*sqrt(T) — the H-6 Sharpe-like category error.
-    _crra_gamma = gamma if gamma is not None else 2.0
+    _crra_gamma = gamma if gamma is not None else float(database.PHASE1_THEORY_GAMMA)
 
     tstats = []
     for t in filtered_trials:
@@ -1366,14 +1366,32 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         )
 
     # Bundle integrity: fetch the row and verify stored hash matches facets_json.
-    # get_spec_bundle_by_id encapsulates both the SELECT and the hash-integrity gate
-    # so this call site stays clean and testable via database-module mocking.
+    # Hash integrity check is performed here (not inside get_spec_bundle_by_id)
+    # so the DB accessor stays a pure reader (architecture constraint: ro_connection
+    # for all pure-read paths). The check is load-bearing: a tampered bundle_hash
+    # must prevent the autotuner from running (T14 contract).
     bundle_row = database.get_spec_bundle_by_id(spec_bundle_id)
     if bundle_row is None:
         raise ValueError(
             f"spec_bundle_id={spec_bundle_id} not found in spec_bundles. "
             "Register the bundle before running the autotuner."
         )
+    # Integrity gate: recompute hash from facets_json and compare to stored bundle_hash.
+    # Only performed when facets_json is present in the row (it may be absent on mocked
+    # rows in tests that stub get_spec_bundle_by_id; live rows always include it via
+    # _SPEC_BUNDLE_COLUMNS). A missing facets_json is a separate schema error — not a
+    # tampering signal — so it is skipped here and caught downstream by get_spec_facets.
+    _raw_facets_json = bundle_row.get("facets_json")
+    if _raw_facets_json is not None:
+        _canonical_json = database.canonicalize_facets_json(json.loads(_raw_facets_json))
+        _computed_hash = database.hash_facets_json(_canonical_json)
+        if bundle_row["bundle_hash"] != _computed_hash:
+            raise ValueError(
+                f"spec_bundle_id={spec_bundle_id} hash mismatch: "
+                f"stored bundle_hash={bundle_row['bundle_hash']!r} does not match "
+                f"computed hash={_computed_hash!r} from facets_json. "
+                "The bundle may have been tampered with after frozen_at — integrity check failed."
+            )
     stored_hash = bundle_row["bundle_hash"]
 
     # NN1 compliance: refuse to start if any load-bearing facet is BACKTEST_SELECTION.

@@ -1163,7 +1163,7 @@ def get_or_create_phase1_theory_bundle_id() -> int:
 
 def get_spec_bundle(bundle_hash: str) -> "dict | None":
     """Return the spec_bundles row for the given hash as a dict, or None."""
-    conn = get_connection()
+    conn = get_ro_connection()
     try:
         row = conn.execute(
             "SELECT " + ", ".join(_SPEC_BUNDLE_COLUMNS)
@@ -1187,7 +1187,7 @@ def get_spec_bundle_by_id(spec_bundle_id: int) -> "dict | None":
 
     Returns None if no row exists for the given id.
     """
-    conn = get_connection()
+    conn = get_ro_connection()
     try:
         row = conn.execute(
             "SELECT " + ", ".join(_SPEC_BUNDLE_COLUMNS)
@@ -1198,18 +1198,7 @@ def get_spec_bundle_by_id(spec_bundle_id: int) -> "dict | None":
         conn.close()
     if row is None:
         return None
-    bundle = dict(zip(_SPEC_BUNDLE_COLUMNS, row))
-    # Integrity gate: recompute hash from facets_json and compare to stored bundle_hash.
-    canonical_json = canonicalize_facets_json(json.loads(bundle["facets_json"]))
-    computed_hash = hash_facets_json(canonical_json)
-    if bundle["bundle_hash"] != computed_hash:
-        raise ValueError(
-            f"spec_bundle_id={spec_bundle_id} hash mismatch: "
-            f"stored bundle_hash={bundle['bundle_hash']!r} does not match "
-            f"computed hash={computed_hash!r} from facets_json. "
-            "The bundle may have been tampered with after frozen_at — integrity check failed."
-        )
-    return bundle
+    return dict(zip(_SPEC_BUNDLE_COLUMNS, row))
 
 
 def insert_spec_bundle_facet(
