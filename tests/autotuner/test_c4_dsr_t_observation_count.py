@@ -116,7 +116,14 @@ def test_portmode_test_no_longer_references_compute_dsr_t():
     function. tests/portmode/test_autotuner_portmode.py imports it and exercises
     it in `TestDSRTCorrectionCallSite`; a live import of a deleted function
     crashes collection.
+
+    If the file no longer exists (deleted as part of the port-dispatch removal
+    cycle per manifest §6), the assertion is trivially satisfied — a deleted file
+    cannot reference anything.
     """
+    if not _PORTMODE_TEST.exists():
+        return  # file deleted — cannot reference compute_dsr_T; intent fully satisfied
+
     src = _PORTMODE_TEST.read_text(encoding="utf-8")
     assert "compute_dsr_T" not in src, (
         "tests/portmode/test_autotuner_portmode.py still references compute_dsr_T. "

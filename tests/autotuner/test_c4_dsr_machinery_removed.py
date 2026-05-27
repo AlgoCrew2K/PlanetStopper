@@ -230,11 +230,16 @@ def test_portmode_test_no_longer_references_deleted_dsr_symbols():
     the deleted symbols (`compute_dsr_T`, `compute_deflated_sharpe_ratio`,
     `compute_expected_max_sharpe`) — a live import of a deleted symbol crashes
     collection of the whole portmode suite.
-    """
-    src = (
-        _WORKTREE_ROOT / "tests" / "portmode" / "test_autotuner_portmode.py"
-    ).read_text(encoding="utf-8")
 
+    If the file no longer exists (deleted as part of the port-dispatch removal
+    cycle per manifest §6), the assertion is trivially satisfied — a deleted file
+    cannot reference anything.
+    """
+    portmode_test = _WORKTREE_ROOT / "tests" / "portmode" / "test_autotuner_portmode.py"
+    if not portmode_test.exists():
+        return  # file deleted — cannot reference any symbol; intent fully satisfied
+
+    src = portmode_test.read_text(encoding="utf-8")
     for symbol in ("compute_dsr_T", "compute_deflated_sharpe_ratio",
                    "compute_expected_max_sharpe"):
         assert symbol not in src, (
