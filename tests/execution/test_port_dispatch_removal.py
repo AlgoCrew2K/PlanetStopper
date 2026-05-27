@@ -636,70 +636,24 @@ class TestLiveExecutionDefaultFalsePreserved:
 
 class TestPortmodeTestFilesToBeDeleted:
     """
-    Tombstone markers for the 14 portmode test files slated for deletion per
-    §6 of the manifest.  These tests assert via importation failure — if the
-    files are still present and importable, the test fails (because the removed
-    production code they target should also be gone, making them dead coverage).
-
-    Each test tries to import a module-level symbol that only exists because the
-    portmode implementation exists.  If the portmode sources are removed, the
-    import will fail and the test here becomes GREEN (i.e., the test passes
-    because we caught the deletion).
-
-    Implementation note: these are structured as ``xfail`` with strict=False so
-    that:
-      * While portmode sources still exist → the import succeeds → xfail does
-        not trigger → test is marked XPASS (acceptable pre-deletion state).
-      * Once portmode sources are deleted → import fails → xfail triggers →
-        test is GREEN (the expected post-deletion state).
-
-    This pattern documents the deletion intent without hard-failing the suite
-    before the source deletion is complete.  The implementer deletes the test
-    files in the same pass as the source removals.
+    Permanent deletion assertions for portmode symbols removed in Sprint 3.
+    Each test asserts the deleted symbol is no longer importable.
     """
 
-    @pytest.mark.xfail(
-        reason="port_aggregator.aggregate_to_port will not be importable after SITE-A2 removal",
-        strict=False,
-    )
     def test_port_aggregator_import_fails_after_removal(self):
-        from port_aggregator import aggregate_to_port  # noqa: F401
-        pytest.fail(
-            "port_aggregator.aggregate_to_port is still importable.  "
-            "Once SITE-A2 removal is complete and the module is cleaned up, "
-            "this import should fail — at which point this xfail will go GREEN."
-        )
+        with pytest.raises((ImportError, ModuleNotFoundError)):
+            from port_aggregator import aggregate_to_port  # noqa: F401
 
-    @pytest.mark.xfail(
-        reason="port_selector.select_symphony_with_mc_gate will not be importable after SITE-A2 removal",
-        strict=False,
-    )
     def test_port_selector_import_fails_after_removal(self):
-        from port_selector import select_symphony_with_mc_gate  # noqa: F401
-        pytest.fail(
-            "port_selector.select_symphony_with_mc_gate is still importable.  "
-            "Once SITE-A2 removal is complete and the module is cleaned up, "
-            "this import should fail."
-        )
+        with pytest.raises((ImportError, ModuleNotFoundError)):
+            from port_selector import select_symphony_with_mc_gate  # noqa: F401
 
-    @pytest.mark.xfail(
-        reason="engine.dual_altitude.initialize_port_state_if_absent will not be importable after SITE-C1 removal",
-        strict=False,
-    )
     def test_dual_altitude_initialize_import_fails_after_removal(self):
-        from engine.dual_altitude import initialize_port_state_if_absent  # noqa: F401
-        pytest.fail(
-            "engine.dual_altitude.initialize_port_state_if_absent is still importable.  "
-            "Once SITE-C1 removal is complete (a later cycle per §8), this import should fail."
-        )
+        with pytest.raises((ImportError, ModuleNotFoundError)):
+            from engine.dual_altitude import initialize_port_state_if_absent  # noqa: F401
 
-    @pytest.mark.xfail(
-        reason="engine.exit_authority.get_exit_authority will not be importable after SITE-C1 removal",
-        strict=False,
-    )
     def test_exit_authority_get_exit_authority_import_fails_after_removal(self):
-        from engine.exit_authority import get_exit_authority  # noqa: F401
-        pytest.fail(
-            "engine.exit_authority.get_exit_authority is still importable.  "
-            "Once SITE-C1 removal is complete (a later cycle per §8), this import should fail."
-        )
+        # engine.exit_authority module STILL EXISTS (display helpers preserved per AX-2).
+        # Only the get_exit_authority symbol was removed. The import itself raises ImportError.
+        with pytest.raises((ImportError, ModuleNotFoundError, AttributeError)):
+            from engine.exit_authority import get_exit_authority  # noqa: F401

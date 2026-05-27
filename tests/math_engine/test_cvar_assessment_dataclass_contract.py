@@ -61,8 +61,6 @@ FIXTURE_DIR = (
 )
 
 # Production modules that must NOT import CVaRAssessment in Phase 1.
-# engine/dual_altitude.py is included so any Phase-1 CVaRAssessment reference
-# there is caught (BLOCK-3 fix, rev-mc review).
 _PRODUCTION_MODULES = [
     "alpha_bot_execution.py",
     "reporting.py",
@@ -70,7 +68,6 @@ _PRODUCTION_MODULES = [
     "autotuner.py",
     "app.py",
     "database.py",
-    "engine/dual_altitude.py",
 ]
 
 _PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent
@@ -309,8 +306,7 @@ def test_phase1_production_module_does_not_import_cvar_assessment(
     RED if a Phase-1 PR adds a CVaRAssessment reference to a production module.
     """
     module_path = _PROJECT_ROOT / module_filename
-    if not module_path.exists():
-        pytest.skip(f"{module_filename} not found in project root — skipping.")
+    assert module_path.exists(), f"{module_filename} not found in project root."
 
     source = module_path.read_text(encoding="utf-8")
     # Match any form: import CVaRAssessment, CVaRAssessment(, CVaRAssessment.
