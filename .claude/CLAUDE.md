@@ -14,10 +14,11 @@
 | `app.py` | Flask dashboard + minute-by-minute scheduler; `_DISMISS_EXECUTOR` (background dismiss thread) + `_FLUSH_STATE_LOCK` (flush serialization); spawns `alpha_bot_execution.py` at :00 |
 | `alpha_bot_execution.py` | Core engine — per-cycle execution; wired to canonical THEORY spec bundle via `get_or_create_phase1_theory_bundle_id` |
 | `math_engine.py` | Risk math: volatility scaling, log time squeeze, parabolic ratchet, MC gating, VWAP, breakeven, exit confirm; CRRA-EU utility (`compute_crra_eu_objective`, `compute_crra_eu_tstat`); CVaR diagnostic (`compute_portfolio_cvar`, `CVaRAssessment`); 6-layer exit decision (`resolve_trigger_priority`) |
-| `autotuner.py` | Optuna walk-forward (125 trading days, 500 trials per symphony); CRRA-EU `_haircut_select` objective with `compute_n_effective` additive accounting; NN1 spec-freeze enforcement at entry |
-| `database.py` | State DB: 24 migration SQL files (001–024); `_MIGRATION_FILES` applies 004–024 in declared order (021 precedes 020 — intentional, see ARCH-002 inline comment); 77 public functions including Phase-1 accessors (`record_cvar_diagnostic`, `read_cvar_diagnostic_for_symphony`, `get_or_create_phase1_theory_bundle_id`, `insert_researcher_dof_ledger`, `query_wall_breach_tripwire`) |
+| `autotuner.py` | Optuna walk-forward (125 trading days, 500 trials per symphony); CRRA-EU `_haircut_select` objective with `compute_n_effective` additive accounting; NN1 spec-freeze enforcement at entry; invokes Overfitting Conscience + Spec Critic + Divergence Explainer post-walk-forward; OC reads `prior_runs` via `advisor_ro_query`; `save_autotune_run` returns the inserted row id |
+| `database.py` | State DB: 25 migration SQL files (001–025); `_MIGRATION_FILES` applies 004–025 in declared order (021 precedes 020 — intentional, see ARCH-002 inline comment); public accessors include Phase-1 originals (`record_cvar_diagnostic`, `read_cvar_diagnostic_for_symphony`, `get_or_create_phase1_theory_bundle_id`, `insert_researcher_dof_ledger`, `query_wall_breach_tripwire`) plus Sprint-3 additions: `insert_advisor_observation` (accepts `symphony_id`), `get_advisor_observations_for_symphony`; `compute_composition_hash` promoted here from deleted `port_selector.py` |
 | `reporting.py` | Discord webhooks + QuickChart embeds |
 | `synthetic_history.py` | 125-day live Alpaca historical fetcher (parallel + file cache); feeds autotuner replay |
+| `advisors/` | Phase-1 Advisor producers: `overfitting_conscience.py`, `spec_critic.py`, `divergence_explainer.py`. Narrator deferred. All write to `advisor_observations` keyed by `symphony_id`. Called post-walk-forward from `autotuner.py`. |
 
 ## Build / Run
 ```
@@ -48,6 +49,7 @@ python app.py          # run daemon
 | Default Optuna trial floor | 100 trials (statistical stability) |
 | `test_live_*.py` files | Excluded by default — opt-in via `--include-live` |
 | Migration 021 listed before 020 in `_MIGRATION_FILES` | Intentional — see ARCH-002 inline comment in `database.py`. Reordering would corrupt live DBs that already have 021 applied. |
+| Blast-radius scanners sweeping `.claude/worktrees/` | `rglob("*.py")` scanners must exclude `.claude/worktrees/` and `.claude/audit-worktrees/`; stale pre-deletion .py files in orphan worktrees produce false-positive import violations. |
 
 ## Project-Local Specialist Agents (`.claude/agents/`)
 **Task-engine specialists:**
