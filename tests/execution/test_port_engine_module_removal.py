@@ -378,10 +378,20 @@ class TestNoRemainingProductionImports:
         return pathlib.Path(__file__).parent.parent.parent
 
     def _production_py_files(self, root: pathlib.Path):
-        """Yield .py files that are not under tests/ or __pycache__."""
+        """Yield .py files that are not under tests/, __pycache__/, or git worktree dirs.
+
+        `.claude/` houses git worktrees (`.claude/worktrees/`) and audit worktrees
+        (`.claude/audit-worktrees/`) from prior sessions whose stale .py snapshots
+        must NOT be scanned as production code. See project memory
+        `project_blast_radius_scanner_worktree_interaction`.
+        """
         for p in root.rglob("*.py"):
             parts = p.relative_to(root).parts
-            if "tests" not in parts and "__pycache__" not in parts:
+            if (
+                "tests" not in parts
+                and "__pycache__" not in parts
+                and ".claude" not in parts
+            ):
                 yield p
 
     def _import_from_names_in_file(

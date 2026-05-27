@@ -457,9 +457,12 @@ def test_no_other_module_imports_removed_port_mode_symbols() -> None:
     violations: list[str] = []
 
     _this_file = pathlib.Path(__file__).resolve()
+    # Exclude `.claude/` to skip git worktree + audit-worktree stale snapshots from
+    # prior sessions — see project memory project_blast_radius_scanner_worktree_interaction.
     py_files = [
         p for p in _WORKTREE_ROOT.rglob("*.py")
         if "__pycache__" not in p.parts
+        and ".claude" not in p.parts
         and p.resolve() != _AUTOTUNER_PATH.resolve()
         and p.resolve() != _this_file
     ]
