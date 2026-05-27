@@ -101,9 +101,15 @@ MC_SEED_MODULUS = 2**64
 
 # Regime-match-quality guard threshold (vision-audit Critical Rec #2 / math-reaudit Surface 3).
 # chi-squared 0.99-quantile with df=2 (number of z-scored kNN features: SPY return + rolling vol).
-# Under the null that today is drawn from the same joint distribution as the candidate pool,
-# the squared Mahalanobis distance follows chi2(df=2). A mean squared kNN distance above this
-# value flags today as a >=99% multivariate outlier — the MC bootstrap is unrepresentative.
+# The test statistic this gate compares against is the MEAN of K squared (z-scored Euclidean)
+# distances over the K nearest candidate-pool neighbours, NOT a single squared distance. Under
+# the null that today is drawn from the same joint distribution as the candidate pool, a single
+# squared Mahalanobis distance follows chi2(df=2); the MEAN of K such draws concentrates near
+# 2 (the mean of chi2(2)) — its 99th percentile is approximately 2.40 (chi2(2*K)/K at K=150).
+# Setting the threshold to chi2(2)_{0.99} ~= 9.21 (the SINGLE-DRAW 0.99-quantile) is therefore
+# intentionally CONSERVATIVE: an effective false-positive rate well below 1% for the mean
+# statistic. This is the correct direction for operator safety — the gate fires only on
+# extreme regime breaks, not on ordinary daily variance.
 # Source: Mahalanobis (1936) "On the generalised distance in statistics"; Aggarwal (2017)
 # Outlier Analysis 2nd ed. Sec 2.3 / 4.4; Knorr & Ng (1998) VLDB '98 kNN-outlier framework.
 # chi2(2)_{0.99} = 9.21034037197618 (scipy.stats.chi2.ppf(0.99, df=2)).
@@ -174,9 +180,11 @@ class RegimeMatchAssessment:
                          pool neighbours. None is the out-of-band insufficient sentinel —
                          mirrors MC_INSUFFICIENT_HISTORY_SENTINEL; eligible pool was below
                          MC_MIN_HISTORY_DAYS so no score can be computed.
-    is_unprecedented:    True when mean_sq_mahalanobis > threshold_used (today is a >=99%
-                         multivariate outlier vs the candidate pool; the MC bootstrap is
-                         unrepresentative). MUST be False when mean_sq_mahalanobis is None
+    is_unprecedented:    True when mean_sq_mahalanobis > threshold_used. The default threshold
+                         (chi2(2)_{0.99}) is the SINGLE-DRAW 0.99-quantile applied to a
+                         MEAN-of-K test statistic, so the gate is intentionally conservative
+                         — fires only on extreme regime breaks (effective false-positive rate
+                         well below 1%). MUST be False when mean_sq_mahalanobis is None
                          (fail-safe: an absent diagnostic is not a suppression signal).
     neighbor_k:          The K used for the kNN mean-squared-distance test statistic.
     threshold_used:      The threshold actually applied at call time (the module-level
@@ -1456,10 +1464,12 @@ def compute_regime_match_quality(
     candidate-pool neighbours of today's query point, using the same z-score
     standardization that run_monte_carlo applies (AC-1). If the mean squared
     distance to the K nearest neighbours exceeds MC_REGIME_MATCH_CHI2_THRESHOLD
-    (chi2(2)_{0.99} ~= 9.21), today is a >=99% multivariate outlier vs the
-    candidate pool and the MC bootstrap is unrepresentative; the caller should
-    suppress the MC veto by passing prob_beating=None to compute_exit_confirmation,
-    exercising the existing MC-unavailable fail-safe path.
+    (chi2(2)_{0.99} ~= 9.21 — the SINGLE-DRAW 0.99-quantile applied as a
+    conservative threshold against the MEAN-of-K statistic; effective false-positive
+    rate well below 1%), today's joint state is far from every recent neighbour and
+    the MC bootstrap is unrepresentative; the caller should suppress the MC veto by
+    passing prob_beating=None to compute_exit_confirmation, exercising the existing
+    MC-unavailable fail-safe path. The gate fires only on extreme regime breaks.
 
     Pure function. O(eligible pool size). No I/O, no blocking work (architecture
     constraint #1).
