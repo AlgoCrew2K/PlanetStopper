@@ -478,6 +478,15 @@ def test_full_suite_reports_zero_skips_and_zero_xfails() -> None:
     ``xfailed``, and zero ``xpassed`` outcomes.
 
     The acceptance criterion verbatim from the user mandate (2026-05-27).
+
+    Subprocess timeout note
+    -----------------------
+    The full default suite at the time of writing runs ~1462s on the
+    Sprint-3 worktree (impl-final measurement, 2026-05-27). We budget
+    3000s (50 min) to leave headroom for suite growth and slower CI
+    hosts. The timeout is intentionally generous because the acceptance
+    gate is the single most important test in this file — a false
+    timeout here would silently mask a real skip/xfail regression.
     """
     proc = subprocess.run(
         [
@@ -498,7 +507,7 @@ def test_full_suite_reports_zero_skips_and_zero_xfails() -> None:
         cwd=str(_PROJECT_ROOT),
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=3000,
     )
     stdout_tail = "\n".join(proc.stdout.splitlines()[-15:])
     # The summary line contains keywords like 'skipped', 'xfailed', 'xpassed'.
