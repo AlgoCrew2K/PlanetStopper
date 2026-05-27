@@ -20,19 +20,12 @@ P2. For ALL CVaRAssessment instances with cvar_pct=None that can be legally
 P3. For ALL CVaRAssessment instances with cvar_pct as a valid float in
     [-100.0, 100.0], the instance is constructed without error and cvar_pct
     round-trips exactly (no silent truncation or normalization of valid floats).
-P4. MONOTONICITY: a CVaRAssessment with a more-negative cvar_pct (deeper tail
-    loss) never has a lower tail_obs_count than one with a less-negative
-    cvar_pct when both are drawn from the same history length. (This is a
-    shape invariant on Phase-2 outputs, not a Phase-1 construction invariant;
-    it is written now so Phase-2 implementations have a structural regression
-    target. It is marked xfail until Phase-2 introduces simulate_forward_paths.)
 
 RED STATUS
 ----------
 P1 and P2 are RED until CVaRAssessment's __post_init__ enforces the invariant
 by raising on illegal combinations. P3 is RED until CVaRAssessment exists at
-all. P4 is xfail (expected fail) in Phase 1 since simulate_forward_paths is
-not yet written.
+all.
 
 FIXTURE
 -------
@@ -200,32 +193,3 @@ def test_property_valid_float_cvar_pct_round_trips(
     assert obj.tail_obs_count == tail_obs_count
 
 
-# ---------------------------------------------------------------------------
-# P4. (xfail — Phase 2) Monotonicity of cvar_pct vs tail_obs_count
-#     Placeholder written now so Phase-2 implementations have a regression target.
-# ---------------------------------------------------------------------------
-
-@pytest.mark.xfail(
-    reason=(
-        "Phase 1 only defines CVaRAssessment shape. simulate_forward_paths is a "
-        "Phase-2 deliverable. This test becomes live once that function exists."
-    ),
-    strict=False,
-)
-def test_property_deeper_tail_loss_never_has_fewer_observations_xfail_phase1() -> None:
-    """
-    P4 (xfail) — Phase-2 shape invariant written now as a regression target.
-
-    When simulate_forward_paths produces two CVaRAssessments from the same
-    history, the one with the more-negative cvar_pct (deeper tail loss) must
-    not have fewer tail_obs_count than the shallower one. Both are drawn from
-    the same path sample, so the 5th-percentile cut of a larger sample is
-    always at least as populated as a smaller one.
-
-    This test is intentionally xfail in Phase 1. It goes GREEN in Phase 2
-    once simulate_forward_paths is implemented.
-    """
-    pytest.fail(
-        "Phase-2 monotonicity invariant placeholder — expected xfail. "
-        "This test becomes live once simulate_forward_paths is defined."
-    )

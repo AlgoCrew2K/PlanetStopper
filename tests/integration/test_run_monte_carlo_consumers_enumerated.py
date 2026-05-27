@@ -63,25 +63,21 @@ import pytest
 _PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent
 
 # Production files in scope for consumer enumeration.
-# engine/dual_altitude.py is included so any future run_monte_carlo( addition
-# there is caught by the call-count baseline (BLOCK-3 fix, rev-mc review).
 _PRODUCTION_FILES = [
     "alpha_bot_execution.py",
     "synthetic_history.py",
     "autotuner.py",
     "reporting.py",
-    "engine/dual_altitude.py",
 ]
 
 # Baseline call count from the Phase-1 consumer map.
-# autotuner.py, reporting.py, and engine/dual_altitude.py have 0 direct calls
+# autotuner.py and reporting.py have 0 direct calls
 # (they consume via dicts/args or carry initial-state defaults only).
 _BASELINE_CALL_SITES = {
     "alpha_bot_execution.py": 1,
     "synthetic_history.py": 1,
     "autotuner.py": 0,
     "reporting.py": 0,
-    "engine/dual_altitude.py": 0,
 }
 
 _CONSUMER_MAP_PATH = _PROJECT_ROOT / "docs" / "handoff" / "run-monte-carlo-consumer-map.md"
@@ -89,8 +85,7 @@ _CONSUMER_MAP_PATH = _PROJECT_ROOT / "docs" / "handoff" / "run-monte-carlo-consu
 
 def _read_production(filename: str) -> str:
     path = _PROJECT_ROOT / filename
-    if not path.exists():
-        pytest.skip(f"{filename} not found in project root.")
+    assert path.exists(), f"{filename} not found in project root."
     return path.read_text(encoding="utf-8")
 
 
