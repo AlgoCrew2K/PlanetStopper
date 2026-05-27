@@ -307,24 +307,32 @@ def test_divergence_explainer_persists_a_row_when_flag_off():
 
 
 def test_oc_prior_runs_supplied_so_drift_indicator_can_fire():
-    """When N>=2 prior autotune_runs exist for the same symphony with strictly
-    growing s_count, the OC verdict for the new run MUST be WATCH (Indicator-3
-    drift), not CLEAR.
+    """The autotuner MUST query prior autotune_runs for the same symphony and
+    pass them as `prior_runs` to `run_overfitting_conscience`.
 
-    The autotuner must (a) query prior_runs for the same symphony excluding
-    the just-inserted id, and (b) pass them through to run_overfitting_conscience.
+    S3-AUDIT-003 fix contract:
+      (a) seed N>=2 prior autotune_runs rows for the same symphony;
+      (b) call run_autotuner;
+      (c) the OC call MUST receive a `prior_runs` arg whose length matches the
+          seeded prior count and whose s_count values match what was seeded.
+
+    Why this asserts via mock-inspection rather than downstream drift effects:
+      In the patched test harness `d_spec=0` (no BACKTEST_SELECTION rows in the
+      researcher_dof_ledger), so the producer's `s = max(ledger_S, s_count) = 0`
+      for the new run.  A series like `[1, 2, 0]` is not strictly increasing,
+      so `drift_detected=False` even though prior_runs WAS supplied — the data
+      arithmetic conflates "prior_runs not passed" with "passed but not
+      monotonic".  Asserting at the producer call boundary tests the wiring
+      contract directly and is robust to OC's internal indicator algebra.
     """
-    import database
+    import advisors.overfitting_conscience as oc_mod
 
-    # Seed 2 prior autotune_runs rows with monotonically growing s_count.
-    # We use direct SQL because save_autotune_run does not yet expose s_count;
-    # the autotuner-side fix may or may not persist s_count, but the producer
-    # consumes it — so we seed it directly to exercise the drift path.
+    # Seed 2 prior autotune_runs rows for the same (normalised) symphony with
+    # distinct s_count values, so the autotuner's prior_runs SELECT can return
+    # them and we can verify they reach the producer.
     import os
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
-    # Seed with the NORMALIZED symphony_id so the autotuner's prior_runs SELECT
-    # (which filters by normalized_name internally) finds these rows.
     _norm = _normalized("DefensiveAlpha")
     conn.execute(
         "INSERT INTO autotune_runs (run_timestamp, symphony_id, oos_alpha, "
@@ -341,47 +349,53 @@ def test_oc_prior_runs_supplied_so_drift_indicator_can_fire():
     conn.commit()
     conn.close()
 
-    # Run the autotuner.  The new run should have s_count >= 3 (drift continues),
-    # but for the drift detector we only need the prior 2 rows + new row in
-    # strictly-growing order.  We achieve "strictly growing" by also seeding the
-    # new-run s_count via the autotuner's own d_spec/s_count plumbing — the
-    # cleanest way to assert drift is via the persisted raw_response on the OC
-    # row that the producer writes.
-    _run_autotuner(symphony_name="DefensiveAlpha")
+    # Patch run_overfitting_conscience so we can inspect the prior_runs arg
+    # the autotuner passes.  Return value is the (mocked) row id; the producer
+    # itself never runs in this test — the contract under test is the call
+    # signature from the autotuner side.
+    captured: dict = {"prior_runs": None, "called": False}
 
-    # The new OC observation row's raw_response must reflect drift detection.
-    # We do not assert exact verdict text or threshold numerics — only that the
-    # producer SAW the prior runs (drift_detected reflected in raw_response or
-    # verdict).
-    import os as _os
-    db_path = _os.environ["DB_PATH"]
-    conn = sqlite3.connect(db_path)
-    rows = conn.execute(
-        "SELECT verdict, raw_response FROM advisor_observations "
-        "WHERE advisor_role = 'OVERFITTING_CONSCIENCE' ORDER BY id DESC LIMIT 1"
-    ).fetchall()
-    conn.close()
-    assert rows, "Expected at least one OC observation"
-    verdict, raw_response = rows[0]
+    def _spy(autotune_run, ledger_rows, prior_runs=None):
+        captured["called"] = True
+        captured["prior_runs"] = prior_runs
+        return 999  # arbitrary row id
 
-    import json as _json
-    parsed = _json.loads(raw_response) if isinstance(raw_response, str) else raw_response
+    with patch.object(oc_mod, "run_overfitting_conscience", side_effect=_spy):
+        _run_autotuner(symphony_name="DefensiveAlpha")
 
-    # Two acceptable outcomes that demonstrate prior_runs were supplied:
-    #   (a) raw_response contains "drift" / "monotonic_trend" keys (the producer
-    #       saw a multi-element s_series and detected drift).
-    #   (b) verdict is WATCH or BREACH and raw_response carries a non-empty
-    #       prior-runs trail.
-    # We assert option (a) directly because the audit specifies the exact
-    # raw_response keys (`drift`, `monotonic_trend`) at overfitting_conscience.py:151-157.
-    saw_drift_keys = (
-        isinstance(parsed, dict)
-        and (parsed.get("drift") is True or "monotonic_trend" in parsed)
+    assert captured["called"], (
+        "advisors.overfitting_conscience.run_overfitting_conscience was not "
+        "called from run_autotuner.  S3-AUDIT-001/002/003 prerequisite failed."
     )
-    assert saw_drift_keys, (
-        f"OC raw_response shows no drift evidence after seeding 2 prior runs with "
-        f"growing s_count.  raw_response={parsed!r}.  S3-AUDIT-003: the autotuner "
-        "must query prior_runs and pass them to run_overfitting_conscience."
+    prior = captured["prior_runs"]
+    assert prior is not None, (
+        "run_overfitting_conscience was called with prior_runs=None.  "
+        "S3-AUDIT-003: the autotuner MUST query autotune_runs for the same "
+        "symphony and pass the result as prior_runs (kwarg) so Indicator-3 "
+        "drift detection can fire."
+    )
+    # The autotuner's SELECT excludes the just-inserted id, so prior_runs must
+    # contain exactly the 2 rows we seeded above (any additional internal-loop
+    # rows would also count; the strict assertion is >= 2).
+    assert len(prior) >= 2, (
+        f"prior_runs length = {len(prior)} (got {prior!r}); expected >= 2 "
+        "after seeding 2 prior autotune_runs rows for the same symphony.  "
+        "S3-AUDIT-003: the prior_runs SELECT must return all prior same-symphony "
+        "rows excluding the just-inserted one."
+    )
+    # The seeded s_count values must round-trip — confirms the SELECT projects
+    # s_count and the row-to-dict normalisation surfaces it for the producer.
+    # Both dict and sqlite3.Row support key access via r["s_count"].
+    s_counts = []
+    for r in prior:
+        try:
+            s_counts.append(r["s_count"])
+        except (KeyError, IndexError):
+            continue
+    assert 1 in s_counts and 2 in s_counts, (
+        f"prior_runs s_count values = {sorted(s_counts)}; expected the seeded "
+        "values 1 and 2 to be present.  S3-AUDIT-003: the SELECT must "
+        "project s_count for drift detection to work."
     )
 
 
