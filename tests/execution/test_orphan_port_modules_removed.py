@@ -419,7 +419,7 @@ class TestNoSurvivingTestImportsOrphanModules:
 # ---------------------------------------------------------------------------
 
 
-class TestXfailTripwiresAutoFlipToPass:
+class TestXfailTripwiresAutoFlipToXfail:
     """
     The two xfail tripwires at tests/execution/test_port_dispatch_removal.py:661-683:
 
@@ -427,20 +427,30 @@ class TestXfailTripwiresAutoFlipToPass:
         test_port_selector_import_fails_after_removal
 
     are declared with `strict=False`. They contain `from <mod> import ...`
-    followed by `pytest.fail(...)`. Today the imports succeed because the
-    modules exist → the unconditional pytest.fail fires → xfail records XPASS.
+    followed by `pytest.fail(...)`. The pre/post-deletion contract per pytest
+    xfail semantics:
 
-    After the orphan modules are deleted in Cycle B, the imports raise
-    ImportError → xfail catches the exception → the tests are recorded as
-    PASS (not XPASS). S3-AUDIT-009 auto-resolves.
+        BEFORE deletion: the import succeeds → pytest.fail fires → the body
+            "failed as expected" → recorded as **XPASS** (the test body did
+            not actually verify the deletion; pytest treats this as
+            "unexpectedly passing" with strict=False, which is suite-green).
+        AFTER  deletion: the import raises ImportError → the xfail wrapper
+            catches the exception → recorded as **XFAIL** (the documented
+            post-deletion outcome; strict=False keeps the run green).
+        NEVER:           FAILED — strict=False xfail never surfaces as
+            FAILED for these two tests.
 
-    This test invokes pytest as a subprocess against just those two tests
-    and parses the report to confirm both lines show `PASSED` (the
-    post-deletion expectation). Today this test FAILS — the lines will
-    show `XPASS` because the modules still exist.
+    S3-AUDIT-009 calls this the "auto-flip" XPASS → XFAIL. No source edit
+    to the xfail tests themselves; the outcome flips purely because the
+    import target stops existing. This sentinel verifies the flip by running
+    pytest as a subprocess against just those two test IDs and parsing `-rA`
+    output.
+
+    Today (pre-deletion): this test FAILS because both tripwires record as
+    XPASS — confirmation that the orphan modules are still importable.
     """
 
-    def test_two_xfail_tripwires_record_as_passed_after_orphan_removal(self):
+    def test_two_xfail_tripwires_record_as_xfail_after_orphan_removal(self):
         target_file = (
             _project_root() / "tests" / "execution" / "test_port_dispatch_removal.py"
         )
@@ -457,9 +467,9 @@ class TestXfailTripwiresAutoFlipToPass:
             "test_port_selector_import_fails_after_removal",
         ]
 
-        # `-rA` reports short summary for ALL outcomes; we parse stdout for
-        # the `PASSED` vs `XPASS` markers per test id. -p no:cacheprovider
-        # keeps the run reproducible across pytest invocations.
+        # `-rA` reports the short summary for ALL outcomes (PASSED, FAILED,
+        # XFAIL, XPASS, SKIPPED, ERROR). -p no:cacheprovider keeps the run
+        # reproducible across pytest invocations.
         result = subprocess.run(
             ["python", "-m", "pytest", "-rA", "-q", "-p", "no:cacheprovider", *target_tests],
             cwd=str(_project_root()),
@@ -469,35 +479,68 @@ class TestXfailTripwiresAutoFlipToPass:
         )
 
         stdout = result.stdout + result.stderr
-        # After orphan deletion: both lines must show PASSED, neither XPASS.
-        # We assert the NEGATIVE first (no XPASS) so the failure message
-        # surfaces the still-importable module clearly.
+
+        # pytest exits 0 when only PASSED/XFAIL/XPASS(strict=False)/SKIPPED
+        # are present (all four are green outcomes). A non-zero exit means
+        # at least one FAILED or ERROR — that breaks the deletion contract.
+        assert result.returncode == 0, (
+            "pytest subprocess exited non-zero — the two xfail tripwires must "
+            "be GREEN-equivalent after orphan deletion (XFAIL, not FAILED). "
+            f"exit={result.returncode}\npytest output:\n{stdout}"
+        )
+
+        # Negative assertion — zero XPASS. XPASS is the BEFORE-deletion
+        # signature; finding any XPASS means at least one orphan module is
+        # still importable.
         xpass_count = stdout.count("XPASS")
         assert xpass_count == 0, (
             "Expected zero XPASS results after orphan-module deletion, found "
-            f"{xpass_count}.\n"
-            "This means port_aggregator and/or port_selector are still "
-            "importable — the deletion in Cycle B is incomplete.\n"
+            f"{xpass_count}. XPASS here means port_aggregator and/or "
+            "port_selector are still importable — the deletion in Cycle B is "
+            f"incomplete.\npytest output:\n{stdout}"
+        )
+
+        # Negative assertion — zero FAILED short-summary markers. strict=False
+        # xfail must never surface as FAILED for these tripwires; a FAILED
+        # marker means something orthogonal broke.
+        #
+        # Distinguish the all-caps short-summary marker "FAILED " from the
+        # lower-case "failed" inside the count line ("N failed, M xfailed").
+        # The trailing space matters: "FAILED " on a short-summary line is
+        # followed by the test id; the word "failed" in the count summary
+        # is preceded by a digit.
+        failed_marker_count = stdout.count("FAILED ")
+        assert failed_marker_count == 0, (
+            "Expected zero FAILED short-summary markers from the xfail "
+            f"tripwires (strict=False); found {failed_marker_count}. "
+            f"Something orthogonal to the deletion is broken.\n"
             f"pytest output:\n{stdout}"
         )
 
-        # Positive cross-check: both targeted tests pass under the post-deletion
-        # contract. pytest's `-rA` short-summary line for PASSED tests reads
-        # "PASSED tests/execution/test_port_dispatch_removal.py::...".
-        assert (
-            "test_port_aggregator_import_fails_after_removal" in stdout
-            and "PASSED" in stdout
-        ), (
-            "test_port_aggregator_import_fails_after_removal must record as "
-            "PASSED after orphan-module deletion (xfail catches ImportError "
-            "from the now-deleted module).\npytest output:\n" + stdout
+        # Positive assertion — both targeted tests record as XFAIL. The `-rA`
+        # short-summary line for an xfail outcome reads:
+        #   `XFAIL tests/execution/test_port_dispatch_removal.py::...`
+        # We verify each test id appears AND an XFAIL marker is present.
+        assert "XFAIL" in stdout, (
+            "Expected at least one XFAIL outcome from the xfail tripwires "
+            "after orphan-module deletion (the xfail wrapper catches the "
+            f"ImportError from the now-deleted module).\npytest output:\n{stdout}"
         )
-        assert (
-            "test_port_selector_import_fails_after_removal" in stdout
-            and "PASSED" in stdout
-        ), (
-            "test_port_selector_import_fails_after_removal must record as "
-            "PASSED after orphan-module deletion.\npytest output:\n" + stdout
+        assert "test_port_aggregator_import_fails_after_removal" in stdout, (
+            "test_port_aggregator_import_fails_after_removal must appear in "
+            f"the pytest output (target test id missing).\npytest output:\n{stdout}"
+        )
+        assert "test_port_selector_import_fails_after_removal" in stdout, (
+            "test_port_selector_import_fails_after_removal must appear in "
+            f"the pytest output (target test id missing).\npytest output:\n{stdout}"
+        )
+
+        # Sanity: at least 2 XFAIL outcomes (one per tripwire). Belt-and-braces
+        # against a future refactor adding another xfail to the same module.
+        xfail_count = stdout.count("XFAIL")
+        assert xfail_count >= 2, (
+            f"Expected at least 2 XFAIL outcomes (one per tripwire); found "
+            f"{xfail_count}.\npytest output:\n{stdout}"
         )
 
 

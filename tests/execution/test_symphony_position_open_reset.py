@@ -331,13 +331,17 @@ class TestRebalanceDoesNotResetLivePosition:
         # the BLOCK-1 defect. After the detection is removed the engine never
         # reads position_identity, so this seed is harmless. Without it the
         # symphony looks like a first observation and the test has no teeth.
+        # Use database.compute_composition_hash (database.py:1851) — the
+        # canonical composition-hash for the port_state table. The previous
+        # port_selector.composition_hash was a byte-for-byte duplicate algorithm
+        # (sha256 of comma-joined sorted ids, hex[:16]) that lived inside a
+        # now-deleted orphan module (S3-AUDIT-005). The fallback sentinel is
+        # retained in case the helper is unavailable for any reason — it still
+        # differs from any {SPY,QQQ} hash so the test keeps its teeth.
         try:
-            from port_selector import composition_hash as _ch
+            from database import compute_composition_hash as _ch
             mid_position_state["position_identity"] = _ch(["SPY"])
         except Exception:  # pragma: no cover
-            # If the hash helper cannot be imported, fall back to a sentinel
-            # that still differs from any {SPY,QQQ} hash — the test still
-            # exercises a mid-position identity mismatch.
             mid_position_state["position_identity"] = "prior-spy-only-identity"
 
         bot_state = {
