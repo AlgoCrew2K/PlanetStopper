@@ -14,11 +14,9 @@ import tempfile
 import pytest
 
 
-# These imports WILL FAIL until implemented (RED intent)
-from engine.exit_authority import (  # noqa: F401
-    build_restart_notice_context,
-    write_exit_authority_to_env,
-)
+# build_restart_notice_context is a KEEP-DISPLAY helper (AX-2 option b).
+# write_exit_authority_to_env was removed in SITE-C1 — import dropped here.
+from engine.exit_authority import build_restart_notice_context  # noqa: F401
 
 
 @pytest.fixture(scope="module")
