@@ -8,6 +8,7 @@ import math_engine
 import synthetic_history
 import glob
 import json
+from advisors import overfitting_conscience as _oc
 
 
 def _replay_grace_minutes() -> int:
@@ -1796,6 +1797,28 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             gamma=_gamma,
             overfitting_verdict=_overfitting_verdict,
         )
+
+        # Sprint 3: Overfitting Conscience — post-save observation.
+        # Reads ledger rows via advisor_ro_query (wall integrity contract);
+        # persists the observation via insert_advisor_observation.
+        _oc_ledger_rows = database.advisor_ro_query(
+            "SELECT evidence_source, n_configs_searched, touched_frozen_eval, "
+            "spec_bundle_id, facet_name FROM researcher_dof_ledger "
+            "WHERE spec_bundle_id = ?",
+            (stored_hash,),
+        )
+        _oc_run = {
+            "id": 0,  # save_autotune_run returns None; id retrieved from latest row
+            "symphony_id": normalized_name,
+            "run_timestamp": run_timestamp,
+            "spec_bundle_id": stored_hash,
+            "n_effective": n_eff,
+            "s_count": d_spec,
+        }
+        _latest_run = database.get_latest_autotune_run(normalized_name)
+        if _latest_run is not None:
+            _oc_run["id"] = _latest_run.get("id", 0)
+        _oc.run_overfitting_conscience(_oc_run, _oc_ledger_rows)
 
     print("  -> Autotuner finished all symphonies.")
     return optimization_results
