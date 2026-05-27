@@ -1117,6 +1117,23 @@ def main():
                     NEIGHBOR_K,
                     seed=math_engine.derive_cycle_mc_seed(current_et.strftime("%Y%m%d_%H%M")),
                 )
+
+                # Regime-match-quality guard (vision-audit Critical Rec #2): assess
+                # whether today's (SPY return, vol) query point is unprecedented vs the
+                # candidate pool. When is_unprecedented=True the K nearest historical days
+                # are all far outliers — the MC bootstrap is unrepresentative and must not
+                # veto the trailing stop. Suppression reuses the existing MC-unavailable
+                # fail-safe: override prob_beating=None so compute_exit_confirmation treats
+                # MC as absent and the protective stop fires on its own ticks-below-stop
+                # condition alone. mc_available is also set False so the arm/disarm/TP
+                # branches are skipped (same as the insufficient-history path).
+                _regime_assessment = math_engine.compute_regime_match_quality(
+                    historical_data,
+                    spy_today,
+                )
+                if _regime_assessment.is_unprecedented:
+                    prob_beating = None
+
                 symphony_vol = bot_state[symphony_id]["symphony_vol"]
 
                 acc_VWAP_BLEED_ARM_PCT = math_engine.compute_vwap_bleed_arm_threshold(
@@ -1133,6 +1150,8 @@ def main():
                 # MC veto of the trailing stop (compute_exit_confirmation
                 # handles None). The protective stop still fires on its
                 # ticks-below-stop condition alone.
+                # The regime-match-quality guard above may also override prob_beating
+                # to None (unprecedented regime); both paths converge here.
                 mc_available = prob_beating is not None
 
                 if mc_available and acc_TAKE_PROFIT_MC_PCT <= prob_beating < acc_TRIGGER_THRESHOLD_PCT:
@@ -1423,6 +1442,8 @@ def main():
                     cvar_5pct_long=None,
                     cvar_n_tail_long=None,
                     mode="live",
+                    mc_regime_match_mean_dist2=_regime_assessment.mean_sq_mahalanobis,
+                    mc_regime_match_suppressed=1 if _regime_assessment.is_unprecedented else 0,
                 )
 
                 if (
