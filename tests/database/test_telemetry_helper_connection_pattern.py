@@ -102,15 +102,29 @@ def test_write_telemetry_row_uses_timeout_10():
         "write_telemetry_row not found — implement it first"
     )
     source = inspect.getsource(db.write_telemetry_row)
-    # CC-002: sqlite3.connect lives in the private helper; check both
+    # CC-002: sqlite3.connect lives in the private helper; check both.
+    # Post fix-perf-fixture: _write_telemetry_row_unsafe was refactored to call
+    # get_connection() (which routes :memory: through a shared-cache URI). The
+    # timeout=10.0 contract is preserved via composition — check get_connection
+    # source too so the indirection doesn't fail this contract test.
     helper_source = (
         inspect.getsource(db._write_telemetry_row_unsafe)
         if hasattr(db, "_write_telemetry_row_unsafe")
         else ""
     )
-    assert "timeout=10.0" in source or "timeout=10.0" in helper_source, (
-        "write_telemetry_row (or its internal helper) must use timeout=10.0 "
-        "in sqlite3.connect, matching the record_shadow_observation precedent."
+    get_connection_source = (
+        inspect.getsource(db.get_connection)
+        if hasattr(db, "get_connection")
+        else ""
+    )
+    assert (
+        "timeout=10.0" in source
+        or "timeout=10.0" in helper_source
+        or "timeout=10.0" in get_connection_source
+    ), (
+        "write_telemetry_row (or its internal helper, or the shared get_connection "
+        "factory it now delegates to) must use timeout=10.0 in sqlite3.connect, "
+        "matching the record_shadow_observation precedent."
     )
 
 
