@@ -104,8 +104,8 @@
       "_note": "Cross-bundle ledger rows must not pollute this run's S count"
     },
 
-    "ratio_boundary_exactly_0_1_is_breach": {
-      "_description": "Boundary: S/N_optuna = 0.1 exactly (50/500). The threshold is 'S/N_optuna > 0.1', so 0.1 exactly is NOT a breach — this asserts the correct boundary. S=50, N_optuna=500, ratio=0.1 exactly is WATCH (or CLEAR if no S), not BREACH.",
+    "ratio_boundary_exactly_0_1_is_watch": {
+      "_description": "Boundary: S/N_optuna = 0.1 exactly (50/500). The threshold is 'S/N_optuna > 0.1', so 0.1 exactly is NOT a breach — verdict is WATCH (Indicator 1: S>0) not BREACH (Indicator 2 requires strict >).",
       "_boundary_clarification": "Indicator 2 BREACH condition is STRICT: ratio > 0.1, so 0.1 exactly = NOT a breach. If S>0, verdict is WATCH (Indicator 1 fires), not BREACH.",
       "autotune_run": {
         "id": 5,

@@ -122,7 +122,7 @@ def different_bundle_run(conscience_fixture) -> tuple[dict, list]:
 @pytest.fixture
 def boundary_run(conscience_fixture) -> tuple[dict, list]:
     """S/N_optuna = 0.1 exactly — WATCH not BREACH (strict > threshold)."""
-    s = conscience_fixture["scenarios"]["ratio_boundary_exactly_0_1_is_breach"]
+    s = conscience_fixture["scenarios"]["ratio_boundary_exactly_0_1_is_watch"]
     return s["autotune_run"], s["ledger_rows"]
 
 
