@@ -204,6 +204,7 @@ class TestComputePortfolioCvarInvokedPerCycle:
             cvar_pct=None,
             breach=False,
             tail_obs_count=0,
+            stderr=None,
             insufficient_reason="test-stub: insufficient history",
         )
 
@@ -237,6 +238,7 @@ class TestComputePortfolioCvarInvokedPerCycle:
             cvar_pct=None,
             breach=False,
             tail_obs_count=0,
+            stderr=None,
             insufficient_reason="stub",
         )
 
@@ -322,10 +324,15 @@ class TestRecordCvarDiagnosticReceivesComputedValues:
         # computes from real history — that is pinned in tests/engine/).
         stub_cvar_pct = -2.5  # any non-None value the stub returns
         stub_tail_count = 8   # any non-zero count
+        # stderr is any positive finite float — the value is not asserted
+        # here; only the delegation of cvar_pct + tail count is pinned.
+        # Per the CVaRAssessment fail-safe pairing, a finite cvar_pct REQUIRES
+        # a finite stderr (else __post_init__ raises).
         stub_stub = math_engine.CVaRAssessment(
             cvar_pct=stub_cvar_pct,
             breach=False,
             tail_obs_count=stub_tail_count,
+            stderr=0.001,
             insufficient_reason=None,
         )
 
@@ -377,6 +384,7 @@ class TestRecordCvarDiagnosticReceivesComputedValues:
             cvar_pct=None,
             breach=False,
             tail_obs_count=0,
+            stderr=None,
             insufficient_reason="insufficient eligible history",
         )
 
@@ -414,7 +422,7 @@ class TestRecordCvarDiagnosticReceivesComputedValues:
         """
         env = patched_environment
         insufficient = math_engine.CVaRAssessment(
-            cvar_pct=None, breach=False, tail_obs_count=0, insufficient_reason="x",
+            cvar_pct=None, breach=False, tail_obs_count=0, stderr=None, insufficient_reason="x",
         )
         with patch.object(
             alpha_bot_execution.math_engine,

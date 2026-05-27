@@ -203,7 +203,7 @@ class TestSecondWindowFlagOff:
         self, patched_env_factory, flag_value
     ):
         insufficient = math_engine.CVaRAssessment(
-            cvar_pct=None, breach=False, tail_obs_count=0, insufficient_reason="x",
+            cvar_pct=None, breach=False, tail_obs_count=0, stderr=None, insufficient_reason="x",
         )
         with patched_env_factory(flag_value) as env, patch.object(
             alpha_bot_execution.math_engine,
@@ -245,11 +245,14 @@ class TestSecondWindowFlagOn:
     def test_long_window_columns_populated_when_flag_on(self, patched_env_factory):
         # Two distinct CVaRAssessment values so the test can prove
         # short ≠ long (long-window must NOT be a copy of short-window).
+        # stderr values are arbitrary positive finites — not asserted here;
+        # the pairing rule (finite cvar_pct REQUIRES finite stderr) is what
+        # the constructor enforces.
         short = math_engine.CVaRAssessment(
-            cvar_pct=-1.5, breach=False, tail_obs_count=8, insufficient_reason=None,
+            cvar_pct=-1.5, breach=False, tail_obs_count=8, stderr=0.001, insufficient_reason=None,
         )
         long_ = math_engine.CVaRAssessment(
-            cvar_pct=-3.25, breach=False, tail_obs_count=12, insufficient_reason=None,
+            cvar_pct=-3.25, breach=False, tail_obs_count=12, stderr=0.002, insufficient_reason=None,
         )
         # Return distinct values by call count.
         side_effects = [short, long_, short, long_, short, long_]  # generous
@@ -310,10 +313,10 @@ class TestNoSignedDivergenceEverComputed:
 
     def test_record_cvar_diagnostic_kwargs_never_carry_a_divergence_key(self, patched_env_factory):
         short = math_engine.CVaRAssessment(
-            cvar_pct=-1.0, breach=False, tail_obs_count=5, insufficient_reason=None,
+            cvar_pct=-1.0, breach=False, tail_obs_count=5, stderr=0.001, insufficient_reason=None,
         )
         long_ = math_engine.CVaRAssessment(
-            cvar_pct=-2.5, breach=False, tail_obs_count=7, insufficient_reason=None,
+            cvar_pct=-2.5, breach=False, tail_obs_count=7, stderr=0.002, insufficient_reason=None,
         )
         with patched_env_factory("1") as env, patch.object(
             alpha_bot_execution.math_engine,
