@@ -30,18 +30,6 @@ def _replay_grace_minutes() -> int:
     import alpha_bot_execution
     return alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES
 
-# --- PORT-LEVEL REPLAY BLIND SPOT (AC-8 / plan D-C3b) ---
-# The autotuner replay (run_simulation / _collect_sim_returns /
-# replay_exit_sequence) simulates ONLY the per-symphony altitude — it iterates
-# per sym_id and replays each symphony's exit path in isolation. There is no
-# port-level altitude replay: no port aggregation, no port-level exit. So
-# port-mode autotuning results are NOT replay-validated — the objective the
-# optimizer maximizes in port mode does not reflect a port-level exit
-# simulation. Port-level exiting is currently dormant (the standing config runs
-# per_symphony); a full port-level replay simulation is a separate, larger
-# feature. warn_port_mode_replay_blind_spot() makes this gap visible so
-# port-mode tuning cannot be silently trusted.
-
 # Required keys for a complete Optuna best_params payload.
 # MUST be kept in sync with the suggest_* calls in the objective() closure
 # below. If any of these keys is missing from study.best_params after
@@ -214,74 +202,9 @@ assert abs(TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO - 1.0) < 1e-9, (
     "TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO must equal 1.0"
 )
 
-# Amendment F2: Port-mode uses a 50/20/30 split (wider frozen-eval fold).
-# Rationale: port-level studies aggregate multiple symphonies, so there is more
-# signal per day; holding 30% for frozen-eval gives a more stable OOS estimate.
-# Compare: per-symphony TRAIN_RATIO=0.60, FROZEN_EVAL_RATIO=0.20.
-# At 125 trading days: PORT_FROZEN = 37 days >= 25-day floor (AC-P2.11.4).
-PORT_TRAIN_RATIO = 0.50
-PORT_VALIDATION_RATIO = 0.20
-PORT_FROZEN_EVAL_RATIO = 0.30
-assert abs(PORT_TRAIN_RATIO + PORT_VALIDATION_RATIO + PORT_FROZEN_EVAL_RATIO - 1.0) < 1e-9, (
-    "PORT_TRAIN_RATIO + PORT_VALIDATION_RATIO + PORT_FROZEN_EVAL_RATIO must equal 1.0"
-)
-
-# Amendment F4: Search-space parameter classification.
-# MODE_SPECIFIC: re-tuned per account in port-mode (account-level sensitivity).
-# MODE_INVARIANT: shared single study, mode-blind — same value across all accounts.
-# VWAP_BREAK_CONFIRM_TICKS is a math_engine.py constant and must NOT appear here.
-MODE_SPECIFIC_PARAMS = frozenset({
-    "PARABOLIC_VELOCITY_THRESHOLD",
-    "VWAP_CROSS_HWM_PCT",
-})
-MODE_INVARIANT_PARAMS = frozenset({
-    "TAKE_PROFIT_MC_PCT",
-    "VWAP_BLEED_MULTIPLIER",
-    "VWAP_BLEED_TICKS",
-    "MAX_PARABOLIC_SQUEEZE",
-})
-
-
-def build_port_study_name(timestamp: str, account_id: str) -> str:
-    """Return the port-mode study name: {timestamp}__{account_id}__port (N1)."""
-    return f"{timestamp}__{account_id}__port"
-
-
 def build_symphony_study_name(timestamp: str, symphony_id: str) -> str:
     """Return the per-symphony study name: {timestamp}__{symphony_id} (N1/O3)."""
     return f"{timestamp}__{symphony_id}"
-
-
-def get_port_mode_search_space() -> dict:
-    """Return the port-mode-specific search space bounds (Amendment F4).
-
-    Only MODE_SPECIFIC params are included; MODE_INVARIANT params come from
-    the shared per-symphony study and must not be re-tuned per account.
-    Returns a dict of param_name -> (low, high, step) for suggest_float/int calls.
-    """
-    # Port-mode tuning is not replay-validated — surface the blind spot
-    # whenever the port-mode search space is requested (AC-8 / plan D-C3b).
-    warn_port_mode_replay_blind_spot()
-    return {
-        "PARABOLIC_VELOCITY_THRESHOLD": (_SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX, None),
-        "VWAP_CROSS_HWM_PCT": (_SS_VWAP_CROSS_HWM_V1_MIN, _SS_VWAP_CROSS_HWM_V1_MAX, None),
-    }
-
-
-def validate_port_mode_params_available(account_id: str) -> dict:
-    """Check whether a port-level autotune_run exists for account_id (AC-P2.11.5).
-
-    Returns {"available": bool, "fail_stop": bool}.
-    fail_stop=True when math_mode=port_level is requested but no port-level run
-    exists — callers must raise + log ERROR (not fall back to per_symphony).
-    """
-    run = database.get_latest_autotune_run(
-        symphony_id="__port__",
-        account_id=account_id,
-        math_mode="port_level",
-    )
-    available = run is not None
-    return {"available": available, "fail_stop": not available}
 
 
 def compute_sortino_ratio(returns: list, target: float = SORTINO_TARGET_RETURN) -> float:
@@ -628,23 +551,6 @@ def calculate_historical_deviation(current_date_str):
 
     print(f"  -> Historical Execution Deviation Penalties: {deviation_dict}")
     return deviation_dict
-
-def warn_port_mode_replay_blind_spot():
-    """Surface the per-symphony-only replay limitation for port-mode autotuning.
-
-    The autotuner replay validates only the per-symphony altitude; the
-    port-level exit altitude is NOT replay-validated (plan D-C3b). The
-    port-mode autotuning path calls this guard so port-mode results cannot be
-    silently trusted. Pure and idempotent — it only prints a warning, never
-    mutates state or raises, so it is safe to call on every port-mode run.
-    """
-    print(
-        "  -> WARNING: port-mode autotuning is NOT replay-validated. The "
-        "autotuner replay simulates only the per-symphony altitude; the "
-        "port-level exit altitude has no replay simulation. Treat port-mode "
-        "tuning results as un-validated for the port-level exit path."
-    )
-
 
 def _replay_exit_tick(state, tick, tick_idx, n_ticks, p, grace_minutes):
     """Run ONE replay tick of the production exit path; mutate `state` in place.
