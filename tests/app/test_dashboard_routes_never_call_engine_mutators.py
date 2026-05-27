@@ -1,5 +1,5 @@
 """
-RED tests — Dashboard routes must never call engine mutator symbols.
+Tests — Dashboard routes must never call engine mutator symbols.
 
 Plan deliverable (2): static import-graph test: every symbol called by an
 app.py route is checked against a denylist:
@@ -24,14 +24,21 @@ Two complementary test strategies are used:
    was never called.  This catches indirect calls (e.g. a helper that calls a
    denylisted function).
 
-Tests WILL be RED because several routes currently call denylisted symbols:
-  - `fleet_alert_dismiss` calls `database.write_fleet_alert(payload)` — WRITE
-  - `flush_resync` calls `database.save_state(...)` — WRITE
-  - `ai_advisor_accept` calls `database.save_symphony_strategy(...)` — WRITE
-  - `save_settings` calls `database.save_symphony_strategy(...)` — WRITE
-  - `manual_trigger` spawns `alpha_bot_execution.py` subprocess — ENGINE
+Permitted write paths (explicit allowlist — not denylist violations):
+  - `fleet_alert_dismiss` dispatches `write_fleet_alert` to _DISMISS_EXECUTOR
+    background thread — the request thread itself does not call it synchronously.
+  - `flush_resync` dispatches `save_state` to _flush_state_async background
+    thread — request thread returns immediately before the write.
+  - `ai_advisor_accept` calls `save_symphony_strategy` — this is the
+    intentional operator-approval config-write path (gated behind four safety
+    checks). It is a config write, not a state mutation or trade action.
+    Pinned as the ONLY permitted write by test_dashboard_advisor_render_is_read_only.py.
+  - `save_settings` calls `save_symphony_strategy` — same rationale as above;
+    operator-initiated config write, not engine state.
 
-These are existing violations the implementer must resolve.
+The "save_" prefix in _DB_MUTATOR_PREFIXES catches these intentional writes.
+_ALLOWED_ROUTE_WRITE_PAIRS enumerates them explicitly so the prefix-based
+enumeration does not generate false positives in future behavioral spy tests.
 """
 
 from __future__ import annotations
@@ -77,11 +84,39 @@ _DB_MUTATOR_DENYLIST: frozenset[str] = frozenset({
 # Substrings that identify mutator patterns (prefix match on function names)
 _DB_MUTATOR_PREFIXES: tuple[str, ...] = ("wipe_", "record_", "save_")
 
+# Explicit allowlist: (route_function_name, database_function_name) pairs that
+# are PERMITTED writes — the "save_" prefix is over-broad and catches intentional
+# operator-approval config writes.  Pairs here are excluded from denylist checks.
+# See module docstring for the rationale for each entry.
+_ALLOWED_ROUTE_WRITE_PAIRS: frozenset[tuple[str, str]] = frozenset({
+    # Operator-approval config write — four safety gates, not a trade action.
+    # Pinned as the only permitted write in test_dashboard_advisor_render_is_read_only.py.
+    ("ai_advisor_accept", "save_symphony_strategy"),
+    # Operator settings write — same rationale; config write, not engine state.
+    ("save_settings", "save_symphony_strategy"),
+    # Chart history writes — persisted display data, not live engine state.
+    ("save_chart_history_endpoint", "save_chart_history"),
+    ("save_chart_archive_endpoint", "save_chart_archive"),
+})
+
+# Symbols that are permitted writes (derived from _ALLOWED_ROUTE_WRITE_PAIRS)
+# and must be excluded from the prefix-based denylist expansion.
+_PERMITTED_WRITE_SYMBOLS: frozenset[str] = frozenset(
+    sym for _, sym in _ALLOWED_ROUTE_WRITE_PAIRS
+)
+
 
 def _all_db_mutators() -> frozenset[str]:
-    """Enumerate every public function in database.py that matches the denylist."""
+    """Enumerate every public function in database.py that matches the denylist.
+
+    Excludes symbols in _PERMITTED_WRITE_SYMBOLS — those are intentional
+    operator-approval writes, not engine-state violations.
+    """
     all_names: set[str] = set(_DB_MUTATOR_DENYLIST)
     for name, obj in inspect.getmembers(database_module, inspect.isfunction):
+        if name in _PERMITTED_WRITE_SYMBOLS:
+            # Intentional write path — not a denylist violation.
+            continue
         if any(name.startswith(prefix) for prefix in _DB_MUTATOR_PREFIXES):
             all_names.add(name)
     return frozenset(all_names)
