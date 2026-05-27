@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Council Attack Rubric — EUT+CVaR Exit-Core Migration
 
 **Author:** `critic` (quant-code-reviewer) — adversarial gate, decision-science-council

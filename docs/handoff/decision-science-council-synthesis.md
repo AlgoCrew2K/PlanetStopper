@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Decision-Science Council — Synthesis
 
 **Owner:** risk-architect (risk-engine-specialist), council coordinator

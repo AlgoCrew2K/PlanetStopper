@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Behavior Audit — Final Verification — 2026-05-20
 
 **Branch tip audited:** 4a8e1e719cde4202d9635d048351a2d5f4a7afac
