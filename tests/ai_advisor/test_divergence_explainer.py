@@ -945,6 +945,60 @@ def test_divergence_explainer_module_references_advisor_ro_query():
     )
 
 
+def test_run_divergence_explainer_actually_calls_advisor_ro_query_when_flag_on(
+    monkeypatch, flag_on_both_windows
+):
+    """Wall integrity — call-site test: advisor_ro_query must be CALLED at runtime.
+
+    Source-text tests verify the reference is present (static); this test
+    verifies the function is actually invoked on the §B-on path (runtime).
+    A dead reference (imported but never called, or called only in a branch
+    that never executes) passes the source-text test but violates the wall.
+
+    The producer is expected to call advisor_ro_query to read the
+    cvar_diagnostics row for the symphony — that is the approved DB read path.
+    We patch database.advisor_ro_query and assert it is called at least once
+    when second_window_enabled=True.
+    """
+    mod = _import_divex()
+    monkeypatch.setenv("SECOND_WINDOW_CVAR_ENABLED", "1")
+
+    ro_query_calls = []
+
+    def capture_ro_query(sql, params=()):
+        ro_query_calls.append({"sql": sql, "params": params})
+        # Return a list with one mock row shaped like a cvar_diagnostics row.
+        # Using a plain dict here; the module must tolerate dict-shaped rows
+        # (same normalisation contract as overfitting_conscience).
+        return [
+            {
+                "cycle_id": "cycle-mock",
+                "symphony_id": flag_on_both_windows["autotune_run"]["symphony_id"],
+                "cvar_5pct": -2.1,
+                "cvar_5pct_stderr": 0.3,
+                "cvar_n_tail": 5,
+                "cvar_5pct_long": -1.8,
+                "cvar_n_tail_long": 7,
+                "ts_utc": "2026-05-27T16:01:00Z",
+            }
+        ]
+
+    with (
+        patch("database.advisor_ro_query", side_effect=capture_ro_query),
+        patch("database.insert_advisor_observation", return_value=1),
+    ):
+        mod.run_divergence_explainer(
+            flag_on_both_windows["autotune_run"],
+            None,  # pass None so the module must fetch the row via advisor_ro_query
+        )
+
+    assert len(ro_query_calls) >= 1, (
+        "run_divergence_explainer must call database.advisor_ro_query at least once "
+        "when §B is enabled — a dead reference passes the source-text test but "
+        "violates the wall integrity contract. Got 0 calls."
+    )
+
+
 # ===========================================================================
 # Test group 10 — Performance: producer execution under 100ms.
 # ===========================================================================
