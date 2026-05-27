@@ -446,14 +446,23 @@ class TestAdvisorObservationsApiRoute:
 
 class TestSymphonyIdFilter:
     """GET /api/advisor-observations?symphony_id=<id> must filter observations
-    to those whose subject_id matches the given symphony_id."""
+    via the single-query symphony accessor backed by the new
+    advisor_observations.symphony_id column (migration 025, S3-AUDIT-004).
+
+    Prior to the audit-fix cycle, this test class asserted that the route
+    used `get_advisor_observations_for_subject` with a 3x fan-out across
+    subject_types — that path was structurally broken because the user-supplied
+    symphony_id never matched producer-persisted subject_ids (numeric PKs and
+    bundle hashes).  The new contract: route calls
+    `get_advisor_observations_for_symphony(symphony_id)` exactly once.
+    """
 
     def test_symphony_filter_returns_only_matching_rows(self, flask_client):
-        """When ?symphony_id=sym-A is given, only rows with subject_id='sym-A'
-        are returned.  The unfiltered set contains rows for both sym-A and sym-B."""
-        rows_a = [_make_observation(obs_id=1, subject_id="sym-A")]
-        with (
-            patch("database.get_advisor_observations_for_subject", return_value=rows_a) as mock_fn,
+        """When ?symphony_id=sym-A is given, the route returns every row
+        emitted by the new single-query accessor for that symphony."""
+        rows_a = [_make_observation(obs_id=1, subject_id="run-7")]
+        with patch(
+            "database.get_advisor_observations_for_symphony", return_value=rows_a
         ):
             resp = flask_client.get("/api/advisor-observations?symphony_id=sym-A")
 
@@ -463,32 +472,44 @@ class TestSymphonyIdFilter:
         )
         data = resp.get_json()
         assert isinstance(data, list), "filtered response must be a JSON array"
-        # Every returned row must match the requested symphony_id
-        for row in data:
-            assert row["subject_id"] == "sym-A", (
-                f"Symphony filter ?symphony_id=sym-A returned row with subject_id="
-                f"{row['subject_id']!r} — filter is not applied."
-            )
+        assert len(data) == len(rows_a), (
+            f"Route must surface every row returned by the single-query accessor; "
+            f"expected {len(rows_a)} rows, got {len(data)}."
+        )
 
     def test_symphony_filter_calls_correct_accessor(self, flask_client):
-        """?symphony_id= must cause the route to call
-        database.get_advisor_observations_for_subject (not the role accessor),
-        so the DB query is properly scoped."""
+        """?symphony_id= must cause the route to call the new single-query
+        accessor `get_advisor_observations_for_symphony` — not the legacy
+        subject-type fan-out.  S3-AUDIT-004 + S3-AUDIT-010.
+        """
         with (
-            patch("database.get_advisor_observations_for_subject", return_value=[]) as mock_subject,
-            patch("database.get_advisor_observations_for_role", return_value=[]) as mock_role,
+            patch(
+                "database.get_advisor_observations_for_symphony", return_value=[]
+            ) as mock_symphony,
+            patch(
+                "database.get_advisor_observations_for_subject", return_value=[]
+            ) as mock_subject,
+            patch(
+                "database.get_advisor_observations_for_role", return_value=[]
+            ) as mock_role,
         ):
             flask_client.get("/api/advisor-observations?symphony_id=sym-B")
 
-        mock_subject.assert_called(), (
+        assert mock_symphony.called, (
             "GET /api/advisor-observations?symphony_id=sym-B must call "
-            "database.get_advisor_observations_for_subject — not the role accessor."
+            "database.get_advisor_observations_for_symphony (S3-AUDIT-004 fix)."
+        )
+        assert not mock_subject.called, (
+            "Route must NOT call the legacy get_advisor_observations_for_subject "
+            "fan-out for symphony filtering (S3-AUDIT-010: single-query path)."
         )
 
     def test_symphony_filter_empty_result_returns_empty_list(self, flask_client):
         """?symphony_id= with no matching rows must return [] (empty list),
         not 404 or a stack trace."""
-        with patch("database.get_advisor_observations_for_subject", return_value=[]):
+        with patch(
+            "database.get_advisor_observations_for_symphony", return_value=[]
+        ):
             resp = flask_client.get("/api/advisor-observations?symphony_id=nonexistent-sym")
         assert resp.status_code == 200, (
             "Filtered request with no matching rows must return 200 + empty list, not 404."

@@ -62,8 +62,14 @@ def _load_fixture() -> dict:
 
 
 def _make_raw_row(overrides: dict) -> tuple:
-    """Build a 14-element tuple matching _autotune_run_row_to_dict's SELECT order."""
+    """Build a 15-element tuple matching _autotune_run_row_to_dict's SELECT order.
+
+    Position 0 is `id` (added by the S3-AUDIT-001 fix so the OC subject_id can
+    propagate the autotune_runs PK).  These coercion tests assert numeric-field
+    coercion only; any positive int suffices for id.
+    """
     defaults = {
+        "id": 1,
         "run_timestamp": "2026-05-16T16:00:01",
         "symphony_id": "sym-alpha",
         "oos_alpha": 1.5,
@@ -81,6 +87,7 @@ def _make_raw_row(overrides: dict) -> tuple:
     }
     defaults.update(overrides)
     return (
+        defaults["id"],
         defaults["run_timestamp"],
         defaults["symphony_id"],
         defaults["oos_alpha"],

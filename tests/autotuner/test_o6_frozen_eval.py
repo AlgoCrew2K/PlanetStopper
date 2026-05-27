@@ -157,6 +157,9 @@ def _autotuner_patches(
     def capturing_save(**kwargs):
         if save_autotune_run_calls is not None:
             save_autotune_run_calls.append(kwargs)
+        # S3-AUDIT-001 fix: save_autotune_run now returns cursor.lastrowid;
+        # the autotuner uses it as a SQL parameter in the prior_runs SELECT.
+        return 1
 
     with (
         patch("autotuner.optuna.create_study", return_value=fake_study),
