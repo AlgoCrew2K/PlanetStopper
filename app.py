@@ -651,10 +651,8 @@ def get_api_state_dict() -> dict:
     Additive fields (AC-P2.12.2): port_state, exit_authority, daemon_started_at.
     No existing field is renamed or removed.
     """
-    from engine.exit_authority import get_exit_authority
-
     bot_state = database.load_state()
-    exit_authority = get_exit_authority()
+    exit_authority = os.getenv("EXIT_AUTHORITY", "per_symphony")
 
     # Read lock status directly — no dedicated helper exists for read-only lock query
     _ro = None
