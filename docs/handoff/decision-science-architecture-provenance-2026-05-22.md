@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Decision-Science Architecture — Provenance & Institutional-Adoption Review
 
 **Date:** 2026-05-22

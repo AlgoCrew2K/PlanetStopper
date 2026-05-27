@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 a0ce875
 
 ux-expert: APPROVED @ docs/handoff/cycle-2-fix-v4-REVIEW-DONE.md

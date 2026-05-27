@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Ground-Truth Reconciliation — Pass 4 (Final)
 **HEAD:** 80363b6  
 **Market state:** `closed_frozen` (frozen_at 16:00:01 ET 2026-05-20)  
