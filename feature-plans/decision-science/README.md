@@ -1,8 +1,40 @@
 # Decision-Science Roadmap — Feature-Plan Index
 
 **Owner (coordinator):** risk-architect (`risk-engine-specialist`), decision-science-scaffold team.
-**Status:** Scaffold — TDD-cycle-sized plans. **This folder ships PLANS only.** A separate downstream effort executes them under the project's Agent-Teams TDD discipline.
+**Status:** Scaffold plans — Phase-1 plans (016–024 migrations, H4 telemetry helper, M1 CRRA-EU objective, M2 CVaR diagnostic, n-effective accounting, NN1 spec-freeze, advisor frozen-eval wall, live-vs-replay safety boundary, replay-determinism anchor, shadow-logging, logging-redaction, dashboard-side-effect-ban, mc-sentinel blast radius, theory-bundle wiring) **EXECUTED** in Sprint 2 as Agent-Teams TDD cycles. Phase-1.5, Phase-2, and engine-audit plans remain scaffold-only pending Phase-1 GREEN + audit completion.
 **Branch:** `plan/finalist-a-scaffold` (forked from `origin/main` with the v3 evidence base cherry-picked at `413a806`).
+
+---
+
+## Sprint 2 — Phase-1 Delivery Summary (current to 4cf7be3)
+
+Phase 1 plans were executed as Agent-Teams TDD Quad cycles during Sprint 2. The table below maps plans to their merge SHAs. Plans not listed are either Phase-1.5 / Phase-2 (scaffold-only, pending preconditions) or engine-audit lanes (diagnosis-only, no code shipped).
+
+| Plan | Merge SHA | Notes |
+|------|-----------|-------|
+| `phase-1/016-spec-bundles` | `508a4a2` | `spec_bundles` + `spec_facets` tables |
+| `phase-1/019-fold-role-columns` | `1609364` | `fold_role` columns + COALESCE Advisor wall |
+| `phase-1/h4-telemetry-helper` | `8365479` | `write_telemetry_row` + `record_cvar_diagnostic` |
+| `phase-1/logging-redaction` | `d0dff05` | 5 print() redactions in `alpha_bot_execution.py` |
+| `phase-1/dashboard-side-effect-ban` | `79983c4` | Flask routes read-only; write paths removed |
+| `phase-1/mc-sentinel-blast-radius` | `3e0b83a` | Consumer enumeration tests |
+| `phase-1/017-advisor-observations` | `237e904` | Migration 017; closes Sprint 1 CC-001 CRITICAL |
+| `phase-1/018-researcher-dof-ledger` | `54ed6ff` | Migration 018 + insert/get/count accessors |
+| `phase-1/replay-determinism-anchor` | `f9394ac` | `_PARITY_DECISION_COLUMNS` + `read_cvar_diagnostic_for_cycle` |
+| `phase-1/live-vs-replay-safety-boundary` | `d2328ca` | `compute_portfolio_cvar` in math_engine + LIVE_EXECUTION gate hardening |
+| `phase-1/shadow-logging-pattern` | `185d71b` | `record_cvar_diagnostic` call site in `alpha_bot_execution.py` |
+| `phase-1/advisor-frozen-eval-wall` | `d11af6e` | `advisor_ro_query` SQL-wrap restructure + `query_wall_breach_tripwire` |
+| `phase-1/020-autotune-runs-eut` | `db9ed4f` | 9 EUT audit columns ALTER + H1 dual-write into `init_db` |
+| `phase-1/nn1-spec-freeze-discipline` | `e376264` | NN1 enforcement at autotuner entry; migration 022 |
+| `phase-1/n-effective-additive-accounting` | `8f9e14f` | `compute_n_effective` + `get_researcher_dof_ledger_for_run` + migration 023 |
+| `phase-1/m1-crra-eu-autotuner-objective` | `d5d7662` | CRRA-EU objective in `autotuner.py`; W-H4 floor; `compute_crra_eu_tstat` |
+| `phase-1/m2-cvar-diagnostic` | `304d907` | R-U estimator on kNN pool; H-2 stderr; S-3 four-part display; migration 021 |
+| `phase-1/spec-bundles-dof-ledger-integration` (theory-bundle wiring) | `8819867` | `get_or_create_phase1_theory_bundle_id`; migration 024; call-site wiring |
+| Audit fix CRRA-001 / NEFF-001 / ARCH-001 | `836e0ed` | U-transform in `_haircut_select`; `compute_n_effective` wired at both call sites |
+| Audit fix CC-NEW-001 / LATENT-001 | `37c39cc` | `_FLUSH_STATE_LOCK` serialization; log count fix |
+| Audit MEDIUM/LOW fix-pass | `4cf7be3` | TYPE-001/002, NAME-001/002, CVAR-001, ARCH-002, PROV-001; 3669/0/1xfail |
+
+**Phase-1.5, Phase-2, and engine-audit plans:** scaffold-only at branch tip `4cf7be3`. Phase-1.5 is deferred pending Phase-1 GREEN verification. Phase-2 is gated by four preconditions (synthesis §5.1). Engine-audit lanes are diagnosis-only — no code ships from them.
 
 ---
 
