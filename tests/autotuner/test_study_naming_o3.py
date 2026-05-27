@@ -94,7 +94,12 @@ def _autotuner_patches(captured_study_names: list, captured_load_if_exists: list
 
     import database
 
-    def fake_create_study(study_name, storage, load_if_exists, direction):
+    def fake_create_study(
+        study_name, storage, load_if_exists, direction, sampler=None, **kwargs
+    ):
+        # `sampler` kwarg added by fix-optuna1-6 (autotuner.py:1567 now passes
+        # explicit TPESampler(seed=...) per OPTUNA-1). Accept it + any future
+        # kwargs to keep this mock loose-coupled to the call signature.
         captured_study_names.append(study_name)
         captured_load_if_exists.append(load_if_exists)
         return fake_study
