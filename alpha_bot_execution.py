@@ -93,6 +93,10 @@ MAX_PARABOLIC_SQUEEZE = float(os.getenv("MAX_PARABOLIC_SQUEEZE", "0.50"))
 
 SIMULATION_PATHS = int(os.getenv("SIMULATION_PATHS", "5000"))
 NEIGHBOR_K = int(os.getenv("NEIGHBOR_K", "150"))
+# Long-window kNN neighbor count for the optional second CVaR window.
+# Wider regime pool = smoother estimate with less locality.
+# Gated on SECOND_WINDOW_CVAR_ENABLED env flag (default off).
+CVAR_LONG_NEIGHBOR_K = int(os.getenv("CVAR_LONG_NEIGHBOR_K", "300"))
 
 # --- FLEET CORRELATION CIRCUIT BREAKER (V3, AC-V3.1) ---
 # Flag when >50% of active symphonies fire the same reason within 3 minutes.
@@ -1408,20 +1412,45 @@ def main():
                     }
                 )
 
-                # M2: per-cycle CVaR diagnostic telemetry (Phase-1 — all cvar_* values are
-                # None sentinels; Phase-2 will populate them from forward-path simulation).
-                # Non-blocking: write_telemetry_row opens its own connection, swallows
-                # OperationalError in live mode (H4 helper; shadow-logging-pattern plan).
+                # M2: per-cycle CVaR diagnostic telemetry (Phase-1 kNN historical
+                # regime-match via math_engine.compute_portfolio_cvar).
+                # Non-blocking: database.record_cvar_diagnostic swallows OperationalError
+                # in live mode (H4 helper; shadow-logging-pattern plan).
                 # Unconditional — fires in both live and dry-run modes (telemetry is never
                 # gated on LIVE_EXECUTION; architecture constraint 4 analogue for telemetry).
+                # CVaR remains diagnostic-only: no trigger branch reads this write.
+                _cvar_short = math_engine.compute_portfolio_cvar(
+                    cycle_id=current_et.isoformat(),
+                    holdings=holdings,
+                    historical_data=historical_data,
+                    spy_today_return=spy_today,
+                )
+                # Optional second (wider-k) window: gated on SECOND_WINDOW_CVAR_ENABLED.
+                # When off: long-window columns stay None (Divergence Explainer NOT_APPLICABLE
+                # row remains the source of truth; advisors/divergence_explainer.py:99-109).
+                # When on: an independent compute with CVAR_LONG_NEIGHBOR_K produces the
+                # long-window estimate — never a copy of the short-window result.
+                # No signed divergence is ever computed (DECISIONS.md §DE-S3-005).
+                _cvar_5pct_long = None
+                _cvar_n_tail_long = None
+                if os.environ.get("SECOND_WINDOW_CVAR_ENABLED", "0") == "1":
+                    _cvar_long = math_engine.compute_portfolio_cvar(
+                        cycle_id=current_et.isoformat(),
+                        holdings=holdings,
+                        historical_data=historical_data,
+                        spy_today_return=spy_today,
+                        neighbor_k=CVAR_LONG_NEIGHBOR_K,
+                    )
+                    _cvar_5pct_long = _cvar_long.cvar_pct
+                    _cvar_n_tail_long = _cvar_long.tail_obs_count if _cvar_long.cvar_pct is not None else None
                 database.record_cvar_diagnostic(
                     cycle_id=current_et.isoformat(),
                     symphony_id=symphony_id,
-                    cvar_5pct=None,
+                    cvar_5pct=_cvar_short.cvar_pct,
                     cvar_5pct_stderr=None,
-                    cvar_n_tail=None,
-                    cvar_5pct_long=None,
-                    cvar_n_tail_long=None,
+                    cvar_n_tail=_cvar_short.tail_obs_count,
+                    cvar_5pct_long=_cvar_5pct_long,
+                    cvar_n_tail_long=_cvar_n_tail_long,
                     mode="live",
                 )
 
