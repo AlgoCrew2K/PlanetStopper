@@ -272,6 +272,54 @@ class TestM2WriteP99LatencyUnderBudget:
             f"(e.g., an N+1 query or missing index), not CI noise."
         )
 
+    def test_in_memory_benchmark_fixture_creates_cvar_diagnostics_table(self):
+        """
+        Structural RED for the fix-perf-fixture cycle.
+
+        Pin: the in-memory benchmark fixture (_run_benchmark with db_path=":memory:")
+        MUST set up the cvar_diagnostics schema in the SAME DB instance that
+        record_cvar_diagnostic later writes to. The pre-fix defect is that
+        sqlite3.connect(":memory:") returns a fresh, isolated DB per call, so
+        init_db()'s schema is discarded before the INSERT runs. The fix must
+        make a single in-memory DB shared across init + INSERT (e.g. via the
+        shared-cache URI form, a tmp-file substitute, or a connection cache).
+
+        Discriminating power:
+          - A no-op "fix" that swallows the OperationalError still trips this:
+            we assert a row was actually inserted, not merely that no exception
+            propagated.
+          - A fix that only patches init_db (without making the schema visible
+            to record_cvar_diagnostic's separate connection) still trips this:
+            the INSERT itself must succeed and be readable.
+          - A fix that swaps to a disk path would also satisfy this — that is
+            an acceptable resolution per the team-lead scope (any path that
+            makes the in-memory variant work end-to-end).
+
+        Uses n_runs=1 to isolate the schema-presence concern from latency.
+        """
+        # Reuse the same fixture entry point the failing test uses, so the
+        # RED is pinned to the SAME code path — no parallel reimplementation.
+        latencies = self._run_benchmark(":memory:", n_runs=1)
+
+        # The benchmark returns one latency per successful INSERT. If the
+        # INSERT raised OperationalError ("no such table: cvar_diagnostics"),
+        # _run_benchmark would have propagated it and we'd never get here.
+        # Still — assert explicitly that one INSERT happened and that the
+        # row is present in whatever DB the helper now uses for reads.
+        assert len(latencies) == 1, (
+            "Expected exactly 1 latency sample from n_runs=1; got "
+            f"{len(latencies)}. The benchmark fixture did not complete the "
+            "INSERT — likely the cvar_diagnostics table was not created in "
+            "the same in-memory DB instance that record_cvar_diagnostic "
+            "writes to (sqlite3.connect(':memory:') returns a fresh DB "
+            "per call). Fix the fixture to share one in-memory DB across "
+            "init + INSERT, or substitute a tmp-file DB."
+        )
+        assert latencies[0] >= 0.0, (
+            f"Latency must be non-negative; got {latencies[0]}. "
+            "Negative latency is a measurement bug, not a fixture issue."
+        )
+
     def test_m2_write_p99_latency_under_budget_disk(self, tmp_path):
         """
         Disk SQLite: the realistic latency measure uses a tmp_path DB with WAL mode.
