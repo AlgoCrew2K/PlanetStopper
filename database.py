@@ -27,6 +27,14 @@ DB_FILE = os.environ.get("DB_PATH", "alphabot_state.db")
 # Captured at import time — used by _db_file() to detect explicit test overrides.
 _DB_FILE_DEFAULT = DB_FILE
 
+# Sentinel connection for in-memory DBs (":memory:" path).
+# sqlite3.connect(":memory:") returns a fresh, isolated DB per call; the
+# shared-cache URI ("file::memory:?cache=shared") makes all callers share one
+# instance, but it is destroyed when the last connection closes.  Holding this
+# sentinel open keeps the shared in-memory DB alive for the duration of a test
+# run.  Production code never sets DB_PATH=":memory:", so this is test-only.
+_in_memory_sentinel: "sqlite3.Connection | None" = None
+
 # DEFAULT STRATEGY PARAMETERS (Used when a new account is detected)
 DEFAULT_STRATEGY = {
     "TRIGGER_THRESHOLD_PCT": 15.0,
@@ -52,7 +60,17 @@ def _db_file() -> str:
 
 
 def get_connection():
-    return sqlite3.connect(_db_file(), timeout=10.0)
+    global _in_memory_sentinel
+    path = _db_file()
+    if path == ":memory:":
+        # Use the shared-cache URI so all callers share the same in-memory DB.
+        # Keep a module-level sentinel connection open to prevent the in-memory
+        # DB from being destroyed when transient connections close.
+        shared_uri = "file::memory:?cache=shared"
+        if _in_memory_sentinel is None:
+            _in_memory_sentinel = sqlite3.connect(shared_uri, uri=True, timeout=10.0)
+        return sqlite3.connect(shared_uri, uri=True, timeout=10.0)
+    return sqlite3.connect(path, timeout=10.0)
 
 
 def get_ro_connection() -> sqlite3.Connection:
@@ -2105,7 +2123,7 @@ def _write_telemetry_row_unsafe(table_name: str, row_dict: dict) -> None:
     sql = f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders})"
     values = tuple(row_dict[c] for c in columns)
 
-    conn = sqlite3.connect(_db_file(), timeout=10.0)
+    conn = get_connection()
     conn.execute(sql, values)
     conn.commit()
     conn.close()
