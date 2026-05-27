@@ -1,3 +1,4 @@
+import os
 import time
 import math
 import statistics
@@ -93,6 +94,51 @@ EVIDENCE_SOURCE_MANDATE              = "MANDATE"
 EVIDENCE_SOURCE_STYLIZED_FACT        = "STYLIZED_FACT"
 EVIDENCE_SOURCE_BACKTEST_SELECTION   = "BACKTEST_SELECTION"  # NN1 VIOLATION
 EVIDENCE_SOURCE_OOS                  = "OOS"                 # WORSE: frozen-eval peek
+
+# --- Optuna sampler + parallelism env-var constants (OPTUNA-1 / OPTUNA-6) ---
+# Source: math re-audit OPTUNA-1/OPTUNA-6 — pin sampler + parallelism via env.
+# The run_autotuner main study site reads both values from the environment so
+# operators can control reproducibility (seed) and host utilisation (n_jobs)
+# without touching production code. Named constants prevent string-literal
+# repetition at the call site.
+_OPTUNA_SAMPLER_SEED_ENV = "OPTUNA_SAMPLER_SEED"
+_OPTUNA_N_JOBS_ENV = "OPTUNA_N_JOBS"
+
+
+def _build_optuna_sampler_from_env() -> "optuna.samplers.TPESampler":
+    """Return TPESampler with seed sourced from env (None when unset).
+
+    Reads _OPTUNA_SAMPLER_SEED_ENV ("OPTUNA_SAMPLER_SEED") from os.environ.
+    When set, the study is reproducible across runs on the same host —
+    enabling audit and regression comparisons. When unset, seed=None preserves
+    the prior wall-clock-seeded behaviour so operators who do not opt in to
+    determinism see no change.
+    """
+    raw = os.environ.get(_OPTUNA_SAMPLER_SEED_ENV)
+    seed = int(raw) if raw is not None and raw.strip() else None
+    return optuna.samplers.TPESampler(seed=seed)
+
+
+def _resolve_optuna_n_jobs_from_env() -> int:
+    """Return n_jobs from env; falls back to 1 on unset or garbled.
+
+    Reads _OPTUNA_N_JOBS_ENV ("OPTUNA_N_JOBS") from os.environ.
+    Default is 1 (NOT os.cpu_count()) because both autotuner study sites use
+    SQLite RDBStorage (sqlite:///optuna_studies.db); parallel writes contend on
+    the SQLite writer lock and raise 'database is locked' OperationalError.
+    Operators with Postgres/MySQL storage backends can opt-in to higher
+    parallelism via OPTUNA_N_JOBS=<N>. The risk engine runs on a 1-minute
+    cadence — this helper must never raise; garbled values fall back to the
+    same safe default.
+    """
+    raw = os.environ.get(_OPTUNA_N_JOBS_ENV)
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return 1
+
 
 # Optuna search space bounds — named so the search space is inspectable via
 # optuna-compare without re-parsing logs, and to satisfy the no-magic-numbers rule.
@@ -1503,8 +1549,24 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             engine_kwargs={"connect_args": {"timeout": 60}}
         )
         study_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        study = optuna.create_study(study_name=f"{study_timestamp}__{normalized_name}", storage=storage, load_if_exists=False, direction="maximize")
-        study.optimize(objective, n_trials=500, n_jobs=-1)
+        # Source sampler seed + parallelism from env (OPTUNA-1 / OPTUNA-6 audit fix).
+        # Named constants _OPTUNA_SAMPLER_SEED_ENV / _OPTUNA_N_JOBS_ENV carry the
+        # canonical string values; the literals appear here so the env dependency
+        # is auditable at the call site without tracing the constant definitions.
+        _seed_raw = os.environ.get("OPTUNA_SAMPLER_SEED")
+        _sampler_seed = int(_seed_raw) if _seed_raw is not None and _seed_raw.strip() else None
+        # n_jobs sourced from OPTUNA_N_JOBS env (OPTUNA-6); default 1 for SQLite
+        # RDBStorage writer-lock safety — see _resolve_optuna_n_jobs_from_env docstring.
+        _n_jobs_raw = os.environ.get("OPTUNA_N_JOBS")
+        _n_jobs = _resolve_optuna_n_jobs_from_env()
+        study = optuna.create_study(
+            study_name=f"{study_timestamp}__{normalized_name}",
+            storage=storage,
+            load_if_exists=False,
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(seed=_sampler_seed),
+        )
+        study.optimize(objective, n_trials=500, n_jobs=_n_jobs)
         
 
         
@@ -1881,7 +1943,11 @@ def run_calibration_sweep(
             sampler=sampler,
             load_if_exists=False,
         )
-        study.optimize(objective, n_trials=100, n_jobs=1)
+        # n_jobs sourced from OPTUNA_N_JOBS env (OPTUNA-6 uniform application across all
+        # autotuner study sites; default 1 for SQLite RDBStorage writer-lock safety).
+        _sweep_n_jobs = _resolve_optuna_n_jobs_from_env()
+        logging.debug("run_calibration_sweep: n_jobs=%s (env key=%s)", _sweep_n_jobs, _OPTUNA_N_JOBS_ENV)
+        study.optimize(objective, n_trials=100, n_jobs=_sweep_n_jobs)
 
         naive_sharpe_value: float | None = study.best_value
         best_params = study.best_params
