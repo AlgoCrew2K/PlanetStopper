@@ -2226,7 +2226,7 @@ def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
 
     allowlist: key is in the suggestible allowlist.
     risk_direction: Claude's self-reported direction agrees with engine's.
-    oos: suggestion's oos_status is 'passed'.
+    oos_frozen_eval: suggestion's oos_status is 'passed'.
     locked_vars: key is NOT locked for this symphony.
     """
     allowed, _ = ai_advisor.enforce_suggestion_allowlist([suggestion])
@@ -2235,7 +2235,7 @@ def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
     return {
         "allowlist": bool(allowed),
         "risk_direction": direction_check.get("agrees", False),
-        "oos": suggestion.oos_status == "passed",
+        "oos_frozen_eval": suggestion.oos_status == "passed",
         "locked_vars": suggestion.config_key not in locked,
     }
 

@@ -625,16 +625,38 @@ def _make_fake_anthropic_client(parsed_obj=None, raise_exc=None):
     a different SDK method, this helper is the one place to adjust — and the
     Tier 2 live test is what authoritatively pins the real SDK surface.
 
-    parsed_obj: object returned as the .parsed attribute of the SDK response
-                (a ConfigSuggestionsResponse instance) on the happy path.
+    Returns a real-shape ParsedMessage (same type the live SDK returns) so
+    these Tier-1 tests are compatible with test_sdk_contract.py's adversarial
+    contract. The validated Pydantic instance sits on
+    content[0].parsed_output — NOT on a top-level .parsed field (which does
+    not exist on ParsedMessage in anthropic 0.85.0).
+
+    parsed_obj: ConfigSuggestionsResponse placed in content[0].parsed_output.
     raise_exc:  if set, client.messages.parse raises it instead.
     """
+    from anthropic.types.parsed_message import ParsedMessage, ParsedTextBlock
+    from anthropic.types.usage import Usage
+
     client = MagicMock(name="fake_anthropic_client")
     if raise_exc is not None:
         client.messages.parse.side_effect = raise_exc
     else:
-        sdk_response = MagicMock(name="fake_sdk_response")
-        sdk_response.parsed = parsed_obj
+        block = ParsedTextBlock.model_construct(
+            type="text",
+            text='{"suggestions": []}',
+            parsed_output=parsed_obj,
+            citations=None,
+        )
+        sdk_response = ParsedMessage.model_construct(
+            id="msg_fake",
+            type="message",
+            role="assistant",
+            model="claude-opus-4-7",
+            content=[block],
+            stop_reason="end_turn",
+            stop_sequence=None,
+            usage=Usage(input_tokens=1, output_tokens=1),
+        )
         client.messages.parse.return_value = sdk_response
     return client
 
