@@ -2193,8 +2193,34 @@ def flush_resync():
 # --- 5. AI Advisor Routes ---
 @app.route("/ai-advisor", methods=["GET"])
 def ai_advisor_tab():
-    """Render the Claude AI Config Advisor tab."""
-    return render_template("ai_advisor.html", active_route="advisor", meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))))
+    """Render the Claude AI Config Advisor tab.
+
+    Passes the last _ADVISOR_OBSERVATIONS_PAGE_LIMIT advisor observations
+    to the template for the observations section.  Observations are fetched
+    across all known advisor roles using read-only accessors.
+    """
+    observations: list[dict] = []
+    for role in _ADVISOR_ROLES:
+        observations.extend(
+            database.get_advisor_observations_for_role(
+                role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+            )
+        )
+    # Deduplicate by id and apply page limit
+    seen: set = set()
+    deduped_obs: list[dict] = []
+    for obs in observations:
+        if obs["id"] not in seen:
+            seen.add(obs["id"])
+            deduped_obs.append(obs)
+    observations = deduped_obs[: _ADVISOR_OBSERVATIONS_PAGE_LIMIT]
+
+    return render_template(
+        "ai_advisor.html",
+        active_route="advisor",
+        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
+        observations=observations,
+    )
 
 
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
@@ -2385,6 +2411,66 @@ def ai_advisor_accept():
 def ai_advisor_reject():
     """Record operator rejection — no config write."""
     return jsonify({"status": "rejected"})
+
+
+# Known advisor roles — used to aggregate observations for the AI Advisor page.
+_ADVISOR_ROLES = [
+    "OVERFITTING_CONSCIENCE",
+    "SPEC_CRITIC",
+    "DIVERGENCE_EXPLAINER",
+    "NARRATOR",
+]
+
+# Hard limit on observations returned per request — prevents unbounded UI renders.
+_ADVISOR_OBSERVATIONS_PAGE_LIMIT = 50
+
+
+@app.route("/api/advisor-observations", methods=["GET"])
+def api_advisor_observations():
+    """Return advisor observations as a JSON list.
+
+    ?symphony_id=<id>  — filter to rows whose subject_id matches; calls
+                         database.get_advisor_observations_for_subject.
+    No query param      — return observations across all known advisor roles;
+                         calls database.get_advisor_observations_for_role.
+
+    Response is limited to _ADVISOR_OBSERVATIONS_PAGE_LIMIT rows.
+    Read-only; POST/PUT/DELETE return 405 via Flask methods restriction.
+    """
+    symphony_id = request.args.get("symphony_id", "").strip()
+    if symphony_id:
+        rows = database.get_advisor_observations_for_subject(
+            subject_type="autotune_run",
+            subject_id=symphony_id,
+        )
+        # Also check spec_bundle and other subject types
+        rows += database.get_advisor_observations_for_subject(
+            subject_type="spec_bundle",
+            subject_id=symphony_id,
+        )
+        rows += database.get_advisor_observations_for_subject(
+            subject_type="cvar_diagnostic",
+            subject_id=symphony_id,
+        )
+        # Deduplicate by id, preserve insertion order
+        seen: set = set()
+        deduped = []
+        for r in rows:
+            if r["id"] not in seen:
+                seen.add(r["id"])
+                deduped.append(r)
+        rows = deduped
+    else:
+        rows = []
+        for role in _ADVISOR_ROLES:
+            rows.extend(
+                database.get_advisor_observations_for_role(
+                    role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+                )
+            )
+
+    rows = rows[: _ADVISOR_OBSERVATIONS_PAGE_LIMIT]
+    return jsonify(rows)
 
 
 _BASELINE_DECISION_TOKENS = {
