@@ -1256,6 +1256,9 @@
 
   {# M2 CVaR diagnostic panel — S-3 four-part display contract (read-only, arch constraint 2). #}
   {# All four S-3 elements are required: (a) stderr, (b) tail_obs_count, (c) diagnostic label, (d) bias warning. #}
+  {# CVAR-001 Phase-1 scope limit (sprint-2-audit a6e4d9f8): cvar_diagnostic holds the FIRST symphony only. #}
+  {# Multi-symphony portfolios silently omit other symphonies' CVaR diagnostics. Phase-2 will expand to a #}
+  {# per-symphony dict for multi-row rendering. See app.py CVAR-001 comment for the TODO. #}
   {% if cvar_diagnostic %}
   <section
     id="cvar-diagnostic-panel"

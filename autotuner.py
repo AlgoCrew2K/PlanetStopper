@@ -537,7 +537,22 @@ def compute_n_effective(
     `ledger_query` is a callable returning the list of relevant ledger
     rows; injected for testability and to keep compute_n_effective
     pure with respect to its DB read.
+
+    TYPE-002 (sprint-2-audit a6e4d9f8): `winning_spec_bundle_id` is the
+    64-char TEXT bundle_hash (researcher_dof_ledger.spec_bundle_id column
+    is TEXT). Callers MUST pass a string or None — never an integer primary
+    key. The production path (run_autotuner) pre-filters via
+    get_researcher_dof_ledger_for_run(winning_spec_bundle_id=stored_hash)
+    and does not pass this param here; the assert below guards direct callers.
     """
+    # TYPE-002: guard against callers passing integer PK instead of bundle hash.
+    assert winning_spec_bundle_id is None or isinstance(
+        winning_spec_bundle_id, str
+    ), (
+        f"compute_n_effective: winning_spec_bundle_id must be str (bundle_hash) "
+        f"or None, got {type(winning_spec_bundle_id).__name__!r}. "
+        f"Pass the 64-char bundle_hash, not the integer spec_bundles.id."
+    )
     rows = ledger_query()
     s = 0
     for row in rows:
@@ -1007,11 +1022,16 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
     """
     # Local aliases for penalty scalars/thresholds (M1 T6: confined to this function).
     # Values sourced from SORTINO_OBJ_* module-level constants (AC-4 named constants).
+    # NAME-002 (sprint-2-audit a6e4d9f8): the three _PCT suffixes are inconsistent with
+    # the module-level SORTINO_OBJ_* names (which carry no _PCT suffix). They cannot be
+    # renamed here because tests/autotuner/test_m1_crra_eu_objective.py T6 pins these
+    # exact names as the contractual RUN_SIM_* set (test_run_sim_constants_not_at_module_scope).
+    # A rename would require a coordinated test update — out of scope for this hotfix pass.
     RUN_SIM_MISSED_UPSIDE_MULT = SORTINO_OBJ_MISSED_UPSIDE_MULT
-    RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT = SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD
+    RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT = SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD  # _PCT suffix: T6 contract
     RUN_SIM_DRAWDOWN_MULT = SORTINO_OBJ_DRAWDOWN_MULT
-    RUN_SIM_DRAWDOWN_THRESHOLD_PCT = SORTINO_OBJ_DRAWDOWN_THRESHOLD
-    RUN_SIM_DRAWDOWN_MIN_GAIN_PCT = SORTINO_OBJ_DRAWDOWN_MIN_GAIN
+    RUN_SIM_DRAWDOWN_THRESHOLD_PCT = SORTINO_OBJ_DRAWDOWN_THRESHOLD  # _PCT suffix: T6 contract
+    RUN_SIM_DRAWDOWN_MIN_GAIN_PCT = SORTINO_OBJ_DRAWDOWN_MIN_GAIN  # _PCT suffix: T6 contract
     RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT = SORTINO_OBJ_NEGATIVE_GUARD_ALPHA_MULT
 
     total_guard_alpha = 0.0
@@ -1087,6 +1107,11 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
 # Sortino + loss-aversion objective going forward. run_simulation is kept as the
 # primary def (satisfying C4 AST inspection) and run_simulation_sortino_legacy
 # is a callable alias for explicit legacy-branch callers and T6 callable tests.
+# NAME-001 (sprint-2-audit a6e4d9f8): "sortino" and "legacy" embed change history
+# rather than behavior. The auditor recommends run_simulation_sortino_guard_alpha
+# or reverting to run_simulation. Cannot rename here: T6 contract test
+# test_run_simulation_sortino_legacy_function_exists in test_m1_crra_eu_objective.py
+# pins this exact name. A rename requires a coordinated test update.
 run_simulation_sortino_legacy = run_simulation
 
 
@@ -1299,7 +1324,7 @@ def validate_nn1_compliance(spec_bundle_id: int) -> "tuple[bool, list[str]]":
     return is_honest, violations
 
 
-def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, spec_bundle_id=None):
+def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, spec_bundle_id: "int | None" = None):  # TYPE-001 (sprint-2-audit a6e4d9f8)
     """
     Runs walk-forward optimization using Bayesian Optimization (Optuna) per symphony.
     Implements a three-fold walk-forward split (60/20/20): train / validation / frozen-eval.
