@@ -4,6 +4,8 @@
 
 The primary intent of **AlphaBot** is to function as an institutional-grade, algorithmic risk engine that sits on top of Composer.trade portfolios (referred to as "symphonies"). Rather than relying on passive "buy-and-hold" strategies that leave capital exposed to intraday market crashes, AlphaBot actively monitors live market data minute-by-minute. Its goal is to dynamically calculate intelligent trailing stops and automatically execute "sell-to-cash" orders via API when mathematical risk thresholds are breached. Ultimately, it seeks to generate "Guard Alpha"—mathematically proving that its automated early exits saved the user money compared to holding the asset until the market close.
 
+**Hard fork status:** AlphaBot v3 is a hard fork of the upstream Composer bot — it never re-syncs upstream. All architecture decisions are made with full autonomy within project guidelines.
+
 ---
 
 ## Features Overview
@@ -29,7 +31,7 @@ AlphaBot achieves its goals through a sophisticated combination of data ingestio
 
 ### **Symphony-Level Database Architecture**
 * **SQLite State Management:** Uses a highly concurrent SQLite database to store states, isolated risk parameters, execution locks, and continuous chart histories.
-* **Symphony-Level Strategies:** Maintains independent parameter tuning and variable locks based on unique, normalized symphony names.
+* **Symphony-Level Strategies:** Maintains independent parameter tuning and variable locks based on unique, normalized symphony names. Decision math is symphony-level only — port-level decision math was deprecated in Sprint 3 (Stream A). Port state display surfaces are retained (AX-2 badge helpers, restart_notice), but no autonomous port-level decision logic remains in production code.
 * **Per-Symphony Activity Logging:** Captures and stores specific event logs (e.g., arming, triggers, execution) for each symphony into a local `symphony_logs.json` file, ensuring intraday actions are auditable.
 
 
@@ -42,6 +44,18 @@ AlphaBot achieves its goals through a sophisticated combination of data ingestio
 ### **EOD Autotuning & Post-Mortem Analytics**
 * **Two-Stage EOD Pipeline:** Generates a daily post-mortem JSON snapshot using a two-stage process to prevent Composer API cash flatlines from corrupting the math. Stage 1 locks true shadow returns and Guard Alpha using live Alpaca pricing precisely at 15:53 ET. Stage 2 runs at 16:00 ET to inject tomorrow's target holdings without overwriting the previously locked math.
 * **Persistent Optimization Engine:** Performs a 125-trading-day Walk-Forward Analysis using an 80% Train / 20% Out-of-Sample test split. Powered by Optuna with a persistent SQLite backend, it runs 500 parallel trials per unique symphony name to tune dynamic stops, multipliers, and parabolic thresholds. The autotuner objective is CRRA-EU (`compute_crra_eu_tstat = mean(U)/(sd(U)/√T)`) with risk-aversion shaping — replacing the legacy Sortino-like constant. N-effective additive accounting (`N_effective = N_optuna + S`) preserves BHY haircut integrity across spec facets.
+* **AI Advisor integration:** Post-walk-forward, `autotuner.py` invokes the Phase-1 Advisor producers — Overfitting Conscience, Spec Critic, and Divergence Explainer — and writes their observations to `advisor_observations` via `insert_advisor_observation`. Overfitting Conscience reads `prior_runs` via `advisor_ro_query` (structural wall: `COALESCE(fold_role,'') != 'frozen_eval'`).
+
+
+### **AI Advisor Producers**
+Three Phase-1 Advisor producers are operational as of Sprint 3 (Stream B). They run post-walk-forward in `autotuner.py` and write to the `advisor_observations` table, keyed by `symphony_id`.
+
+* **Overfitting Conscience** (`advisors/overfitting_conscience.py`): Reads `researcher_dof_ledger` + `spec_bundles`. Writes observations when `S > 0` (BACKTEST_SELECTION count) or other overfitting indicators are detected. Receives `prior_runs` via `advisor_ro_query` (frozen-eval wall enforced).
+* **Spec Critic** (`advisors/spec_critic.py`): Reviews `spec_bundles` for completeness, missing facets, and freeze-discipline gaps. Writes verdicts.
+* **Divergence Explainer** (`advisors/divergence_explainer.py`): Only fires when the `SECOND_WINDOW_CVAR_ENABLED` feature flag is active. When enabled, writes per-cycle divergence explanations for both CVaR windows. When disabled, writes a `NOT_APPLICABLE` observation. **No signed-divergence number is persisted or displayed** — the CVaR-divergence REJECT wall is intact.
+* **Narrator**: Deferred to a future cycle. Phase-1 has no parameter drift to narrate.
+
+The `/ai-advisor` UI (`templates/ai_advisor.html`) displays `advisor_observations` rows for the selected symphony (or globally if no filter). Columns shown: `advisor_role`, `subject_type`, `subject_id`, `verdict`, `timestamp`, `is_advisory_only` badge. `raw_response` is Jinja2-escaped.
 
 
 ### **Interactive Control Center (UI/UX)**
@@ -79,6 +93,7 @@ The bot's operation is customized through various variables set in the `.env` fi
 * **`VWAP_BLEED_TICKS`**: The number of consecutive ticks required below the calculated bleed threshold before liquidating (System B).
 * **`PARABOLIC_VELOCITY_THRESHOLD`**: The threshold of upward return velocity required to trigger the permanent "Parabolic Squeeze" ratchet.
 * **`MAX_PARABOLIC_SQUEEZE`**: The stop squeeze multiplier applied continuously once the Parabolic Squeeze is armed or the breakeven lock is achieved.
+* **`SECOND_WINDOW_CVAR_ENABLED`**: Feature flag for the optional second-window CVaR operator surface. When enabled, Divergence Explainer writes per-cycle explanations. Default: disabled.
 
 ---
 
@@ -153,8 +168,9 @@ Procedures for common operational scenarios:
 - **NN1 spec-freeze discipline:** All spec facets frozen by THEORY/MANDATE/STYLIZED_FACT are enforced at autotuner entry via `validate_nn1_compliance`. `BACKTEST_SELECTION` freeze discipline is forbidden for these facets. Violations raise at entry — never silently proceed.
 - **N-effective additive accounting:** `compute_n_effective` adds `N_optuna` and the researcher DOF ledger `S` count additively (`N_effective = N_optuna + S`). Both `_haircut_select` call sites wire this. Yekutieli c(N) is preserved.
 - **Advisor wall:** The `advisor_ro_query` structural wall (`COALESCE(fold_role,'') != 'frozen_eval'` filter) prevents read-through to frozen-eval rows. `query_wall_breach_tripwire` enforces this in tests. Violation surfaces before the advisory result is consumed.
-- **Test harness:** 3669 tests / 0 failures / 1 expected-fail at Sprint 2 tip (4cf7be3). Live-execution tests excluded by default, opt in via `--include-live`. Run via `/run-tests` skill.
-- **Schema migrations:** 24 migration SQL files (001–024) in `migrations/`. `_MIGRATION_FILES` in `database.py` applies 004–024; migrations 001–003 are applied unconditionally in `init_db`. Migration 021 is listed before 020 intentionally — see ARCH-002 inline comment in `database.py`. Apply in order before starting the daemon after a schema-affecting upgrade.
+- **Port-level deprecation (Sprint 3):** Decision math is symphony-level only. `engine/multi_cycle.py`, `engine/port_selector.py`, and `engine/port_aggregator.py` have been deleted. `engine/exit_authority.py` survives as display-only badge helpers (`SITE-D1` + `AX-2`). `engine/dual_altitude.py` is deleted. No autonomous port-level decision logic remains in production code. Port state schema rows are preserved (additive-first policy).
+- **Test harness:** 3753 tests / 0 failures / 5 expected-fails / 5 skipped at Sprint 3 tip (be74f4f). Live-execution tests excluded by default, opt in via `--include-live`. Run via `/run-tests` skill.
+- **Schema migrations:** 25 migration SQL files (001–025) in `migrations/`. `_MIGRATION_FILES` in `database.py` applies 004–025; migrations 001–003 are applied unconditionally in `init_db`. Migration 021 is listed before 020 intentionally — see ARCH-002 inline comment in `database.py`. Migration 025 adds `advisor_observations.symphony_id` (NULLable, additive). Apply in order before starting the daemon after a schema-affecting upgrade.
 - **Invariants enforced in the math layer:** Trailing-stop monotonicity is enforced inside `compute_active_trailing_stop` via the `previously_persisted_stop_level` kwarg (Fu & Zhang canonical clamp). NaN/Inf inputs are rejected at the boundary of 11 math functions — callers receive a raised `ValueError`, never a silent sentinel. The MC sentinel (`MC_INSUFFICIENT_HISTORY_SENTINEL = None`) is out-of-band; the protective stop always fires on ticks-below-stop alone when sentinel is active.
 - **Decision-Science roadmap:** Feature plans live in `feature-plans/decision-science/`. The scaffold (`plan/finalist-a-scaffold` branch) covers Phase 1 (HARDEN-core), Phase 1.5 (M3 re-derivation), Phase 2 (evidence-gated Finalist B), and engine-audit lanes. See `feature-plans/decision-science/README.md` for the full index. Cross-cycle audit reports live in `docs/audit/`.
 
