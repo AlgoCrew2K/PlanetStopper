@@ -443,10 +443,19 @@ def test_env_n_jobs_parsed_to_int(monkeypatch, autotuner_module, pin_contract):
     assert value == 3, f"Env OPTUNA_N_JOBS=3 must flow through; got {value!r}"
 
 
-def test_unset_n_jobs_env_falls_back_to_cpu_count_or_one(
+def test_unset_n_jobs_env_falls_back_to_one_for_sqlite_safety(
     monkeypatch, autotuner_module, pin_contract
 ):
-    """Unset env must yield ``os.cpu_count() or 1`` — never -1 or None."""
+    """Unset env must yield literal ``1`` — never -1, never cpu_count.
+
+    Default flipped from ``os.cpu_count() or 1`` to literal ``1`` after
+    opt-optuna review: the run_autotuner study uses SQLite RDBStorage
+    (autotuner.py:1544 — ``sqlite:///optuna_studies.db``). Parallel Optuna
+    trials writing to one SQLite DB contend on the writer lock and produce
+    ``sqlite3.OperationalError: database is locked``. n_jobs=1 is the only
+    safe default for the SQLite backend; operators with Postgres/MySQL can
+    opt-in via OPTUNA_N_JOBS=<N>.
+    """
     n_jobs_env = pin_contract["constants"]["n_jobs_env_var"]
     monkeypatch.delenv(n_jobs_env, raising=False)
 
@@ -456,32 +465,43 @@ def test_unset_n_jobs_env_falls_back_to_cpu_count_or_one(
     assert isinstance(value, int), (
         f"helper must return int even when env is unset, got {type(value).__name__}"
     )
-    expected = os.cpu_count() or 1
+    expected = int(pin_contract["parallelism_contract"]["n_jobs_default_when_unset_or_invalid"])
+    assert expected == 1, (
+        "Fixture invariant: parallelism_contract.n_jobs_default_when_unset_or_invalid "
+        f"must be 1 (SQLite RDBStorage safety); got {expected!r}"
+    )
     assert value == expected, (
-        f"Unset OPTUNA_N_JOBS must default to os.cpu_count() or 1 "
-        f"(={expected}); got {value!r}"
+        f"Unset OPTUNA_N_JOBS must default to {expected} (literal 1 for "
+        f"SQLite RDBStorage writer-lock safety); got {value!r}. "
+        f"Returning os.cpu_count() here would saturate the writer lock and "
+        f"produce 'database is locked' OperationalError under load."
     )
     assert value != -1, (
         "OPTUNA-6 prohibition: helper must never return -1 (audit fix is "
         "explicitly to eliminate the -1 hardcode)."
     )
-    assert value >= 1, f"helper must return a positive parallelism count; got {value!r}"
 
 
-def test_invalid_n_jobs_env_falls_back_to_default(
+def test_invalid_n_jobs_env_falls_back_to_safe_default(
     monkeypatch, autotuner_module, pin_contract
 ):
     """A non-int env value must not crash the daemon — fall back to the
-    same default the unset case uses. The risk engine runs on a 1-minute
-    cadence; a parse-error crash here would take the engine down."""
+    same safe default (1) the unset case uses. The risk engine runs on a
+    1-minute cadence; a parse-error crash here would take the engine down,
+    and any default > 1 would re-introduce the SQLite writer-lock issue."""
     n_jobs_env = pin_contract["constants"]["n_jobs_env_var"]
     monkeypatch.setenv(n_jobs_env, "not-an-int")
     helper = getattr(autotuner_module, "_resolve_optuna_n_jobs_from_env", None)
     assert helper is not None
     value = helper()
-    assert isinstance(value, int) and value >= 1, (
-        f"Garbled OPTUNA_N_JOBS must fall back to a positive int default "
-        f"(no crash); got {value!r}"
+    expected = int(pin_contract["parallelism_contract"]["n_jobs_default_when_unset_or_invalid"])
+    assert isinstance(value, int), (
+        f"helper must return int even on garbled env, got {type(value).__name__}"
+    )
+    assert value == expected, (
+        f"Garbled OPTUNA_N_JOBS must fall back to the same safe default "
+        f"({expected}) as the unset case; got {value!r}. Falling back to "
+        f"cpu_count would silently saturate the SQLite writer lock on a typo."
     )
     assert value != -1
 
@@ -563,24 +583,25 @@ def test_unseeded_sampler_diverges_negative_control(pin_contract):
 
 
 # ---------------------------------------------------------------------------
-# Calibration-site invariant — the existing pin pattern must not regress
+# Calibration-site invariant — TPESampler pin preserved; n_jobs uniformly
+# env-driven (OPTUNA-6 applied across all autotuner.py study sites)
 # ---------------------------------------------------------------------------
 
-def test_calibration_sweep_still_uses_tpesampler_and_n_jobs_one(
-    autotuner_ast, pin_contract
-):
-    """``run_calibration_sweep`` is the reference pin site (autotuner.py:1877-1884).
-    The OPTUNA-1/6 fix to the run_autotuner site must NOT regress the
-    calibration site's existing explicit ``TPESampler(seed=random_state)``
-    + ``n_jobs=1``. This test is the regression guard.
+def test_calibration_sweep_preserves_tpesampler_pin(autotuner_ast, pin_contract):
+    """``run_calibration_sweep`` must keep its explicit
+    ``TPESampler(seed=random_state)`` sampler. The OPTUNA-1/6 fix to the
+    run_autotuner site must NOT regress the calibration sampler pin.
+
+    Scope-expansion note (opt-optuna review): the previous version of this
+    test ALSO pinned ``n_jobs=1`` as a literal. After review, OPTUNA-6 is
+    applied uniformly — every n_jobs in autotuner.py must read from
+    OPTUNA_N_JOBS — so the literal check moved to the new RED test below.
     """
     expected_sampler_cls = pin_contract["calibration_site_invariant"]["expected_sampler_class"]
-    expected_n_jobs = int(pin_contract["calibration_site_invariant"]["expected_n_jobs_literal"])
     assert expected_sampler_cls.endswith("TPESampler")
 
     func = _function_def(autotuner_ast, _RUN_CALIBRATION)
 
-    # Sampler check.
     create_calls = _create_study_calls(func)
     assert create_calls, (
         "AST: run_calibration_sweep must contain at least one "
@@ -624,21 +645,124 @@ def test_calibration_sweep_still_uses_tpesampler_and_n_jobs_one(
         "to pass an explicit TPESampler to optuna.create_study(sampler=...)."
     )
 
-    # n_jobs check — must remain the literal expected_n_jobs at the
-    # calibration site (sweep is a small in-process operator tool;
-    # parallelism is intentionally pinned to 1 for reproducibility).
+
+def test_calibration_sweep_n_jobs_is_env_driven_not_literal_one(autotuner_ast):
+    """``run_calibration_sweep.study.optimize(...)`` must NOT pass the
+    literal ``n_jobs=1`` (or any other integer literal). OPTUNA-6 is
+    applied uniformly: every n_jobs in autotuner.py reads from
+    OPTUNA_N_JOBS (default 1 for SQLite RDBStorage safety).
+
+    Scope-expansion note (opt-optuna review): this was previously the
+    "reference pin pattern" and the literal ``1`` was treated as
+    intentional. After review, the literal violates the OPTUNA-6 rule
+    "never hardcode CPU counts" and must be replaced with the shared
+    env-resolver. The default of 1 is preserved via the helper.
+    """
+    func = _function_def(autotuner_ast, _RUN_CALIBRATION)
     optimize_calls = _study_optimize_calls(func)
     assert optimize_calls, "AST: expected study.optimize(...) in run_calibration_sweep."
-    saw_match = False
+
+    offenders: list[str] = []
     for call in optimize_calls:
         n_jobs_expr = _kw(call, "n_jobs")
         if n_jobs_expr is None:
-            continue
-        if isinstance(n_jobs_expr, ast.Constant) and n_jobs_expr.value == expected_n_jobs:
-            saw_match = True
-            break
-    assert saw_match, (
-        f"Calibration-site regression: run_calibration_sweep.study.optimize "
-        f"must keep n_jobs={expected_n_jobs} literal (the reference pin). "
-        f"OPTUNA-6 fix targets run_autotuner only."
+            continue  # No kwarg at all is acceptable (defaults to 1).
+        # Any integer literal (positive, negative, or via UnaryOp) is a
+        # hardcode and a violation of the expanded OPTUNA-6 rule.
+        is_int_literal = (
+            isinstance(n_jobs_expr, ast.Constant)
+            and isinstance(n_jobs_expr.value, int)
+        )
+        is_unary_int_literal = (
+            isinstance(n_jobs_expr, ast.UnaryOp)
+            and isinstance(n_jobs_expr.operand, ast.Constant)
+            and isinstance(n_jobs_expr.operand.value, int)
+        )
+        if is_int_literal or is_unary_int_literal:
+            literal_repr = (
+                str(n_jobs_expr.value) if is_int_literal
+                else ("-" + str(n_jobs_expr.operand.value))
+            )
+            offenders.append(
+                f"line {call.lineno}: study.optimize(..., n_jobs={literal_repr}) "
+                f"is an OPTUNA-6 hardcode (project rule: never hardcode CPU "
+                f"counts in autotuner.py). Source via "
+                f"_resolve_optuna_n_jobs_from_env() instead."
+            )
+    assert not offenders, (
+        "OPTUNA-6 calibration-site violations:\n  - " + "\n  - ".join(offenders)
+    )
+
+
+def test_calibration_sweep_references_n_jobs_env_constant(
+    autotuner_source: str, pin_contract: dict
+):
+    """``run_calibration_sweep`` body must reference ``OPTUNA_N_JOBS`` —
+    either via the named module-level constant or as a literal — so the
+    env dependency is auditable at the call site. Mirrors the
+    run_autotuner contract."""
+    n_jobs_env = pin_contract["constants"]["n_jobs_env_var"]
+    tree = ast.parse(autotuner_source)
+    func = _function_def(tree, _RUN_CALIBRATION)
+    found_literal = any(
+        isinstance(node, ast.Constant) and node.value == n_jobs_env
+        for node in ast.walk(func)
+    )
+    # The impl may instead reference the named constant via a Name node
+    # whose binding is the module-level constant. We accept either path:
+    # a string literal in-body OR a Name reference to a known constant
+    # whose value is the env var.
+    found_name_ref = False
+    # Collect module-level string-constant assignments whose value is
+    # the env-var name.
+    seed_const_names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if (
+                isinstance(node.value, ast.Constant)
+                and node.value.value == n_jobs_env
+            ):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        seed_const_names.add(tgt.id)
+    if seed_const_names:
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name) and node.id in seed_const_names:
+                found_name_ref = True
+                break
+    assert found_literal or found_name_ref, (
+        f"OPTUNA-6 calibration expansion: run_calibration_sweep must "
+        f"reference {n_jobs_env!r} (either as a literal in-body or via a "
+        f"Name reference to the module-level constant whose value is "
+        f"{n_jobs_env!r}). Could not find either."
+    )
+
+
+def test_calibration_sweep_uses_shared_n_jobs_helper_default(
+    monkeypatch, autotuner_module, pin_contract
+):
+    """Behavioural lock-step: the shared helper
+    ``_resolve_optuna_n_jobs_from_env()`` must return literal ``1`` when
+    the env is unset — and the calibration site's default must be the
+    same value. Test the helper's contract directly; the AST tests above
+    pin that the calibration site sources its n_jobs through the env.
+
+    This is the lock-step assertion that ensures the helper default flip
+    (cpu_count -> 1) lands consistently across BOTH study sites.
+    """
+    n_jobs_env = pin_contract["constants"]["n_jobs_env_var"]
+    monkeypatch.delenv(n_jobs_env, raising=False)
+
+    helper = getattr(autotuner_module, "_resolve_optuna_n_jobs_from_env", None)
+    assert helper is not None, (
+        "Lock-step contract: _resolve_optuna_n_jobs_from_env() must exist "
+        "as the single source of n_jobs default truth for BOTH run_autotuner "
+        "and run_calibration_sweep."
+    )
+    expected = int(pin_contract["parallelism_contract"]["n_jobs_default_when_unset_or_invalid"])
+    assert helper() == expected, (
+        f"Lock-step default flip: helper must return {expected} when env is "
+        f"unset (SQLite RDBStorage safety). The calibration site relies on "
+        f"this default to preserve its prior n_jobs=1 behaviour without a "
+        f"local literal."
     )

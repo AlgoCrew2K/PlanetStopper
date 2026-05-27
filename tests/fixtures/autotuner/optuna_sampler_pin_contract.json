@@ -25,16 +25,17 @@
     "n_jobs_source": "env",
     "n_jobs_env_var": "OPTUNA_N_JOBS",
     "n_jobs_parse": "int(os.environ[...])",
-    "n_jobs_default_when_unset_or_invalid": "os.cpu_count() or 1",
-    "_default_rationale": "When env is unset, default to a sane positive integer derived from the host. Never -1: Optuna's -1 means 'all cores' but is an implementation-defined sentinel that bypasses an explicit count and obscures saturated-host behaviour in logs.",
+    "n_jobs_default_when_unset_or_invalid": 1,
+    "_default_rationale": "Default flipped from 'os.cpu_count() or 1' to literal 1 after opt-optuna review (Sprint-3 cycle/fix-optuna1-6). Rationale: the run_autotuner study uses SQLite RDBStorage (autotuner.py:1544 — sqlite:///optuna_studies.db); parallel Optuna trials writing to one SQLite DB contend on the writer lock and produce 'database is locked' OperationalError failures. n_jobs=1 is the only safe default for SQLite-backed studies. Operators with a Postgres/MySQL storage backend can opt-in to higher parallelism via OPTUNA_N_JOBS=<N>.",
     "prohibited_literal": -1,
     "_prohibition_rationale": "OPTUNA-6 audit finding: hardcoded n_jobs=-1 violates project rule (read n_jobs from .env, never hardcode CPU counts)."
   },
   "calibration_site_invariant": {
     "function": "run_calibration_sweep",
-    "_invariant": "Already uses TPESampler(seed=random_state) and n_jobs=1; this pin pattern is the consistency reference. Tests guard that the calibration site stays this way after the run_autotuner fix.",
+    "_invariant": "TPESampler(seed=random_state) pin must be preserved. n_jobs MUST now also be env-driven (was previously literal 1; flipped after opt-optuna review for uniform application of OPTUNA-6 'never hardcode CPU counts'). The literal n_jobs=1 is no longer accepted at this site — env-driven only, default 1 via the shared helper.",
     "expected_sampler_class": "optuna.samplers.TPESampler",
-    "expected_n_jobs_literal": 1
+    "expected_n_jobs_source": "env",
+    "_expected_n_jobs_rationale": "Uniform OPTUNA-6 application: every n_jobs in autotuner.py reads from OPTUNA_N_JOBS; the default-of-1 policy dovetails with the SQLite-RDBStorage constraint above (calibration writes to the same optuna_studies.db) so behaviour-preserving for the no-env case."
   },
   "determinism_property": {
     "_strategy": "With OPTUNA_SAMPLER_SEED set to a fixed int, two freshly constructed optuna.samplers.TPESampler(seed=<that int>) instances driving the same deterministic objective produce identical trial sequences. This is a sampler-side property test, not a run_autotuner end-to-end run — the e2e run touches DB, advisor producers, history, and is out of scope here.",
