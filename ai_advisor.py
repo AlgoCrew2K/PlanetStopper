@@ -504,10 +504,18 @@ def request_suggestions(
         )
         return None, msg
 
-    # Extract + validate the parsed structured output. A malformed or
-    # wrong-shape response (.parsed is None, or not a ConfigSuggestionsResponse)
-    # must degrade gracefully — never raise.
-    parsed = getattr(sdk_response, "parsed", None)
+    # Extract + validate the parsed structured output. On anthropic 0.85.0 the
+    # validated Pydantic instance lives on each ParsedTextBlock inside
+    # response.content, not on a top-level .parsed attribute (which does not
+    # exist on ParsedMessage). Walk the content blocks and take the first
+    # non-None parsed_output. A malformed response (all parsed_output=None, or
+    # empty content) degrades gracefully — never raise.
+    parsed = None
+    for block in getattr(sdk_response, "content", None) or []:
+        candidate = getattr(block, "parsed_output", None)
+        if candidate is not None:
+            parsed = candidate
+            break
     if parsed is None:
         msg = (
             "Claude returned an unparseable response (no structured output). "
