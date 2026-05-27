@@ -1253,8 +1253,10 @@ def get_spec_facets_for_bundle(bundle_hash: str) -> "list[dict]":
     """Return all spec_facets rows for the given bundle_hash, ordered by id.
 
     Returns an empty list if none exist — never raises for an unknown hash.
+    Uses get_ro_connection() — pure-read path; avoids write-lock contention
+    on the WAL-mode DB (architecture constraint 3).
     """
-    conn = get_connection()
+    conn = get_ro_connection()
     try:
         rows = conn.execute(
             "SELECT " + ", ".join(_SPEC_FACET_COLUMNS)
