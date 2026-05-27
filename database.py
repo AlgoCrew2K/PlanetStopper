@@ -2223,9 +2223,9 @@ def record_cvar_diagnostic(
         "cvar_5pct_long": cvar_5pct_long,
         "cvar_n_tail_long": cvar_n_tail_long,
     }
-    # Migration 026 columns: additive-first pattern — only include in the INSERT
+    # Migration 026 columns: additive-first pattern — only include in row_dict
     # when the caller explicitly provides them. Omitting lets SQLite supply the
-    # DEFAULT NULL, so pre-026 DBs (which lack the columns) accept the INSERT
+    # DEFAULT NULL, so pre-026 DBs (which lack the columns) accept the write
     # unchanged. This preserves backward compat through the migration window.
     if mc_regime_match_mean_dist2 is not None:
         row_dict["mc_regime_match_mean_dist2"] = mc_regime_match_mean_dist2
