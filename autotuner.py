@@ -9,6 +9,7 @@ import synthetic_history
 import glob
 import json
 from advisors import overfitting_conscience as _oc
+from advisors import spec_critic as _sc
 
 
 def _replay_grace_minutes() -> int:
@@ -1403,6 +1404,18 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             f"the BHY haircut would silently undercount N. Refusing to start. "
             f"Violations: {violations}"
         )
+
+    # Sprint 3: Spec Critic — advisory structural integrity check on the spec bundle.
+    # Runs immediately after NN1 compliance (which guards the hard gate); this is
+    # the soft advisory layer for Phase-1 THEORY facet completeness, discipline
+    # recognition, spec age, and phase-scope leak detection.
+    _sc_facets_rows = database.advisor_ro_query(
+        "SELECT facet_name, freeze_discipline, "
+        "    (SELECT frozen_at FROM spec_bundles WHERE bundle_hash = sf.bundle_hash) AS frozen_at "
+        "FROM spec_facets sf WHERE sf.bundle_hash = ?",
+        (stored_hash,),
+    )
+    _sc.run_spec_critic(stored_hash, _sc_facets_rows)
 
     # Suppress Optuna's per-trial log noise; set here (not at module level) to
     # avoid clobbering pytest's output-capture on import.
