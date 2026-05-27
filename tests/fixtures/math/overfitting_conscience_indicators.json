@@ -1,0 +1,131 @@
+{
+  "_provenance": "Hand-derived from Sprint 3 Overfitting Conscience design (team-lead dispatch brief). Scenario inputs are plain integers and enum strings. No producer-computed rates or percents are pinned — verdicts are enum-constrained (CLEAR/WATCH/BREACH), ratios are derived from fixture inputs. All spec_bundle_ids are synthetic hashes for isolation.",
+  "_design_refs": [
+    "Sprint-3 Overfitting Conscience dispatch brief — indicator definitions",
+    "council synthesis §2.2 (N_effective = N_optuna + S)",
+    "NN1 multiple-testing haircut (researcher_dof_ledger BACKTEST_SELECTION S accumulator)"
+  ],
+
+  "scenarios": {
+    "honest_s0_clear": {
+      "_description": "NN1-honest case: no BACKTEST_SELECTION rows for the bundle. S=0, verdict=CLEAR.",
+      "autotune_run": {
+        "id": 1,
+        "symphony_id": "test-symphony-alpha",
+        "run_timestamp": "2026-05-23T16:00:00Z",
+        "spec_bundle_id": "bundle-abc001",
+        "n_effective": 500,
+        "s_count": 0
+      },
+      "ledger_rows": [],
+      "expected_verdict": "CLEAR",
+      "expected_advisor_role": "OVERFITTING_CONSCIENCE",
+      "expected_subject_type": "autotune_run",
+      "expected_is_advisory_only": 1,
+      "_note": "raw_response must note 'no BACKTEST_SELECTION facets' and that N_effective equals N_optuna"
+    },
+
+    "s_gt_0_low_ratio_watch": {
+      "_description": "Indicator 1: S > 0 but S/N_optuna ratio <= 0.1. verdict=WATCH (uncounted testing present but ratio below BREACH threshold).",
+      "autotune_run": {
+        "id": 2,
+        "symphony_id": "test-symphony-beta",
+        "run_timestamp": "2026-05-23T16:01:00Z",
+        "spec_bundle_id": "bundle-abc002",
+        "n_effective": 505,
+        "s_count": 5
+      },
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 5,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-abc002",
+          "facet_name": "facet-x",
+          "_note": "S=5, N_optuna inferred as 500; ratio=0.01 well below 0.1 BREACH threshold"
+        }
+      ],
+      "expected_verdict": "WATCH",
+      "expected_advisor_role": "OVERFITTING_CONSCIENCE",
+      "expected_subject_type": "autotune_run",
+      "expected_is_advisory_only": 1,
+      "_note": "raw_response must include BACKTEST_SELECTION facet count and names"
+    },
+
+    "high_ratio_breach": {
+      "_description": "Indicator 2: S/N_optuna ratio > 0.1 (S=60, N_optuna=500). verdict=BREACH.",
+      "autotune_run": {
+        "id": 3,
+        "symphony_id": "test-symphony-gamma",
+        "run_timestamp": "2026-05-23T16:02:00Z",
+        "spec_bundle_id": "bundle-abc003",
+        "n_effective": 560,
+        "s_count": 60
+      },
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 60,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-abc003",
+          "facet_name": "facet-high-count",
+          "_note": "ratio = 60/500 = 0.12 which exceeds the 0.1 BREACH threshold"
+        }
+      ],
+      "breach_threshold": 0.1,
+      "expected_verdict": "BREACH",
+      "expected_advisor_role": "OVERFITTING_CONSCIENCE",
+      "expected_subject_type": "autotune_run",
+      "expected_is_advisory_only": 1,
+      "_note": "raw_response must include ratio and threshold"
+    },
+
+    "different_bundle_excluded": {
+      "_description": "Ledger row pointing at a different spec_bundle_id must be excluded — only rows matching the autotune_run's bundle are in scope.",
+      "autotune_run": {
+        "id": 4,
+        "symphony_id": "test-symphony-delta",
+        "run_timestamp": "2026-05-23T16:03:00Z",
+        "spec_bundle_id": "bundle-target-004",
+        "n_effective": 500,
+        "s_count": 0
+      },
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 99,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-OTHER-999",
+          "facet_name": "facet-other",
+          "_note": "Points at a DIFFERENT bundle — must not contribute to S for this run"
+        }
+      ],
+      "expected_verdict": "CLEAR",
+      "_note": "Cross-bundle ledger rows must not pollute this run's S count"
+    },
+
+    "ratio_boundary_exactly_0_1_is_breach": {
+      "_description": "Boundary: S/N_optuna = 0.1 exactly (50/500). The threshold is 'S/N_optuna > 0.1', so 0.1 exactly is NOT a breach — this asserts the correct boundary. S=50, N_optuna=500, ratio=0.1 exactly is WATCH (or CLEAR if no S), not BREACH.",
+      "_boundary_clarification": "Indicator 2 BREACH condition is STRICT: ratio > 0.1, so 0.1 exactly = NOT a breach. If S>0, verdict is WATCH (Indicator 1 fires), not BREACH.",
+      "autotune_run": {
+        "id": 5,
+        "symphony_id": "test-symphony-boundary",
+        "run_timestamp": "2026-05-23T16:04:00Z",
+        "spec_bundle_id": "bundle-abc005",
+        "n_effective": 550,
+        "s_count": 50
+      },
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 50,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-abc005",
+          "facet_name": "facet-boundary"
+        }
+      ],
+      "expected_verdict": "WATCH",
+      "_note": "S/N_optuna = 0.1 exactly triggers WATCH (Indicator 1: S > 0) but NOT BREACH (Indicator 2: strict >)"
+    }
+  }
+}
