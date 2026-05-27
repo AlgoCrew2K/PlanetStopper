@@ -729,11 +729,10 @@ def main():
                     bot_state[s_id]["name"] = sym.get("name", bot_state[s_id].get("name", ""))
                     bot_state[s_id]["account"] = account
 
-                    if not bot_state[s_id].get("triggered"):
-                        holdings_for_vol = sym.get("holdings", [])
-                        bot_state[s_id]["symphony_vol"] = math_engine.calculate_20d_vol(
-                            holdings_for_vol, data_phase_history
-                        )
+                    holdings_for_vol = sym.get("holdings", [])
+                    bot_state[s_id]["symphony_vol"] = math_engine.calculate_20d_vol(
+                        holdings_for_vol, data_phase_history
+                    )
 
                     # Advance HWM (monotonic — never decreases)
                     if current_return > bot_state[s_id].get(
@@ -1118,7 +1117,7 @@ def main():
                     NEIGHBOR_K,
                     seed=math_engine.derive_cycle_mc_seed(current_et.strftime("%Y%m%d_%H%M")),
                 )
-                symphony_vol = math_engine.calculate_20d_vol(holdings, historical_data)
+                symphony_vol = bot_state[symphony_id]["symphony_vol"]
 
                 acc_VWAP_BLEED_ARM_PCT = math_engine.compute_vwap_bleed_arm_threshold(
                     symphony_vol=symphony_vol,
