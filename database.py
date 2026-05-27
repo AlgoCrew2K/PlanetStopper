@@ -422,8 +422,12 @@ def save_autotune_run(
     d_spec=None,
     gamma=None,
     overfitting_verdict=None,
-) -> None:
+) -> int:
     """Persist one row of per-run Optuna validation metrics to autotune_runs.
+
+    Returns the new row id (cursor.lastrowid) so the OC producer can propagate
+    it directly into _oc_run["id"] without a read-after-write round-trip.
+    S3-AUDIT-001 fix: previously returned None.
 
     Called once per symphony per run_autotuner() invocation, after baseline_decision
     is finalized.  All metric columns are NULLable so partial data never fails an
@@ -481,31 +485,39 @@ def save_autotune_run(
         ),
     )
     conn.commit()
+    row_id: int = cursor.lastrowid
     conn.close()
+    return row_id
 
 
 def _autotune_run_row_to_dict(row) -> dict:
-    """Map a raw autotune_runs SELECT row (14 columns) to a dict."""
+    """Map a raw autotune_runs SELECT row (15 columns) to a dict.
+
+    Column order matches _AUTOTUNE_RUNS_SELECT. id is projected first
+    (S3-AUDIT-001 fix) so the OC producer receives an honest row id.
+    """
     return {
-        "run_timestamp": row[0],
-        "symphony_id": row[1],
-        "oos_alpha": _finite_or_none(row[2]),
-        "train_alpha": _finite_or_none(row[3]),
-        "baseline_decision": row[4],
-        "fallback_oos_alpha": _finite_or_none(row[5]),
-        "default_oos_alpha": _finite_or_none(row[6]),
-        "selection_tstat": _finite_or_none(row[7]),
-        "naive_sharpe": _finite_or_none(row[8]),
-        "validation_sharpe": _finite_or_none(row[9]),
-        "frozen_eval_sharpe": _finite_or_none(row[10]),
-        "math_mode": row[11],
-        "account_id": row[12],
-        "sortino_sentinel_pct": _finite_or_none(row[13]),
+        "id": row[0],
+        "run_timestamp": row[1],
+        "symphony_id": row[2],
+        "oos_alpha": _finite_or_none(row[3]),
+        "train_alpha": _finite_or_none(row[4]),
+        "baseline_decision": row[5],
+        "fallback_oos_alpha": _finite_or_none(row[6]),
+        "default_oos_alpha": _finite_or_none(row[7]),
+        "selection_tstat": _finite_or_none(row[8]),
+        "naive_sharpe": _finite_or_none(row[9]),
+        "validation_sharpe": _finite_or_none(row[10]),
+        "frozen_eval_sharpe": _finite_or_none(row[11]),
+        "math_mode": row[12],
+        "account_id": row[13],
+        "sortino_sentinel_pct": _finite_or_none(row[14]),
     }
 
 
 _AUTOTUNE_RUNS_SELECT = """
-    SELECT run_timestamp, symphony_id, oos_alpha, train_alpha,
+    SELECT id,
+           run_timestamp, symphony_id, oos_alpha, train_alpha,
            baseline_decision, fallback_oos_alpha, default_oos_alpha,
            selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
            math_mode, account_id, sortino_sentinel_pct
@@ -781,6 +793,7 @@ _ADVISOR_OBSERVATION_COLUMNS = [
     "raw_response",
     "is_advisory_only",
     "spec_bundle_id",
+    "symphony_id",
 ]
 
 
@@ -808,6 +821,7 @@ def insert_advisor_observation(
     verdict: str | None = None,
     raw_response: "dict | str | None" = None,
     spec_bundle_id: str | None = None,
+    symphony_id: str | None = None,
     **kwargs,
 ) -> int:
     """Insert an advisor observation row; return the new row id.
@@ -818,6 +832,10 @@ def insert_advisor_observation(
     is_advisory_only is always stored as 1 regardless of any caller-supplied value
     in **kwargs — the Advisor never moves money.  raw_response defaults to '{}'
     for computed rows that carry no LLM output.
+
+    symphony_id (S3-AUDIT-004): denormalized symphony name so the
+    /api/advisor-observations?symphony_id= filter resolves in one SELECT
+    rather than three subject-type fan-out queries.
     """
     # Serialise raw_response; None and empty dict both become '{}'.
     if raw_response is None:
@@ -832,9 +850,9 @@ def insert_advisor_observation(
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO advisor_observations "
-        "(advisor_role, subject_type, subject_id, verdict, raw_response, is_advisory_only, spec_bundle_id) "
-        "VALUES (?, ?, ?, ?, ?, 1, ?)",
-        (advisor_role, subject_type, subject_id, verdict, raw_response_str, spec_bundle_id),
+        "(advisor_role, subject_type, subject_id, verdict, raw_response, is_advisory_only, spec_bundle_id, symphony_id) "
+        "VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+        (advisor_role, subject_type, subject_id, verdict, raw_response_str, spec_bundle_id, symphony_id),
     )
     conn.commit()
     row_id = cursor.lastrowid
@@ -890,6 +908,30 @@ def get_advisor_observations_for_role(
     return [_parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS) for row in rows]
 
 
+def get_advisor_observations_for_symphony(symphony_id: str) -> list[dict]:
+    """Return all advisor_observations rows whose symphony_id matches, oldest-first.
+
+    Single-query filter via the denormalized symphony_id column added by
+    migration 025 (S3-AUDIT-004 + S3-AUDIT-010 fix).  Replaces the legacy
+    three-subject fan-out in /api/advisor-observations, which could never
+    match because subject_id stores a numeric PK or bundle_hash, not a name.
+
+    Returns an empty list when no rows match.
+    Uses get_ro_connection() — read-only (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT "
+        + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+        + " FROM advisor_observations WHERE symphony_id = ? ORDER BY id ASC",
+        (symphony_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS) for row in rows]
+
+
 # --- H1: Schema Migration Runner ---
 
 _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
@@ -924,6 +966,7 @@ _MIGRATION_FILES = [
     "022_spec_bundles_add_id.sql",
     "023_autotune_runs_s_count.sql",
     "024_spec_facets_unique_constraint.sql",
+    "025_advisor_observations_symphony_id.sql",
 ]
 
 

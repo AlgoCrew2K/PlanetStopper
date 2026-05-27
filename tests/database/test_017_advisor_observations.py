@@ -79,7 +79,10 @@ import database as db_module
 _MIGRATION_FILENAME = "017_advisor_observations.sql"
 _MIGRATION_PATH = Path(__file__).parents[2] / "migrations" / _MIGRATION_FILENAME
 
-# Canonical column set for advisor_observations (plan §Deliverables #1).
+# Canonical column set for advisor_observations.
+# Migration 025 (S3-AUDIT-004 fix) added the NULLable `symphony_id` column so
+# the /api/advisor-observations symphony filter can resolve OC/DE rows in one
+# query.  Producers populate it; pre-existing callers leave it NULL.
 _EXPECTED_COLUMNS: frozenset[str] = frozenset({
     "id",
     "created_at",
@@ -90,6 +93,7 @@ _EXPECTED_COLUMNS: frozenset[str] = frozenset({
     "raw_response",
     "is_advisory_only",
     "spec_bundle_id",
+    "symphony_id",
 })
 
 # Roles that must be accepted by the table discriminator (Phase-1/Phase-2 set).

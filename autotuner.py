@@ -1,6 +1,7 @@
 import time
 import math
 import statistics
+import logging
 import optuna
 from datetime import datetime, timedelta, timezone
 import database
@@ -10,6 +11,7 @@ import glob
 import json
 from advisors import overfitting_conscience as _oc
 from advisors import spec_critic as _sc
+from advisors import divergence_explainer as _de
 
 
 def _replay_grace_minutes() -> int:
@@ -1321,7 +1323,14 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         "FROM spec_facets sf WHERE sf.bundle_hash = ?",
         (stored_hash,),
     )
-    _sc.run_spec_critic(stored_hash, _sc_facets_rows)
+    # Note: the Spec Critic is called once per bundle (before the per-symphony loop),
+    # so normalized_name is not yet available here. symphony_id is set to None at this
+    # site. If per-symphony SC observations with a populated symphony_id are needed,
+    # the call should be moved inside the per-symphony loop.
+    try:
+        _sc.run_spec_critic(stored_hash, _sc_facets_rows, symphony_id=None)
+    except Exception as e:
+        logging.warning("Spec Critic observation failed (advisory only): %s", e)
 
     # Suppress Optuna's per-trial log noise; set here (not at module level) to
     # avoid clobbering pytest's output-capture on import.
@@ -1715,7 +1724,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             f"D_spec={d_spec} n_effective={n_eff}"
         )
 
-        database.save_autotune_run(
+        # S3-AUDIT-001: capture the inserted row id directly from save_autotune_run
+        # (which now returns cursor.lastrowid) — eliminates the read-after-write
+        # get_latest_autotune_run dance that raced and always fell back to id=0.
+        _inserted_id = database.save_autotune_run(
             run_timestamp=run_timestamp,
             symphony_id=normalized_name,
             oos_alpha=oos_alpha,
@@ -1745,17 +1757,33 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             (stored_hash,),
         )
         _oc_run = {
-            "id": 0,  # save_autotune_run returns None; id retrieved from latest row
+            "id": _inserted_id,
             "symphony_id": normalized_name,
             "run_timestamp": run_timestamp,
             "spec_bundle_id": stored_hash,
             "n_effective": n_eff,
             "s_count": d_spec,
         }
-        _latest_run = database.get_latest_autotune_run(normalized_name)
-        if _latest_run is not None:
-            _oc_run["id"] = _latest_run.get("id", 0)
-        _oc.run_overfitting_conscience(_oc_run, _oc_ledger_rows)
+        # S3-AUDIT-003: supply prior_runs (same symphony, excluding just-inserted row,
+        # ASC by run_timestamp) so OC Indicator-3 drift detection can fire.
+        _oc_prior_raw = database.advisor_ro_query(
+            "SELECT id, symphony_id, s_count FROM autotune_runs "
+            "WHERE symphony_id = ? AND id != ? ORDER BY run_timestamp ASC",
+            (normalized_name, _inserted_id),
+        )
+        # Normalise sqlite3.Row → dict for the producer.
+        _oc_prior_dicts = [dict(r) for r in _oc_prior_raw]
+        try:
+            _oc.run_overfitting_conscience(_oc_run, _oc_ledger_rows, prior_runs=_oc_prior_dicts)
+        except Exception as e:
+            logging.warning("Overfitting Conscience observation failed (advisory only): %s", e)
+        # S3-AUDIT-002: Divergence Explainer call site, post-OC mirror.
+        # Consistent placement with OC; avoids the 1-minute alpha_bot_execution path
+        # (architecture constraint #1 — no blocking I/O on the execution path).
+        try:
+            _de.run_divergence_explainer(_oc_run, cvar_row=None)
+        except Exception as e:
+            logging.warning("Divergence Explainer observation failed (advisory only): %s", e)
 
     print("  -> Autotuner finished all symphonies.")
     return optimization_results

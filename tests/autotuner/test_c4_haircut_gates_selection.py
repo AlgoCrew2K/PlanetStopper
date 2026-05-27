@@ -152,7 +152,11 @@ def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
               return_value={"params": params.copy(), "locked_vars": []}),
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", params),
-        patch("autotuner.database.save_autotune_run"),
+        # S3-AUDIT-001 fix: save_autotune_run now returns cursor.lastrowid; the
+        # autotuner immediately uses the returned id as a SQL parameter in the
+        # prior_runs SELECT.  A bare patch() returns a MagicMock, which SQLite
+        # rejects — pin to a positive int.
+        patch("autotuner.database.save_autotune_run", return_value=1),
         patch("autotuner.benjamini_hochberg_adjust", side_effect=_spy_bhy),
         patch("autotuner.math_engine.compute_para_arm_decision",
               side_effect=lambda **kw: (0.0, False)),
@@ -280,8 +284,13 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
                   return_value={"params": params.copy(), "locked_vars": []}),
             patch("autotuner.database.save_symphony_strategy"),
             patch("autotuner.database.DEFAULT_STRATEGY", params),
-            patch("autotuner.database.save_autotune_run",
-                  side_effect=lambda **kw: captured.append(kw)),
+            # S3-AUDIT-001 fix: save_autotune_run now returns cursor.lastrowid
+            # (a positive int) and the autotuner uses it as a SQL parameter.
+            # The side_effect must return an int — append() returns None.
+            patch(
+                "autotuner.database.save_autotune_run",
+                side_effect=lambda **kw: (captured.append(kw) or 1),
+            ),
             patch("autotuner.math_engine.compute_para_arm_decision",
                   side_effect=lambda **kw: (0.0, False)),
             patch("autotuner.math_engine.compute_time_squeeze_decay",

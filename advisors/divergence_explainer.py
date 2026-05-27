@@ -194,5 +194,6 @@ def run_divergence_explainer(
         verdict=obs["verdict"],
         raw_response=obs["raw_response"],
         spec_bundle_id=obs["spec_bundle_id"],
+        symphony_id=autotune_run.get("symphony_id"),
     )
     return row_id

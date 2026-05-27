@@ -108,7 +108,7 @@ def _autotuner_patches(captured_study_names: list, captured_load_if_exists: list
          patch("autotuner.database.get_symphony_strategy",
                return_value={"params": database.DEFAULT_STRATEGY.copy(), "locked_vars": []}), \
          patch("autotuner.database.save_symphony_strategy"), \
-         patch("autotuner.database.save_autotune_run", return_value=None), \
+         patch("autotuner.database.save_autotune_run", return_value=1), \
          patch("autotuner.database.DEFAULT_STRATEGY", database.DEFAULT_STRATEGY.copy()), \
          patch("autotuner.math_engine.compute_vwap_breakdown_update",
                return_value=(0, 0, False, False)):

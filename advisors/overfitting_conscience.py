@@ -69,6 +69,15 @@ def compute_overfitting_conscience_observation(
     """
     # --- Mandatory column access — KeyError is intentional on pre-020 rows ---
     run_id: int = autotune_run["id"]
+    # S3-AUDIT-007: sentinel 0/None/negative would corrupt the audit trail.
+    # A future regression of the save_autotune_run writer (S3-AUDIT-001) must
+    # not silently produce subject_id="0" rows — the producer fails-noisy here.
+    if run_id in (0, None) or (isinstance(run_id, int) and run_id <= 0):
+        raise ValueError(
+            f"autotune_run['id']={run_id!r} is invalid; the sentinel 0/None/negative "
+            "would corrupt the audit trail — every OC observation would land with "
+            "subject_id='0'.  Ensure save_autotune_run returns cursor.lastrowid (S3-AUDIT-001)."
+        )
     symphony_id: str = autotune_run["symphony_id"]
     spec_bundle_id: str = autotune_run["spec_bundle_id"]
     n_effective: int = autotune_run["n_effective"]
@@ -191,5 +200,6 @@ def run_overfitting_conscience(
         verdict=obs["verdict"],
         raw_response=obs["raw_response"],
         spec_bundle_id=obs["spec_bundle_id"],
+        symphony_id=autotune_run.get("symphony_id"),
     )
     return row_id

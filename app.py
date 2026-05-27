@@ -2416,7 +2416,7 @@ _ADVISOR_ROLES = [
     "OVERFITTING_CONSCIENCE",
     "SPEC_CRITIC",
     "DIVERGENCE_EXPLAINER",
-    "NARRATOR",
+    "NARRATOR",  # DEFERRED per Sprint 3 scope — producer not yet shipped
 ]
 
 # Hard limit on observations returned per request — prevents unbounded UI renders.
@@ -2437,27 +2437,11 @@ def api_advisor_observations():
     """
     symphony_id = request.args.get("symphony_id", "").strip()
     if symphony_id:
-        rows = database.get_advisor_observations_for_subject(
-            subject_type="autotune_run",
-            subject_id=symphony_id,
-        )
-        # Also check spec_bundle and other subject types
-        rows += database.get_advisor_observations_for_subject(
-            subject_type="spec_bundle",
-            subject_id=symphony_id,
-        )
-        rows += database.get_advisor_observations_for_subject(
-            subject_type="cvar_diagnostic",
-            subject_id=symphony_id,
-        )
-        # Deduplicate by id, preserve insertion order
-        seen: set = set()
-        deduped = []
-        for r in rows:
-            if r["id"] not in seen:
-                seen.add(r["id"])
-                deduped.append(r)
-        rows = deduped
+        # S3-AUDIT-004 + S3-AUDIT-010: single-query via the denormalized symphony_id
+        # column (migration 025).  The legacy 3x subject_type fan-out used
+        # subject_id==symphony_id which never matched: producers store subject_id
+        # as a numeric PK (OC/DE) or bundle_hash (SC), not the symphony name.
+        rows = database.get_advisor_observations_for_symphony(symphony_id)
     else:
         rows = []
         for role in _ADVISOR_ROLES:
