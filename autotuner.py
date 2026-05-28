@@ -175,7 +175,7 @@ def _resolve_optuna_n_jobs_from_env() -> int:
 # optuna-compare without re-parsing logs, and to satisfy the no-magic-numbers rule.
 _SS_TAKE_PROFIT_MC_MIN = 2.0
 _SS_TAKE_PROFIT_MC_MAX = 10.0
-_SS_VWAP_CROSS_HWM_MIN = 0.5
+_SS_VWAP_CROSS_HWM_MIN = 0.5  # production walk-forward bounds; see _SS_VWAP_CROSS_HWM_V1_MIN below for the narrower V1 calibration sweep bounds and asymmetry rationale
 _SS_VWAP_CROSS_HWM_MAX = 2.5
 _SS_VWAP_BLEED_MULT_MIN = 0.5
 _SS_VWAP_BLEED_MULT_MAX = 3.0
@@ -1956,6 +1956,12 @@ def run_calibration_sweep(
     study names, O5 Sortino objective, O6 frozen-eval fold — same methodology as
     run_autotuner but search space is limited to the two V1 parameters. Does NOT
     persist anything to the DB (AC-V1.3: read-only, operator-gated rollout).
+
+    Note: the VWAP_CROSS_HWM_PCT bounds used here (via ``_SS_VWAP_CROSS_HWM_V1_MIN``
+    / ``_SS_VWAP_CROSS_HWM_V1_MAX``) are narrower than the production walk-forward
+    bounds (``_SS_VWAP_CROSS_HWM_MIN`` / ``_SS_VWAP_CROSS_HWM_MAX``). The asymmetry
+    is intentional — see the source-comment block above those V1 constants for the
+    math rationale (3-tick confirm gate; ~2sigma upper reliability limit).
 
     Returns a list of report dicts, one per tuned param per symphony found in
     history_data. The caller decides whether to act on proposals.
