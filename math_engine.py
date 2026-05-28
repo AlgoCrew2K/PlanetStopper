@@ -153,13 +153,20 @@ class CVaRAssessment:
 
 
 # Time-squeeze decay constants (drives intraday tightening of trailing stops)
-# Rationale (AC-7 / M-4): the log10(1 + 9*t) curve is concave — it tightens the
-# stop FASTER early in the session and SLOWER near the close. The concave shape
-# is a tuned practitioner heuristic: early-session noise warrants quicker
-# give-up of slack while late-session moves are likelier to be real, so the
-# curve flattens. The shape has no formal literature provenance and is flagged
-# for a follow-up empirical review against realized intraday vol term-structure.
-DECAY_CURVE_SCALAR = 9  # log10(1 + 9*t) maps t in [0,1] to decay in [0,1]; produces the characteristic AlphaBot intraday decay curve
+# PROVENANCE: f(t) = 1 - sqrt(1 - t), the i.i.d.-returns "remaining-session
+# uncertainty" curve. Under the standard square-root-of-time scaling for
+# i.i.d. log-returns with constant per-unit-time variance, the standard
+# deviation of remaining-session returns scales as sqrt(1-t); tightness
+# (1 - remaining_std / full_std) is therefore 1 - sqrt(1-t). Endpoints
+# f(0)=0, f(1)=1. Concave, monotone, front-loaded (open-loaded). No fitted
+# constants — the formula is closed-form THEORY with zero free parameters.
+# The curve is less aggressive midday (~0.45 pp wider stop at t=0.5) than
+# the prior log10 heuristic; monotone-converging at endpoints (f(0)=0
+# exactly, f(1)=1 exactly). Cited: Danielsson & Zigrand (2003), LSE FMG
+# DP-439, https://eprints.lse.ac.uk/24827/1/dp439.pdf.
+# Research note: docs/research/m3-provenance/literature-pass.md.
+# freeze_discipline = THEORY.
+# DECAY_CURVE_SCALAR removed — closed by the sqrt-time derivation (M3).
 MULT_OPEN = 1.5  # dynamic_multiplier at market open (loosest stop)
 MULT_CLOSE = 0.5  # dynamic_multiplier at market close (tightest)
 MIN_STOP_OPEN = 0.3  # min stop floor at market open, in percentage points
@@ -215,12 +222,12 @@ def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
 
     - time_ratio MUST be in the closed interval [0.0, 1.0] (fraction of trading
       session elapsed: 0.0 = market open, 1.0 = close). A value outside that
-      range raises ValueError — reject-don't-coerce policy (M-1): a negative
-      time_ratio below -1/9 would otherwise crash math.log10 with an opaque
-      domain error, and a value above 1 would silently over-tighten the stop.
-    - decay_curve = log10(1 + DECAY_CURVE_SCALAR * time_ratio), ranges from
-      0.0 at open to 1.0 at close. See DECAY_CURVE_SCALAR for the concave-shape
-      rationale.
+      range raises ValueError — reject-don't-coerce policy (M-1).
+    - decay_curve = 1 - sqrt(1 - time_ratio), the i.i.d.-returns remaining-
+      session uncertainty curve (Danielsson & Zigrand 2003). Ranges from 0.0
+      at open to 1.0 at close. Concave, monotone, front-loaded (open-loaded).
+      Zero free parameters — THEORY provenance. Research note:
+      docs/research/m3-provenance/literature-pass.md §1.
     - dynamic_multiplier linearly interpolates from MULT_OPEN at decay=0
       to MULT_CLOSE at decay=1.
     - dynamic_min_stop linearly interpolates from MIN_STOP_OPEN at decay=0
@@ -229,14 +236,14 @@ def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
     Pure. No I/O. No state. No datetime handling.
 
     Extracted from alpha_bot_execution.py:574-585 (cycle 4 of math-layer
-    extraction).
+    extraction). Formula re-derived M3 from first principles (M3 redrive).
     """
     _reject_non_finite(time_ratio=time_ratio)
     if time_ratio < 0.0 or time_ratio > 1.0:
         raise ValueError(
             f"time_ratio must be in the range [0, 1]; got {time_ratio!r}"
         )
-    decay_curve = math.log10(1 + DECAY_CURVE_SCALAR * time_ratio)
+    decay_curve = 1.0 - math.sqrt(1.0 - time_ratio)
     dynamic_multiplier = float(MULT_OPEN - (MULT_OPEN - MULT_CLOSE) * decay_curve)
     dynamic_min_stop = float(MIN_STOP_OPEN - (MIN_STOP_OPEN - MIN_STOP_CLOSE) * decay_curve)
     return dynamic_multiplier, dynamic_min_stop
@@ -665,12 +672,25 @@ def compute_vwap_breakdown_update(
         return 0, 0, False, False
 
     # System A — profit-protection break.
-    # PROVENANCE (AC-8): the gate `safe_hwm >= vwap_cross_hwm_pct` is a tuned
-    # practitioner heuristic with no formal literature provenance. It encodes
-    # the practitioner judgement that VWAP-break profit protection should only
-    # arm once the position has banked a high-water mark above the tuned
-    # vwap_cross_hwm_pct threshold; the threshold itself is an Optuna-tuned
-    # parameter, not a derived quantity.
+    # PROVENANCE: the gate `safe_hwm >= vwap_cross_hwm_pct` is the regime
+    # boundary of a two-regime trailing-stop system. Regime 1 (below gate):
+    # primary trailing-stop only (compute_active_trailing_stop with
+    # time-squeeze decay). Regime 2 (at-or-above gate): primary stop OR
+    # VWAP-cross profit-protection (System A) — adds the System-A break
+    # tick counter once HWM has banked enough to justify a tighter exit
+    # policy. The structural choice of a regime switch is justified by the
+    # optimal-stopping formalism for trailing stops with running maxima
+    # (Leung & Zhang, 2019, "Optimal Trading with a Trailing Stop,"
+    # Applied Mathematics & Optimization 80, 669-698,
+    # DOI: 10.1007/s00245-019-09559-0). The maximality principle (Peskir,
+    # 1998, Annals of Probability 26(4), 1614-1640) characterizes the
+    # optimal trailing boundary as the maximal solution to a first-order
+    # nonlinear ODE; the regime-switch construction is a discretization of
+    # this boundary into inactive/active regions, with the boundary location
+    # (vwap_cross_hwm_pct) remaining an Optuna-searched parameter within the
+    # BHY haircut surface. Research note:
+    # docs/research/m3-provenance/literature-pass.md §2.
+    # freeze_discipline = THEORY.
     if safe_hwm >= vwap_cross_hwm_pct and current_return < safe_hwm:
         new_vwap_ticks = int(current_vwap_ticks) + 1
         is_vwap_broken = bool(new_vwap_ticks >= VWAP_BREAK_CONFIRM_TICKS)

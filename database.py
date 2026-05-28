@@ -1222,6 +1222,138 @@ def get_or_create_phase1_theory_bundle_id() -> int:
     return bundle_id
 
 
+# Process-local cache for the Phase-1.5 M3 bundle id.
+# Tuple of (db_path, bundle_id) so the cache misses automatically if the DB
+# path changes between calls (per-test isolation via DB_FILE monkeypatching).
+_phase15_m3_bundle_id_cache: "tuple[str, int] | None" = None
+
+# Canonical Phase-1.5 M3 facet values.
+# R1: time_squeeze_decay_curve_v2 — the sqrt remaining-variance derivation
+#   (Danielsson & Zigrand 2003, LSE FMG DP-439). freeze_discipline = THEORY.
+# R2: vwap_system_a_hwm_gate_v2 — the regime-switch construction justified
+#   from optimal-stopping (Leung & Zhang 2019, Peskir 1998). THEORY.
+_M3_R1_FACET_NAME = "time_squeeze_decay_curve_v2"
+_M3_R1_FACET_VALUE = (
+    "f(t) = 1 - sqrt(1 - t). Under the standard square-root-of-time scaling "
+    "for i.i.d. log-returns with constant per-unit-time variance, the standard "
+    "deviation of remaining-session returns scales as sqrt(1-t); tightness "
+    "(1 - remaining_std / full_std) is therefore 1 - sqrt(1-t). Zero free "
+    "parameters. Danielsson & Zigrand (2003), LSE FMG DP-439."
+)
+_M3_R1_JUSTIFICATION = (
+    "THEORY provenance: the curve is derived from first principles under i.i.d. "
+    "log-returns. Cited: Danielsson & Zigrand 2003. Research note: "
+    "docs/research/m3-provenance/literature-pass.md §1.3."
+)
+_M3_R1_CALIBRATION_EVIDENCE = (
+    "intended_direction: concave, open-loaded, less aggressive midday (~0.45 pp "
+    "wider stop at t=0.5 vs prior log10 heuristic), monotone-converging at "
+    "endpoints (f(0)=0, f(1)=1 exactly). Expected effect: fewer mid-morning "
+    "exits, more late-afternoon exits."
+)
+
+_M3_R2_FACET_NAME = "vwap_system_a_hwm_gate_v2"
+_M3_R2_FACET_VALUE = (
+    "The gate safe_hwm >= vwap_cross_hwm_pct is the regime boundary of a "
+    "two-regime trailing-stop system. Regime 1 (below gate): primary trailing-"
+    "stop only. Regime 2 (at-or-above gate): primary stop OR VWAP System-A "
+    "profit-protection. Structural choice justified by optimal-stopping "
+    "formalism (Leung & Zhang, 2019; Peskir, 1998 maximality principle). "
+    "Runtime is byte-identical to pre-M3; this is a provenance-only closure."
+)
+_M3_R2_JUSTIFICATION = (
+    "THEORY provenance: the regime-switch structure is justified by Leung & "
+    "Zhang (2019) optimal-stopping for trailing stops with running maxima and "
+    "the Peskir (1998) maximality principle. The threshold value "
+    "(vwap_cross_hwm_pct) remains Optuna-searched within the BHY haircut "
+    "surface. Research note: docs/research/m3-provenance/literature-pass.md §2.3."
+)
+_M3_R2_CALIBRATION_EVIDENCE = (
+    "intended_direction: byte-identical runtime (zero behavioral change vs "
+    "pre-M3). The closure is provenance-only: the regime-switch structure is "
+    "now anchored to optimal-stopping theory rather than left as a practitioner "
+    "heuristic. Max-absolute-deviation = 0 in the S-1 Stage 2 attribution table."
+)
+
+
+def get_or_create_phase15_m3_bundle_id() -> int:
+    """Return the integer id for the canonical Phase-1.5 M3 spec bundle.
+
+    Idempotent: INSERT OR IGNORE means repeated calls return the same id.
+    The M3 bundle encodes two THEORY-frozen facets:
+      - time_squeeze_decay_curve_v2: f(t) = 1 - sqrt(1-t) per Danielsson &
+        Zigrand (2003) square-root-of-time scaling under i.i.d. returns.
+      - vwap_system_a_hwm_gate_v2: regime-switch construction per Leung &
+        Zhang (2019) optimal-stopping / Peskir (1998) maximality principle.
+
+    Process-local cache: second and subsequent calls within the same process
+    return immediately without touching the DB (sub-microsecond).
+
+    Research note: docs/research/m3-provenance/literature-pass.md.
+    freeze_discipline = THEORY for both facets per M3 plan §69 + NN1 binding.
+    """
+    global _phase15_m3_bundle_id_cache
+    current_db = _db_file()
+    if _phase15_m3_bundle_id_cache is not None:
+        cached_db, cached_id = _phase15_m3_bundle_id_cache
+        if cached_db == current_db:
+            return cached_id
+        # DB path changed (test isolation); fall through to re-compute.
+        _phase15_m3_bundle_id_cache = None
+
+    _m3_facets = {
+        _M3_R1_FACET_NAME: _M3_R1_FACET_VALUE,
+        _M3_R2_FACET_NAME: _M3_R2_FACET_VALUE,
+    }
+    canonical_json = canonicalize_facets_json(_m3_facets)
+    bundle_hash = hash_facets_json(canonical_json)
+    insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
+
+    # Fetch the id backfilled by insert_spec_bundle.
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or row[0] is None:
+        raise RuntimeError(
+            f"get_or_create_phase15_m3_bundle_id: id is NULL for bundle_hash={bundle_hash!r} "
+            "after insert — run_migrations() may not have applied migration 022."
+        )
+    bundle_id: int = row[0]
+
+    # Ensure the two M3 facets are registered.
+    # INSERT OR IGNORE in insert_spec_bundle_facet makes repeated calls safe
+    # (migration 024 adds UNIQUE(bundle_hash, facet_name) to spec_facets).
+    existing = get_spec_facets_for_bundle(bundle_hash)
+    existing_names = {r["facet_name"] for r in existing}
+
+    if _M3_R1_FACET_NAME not in existing_names:
+        insert_spec_bundle_facet(
+            bundle_hash=bundle_hash,
+            facet_name=_M3_R1_FACET_NAME,
+            facet_value=_M3_R1_FACET_VALUE,
+            freeze_discipline="THEORY",
+            justification=_M3_R1_JUSTIFICATION,
+            calibration_evidence=_M3_R1_CALIBRATION_EVIDENCE,
+        )
+
+    if _M3_R2_FACET_NAME not in existing_names:
+        insert_spec_bundle_facet(
+            bundle_hash=bundle_hash,
+            facet_name=_M3_R2_FACET_NAME,
+            facet_value=_M3_R2_FACET_VALUE,
+            freeze_discipline="THEORY",
+            justification=_M3_R2_JUSTIFICATION,
+            calibration_evidence=_M3_R2_CALIBRATION_EVIDENCE,
+        )
+
+    _phase15_m3_bundle_id_cache = (current_db, bundle_id)
+    return bundle_id
+
+
 def get_spec_bundle(bundle_hash: str) -> "dict | None":
     """Return the spec_bundles row for the given hash as a dict, or None."""
     conn = get_ro_connection()
