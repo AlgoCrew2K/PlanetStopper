@@ -1,0 +1,55 @@
+{
+  "history_length": 125,
+  "split_ratios": {
+    "train": 0.60,
+    "validation": 0.20,
+    "frozen_eval": 0.20
+  },
+  "raw_fold_sizes": {
+    "train_days": 75,
+    "validation_days": 25,
+    "frozen_eval_days": 25
+  },
+  "purge_embargo_constants": {
+    "PURGE_DAYS": 20,
+    "EMBARGO_DAYS": 1,
+    "boundary_strip_per_side": 21
+  },
+  "usable_window_post_purge": {
+    "usable_validation_days": 4,
+    "usable_frozen_eval_days": 25,
+    "usable_validation_days_formula": "max(0, validation_days - PURGE_DAYS - EMBARGO_DAYS)",
+    "comment": "PURGE+EMBARGO=21 is applied at the train|validation boundary (strips the last 21 of train) AND at the validation|frozen-eval boundary (strips the last 21 of validation). The frozen-eval fold is NOT purged on its trailing edge — it is the held-out final block. Usable validation post-purge = 25 - 21 = 4 days."
+  },
+  "operator_visibility_field": {
+    "field_name": "eval_window_days",
+    "field_location": "optimization_results[normalized_name]",
+    "field_type": "dict",
+    "required_subkeys": [
+      "raw_validation_days",
+      "usable_validation_days",
+      "raw_frozen_eval_days",
+      "purge_days",
+      "embargo_days"
+    ],
+    "comment": "The optimization_results return dict must expose the usable-window day-counts so the operator sees the thin-window cost on every autotune cycle. This is the OPTUNA-4 Path B operator-visibility contract."
+  },
+  "docstring_required_phrases": {
+    "field_in_docstring": "eval_window_days",
+    "thin_window_phrase": "BHY haircut",
+    "compensation_phrase": "selection-bias correction",
+    "comment": "The run_autotuner docstring must explicitly cite that the BHY (Benjamini-Hochberg-Yekutieli) selection-bias correction compensates for the thin usable validation window. The compensation argument is the load-bearing reason the 125-day window is operationally safe despite the ~4-day usable validation window."
+  },
+  "named_constant": {
+    "name": "_OOS_USABLE_VALIDATION_DAYS_EXPECTED",
+    "expected_value": 4,
+    "expected_value_formula": "int(history_length * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS",
+    "comment": "Module-level pinned constant naming the expected usable validation day-count at the 125-day operator-data-budget. A drift in this value indicates either (a) the operator-data-budget changed or (b) PURGE/EMBARGO drifted; either case must be surfaced as an Amendment, not an audit slide-in."
+  },
+  "citation_sources": {
+    "ldp_2018": "López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4",
+    "harvey_liu_2015": "Harvey & Liu 2015, Backtesting, J. Portfolio Management 42(1), 13-28",
+    "audit_finding": "math-reaudit MEDIUM OPTUNA-4 — OOS-fold-collapse v2",
+    "engine_audit_plan": "feature-plans/decision-science/engine-audit/walk-forward-fold-structure/plan.md"
+  }
+}
