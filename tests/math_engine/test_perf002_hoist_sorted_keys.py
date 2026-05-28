@@ -864,3 +864,154 @@ def test_compute_portfolio_cvar_insufficient_branch_boundary_after_hoist() -> No
         f"cvar_pct={result.cvar_pct!r}."
     )
     assert result.insufficient_reason is not None
+
+
+# ---------------------------------------------------------------------------
+# Round 2 RED — Bounded cache (long-running daemon memory)
+# ---------------------------------------------------------------------------
+#
+# Context: AlphaBot is a long-running daemon (app.py: "minute-by-minute
+# scheduler" — project CLAUDE.md). Each cycle constructs a fresh
+# historical_data dict (alpha_bot_execution.py:271, 994) sized roughly
+# 125 days x ~10 tickers x ~4 fields per ticker. If _sorted_dates_cache
+# holds a STRONG reference to every dict it ever sees, the cache grows
+# unboundedly: ~390 minutes of trading per day x ~1 MB per dict = ~400 MB
+# of leaked memory per day, ~2 GB after a week of trading.
+#
+# This violates the "no blocking I/O on the execution path" arch
+# constraint indirectly via memory pressure on a process meant to run
+# for weeks at a time. The pre-GREEN impl uses a strong-ref dict cache,
+# acknowledged in its own docstring: "the cache holds a strong reference
+# to historical_data, so it lives as long as the module."
+#
+# Acceptable fixes (impl picks one):
+#   A. weakref to a wrapper. Plain dicts can't be weak-referenced in
+#      CPython, but a tiny `class _HistoricalDataRef: __slots__ = ('d',)`
+#      wrapper can. The helper accepts the raw dict (no API change) and
+#      stores a weakref.ref to a wrapper held alongside the dict via a
+#      WeakKeyDictionary keyed by the wrapper. Complex; not preferred.
+#   B. Bounded LRU. functools.lru_cache cannot key by id, but a small
+#      collections.OrderedDict-based LRU with maxsize >= 8 satisfies
+#      the cross-consumer cache (max ~5 consumers per cycle) while
+#      bounding total memory to 8 * 1 MB ~= 8 MB across the daemon's
+#      lifetime. PREFERRED — minimal code, robust semantics.
+#   C. Explicit invalidation hook. The caller (alpha_bot_execution.py)
+#      calls math_engine._sorted_dates_cache.clear() at end of cycle.
+#      Couples math_engine to its caller; not preferred.
+#
+# The RED tests below assert (B) without prescribing the implementation
+# (functools.OrderedDict vs custom). The bound is parameterised at a
+# small constant > 5 (the per-cycle consumer count) and < 64 (so the
+# memory ceiling is comfortably small).
+
+
+def _make_fresh_history(n_days: int = 50) -> dict:
+    """Construct a small historical_data dict. Used to stress the cache
+    with many distinct dict objects."""
+    return {
+        _date_key(i): {
+            "SPY": {"daily_ret": 0.001 * ((i % 5) - 2)},
+            "AAA": {"daily_ret": 0.001 * ((i % 7) - 3)},
+        }
+        for i in range(n_days)
+    }
+
+
+def test_sorted_dates_cache_is_bounded_across_many_distinct_dicts() -> None:
+    """The cache must NOT grow unboundedly as the daemon processes
+    successive historical_data dicts. AlphaBot constructs a fresh dict
+    each cycle; an unbounded cache leaks memory over the process's
+    multi-day lifetime.
+
+    Hard ceiling: 64 entries. The per-cycle consumer count is at most 5
+    (run_monte_carlo, compute_portfolio_cvar x2, compute_regime_match_quality,
+    calculate_20d_vol, calculate_14d_atr_pct), so 64 is 10x+ headroom for
+    multi-symphony cycles while still bounded.
+
+    Test mechanism: call _sorted_dates with 200 distinct dict objects in
+    sequence (force GC between batches to release the local references).
+    After all 200 calls, the cache size must be <= 64.
+
+    Tolerance rationale: 64 is the hard ceiling; impl is free to set a
+    tighter bound (e.g. 8 or 16). Anything > 64 is rejected. Anything
+    less than 200 (the input count) proves the cache evicts. The current
+    strong-ref impl yields 200 — fails this assertion as desired.
+    """
+    import gc
+
+    # Drain the cache so prior tests don't contaminate the size check.
+    if hasattr(math_engine, "_sorted_dates_cache"):
+        math_engine._sorted_dates_cache.clear()
+
+    n_calls = 200
+    for _ in range(n_calls):
+        d = _make_fresh_history()
+        _ = math_engine._sorted_dates(d)
+        # Drop the local reference. Under a bounded LRU, the entry will
+        # be evicted by LRU pressure as more dicts roll through. Under
+        # a weakref scheme, GC reclaims it as soon as we drop d.
+        del d
+
+    gc.collect()
+
+    cache_size = len(math_engine._sorted_dates_cache)
+    assert cache_size <= 64, (
+        f"_sorted_dates_cache holds {cache_size} entries after {n_calls} "
+        f"distinct-dict calls. Hard ceiling is 64. The current strong-ref "
+        f"dict cache leaks memory in AlphaBot's long-running daemon "
+        f"(~1 MB per historical_data dict x 390 min/day of trading). "
+        f"Fix: bounded LRU (collections.OrderedDict with maxsize check on "
+        f"insert) or weakref-via-wrapper. See test docstring for options."
+    )
+
+
+def test_sorted_dates_cache_still_caches_within_one_cycle_after_bounding() -> None:
+    """Bounding the cache must NOT break the AC-PERF002.3 contract:
+    within a single call chain, a repeat call on the same dict object
+    must still hit the cache (zero sorted calls).
+
+    Pins that the impl picks a bound LARGER than the per-cycle consumer
+    count — a maxsize=1 LRU would technically pass the boundedness test
+    but break the per-cycle cache for the very-first-consumer's dict
+    once the second consumer arrives. The bound must be >= 8 (5
+    consumers + 3 headroom for short+long CVaR + a second symphony).
+
+    Test mechanism: drain the cache, prime with dict D, then call N
+    other dicts (where N is small but > 1), then call D again. The D
+    second-call must still hit cache.
+    """
+    if hasattr(math_engine, "_sorted_dates_cache"):
+        math_engine._sorted_dates_cache.clear()
+
+    d_primary = _make_fresh_history()
+    primed = math_engine._sorted_dates(d_primary)
+
+    # Touch a small handful of OTHER dicts (simulates other consumers /
+    # other symphonies in the same cycle).
+    for _ in range(6):
+        d_other = _make_fresh_history()
+        _ = math_engine._sorted_dates(d_other)
+
+    # Re-call primary. Spy on sorted; must be 0 calls.
+    call_count = {"n": 0}
+    real_sorted = sorted
+
+    def _spy_sorted(*args, **kwargs):
+        call_count["n"] += 1
+        return real_sorted(*args, **kwargs)
+
+    with patch.object(math_engine, "sorted", _spy_sorted, create=True):
+        again = math_engine._sorted_dates(d_primary)
+
+    assert again == primed, (
+        "Repeat call on primary dict returned a different result — cache "
+        "is corrupt or impl returned a different sorted-keys list."
+    )
+    assert call_count["n"] == 0, (
+        f"After touching 6 other dicts (well under the recommended bound "
+        f"of >= 8), the primary dict's cache entry was evicted: re-call "
+        f"invoked `sorted` {call_count['n']} time(s). The bound on the "
+        f"cache must be >= 8 so a normal cycle (5 consumers + buffer) "
+        f"keeps every cycle dict's entry hot."
+    )
+
