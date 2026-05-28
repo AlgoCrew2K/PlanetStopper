@@ -2,6 +2,7 @@ import dataclasses
 import hashlib
 import math
 import os
+from collections import OrderedDict
 
 import numpy as np
 
@@ -852,16 +853,19 @@ def derive_cycle_mc_seed(cycle_id: str) -> int:
     return int(hashlib.sha256(cycle_id.encode()).hexdigest(), 16) % MC_SEED_MODULUS
 
 
-# Module-level cache for _sorted_dates, keyed by id(historical_data).
-# Each entry is (object_ref, sorted_list) where object_ref is the dict
-# itself (kept to detect id reuse — CPython can recycle an id if the
-# prior dict is GC'd before a new one is created at the same address).
-# The cache holds a strong reference to historical_data, so it lives
-# as long as the module. In production each symphony cycle constructs
-# and discards the dict within the process lifetime, so the cache
-# is bounded by the number of distinct historical_data objects seen.
-# Sentinel: entries are invalidated on identity mismatch (id reuse).
-_sorted_dates_cache: dict[int, tuple] = {}
+# Bounded LRU cache for _sorted_dates, keyed by id(historical_data).
+# AlphaBot is a long-running daemon constructing a fresh historical_data
+# dict every minute during market hours (~390 dicts/day). An unbounded
+# strong-ref cache would leak ~1 MB x 390 min/day = ~400 MB/day.
+# OrderedDict-based LRU caps memory to _SORTED_DATES_CACHE_MAXSIZE entries
+# (~8 MB ceiling). Maxsize is chosen to be >= 8 so one full symphony cycle
+# (up to 5 consumers + 3 headroom for multi-symphony overlap) never evicts
+# a hot entry mid-cycle.
+# Each entry is (object_ref, sorted_list). object_ref lets us detect
+# CPython id reuse (rare: only if a prior dict is GC'd and a new one
+# allocated at the same address before the eviction runs).
+_SORTED_DATES_CACHE_MAXSIZE = 32  # >= 8 (per-cycle hot path), << 64 (memory ceiling)
+_sorted_dates_cache: OrderedDict = OrderedDict()
 
 
 def _sorted_dates(historical_data: dict) -> list[str]:
@@ -873,10 +877,13 @@ def _sorted_dates(historical_data: dict) -> list[str]:
     - A new dict object — even one with identical keys — always recomputes,
       so no stale results can leak across cycles (id-keyed, not value-keyed).
 
-    Cache validity: each entry stores the dict itself alongside the
-    sorted list. On lookup, the stored reference is compared to the
-    incoming object via `is` — if CPython reused the id for a different
-    dict (possible after GC), the stale entry is evicted and recomputed.
+    Eviction: LRU with maxsize _SORTED_DATES_CACHE_MAXSIZE. Ensures the
+    daemon's memory footprint stays bounded over multi-day runs.
+
+    Cache validity: each entry stores the dict alongside the sorted list.
+    On lookup, `stored_dict is historical_data` guards against CPython id
+    reuse — if the ids match but the objects differ, the stale entry is
+    evicted and recomputed.
 
     Returns a list (not a tuple) because consumers slice it:
     `valid_dates[-LOOKBACK_DAYS:]` etc.
@@ -886,11 +893,14 @@ def _sorted_dates(historical_data: dict) -> list[str]:
     if entry is not None:
         stored_dict, sorted_list = entry
         if stored_dict is historical_data:
+            _sorted_dates_cache.move_to_end(id_)  # LRU bump — mark as recently used
             return sorted_list
-        # id reuse after GC — fall through to recompute
+        # id reuse after GC — fall through to recompute and overwrite
 
     sorted_list = sorted(historical_data.keys())
     _sorted_dates_cache[id_] = (historical_data, sorted_list)
+    if len(_sorted_dates_cache) > _SORTED_DATES_CACHE_MAXSIZE:
+        _sorted_dates_cache.popitem(last=False)  # evict least-recently-used entry
     return sorted_list
 
 
