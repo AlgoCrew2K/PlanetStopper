@@ -2,6 +2,7 @@ import dataclasses
 import hashlib
 import math
 import os
+from collections import OrderedDict
 
 import numpy as np
 
@@ -852,6 +853,57 @@ def derive_cycle_mc_seed(cycle_id: str) -> int:
     return int(hashlib.sha256(cycle_id.encode()).hexdigest(), 16) % MC_SEED_MODULUS
 
 
+# Bounded LRU cache for _sorted_dates, keyed by id(historical_data).
+# AlphaBot is a long-running daemon constructing a fresh historical_data
+# dict every minute during market hours (~390 dicts/day). An unbounded
+# strong-ref cache would leak ~1 MB x 390 min/day = ~400 MB/day.
+# OrderedDict-based LRU caps memory to _SORTED_DATES_CACHE_MAXSIZE entries
+# (~8 MB ceiling). Maxsize is chosen to be >= 8 so one full symphony cycle
+# (up to 5 consumers + 3 headroom for multi-symphony overlap) never evicts
+# a hot entry mid-cycle.
+# Each entry is (object_ref, sorted_list). object_ref lets us detect
+# CPython id reuse (rare: only if a prior dict is GC'd and a new one
+# allocated at the same address before the eviction runs).
+_SORTED_DATES_CACHE_MAXSIZE = 32  # >= 8 (per-cycle hot path), << 64 (memory ceiling)
+_sorted_dates_cache: OrderedDict = OrderedDict()
+
+
+def _sorted_dates(historical_data: dict) -> list[str]:
+    """Return sorted(historical_data.keys()) memoised by object identity.
+
+    Keying by id(historical_data) means:
+    - Repeated calls with the SAME dict object (one symphony cycle) pay
+      O(1) — the sorted list is returned from cache without re-sorting.
+    - A new dict object — even one with identical keys — always recomputes,
+      so no stale results can leak across cycles (id-keyed, not value-keyed).
+
+    Eviction: LRU with maxsize _SORTED_DATES_CACHE_MAXSIZE. Ensures the
+    daemon's memory footprint stays bounded over multi-day runs.
+
+    Cache validity: each entry stores the dict alongside the sorted list.
+    On lookup, `stored_dict is historical_data` guards against CPython id
+    reuse — if the ids match but the objects differ, the stale entry is
+    evicted and recomputed.
+
+    Returns a list (not a tuple) because consumers slice it:
+    `valid_dates[-LOOKBACK_DAYS:]` etc.
+    """
+    id_ = id(historical_data)
+    entry = _sorted_dates_cache.get(id_)
+    if entry is not None:
+        stored_dict, sorted_list = entry
+        if stored_dict is historical_data:
+            _sorted_dates_cache.move_to_end(id_)  # LRU bump — mark as recently used
+            return sorted_list
+        # id reuse after GC — fall through to recompute and overwrite
+
+    sorted_list = sorted(historical_data.keys())
+    _sorted_dates_cache[id_] = (historical_data, sorted_list)
+    if len(_sorted_dates_cache) > _SORTED_DATES_CACHE_MAXSIZE:
+        _sorted_dates_cache.popitem(last=False)  # evict least-recently-used entry
+    return sorted_list
+
+
 def _compute_rolling_spy_vol(spy_returns: np.ndarray) -> np.ndarray:
     """Vectorized rolling population-std over spy_returns.
 
@@ -933,7 +985,7 @@ def run_monte_carlo(
         for h in holdings
         if h.get("last_percent_change") is not None
     )
-    valid_dates = sorted(list(historical_data.keys()))
+    valid_dates = _sorted_dates(historical_data)
     # Sufficiency is judged on the ELIGIBLE kNN pool, not the raw history: the
     # first MC_VOL_WINDOW_DAYS - 1 early-window days are excluded below (their
     # rolling vol is short-sample biased), so a raw history needs at least
@@ -1042,7 +1094,7 @@ def calculate_20d_vol(holdings, historical_data):
     for day_data in historical_data.values():
         for ticker_data in day_data.values():
             _reject_non_finite_in_records([ticker_data], "daily_ret")
-    valid_dates = sorted(list(historical_data.keys()))[-LOOKBACK_DAYS:]
+    valid_dates = _sorted_dates(historical_data)[-LOOKBACK_DAYS:]
     if len(valid_dates) < LOOKBACK_DAYS:
         return 0.0
 
@@ -1077,7 +1129,7 @@ def calculate_14d_atr_pct(holdings, historical_data):
     for day_data in historical_data.values():
         for ticker_data in day_data.values():
             _reject_non_finite_in_records([ticker_data], "high", "low", "close")
-    valid_dates = sorted(list(historical_data.keys()))[-ATR_LOOKBACK_DAYS:]
+    valid_dates = _sorted_dates(historical_data)[-ATR_LOOKBACK_DAYS:]
     if len(valid_dates) < ATR_LOOKBACK_DAYS:
         return calculate_20d_vol(holdings, historical_data)
 
@@ -1355,7 +1407,7 @@ def compute_portfolio_cvar(
             allocation=h.get("allocation", 0.0),
         )
 
-    valid_dates = sorted(list(historical_data.keys()))
+    valid_dates = _sorted_dates(historical_data)
     # Eligible pool mirrors run_monte_carlo: first MC_VOL_WINDOW_DAYS - 1 days
     # are excluded (short-sample vol bias), so sufficiency is checked on the
     # eligible count, not the raw history count.
@@ -1573,7 +1625,7 @@ def compute_regime_match_quality(
     # K for the kNN test statistic — reuses the canonical MC default constant.
     k = MC_DEFAULT_NEIGHBOR_K
 
-    valid_dates = sorted(list(historical_data.keys()))
+    valid_dates = _sorted_dates(historical_data)
 
     # Eligible-pool sufficiency: mirrors run_monte_carlo's exact boundary so the
     # two guards are bit-consistent on the short-history short-circuit.
