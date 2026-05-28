@@ -1,0 +1,56 @@
+{
+  "_provenance": "Schema-derived from docs/research/m3-provenance/literature-pass.md §1.3, §2.3, §3.3, §3.4 + the M3 plan at feature-plans/decision-science/phase-1.5/m3-redrive-provenance-gaps/plan.md §69-72. No producer-computed values -- every field is a named enum constant, a citation requirement, or a structural shape assertion. NOT regenerated from any spec_bundle persistence code; this fixture is the spec.",
+  "_layer": "m3_provenance_facets",
+  "_binding_plan": "feature-plans/decision-science/phase-1.5/m3-redrive-provenance-gaps/plan.md",
+  "_research_note": "docs/research/m3-provenance/literature-pass.md",
+
+  "r1_facet": {
+    "facet_name": "time_squeeze_decay_curve_v2",
+    "required_freeze_discipline": "THEORY",
+    "value_must_reference": [
+      "1 - sqrt(1 - t)",
+      "Danielsson",
+      "Zigrand",
+      "2003"
+    ],
+    "_value_note": "The facet_value (or its justification) must reference the closed-form formula AND the citing paper. THEORY discipline means the curve is derived from i.i.d.-returns square-root-of-time scaling -- zero free parameters, no calibration.",
+    "intended_direction_required_substrings": [
+      "concave",
+      "open-loaded",
+      "less aggressive midday",
+      "monotone-converging at endpoints"
+    ],
+    "_intended_direction_note": "Per literature-pass.md §1.5: 'the new R1 curve is less aggressive midday by up to ~0.45 in decay-weight, equivalent to ~0.45 pp wider stop at t=0.5, monotone-converging at endpoints; expected effect: fewer mid-morning exits, more late-afternoon exits.' Per M3 plan §118, an after-the-fact direction declaration is circular -- the declaration must be persisted with the spec_bundle BEFORE any S-1 attribution-table run."
+  },
+
+  "r2_facet": {
+    "facet_name": "vwap_system_a_hwm_gate_v2",
+    "required_freeze_discipline": "THEORY",
+    "value_must_reference": [
+      "Leung",
+      "Zhang",
+      "2019",
+      "Peskir",
+      "maximality"
+    ],
+    "_value_note": "R2 is a provenance-only closure per literature-pass.md §2.3 -- the runtime is byte-identical to pre-M3. The facet records the optimal-stopping regime-switch framing that justifies the gate shape; the threshold value (vwap_cross_hwm_pct) continues to live in the Optuna search space (BHY haircut surface, distinct from NN1).",
+    "intended_direction_required_substrings": [
+      "byte-identical",
+      "regime-switch"
+    ],
+    "_intended_direction_note": "Per literature-pass.md §2.4: 'Max-absolute-deviation: 0 (zero divergent cycles in the S-1 Stage 2 attribution table for R2).' The intended_direction is 'no behavioral change; only the provenance comment moves.' The strings 'byte-identical' and 'regime-switch' pin both halves of that claim."
+  },
+
+  "freeze_discipline_constraints": {
+    "permitted": ["THEORY", "MANDATE", "STYLIZED_FACT"],
+    "forbidden": ["BACKTEST_SELECTION", "OOS"],
+    "_note": "Per M3 plan §69 + council synthesis §2.5. BACKTEST_SELECTION is the NN1-violation discipline that turns the BHY haircut into a lie by omission. OOS is the stricter frozen-eval-peek violation. Both are HARD FAIL for an M3 facet."
+  },
+
+  "persistence_contract": {
+    "must_be_callable_idempotently": true,
+    "must_persist_via": "database.insert_spec_bundle_facet",
+    "must_be_introspectable_via": "database.get_spec_facets_for_bundle",
+    "_note": "impl-m3 chooses the entry point -- either extend get_or_create_phase1_theory_bundle_id to include the R1 + R2 facets, or add a sibling helper (e.g. get_or_create_phase15_m3_bundle_id). The test asserts the CONTRACT: after the entry point is called, both facets exist with the right discipline + content. The choice of entry point is impl-m3's."
+  }
+}

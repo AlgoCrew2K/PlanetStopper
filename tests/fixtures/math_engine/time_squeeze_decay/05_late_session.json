@@ -1,13 +1,14 @@
 {
   "name": "late_session",
-  "description": "time_ratio = 0.9 (90% of the session elapsed; ~39 minutes before close). Decay is ~96% complete at 90% wall-clock — the curve plateaus near the close as MULT_OPEN -> MULT_CLOSE settles. Confirms the upper-tail shape of the log10 curve and that the linear-interp coefficient is correctly applied.",
+  "description": "time_ratio = 0.9 (~15:21 ET -- last hour of a 9:30-16:00 session). Under the M3 re-derivation f(t) = 1 - sqrt(1 - t), decay_curve ~= 0.6838 -- the new curve has banked ~68% of its tightening budget by the last hour. The pre-M3 log10(1+9t) heuristic put decay ~0.959 here (already 96% -- nearly fully tightened); the post-M3 curve is ~0.28 looser in decay, meaning ~0.28 percentage-points-of-stop wider in the last hour. The new curve is BACK-LOADED relative to the heuristic, banking the tightening in the late afternoon instead of the morning -- that is the intended_direction the spec_bundle will declare.",
   "function": "compute_time_squeeze_decay",
+  "provenance": "DERIVED from the closed-form THEORY formula f(t) = 1 - sqrt(1 - t) (Danielsson & Zigrand, 2003, LSE FMG DP-439). NOT captured from compute_time_squeeze_decay output -- D-2 load-bearing per docs/research/m3-provenance/literature-pass.md §3.1.",
   "inputs": {
     "time_ratio": 0.9
   },
   "expected": {
-    "dynamic_multiplier": 0.5409586076789065,
-    "dynamic_min_stop": 0.15614379115183596
+    "dynamic_multiplier": 0.8162277660168379,
+    "dynamic_min_stop": 0.1974341649025257
   },
-  "derivation": "decay_curve = log10(1 + 9 * 0.9) = log10(9.1) = 0.9590413923210935 (IEEE-754 double; verified via Python math.log10). dynamic_multiplier = 1.5 - (1.5 - 0.5) * 0.9590413923210935 = 1.5 - 0.9590413923210935 = 0.5409586076789065. dynamic_min_stop = 0.3 - (0.3 - 0.15) * 0.9590413923210935 = 0.3 - 0.15 * 0.9590413923210935 = 0.3 - 0.14385620884816403 = 0.15614379115183596."
+  "derivation": "decay_curve = 1 - sqrt(1 - 0.9) = 1 - sqrt(0.1) = 1 - 0.31622776601683794 = 0.6837722339831621 (IEEE-754 double; sqrt is exact-rounded). dynamic_multiplier = 1.5 - 0.6837722339831621 = 0.8162277660168379. dynamic_min_stop = 0.3 - 0.15 * 0.6837722339831621 = 0.3 - 0.10256583509747432 = 0.1974341649025257."
 }
