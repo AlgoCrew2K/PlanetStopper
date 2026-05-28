@@ -174,10 +174,13 @@ def test_cvar_assessment_construction_with_valid_float_succeeds() -> None:
     import math_engine
 
     # A negative cvar_pct is the typical case: the 5th-percentile return is a loss.
+    # stderr is paired with cvar_pct — finite cvar_pct REQUIRES finite stderr
+    # (decision-science-council-synthesis.md §A.3 H-2 binding).
     obj = math_engine.CVaRAssessment(
         cvar_pct=-4.2,
         breach=False,
         tail_obs_count=5,
+        stderr=0.001,
         insufficient_reason=None,
     )
     assert obj.cvar_pct == pytest.approx(-4.2, abs=1e-9), (  # approx: float equality is exact here but matches project convention
@@ -202,6 +205,7 @@ def test_cvar_assessment_construction_breach_true_with_valid_float_succeeds() ->
         cvar_pct=-8.5,
         breach=True,
         tail_obs_count=7,
+        stderr=0.001,
         insufficient_reason=None,
     )
     assert obj.breach is True
@@ -224,12 +228,14 @@ def test_cvar_assessment_construction_none_cvar_pct_breach_false_succeeds() -> N
         cvar_pct=None,
         breach=False,
         tail_obs_count=0,
+        stderr=None,
         insufficient_reason="Insufficient MC history (eligible days < MC_MIN_HISTORY_DAYS).",
     )
     assert obj.cvar_pct is None
     assert obj.breach is False
     assert obj.tail_obs_count == 0
     assert obj.insufficient_reason is not None
+    assert obj.stderr is None
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +263,7 @@ def test_cvar_assessment_none_cvar_pct_with_breach_true_raises() -> None:
             cvar_pct=None,
             breach=True,
             tail_obs_count=0,
+            stderr=None,
             insufficient_reason="Should not matter — breach=True with None is the violation.",
         )
 
@@ -279,6 +286,7 @@ def test_cvar_assessment_is_frozen() -> None:
         cvar_pct=None,
         breach=False,
         tail_obs_count=0,
+        stderr=None,
         insufficient_reason="Test immutability.",
     )
     with pytest.raises((dataclasses.FrozenInstanceError, AttributeError)):
@@ -344,6 +352,7 @@ def test_cvar_assessment_tail_obs_count_is_zero_when_cvar_pct_is_none() -> None:
         cvar_pct=None,
         breach=False,
         tail_obs_count=0,
+        stderr=None,
         insufficient_reason="Below MC minimum history.",
     )
     assert obj.tail_obs_count == 0, (
@@ -360,6 +369,7 @@ def test_cvar_assessment_tail_obs_count_is_zero_when_cvar_pct_is_none() -> None:
             cvar_pct=None,
             breach=False,
             tail_obs_count=3,  # non-zero with None cvar_pct — should be invalid
+            stderr=None,
             insufficient_reason="Inconsistent: non-zero tail count but no CVaR.",
         )
         # If construction succeeds, the value must be 0 (normalized by __post_init__).

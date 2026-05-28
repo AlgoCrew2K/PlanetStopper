@@ -153,6 +153,7 @@ class CVaRAssessment:
     cvar_pct: float | None
     breach: bool
     tail_obs_count: int
+    stderr: float | None
     insufficient_reason: str | None
 
     def __post_init__(self) -> None:
@@ -168,6 +169,18 @@ class CVaRAssessment:
             raise ValueError(
                 f"CVaRAssessment: cvar_pct is None but tail_obs_count is "
                 f"{self.tail_obs_count} (must be 0 for an insufficient sentinel)."
+            )
+        # Fail-safe pairing: stderr is only meaningful when cvar_pct is present.
+        if self.cvar_pct is None and self.stderr is not None:
+            raise ValueError(
+                "CVaRAssessment: cvar_pct is None but stderr is not None — fail-safe violated. "
+                "A standard error has no meaning when no estimate was produced."
+            )
+        # Fail-safe pairing: a present estimate must carry its uncertainty.
+        if self.cvar_pct is not None and self.stderr is None:
+            raise ValueError(
+                "CVaRAssessment: cvar_pct is present but stderr is None — fail-safe violated. "
+                "Every estimate must carry its standard error for S-3 display contract."
             )
 
 
@@ -1302,6 +1315,7 @@ def compute_portfolio_cvar(
             cvar_pct=None,
             breach=False,
             tail_obs_count=0,
+            stderr=None,
             insufficient_reason=(
                 f"Insufficient history: {eligible_days} eligible days "
                 f"< MC_MIN_HISTORY_DAYS ({MC_MIN_HISTORY_DAYS}). "
@@ -1390,12 +1404,15 @@ def compute_portfolio_cvar(
     # fraction (5%*5000=250). H-2 binding: denominator is the pool's k+atom count.
     pool = nearest_day_returns.tolist()
     cvar_estimate = compute_cvar_5pct_general_distribution(pool, alpha=CVAR_ALPHA_DEFAULT)
-    cvar_5pct_stderr = compute_cvar_stderr_distinct_tail(pool, alpha=CVAR_ALPHA_DEFAULT)
+    # cvar_estimate.stderr already carries the H-2 distinct-tail denominator
+    # (computed inside compute_cvar_5pct_general_distribution); no separate
+    # compute_cvar_stderr_distinct_tail call needed.
 
     result = CVaRAssessment(
         cvar_pct=cvar_estimate.cvar_pct,
         breach=False,  # Phase-1: no breach threshold defined; breach is always False
         tail_obs_count=cvar_estimate.tail_obs_count,
+        stderr=cvar_estimate.stderr,
         insufficient_reason=cvar_estimate.insufficient_reason,
     )
 
@@ -1405,7 +1422,7 @@ def compute_portfolio_cvar(
             cycle_id=cycle_id,
             symphony_id="",
             cvar_5pct=cvar_estimate.cvar_pct,
-            cvar_5pct_stderr=cvar_5pct_stderr,
+            cvar_5pct_stderr=cvar_estimate.stderr,
             cvar_n_tail=cvar_estimate.tail_obs_count,
             cvar_5pct_long=None,
             cvar_n_tail_long=None,

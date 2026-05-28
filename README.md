@@ -161,7 +161,7 @@ The estimator is the general-distribution form (Rockafellar-Uryasev 2002), which
 
 References: Rockafellar & Uryasev (2000, 2002); Acerbi & Tasche (2002) — the latter establishes CVaR as a *coherent* risk measure where VaR is not.
 
-**Soundness verdict.** The math is sound and well-grounded. **Important operational caveat — CVaR is staged, not live.** On the current branch (`a0591b0`), the per-cycle live path writes all-`None` sentinels to the `cvar_diagnostic` table ([`alpha_bot_execution.py:1417-1426`](alpha_bot_execution.py)) instead of calling `compute_portfolio_cvar`. The function, the typed result, the schema, and the dashboard display panel are all in place; the wire from the per-cycle path to the function is intentionally deferred to Phase 1.5. The dashboard's CVaR Diagnostic panel therefore shows the framing labels ("diagnostic, not a signal — do not trade on this") with empty numeric cells today. See §[4.4](#44-diagnostic-only-cvar--and-why-we-rejected-cvar-divergence-detectors) for the philosophical decision behind keeping CVaR diagnostic-only.
+**Soundness verdict.** The math is sound and well-grounded. The per-cycle live path calls `compute_portfolio_cvar` for each managed symphony and persists the result to `cvar_diagnostic` via `database.record_cvar_diagnostic`. CVaR is **never** a live trigger — it is operator instrumentation only. See §[4.4](#44-diagnostic-only-cvar--and-why-we-rejected-cvar-divergence-detectors) for the philosophical decision behind keeping CVaR diagnostic-only.
 
 **Statistical thinness caveat.** Even when wired live, a 150-neighbor pool at α=5% yields only about 8 distinct tail observations. The CVaR point estimate has a wide error bar; the dashboard surfaces this as a `tail_obs_count` field alongside the value. Treat the value as a discussion prompt, not a forecast.
 
@@ -329,7 +329,7 @@ This section answers the *why* behind the major design choices. Each subsection 
 
 **Why we rejected the divergence-detector idea.** The detector would seem to escape the "wide error bars on CVaR" problem by comparing two CVaR windows instead of trusting one — but the project's validation analysis concluded that "validate a detector not an estimate" only **relocates** the data wall. The detector's validation requires an **independent regime-shift count** of roughly 5-15 events in the available history, and those regime-shift events correlate with exactly the tail-day count the original CVaR estimator already exhausts. The detector does not escape the data wall; it hides it behind a different question. Recorded in `DECISIONS.md §DE-S3-005` ("CVaR-divergence REJECT") and project memory `[[project_cvar_divergence_validation_wall]]`.
 
-**Current operational status.** The CVaR live wire-up is **deferred to Phase 1.5**. On the current branch (`a0591b0`), the per-cycle live path writes all-`None` sentinels into the `cvar_diagnostic` table ([`alpha_bot_execution.py:1417-1426`](alpha_bot_execution.py)). The function `compute_portfolio_cvar` ([`math_engine.py:1185-1345`](math_engine.py)) exists, the schema exists, the dashboard display panel exists with the framing labels — but the numeric cells are empty pending the live wire-up. There is also a CVAR-001 scope limit on the dashboard: the panel today shows the *first* symphony only; multi-symphony portfolios silently omit other symphonies' rows pending Phase 1.5 expansion.
+**Current operational status.** CVaR is live. The per-cycle path calls `compute_portfolio_cvar` ([`math_engine.py:1185-1345`](math_engine.py)) for each managed symphony and writes the result to `cvar_diagnostic` via `database.record_cvar_diagnostic`. CVaR is **never** a live trigger — it remains diagnostic-only (operator instrumentation, not a decision input). There is a CVAR-001 scope limit on the dashboard: the panel today shows the *first* symphony only; multi-symphony portfolios silently omit other symphonies' rows pending a future expansion.
 
 ### 4.5 NN1 spec-freeze — fingerprinting our backtests
 
@@ -433,7 +433,7 @@ The resolver picks the winner per `_TRIGGER_PRIORITY_ORDER` ([`math_engine.py:72
 
 If a trigger fired, append to `execution_queue` ([`alpha_bot_execution.py:1459-1469`](alpha_bot_execution.py)) with the winner reason + `also_true` co-fires + the symphony state snapshot. The queue is drained once at the end of the symphony pass — Composer's liquidation endpoint is called with exponential backoff (1s, 2s, 4s, 10s).
 
-If no trigger fired, the loop ends with a `record_cvar_diagnostic` telemetry write (writing `None` sentinels today; the live wire-up is Phase 1.5) and "no-action" reduces to a state-update pass.
+If no trigger fired, the loop ends with a `record_cvar_diagnostic` telemetry write (populated from `compute_portfolio_cvar`; CVaR is diagnostic-only and never a trigger) and "no-action" reduces to a state-update pass.
 
 ### Step 8 — Post-decision
 
@@ -543,7 +543,7 @@ Explicit non-goals, so the operator's expectations are calibrated.
 - **AlphaBot does not size positions.** Position sizing is Composer's responsibility. AlphaBot operates on the size Composer set.
 - **AlphaBot does not make alpha calls.** There is no master forecast of expected return. The bot does not say "this symphony will outperform tomorrow." It says only: "now is the time to exit *this* symphony to cash."
 - **AlphaBot does not produce a portfolio-level decision.** Every decision is symphony-level. See §[4.1](#41-symphony-level-only-not-portfolio-level).
-- **AlphaBot does not currently compute CVaR in the live path.** The function exists, the schema exists, the dashboard panel exists — but the per-cycle live wire-up is staged for Phase 1.5. See §[4.4](#44-diagnostic-only-cvar--and-why-we-rejected-cvar-divergence-detectors).
+- **AlphaBot computes CVaR each cycle as a diagnostic.** `compute_portfolio_cvar` runs per-symphony each minute and writes to `cvar_diagnostic`. CVaR is **never** a live trigger — it is operator instrumentation only. See §[4.4](#44-diagnostic-only-cvar--and-why-we-rejected-cvar-divergence-detectors).
 - **AlphaBot does not surface a CVaR-divergence number.** This was explicitly rejected — see §[4.4](#44-diagnostic-only-cvar--and-why-we-rejected-cvar-divergence-detectors) and `DECISIONS.md §DE-S3-005`.
 - **AlphaBot does not have a "manual force-trigger" button on the dashboard.** The `/api/trigger` POST handler is intentionally disabled. The scheduler is the only legal engine spawner. See §[4.3](#43-the-dashboard-is-observability-not-action).
 - **AlphaBot does not run a Narrator advisor.** Narrator is deferred to Phase 2. See §[7](#7-ai-advisor--the-three-producers).
