@@ -1447,7 +1447,7 @@ def main():
                     cycle_id=current_et.isoformat(),
                     symphony_id=symphony_id,
                     cvar_5pct=_cvar_short.cvar_pct,
-                    cvar_5pct_stderr=None,
+                    cvar_5pct_stderr=_cvar_short.stderr,
                     cvar_n_tail=_cvar_short.tail_obs_count,
                     cvar_5pct_long=_cvar_5pct_long,
                     cvar_n_tail_long=_cvar_n_tail_long,
