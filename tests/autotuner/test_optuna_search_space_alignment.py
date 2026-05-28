@@ -15,44 +15,64 @@ the production walk-forward path and the V1 calibration sweep:
   (via ``_SS_VWAP_CROSS_HWM_V1_MIN`` / ``_SS_VWAP_CROSS_HWM_V1_MAX``)
 
 OPTUNA-9a is an HONEST PROVENANCE ASYMMETRY: the bounds genuinely differ
-for math reasons (the lower bound 0.3 sits below 0.5 because the 3-tick
-confirm gate in ``math_engine`` prevents spurious single-tick exits at
-that level, giving the calibration sweep more room to find the true
-optimum; the upper bound 2.0 sits below 2.5 because above ~2sigma daily
-return System A is effectively disabled for normal sessions and
-calibration becomes unreliable). The decision is Path B (documented
-asymmetry), NOT Path A (alignment) — Path A would either weaken the
-production floor (widening to 0.3) or lose the wider V1 exploration
-(narrowing to 0.5), both of which are methodology changes.
+for math reasons. The relationship is MIXED-DIRECTION, not strict
+narrowing:
 
-Path B requires three documentation surfaces:
+- V1 lower 0.3 < production lower 0.5 — V1 EXPANDS the lower bound below
+  production (the 3-tick confirm gate in ``math_engine`` prevents spurious
+  single-tick exits, giving the calibration sweep more room below).
+- V1 upper 2.0 < production upper 2.5 — V1 NARROWS the upper bound below
+  production (above ~2sigma daily return System A is effectively disabled
+  and calibration becomes unreliable).
 
-1. The V1 bound constants must carry a source-comment block explaining
-   the bound differences AND citing at least one math-rationale token
-   (3-tick confirm gate / ~2sigma / System A).
-   STATUS ON HEAD: the block at autotuner.py:189-195 already satisfies
-   this; the test is a regression guard that trips if a future PR
-   strips the explanatory comment.
+The decision is Path B (documented asymmetry), NOT Path A (alignment) —
+Path A would either weaken the production floor or lose the wider V1
+exploration the audited reasoning validates.
 
-2. The ``run_calibration_sweep`` docstring must explicitly mention the
-   bound asymmetry (the facet name + a directionality word like
-   ``narrowed`` / ``differs from`` / ``production``).
-   STATUS ON HEAD: the current docstring only says "search space is
-   limited to the two V1 parameters" — silent on bounds. RED.
+Path B requires three documentation surfaces and two anti-misframing
+rules (opt-optuna9a R1 revise):
 
-3. The production-side constants must carry a discoverability comment
-   pointing at the V1 narrowed pair (and vice versa) so a reader
-   following EITHER call chain sees the asymmetry at the constant site
-   without tracing.
-   STATUS ON HEAD: the production constants (lines 178-179) carry no
-   "see also V1" pointer. RED.
+1. V1 bound constants source-comment block — citing the asymmetry +
+   per-direction math rationale (3-tick confirm gate / ~2sigma /
+   System A). Per opt-optuna9a BLOCK-1 the standalone words ``narrowed``
+   and ``narrower`` are now FORBIDDEN as the only directionality label
+   (they misdescribe a tighter box; the box is asymmetric, not narrower).
+   The block must use ``asymmetric`` / ``mixed`` / explicit
+   ``lower expands`` + ``narrows the upper`` framing OR pair a
+   per-direction acknowledgement with both ``lower`` and ``upper``
+   present.
+
+2. ``run_calibration_sweep`` docstring — same asymmetric framing
+   requirement applied to the docstring Note paragraph that calls out
+   the V1-vs-production bound difference.
+
+3. Production-side constants discoverability comment pointing at the V1
+   sibling pair (so a reader following the production call chain sees
+   the asymmetry at the production constant site, not only by scrolling
+   down to the V1 block).
+
+4. Out-of-production-range NOTE (opt-optuna9a R1 NOTE) — at least one of
+   the documentation surfaces must explicitly acknowledge that
+   calibration proposals in [0.3, 0.5) fall OUTSIDE the production
+   walk-forward search space and the production optimizer therefore
+   cannot reproduce them. Read-only / operator-gated machinery means
+   this is not a mechanics bug — but it is a non-obvious operator
+   caveat that must be visible.
 
 Tests are located by AST + module attribute inspection, NOT by line
 number — refactors that re-flow the sites without preserving the
-documentation contract still fail. All tests RED on
-cycle/optuna-9a-search-space @ 223b053 (the fork-point commit before
-any GREEN impl), except for the regression guards which are RED only on
-a regression.
+documentation contract still fail.
+
+STATUS ON THE R1 REVISE FORK POINT (28e49ae):
+  Tier 1-3 + Tier 5 regression guards: GREEN (cycle-1 GREEN preserved).
+  Tier 4 documentation contract: GREEN under the cycle-1 wording (which
+  used ``narrowed`` / ``narrower``).
+  Tier 6 (mixed-direction acknowledgement): RED — both surfaces use
+  ``narrowed`` / ``narrower`` standalone without per-direction framing.
+  Tier 7 (forbidden-bare-narrower negative): RED — both surfaces use
+  the now-forbidden bare framing.
+  Tier 8 (out-of-production-range NOTE): RED — neither surface
+  acknowledges the [0.3, 0.5) operator caveat.
 """
 
 from __future__ import annotations
@@ -183,11 +203,64 @@ def _comment_window(source: str, lineno: int, span: int) -> str:
     """Return the source lines from (lineno - span) to (lineno + span),
     joined. Used to scan the comment context surrounding a constant
     definition.
+
+    NOTE: this fixed-span window can BLEED across unrelated comment
+    blocks (e.g. the Sortino objective block immediately below the V1
+    bounds). Prefer ``_adjacent_comment_block`` for tests that must
+    confine themselves to the constant's OWN documentation block.
     """
     lines = source.splitlines()
     start = max(0, lineno - 1 - span)
     end = min(len(lines), lineno + span)
     return "\n".join(lines[start:end])
+
+
+def _adjacent_comment_block(source: str, lineno: int) -> str:
+    """Return the contiguous comment block IMMEDIATELY preceding the line
+    at ``lineno`` (1-indexed). Scans upward from ``lineno - 1``, including
+    consecutive lines whose stripped content starts with ``#``, and stops
+    on the first non-comment / non-blank line. Blank lines are tolerated
+    inside the block (multi-paragraph docstrings) by stopping only on a
+    non-comment non-blank line.
+
+    The returned string is the JOINED block lines in source order, with
+    no trailing newline. If no adjacent comment block exists, returns
+    an empty string.
+
+    Used for the mixed-direction + bare-narrower tests, which must confine
+    themselves to the V1 constant's OWN documentation block — a fixed
+    ~12-line window bleeds into the Sortino objective comment block
+    immediately below the V1 bounds and contaminates the asymmetric-token
+    probe with an unrelated 'asymmetric utility' phrase.
+    """
+    lines = source.splitlines()
+    # Convert to 0-indexed. lineno is the constant's own line; scan
+    # backwards from the line BEFORE it.
+    idx = lineno - 2
+    collected: list[str] = []
+    seen_comment = False
+    while idx >= 0:
+        stripped = lines[idx].lstrip()
+        if stripped.startswith("#"):
+            collected.append(lines[idx])
+            seen_comment = True
+            idx -= 1
+            continue
+        if stripped == "":
+            # Blank line — keep scanning IFF we haven't yet seen any
+            # comment lines (leading whitespace before the block) OR if
+            # we have, only one blank is tolerated as a paragraph break.
+            # To keep semantics simple and predictable, stop on any
+            # blank line AFTER we have started collecting comments.
+            if seen_comment:
+                break
+            idx -= 1
+            continue
+        # Non-comment, non-blank — block boundary.
+        break
+    # collected is in reverse source order; reverse to restore.
+    collected.reverse()
+    return "\n".join(collected)
 
 
 # ---------------------------------------------------------------------------
@@ -676,3 +749,309 @@ def test_optuna_1_2_6_7_regression_guards_preserved(
                 f"OPTUNA-2 regression in {func_name} (line {call.lineno}): "
                 f"create_study(...) missing pruner= kwarg."
             )
+
+
+# ---------------------------------------------------------------------------
+# Tier 6 — Mixed-direction acknowledgement (opt-optuna9a R1 BLOCK-1)
+#
+# Per opt-optuna9a review of cycle-1 GREEN @ 28e49ae: both documentation
+# surfaces (V1 source-comment block AND run_calibration_sweep docstring)
+# must EXPLICITLY acknowledge that the asymmetry is mixed-direction —
+# V1 lower 0.3 EXPANDS below production lower 0.5; V1 upper 2.0 NARROWS
+# below production upper 2.5. A reader of either surface must see this
+# without tracing into the numeric constants.
+#
+# Acceptable acknowledgement forms (either is sufficient):
+#   (a) an explicit asymmetric/mixed token AND the words 'lower' AND
+#       'upper' both present in the documentation window — so the reader
+#       can map the asymmetric label onto the per-direction behaviour, OR
+#   (b) a long-form phrase that names a per-direction behaviour directly
+#       (e.g. 'lower expands', 'narrows the upper', 'expands below').
+# ---------------------------------------------------------------------------
+
+
+def _has_mixed_direction_acknowledgement(window: str, contract: dict) -> tuple[bool, dict]:
+    """Return (ok, diagnostic) for whether the given documentation window
+    satisfies the mixed_direction_contract. Diagnostic is a dict of the
+    individual probes so the assertion message can show which check failed.
+    """
+    haystack_lower = window.lower()
+    asym_tokens = contract["asymmetric_or_mixed_tokens_any"]
+    longform_phrases = contract["long_form_directional_phrases_any"]
+    lower_token = contract["lower_token"]
+    upper_token = contract["upper_token"]
+
+    has_asym = any(t.lower() in haystack_lower for t in asym_tokens)
+    has_longform = any(p.lower() in haystack_lower for p in longform_phrases)
+    has_lower = lower_token.lower() in haystack_lower
+    has_upper = upper_token.lower() in haystack_lower
+
+    # Form (a): asymmetric token paired with both lower AND upper present
+    form_a = has_asym and has_lower and has_upper
+    # Form (b): long-form per-direction phrase alone
+    form_b = has_longform
+
+    diagnostic = {
+        "has_asymmetric_token": has_asym,
+        "has_long_form_phrase": has_longform,
+        "has_lower_token": has_lower,
+        "has_upper_token": has_upper,
+        "form_a_asym_paired_lower_upper": form_a,
+        "form_b_long_form_phrase": form_b,
+    }
+    return (form_a or form_b), diagnostic
+
+
+def test_v1_source_comment_block_acknowledges_mixed_direction(
+    autotuner_source, autotuner_ast, alignment_contract
+):
+    """V1 source-comment block (within ~12 lines of the
+    ``_SS_VWAP_CROSS_HWM_V1_MIN`` definition) must satisfy the
+    mixed-direction acknowledgement: either an asymmetric/mixed token
+    PAIRED with both ``lower`` AND ``upper`` present, OR a long-form
+    per-direction phrase like ``lower expands`` / ``narrows the upper``.
+
+    STATUS ON 28e49ae (cycle-1 GREEN): RED. The V1 block at
+    autotuner.py:189-195 uses the bare framing 'V1 calibration sweep —
+    narrowed VWAP_CROSS_HWM_PCT bounds.' Per opt-optuna9a BLOCK-1 this
+    misdescribes the relationship — the lower bound EXPANDS below
+    production, it does not narrow.
+    """
+    names = alignment_contract["named_constants_contract"]
+    v1_min_name = names["v1_min_name"]
+    contract = alignment_contract["mixed_direction_contract"]
+
+    assigns = _module_float_assignments(autotuner_ast)
+    assert v1_min_name in assigns, (
+        f"AST: expected module-level numeric assignment {v1_min_name!r}."
+    )
+    _val, lineno = assigns[v1_min_name]
+    # Use the V1 constant's OWN adjacent comment block so the
+    # acknowledgement probe is confined to the V1 documentation surface
+    # — a fixed ~12-line window bleeds into unrelated downstream
+    # comments (e.g. the Sortino objective block at lines 197+ which
+    # legitimately uses 'asymmetric utility' in a different sense).
+    window = _adjacent_comment_block(autotuner_source, lineno)
+    assert window, (
+        f"Precondition: expected an adjacent comment block immediately "
+        f"above {v1_min_name} (line {lineno}). None found — the V1 "
+        f"constant lost its documentation block entirely."
+    )
+
+    ok, diag = _has_mixed_direction_acknowledgement(window, contract)
+    assert ok, (
+        f"OPTUNA-9a R1 mixed-direction acknowledgement (V1 block): the "
+        f"adjacent comment block above {v1_min_name} (line {lineno}) "
+        f"must EITHER (a) contain an asymmetric/mixed token PAIRED with "
+        f"both 'lower' AND 'upper', OR (b) contain a long-form "
+        f"per-direction phrase. Diagnostic: {diag}. Per opt-optuna9a "
+        f"BLOCK-1: a bare 'narrowed' framing is forbidden because "
+        f"V1.lower (0.3) actually EXPANDS below production.lower (0.5). "
+        f"V1 block:\n---\n{window}\n---"
+    )
+
+
+def test_calibration_sweep_docstring_acknowledges_mixed_direction(
+    autotuner_module, alignment_contract
+):
+    """``run_calibration_sweep.__doc__`` must satisfy the mixed-direction
+    acknowledgement under the same forms as the V1 block test.
+
+    STATUS ON 28e49ae (cycle-1 GREEN): RED. The docstring Note paragraph
+    says "are narrower than the production walk-forward bounds" — bare
+    'narrower than' framing, no per-direction acknowledgement.
+    """
+    contract = alignment_contract["mixed_direction_contract"]
+    func = getattr(autotuner_module, "run_calibration_sweep", None)
+    assert func is not None and callable(func), (
+        "Precondition: autotuner.run_calibration_sweep must exist."
+    )
+    doc = func.__doc__ or ""
+
+    ok, diag = _has_mixed_direction_acknowledgement(doc, contract)
+    assert ok, (
+        f"OPTUNA-9a R1 mixed-direction acknowledgement (docstring): "
+        f"run_calibration_sweep.__doc__ must EITHER (a) contain an "
+        f"asymmetric/mixed token PAIRED with both 'lower' AND 'upper', "
+        f"OR (b) contain a long-form per-direction phrase. Diagnostic: "
+        f"{diag}. Per opt-optuna9a BLOCK-1: a bare 'narrower than' "
+        f"framing is forbidden because V1.lower (0.3) actually EXPANDS "
+        f"below production.lower (0.5). Current docstring:\n---\n{doc}\n---"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tier 7 — Forbidden bare-narrower framing (opt-optuna9a R1 BLOCK-1, negative)
+#
+# Negative invariant: the documentation MUST NOT rely on a bare
+# 'narrowed' or 'narrower' framing as its sole directionality label. The
+# words themselves are not forbidden — what's forbidden is using them
+# WITHOUT compensating per-direction language ('lower' + 'upper' pairing
+# OR a long-form per-direction phrase). This complements Tier 6: Tier 6
+# requires the positive acknowledgement; Tier 7 trips on the negative
+# misframing if the compensating language is absent.
+#
+# A future PR that adds 'narrowed' or 'narrower' without per-direction
+# context still trips this test. A docstring like "the upper bound is
+# narrower than production while the lower expands below it" satisfies
+# Tier 7 because 'lower' and 'upper' are both present.
+# ---------------------------------------------------------------------------
+
+
+_FORBIDDEN_BARE_TOKENS = ("narrowed", "narrower")
+
+
+def _has_bare_narrower_framing(text: str, mixed_contract: dict) -> tuple[bool, str]:
+    """Return (offending, evidence) where offending=True means the text
+    contains one of the bare ``narrowed`` / ``narrower`` tokens WITHOUT
+    the compensating mixed-direction acknowledgement that would make the
+    framing accurate. Evidence is the matched token or empty string.
+    """
+    lower = text.lower()
+    for tok in _FORBIDDEN_BARE_TOKENS:
+        if tok in lower:
+            ok, _diag = _has_mixed_direction_acknowledgement(text, mixed_contract)
+            if not ok:
+                return True, tok
+    return False, ""
+
+
+def test_v1_source_comment_block_rejects_bare_narrower_framing(
+    autotuner_source, autotuner_ast, alignment_contract
+):
+    """V1 source-comment block must not use a bare ``narrowed`` /
+    ``narrower`` framing as its sole directionality label.
+
+    STATUS ON 28e49ae: RED. autotuner.py:189 reads
+    'V1 calibration sweep — narrowed VWAP_CROSS_HWM_PCT bounds.' — bare
+    'narrowed' with no 'lower'+'upper' pairing or long-form phrase.
+    """
+    names = alignment_contract["named_constants_contract"]
+    v1_min_name = names["v1_min_name"]
+    mixed_contract = alignment_contract["mixed_direction_contract"]
+
+    assigns = _module_float_assignments(autotuner_ast)
+    assert v1_min_name in assigns
+    _val, lineno = assigns[v1_min_name]
+    # Same V1-block confinement as the mixed-direction test — the
+    # forbidden-bare-narrower probe must NOT be defeated by a downstream
+    # 'lower' / 'upper' token bleeding in from an unrelated block.
+    window = _adjacent_comment_block(autotuner_source, lineno)
+    assert window, (
+        f"Precondition: expected an adjacent comment block immediately "
+        f"above {v1_min_name} (line {lineno})."
+    )
+
+    offending, evidence = _has_bare_narrower_framing(window, mixed_contract)
+    assert not offending, (
+        f"OPTUNA-9a R1 forbidden-bare-narrower framing (V1 block): the "
+        f"adjacent comment block above {v1_min_name} (line {lineno}) "
+        f"contains the bare token {evidence!r} WITHOUT the compensating "
+        f"mixed-direction acknowledgement (no per-direction phrase like "
+        f"'lower expands' / 'narrows the upper', and no asymmetric token "
+        f"paired with both 'lower' and 'upper'). Per opt-optuna9a "
+        f"BLOCK-1 this misdescribes the relationship. Either pair the "
+        f"framing with explicit per-direction language or replace with "
+        f"'asymmetric' / 'mixed-direction'. V1 block:\n"
+        f"---\n{window}\n---"
+    )
+
+
+def test_calibration_sweep_docstring_rejects_bare_narrower_framing(
+    autotuner_module, alignment_contract
+):
+    """``run_calibration_sweep.__doc__`` must not use a bare ``narrowed`` /
+    ``narrower`` framing as its sole directionality label.
+
+    STATUS ON 28e49ae: RED. The docstring Note says 'are narrower than
+    the production walk-forward bounds' — bare 'narrower than' with no
+    'lower'+'upper' pairing or long-form phrase.
+    """
+    mixed_contract = alignment_contract["mixed_direction_contract"]
+    func = getattr(autotuner_module, "run_calibration_sweep", None)
+    assert func is not None and callable(func)
+    doc = func.__doc__ or ""
+
+    offending, evidence = _has_bare_narrower_framing(doc, mixed_contract)
+    assert not offending, (
+        f"OPTUNA-9a R1 forbidden-bare-narrower framing (docstring): "
+        f"run_calibration_sweep.__doc__ contains the bare token "
+        f"{evidence!r} WITHOUT the compensating mixed-direction "
+        f"acknowledgement. Per opt-optuna9a BLOCK-1 this misdescribes "
+        f"the relationship — V1.lower (0.3) actually EXPANDS below "
+        f"production.lower (0.5). Either pair with per-direction "
+        f"language or replace with 'asymmetric' / 'mixed-direction'. "
+        f"Current docstring:\n---\n{doc}\n---"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tier 8 — Out-of-production-range operator NOTE (opt-optuna9a R1 NOTE)
+#
+# The calibration sweep can return a proposed VWAP_CROSS_HWM_PCT in
+# [V1.min=0.3, production.min=0.5) — a region the production
+# walk-forward search space [0.5, 2.5] cannot reproduce. Calibration is
+# read-only / operator-gated (AC-V1.3) so this is not a mechanics bug,
+# but it is a non-obvious operator caveat that must be visible: if
+# calibration finds the optimum at e.g. 0.35, the operator must
+# understand that the production optimizer will never reproduce that
+# recommendation in a subsequent walk-forward.
+#
+# The contract is satisfied by either documentation surface (V1
+# source-comment block OR run_calibration_sweep docstring) — the
+# implementer chooses where it lands.
+# ---------------------------------------------------------------------------
+
+
+def test_out_of_production_range_caveat_present_in_some_documentation_surface(
+    autotuner_module, autotuner_source, autotuner_ast, alignment_contract
+):
+    """At least one of the two documentation surfaces (V1 source-comment
+    block adjacent to ``_SS_VWAP_CROSS_HWM_V1_MIN`` OR
+    ``run_calibration_sweep.__doc__``) must explicitly acknowledge that
+    calibration proposals in [V1.min, production.min) — i.e. [0.3, 0.5)
+    — fall outside the production search space and the production
+    optimizer cannot reproduce them.
+
+    STATUS ON 28e49ae: RED. Neither surface mentions this caveat.
+
+    Acceptable tokens: ``informational`` / ``cannot be reproduced`` /
+    ``outside the production`` / ``not reachable`` / ``will not
+    reproduce`` / ``will not validate`` / ``operator advisory`` etc.
+    See `out_of_production_range_note_contract.required_caveat_tokens_any`.
+    """
+    names = alignment_contract["named_constants_contract"]
+    v1_min_name = names["v1_min_name"]
+    caveat_tokens = alignment_contract[
+        "out_of_production_range_note_contract"
+    ]["required_caveat_tokens_any"]
+
+    # Surface 1: V1 constant's OWN adjacent comment block. Confined to
+    # the V1 block (not a wide window) so an unrelated downstream
+    # comment block cannot accidentally satisfy this caveat by
+    # containing a token like 'informational' in a different context.
+    assigns = _module_float_assignments(autotuner_ast)
+    assert v1_min_name in assigns
+    _val, lineno = assigns[v1_min_name]
+    v1_window = _adjacent_comment_block(autotuner_source, lineno)
+
+    # Surface 2: run_calibration_sweep docstring.
+    func = getattr(autotuner_module, "run_calibration_sweep", None)
+    assert func is not None and callable(func)
+    doc = func.__doc__ or ""
+
+    combined_lower = (v1_window + "\n" + doc).lower()
+    matched = [t for t in caveat_tokens if t.lower() in combined_lower]
+
+    assert matched, (
+        f"OPTUNA-9a R1 out-of-production-range operator NOTE: neither "
+        f"the V1 source-comment block (~15 lines around {v1_min_name} at "
+        f"line {lineno}) nor run_calibration_sweep.__doc__ contains any "
+        f"of the required caveat tokens {caveat_tokens}. Per "
+        f"opt-optuna9a R1 NOTE: calibration proposals in [0.3, 0.5) "
+        f"cannot be reproduced by the production walk-forward "
+        f"optimizer; the operator must see this caveat at one of the "
+        f"two documentation surfaces.\n"
+        f"V1 block window:\n---\n{v1_window}\n---\n"
+        f"Docstring:\n---\n{doc}\n---"
+    )
