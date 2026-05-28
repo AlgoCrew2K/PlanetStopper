@@ -260,6 +260,26 @@ assert abs(TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO - 1.0) < 1e-9, (
     "TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO must equal 1.0"
 )
 
+# OPTUNA-4 — Operator-visibility pin on the usable validation window.
+# At the 125-day operator-data-budget:
+#     int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS = 4 days.
+# The ~4-day usable validation window is an acknowledged statistical power limitation
+# (NOT a defect tolerated by the cycle): with T≈4 the per-trial
+# t-stat sampling distribution is too thin for the normal-CDF approximation
+# in compute_haircut_pvalue to be defensible. BHY's multiplicity correction
+# addresses cross-trial selection bias independently of T; it does NOT
+# substitute for thin per-trial sample length. Future-workstream remediation
+# paths: (a) expand the operator-data-budget (council Amendment), or
+# (b) adopt combinatorial purged k-fold cross-validation per López de Prado
+# 2018 Ch. 7.4 to recover statistical power without expanding total history.
+# The canonical joint (N, T) framework to consult is the Deflated Sharpe
+# Ratio — Bailey & López de Prado 2014. A drift in this value indicates
+# either (a) the operator-data-budget changed or (b) PURGE_DAYS / EMBARGO_DAYS
+# drifted; both must surface as Amendments, not silent slide-ins.
+_OOS_USABLE_VALIDATION_DAYS_EXPECTED = (
+    int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS
+)
+
 def build_symphony_study_name(timestamp: str, symphony_id: str) -> str:
     """Return the per-symphony study name: {timestamp}__{symphony_id} (N1/O3)."""
     return f"{timestamp}__{symphony_id}"
@@ -1315,6 +1335,22 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
       purge is methodologically correct and the short evaluation window is the cost of honest
       OOS reporting. Future workstream: expand history window or use purged k-fold CV (rolling
       folds) to recover statistical power.
+
+    Operator visibility (OPTUNA-4 Path B, Option 1 — honesty framing):
+    - `optimization_results[symphony]["eval_window_days"]` carries per-cycle day-counts for
+      the validation and frozen-eval folds so the operator sees the thin-window cost on every
+      autotune cycle without requiring a DB schema migration.
+    - The ~4-day usable validation window at the 125-day operator-data-budget is an
+      acknowledged statistical-power limitation — the cost of honest OOS reporting,
+      not a defect. The BHY haircut addresses cross-trial multiple-testing; it operates
+      on per-trial p-values whose validity depends on adequate sample length per trial
+      and does NOT substitute for thin per-trial windows.
+    - Future-workstream remediation paths: (a) expand the operator-data-budget beyond 125
+      days (a council Amendment, not an audit slide-in), or (b) adopt combinatorial
+      purged k-fold cross-validation (López de Prado 2018 Ch. 7.4) to recover statistical
+      power without expanding total history. The canonical joint (N, T) framework future
+      workstreams should consult is the Deflated Sharpe Ratio (Bailey & López de Prado 2014),
+      which accounts for trial count AND sample length.
     """
     # NN1 spec-freeze hard gate (D5 wiring — council §2.5).
     # validate_search_space_nn1 must run BEFORE optuna.create_study so any
@@ -1713,7 +1749,21 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             oos_alpha = -math.inf
 
         optimization_results[normalized_name] = {}
-        
+
+        # OPTUNA-4 Path B operator-visibility emission. Derived from the live
+        # fold-construction variables (raw_val_dates, raw_frozen_dates, PURGE_DAYS,
+        # EMBARGO_DAYS) so any future drift in the inputs surfaces here automatically.
+        _raw_val_days = len(raw_val_dates)
+        _raw_frozen_days = len(raw_frozen_dates)
+        _usable_val_days = max(0, _raw_val_days - PURGE_DAYS - EMBARGO_DAYS)
+        optimization_results[normalized_name]["eval_window_days"] = {
+            "raw_validation_days": _raw_val_days,
+            "usable_validation_days": _usable_val_days,
+            "raw_frozen_eval_days": _raw_frozen_days,
+            "purge_days": PURGE_DAYS,
+            "embargo_days": EMBARGO_DAYS,
+        }
+
         # Evaluate fallback parameters in OOS for comparison
         fallback_params = current_params.copy()
         fallback_oos_alpha = -run_simulation(fallback_params, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)

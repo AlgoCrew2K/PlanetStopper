@@ -1,0 +1,86 @@
+{
+  "history_length": 125,
+  "split_ratios": {
+    "train": 0.60,
+    "validation": 0.20,
+    "frozen_eval": 0.20
+  },
+  "raw_fold_sizes": {
+    "train_days": 75,
+    "validation_days": 25,
+    "frozen_eval_days": 25
+  },
+  "purge_embargo_constants": {
+    "PURGE_DAYS": 20,
+    "EMBARGO_DAYS": 1,
+    "boundary_strip_per_side": 21
+  },
+  "usable_window_post_purge": {
+    "usable_validation_days": 4,
+    "usable_frozen_eval_days": 25,
+    "usable_validation_days_formula": "max(0, validation_days - PURGE_DAYS - EMBARGO_DAYS)",
+    "comment": "PURGE+EMBARGO=21 is applied at the train|validation boundary (strips the last 21 of train) AND at the validation|frozen-eval boundary (strips the last 21 of validation). The frozen-eval fold is NOT purged on its trailing edge — it is the held-out final block. Usable validation post-purge = 25 - 21 = 4 days."
+  },
+  "operator_visibility_field": {
+    "field_name": "eval_window_days",
+    "field_location": "optimization_results[normalized_name]",
+    "field_type": "dict",
+    "required_subkeys": [
+      "raw_validation_days",
+      "usable_validation_days",
+      "raw_frozen_eval_days",
+      "purge_days",
+      "embargo_days"
+    ],
+    "comment": "The optimization_results return dict must expose the usable-window day-counts so the operator sees the thin-window cost on every autotune cycle. This is the OPTUNA-4 Path B operator-visibility contract."
+  },
+  "docstring_required_phrases": {
+    "field_in_docstring": "eval_window_days",
+    "power_limitation_phrase": "power limitation",
+    "honesty_framing_phrase": "cost of honest OOS reporting",
+    "future_workstream_phrase": "purged k-fold",
+    "joint_n_t_framework_citation": "Bailey",
+    "comment": "OPTUNA-4 Path B revised contract (Option 1: honesty framing, no compensation claim). The run_autotuner docstring must explicitly carry: (a) the new field name `eval_window_days` so the next reader can find the operator-visibility surface; (b) the phrase `power limitation` acknowledging that the ~4-day usable validation window is a STATISTICAL POWER deficit, not a tolerated defect; (c) the engine-audit honesty wording `cost of honest OOS reporting`; (d) a pointer to the future-workstream remediation path naming `purged k-fold` (López de Prado 2018 Ch. 7.4) so the next reader sees the methodologically-clean fix is recovering power not arguing the cost away; (e) a citation to `Bailey` & López de Prado 2014 (Deflated Sharpe Ratio) as the canonical (N, T) joint framework future workstreams should consider. The substring `Bailey` is the load-bearing token — any future reader Ctrl-F-ing for the joint (N, T) framework finds it via the author surname."
+  },
+  "docstring_forbidden_phrases": {
+    "phrases": [
+      "compensated by",
+      "selection-bias correction",
+      "BHY haircut compensates",
+      "haircut compensates",
+      "compensation is what makes",
+      "operationally safe because the haircut",
+      "scales with the trials attempted, not the days observed"
+    ],
+    "comment": "OPTUNA-4 Path B revised contract — negative pattern set. None of these phrases may appear in the run_autotuner docstring. They are the category-confusion phrasings flagged by opt-optuna4's BLOCK on ebbe571: each fuses BHY's multiplicity-correction property with a claim of statistical-power substitution. The BHY haircut addresses cross-trial selection bias INDEPENDENTLY of day count; that is a FEATURE of BHY, not the JUSTIFICATION for a thin per-trial window. If any phrase from this list reappears, the same methodology error re-enters the codebase. This test is the door that does not reopen."
+  },
+  "source_comment_required_phrases": {
+    "anchor_line_substring": "_OOS_USABLE_VALIDATION_DAYS_EXPECTED",
+    "must_contain": [
+      "power limitation",
+      "Bailey",
+      "purged k-fold"
+    ],
+    "must_not_contain": [
+      "compensated by",
+      "selection-bias correction",
+      "haircut compensates",
+      "compensation is what makes"
+    ],
+    "comment": "The source comment co-located with `_OOS_USABLE_VALIDATION_DAYS_EXPECTED` (autotuner.py near line 263) must carry the honesty framing AND the future-workstream/joint-(N,T)-framework pointers, and must NOT carry any of the BHY-compensation phrasings. Per opt-optuna4 note #3 the BHY-compensation paragraph is replaced wholesale, not edited."
+  },
+  "named_constant": {
+    "name": "_OOS_USABLE_VALIDATION_DAYS_EXPECTED",
+    "expected_value": 4,
+    "expected_value_formula": "int(history_length * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS",
+    "comment": "Module-level pinned constant naming the expected usable validation day-count at the 125-day operator-data-budget. A drift in this value indicates either (a) the operator-data-budget changed or (b) PURGE/EMBARGO drifted; either case must be surfaced as an Amendment, not an audit slide-in."
+  },
+  "citation_sources": {
+    "ldp_2018": "López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4 (purged k-fold CV, frozen-eval discipline)",
+    "harvey_liu_2015": "Harvey & Liu 2015, Backtesting, J. Portfolio Management 42(1), 13-28 (BHY multiplicity correction — addresses cross-trial selection bias, NOT per-trial signal reliability)",
+    "bailey_lopez_de_prado_2014": "Bailey & López de Prado 2014, The Deflated Sharpe Ratio (canonical joint (N, T) framework — accounts for trial count AND sample length)",
+    "audit_finding": "math-reaudit MEDIUM OPTUNA-4 — OOS-fold-collapse v2",
+    "engine_audit_plan": "feature-plans/decision-science/engine-audit/walk-forward-fold-structure/plan.md",
+    "block_provenance": "opt-optuna4 BLOCK on ebbe571 — BHY compensation claim is methodologically wrong (category confusion between multiplicity correction and statistical-power substitution)"
+  }
+}
