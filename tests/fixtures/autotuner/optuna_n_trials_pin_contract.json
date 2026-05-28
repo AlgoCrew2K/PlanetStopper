@@ -1,0 +1,44 @@
+{
+  "_provenance": "schema-derived from math re-audit finding OPTUNA-7 (MEDIUM) + feature-plans/decision-science/engine-audit/trial-floor-justification/plan.md — pin the autotuner's per-study n_trials value as a NAMED module-level constant with a source comment, so a future PR that lowers the trial count below the project's 100-trial statistical-stability floor either (a) trips the floor-invariant test or (b) leaves a paper trail at the constant's source comment for PM surface. The production literal at autotuner.py:1626 (n_trials=500) and the calibration literal at autotuner.py:2029 (n_trials=100) are the OPTUNA-7 magic numbers; both move behind names.",
+  "_audit_source": "docs/research/math-audit-3/ OPTUNA-7 lane + trial-floor-justification plan D1-D6 + project CLAUDE.md Known Gotchas 'Default Optuna trial floor 100 trials (statistical stability)'",
+  "_sites": [
+    {
+      "function": "run_autotuner",
+      "anchor": "main study.optimize call (currently around autotuner.py:1626); located by AST, not line number",
+      "expected_kwarg_value": "OPTUNA_N_TRIALS_PRODUCTION"
+    },
+    {
+      "function": "run_calibration_sweep",
+      "anchor": "calibration study.optimize call (currently around autotuner.py:2029); located by AST, not line number",
+      "expected_kwarg_value": "OPTUNA_N_TRIALS_CALIBRATION"
+    }
+  ],
+  "constants": {
+    "production_n_trials_value": 500,
+    "_production_n_trials_value_naming": "Must live as a module-level named constant in autotuner.py whose VALUE is 500. The fixture does NOT pin the symbol name (implementation may use OPTUNA_N_TRIALS_PRODUCTION, N_TRIALS, _N_TRIALS_PRODUCTION, etc.) but DOES pin the value. The constants-existence test searches all module-level int attrs for one equal to 500 and uses it.",
+    "calibration_n_trials_value": 100,
+    "_calibration_n_trials_value_naming": "Must live as a module-level named constant in autotuner.py whose VALUE is 100. Same naming flexibility as the production constant. Note: the value MUST equal the project's 100-trial statistical-stability floor exactly — the calibration sweep IS the floor.",
+    "statistical_stability_floor": 100,
+    "_statistical_stability_floor_rationale": "Project CLAUDE.md Known Gotchas: 'Default Optuna trial floor 100 trials (statistical stability)'. The BHY c(N) Yekutieli factor at N=100 is ~5.19; below this, selection-bias correction is materially weaker (c(50)~4.50) AND the TPE sampler under-explores the 6-D search space. Reducing the production constant below this floor is a methodology change requiring PM surface.",
+    "production_floor_headroom_ratio": 5,
+    "_production_floor_headroom_ratio_rationale": "5x headroom (500 = 5 * 100) gives the BHY haircut adequate selection-bias correction strength: c(500) ~6.79 vs c(100) ~5.19, a ~30% larger correction. Reducing the headroom (e.g. setting production to 2x floor = 200) requires PM surface — the headroom is the explicit dial for BHY adequacy."
+  },
+  "source_comment_contract": {
+    "_purpose": "Plan D1: the production n_trials constant must carry a source comment citing (a) BHY/Harvey-Liu Yekutieli c(N) calibration, (b) the 100-trial statistical-stability floor as project rule, (c) the 5x headroom rationale. The comment is what makes a future 'cut to 100 for speed' PR visible at review time without tracing constants.",
+    "required_substrings_any_for_bhy": ["BHY", "Harvey", "Yekutieli", "haircut"],
+    "_required_substrings_any_for_bhy_rationale": "At least one of these tokens must appear within ~25 source lines of the production constant definition, so the BHY dependency is auditable at the constant site.",
+    "required_substrings_any_for_floor": ["100", "floor", "stability"],
+    "_required_substrings_any_for_floor_rationale": "At least one of these tokens must appear near the production constant so the floor relationship is visible — a future PR proposing to lower the constant sees the floor mention immediately."
+  },
+  "static_guard_contract": {
+    "_purpose": "Plan T2: the autotuner.py source must NOT contain n_trials=<integer-literal> anywhere — every n_trials kwarg must reference a named constant or expression. A regression that re-introduces n_trials=500 (or any literal) trips this.",
+    "forbidden_pattern_description": "study.optimize(..., n_trials=<int-literal>, ...) anywhere in autotuner.py",
+    "scope": "autotuner.py source only — other modules (tests, demo scripts) may legitimately pass literal n_trials values."
+  },
+  "regression_guards": {
+    "_purpose": "OPTUNA-7 cycle must NOT regress OPTUNA-1 (TPESampler pin + seed env), OPTUNA-2 (NopPruner pin), or OPTUNA-6 (n_jobs env resolver). These three previous audit fixes are preserved across both study sites — the OPTUNA-7 diff is targeted to the n_trials kwarg only.",
+    "optuna_1_sampler_class": "optuna.samplers.TPESampler",
+    "optuna_2_pruner_class": "optuna.pruners.NopPruner",
+    "optuna_6_n_jobs_helper_name": "_resolve_optuna_n_jobs_from_env"
+  }
+}

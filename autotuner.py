@@ -114,6 +114,27 @@ _OPTUNA_N_JOBS_ENV = "OPTUNA_N_JOBS"
 # trial set). Changing this constant is a methodology change — surface to PM.
 ACTIVE_OPTUNA_PRUNER_FAMILY = "NOP"
 
+# --- Optuna trial-count constants (OPTUNA-7) ---
+# These values are math-soundness constants, not speed knobs. Changing either
+# value is a methodology change that MUST be surfaced to PM before committing.
+#
+# BHY / Yekutieli c(N) rationale (Harvey & Liu 2015 haircut):
+#   The BHY selection-bias haircut uses c(N) = sum(1/k for k in 1..N) as the
+#   Yekutieli multiple-testing correction factor. Larger N gives a larger c(N)
+#   and therefore a stronger (more conservative) haircut:
+#     c(100) ≈ 5.19   c(500) ≈ 6.79   (≈30% larger at production floor)
+#   Reducing production_n_trials BELOW the 5x-headroom adequacy line
+#   (production >= 5 * floor = 5 * 100 = 500) weakens the haircut materially.
+#
+# Statistical-stability floor (project rule — see CLAUDE.md Known Gotchas):
+#   Minimum n_trials for the TPE sampler to adequately explore the 6-D
+#   search space is 100. Below 100 the sampler under-explores and the
+#   BHY c(N) factor is materially weaker (c(50) ≈ 4.50 vs c(100) ≈ 5.19).
+#   OPTUNA_N_TRIALS_CALIBRATION equals the floor exactly — the calibration
+#   sweep IS the floor. OPTUNA_N_TRIALS_PRODUCTION is 5x that floor.
+OPTUNA_N_TRIALS_PRODUCTION = 500   # production walk-forward main study site; 5x the 100-trial stability floor
+OPTUNA_N_TRIALS_CALIBRATION = 100  # calibration sweep; equals the statistical-stability floor exactly
+
 
 def _build_optuna_sampler_from_env() -> "optuna.samplers.TPESampler":
     """Return TPESampler with seed sourced from env (None when unset).
@@ -1623,7 +1644,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             sampler=optuna.samplers.TPESampler(seed=_sampler_seed),
             pruner=optuna.pruners.NopPruner(),
         )
-        study.optimize(objective, n_trials=500, n_jobs=_n_jobs)
+        study.optimize(objective, n_trials=OPTUNA_N_TRIALS_PRODUCTION, n_jobs=_n_jobs)
         
 
         
@@ -2026,7 +2047,7 @@ def run_calibration_sweep(
         # autotuner study sites; default 1 for SQLite RDBStorage writer-lock safety).
         _sweep_n_jobs = _resolve_optuna_n_jobs_from_env()
         logging.debug("run_calibration_sweep: n_jobs=%s (env key=%s)", _sweep_n_jobs, _OPTUNA_N_JOBS_ENV)
-        study.optimize(objective, n_trials=100, n_jobs=_sweep_n_jobs)
+        study.optimize(objective, n_trials=OPTUNA_N_TRIALS_CALIBRATION, n_jobs=_sweep_n_jobs)
 
         naive_sharpe_value: float | None = study.best_value
         best_params = study.best_params
