@@ -1,22 +1,35 @@
 """
-RED tests for AC-8 (VWAP System A provenance) and AC-9 (open-window grace
-timezone handling) — the two LOW-severity exit-math audit items.
+Tests for AC-8 (VWAP System A provenance) and AC-9 (open-window grace tz).
 
-AC-8 (VWAP provenance, audit MEDIUM):
-  compute_vwap_breakdown_update's System A gate is
-      if safe_hwm >= vwap_cross_hwm_pct and current_return < safe_hwm
-  The audit found no literature provenance for why the profit-protection
-  break should gate on safe_hwm >= vwap_cross_hwm_pct. The decision is to
-  DOCUMENT System A in-code as a tuned practitioner heuristic with no formal
-  literature provenance. This test asserts the docstring/inline comment
-  carries that explicit heuristic-without-provenance language.
+AC-8 history:
+  PRE-M3: the audit flagged compute_vwap_breakdown_update's System A gate
+  (safe_hwm >= vwap_cross_hwm_pct) as having no literature provenance.
+  The AC-8 RED required an in-code "tuned practitioner heuristic" flag so a
+  future reader knows the gate's provenance was open. That precondition was
+  CORRECT for the pre-M3 era.
+
+  POST-M3 (cycle fix-m3-provenance): the M3 redrive CLOSES the provenance
+  gap by re-framing the gate as the regime boundary of a two-regime
+  trailing-stop system under the Leung & Zhang (2019) optimal-stopping
+  formalism / Peskir (1998) maximality principle. The runtime arithmetic
+  is byte-identical (provenance-only closure per literature-pass.md §2.3);
+  the in-code provenance comment now CITES the derivation instead of
+  flagging an open gap.
+
+  These tests are UPDATED to assert the M3 closure: the new THEORY
+  citations are present AND the old heuristic / no-formal-provenance flag
+  language is absent. The AC-8 contract has inverted -- pre-M3 asserted
+  the gap flag is present; post-M3 asserts the closure citation is
+  present and the gap flag is gone. The M3 plan at §49 + §131 explicitly
+  authorizes this rewrite ('The companion test file's AC-7 / AC-8
+  assertions are updated to reference the new provenance comment').
 
 AC-9 (open-window grace tz, audit LOW):
   is_in_open_window_grace strips tzinfo and compares naively — correct only
   if current_et is genuinely ET; a UTC caller silently shifts the grace
   window 4-5 hours. Also has a dead local `exec_start`. The fix: require /
   assert a tz-aware ET datetime (or do tz-aware arithmetic) and delete the
-  dead local.
+  dead local. UNCHANGED by M3.
 
 These are documentation / robustness fixes; the tests assert the contract
 (comment presence, tz-awareness behavior, dead-code removal), never a
@@ -49,66 +62,103 @@ _UTC = timezone.utc
 # ===========================================================================
 
 
-def test_vwap_system_a_documented_as_heuristic_without_provenance() -> None:
+def test_vwap_system_a_documented_with_closed_provenance() -> None:
     """
-    AC-8: the VWAP System A gate (safe_hwm >= vwap_cross_hwm_pct) must be
-    documented in-code as a tuned practitioner heuristic with no formal
-    literature provenance.
+    AC-8 (post-M3): the VWAP System A gate (safe_hwm >= vwap_cross_hwm_pct)
+    must carry an in-code provenance comment citing the optimal-stopping
+    derivation that closes the pre-M3 gap. The M3 closure (per
+    docs/research/m3-provenance/literature-pass.md §2.3) re-frames the
+    scalar gate as the regime boundary of a two-regime trailing-stop
+    system under Leung & Zhang (2019) / Peskir (1998).
 
-    The audit flagged that fixtures pin the inequality DIRECTIONS but nothing
-    explains WHY the profit-protection break gates on
-    safe_hwm >= vwap_cross_hwm_pct, nor why that is the right gate quantity.
+    Inverted from pre-M3 AC-8: pre-M3 asserted the heuristic-without-
+    provenance flag was PRESENT; post-M3 asserts the closure citations are
+    present AND the gap flag is absent. M3 plan §49 authorizes this update.
 
-    This test asserts the compute_vwap_breakdown_update source (docstring +
-    inline comments) contains explicit heuristic/provenance language near
-    System A. It does not pin exact wording.
-
-    RED: the current docstring describes the System A BRANCH MECHANICS but
-    contains no provenance statement.
+    The function source (docstring + inline comments) must contain AT LEAST
+    ONE marker from each of two groups:
+      - Closure citations (at least one): 'leung', 'peskir', 'maximality',
+        'regime-switch', 'optimal-stopping' / 'optimal stopping' / 'trailing
+        boundary' / 'theory'.
+      - Negative: NONE of the pre-M3 gap flags ('no formal literature
+        provenance', 'no provenance', 'heuristic with no') must remain in
+        the System A comment region.
     """
     source = inspect.getsource(math_engine.compute_vwap_breakdown_update).lower()
-    provenance_markers = (
-        "heuristic",
-        "no formal",
-        "no literature",
+
+    closure_markers = (
+        "leung",
+        "peskir",
+        "maximality",
+        "regime-switch",
+        "regime switch",
+        "optimal-stopping",
+        "optimal stopping",
+        "trailing boundary",
+        "theory",
+    )
+    assert any(m in source for m in closure_markers), (
+        "compute_vwap_breakdown_update has no M3 closure citation. AC-8 "
+        "post-M3 requires the System A gate comment to cite the optimal-"
+        "stopping derivation (Leung & Zhang 2019 / Peskir 1998 maximality "
+        "principle / regime-switch construction / THEORY discipline). The "
+        "pre-M3 'heuristic without provenance' flag has been replaced; the "
+        "comment must now cite the published derivation, not flag an open "
+        "gap. Research note: docs/research/m3-provenance/literature-pass.md."
+    )
+
+    # Negative: the M3 closure must have REMOVED the pre-M3 gap-flag phrases
+    # from the System A comment region. A half-done closure (new citation
+    # added but old self-flag left in) is a regression.
+    gap_phrases = (
+        "no formal literature provenance",
         "no provenance",
-        "practitioner",
-        "tuned",
-        "empirical",
+        "heuristic with no",
     )
-    assert any(m in source for m in provenance_markers), (
-        "compute_vwap_breakdown_update has no provenance statement for the "
-        "System A gate. AC-8 requires an in-code note that System A "
-        "(safe_hwm >= vwap_cross_hwm_pct) is a tuned practitioner heuristic "
-        "with no formal literature provenance."
+    surviving = [p for p in gap_phrases if p in source]
+    assert not surviving, (
+        f"compute_vwap_breakdown_update still contains pre-M3 gap-flag "
+        f"language: {surviving}. The M3 closure replaces the open-gap flag "
+        f"with the THEORY-derivation citation; leaving the flag behind "
+        f"defeats the closure (a future reader cannot tell whether the gap "
+        f"is open or closed). Remove the surviving phrase(s)."
     )
 
 
-def test_vwap_system_a_provenance_note_mentions_the_gate_quantity() -> None:
+def test_vwap_system_a_provenance_note_anchored_to_the_gate_quantity() -> None:
     """
-    AC-8: the provenance note must specifically concern the System A gate —
-    a generic 'this is heuristic' comment elsewhere in the function does not
-    satisfy the AC. Assert the source mentions the gate quantity
-    (vwap_cross_hwm_pct or safe_hwm) in proximity to heuristic language.
+    AC-8 (post-M3): the closure citation must specifically concern the
+    System A gate — a generic Leung-Zhang reference elsewhere in the
+    function does not satisfy the AC. Assert the closure citation appears
+    in proximity to the gate quantity (vwap_cross_hwm_pct or 'System A').
 
-    Implemented as: at least one source line contains both a provenance
-    marker AND a gate-quantity reference, OR a provenance marker appears
-    within 3 lines of a vwap_cross_hwm_pct reference.
+    Same anchoring contract as pre-M3 (the citation must be next to WHAT
+    it documents); only the citation language has changed.
+
+    Implemented as: at least one source line containing a closure-citation
+    marker appears within a 6-line window of a line containing the gate
+    quantity. The window is widened from pre-M3's 3 to 6 because the new
+    citation is a multi-line block (citation + research-note path + THEORY
+    declaration) and the gate-quantity reference may sit a few lines below
+    the comment header.
     """
     src_lines = inspect.getsource(
         math_engine.compute_vwap_breakdown_update
     ).splitlines()
-    provenance_markers = (
-        "heuristic",
-        "no formal",
-        "no literature",
-        "no provenance",
-        "practitioner",
+    closure_markers = (
+        "leung",
+        "peskir",
+        "maximality",
+        "regime-switch",
+        "regime switch",
+        "optimal-stopping",
+        "optimal stopping",
+        "trailing boundary",
     )
 
-    def is_provenance(line: str) -> bool:
+    def is_closure_citation(line: str) -> bool:
         low = line.lower()
-        return any(m in low for m in provenance_markers)
+        return any(m in low for m in closure_markers)
 
     def is_gate_ref(line: str) -> bool:
         low = line.lower()
@@ -116,16 +166,18 @@ def test_vwap_system_a_provenance_note_mentions_the_gate_quantity() -> None:
 
     near = False
     for i, line in enumerate(src_lines):
-        if is_provenance(line):
-            window = src_lines[max(0, i - 3): i + 4]
+        if is_closure_citation(line):
+            window = src_lines[max(0, i - 6): i + 7]
             if any(is_gate_ref(w) for w in window):
                 near = True
                 break
     assert near, (
-        "The AC-8 provenance note is not anchored to the System A gate. The "
-        "heuristic-without-provenance comment must sit next to the "
-        "safe_hwm >= vwap_cross_hwm_pct gate (or name System A) so a future "
-        "reader knows WHICH gate lacks literature support."
+        "The AC-8 closure citation is not anchored to the System A gate. "
+        "The M3 closure (Leung & Zhang 2019 / Peskir 1998 / maximality "
+        "principle / regime-switch construction) must sit next to the "
+        "safe_hwm >= vwap_cross_hwm_pct gate (or name 'System A') so a "
+        "future reader knows WHICH gate the closure documents. Research "
+        "note: docs/research/m3-provenance/literature-pass.md §2.3."
     )
 
 

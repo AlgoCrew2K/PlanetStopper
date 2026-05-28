@@ -254,25 +254,26 @@ References: López de Prado (2018) *Advances in Financial Machine Learning* Ch. 
 
 **Plain English.** The bot scales its trailing-stop distance by recent volatility — a 20-day rolling estimate, textbook standard. Two extra adjustments sit on top:
 
-1. **Log time squeeze.** The stop *tightens* through the trading day on a logarithmic curve — wider at the open, tighter at the close — on the rationale that less time remains to recover from a drawdown. Curve: `1.5x` at the open decaying to `0.5x` by the close.
+1. **Time squeeze (M3-derived).** The stop *tightens* through the trading day on a concave, front-loaded curve — wider at the open, tighter at the close. Curve: `1.5x` at the open decaying to `0.5x` by the close, following `f(t) = 1 − √(1 − t)`. Under the standard square-root-of-time scaling for i.i.d. log-returns with constant per-unit-time variance, the standard deviation of remaining-session returns scales as `√(1 − t)`; tightness `(1 − remaining_std / full_std)` is therefore `1 − √(1 − t)`. Zero free parameters — the formula is closed-form THEORY. The curve is less aggressive midday (~0.45 pp wider stop at `t = 0.5`) than the prior heuristic, with the tightening budget concentrated in the late afternoon. Cited: Danielsson & Zigrand (2003), LSE FMG DP-439.
 2. **Parabolic ratchet (PARA-ARM).** If a price moves quickly (the "parabolic squeeze"), the stop *tightens further* to lock in the move. Named after Wilder's Parabolic SAR but mathematically a 1-cycle rate-of-change indicator.
 
 ```text
-dynamic_multiplier(t) = 1.5 - (1.5 - 0.5) × log10(1 + 9 × time_ratio) / log10(10)
-                                                ↑
-                                    practitioner shape — no published anchor
+dynamic_multiplier(t) = 1.5 - (1.5 - 0.5) × (1 - sqrt(1 - t))
+                                               ↑
+                           i.i.d. remaining-variance derivation
+                           (Danielsson & Zigrand 2003, THEORY)
 
 velocity = current_return - prev_return
 should_para_arm = (velocity ≥ PARABOLIC_VELOCITY_THRESHOLD) and not currently_armed
 ```
 
-The vol-scaling and 20-day window are anchored by Andersen & Bollerslev (1997) and RiskMetrics (1996) — mainstream. The 14-day ATR underneath uses Wilder (1978) — also mainstream. But the **specific shape of the log-time-squeeze curve** and the **PARA-ARM cross-day reset behavior** (where `prev_return=0` at the start of each new day means any symphony opening above 2% auto-arms PARA on the first cycle) have no published precedent. They are practitioner heuristics with coherent rationales but no formal anchor.
+The vol-scaling and 20-day window are anchored by Andersen & Bollerslev (1997) and RiskMetrics (1996) — mainstream. The 14-day ATR underneath uses Wilder (1978) — also mainstream. The **time-squeeze curve** is now first-principles-derived (M3 redrive, Danielsson & Zigrand 2003). The **PARA-ARM cross-day reset behavior** (where `prev_return=0` at the start of each new day means any symphony opening above 2% auto-arms PARA on the first cycle) still has no published precedent and remains a practitioner heuristic pending a future derivation cycle.
 
-The relevant code: [`math_engine.py:155-167`](math_engine.py) (time-squeeze constants), [`math_engine.py:211-242`](math_engine.py) (`compute_time_squeeze_decay`), [`math_engine.py:185-208`](math_engine.py) (`compute_para_arm_decision`), [`math_engine.py:903-960`](math_engine.py) (20-day vol).
+The relevant code: [`math_engine.py:155-171`](math_engine.py) (time-squeeze constants + provenance), [`math_engine.py:211-244`](math_engine.py) (`compute_time_squeeze_decay`), [`math_engine.py:185-208`](math_engine.py) (`compute_para_arm_decision`), [`math_engine.py:903-960`](math_engine.py) (20-day vol).
 
-References: Andersen & Bollerslev (1997) *Journal of Empirical Finance*; J.P. Morgan / Reuters (1996) *RiskMetrics Technical Document*; Wilder (1978) *New Concepts in Technical Trading Systems*; Kestner (2003) *Quantitative Trading Strategies* (ATR-based stops backtest across 15 futures markets — single-author, not peer-reviewed).
+References: Andersen & Bollerslev (1997) *Journal of Empirical Finance*; J.P. Morgan / Reuters (1996) *RiskMetrics Technical Document*; Wilder (1978) *New Concepts in Technical Trading Systems*; Kestner (2003) *Quantitative Trading Strategies*; Danielsson & Zigrand (2003) *On time-scaling of risk and the square-root-of-time rule*, LSE FMG DP-439.
 
-**Soundness verdict.** **Mixed.** Vol-scaling (the foundation) is solid. The two ratchets on top are practitioner-grade. The decision-science Phase-1.5 M3 work tracks the re-derivation of these curves; it has not shipped on the current branch. The dashboard surfaces these stops as live signals today; the operator should know they live or die by empirical evaluation that the 125-day calibration window cannot deliver with high confidence. See §[12](#12-open-questions--known-limits) OQ-5, OQ-6.
+**Soundness verdict.** **Improved.** Vol-scaling (the foundation) is solid. The time-squeeze curve now has first-principles THEORY provenance (M3 redrive shipped). The parabolic ratchet on top remains practitioner-grade. The dashboard surfaces these stops as live signals today; the operator should know the parabolic ratchet lives or dies by empirical evaluation that the 125-day calibration window cannot deliver with high confidence. See §[12](#12-open-questions--known-limits) OQ-5, OQ-6.
 
 ---
 
