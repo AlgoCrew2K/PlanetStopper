@@ -234,51 +234,114 @@ def test_in_range_time_ratio_does_not_raise(time_ratio: float) -> None:
 
 
 # ===========================================================================
-# AC-7 — Decay-curve provenance comment
+# AC-7 — Decay-curve provenance (post-M3 closure)
 # ===========================================================================
+#
+# AC-7 history:
+#   PRE-M3: the audit flagged the log10(1 + 9*t) decay curve as
+#   provenance-light; the AC-7 RED required a sourced rationale OR a
+#   follow-up-empirical-review flag. That precondition was correct for
+#   the pre-M3 era.
+#
+#   POST-M3 (cycle fix-m3-provenance): the M3 redrive REPLACES the log10
+#   heuristic with the THEORY-derived f(t) = 1 - sqrt(1 - t) from Danielsson
+#   & Zigrand (2003, LSE FMG DP-439). DECAY_CURVE_SCALAR is removed
+#   entirely. AC-7 is closed by the published-derivation citation, not by a
+#   rationale comment.
+#
+#   This test is UPDATED to assert the M3 closure (citations to Danielsson
+#   & Zigrand + a THEORY discipline declaration + the sqrt-formula text)
+#   AND the absence of the pre-M3 self-flag language. M3 plan §49 + §72
+#   authorize this rewrite.
 
 
-def test_decay_curve_carries_sourced_rationale_comment() -> None:
+def test_decay_curve_provenance_comment_cites_m3_closure() -> None:
     """
-    AC-7 (M-4): the log10(1 + 9*t) decay curve must carry a sourced inline
-    rationale for its concave shape, OR be explicitly flagged for a
-    follow-up empirical review. The audit flagged DECAY_CURVE_SCALAR / the
-    decay curve as provenance-light.
+    AC-7 (post-M3): the decay-curve provenance comment block must cite the
+    Danielsson & Zigrand (2003) square-root-of-time derivation, declare
+    freeze_discipline = THEORY, and reference the M3 research note.
 
-    This test asserts the source region around compute_time_squeeze_decay /
-    DECAY_CURVE_SCALAR contains rationale language — it does not pin exact
-    wording, only that the GREEN phase added a rationale or a review flag.
+    Inverted from pre-M3 AC-7: pre-M3 asserted a rationale OR a follow-up
+    flag was present in lines mentioning the decay curve; post-M3 asserts
+    the THEORY closure citations are present AND the pre-M3 self-flag
+    language is absent. The closure is THEORY because the new formula is
+    closed-form (zero free parameters); no rationale is needed beyond the
+    citation.
 
-    RED: the current DECAY_CURVE_SCALAR comment describes WHAT the curve does
-    ("maps t in [0,1] to decay in [0,1]") but gives no rationale for WHY a
-    concave log curve was chosen.
+    Anchor: the comment block immediately above the (post-M3) MULT_OPEN
+    constant. The block contains the full M3 PROVENANCE narrative. We
+    extract ~25 lines preceding MULT_OPEN to capture the multi-line block
+    without reaching upward into unrelated dataclass docs.
     """
     source = pathlib.Path(math_engine.__file__).read_text(encoding="utf-8")
-    # Look at the lines mentioning the decay curve / scalar.
-    relevant = "\n".join(
-        line
-        for line in source.splitlines()
-        if "DECAY_CURVE" in line
-        or "decay_curve" in line
-        or "time-squeeze" in line.lower()
-        or "time squeeze" in line.lower()
-    ).lower()
-    rationale_markers = (
-        "concave",
-        "rationale",
-        "empirical",
-        "follow-up",
-        "follow up",
-        "tuned",
-        "practitioner",
-        "review",
-        "source:",
-        "because",
+    mult_open_idx = source.find("MULT_OPEN = 1.5")
+    assert mult_open_idx != -1, (
+        "MULT_OPEN = 1.5 not found in math_engine.py source -- impl-m3 "
+        "removed or renamed the at-open multiplier endpoint, which is "
+        "out of scope for M3 (M3 changes the curve SHAPE, not the endpoints)."
     )
-    assert any(m in relevant for m in rationale_markers), (
-        "The log10(1 + 9*t) decay curve has no sourced rationale for its "
-        "concave shape and no explicit follow-up-review flag. AC-7 requires "
-        "one or the other. Add an inline comment explaining WHY a concave "
-        "log curve (faster early tightening, slower late) was chosen, or "
-        "flag it for empirical review."
+    pre_lines = source[:mult_open_idx].splitlines()
+    block = "\n".join(pre_lines[-25:]).lower()
+
+    # Positive: M3 closure citations + THEORY discipline + sqrt formula.
+    required_substrings = (
+        "danielsson",
+        "zigrand",
+        "2003",
+        "theory",
+        "docs/research/m3-provenance/literature-pass.md",
+    )
+    missing = [s for s in required_substrings if s not in block]
+    assert not missing, (
+        f"M3 decay-curve provenance comment missing required substrings: "
+        f"{missing}. AC-7 post-M3 requires the comment to cite Danielsson "
+        f"& Zigrand (2003), declare THEORY discipline, and reference the "
+        f"research note. Block scanned:\n{block}"
+    )
+
+    # Either 'sqrt' or 'square-root' / 'square root' satisfies the formula
+    # reference -- the comment may use either spelling.
+    assert (
+        "sqrt" in block
+        or "square-root" in block
+        or "square root" in block
+    ), (
+        "M3 decay-curve provenance comment must reference the sqrt /"
+        "square-root-of-time scaling that defines f(t) = 1 - sqrt(1 - t). "
+        f"Block scanned:\n{block}"
+    )
+
+    # Negative: the pre-M3 self-flag MUST be removed.
+    gap_phrases = (
+        "no formal literature provenance",
+        "no formal literature",
+    )
+    surviving = [p for p in gap_phrases if p in block]
+    assert not surviving, (
+        f"Pre-M3 self-flag survived the closure: {surviving}. The M3 "
+        f"redrive replaces 'has no formal literature provenance' with the "
+        f"Danielsson-Zigrand citation; leaving the flag behind defeats "
+        f"the closure. Block scanned:\n{block}"
+    )
+
+
+def test_decay_curve_scalar_constant_is_removed_by_m3() -> None:
+    """
+    AC-7 (post-M3): DECAY_CURVE_SCALAR is REMOVED from math_engine. The
+    pre-M3 heuristic used `log10(1 + DECAY_CURVE_SCALAR * t)` with the
+    tuned scalar 9; the post-M3 THEORY formula is `1 - sqrt(1 - t)` with
+    zero free parameters. Leaving the constant on the module post-M3
+    would be a dead-code provenance debt.
+
+    Same intent as
+    tests/math_engine/test_time_squeeze_decay.py::test_decay_curve_scalar_constant_is_removed_post_m3
+    but expressed against the module surface (this file's AC-7 home). Both
+    must pass on a clean GREEN.
+    """
+    assert not hasattr(math_engine, "DECAY_CURVE_SCALAR"), (
+        "DECAY_CURVE_SCALAR is still defined on math_engine post-M3. The "
+        "M3 redrive (Danielsson & Zigrand 2003 square-root-of-time) has "
+        "zero free parameters; the constant must be REMOVED to close the "
+        "provenance gap. Research note: "
+        "docs/research/m3-provenance/literature-pass.md §1.3."
     )
