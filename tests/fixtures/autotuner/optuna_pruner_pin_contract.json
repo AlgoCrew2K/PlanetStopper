@@ -1,0 +1,51 @@
+{
+  "_provenance": "schema-derived from math re-audit finding OPTUNA-2 (MEDIUM) + feature-plans/decision-science/engine-audit/pruner-choice/plan.md — pin the autotuner's Optuna pruner to NopPruner so the BHY haircut + N_effective additive accounting both retain the complete-trial-set assumption, and a future trial.report addition cannot silently activate MedianPruner.",
+  "_audit_source": "docs/research/math-audit-3/ (OPTUNA-2 lane) + pruner-choice plan T1-T4",
+  "_sites": [
+    {
+      "function": "run_autotuner",
+      "anchor": "main create_study call (currently around autotuner.py:1562); located by AST, not line number"
+    },
+    {
+      "function": "run_calibration_sweep",
+      "anchor": "calibration create_study call (currently around autotuner.py:1940); located by AST, not line number"
+    }
+  ],
+  "constants": {
+    "pruner_family_label": "NOP",
+    "_pruner_family_label_naming": "Must live as a module-level named constant in autotuner.py (per project Coding Standards: 'every constant named + source comment'). The implementation is free to name the symbol itself (e.g. _ACTIVE_OPTUNA_PRUNER_FAMILY or ACTIVE_OPTUNA_PRUNER_FAMILY); this fixture pins the VALUE only.",
+    "expected_pruner_class": "optuna.pruners.NopPruner",
+    "_expected_pruner_class_rationale": "NopPruner is the only no-op pruner in Optuna. MedianPruner, HyperbandPruner, SuccessiveHalvingPruner, PercentilePruner, ThresholdPruner, PatientPruner all act on intermediate trial.report() values; with no reports the default MedianPruner is silently inactive today but would silently activate the moment a developer adds trial.report — censoring the BHY haircut's complete-trial-set assumption."
+  },
+  "pruner_contract": {
+    "required_class_dotted": "optuna.pruners.NopPruner",
+    "kwarg_name": "pruner",
+    "_kwarg_name_rationale": "optuna.create_study(...) accepts pruner= as a kwarg; the fix pins it explicitly at every call site rather than relying on the implicit default.",
+    "prohibited_default_class": "optuna.pruners.MedianPruner",
+    "_prohibited_default_rationale": "MedianPruner is Optuna's implicit default. The OPTUNA-2 finding is that the implicit default silently activates if a future trial.report appears — invalidating BHY's c(N) Yekutieli factor (calibrated over the COMPLETE trial set) and the N_effective additive accounting (which sums across the FULL set of completed trials)."
+  },
+  "static_guard_contract": {
+    "_purpose": "Plan D3/T3: autotuner.py source must NOT contain trial.report or .should_prune at any line. Adding either is a methodology change that must surface to PM before merge.",
+    "forbidden_substrings": [
+      "trial.report",
+      ".should_prune"
+    ],
+    "scope": "autotuner.py source only — other modules may legitimately reference these substrings in tests or docs"
+  },
+  "source_comment_contract": {
+    "_purpose": "Plan T4: the pruner= kwarg must be accompanied by a comment block that cites the BHY haircut + N_effective additive accounting rationale. The comment is what makes the methodology-change-discipline visible at PR review time.",
+    "required_substrings_any": [
+      "BHY",
+      "Harvey",
+      "haircut"
+    ],
+    "_substrings_any_rationale": "At least one of these tokens must appear within ~15 source lines of each pruner=... pin, so the rationale is auditable at the call site without tracing constants.",
+    "must_also_mention": "N_effective",
+    "_must_also_mention_rationale": "The N_effective additive accounting is the second math layer that depends on the complete trial set; the comment must cite both dependencies, not just BHY."
+  },
+  "behavioural_contract": {
+    "_strategy": "Construct each study via the exposed call site (or a helper), then inspect study.pruner. The assertion is type-based (isinstance NopPruner / not MedianPruner) — never a magic property value.",
+    "expected_pruner_isinstance": "optuna.pruners.NopPruner",
+    "prohibited_pruner_isinstance": "optuna.pruners.MedianPruner"
+  }
+}

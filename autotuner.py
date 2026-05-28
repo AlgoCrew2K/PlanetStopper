@@ -103,6 +103,16 @@ EVIDENCE_SOURCE_OOS                  = "OOS"                 # WORSE: frozen-eva
 # repetition at the call site.
 _OPTUNA_SAMPLER_SEED_ENV = "OPTUNA_SAMPLER_SEED"
 _OPTUNA_N_JOBS_ENV = "OPTUNA_N_JOBS"
+# OPTUNA-2 audit pin: the active pruner family is NOP. Explicit rather than
+# relying on Optuna's implicit default (MedianPruner). The objective is
+# end-of-trial-scored; the simulation runs to completion with a single scalar
+# return — no intermediate step reporting — so any pruner is silently inactive
+# today. Pinning NopPruner documents the intent and prevents a future addition
+# of intermediate step reporting from silently activating MedianPruner, which
+# would censor the trial set consumed by the BHY (Harvey & Liu) haircut and
+# invalidate the N_effective additive accounting (both assume the COMPLETE
+# trial set). Changing this constant is a methodology change — surface to PM.
+ACTIVE_OPTUNA_PRUNER_FAMILY = "NOP"
 
 
 def _build_optuna_sampler_from_env() -> "optuna.samplers.TPESampler":
@@ -1559,12 +1569,23 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         # RDBStorage writer-lock safety — see _resolve_optuna_n_jobs_from_env docstring.
         _n_jobs_raw = os.environ.get("OPTUNA_N_JOBS")
         _n_jobs = _resolve_optuna_n_jobs_from_env()
+        # Pruner: NopPruner (OPTUNA-2 pin) — the objective is end-of-trial-scored
+        # (a single scalar after the full guard-alpha sim; the simulation runs
+        # to completion with no intermediate step reporting to Optuna). Any
+        # pruner is silently inactive today. Explicit NopPruner documents the
+        # intent: if a future PR adds intermediate step reporting it must
+        # consciously choose a pruner family — because activating MedianPruner
+        # would censor the BHY (Harvey & Liu) haircut's trial set (c(N)
+        # Yekutieli factor calibrated over the COMPLETE set) and break the
+        # N_effective additive accounting (sums across ALL completed trials).
+        # A pruner-family change is a methodology change — surface to PM first.
         study = optuna.create_study(
             study_name=f"{study_timestamp}__{normalized_name}",
             storage=storage,
             load_if_exists=False,
             direction="maximize",
             sampler=optuna.samplers.TPESampler(seed=_sampler_seed),
+            pruner=optuna.pruners.NopPruner(),
         )
         study.optimize(objective, n_trials=500, n_jobs=_n_jobs)
         
@@ -1937,11 +1958,19 @@ def run_calibration_sweep(
             return compute_sortino_ratio(daily_returns)
 
         sampler = optuna.samplers.TPESampler(seed=random_state)
+        # Pruner: NopPruner (OPTUNA-2 pin) — same rationale as run_autotuner.
+        # Objective is end-of-trial-scored; the simulation runs to completion
+        # with no intermediate step reporting to Optuna. Explicit NopPruner
+        # prevents a future intermediate step-reporting addition from silently
+        # activating MedianPruner and censoring the BHY (Harvey & Liu) haircut's
+        # complete-trial-set assumption and the N_effective additive accounting.
+        # Pruner-family change = methodology change; surface to PM first.
         study = optuna.create_study(
             study_name=study_name,
             direction="maximize",
             sampler=sampler,
             load_if_exists=False,
+            pruner=optuna.pruners.NopPruner(),
         )
         # n_jobs sourced from OPTUNA_N_JOBS env (OPTUNA-6 uniform application across all
         # autotuner study sites; default 1 for SQLite RDBStorage writer-lock safety).
