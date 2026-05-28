@@ -1,23 +1,38 @@
 """
-OPTUNA-4 — OOS-Fold-Collapse v2: RED tests (Path B resolution).
+OPTUNA-4 — OOS-Fold-Collapse v2: RED tests (Path B, Option 1 — revised after
+opt-optuna4 BLOCK on ebbe571).
 
 Audit finding (math-reaudit MEDIUM OPTUNA-4):
   At 125 trading days × 60/20/20 split, after PURGE_DAYS=20 + EMBARGO_DAYS=1
   is applied at the validation|frozen-eval boundary, the usable validation
   window collapses to ~4 days. Statistical power on 4 days is thin.
 
-Decision (this cycle) — Path B: document + operator-visibility.
+Decision (this cycle) — Path B, Option 1: HONESTY framing + operator-visibility.
   - The 125-day operator-data-budget stays (decision-science council §0
     binding choice; expanding the window is a data-budget Amendment, not
     an audit slide-in — see feature-plans/decision-science/engine-audit/
     walk-forward-fold-structure/plan.md "Out of scope: changing any
     fold-structure constant").
-  - The BHY haircut already compensates statistically for the thin window
-    (Harvey & Liu 2015 selection-bias correction; the ~4-day usable
-    validation window is the COST of honest OOS reporting, not a defect).
-  - The autotuner docstring must explicitly carry both halves of the
-    argument — the thin-window cost AND the BHY-compensation justification
-    that makes the 125-day window operationally safe.
+  - The ~4-day usable validation window is an acknowledged STATISTICAL
+    POWER LIMITATION and the COST of honest OOS reporting. The BHY haircut
+    addresses CROSS-TRIAL SELECTION BIAS — a multiplicity problem — and
+    does NOT substitute for per-trial sample length. Conflating the two
+    is the category error opt-optuna4 BLOCKed on ebbe571.
+  - The autotuner docstring must:
+      (a) name the new `eval_window_days` field,
+      (b) acknowledge the thin window as a "power limitation",
+      (c) cite the engine-audit honesty wording "cost of honest OOS
+          reporting",
+      (d) point to the future-workstream remediation paths (purged k-fold
+          CV per López de Prado 2018 Ch. 7.4, or expanded operator-data-
+          budget),
+      (e) name Bailey & López de Prado 2014 (Deflated Sharpe Ratio) as
+          the canonical joint (N, T) framework for future work.
+  - The docstring must NOT carry any phrase fusing the BHY haircut with
+    the thin window — the forbidden_phrases set below is the door that
+    does not reopen.
+  - The same positive + negative phrase contract applies to the source
+    comment co-located with `_OOS_USABLE_VALIDATION_DAYS_EXPECTED`.
   - A new operator-visible field `eval_window_days` is added to the
     optimization_results return dict, so every autotune cycle surfaces
     the usable-window day-counts to the operator without requiring a DB
@@ -28,8 +43,10 @@ Decision (this cycle) — Path B: document + operator-visibility.
     so a future drift in any of those inputs trips the cross-check.
 
 Fixture provenance: tests/fixtures/autotuner/oos_fold_collapse/
-  oos_fold_collapse_pin.json — schema-derived expected values + the
-  docstring-phrase contract + the operator-visibility-field contract.
+  oos_fold_collapse_pin.json — schema-derived expected values, the
+  docstring positive/negative phrase contract, the source-comment
+  positive/negative phrase contract, and the operator-visibility-field
+  contract.
 
 No assertions hardcode producer-computed values. All numeric expectations
 are derived in-test from the named ratio and purge/embargo constants the
@@ -38,9 +55,16 @@ FROZEN_EVAL_RATIO, PURGE_DAYS, EMBARGO_DAYS).
 
 Citations:
   - López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4
+    (purged k-fold CV, frozen-eval discipline)
   - Harvey & Liu 2015, "Backtesting," J. Portfolio Management 42(1)
+    (BHY multiplicity correction — addresses cross-trial selection bias,
+    NOT per-trial signal reliability)
+  - Bailey & López de Prado 2014, "The Deflated Sharpe Ratio" (canonical
+    joint (N, T) framework — accounts for trial count AND sample length)
   - math-reaudit OPTUNA-4 finding
   - feature-plans/decision-science/engine-audit/walk-forward-fold-structure/plan.md
+  - opt-optuna4 BLOCK on ebbe571 (category-confusion diagnosis — provenance
+    for this revision)
 """
 from __future__ import annotations
 
@@ -300,23 +324,25 @@ class TestUsableValidationWindowConstantPinned:
 
 
 # ===========================================================================
-# Test 2 — run_autotuner docstring carries both halves of the Path B argument.
+# Test 2 — run_autotuner docstring carries the Option-1 honesty framing.
 # ===========================================================================
 
-class TestDocstringCarriesBothArgumentHalves:
+class TestDocstringHonestyFraming:
     """
-    Path B's load-bearing claim is that the BHY haircut compensates for
-    the thin usable validation window — the 125-day data-budget is
-    operationally safe BECAUSE the selection-bias correction is sized to
-    the trial count, not the day count.
+    Path B's revised contract (Option 1 after opt-optuna4 BLOCK on ebbe571):
+    the docstring acknowledges the ~4-day usable validation window as a
+    POWER LIMITATION (not a tolerated defect) and points to the future-
+    workstream remediation paths and the canonical joint (N, T) framework
+    (Bailey & López de Prado 2014).
 
-    The docstring of run_autotuner must explicitly carry that argument.
-    Documentation drift here would leave the next reader unable to
-    distinguish "this is a defect we tolerated" from "this is a defended
-    tradeoff."
+    The docstring must NOT claim that any selection-bias correction
+    substitutes for adequate sample length. That category confusion was
+    the ebbe571 failure mode; the forbidden_phrases set in the next class
+    is the door that does not reopen.
 
     Adversarial angle: catch the implementer who adds the field + the
-    constant but quietly omits the compensation phrase from the docstring.
+    constant but ships a docstring that either (a) omits the honesty
+    framing entirely, or (b) reverts to the BHY-compensation phrasing.
     """
 
     def test_docstring_names_eval_window_days_field(self):
@@ -332,36 +358,235 @@ class TestDocstringCarriesBothArgumentHalves:
             f"contract from the source-of-truth comment. RED until added."
         )
 
-    def test_docstring_names_bhy_compensation_argument(self):
+    def test_docstring_acknowledges_power_limitation(self):
         """
-        The docstring must explicitly cite that the BHY (Benjamini-Hochberg-
-        Yekutieli) selection-bias correction is what compensates for the
-        thin usable validation window. Without that phrase the docstring
-        only documents the cost half of the tradeoff, not the justification
-        half — and the justification is what makes Path B defensible.
+        The thin window must be named as a "power limitation" — a
+        statistical-power deficit, not a tolerated defect. This phrase is
+        the load-bearing acknowledgement that distinguishes the honest
+        Option-1 framing from any rationalisation that the limitation is
+        "compensated".
         """
         pin = _load_pin()
-        thin = pin["docstring_required_phrases"]["thin_window_phrase"]
-        comp = pin["docstring_required_phrases"]["compensation_phrase"]
+        phrase = pin["docstring_required_phrases"]["power_limitation_phrase"]
 
         autotuner = _import_autotuner()
         doc = autotuner.run_autotuner.__doc__ or ""
 
-        assert thin in doc, (
-            f"run_autotuner docstring must name the compensating "
-            f"mechanism (`{thin}`) so the OPTUNA-4 tradeoff argument is "
-            f"complete. RED until added."
+        assert phrase in doc, (
+            f"run_autotuner docstring must contain the phrase "
+            f"`{phrase}` to acknowledge the ~4-day usable validation "
+            f"window as a statistical-power deficit. RED until added."
         )
-        assert comp in doc, (
-            f"run_autotuner docstring must explicitly use the phrase "
-            f"`{comp}` (the technical term for what the BHY haircut "
-            f"does) so the compensation argument is unambiguous. "
-            f"RED until added."
+
+    def test_docstring_uses_engine_audit_honesty_wording(self):
+        """
+        The engine-audit plan and the existing docstring at autotuner.py
+        :1311-1317 both use the wording "cost of honest OOS reporting".
+        Pinning that exact wording ties the revised docstring to the
+        preexisting honesty doctrine and prevents a near-miss reword that
+        loses the "honesty" framing.
+        """
+        pin = _load_pin()
+        phrase = pin["docstring_required_phrases"]["honesty_framing_phrase"]
+
+        autotuner = _import_autotuner()
+        doc = autotuner.run_autotuner.__doc__ or ""
+
+        assert phrase in doc, (
+            f"run_autotuner docstring must contain the phrase "
+            f"`{phrase}` (the engine-audit honesty wording). RED until "
+            f"added."
+        )
+
+    def test_docstring_points_to_future_workstream(self):
+        """
+        The methodologically-clean remediation paths are (a) expanding the
+        operator-data-budget OR (b) combinatorial purged k-fold CV per
+        López de Prado 2018 Ch. 7.4. The docstring must point to the
+        latter explicitly so a future reader sees that recovering power
+        is the fix — not arguing the cost away.
+        """
+        pin = _load_pin()
+        phrase = pin["docstring_required_phrases"]["future_workstream_phrase"]
+
+        autotuner = _import_autotuner()
+        doc = autotuner.run_autotuner.__doc__ or ""
+
+        assert phrase in doc, (
+            f"run_autotuner docstring must point to the future-workstream "
+            f"remediation path via the phrase `{phrase}` (López de Prado "
+            f"2018 Ch. 7.4). RED until added."
+        )
+
+    def test_docstring_cites_joint_n_t_framework(self):
+        """
+        Bailey & López de Prado 2014 (Deflated Sharpe Ratio) is the
+        canonical (N, T) joint framework. The docstring must cite it (the
+        substring `Bailey` is the load-bearing token — any future reader
+        looking for the joint (N, T) framework finds it via the author
+        surname) so a future reader cannot repeat the BHY-only conflation.
+        """
+        pin = _load_pin()
+        phrase = pin["docstring_required_phrases"]["joint_n_t_framework_citation"]
+
+        autotuner = _import_autotuner()
+        doc = autotuner.run_autotuner.__doc__ or ""
+
+        assert phrase in doc, (
+            f"run_autotuner docstring must cite Bailey & López de Prado "
+            f"2014 (Deflated Sharpe Ratio) — the canonical joint (N, T) "
+            f"framework — via the substring `{phrase}`. RED until added."
         )
 
 
 # ===========================================================================
-# Test 3 — optimization_results carries the eval_window_days dict.
+# Test 3 — run_autotuner docstring forbids the BHY-compensation category
+# confusion (the door that does not reopen).
+# ===========================================================================
+
+class TestDocstringForbidsCompensationClaims:
+    """
+    opt-optuna4's BLOCK on ebbe571 identified a category confusion: the
+    docstring fused BHY's multiplicity-correction property ("operates
+    independently of day count") with a statistical-power-substitution
+    claim ("operationally safe because of the haircut"). The first is a
+    true feature of BHY; the second is methodologically incorrect.
+
+    This test enforces that none of the category-confusion phrasings
+    reappear. A future PR that tries to reintroduce any of them fails
+    here loudly with the offending phrase quoted.
+    """
+
+    def test_docstring_contains_no_forbidden_compensation_phrases(self):
+        pin = _load_pin()
+        forbidden = pin["docstring_forbidden_phrases"]["phrases"]
+
+        autotuner = _import_autotuner()
+        doc = autotuner.run_autotuner.__doc__ or ""
+        # Case-insensitive scan — the category confusion does not get to
+        # hide behind capitalisation tricks.
+        doc_lower = doc.lower()
+
+        hits = [p for p in forbidden if p.lower() in doc_lower]
+        assert not hits, (
+            f"run_autotuner docstring contains forbidden category-"
+            f"confusion phrase(s): {hits}. These were the methodology "
+            f"error opt-optuna4 BLOCKed on ebbe571 — the BHY haircut "
+            f"addresses cross-trial selection bias independently of day "
+            f"count (a FEATURE), which is NOT the same as compensating "
+            f"for a thin per-trial sample length (a substitution claim). "
+            f"Reword to the honesty framing (power limitation + future-"
+            f"workstream pointer + Bailey 2014 citation). RED until "
+            f"every forbidden phrase is removed."
+        )
+
+
+# ===========================================================================
+# Test 4 — Source comment on _OOS_USABLE_VALIDATION_DAYS_EXPECTED carries
+# the honesty framing and forbids the same compensation phrasings.
+# ===========================================================================
+
+class TestNamedConstantSourceComment:
+    """
+    Per opt-optuna4 note #3 on the ebbe571 BLOCK acknowledgement: the
+    BHY-compensation paragraph in the source comment co-located with
+    `_OOS_USABLE_VALIDATION_DAYS_EXPECTED` (autotuner.py near line 263)
+    must be REPLACED wholesale, not edited. The revised comment must
+    carry the honesty framing AND must not carry any BHY-compensation
+    phrasing.
+
+    Adversarial angle: catch the implementer who fixes the docstring but
+    forgets to revise the source comment — the comment would otherwise
+    remain a methodology-error landmine for the next reader.
+    """
+
+    def test_named_constant_source_comment_carries_honesty_framing(self):
+        pin = _load_pin()
+        anchor = pin["source_comment_required_phrases"]["anchor_line_substring"]
+        must_contain = pin["source_comment_required_phrases"]["must_contain"]
+
+        src = _parse_autotuner_source()
+        lines = src.splitlines()
+
+        # Find the line where the constant is defined; the source comment
+        # is the contiguous run of `#`-prefixed lines immediately above it.
+        anchor_idx = None
+        for i, line in enumerate(lines):
+            if anchor in line and "=" in line and not line.lstrip().startswith("#"):
+                anchor_idx = i
+                break
+        assert anchor_idx is not None, (
+            f"Could not locate the definition line for `{anchor}` in "
+            f"autotuner.py. The constant must exist at module scope; "
+            f"see TestUsableValidationWindowConstantPinned for the "
+            f"named-constant contract."
+        )
+
+        # Walk upward collecting consecutive comment lines.
+        comment_lines: list[str] = []
+        j = anchor_idx - 1
+        while j >= 0 and lines[j].lstrip().startswith("#"):
+            comment_lines.insert(0, lines[j])
+            j -= 1
+        comment_text = "\n".join(comment_lines)
+
+        assert comment_text, (
+            f"No source comment found immediately above the definition "
+            f"of `{anchor}` at autotuner.py line {anchor_idx + 1}. The "
+            f"revised contract requires a co-located comment naming "
+            f"derivation, honesty framing, drift-as-Amendment guard, "
+            f"and the Bailey 2014 joint (N, T) pointer. RED until added."
+        )
+
+        missing = [p for p in must_contain if p not in comment_text]
+        assert not missing, (
+            f"Source comment on `{anchor}` is missing required phrase(s): "
+            f"{missing}. The comment must carry the honesty framing "
+            f"(`power limitation`), the future-workstream pointer "
+            f"(`purged k-fold`), and the joint (N, T) framework citation "
+            f"(`Bailey`). Comment block found:\n{comment_text}\nRED "
+            f"until added."
+        )
+
+    def test_named_constant_source_comment_forbids_compensation_phrasings(self):
+        pin = _load_pin()
+        anchor = pin["source_comment_required_phrases"]["anchor_line_substring"]
+        must_not_contain = pin["source_comment_required_phrases"]["must_not_contain"]
+
+        src = _parse_autotuner_source()
+        lines = src.splitlines()
+
+        anchor_idx = None
+        for i, line in enumerate(lines):
+            if anchor in line and "=" in line and not line.lstrip().startswith("#"):
+                anchor_idx = i
+                break
+        assert anchor_idx is not None, (
+            f"Could not locate the definition line for `{anchor}` in "
+            f"autotuner.py — see the positive-phrase test for the "
+            f"co-located-comment contract."
+        )
+
+        comment_lines: list[str] = []
+        j = anchor_idx - 1
+        while j >= 0 and lines[j].lstrip().startswith("#"):
+            comment_lines.insert(0, lines[j])
+            j -= 1
+        comment_text = "\n".join(comment_lines).lower()
+
+        hits = [p for p in must_not_contain if p.lower() in comment_text]
+        assert not hits, (
+            f"Source comment on `{anchor}` contains forbidden "
+            f"category-confusion phrase(s): {hits}. Per opt-optuna4 "
+            f"note #3 on the ebbe571 BLOCK acknowledgement, the BHY-"
+            f"compensation paragraph must be REPLACED wholesale, not "
+            f"edited. The forbidden set is the negative half of the "
+            f"door-that-does-not-reopen contract. RED until removed."
+        )
+
+
+# ===========================================================================
+# Test 5 — optimization_results carries the eval_window_days dict.
 # ===========================================================================
 
 class TestOptimizationResultsExposesEvalWindowDays:
@@ -497,7 +722,7 @@ class TestOptimizationResultsExposesEvalWindowDays:
 
 
 # ===========================================================================
-# Test 4 — Invariant: usable validation window stays strictly positive at
+# Test 6 — Invariant: usable validation window stays strictly positive at
 # the pinned 125-day data-budget. (T6 in the engine-audit plan.)
 # ===========================================================================
 
