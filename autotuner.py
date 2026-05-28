@@ -261,14 +261,21 @@ assert abs(TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO - 1.0) < 1e-9, (
 )
 
 # OPTUNA-4 — Operator-visibility pin on the usable validation window.
-# At the 125-day operator-data-budget: int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS = 4 days.
-# The thin window is the COST of honest OOS reporting; the BHY haircut
-# (Harvey & Liu 2015 selection-bias correction, c(N)≈6.79 at N=500) is
-# sized to trial count not day count — that compensation is what makes
-# the 125-day operator-data-budget operationally safe. A drift in this
-# value indicates an Amendment to the operator-data-budget (history
-# length) or a feature-lookback change (PURGE_DAYS); both must surface
-# as Amendments, not silent drifts.
+# At the 125-day operator-data-budget:
+#     int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS = 4 days.
+# The ~4-day usable validation window is an acknowledged statistical power limitation
+# (NOT a defect tolerated by the cycle): with T≈4 the per-trial
+# t-stat sampling distribution is too thin for the normal-CDF approximation
+# in compute_haircut_pvalue to be defensible. BHY's multiplicity correction
+# addresses cross-trial selection bias independently of T; it does NOT
+# substitute for thin per-trial sample length. Future-workstream remediation
+# paths: (a) expand the operator-data-budget (council Amendment), or
+# (b) adopt combinatorial purged k-fold cross-validation per López de Prado
+# 2018 Ch. 7.4 to recover statistical power without expanding total history.
+# The canonical joint (N, T) framework to consult is the Deflated Sharpe
+# Ratio — Bailey & López de Prado 2014. A drift in this value indicates
+# either (a) the operator-data-budget changed or (b) PURGE_DAYS / EMBARGO_DAYS
+# drifted; both must surface as Amendments, not silent slide-ins.
 _OOS_USABLE_VALIDATION_DAYS_EXPECTED = (
     int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS
 )
@@ -1329,14 +1336,21 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
       OOS reporting. Future workstream: expand history window or use purged k-fold CV (rolling
       folds) to recover statistical power.
 
-    Operator visibility (OPTUNA-4 Path B):
+    Operator visibility (OPTUNA-4 Path B, Option 1 — honesty framing):
     - `optimization_results[symphony]["eval_window_days"]` carries per-cycle day-counts for
       the validation and frozen-eval folds so the operator sees the thin-window cost on every
       autotune cycle without requiring a DB schema migration.
-    - The thin usable validation window (~4 days at the 125-day operator-data-budget) is
-      compensated by the BHY haircut — a selection-bias correction sized to trial count
-      (N≈500, c(N)≈6.79), not day count. The 125-day data-budget is operationally safe
-      because the haircut threshold scales with the trials attempted, not the days observed.
+    - The ~4-day usable validation window at the 125-day operator-data-budget is an
+      acknowledged statistical-power limitation — the cost of honest OOS reporting,
+      not a defect. The BHY haircut addresses cross-trial multiple-testing; it operates
+      on per-trial p-values whose validity depends on adequate sample length per trial
+      and does NOT substitute for thin per-trial windows.
+    - Future-workstream remediation paths: (a) expand the operator-data-budget beyond 125
+      days (a council Amendment, not an audit slide-in), or (b) adopt combinatorial
+      purged k-fold cross-validation (López de Prado 2018 Ch. 7.4) to recover statistical
+      power without expanding total history. The canonical joint (N, T) framework future
+      workstreams should consult is the Deflated Sharpe Ratio (Bailey & López de Prado 2014),
+      which accounts for trial count AND sample length.
     """
     # NN1 spec-freeze hard gate (D5 wiring — council §2.5).
     # validate_search_space_nn1 must run BEFORE optuna.create_study so any
