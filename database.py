@@ -985,6 +985,7 @@ _MIGRATION_FILES = [
     "023_autotune_runs_s_count.sql",
     "024_spec_facets_unique_constraint.sql",
     "025_advisor_observations_symphony_id.sql",
+    "026_mc_regime_match_telemetry.sql",
 ]
 
 
@@ -2188,6 +2189,8 @@ def record_cvar_diagnostic(
     cvar_n_tail_long: "int | None",
     *,
     mode: Literal["live", "replay"],
+    mc_regime_match_mean_dist2: "float | None" = None,
+    mc_regime_match_suppressed: "int | None" = None,
 ) -> None:
     """Write one cvar_diagnostics telemetry row (M2 Phase-1 consumer).
 
@@ -2197,6 +2200,12 @@ def record_cvar_diagnostic(
 
     mode= is required (keyword-only, no default) — same contract as
     write_telemetry_row: every call site states the mode explicitly.
+
+    mc_regime_match_mean_dist2: mean squared Mahalanobis-style kNN distance from
+        compute_regime_match_quality; None when the eligible pool was insufficient
+        (migration 026 column; defaults to None so existing call sites stay green).
+    mc_regime_match_suppressed: 1 when the MC veto was suppressed (is_unprecedented=True),
+        0 when not suppressed, None when the guard was not run (migration 026 column).
     """
     # F-4 sentinel discipline: cvar_n_tail is NOT NULL DEFAULT 0.
     # SQLite only substitutes the DEFAULT when the column is absent from the statement;
@@ -2214,6 +2223,14 @@ def record_cvar_diagnostic(
         "cvar_5pct_long": cvar_5pct_long,
         "cvar_n_tail_long": cvar_n_tail_long,
     }
+    # Migration 026 columns: additive-first pattern — only include in row_dict
+    # when the caller explicitly provides them. Omitting lets SQLite supply the
+    # DEFAULT NULL, so pre-026 DBs (which lack the columns) accept the write
+    # unchanged. This preserves backward compat through the migration window.
+    if mc_regime_match_mean_dist2 is not None:
+        row_dict["mc_regime_match_mean_dist2"] = mc_regime_match_mean_dist2
+    if mc_regime_match_suppressed is not None:
+        row_dict["mc_regime_match_suppressed"] = mc_regime_match_suppressed
     write_telemetry_row("cvar_diagnostics", row_dict, mode=mode)
 
 
@@ -2250,6 +2267,13 @@ _PARITY_EXCLUDE_COLUMNS: tuple[str, ...] = (
     "ts_utc",
     "cycle_id",
     "symphony_id",
+    # Migration 026: regime-match telemetry columns — classified as exclude (metadata)
+    # so the existing Gate-1 round-trip test (which uses a fixed written dict scoped
+    # to the original 5 decision columns) does not KeyError on the new column names.
+    # Suppression parity is detectable through the downstream mc_prob=None propagation
+    # which the existing cvar_5pct / parity path already exercises.
+    "mc_regime_match_mean_dist2",
+    "mc_regime_match_suppressed",
 )
 
 

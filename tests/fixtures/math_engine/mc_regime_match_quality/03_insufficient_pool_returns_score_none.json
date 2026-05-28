@@ -1,0 +1,27 @@
+{
+  "name": "mc_regime_match_quality_insufficient_pool",
+  "description": "Insufficient-eligible-pool fail-safe fixture. When the eligible candidate pool is below the MC sufficiency floor (eligible_days < MC_MIN_HISTORY_DAYS) the regime-match-quality assessment cannot be computed. compute_regime_match_quality MUST return an assessment whose mean_sq_mahalanobis is None AND is_unprecedented is False. is_unprecedented=False is the correct fail-safe: the EXISTING MC sentinel already short-circuits run_monte_carlo's prob_beating to None on this branch (project memory project_mc_eligible_pool_vs_raw_day_boundary), and compute_exit_confirmation treats None as 'MC unavailable' so the trailing stop fires on its own condition. An is_unprecedented=True on this branch would be a redundant second sentinel signalling the same path and would risk double-counting in telemetry.",
+  "function": "compute_regime_match_quality",
+  "provenance": "Schema-derived synthetic history. Day count is set BELOW the eligible-pool boundary (MC_MIN_HISTORY_DAYS + MC_VOL_WINDOW_DAYS - 1 = 39 raw days) so the sufficiency check fails. No producer-computed score is pinned.",
+  "inputs": {
+    "historical_data_spec": {
+      "kind": "constant",
+      "num_days": 10,
+      "spy_daily_ret_decimal": 0.001,
+      "holding_daily_ret_decimal": 0.001
+    },
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}
+    ],
+    "spy_today_return": 0.2,
+    "neighbor_k": 8,
+    "numpy_seed": 42,
+    "simulation_paths": 2000
+  },
+  "expected_assessment": {
+    "mean_sq_mahalanobis_is_none": true,
+    "is_unprecedented": false,
+    "insufficient_reason_required": true
+  },
+  "derivation": "10 raw days is well below the eligible-pool boundary of MC_MIN_HISTORY_DAYS + MC_VOL_WINDOW_DAYS - 1 = 39 raw days. compute_regime_match_quality returns the insufficient sentinel on its score and is_unprecedented=False; telemetry should record a human-readable insufficient_reason."
+}

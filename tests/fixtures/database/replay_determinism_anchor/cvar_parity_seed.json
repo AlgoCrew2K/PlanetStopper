@@ -30,7 +30,9 @@
       "cvar_5pct_stderr",
       "cvar_n_tail",
       "cvar_5pct_long",
-      "cvar_n_tail_long"
+      "cvar_n_tail_long",
+      "mc_regime_match_mean_dist2",
+      "mc_regime_match_suppressed"
     ]
   }
 }

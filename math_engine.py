@@ -1,6 +1,7 @@
 import dataclasses
 import hashlib
 import math
+import os
 
 import numpy as np
 
@@ -98,6 +99,24 @@ MC_DEFAULT_NEIGHBOR_K = (
 # numpy's default_rng / SeedSequence accept the full 64-bit space.
 MC_SEED_MODULUS = 2**64
 
+# Regime-match-quality guard threshold (vision-audit Critical Rec #2 / math-reaudit Surface 3).
+# chi-squared 0.99-quantile with df=2 (number of z-scored kNN features: SPY return + rolling vol).
+# The test statistic this gate compares against is the MEAN of K squared (z-scored Euclidean)
+# distances over the K nearest candidate-pool neighbours, NOT a single squared distance. Under
+# the null that today is drawn from the same joint distribution as the candidate pool, a single
+# squared Mahalanobis distance follows chi2(df=2); the MEAN of K such draws concentrates near
+# 2 (the mean of chi2(2)) — its 99th percentile is approximately 2.40 (chi2(2*K)/K at K=150).
+# Setting the threshold to chi2(2)_{0.99} ~= 9.21 (the SINGLE-DRAW 0.99-quantile) is therefore
+# intentionally CONSERVATIVE: an effective false-positive rate well below 1% for the mean
+# statistic. This is the correct direction for operator safety — the gate fires only on
+# extreme regime breaks, not on ordinary daily variance.
+# Source: Mahalanobis (1936) "On the generalised distance in statistics"; Aggarwal (2017)
+# Outlier Analysis 2nd ed. Sec 2.3 / 4.4; Knorr & Ng (1998) VLDB '98 kNN-outlier framework.
+# chi2(2)_{0.99} = 9.21034037197618 (scipy.stats.chi2.ppf(0.99, df=2)).
+# Operator override: read from env var MC_REGIME_MATCH_CHI2_THRESHOLD at call time; module
+# constant is the default.
+MC_REGIME_MATCH_CHI2_THRESHOLD: float = 9.21034037197618
+
 # CVaR tail percentile for compute_portfolio_cvar (M2 Phase-1 anchor).
 # CVaR at 5% = expected shortfall = mean return in the worst 5% of simulated paths.
 # Source: decision-science-council-synthesis.md §2.6 / council-attack-rubric.md M-2.
@@ -150,6 +169,37 @@ class CVaRAssessment:
                 f"CVaRAssessment: cvar_pct is None but tail_obs_count is "
                 f"{self.tail_obs_count} (must be 0 for an insufficient sentinel)."
             )
+
+
+@dataclasses.dataclass(frozen=True)
+class RegimeMatchAssessment:
+    """Typed result for the MC regime-match-quality guard (vision-audit Critical Rec #2).
+
+    mean_sq_mahalanobis: mean squared Mahalanobis-style distance from today's z-scored
+                         query point (SPY return, rolling vol) to its K nearest candidate-
+                         pool neighbours. None is the out-of-band insufficient sentinel —
+                         mirrors MC_INSUFFICIENT_HISTORY_SENTINEL; eligible pool was below
+                         MC_MIN_HISTORY_DAYS so no score can be computed.
+    is_unprecedented:    True when mean_sq_mahalanobis > threshold_used. The default threshold
+                         (chi2(2)_{0.99}) is the SINGLE-DRAW 0.99-quantile applied to a
+                         MEAN-of-K test statistic, so the gate is intentionally conservative
+                         — fires only on extreme regime breaks (effective false-positive rate
+                         well below 1%). MUST be False when mean_sq_mahalanobis is None
+                         (fail-safe: an absent diagnostic is not a suppression signal).
+    neighbor_k:          The K used for the kNN mean-squared-distance test statistic.
+    threshold_used:      The threshold actually applied at call time (the module-level
+                         MC_REGIME_MATCH_CHI2_THRESHOLD default or the env-var override).
+                         Telemetry field: lets an operator audit which threshold was in
+                         force at any suppression decision.
+    insufficient_reason: Human-readable explanation when mean_sq_mahalanobis is None.
+                         None when a score was successfully computed.
+    """
+
+    mean_sq_mahalanobis: float | None
+    is_unprecedented: bool
+    neighbor_k: int
+    threshold_used: float
+    insufficient_reason: str | None
 
 
 # Time-squeeze decay constants (drives intraday tightening of trailing stops)
@@ -1402,3 +1452,123 @@ def compute_crra_eu_objective(daily_returns: list[float], gamma: float) -> float
         W = max(WEALTH_ARG_FLOOR, 1.0 + r)
         U_values.append(compute_crra_utility(W, gamma))
     return sum(U_values) / len(U_values)
+
+
+def compute_regime_match_quality(
+    historical_data: dict,
+    spy_today_return: float,
+) -> RegimeMatchAssessment:
+    """Regime-match-quality guard for the MC bootstrap (vision-audit Critical Rec #2).
+
+    Computes a Mahalanobis-style chi-squared test statistic on the K nearest
+    candidate-pool neighbours of today's query point, using the same z-score
+    standardization that run_monte_carlo applies (AC-1). If the mean squared
+    distance to the K nearest neighbours exceeds MC_REGIME_MATCH_CHI2_THRESHOLD
+    (chi2(2)_{0.99} ~= 9.21 — the SINGLE-DRAW 0.99-quantile applied as a
+    conservative threshold against the MEAN-of-K statistic; effective false-positive
+    rate well below 1%), today's joint state is far from every recent neighbour and
+    the MC bootstrap is unrepresentative; the caller should suppress the MC veto by
+    passing prob_beating=None to compute_exit_confirmation, exercising the existing
+    MC-unavailable fail-safe path. The gate fires only on extreme regime breaks.
+
+    Pure function. O(eligible pool size). No I/O, no blocking work (architecture
+    constraint #1).
+
+    The threshold is read from the MC_REGIME_MATCH_CHI2_THRESHOLD environment
+    variable at call time if present; the module-level constant is the default.
+    threshold_used on the returned assessment records the value actually applied.
+
+    References:
+      - Mahalanobis (1936) "On the generalised distance in statistics."
+        Proc. Nat. Inst. Sci. India 2, 49-55.
+      - Aggarwal (2017) Outlier Analysis 2nd ed. Springer. Sec 2.3, 4.4.
+      - Knorr & Ng (1998) "Algorithms for mining distance-based outliers
+        in large datasets." VLDB '98, 392-403.
+    """
+    # Operator-overridable threshold (env var beats module-level default).
+    _env_override = os.environ.get("MC_REGIME_MATCH_CHI2_THRESHOLD")
+    threshold = float(_env_override) if _env_override is not None else MC_REGIME_MATCH_CHI2_THRESHOLD
+
+    # K for the kNN test statistic — reuses the canonical MC default constant.
+    k = MC_DEFAULT_NEIGHBOR_K
+
+    valid_dates = sorted(list(historical_data.keys()))
+
+    # Eligible-pool sufficiency: mirrors run_monte_carlo's exact boundary so the
+    # two guards are bit-consistent on the short-history short-circuit.
+    eligible_days = len(valid_dates) - (MC_VOL_WINDOW_DAYS - 1)
+    if eligible_days < MC_MIN_HISTORY_DAYS:
+        return RegimeMatchAssessment(
+            mean_sq_mahalanobis=None,
+            is_unprecedented=False,  # fail-safe: absent diagnostic is not a suppression signal
+            neighbor_k=k,
+            threshold_used=threshold,
+            insufficient_reason=(
+                f"regime-match quality: eligible pool {eligible_days} days "
+                f"< MC_MIN_HISTORY_DAYS ({MC_MIN_HISTORY_DAYS}); "
+                "assessment unavailable"
+            ),
+        )
+
+    # Build SPY return series (decimal) from the pool — same source as run_monte_carlo.
+    spy_returns = np.array(
+        [historical_data[date].get("SPY", {}).get("daily_ret", 0.0) for date in valid_dates]
+    )
+
+    # Rolling 20-day vol for each pool day — same computation as run_monte_carlo.
+    spy_vols = np.zeros_like(spy_returns)
+    for i in range(len(spy_returns)):
+        start_idx = max(0, i - (MC_VOL_WINDOW_DAYS - 1))
+        if i > 0:
+            spy_vols[i] = np.std(spy_returns[start_idx : i + 1])
+        else:
+            spy_vols[i] = 0.0
+
+    # Today's decimal return and rolling vol — same derivation as run_monte_carlo.
+    spy_today_ret_dec = spy_today_return / PCT_SCALAR
+    today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1) :], spy_today_ret_dec))
+
+    # Early-window exclusion — mirrors run_monte_carlo's candidate_idx construction.
+    candidate_idx = np.arange(MC_VOL_WINDOW_DAYS - 1, len(spy_returns))
+    cand_returns = spy_returns[candidate_idx]
+    cand_vols = spy_vols[candidate_idx]
+
+    # Z-score both features using candidate-pool statistics — same params as run_monte_carlo
+    # so squared Euclidean distances approximate Mahalanobis distances (zero-std guard
+    # collapses to 0.0 to keep output finite).
+    ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
+    vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
+
+    def _z(values, mean, std):
+        if std == 0.0:
+            return np.zeros_like(values, dtype=float)
+        return (values - mean) / std
+
+    cand_returns_z = _z(cand_returns, ret_mean, ret_std)
+    cand_vols_z = _z(cand_vols, vol_mean, vol_std)
+    today_ret_z = 0.0 if ret_std == 0.0 else (spy_today_ret_dec - ret_mean) / ret_std
+    today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
+
+    # Squared Euclidean distance from today's z-scored query to each candidate day.
+    sq_distances = (cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2
+
+    # K nearest neighbours by squared distance; when pool is smaller than K, use all.
+    if len(sq_distances) <= k:
+        nearest_sq = sq_distances
+    else:
+        nearest_idx = np.argpartition(sq_distances, k)[:k]
+        nearest_sq = sq_distances[nearest_idx]
+
+    # Mean squared Mahalanobis-style distance over K nearest neighbours (Surface 3 spec:
+    # "if the K nearest neighbours have a mean distance above a threshold, the bootstrap
+    # is unrepresentative"). This is the test statistic compared to the chi2(2)_{0.99} threshold.
+    mean_sq = float(np.mean(nearest_sq))
+    is_unprecedented = mean_sq > threshold
+
+    return RegimeMatchAssessment(
+        mean_sq_mahalanobis=mean_sq,
+        is_unprecedented=is_unprecedented,
+        neighbor_k=k,
+        threshold_used=threshold,
+        insufficient_reason=None,
+    )
