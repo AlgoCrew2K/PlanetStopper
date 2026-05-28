@@ -1,0 +1,72 @@
+{
+  "name": "perf001_rolling_vol_vectorization_curated_inputs",
+  "description": "Curated input set for PERF-001 rolling-vol vectorization. Drives both the numerical-identity tests (vectorized == Python-loop reference) and the run_monte_carlo end-to-end identity test (same seed, same input, same output). NO producer-computed values are pinned — every assertion compares the production call against an in-test reference implementation.",
+  "function_under_test": "run_monte_carlo + _compute_rolling_spy_vol",
+  "provenance": "Schema-derived. The input shape (history kind, day count, amplitudes) is authored to exercise rolling-vol edge cases; outputs are NOT included. Day counts are derived from MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) at test time — never hardcoded.",
+  "pa18_note": "No mc_prob, no spy_vol values are pinned. Tests assert vectorized_output == python_loop_reference_output, where the reference is computed in the test from the SAME inputs. The reference loop is the spec; the fixture supplies only inputs.",
+  "scenarios": [
+    {
+      "id": "case_01_long_smooth_history",
+      "kind": "alternating",
+      "raw_day_offset_from_minimum": 50,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.008,
+      "bbb_amplitude": 0.004,
+      "description": "Long history (minimum + 50 days). Alternating signs exercise the running-std window over a stationary regime."
+    },
+    {
+      "id": "case_02_at_eligible_boundary",
+      "kind": "alternating",
+      "raw_day_offset_from_minimum": 0,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.008,
+      "bbb_amplitude": 0.004,
+      "description": "Exactly minimum_raw_days. Pins that the window boundary at i==MC_VOL_WINDOW_DAYS-1 produces an identical std under vectorization."
+    },
+    {
+      "id": "case_03_one_above_boundary",
+      "kind": "alternating",
+      "raw_day_offset_from_minimum": 1,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.008,
+      "bbb_amplitude": 0.004,
+      "description": "minimum_raw_days + 1. Pins the off-by-one slice that a careless pandas rewrite would flip."
+    },
+    {
+      "id": "case_04_monotone_returns",
+      "kind": "monotone",
+      "raw_day_offset_from_minimum": 30,
+      "spy_start": -0.02,
+      "spy_step": 0.0008,
+      "aaa_start": -0.015,
+      "aaa_step": 0.0006,
+      "description": "Monotonically-increasing returns. Rolling std on a monotone series is non-zero and changes day-to-day; tests catch a pandas implementation that drops bias-correction (ddof) silently."
+    },
+    {
+      "id": "case_05_constant_returns",
+      "kind": "constant_return",
+      "raw_day_offset_from_minimum": 20,
+      "spy_daily_ret": 0.001,
+      "holding_daily_ret": 0.001,
+      "description": "Constant returns. Rolling std must be zero for every window after day 0. Pins that the vectorized path produces 0.0 (not a numerical-noise epsilon) on a degenerate window."
+    },
+    {
+      "id": "case_06_high_low_alternation",
+      "kind": "alternating",
+      "raw_day_offset_from_minimum": 40,
+      "spy_amplitude": 0.025,
+      "aaa_amplitude": 0.03,
+      "bbb_amplitude": 0.025,
+      "description": "Wide-amplitude alternation. Stress-tests numerical precision on a high-vol regime."
+    }
+  ],
+  "holdings": [
+    {"ticker": "AAA", "allocation": 0.6, "last_percent_change": 0.0},
+    {"ticker": "BBB", "allocation": 0.4, "last_percent_change": 0.0}
+  ],
+  "spy_today_return": 0.0,
+  "simulation_paths": 2000,
+  "neighbor_k": 10,
+  "seed": 12345,
+  "derivation": "raw_days = MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) + raw_day_offset_from_minimum, read from math_engine at test time. last_percent_change=0.0 and spy_today_return=0.0 mirror the existing mc_rng_seeding fixture so the kNN match is mid-distribution (no saturation to 0/100)."
+}
