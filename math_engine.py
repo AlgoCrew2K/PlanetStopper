@@ -852,6 +852,62 @@ def derive_cycle_mc_seed(cycle_id: str) -> int:
     return int(hashlib.sha256(cycle_id.encode()).hexdigest(), 16) % MC_SEED_MODULUS
 
 
+def _compute_rolling_spy_vol(spy_returns: np.ndarray) -> np.ndarray:
+    """Vectorized rolling population-std over spy_returns.
+
+    Replaces the Python for-loop in run_monte_carlo (PERF-001). Also
+    reusable by compute_portfolio_cvar (~line 1344) and
+    compute_regime_match_quality (~line 1557) which carry identical loops.
+
+    Contract:
+      - Output is same length as input.
+      - spy_vols[0] == 0.0 (pinned; matches the pre-PERF-001 production
+        behaviour where i==0 sets 0.0 unconditionally).
+      - Uses ddof=0 (population std) to match np.std default.
+      - Bit-exact with the reference Python loop for the full-window phase
+        (indices >= MC_VOL_WINDOW_DAYS - 1), which is the only phase that
+        feeds the kNN candidate pool in run_monte_carlo.
+      - Growing-window phase (indices 1..MC_VOL_WINDOW_DAYS-2) matches the
+        reference to within 1e-15 via cumsum arithmetic.
+      - Empty and 1-element inputs are handled without raising.
+      - Pure: input array is never mutated.
+    """
+    from numpy.lib.stride_tricks import as_strided
+
+    n = len(spy_returns)
+    if n == 0:
+        return np.array([], dtype=float)
+
+    w = MC_VOL_WINDOW_DAYS
+    result = np.zeros(n, dtype=float)
+
+    # Full-window phase: indices [w-1 .. n-1].
+    # as_strided produces contiguous windows; np.std(axis=1, ddof=0) is
+    # bit-exact with np.std(spy_returns[i-w+1:i+1]) for each i.
+    full_start = w - 1
+    if n > full_start:
+        full_n = n - full_start
+        s = spy_returns.strides[0]
+        windows = as_strided(spy_returns, shape=(full_n, w), strides=(s, s))
+        result[full_start:] = np.std(windows, axis=1, ddof=0)
+
+    # Growing-window phase: indices [1 .. w-2].
+    # These fall outside the kNN candidate pool (run_monte_carlo excludes the
+    # first w-1 days), but compute_portfolio_cvar / compute_regime_match_quality
+    # use the full array. Computed via cumsum: std(x[0:k])^2 = E[x^2] - E[x]^2.
+    # Matches the reference to within float64 rounding (< 1e-15).
+    grow_end = min(w - 1, n)  # indices 1..grow_end-1 (exclusive of full_start)
+    if grow_end > 1:
+        cs = np.cumsum(spy_returns[:grow_end])
+        cs2 = np.cumsum(spy_returns[:grow_end] ** 2)
+        k_vals = np.arange(2, grow_end + 1, dtype=float)
+        means = cs[1:] / k_vals
+        var = cs2[1:] / k_vals - means ** 2
+        result[1:grow_end] = np.sqrt(np.maximum(var, 0.0))
+
+    return result
+
+
 def run_monte_carlo(
     holdings,
     historical_data,
@@ -898,13 +954,7 @@ def run_monte_carlo(
         [historical_data[date].get("SPY", {}).get("daily_ret", 0.0) for date in valid_dates]
     )
 
-    spy_vols = np.zeros_like(spy_returns)
-    for i in range(len(spy_returns)):
-        start_idx = max(0, i - (MC_VOL_WINDOW_DAYS - 1))
-        if i > 0:
-            spy_vols[i] = np.std(spy_returns[start_idx : i + 1])
-        else:
-            spy_vols[i] = 0.0
+    spy_vols = _compute_rolling_spy_vol(spy_returns)
 
     spy_today_ret_dec = spy_today_return / PCT_SCALAR
     # Invariant: len(spy_returns) > MC_VOL_WINDOW_DAYS - 1 because the eligible-
@@ -1340,13 +1390,7 @@ def compute_portfolio_cvar(
     spy_returns = np.array(
         [historical_data[date].get("SPY", {}).get("daily_ret", 0.0) for date in valid_dates]
     )
-    spy_vols = np.zeros_like(spy_returns)
-    for i in range(len(spy_returns)):
-        start_idx = max(0, i - (MC_VOL_WINDOW_DAYS - 1))
-        if i > 0:
-            spy_vols[i] = np.std(spy_returns[start_idx : i + 1])
-        else:
-            spy_vols[i] = 0.0
+    spy_vols = _compute_rolling_spy_vol(spy_returns)
 
     spy_today_ret_dec = spy_today_return / PCT_SCALAR
     today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1) :], spy_today_ret_dec))
@@ -1553,13 +1597,7 @@ def compute_regime_match_quality(
     )
 
     # Rolling 20-day vol for each pool day — same computation as run_monte_carlo.
-    spy_vols = np.zeros_like(spy_returns)
-    for i in range(len(spy_returns)):
-        start_idx = max(0, i - (MC_VOL_WINDOW_DAYS - 1))
-        if i > 0:
-            spy_vols[i] = np.std(spy_returns[start_idx : i + 1])
-        else:
-            spy_vols[i] = 0.0
+    spy_vols = _compute_rolling_spy_vol(spy_returns)
 
     # Today's decimal return and rolling vol — same derivation as run_monte_carlo.
     spy_today_ret_dec = spy_today_return / PCT_SCALAR
