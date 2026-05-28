@@ -175,7 +175,7 @@ def _resolve_optuna_n_jobs_from_env() -> int:
 # optuna-compare without re-parsing logs, and to satisfy the no-magic-numbers rule.
 _SS_TAKE_PROFIT_MC_MIN = 2.0
 _SS_TAKE_PROFIT_MC_MAX = 10.0
-_SS_VWAP_CROSS_HWM_MIN = 0.5
+_SS_VWAP_CROSS_HWM_MIN = 0.5  # production walk-forward bounds; see _SS_VWAP_CROSS_HWM_V1_MIN below for the narrower V1 calibration sweep bounds and asymmetry rationale
 _SS_VWAP_CROSS_HWM_MAX = 2.5
 _SS_VWAP_BLEED_MULT_MIN = 0.5
 _SS_VWAP_BLEED_MULT_MAX = 3.0
@@ -186,10 +186,10 @@ _SS_PARA_VEL_MAX = 4.0
 _SS_MAX_PARA_SQUEEZE_MIN = 0.1
 _SS_MAX_PARA_SQUEEZE_MAX = 0.8
 
-# V1 calibration sweep — narrowed VWAP_CROSS_HWM_PCT bounds.
-# Lower: 0.3 (vs general 0.5) — 3-tick confirm gate (math_engine.py) prevents spurious
+# V1 calibration sweep — asymmetric VWAP_CROSS_HWM_PCT bounds (lower expands below production; upper narrows below production).
+# Lower: 0.3 (vs production 0.5) — 3-tick confirm gate (math_engine.py) prevents spurious
 # single-tick exits at this level; gives the sweep more room to find the true optimum.
-# Upper: 2.0 (~2σ typical daily return) — above this System A is effectively disabled
+# Upper: 2.0 (vs production 2.5; ~2σ typical daily return) — above this System A is effectively disabled
 # for normal sessions, making calibration unreliable.
 _SS_VWAP_CROSS_HWM_V1_MIN = 0.3
 _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
@@ -1956,6 +1956,19 @@ def run_calibration_sweep(
     study names, O5 Sortino objective, O6 frozen-eval fold — same methodology as
     run_autotuner but search space is limited to the two V1 parameters. Does NOT
     persist anything to the DB (AC-V1.3: read-only, operator-gated rollout).
+
+    Note: the VWAP_CROSS_HWM_PCT bounds used here (via ``_SS_VWAP_CROSS_HWM_V1_MIN``
+    / ``_SS_VWAP_CROSS_HWM_V1_MAX``) are asymmetric relative to the production
+    walk-forward bounds (``_SS_VWAP_CROSS_HWM_MIN`` / ``_SS_VWAP_CROSS_HWM_MAX``):
+    the V1 lower bound expands BELOW the production lower bound (0.3 vs 0.5) while
+    the V1 upper bound narrows BELOW the production upper bound (2.0 vs 2.5). The
+    asymmetry is intentional — see the source-comment block above those V1
+    constants for the per-direction math rationale (3-tick confirm gate at the
+    lower end; ~2sigma reliability limit at the upper end).
+
+    Operator advisory: a calibration proposal in [0.3, 0.5) falls outside the
+    production walk-forward search space and cannot be reproduced by the
+    production optimizer — treat such proposals as informational only.
 
     Returns a list of report dicts, one per tuned param per symphony found in
     history_data. The caller decides whether to act on proposals.

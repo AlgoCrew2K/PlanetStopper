@@ -1,0 +1,122 @@
+{
+  "_provenance": "schema-derived from math re-audit finding OPTUNA-9a (LOW) — search-space bound asymmetry between the production walk-forward path (run_autotuner, autotuner.py:~1583) and the V1 calibration sweep (run_calibration_sweep, autotuner.py:~2020) for the VWAP_CROSS_HWM_PCT facet. The production bounds are [0.5, 2.5]; the V1 sweep bounds are [0.3, 2.0]. This fixture pins the asymmetry as DOCUMENTED-INTENTIONAL (Path B): the bound differences are math-soundness choices (3-tick confirm gate floor; ~2σ effective-disable ceiling) and MUST carry explicit source-comment / docstring documentation so the asymmetry is auditable without a methodology trace. The fixture does NOT pin the numerical bounds (those live in named module-level constants in autotuner.py); the fixture pins the named-constant existence, the documentation contract, and the call-site discipline.",
+  "_audit_source": "docs/research/math-audit-3/ OPTUNA-9a finding (LOW); autotuner.py:189-195 existing comment block above _SS_VWAP_CROSS_HWM_V1_MIN / _SS_VWAP_CROSS_HWM_V1_MAX",
+  "_path_decision": "Path B (documented asymmetry). Rationale: (a) the existing source-comment block at autotuner.py:189-195 already encodes the math reason for each bound (lower 0.3: 3-tick confirm gate prevents single-tick spurious exits; upper 2.0: above ~2sigma daily return, System A is effectively disabled for normal sessions, making calibration unreliable). (b) Path A (alignment) would either (i) widen production to [0.3, 2.0] — a methodology change weakening the production-path floor — or (ii) narrow V1 to [0.5, 2.5] — losing the wider exploration the existing comment validates. (c) Path B preserves the math reasoning and adds documentation tightening: the calibration-sweep docstring + both call sites must make the bound difference visible.",
+  "_sites": [
+    {
+      "function": "run_autotuner",
+      "anchor": "main path objective() closure, currently around autotuner.py:1583; located by AST + suggest_float kwarg/positional inspection, not line number",
+      "facet": "VWAP_CROSS_HWM_PCT",
+      "expected_bound_constants": ["_SS_VWAP_CROSS_HWM_MIN", "_SS_VWAP_CROSS_HWM_MAX"]
+    },
+    {
+      "function": "run_calibration_sweep",
+      "anchor": "V1 sweep objective() closure, currently around autotuner.py:2020; located by AST + suggest_float kwarg/positional inspection, not line number",
+      "facet": "VWAP_CROSS_HWM_PCT",
+      "expected_bound_constants": ["_SS_VWAP_CROSS_HWM_V1_MIN", "_SS_VWAP_CROSS_HWM_V1_MAX"]
+    }
+  ],
+  "named_constants_contract": {
+    "_purpose": "Both pairs of bound constants MUST exist as module-level named floats in autotuner.py. The implementation is free to rename, but the fixture pins one canonical naming so the call-site test and the documentation-proximity test have a stable target. If the implementer chooses different names, the rename must be applied uniformly: constant declarations, both call sites, and any other references — and this fixture updated in the same diff.",
+    "production_min_name": "_SS_VWAP_CROSS_HWM_MIN",
+    "production_max_name": "_SS_VWAP_CROSS_HWM_MAX",
+    "v1_min_name": "_SS_VWAP_CROSS_HWM_V1_MIN",
+    "v1_max_name": "_SS_VWAP_CROSS_HWM_V1_MAX",
+    "production_bounds_must_differ_from_v1": true,
+    "_production_bounds_must_differ_from_v1_rationale": "OPTUNA-9a is explicitly an asymmetry finding — if a future diff silently collapses the V1 bounds onto the production bounds, the asymmetry-is-documented contract is moot and the test should fail loudly. This invariant guards against accidental Path-A drift dressed up as Path B."
+  },
+  "documentation_contract": {
+    "_purpose": "Path B requires three documentation surfaces: (1) a source-comment block adjacent to the V1 bound constants explaining WHY they differ from production; (2) the run_calibration_sweep docstring must explicitly mention the bound-asymmetry; (3) both call sites should be locatable via the named constants so a reader following the call chain sees the asymmetry at the use site.",
+    "v1_constant_comment_required_substrings_any": [
+      "asymmetric",
+      "asymmetry",
+      "calibration sweep",
+      "V1 calibration",
+      "differs from",
+      "differ from"
+    ],
+    "_v1_constant_comment_rationale": "At least one of these tokens must appear within ~12 source lines of the _SS_VWAP_CROSS_HWM_V1_MIN definition. Per opt-optuna9a BLOCK-1 (R1 revise) the tokens 'narrowed' and 'narrower' are NO LONGER admissible as standalone labels — they misdescribe the relationship (V1 lower 0.3 EXPANDS below production lower 0.5; V1 upper 2.0 NARROWS below production upper 2.5; the box is asymmetric/mixed, not uniformly narrower).",
+    "v1_constant_comment_required_math_token_any": [
+      "3-tick",
+      "confirm gate",
+      "sigma",
+      "2sigma",
+      "2-sigma",
+      "System A"
+    ],
+    "_v1_constant_comment_math_token_rationale": "The comment must also include at least one math-rationale token so the asymmetry is justified, not merely labelled. The existing block contains '3-tick confirm gate' and 'System A' so this passes as-is.",
+    "calibration_docstring_required_directionality_any": [
+      "asymmetric",
+      "asymmetry",
+      "differs from",
+      "differ from",
+      "differ",
+      "wider than",
+      "tighter than",
+      "mixed",
+      "lower expands",
+      "expands the lower",
+      "narrows the upper"
+    ],
+    "_calibration_docstring_required_directionality_any_rationale": "The run_calibration_sweep docstring must mention bound DIRECTIONALITY — at least one of these tokens. Per opt-optuna9a BLOCK-1 (R1 revise) the bare 'narrower'/'narrowed' framing is REMOVED from the admissible set: it misdescribes the mixed-direction reality. 'asymmetric' / 'mixed' / explicit 'lower expands' + 'narrows the upper' phrasing is required instead.",
+    "calibration_docstring_facet_token": "VWAP_CROSS_HWM_PCT",
+    "_calibration_docstring_facet_token_rationale": "The directionality sentence must be paired with the facet identifier so the reader knows WHICH parameter has the asymmetry — VWAP_CROSS_HWM_PCT (the V1 sweep also tunes PARABOLIC_VELOCITY_THRESHOLD, whose bounds are NOT asymmetric)."
+  },
+  "mixed_direction_contract": {
+    "_purpose": "Per opt-optuna9a BLOCK-1 (R1 revise) both documentation surfaces (V1 source-comment block AND run_calibration_sweep docstring) must EXPLICITLY acknowledge that the asymmetry is mixed-direction: lower bound expands (V1_min 0.3 < prod_min 0.5) while upper bound narrows (V1_max 2.0 < prod_max 2.5). A bare 'narrowed' or 'narrower than' framing is forbidden because it misdescribes a tighter box, which is the OPPOSITE of what happens on the lower side.",
+    "_mixed_direction_explanation": "The acknowledgement may take either form: (a) an explicit asymmetric/mixed token AND the words 'lower' AND 'upper' both present in the documentation window (so the reader sees the asymmetry has two directions), OR (b) a long-form phrase like 'lower expands' / 'expands the lower' / 'narrows the upper' / 'lower extends below' that names the per-direction behaviour directly.",
+    "asymmetric_or_mixed_tokens_any": [
+      "asymmetric",
+      "asymmetry",
+      "mixed",
+      "mixed-direction",
+      "mixed direction"
+    ],
+    "long_form_directional_phrases_any": [
+      "lower expands",
+      "expands the lower",
+      "expands below",
+      "extends below",
+      "lower extends",
+      "narrows the upper",
+      "tightens the upper",
+      "upper narrows",
+      "lower bound expands",
+      "upper bound narrows"
+    ],
+    "lower_token": "lower",
+    "upper_token": "upper",
+    "_lower_upper_pairing_rationale": "If the documentation uses an asymmetric/mixed token, BOTH 'lower' AND 'upper' must also appear in the same documentation window so the reader can map the asymmetric label onto the per-direction behaviour. A long-form phrase alone (e.g. 'lower expands, upper narrows') trivially satisfies both."
+  },
+  "out_of_production_range_note_contract": {
+    "_purpose": "Per opt-optuna9a NOTE (R1 revise) at least one of the two documentation surfaces (V1 source-comment block adjacent to _SS_VWAP_CROSS_HWM_V1_MIN OR the run_calibration_sweep docstring) must explicitly acknowledge that calibration proposals in [_SS_VWAP_CROSS_HWM_V1_MIN, _SS_VWAP_CROSS_HWM_MIN) — i.e. [0.3, 0.5) — fall OUTSIDE the production walk-forward search space [0.5, 2.5] and therefore cannot be reproduced by the production optimizer. The calibration sweep is read-only / operator-gated (AC-V1.3), so this is not a mechanics bug — but it is a non-obvious caveat an operator must be aware of when interpreting a calibration recommendation.",
+    "required_caveat_tokens_any": [
+      "informational",
+      "informational only",
+      "cannot be reproduced",
+      "cannot reproduce",
+      "outside the production",
+      "outside production",
+      "not reachable",
+      "not reproducible",
+      "will not reproduce",
+      "will not validate",
+      "operator advisory"
+    ],
+    "_required_caveat_tokens_any_rationale": "At least one of these tokens must appear in the COMBINED documentation window (V1 source-comment block UNION run_calibration_sweep docstring). The contract is satisfied by either surface — implementer chooses where it lands."
+  },
+  "call_site_contract": {
+    "_purpose": "Each suggest_float call for VWAP_CROSS_HWM_PCT must reference the appropriate named constants — NOT integer/float literals — at both the production site (run_autotuner) and the V1 site (run_calibration_sweep). This guards against a refactor that breaks the constant-to-call-site coupling on which the documentation contract depends.",
+    "production_site_function": "run_autotuner",
+    "v1_site_function": "run_calibration_sweep",
+    "facet_name": "VWAP_CROSS_HWM_PCT"
+  },
+  "regression_guards": {
+    "_purpose": "OPTUNA-9a cycle must NOT regress OPTUNA-1 (TPESampler pin), OPTUNA-2 (NopPruner pin), OPTUNA-6 (n_jobs env resolver), or OPTUNA-7 (n_trials named constants). OPTUNA-9a diff is targeted to the VWAP_CROSS_HWM_PCT bound facet only — sampler/pruner/n_jobs/n_trials machinery is in scope to preserve.",
+    "optuna_1_sampler_class": "optuna.samplers.TPESampler",
+    "optuna_2_pruner_class": "optuna.pruners.NopPruner",
+    "optuna_6_n_jobs_helper_name": "_resolve_optuna_n_jobs_from_env",
+    "optuna_7_production_n_trials_value": 500,
+    "optuna_7_calibration_n_trials_value": 100
+  }
+}
