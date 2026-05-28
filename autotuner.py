@@ -260,6 +260,19 @@ assert abs(TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO - 1.0) < 1e-9, (
     "TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO must equal 1.0"
 )
 
+# OPTUNA-4 — Operator-visibility pin on the usable validation window.
+# At the 125-day operator-data-budget: int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS = 4 days.
+# The thin window is the COST of honest OOS reporting; the BHY haircut
+# (Harvey & Liu 2015 selection-bias correction, c(N)≈6.79 at N=500) is
+# sized to trial count not day count — that compensation is what makes
+# the 125-day operator-data-budget operationally safe. A drift in this
+# value indicates an Amendment to the operator-data-budget (history
+# length) or a feature-lookback change (PURGE_DAYS); both must surface
+# as Amendments, not silent drifts.
+_OOS_USABLE_VALIDATION_DAYS_EXPECTED = (
+    int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS
+)
+
 def build_symphony_study_name(timestamp: str, symphony_id: str) -> str:
     """Return the per-symphony study name: {timestamp}__{symphony_id} (N1/O3)."""
     return f"{timestamp}__{symphony_id}"
@@ -1315,6 +1328,15 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
       purge is methodologically correct and the short evaluation window is the cost of honest
       OOS reporting. Future workstream: expand history window or use purged k-fold CV (rolling
       folds) to recover statistical power.
+
+    Operator visibility (OPTUNA-4 Path B):
+    - `optimization_results[symphony]["eval_window_days"]` carries per-cycle day-counts for
+      the validation and frozen-eval folds so the operator sees the thin-window cost on every
+      autotune cycle without requiring a DB schema migration.
+    - The thin usable validation window (~4 days at the 125-day operator-data-budget) is
+      compensated by the BHY haircut — a selection-bias correction sized to trial count
+      (N≈500, c(N)≈6.79), not day count. The 125-day data-budget is operationally safe
+      because the haircut threshold scales with the trials attempted, not the days observed.
     """
     # NN1 spec-freeze hard gate (D5 wiring — council §2.5).
     # validate_search_space_nn1 must run BEFORE optuna.create_study so any
@@ -1713,7 +1735,21 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             oos_alpha = -math.inf
 
         optimization_results[normalized_name] = {}
-        
+
+        # OPTUNA-4 Path B operator-visibility emission. Derived from the live
+        # fold-construction variables (raw_val_dates, raw_frozen_dates, PURGE_DAYS,
+        # EMBARGO_DAYS) so any future drift in the inputs surfaces here automatically.
+        _raw_val_days = len(raw_val_dates)
+        _raw_frozen_days = len(raw_frozen_dates)
+        _usable_val_days = max(0, _raw_val_days - PURGE_DAYS - EMBARGO_DAYS)
+        optimization_results[normalized_name]["eval_window_days"] = {
+            "raw_validation_days": _raw_val_days,
+            "usable_validation_days": _usable_val_days,
+            "raw_frozen_eval_days": _raw_frozen_days,
+            "purge_days": PURGE_DAYS,
+            "embargo_days": EMBARGO_DAYS,
+        }
+
         # Evaluate fallback parameters in OOS for comparison
         fallback_params = current_params.copy()
         fallback_oos_alpha = -run_simulation(fallback_params, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
