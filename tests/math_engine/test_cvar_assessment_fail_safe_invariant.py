@@ -92,11 +92,14 @@ def test_property_none_cvar_pct_always_implies_breach_false(
     """
     CVaRAssessment = _import_cvar_assessment()
 
-    # Legal None construction must succeed.
+    # Legal None construction must succeed. stderr is paired with cvar_pct:
+    # cvar_pct=None requires stderr=None (the H-2 stderr is the uncertainty
+    # band that travels with the CVaR estimate; absent estimate → absent band).
     obj = CVaRAssessment(
         cvar_pct=None,
         breach=False,
         tail_obs_count=tail_obs_count,
+        stderr=None,
         insufficient_reason=insufficient_reason,
     )
     # The invariant: breach must be False.
@@ -136,6 +139,7 @@ def test_property_none_cvar_pct_always_has_zero_tail_obs_count(
         cvar_pct=None,
         breach=False,
         tail_obs_count=0,
+        stderr=None,
         insufficient_reason=insufficient_reason,
     )
     assert obj.tail_obs_count == 0, (
@@ -158,6 +162,10 @@ def test_property_none_cvar_pct_always_has_zero_tail_obs_count(
     ),
     breach=st.booleans(),
     tail_obs_count=st.integers(min_value=0, max_value=10000),
+    # stderr is paired with cvar_pct — a finite cvar_pct REQUIRES a finite
+    # stderr (H-2 binding). The strategy generates any positive finite stderr;
+    # P3 does not assert the numeric stderr value, only that cvar_pct round-trips.
+    stderr=st.floats(min_value=1e-10, max_value=10.0, allow_nan=False, allow_infinity=False),
     insufficient_reason=st.none(),  # None is correct when cvar_pct is a valid float
 )
 @settings(max_examples=300, suppress_health_check=[HealthCheck.too_slow])
@@ -165,6 +173,7 @@ def test_property_valid_float_cvar_pct_round_trips(
     cvar_pct: float,
     breach: bool,
     tail_obs_count: int,
+    stderr: float,
     insufficient_reason: None,
 ) -> None:
     """
@@ -180,6 +189,7 @@ def test_property_valid_float_cvar_pct_round_trips(
         cvar_pct=cvar_pct,
         breach=breach,
         tail_obs_count=tail_obs_count,
+        stderr=stderr,
         insufficient_reason=insufficient_reason,
     )
     # float round-trip: stored value must equal input (no silent mutation).

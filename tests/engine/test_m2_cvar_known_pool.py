@@ -599,6 +599,7 @@ class TestM2SentinelMirror:
                 cvar_pct=None,
                 breach=True,
                 tail_obs_count=0,
+                stderr=None,
                 insufficient_reason="test",
             )
 
@@ -613,6 +614,7 @@ class TestM2SentinelMirror:
                 cvar_pct=None,
                 breach=False,
                 tail_obs_count=3,  # invalid: must be 0 when cvar_pct is None
+                stderr=None,
                 insufficient_reason="test",
             )
 
