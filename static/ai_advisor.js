@@ -145,10 +145,10 @@
                 var label = raw === true ? 'pass' : raw === false ? 'fail' : (raw != null ? String(raw) : 'unknown');
                 return '<span data-testid="gate-badge" style="font-size:0.5625rem;font-weight:700;' +
                     'text-transform:uppercase;letter-spacing:0.06em;padding:0.1rem 0.3rem;' +
-                    'border-radius:0.25rem;border:1px solid ' + gc + ';color:' + gc + ';margin-right:0.25rem;">' +
+                    'border-radius:0.25rem;border:1px solid ' + gc + ';color:' + gc + ';white-space:nowrap;">' +
                     escHtml(gk.replace(/_/g, ' ')) + ': ' + escHtml(label) + '</span>';
             }).join('');
-            var gatesRow = '<div style="margin-bottom:0.5rem;">' + gateBadges + '</div>';
+            var gatesRow = '<div style="display:flex;flex-wrap:wrap;gap:0.25rem;margin-bottom:0.5rem;">' + gateBadges + '</div>';
 
             return (
                 '<div id="card-' + i + '" style="' +
