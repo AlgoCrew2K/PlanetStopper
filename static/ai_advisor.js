@@ -185,7 +185,7 @@
                 '</div>' +
 
                 '<p style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';margin-bottom:0.375rem;">' +
-                escHtml(s.rationale.substring(0, 160)) + (s.rationale.length > 160 ? '&hellip;' : '') + '</p>' +
+                escHtml(s.rationale) + '</p>' +
 
                 '<span style="font-size:0.6875rem;color:' + oosColor + ';">OOS: ' + oosLabel + '</span>' +
                 '</div>' +
