@@ -215,6 +215,16 @@ class RegimeMatchAssessment:
     threshold_used: float
     insufficient_reason: str | None
 
+    def __post_init__(self) -> None:
+        # Fail-safe: an absent diagnostic is not a suppression signal.
+        if self.mean_sq_mahalanobis is None and self.is_unprecedented:
+            raise ValueError(
+                "RegimeMatchAssessment: mean_sq_mahalanobis is None but "
+                "is_unprecedented is True — fail-safe violated. "
+                "An absent regime-match diagnostic must not trigger MC suppression; "
+                "the insufficient-pool sentinel is (None, False)."
+            )
+
 
 # Time-squeeze decay constants (drives intraday tightening of trailing stops)
 # PROVENANCE: f(t) = 1 - sqrt(1 - t), the i.i.d.-returns "remaining-session
