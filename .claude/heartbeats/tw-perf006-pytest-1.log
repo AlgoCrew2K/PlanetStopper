@@ -1,0 +1,666 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.7, pytest-8.4.2, pluggy-1.6.0 -- C:\Users\paulm\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\perf-006-harmonic
+configfile: pyproject.toml
+plugins: anyio-4.12.1, flaky-3.8.1, hydra-core-1.3.2, hypothesis-6.152.6, langsmith-0.7.32, asyncio-1.3.0, base-url-2.1.0, cov-7.1.0, mock-3.15.1, playwright-0.7.2, timeout-2.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 16 items
+
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_exists_and_takes_single_int FAILED [  6%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_has_functools_cache_decorator FAILED [ 12%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_cache_reuses_across_calls FAILED [ 18%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[1] FAILED [ 25%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[5] FAILED [ 31%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[10] FAILED [ 37%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[100] FAILED [ 43%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[500] FAILED [ 50%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[1000] FAILED [ 56%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_matches_fixture_pins FAILED [ 62%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_benjamini_hochberg_adjust_byte_identical_after_cache PASSED [ 68%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_is_exact_not_log_approximation[2] FAILED [ 75%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_is_exact_not_log_approximation[5] FAILED [ 81%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_is_exact_not_log_approximation[10] FAILED [ 87%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_benjamini_hochberg_adjust_does_not_inline_harmonic_sum FAILED [ 93%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_benjamini_hochberg_module_does_not_use_log_for_c_n FAILED [100%]
+
+================================== FAILURES ===================================
+______________ test_yekutieli_helper_exists_and_takes_single_int ______________
+
+    def test_yekutieli_helper_exists_and_takes_single_int():
+        """PERF-006 Path A requires a module-level helper that accepts
+        ``n: int`` positionally.
+    
+        Why a separate helper (rather than memoizing the whole
+        ``benjamini_hochberg_adjust``): the function takes a ``list[float]``,
+        which is unhashable and so cannot be memoized directly. Lifting the
+        pure-numeric c(N) into its own helper is the standard refactor.
+        """
+>       name, helper = _resolve_helper()
+                       ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:147: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+_____________ test_yekutieli_helper_has_functools_cache_decorator _____________
+
+    def test_yekutieli_helper_has_functools_cache_decorator():
+        """The helper must be decorated with ``functools.lru_cache`` or
+        ``functools.cache``.
+    
+        The decorator IS the perf fix. Stripping it (or replacing with a
+        no-op) reverts to O(N)-per-call. We assert this at the AST level
+        (not runtime) so the contract is robust against namespace shenanigans
+        like ``cache = lambda f: f``.
+        """
+        tree = _autotuner_module_ast()
+>       fn = _find_function_def(tree, ("_yekutieli_c_n", "yekutieli_c_n"))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:192: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tree = <ast.Module object at 0x00000277F18D0A90>
+names = ('_yekutieli_c_n', 'yekutieli_c_n')
+
+    def _find_function_def(tree: ast.Module, names: tuple[str, ...]) -> ast.FunctionDef:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name in names:
+                return node
+>       pytest.fail(
+            f"AST: no FunctionDef matching any of {names!r} found in autotuner.py"
+        )
+E       Failed: AST: no FunctionDef matching any of ('_yekutieli_c_n', 'yekutieli_c_n') found in autotuner.py
+
+tests\autotuner\test_perf006_harmonic_sum.py:177: Failed
+_______________ test_yekutieli_helper_cache_reuses_across_calls _______________
+
+    def test_yekutieli_helper_cache_reuses_across_calls():
+        """The cache must actually hit on the second call for the same n.
+    
+        AST asserts the decorator exists; this asserts the runtime behavior:
+        calling twice with the same argument produces one miss and one hit.
+        A future PR that swaps lru_cache for a no-op shim (e.g. for
+        pickling) would still pass T2 but fail here.
+    
+        We use a fresh ``n`` value (n=37 — not 500, not 100, not in the
+        fixture) so prior test runs in the same pytest process can't have
+        populated the cache with a hit.
+        """
+>       name, helper = _resolve_helper()
+                       ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:237: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+____________ test_yekutieli_helper_byte_identical_to_inline_sum[1] ____________
+
+n = 1
+
+    @pytest.mark.parametrize("n", [1, 5, 10, 100, 500, 1000])
+    def test_yekutieli_helper_byte_identical_to_inline_sum(n):
+        """For every N in {1, 5, 10, 100, 500, 1000} the cached helper must
+        equal the inline sum to within 1e-15.
+    
+        Tolerance 1e-15: IEEE-754 double precision; the cached helper MUST
+        perform the same ascending-order summation
+        ``sum(1.0 / j for j in range(1, n + 1))``. A different summation
+        order (e.g. descending j for better numerical stability) would
+        legitimately produce a different last bit and fail this pin —
+        intentional, because byte-identity is the BHY-preservation
+        contract (M1 plan §"BHY slice — zero-change preservation").
+        """
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:287: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+____________ test_yekutieli_helper_byte_identical_to_inline_sum[5] ____________
+
+n = 5
+
+    @pytest.mark.parametrize("n", [1, 5, 10, 100, 500, 1000])
+    def test_yekutieli_helper_byte_identical_to_inline_sum(n):
+        """For every N in {1, 5, 10, 100, 500, 1000} the cached helper must
+        equal the inline sum to within 1e-15.
+    
+        Tolerance 1e-15: IEEE-754 double precision; the cached helper MUST
+        perform the same ascending-order summation
+        ``sum(1.0 / j for j in range(1, n + 1))``. A different summation
+        order (e.g. descending j for better numerical stability) would
+        legitimately produce a different last bit and fail this pin —
+        intentional, because byte-identity is the BHY-preservation
+        contract (M1 plan §"BHY slice — zero-change preservation").
+        """
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:287: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+___________ test_yekutieli_helper_byte_identical_to_inline_sum[10] ____________
+
+n = 10
+
+    @pytest.mark.parametrize("n", [1, 5, 10, 100, 500, 1000])
+    def test_yekutieli_helper_byte_identical_to_inline_sum(n):
+        """For every N in {1, 5, 10, 100, 500, 1000} the cached helper must
+        equal the inline sum to within 1e-15.
+    
+        Tolerance 1e-15: IEEE-754 double precision; the cached helper MUST
+        perform the same ascending-order summation
+        ``sum(1.0 / j for j in range(1, n + 1))``. A different summation
+        order (e.g. descending j for better numerical stability) would
+        legitimately produce a different last bit and fail this pin —
+        intentional, because byte-identity is the BHY-preservation
+        contract (M1 plan §"BHY slice — zero-change preservation").
+        """
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:287: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+___________ test_yekutieli_helper_byte_identical_to_inline_sum[100] ___________
+
+n = 100
+
+    @pytest.mark.parametrize("n", [1, 5, 10, 100, 500, 1000])
+    def test_yekutieli_helper_byte_identical_to_inline_sum(n):
+        """For every N in {1, 5, 10, 100, 500, 1000} the cached helper must
+        equal the inline sum to within 1e-15.
+    
+        Tolerance 1e-15: IEEE-754 double precision; the cached helper MUST
+        perform the same ascending-order summation
+        ``sum(1.0 / j for j in range(1, n + 1))``. A different summation
+        order (e.g. descending j for better numerical stability) would
+        legitimately produce a different last bit and fail this pin —
+        intentional, because byte-identity is the BHY-preservation
+        contract (M1 plan §"BHY slice — zero-change preservation").
+        """
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:287: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+___________ test_yekutieli_helper_byte_identical_to_inline_sum[500] ___________
+
+n = 500
+
+    @pytest.mark.parametrize("n", [1, 5, 10, 100, 500, 1000])
+    def test_yekutieli_helper_byte_identical_to_inline_sum(n):
+        """For every N in {1, 5, 10, 100, 500, 1000} the cached helper must
+        equal the inline sum to within 1e-15.
+    
+        Tolerance 1e-15: IEEE-754 double precision; the cached helper MUST
+        perform the same ascending-order summation
+        ``sum(1.0 / j for j in range(1, n + 1))``. A different summation
+        order (e.g. descending j for better numerical stability) would
+        legitimately produce a different last bit and fail this pin —
+        intentional, because byte-identity is the BHY-preservation
+        contract (M1 plan §"BHY slice — zero-change preservation").
+        """
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:287: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+__________ test_yekutieli_helper_byte_identical_to_inline_sum[1000] ___________
+
+n = 1000
+
+    @pytest.mark.parametrize("n", [1, 5, 10, 100, 500, 1000])
+    def test_yekutieli_helper_byte_identical_to_inline_sum(n):
+        """For every N in {1, 5, 10, 100, 500, 1000} the cached helper must
+        equal the inline sum to within 1e-15.
+    
+        Tolerance 1e-15: IEEE-754 double precision; the cached helper MUST
+        perform the same ascending-order summation
+        ``sum(1.0 / j for j in range(1, n + 1))``. A different summation
+        order (e.g. descending j for better numerical stability) would
+        legitimately produce a different last bit and fail this pin —
+        intentional, because byte-identity is the BHY-preservation
+        contract (M1 plan §"BHY slice — zero-change preservation").
+        """
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:287: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+_________________ test_yekutieli_helper_matches_fixture_pins __________________
+
+bhy_fixture = {'N': 10, 'expected': {'c_of_n': 2.9289682539682538, 'p_adj': [0.02928968253968254, 0.043934523809523805, 0.0781058201...34523809523807, ...]}, 'name': 'bhy_byte_identical_pin', 'p_values': [0.001, 0.003, 0.008, 0.02, 0.05, 0.09, ...], ...}
+
+    def test_yekutieli_helper_matches_fixture_pins(bhy_fixture):
+        """Re-pin the c(N) values from ``bhy_byte_identical_pin.json``
+        against the cached helper.
+    
+        The M1 T2 test asserts these values against the inline sum; this
+        asserts them against the helper. Both contracts must hold after
+        PERF-006 ships.
+        """
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:311: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+___________ test_yekutieli_helper_is_exact_not_log_approximation[2] ___________
+
+n = 2
+
+    @pytest.mark.parametrize("n", [2, 5, 10])
+    def test_yekutieli_helper_is_exact_not_log_approximation(n):
+        """The cached helper must NOT collapse to the ``ln(n) + \u03b3`` log
+        approximation.
+    
+        At small N this approximation under-corrects c(N) by several percent
+        (at N=5: harmonic=2.283, log_approx=2.187, ~4.2% gap), which would
+        flip a previously-rejected trial through the FDR gate. M1 T2 pins
+        this against the inline sum; this re-pins it against the helper.
+        """
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:371: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+___________ test_yekutieli_helper_is_exact_not_log_approximation[5] ___________
+
+n = 5
+
+    @pytest.mark.parametrize("n", [2, 5, 10])
+    def test_yekutieli_helper_is_exact_not_log_approximation(n):
+        """The cached helper must NOT collapse to the ``ln(n) + \u03b3`` log
+        approximation.
+    
+        At small N this approximation under-corrects c(N) by several percent
+        (at N=5: harmonic=2.283, log_approx=2.187, ~4.2% gap), which would
+        flip a previously-rejected trial through the FDR gate. M1 T2 pins
+        this against the inline sum; this re-pins it against the helper.
+        """
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:371: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+__________ test_yekutieli_helper_is_exact_not_log_approximation[10] ___________
+
+n = 10
+
+    @pytest.mark.parametrize("n", [2, 5, 10])
+    def test_yekutieli_helper_is_exact_not_log_approximation(n):
+        """The cached helper must NOT collapse to the ``ln(n) + \u03b3`` log
+        approximation.
+    
+        At small N this approximation under-corrects c(N) by several percent
+        (at N=5: harmonic=2.283, log_approx=2.187, ~4.2% gap), which would
+        flip a previously-rejected trial through the FDR gate. M1 T2 pins
+        this against the inline sum; this re-pins it against the helper.
+        """
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:371: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+_________ test_benjamini_hochberg_adjust_does_not_inline_harmonic_sum _________
+
+    def test_benjamini_hochberg_adjust_does_not_inline_harmonic_sum():
+        """``benjamini_hochberg_adjust`` must delegate c(N) to the helper —
+        no inline ``sum(1.0/j for j in range(1, n + 1))`` survives.
+    
+        This is the structural regression lock: a future PR that inlines
+        the sum back into the function body (defeating the cache) fails
+        here even if the cached helper still exists elsewhere in the module.
+        """
+        tree = _autotuner_module_ast()
+        fn = _find_function_def(tree, ("benjamini_hochberg_adjust",))
+    
+        # Walk the function body for a generator expression of the form
+        #   <numeric> / <var> for <var> in range(...)
+        # We accept any literal numerator (1, 1.0) and any variable name.
+        found_inline_sum = False
+        for node in ast.walk(fn):
+            if isinstance(node, (ast.GeneratorExp, ast.ListComp)):
+                elt = node.elt
+                # elt should look like BinOp(left=<num>, op=Div(), right=Name(...))
+                if (
+                    isinstance(elt, ast.BinOp)
+                    and isinstance(elt.op, ast.Div)
+                    and isinstance(elt.left, ast.Constant)
+                    and isinstance(elt.left.value, (int, float))
+                    and elt.left.value == 1
+                    or (
+                        isinstance(elt, ast.BinOp)
+                        and isinstance(elt.op, ast.Div)
+                        and isinstance(elt.left, ast.Constant)
+                        and elt.left.value in (1, 1.0)
+                    )
+                ):
+                    # Check the generator iterates over range(1, ..., n+1)
+                    for gen in node.generators:
+                        if isinstance(gen.iter, ast.Call) and isinstance(
+                            gen.iter.func, ast.Name
+                        ) and gen.iter.func.id == "range":
+                            found_inline_sum = True
+                            break
+            if found_inline_sum:
+                break
+    
+>       assert not found_inline_sum, (
+            "PERF-006: benjamini_hochberg_adjust still contains an inline "
+            "`sum(1.0 / j for j in range(1, n + 1))` (or equivalent) generator. "
+            "The Path-A fix requires delegating to the cached helper "
+            "_yekutieli_c_n / yekutieli_c_n; the inline sum defeats the cache."
+        )
+E       AssertionError: PERF-006: benjamini_hochberg_adjust still contains an inline `sum(1.0 / j for j in range(1, n + 1))` (or equivalent) generator. The Path-A fix requires delegating to the cached helper _yekutieli_c_n / yekutieli_c_n; the inline sum defeats the cache.
+E       assert not True
+
+tests\autotuner\test_perf006_harmonic_sum.py:430: AssertionError
+___________ test_benjamini_hochberg_module_does_not_use_log_for_c_n ___________
+
+    def test_benjamini_hochberg_module_does_not_use_log_for_c_n():
+        """Belt-and-braces: scan the source text of
+        ``benjamini_hochberg_adjust`` AND the cached helper for any
+        ``math.log`` call.
+    
+        A log-based c(N) would be the easiest unintended Path-B regression.
+        Neither function should ever call ``math.log`` — c(N) is exact.
+        """
+        src = inspect.getsource(autotuner.benjamini_hochberg_adjust)
+        assert "math.log" not in src and "log(" not in src, (
+            "benjamini_hochberg_adjust source contains math.log / log( — "
+            "PERF-006 Path A is the cached helper, NOT the log "
+            "approximation. The M1 T2 contract forbids the latter."
+        )
+    
+>       _, helper = _resolve_helper()
+                    ^^^^^^^^^^^^^^^^^
+
+tests\autotuner\test_perf006_harmonic_sum.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _resolve_helper():
+        """Return the cached c(N) helper, or fail with a descriptive message.
+    
+        The helper name is impl-perf006's choice but must be one of the two
+        conventional spellings. Both private (``_yekutieli_c_n``) and public
+        (``yekutieli_c_n``) are accepted; AST tests do not depend on which.
+        """
+        for name in ("_yekutieli_c_n", "yekutieli_c_n"):
+            helper = getattr(autotuner, name, None)
+            if helper is not None:
+                return name, helper
+>       pytest.fail(
+            "PERF-006: expected a module-level cached helper named "
+            "`_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither "
+            "found. The helper must encapsulate the Yekutieli c(N) "
+            "harmonic-number sum so it can be memoized."
+        )
+E       Failed: PERF-006: expected a module-level cached helper named `_yekutieli_c_n` or `yekutieli_c_n` in autotuner.py; neither found. The helper must encapsulate the Yekutieli c(N) harmonic-number sum so it can be memoized.
+
+tests\autotuner\test_perf006_harmonic_sum.py:125: Failed
+=========================== short test summary info ===========================
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_exists_and_takes_single_int
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_has_functools_cache_decorator
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_cache_reuses_across_calls
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[1]
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[5]
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[10]
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[100]
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[500]
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[1000]
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_matches_fixture_pins
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_is_exact_not_log_approximation[2]
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_is_exact_not_log_approximation[5]
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_is_exact_not_log_approximation[10]
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_benjamini_hochberg_adjust_does_not_inline_harmonic_sum
+FAILED tests/autotuner/test_perf006_harmonic_sum.py::test_benjamini_hochberg_module_does_not_use_log_for_c_n
+======================== 15 failed, 1 passed in 3.35s =========================

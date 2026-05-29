@@ -1,0 +1,36 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.7, pytest-8.4.2, pluggy-1.6.0 -- C:\Users\paulm\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\perf-006-harmonic
+configfile: pyproject.toml
+plugins: anyio-4.12.1, flaky-3.8.1, hydra-core-1.3.2, hypothesis-6.152.6, langsmith-0.7.32, asyncio-1.3.0, base-url-2.1.0, cov-7.1.0, mock-3.15.1, playwright-0.7.2, timeout-2.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 24 items
+
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_exists_and_takes_single_int PASSED [  4%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_has_functools_cache_decorator PASSED [  8%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_cache_reuses_across_calls PASSED [ 12%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[1] PASSED [ 16%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[5] PASSED [ 20%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[10] PASSED [ 25%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[100] PASSED [ 29%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[500] PASSED [ 33%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_byte_identical_to_inline_sum[1000] PASSED [ 37%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_matches_fixture_pins PASSED [ 41%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_benjamini_hochberg_adjust_byte_identical_after_cache PASSED [ 45%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_is_exact_not_log_approximation[2] PASSED [ 50%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_is_exact_not_log_approximation[5] PASSED [ 54%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_yekutieli_helper_is_exact_not_log_approximation[10] PASSED [ 58%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_benjamini_hochberg_adjust_does_not_inline_harmonic_sum PASSED [ 62%]
+tests/autotuner/test_perf006_harmonic_sum.py::test_benjamini_hochberg_module_does_not_use_log_for_c_n PASSED [ 66%]
+tests/autotuner/test_m1_bhy_haircut_preservation.py::test_bhy_step_up_byte_identical PASSED [ 70%]
+tests/autotuner/test_m1_bhy_haircut_preservation.py::test_yekutieli_c_n_is_harmonic_number_not_log_approximation PASSED [ 75%]
+tests/autotuner/test_m1_bhy_haircut_preservation.py::test_haircut_pvalue_saturates_to_epsilon_for_extreme_positive_t PASSED [ 79%]
+tests/autotuner/test_m1_bhy_haircut_preservation.py::test_haircut_pvalue_saturates_to_one_minus_epsilon_for_extreme_negative_t PASSED [ 83%]
+tests/autotuner/test_m1_bhy_haircut_preservation.py::test_haircut_select_accepts_tstat_fn_parameter PASSED [ 87%]
+tests/autotuner/test_m1_bhy_haircut_preservation.py::test_sortino_sentinel_filter_retains_under_both_tstat_fns PASSED [ 91%]
+tests/autotuner/test_m1_bhy_haircut_preservation.py::test_haircut_select_tstat_fn_default_is_sortino PASSED [ 95%]
+tests/autotuner/test_m1_bhy_haircut_preservation.py::test_sortino_tstat_docstring_carries_h6_warning PASSED [100%]
+
+============================= 24 passed in 4.04s ==============================
