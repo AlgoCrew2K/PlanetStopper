@@ -757,7 +757,9 @@ def get_state():
                 # "weight" so tests that inject a _CHART_ARCHIVE_STUB with a
                 # "weight" field also produce results.
                 _pm_strip = None
-                _hist_data = analytics.get_history_with_cache_invalidation()
+                _hist_data = analytics.get_history_with_cache_invalidation(
+                    base_dir=analytics._POST_MORTEMS_DIR
+                )
                 if _hist_data:
                     _agg_dates, _agg_held_daily, _agg_bot_daily = (
                         analytics.compute_aggregate_returns(_hist_data)
@@ -1791,7 +1793,9 @@ def api_performance():
 @app.route("/api/performance/symphonies")
 def api_performance_symphonies():
     """Sorted list of symphony_ids present in the post-mortem history."""
-    history = analytics.get_history_with_cache_invalidation()
+    history = analytics.get_history_with_cache_invalidation(
+        base_dir=analytics._POST_MORTEMS_DIR
+    )
     symphonies = analytics.list_available_symphonies(history)
     return jsonify({"symphonies": list(symphonies)})
 
