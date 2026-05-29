@@ -756,9 +756,11 @@ Two of the live integration tests conditionally skip when the local environment 
 
 A locked agent worktree exists at `.claude/audit-worktrees/` that this audit did not touch. It contains in-flight work from another team. No bearing on this branch's correctness.
 
-### CVaR live wire-up
+### CVaR diagnostic scope limit (CVAR-001)
 
-The per-cycle live path writes all-`None` sentinels to `cvar_diagnostic` ([`alpha_bot_execution.py:1417-1426`](alpha_bot_execution.py)) instead of calling `compute_portfolio_cvar`. The dashboard CVaR panel renders the framing labels but the numeric cells are empty. Also: the panel currently shows the first symphony only (CVAR-001 scope limit) — multi-symphony portfolios silently omit other symphonies' rows. **Both are intentional Phase-1 deferrals**; the live wire-up and the multi-symphony expansion are staged for Phase 1.5.
+The per-cycle live path calls `compute_portfolio_cvar` at [`alpha_bot_execution.py:1441-1476`](alpha_bot_execution.py) and writes real results to `cvar_diagnostic` via `database.record_cvar_diagnostic` — the CVaR wire-up is live. See §[3.2](#32-cvar-vs-var--measuring-tail-risk) and §[4.4](#44-diagnostic-only-cvar--and-why-we-rejected-cvar-divergence-detectors) for the normative description of what is computed and why CVaR remains diagnostic-only.
+
+The one remaining open item is a **dashboard scope limit (CVAR-001)**: the CVaR panel currently surfaces the first symphony only — multi-symphony portfolios silently omit other symphonies' rows pending a future expansion. This is a display-only gap; the underlying `cvar_diagnostic` rows are written for every managed symphony per cycle.
 
 ---
 
