@@ -1187,9 +1187,11 @@ class CVaREstimate:
 
     cvar_pct: Rockafellar-Uryasev general-distribution CVaR. None when the pool
               is empty or has fewer than CVAR_MIN_TAIL_OBS genuine tail observations.
-    tail_obs_count: distinct tail observations used (k_below + 1 if atom contributes,
-                    else k_below). This is the H-2 stderr denominator — NOT the
-                    resample count. Auditable via the persisted cvar_n_tail column.
+    tail_obs_count: distinct tail observations used:
+                    tail_obs_count = floor(alpha*N) + (1 if fractional_weight > 0 else 0)
+                    (k_below + 1 if atom contributes, else k_below). This is the
+                    H-2 stderr denominator — NOT the resample count. Auditable via
+                    the persisted cvar_n_tail column.
     stderr: std(tail_values, ddof=1)/sqrt(tail_obs_count). None when sentinel.
     insufficient_reason: human-readable explanation when cvar_pct is None.
     """
@@ -1268,7 +1270,8 @@ def compute_cvar_5pct_general_distribution(
     contribution, producing a ~4% upward bias in the N=150 fixture.
 
     stderr uses the DISTINCT GENUINE tail count as denominator (H-2 binding).
-    tail_obs_count = k + 1 if fractional_weight > 0 else k.
+    Canonical formula (Acerbi-Tasche atom-contribution discipline):
+      tail_obs_count = floor(alpha*N) + (1 if fractional_weight > 0 else 0)
 
     Returns CVaREstimate with cvar_pct=None (sentinel) when:
       - pool is empty
@@ -1277,6 +1280,7 @@ def compute_cvar_5pct_general_distribution(
     Raises ValueError on non-finite inputs (A-2 closure).
 
     Source: Rockafellar & Uryasev (2002), Optimization of Conditional Value-at-Risk;
+            Acerbi & Tasche (2002), On the coherence of expected shortfall — atom-contribution discipline;
             decision-science-council-synthesis.md §2.6; plan §Deliverables Code.
     """
     if not returns:
