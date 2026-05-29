@@ -1618,6 +1618,10 @@ def compute_regime_match_quality(
       - Knorr & Ng (1998) "Algorithms for mining distance-based outliers
         in large datasets." VLDB '98, 392-403.
     """
+    _reject_non_finite(spy_today_return=spy_today_return)
+    for day_data in historical_data.values():
+        for ticker_data in day_data.values():
+            _reject_non_finite_in_records([ticker_data], "daily_ret")
     # Operator-overridable threshold (env var beats module-level default).
     _env_override = os.environ.get("MC_REGIME_MATCH_CHI2_THRESHOLD")
     threshold = float(_env_override) if _env_override is not None else MC_REGIME_MATCH_CHI2_THRESHOLD
