@@ -718,21 +718,23 @@ This section is the honest list of what *isn't* settled.
 
 ### Open provenance questions (from the logic-trace audit)
 
-These are choices the code makes today that have no written first-principles justification in `DECISIONS.md`, feature-plans, project memory, or in-file comments. They are not bugs — they are gaps the doc-writer flags for either future resolution or `[open question]` acknowledgment.
+These are choices the code makes today that have no written first-principles justification in `DECISIONS.md`, feature-plans, project memory, or in-file comments. They are not bugs — they are gaps flagged for either future resolution or `[open question]` acknowledgment.
 
-| # | Choice | Status |
-|---|---|---|
-| **OQ-1** | `_TRIGGER_PRIORITY_ORDER` places Take-Profit ahead of VWAP Bleed Cut | The relative position of TP vs Bleed Cut is load-bearing on cycles where both fire. The in-code comment cites a historical H2 acceptance-criteria reference; no first-principles argument is on file. Open. |
-| **OQ-2** | `n_trials=500` for the per-symphony walk-forward | The BHY-over-Bonferroni argument at [`autotuner.py:300-302`](autotuner.py) is backwards — it justifies the haircut for N=500, not 500 specifically. No power-analysis for 500 over 250 or 1000. Open. |
-| **OQ-3** | `MC_DEFAULT_NEIGHBOR_K = 150` and the absence of a regime-match-quality guard | The kNN locality fails when the 150 nearest neighbors are all "least bad fits" — a known soft spot in the math review. The recommended fix (math-soundness §"Critique" item 1) is a regime-match-quality threshold that defaults MC to "allow exit" when the mean kNN distance exceeds a bound. Open. |
-| **OQ-4** | `MC_DEFAULT_SIMULATION_PATHS = 5000` | "CLT stability vs runtime tradeoff" is the only justification. No runtime-budget anchor. Open. |
-| **OQ-5** | `PARABOLIC_VELOCITY_THRESHOLD` default + PARA-ARM day-boundary semantic | The `prev_return=0` reset at every new day means any symphony opening above 2% auto-arms PARA on the first cycle. May be intended ("any large move from baseline arms the squeeze") or unintended. Open. |
-| **OQ-6** | `VWAP_CROSS_HWM_PCT`, `VWAP_BLEED_MULTIPLIER`, `VWAP_BLEED_TICKS` | The VWAP×2 thresholds are tagged in the council synthesis as Phase-1.5 M3 R2 re-derive targets — **this is the one OQ already on a remediation track.** |
-| **OQ-7** | `VWAP_OPEN_WINDOW_GRACE_MINUTES = 15` | No in-code justification for 15 specifically. Operator empirics. Open. |
-| **OQ-8** | 60/20/20 walk-forward ratio | Documented in code as an operator choice; the held-out invariant derives from AFML 2018 Ch. 7.4 but the **specific ratio** is not theoretical. Honest provenance — not a gap, but worth knowing. |
-| **OQ-9** | `HARVEY_LIU_FDR_Q = 0.05` | "Conventional" — the operator may tighten/loosen. Honest provenance — policy dial. |
-| **OQ-10** | The `_SORTINO_SENTINEL = 1e6` magic number | Chosen to look finite to Optuna but distinct enough to filter before BHY. The specific magnitude is arbitrary. Open. |
-| **OQ-11** | γ (gamma) default and where it lives | Per the math-soundness review, γ=2 is the moderately-risk-averse retail default. Whether to surface this as a configurable parameter or keep it THEORY-frozen-only is a product decision. Open. |
+Full per-OQ resolution detail (source quotes, file:line citations, classification rationale) is in [`docs/audit/vision-audit-2026-05-27/open-questions-resolution.md`](docs/audit/vision-audit-2026-05-27/open-questions-resolution.md). **Score: 4 CITE / 5 TAG-OPEN / 1 CROSS-LINK.**
+
+| # | Constant | File:line | Class | Resolution one-liner |
+|---|---|---|---|---|
+| **OQ-1** | `_TRIGGER_PRIORITY_ORDER` — TP before Bleed Cut | `math_engine.py:826` | TAG-OPEN | In-code cites H2 acceptance criteria; that document is not on this branch; no first-principles argument for the pairwise TP > Bleed Cut position on file. [open question — pending H2 recovery or first-principles argument] |
+| **OQ-2** | `OPTUNA_N_TRIALS_PRODUCTION = 500` | `autotuner.py:153` | CITE | Documented in code: 500 = 5 × the 100-trial TPE stability floor; yields BHY c(500)/c(100) ≈ 1.30 — materially stronger haircut. See `autotuner.py:139-153`. |
+| **OQ-3** | `MC_DEFAULT_NEIGHBOR_K = 150` | `math_engine.py:92` | TAG-OPEN | In-code: "smaller=tighter regime match, larger=smoother estimate" — qualitative only; no calibration source. [open question — pending calibration study or regime-locality citation] |
+| **OQ-4** | `MC_DEFAULT_SIMULATION_PATHS = 5000` | `math_engine.py:91` | TAG-OPEN | In-code: "CLT stability vs runtime tradeoff" — no convergence criterion or runtime-budget anchor. [open question — pending CLT-convergence analysis] |
+| **OQ-5** | `PARABOLIC_VELOCITY_THRESHOLD = 2.0`, `MAX_PARABOLIC_SQUEEZE = 0.50` | `alpha_bot_execution.py:91-92` | TAG-OPEN | No provenance comment on default values; `prev_return=0` day-boundary auto-arm behavior undocumented as intended vs unintended. [open question — see SYNTHESIS.md B-B4] |
+| **OQ-6** | `VWAP_CROSS_HWM_PCT`, `VWAP_BLEED_MULTIPLIER`, `VWAP_BLEED_TICKS` | `alpha_bot_execution.py:81`, `math_engine.py:748-771` | CROSS-LINK | Regime-switch structure is THEORY-anchored (Leung & Zhang 2019; Peskir 1998); specific threshold values remain Optuna-searched. Re-derivation is Phase-1.5 M3 R2. |
+| **OQ-7** | `VWAP_OPEN_WINDOW_GRACE_MINUTES = 15` | `alpha_bot_execution.py:73` | TAG-OPEN | In-code justifies the grace concept (suppress open-vol false exits, AC-V2.1); specific value 15 has no calibration citation. [open question — pending calibration or empirics citation] |
+| **OQ-8** | 60/20/20 walk-forward ratio | `autotuner.py:291-294` | CITE | Documented in code: "operator choice for AlphaBot's data scale (125 trading days); the held-out frozen-eval invariant derives from LdP 2018 Ch. 7.4 (not the specific ratio)." Honest provenance. |
+| **OQ-9** | `HARVEY_LIU_FDR_Q = 0.05` | `autotuner.py:373` | CITE | Documented in code: "Conventional 0.05 (Harvey & Liu 2015). Policy dial — operator may tighten/loosen." Honest provenance. |
+| **OQ-10** | `_SORTINO_SENTINEL = 1e6` | `math_engine.py:15` | TAG-OPEN | In-code documents the requirement (finite, detectable); specific magnitude 1e6 vs 1e5/1e7 not calibrated against empirical trial distribution. [open question — pending collision-safety analysis] |
+| **OQ-11** | γ (gamma) default | spec_bundles THEORY facet | TAG-OPEN | Per the math-soundness review, γ=2 is the moderately-risk-averse retail default. Whether to surface as a configurable parameter or keep THEORY-frozen-only is a product decision. Open. |
 
 ### Phase 1.5 M3 redrive-provenance items
 
