@@ -1,12 +1,12 @@
-# AlphaBot v3 — Project-Local CLAUDE.md
+# Planet Stopper — Project-Local CLAUDE.md
 # EXTENDS ~/.claude/CLAUDE.md — do NOT duplicate global content.
 
 ## Project Identity
-- **Name:** AlphaBot v3 (hard fork)
+- **Name:** Planet Stopper
 - **Purpose:** Institutional-grade algorithmic risk engine; monitors live Composer.trade portfolios; executes intelligent trailing stops ("Guard Alpha")
 - **Stack:** Python 3 / Flask monolithic daemon; SQLite (state DB + optimization DB); Optuna; Composer.trade + Alpaca + Discord integrations
 - **Workflow:** Hard fork — never re-syncing upstream; full autonomy within global guidelines
-- **Roadmap (in scope):** historical analysis, live-vs-AlphaBot comparison stats, charts/graphs in Flask dashboard, pytest + GitHub Actions test harness
+- **Roadmap (in scope):** historical analysis, live-vs-Planet Stopper comparison stats, charts/graphs in Flask dashboard, pytest + GitHub Actions test harness
 
 ## Key Files (quick reference for workers)
 | File | Role |

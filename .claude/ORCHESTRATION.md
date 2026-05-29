@@ -1,7 +1,7 @@
-# AlphaBot PM — Project-Local Orchestration
+# Planet Stopper PM — Project-Local Orchestration
 
 Extends `~/.claude/ORCHESTRATION.md`. Global playbook governs; this file adds
-AlphaBot-specific dispatch mappings, review gates, and workflow sequences only.
+Planet Stopper-specific dispatch mappings, review gates, and workflow sequences only.
 
 ---
 

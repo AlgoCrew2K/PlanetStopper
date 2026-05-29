@@ -1,4 +1,4 @@
-# AlphaBot v3 -- Generated Module Reference Index
+# Planet Stopper -- Generated Module Reference Index
 
 **Last regenerated:** 2026-05-27 (Sprint 3 full regen)
 

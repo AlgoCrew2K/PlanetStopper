@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>AlphaBotPM — Studio dashboard</title>
+<title>Planet Stopper — Studio dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link
@@ -62,7 +62,7 @@
   // entry points showcase both views: the dashboard with the panel closed,
   // and the dashboard with the Paragons take-profit detail open.
   function DashboardFrame({ t, initialOpen }) {
-    const data = window.ALPHABOT_DATA;
+    const data = window.PLANET_STOPPER_DATA;
     const [openSym, setOpenSym] = useState(initialOpen ? data.symphonies.find(s => s.id === 'sym_paragons') : null);
     const p = studioPalette(t.theme, t.accent);
 
@@ -94,7 +94,7 @@
         <DesignCanvas>
           <DCSection
             id="studio"
-            title="AlphaBotPM · Studio"
+            title="Planet Stopper · Studio"
             subtitle="A · Bureau (calm, editorial) × C · Cockpit (card grid, viz-led). Hero headlines Guard Alpha with Bot-vs-If-Held breakdowns. Click any symphony card to open the detail slide-over. Tweaks (top-right) drive theme, accent, density, math overlays, number formatting."
           >
             <DCArtboard id="dash-closed" label="Dashboard" width={1440} height={1024}>
@@ -108,14 +108,14 @@
           <DCSection
             id="performance"
             title="Performance"
-            subtitle="/performance route — Live (if held) vs AlphaBot-exited (shadow) cumulative returns + QuantStats risk metrics. Toggle Aggregate/Per-symphony and window (30d → 5Y including YTD)."
+            subtitle="/performance route — Live (if held) vs Planet Stopper-exited (shadow) cumulative returns + QuantStats risk metrics. Toggle Aggregate/Per-symphony and window (30d → 5Y including YTD)."
           >
             <DCArtboard id="perf-agg" label="Performance · Aggregate" width={1440} height={1024}>
               <div style={{
                 width: '100%', height: '100%',
                 '--studio-sans': `'${t.typeface}'`,
               }}>
-                <Performance data={window.ALPHABOT_DATA} t={t} />
+                <Performance data={window.PLANET_STOPPER_DATA} t={t} />
               </div>
             </DCArtboard>
           </DCSection>
@@ -130,7 +130,7 @@
                 width: '100%', height: '100%',
                 '--studio-sans': `'${t.typeface}'`,
               }}>
-                <Advisor data={window.ALPHABOT_DATA} t={t} />
+                <Advisor data={window.PLANET_STOPPER_DATA} t={t} />
               </div>
             </DCArtboard>
           </DCSection>
@@ -145,7 +145,7 @@
                 width: '100%', height: '100%',
                 '--studio-sans': `'${t.typeface}'`,
               }}>
-                <History data={window.ALPHABOT_DATA} t={t} />
+                <History data={window.PLANET_STOPPER_DATA} t={t} />
               </div>
             </DCArtboard>
           </DCSection>
@@ -160,7 +160,7 @@
                 width: '100%', height: '100%',
                 '--studio-sans': `'${t.typeface}'`,
               }}>
-                <Settings data={window.ALPHABOT_DATA} t={t} />
+                <Settings data={window.PLANET_STOPPER_DATA} t={t} />
               </div>
             </DCArtboard>
           </DCSection>

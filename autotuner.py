@@ -217,7 +217,7 @@ _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
 # explicit LOSS-AVERSE utility: it weights downside outcomes (negative guard-alpha,
 # missed upside, peak-to-exit drawdown) more heavily than symmetric guard-alpha.
 # Loss aversion is a deliberate capital-preservation choice — the same family of
-# asymmetric utility AlphaBot's Sortino objective (downside deviation) embodies.
+# asymmetric utility Planet Stopper's Sortino objective (downside deviation) embodies.
 # Each scalar/threshold below was an unsourced inline literal (finding H-10); naming
 # + sourcing them here makes the objective inspectable and prevents a silent scalar
 # drift inverting the policy ranking.
@@ -290,7 +290,7 @@ EMBARGO_DAYS = 1
 # Three-fold walk-forward ratios: 60% train / 20% validation / 20% frozen-eval.
 # Selection is on validation; frozen-eval is consumed once post-selection for honest
 # performance reporting. Purge + embargo applied at BOTH fold boundaries.
-# 60/20/20 split is an operator choice for AlphaBot's data scale (125 trading days);
+# 60/20/20 split is an operator choice for Planet Stopper's data scale (125 trading days);
 # the held-out frozen-eval invariant derives from LdP 2018 Ch. 7.4 (not the specific ratio).
 TRAIN_RATIO = 0.60
 VALIDATION_RATIO = 0.20
@@ -1380,7 +1380,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
     """
     Runs walk-forward optimization using Bayesian Optimization (Optuna) per symphony.
     Implements a three-fold walk-forward split (60/20/20): train / validation / frozen-eval.
-    The 60/20/20 ratio is an operator choice for AlphaBot's 125-day data scale; AFML Ch. 7.4
+    The 60/20/20 ratio is an operator choice for Planet Stopper's 125-day data scale; AFML Ch. 7.4
     prescribes the held-out frozen-eval invariant (purge+embargo), not the specific ratio.
 
     Walk-forward split methodology (López de Prado 2018 Ch. 7.4):

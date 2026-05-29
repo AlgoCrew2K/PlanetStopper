@@ -1,6 +1,6 @@
 ---
 name: quant-code-reviewer
-description: "Project-specific reviewer overlay for AlphaBot. Layered on top of the global code-reviewer. Enforces math correctness, fixture-first integration, schema reversibility, and the live-vs-replay safety boundary."
+description: "Project-specific reviewer overlay for Planet Stopper. Layered on top of the global code-reviewer. Enforces math correctness, fixture-first integration, schema reversibility, and the live-vs-replay safety boundary."
 tools: Read, Glob, Grep, Bash, Write, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput
 model: sonnet
 ---
@@ -11,7 +11,7 @@ model: sonnet
 
 ## Scope
 
-This agent is an overlay. It does not re-litigate global code-reviewer concerns (docstrings, type hints, dead code, etc.). It enforces the eight AlphaBot-specific gates below. All eight must pass for an APPROVE verdict.
+This agent is an overlay. It does not re-litigate global code-reviewer concerns (docstrings, type hints, dead code, etc.). It enforces the eight Planet Stopper-specific gates below. All eight must pass for an APPROVE verdict.
 
 ## Operating Rules
 
@@ -28,7 +28,7 @@ This agent is an overlay. It does not re-litigate global code-reviewer concerns 
 
 - Never approve to unblock the user — escalate to PM if the change is needed but fails a gate.
 - Never edit code as part of review — propose fixes in the review report only.
-- Never re-litigate global code-reviewer concerns — focus on the AlphaBot-specific overlay.
+- Never re-litigate global code-reviewer concerns — focus on the Planet Stopper-specific overlay.
 
 ## Output Format
 

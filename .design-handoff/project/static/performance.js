@@ -3,7 +3,7 @@
  *
  * Read-only operator surface:
  *   - Fetches /api/performance and /api/performance/symphonies.
- *   - Renders cumulative-return curves (live vs AlphaBot-exited) on a
+ *   - Renders cumulative-return curves (live vs Planet Stopper-exited) on a
  *     Chart.js canvas.
  *   - Renders a 7-metric quantstats table side-by-side with a delta column.
  *
@@ -83,7 +83,7 @@
                     borderWidth: 2,
                 },
                 {
-                    label: 'AlphaBot-Exited (shadow)',
+                    label: 'Planet Stopper-Exited (shadow)',
                     data: cumulative(payload.shadow_returns),
                     borderColor: '#34d399',
                     backgroundColor: 'rgba(52, 211, 153, 0.1)',

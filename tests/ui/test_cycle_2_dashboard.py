@@ -622,7 +622,7 @@ def test_hero_chart_has_legend(dashboard_client):
 
     ux BLOCK-5: Chart legend strip below the cumulative chart is absent.
     Design: studio.jsx Hero left column — legend strip with:
-      - Bot line swatch + 'AlphaBot (dry-run)' label
+      - Bot line swatch + 'Planet Stopper (dry-run)' label
       - Dashed held swatch + 'If held' label
       - Right-aligned 'data as of {meta.portfolio.data_as_of}' timestamp
     """
@@ -632,9 +632,9 @@ def test_hero_chart_has_legend(dashboard_client):
         "legend strip. "
         "Design: studio.jsx Legend items below CumChart."
     )
-    assert "AlphaBot" in html, (
-        "chart-legend must contain 'AlphaBot' label for the Bot line. "
-        "Design: studio.jsx Legend color=p.accent label='AlphaBot (dry-run)'."
+    assert "Planet Stopper" in html, (
+        "chart-legend must contain 'Planet Stopper' label for the Bot line. "
+        "Design: studio.jsx Legend color=p.accent label='Planet Stopper (dry-run)'."
     )
     assert "If held" in html or "if held" in html.lower(), (
         "chart-legend must contain 'If held' label for the dashed baseline. "

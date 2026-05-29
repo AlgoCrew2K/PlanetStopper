@@ -1,13 +1,13 @@
 ---
 name: perf-snapshot
-description: Capture a point-in-time snapshot comparing live AlphaBot performance against the counterfactual (no-AlphaBot hold) for current/recent positions. Computes Guard Alpha = P&L delta from AlphaBot early exits vs holding.
+description: Capture a point-in-time snapshot comparing live Planet Stopper performance against the counterfactual (no-Planet Stopper hold) for current/recent positions. Computes Guard Alpha = P&L delta from Planet Stopper early exits vs holding.
 allowed-tools: Read, Glob, Grep, Bash, Write
 agent: general-purpose
 ---
 
 # /perf-snapshot [<lookback>] [--symphony <id>]
 
-Capture Guard Alpha: what AlphaBot's exits actually saved vs. holding each position.
+Capture Guard Alpha: what Planet Stopper's exits actually saved vs. holding each position.
 
 ## Dynamic Context
 

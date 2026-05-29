@@ -168,7 +168,7 @@ def test_performance_page_has_header_subtitle(perf_client):
     html = perf_client.get("/performance").data.decode("utf-8")
     assert "if held" in html.lower() or "if-held" in html.lower(), (
         "Page header subtitle must reference 'if held' / 'if-held'. "
-        "Design: subtitle = 'Live (if held) vs AlphaBot-exited (shadow) · post-mortem snapshots'."
+        "Design: subtitle = 'Live (if held) vs Planet Stopper-exited (shadow) · post-mortem snapshots'."
     )
 
 
@@ -265,7 +265,7 @@ def test_performance_headline_has_bot_return_stat(perf_client):
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="bot-return-stat"' in html, (
         "Headline strip must contain data-testid=\"bot-return-stat\" — "
-        "AlphaBot-exited total return cell. "
+        "Planet Stopper-exited total return cell. "
         "Design: Stat with k='Bot total return'."
     )
 
@@ -320,16 +320,16 @@ def test_performance_chart_has_legend(perf_client):
     assert 'data-testid="perf-chart-legend"' in html, (
         "Chart block must contain data-testid=\"perf-chart-legend\" — "
         "the legend strip above the chart. "
-        "Design: Legend strip in ChartBlock with 'AlphaBot-exited' + 'Live (if held)'."
+        "Design: Legend strip in ChartBlock with 'Planet Stopper-exited' + 'Live (if held)'."
     )
 
 
 def test_performance_chart_legend_has_alphabot_label(perf_client):
-    """Chart legend must contain 'AlphaBot' label text."""
+    """Chart legend must contain 'Planet Stopper' label text."""
     html = perf_client.get("/performance").data.decode("utf-8")
-    assert "AlphaBot" in html, (
-        "perf-chart-legend must include the 'AlphaBot-exited (shadow)' legend label. "
-        "Design: Legend color={p.accent} label='AlphaBot-exited (shadow)'."
+    assert "Planet Stopper" in html, (
+        "perf-chart-legend must include the 'Planet Stopper-exited (shadow)' legend label. "
+        "Design: Legend color={p.accent} label='Planet Stopper-exited (shadow)'."
     )
 
 
@@ -366,9 +366,9 @@ def test_performance_metrics_table_has_header_columns(perf_client):
     assert "if held" in html.lower() or "if-held" in html.lower(), (
         "Metrics table header must include 'Live · if held' column."
     )
-    # Bot · alphabot-exited column
-    assert "alphabot" in html.lower() or "AlphaBot" in html, (
-        "Metrics table header must include 'Bot · alphabot-exited' column."
+    # Bot · planet-stopper-exited column
+    assert "planet stopper" in html.lower() or "Planet Stopper" in html, (
+        "Metrics table header must include 'Bot · Planet Stopper-exited' column."
     )
     # Delta column
     assert "Delta" in html or "delta" in html.lower(), (

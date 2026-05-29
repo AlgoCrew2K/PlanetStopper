@@ -1,4 +1,4 @@
-"""Flask application for AlphaBot Control Center with Account-Level settings."""
+"""Flask application for Planet Stopper Control Center with Account-Level settings."""
 
 import atexit
 import concurrent.futures
@@ -151,7 +151,7 @@ def _acquire_daemon_singleton(pidfile: str) -> None:
     """Enforce the daemon singleton contract at startup.
 
     Reads the pidfile (if present) and checks whether the stored PID refers to
-    a live AlphaBot process.
+    a live Planet Stopper process.
 
       - Live process found  → print error and exit(1).  Flask and the scheduler
         are never started.
@@ -169,7 +169,7 @@ def _acquire_daemon_singleton(pidfile: str) -> None:
         stored_pid = _read_pidfile(pidfile)
         if stored_pid is not None and _is_alphabot_process_alive(stored_pid):
             print(
-                f"Another AlphaBot daemon is already running (PID {stored_pid}); "
+                f"Another Planet Stopper daemon is already running (PID {stored_pid}); "
                 f"refusing to start. "
                 f"If this is wrong, delete {pidfile} or stop PID {stored_pid} first.",
                 file=sys.stderr,
@@ -2501,7 +2501,7 @@ if __name__ == "__main__":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
     # Enforce daemon singleton BEFORE starting Flask or the scheduler thread.
-    # If another AlphaBot is alive this call prints an error and exits non-zero.
+    # If another Planet Stopper is alive this call prints an error and exits non-zero.
     # If a stale pidfile exists (ungraceful prior kill) it is overwritten cleanly.
     _acquire_daemon_singleton(_PIDFILE_PATH)
 

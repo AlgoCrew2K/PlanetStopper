@@ -24,7 +24,7 @@ Two module-level thread-safety constructs:
 ### Daemon Singleton
 
 #### `_acquire_daemon_singleton(pidfile: str) → None`
-Enforces one-process invariant at startup. Reads the pidfile (if present), checks whether the stored PID refers to a live AlphaBot process. Live → exit(1). Stale → take ownership. Registers atexit handler and SIGTERM handler to remove the pidfile on clean shutdown.
+Enforces one-process invariant at startup. Reads the pidfile (if present), checks whether the stored PID refers to a live Planet Stopper process. Live → exit(1). Stale → take ownership. Registers atexit handler and SIGTERM handler to remove the pidfile on clean shutdown.
 
 ---
 

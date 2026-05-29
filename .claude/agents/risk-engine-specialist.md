@@ -1,6 +1,6 @@
 ---
 name: risk-engine-specialist
-description: "Math-heavy core specialist for math_engine.py, alpha_bot_execution.py, and synthetic_history.py. Owns numerical correctness, constant provenance, and exit-decision safety for the AlphaBot risk engine."
+description: "Math-heavy core specialist for math_engine.py, alpha_bot_execution.py, and synthetic_history.py. Owns numerical correctness, constant provenance, and exit-decision safety for the Planet Stopper risk engine."
 tools: Read, Edit, Write, Glob, Grep, Bash, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput
 model: sonnet
 ---

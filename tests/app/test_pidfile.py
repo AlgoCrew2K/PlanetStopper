@@ -152,7 +152,7 @@ class TestAcquireDaemonSingleton:
 
     def test_refuses_and_exits_nonzero_when_alive_daemon_found(self, tmp_path, monkeypatch, capsys):
         """
-        If a live AlphaBot daemon holds the pidfile, _acquire_daemon_singleton
+        If a live Planet Stopper daemon holds the pidfile, _acquire_daemon_singleton
         must print an error to stderr and exit with non-zero status.
         Flask and the scheduler must never be started.
         """

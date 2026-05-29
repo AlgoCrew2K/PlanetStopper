@@ -1,6 +1,6 @@
 ---
 name: db-inspect
-description: Read-only SQLite query helper for AlphaBot state + optimization databases. Lists tables, samples rows, or runs a user-supplied SELECT.
+description: Read-only SQLite query helper for Planet Stopper state + optimization databases. Lists tables, samples rows, or runs a user-supplied SELECT.
 allowed-tools:
   - Bash
   - Read
@@ -9,7 +9,7 @@ allowed-tools:
 
 # /db-inspect
 
-Inspect AlphaBot's SQLite databases without booting the dashboard.
+Inspect Planet Stopper's SQLite databases without booting the dashboard.
 
 ## Dynamic Context
 

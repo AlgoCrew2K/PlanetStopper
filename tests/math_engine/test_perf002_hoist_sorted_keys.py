@@ -870,7 +870,7 @@ def test_compute_portfolio_cvar_insufficient_branch_boundary_after_hoist() -> No
 # Round 2 RED — Bounded cache (long-running daemon memory)
 # ---------------------------------------------------------------------------
 #
-# Context: AlphaBot is a long-running daemon (app.py: "minute-by-minute
+# Context: Planet Stopper is a long-running daemon (app.py: "minute-by-minute
 # scheduler" — project CLAUDE.md). Each cycle constructs a fresh
 # historical_data dict (alpha_bot_execution.py:271, 994) sized roughly
 # 125 days x ~10 tickers x ~4 fields per ticker. If _sorted_dates_cache
@@ -919,7 +919,7 @@ def _make_fresh_history(n_days: int = 50) -> dict:
 
 def test_sorted_dates_cache_is_bounded_across_many_distinct_dicts() -> None:
     """The cache must NOT grow unboundedly as the daemon processes
-    successive historical_data dicts. AlphaBot constructs a fresh dict
+    successive historical_data dicts. Planet Stopper constructs a fresh dict
     each cycle; an unbounded cache leaks memory over the process's
     multi-day lifetime.
 
@@ -958,7 +958,7 @@ def test_sorted_dates_cache_is_bounded_across_many_distinct_dicts() -> None:
     assert cache_size <= 64, (
         f"_sorted_dates_cache holds {cache_size} entries after {n_calls} "
         f"distinct-dict calls. Hard ceiling is 64. The current strong-ref "
-        f"dict cache leaks memory in AlphaBot's long-running daemon "
+        f"dict cache leaks memory in Planet Stopper's long-running daemon "
         f"(~1 MB per historical_data dict x 390 min/day of trading). "
         f"Fix: bounded LRU (collections.OrderedDict with maxsize check on "
         f"insert) or weakref-via-wrapper. See test docstring for options."

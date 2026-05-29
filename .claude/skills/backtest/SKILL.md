@@ -1,6 +1,6 @@
 ---
 name: backtest
-description: Replay the AlphaBot risk engine over a historical date range using saved SQLite state, producing a P&L summary and exit-decision log.
+description: Replay the Planet Stopper risk engine over a historical date range using saved SQLite state, producing a P&L summary and exit-decision log.
 allowed-tools:
   - Read
   - Glob
@@ -14,7 +14,7 @@ agent: general-purpose
 
 ## Purpose
 
-Replay AlphaBot's risk-engine decisions over a historical date range from saved SQLite state. Never touches live APIs or production data.
+Replay Planet Stopper's risk-engine decisions over a historical date range from saved SQLite state. Never touches live APIs or production data.
 
 ## Dynamic Context
 

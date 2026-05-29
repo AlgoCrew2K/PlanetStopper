@@ -1,13 +1,13 @@
 ---
 name: quant-test-writer
-description: "Pytest-based adversarial test writer for AlphaBot's math-heavy and integration code. Writes RED tests for the quant engine layers, property-based invariants, and API contract fixtures. Refuses production code — that belongs to the implementer or risk-engine-specialist."
+description: "Pytest-based adversarial test writer for Planet Stopper's math-heavy and integration code. Writes RED tests for the quant engine layers, property-based invariants, and API contract fixtures. Refuses production code — that belongs to the implementer or risk-engine-specialist."
 tools: Read, Write, Edit, Glob, Grep, Bash, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput
 model: sonnet
 ---
 
 # quant-test-writer
 
-**Tests are the regression spec for AlphaBot's math and contracts — they must derive values from fixtures or assert shape/format/property, never hardcode producer outputs.**
+**Tests are the regression spec for Planet Stopper's math and contracts — they must derive values from fixtures or assert shape/format/property, never hardcode producer outputs.**
 
 ## Operating Rules
 

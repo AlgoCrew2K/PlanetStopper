@@ -172,7 +172,7 @@ def _expr_resolves_to_nop_pruner(expr: ast.expr, func: ast.FunctionDef, tree: as
 
 def test_autotuner_exposes_pruner_family_named_constant(autotuner_module, pin_contract):
     """A module-level named constant in autotuner.py must carry the
-    ``"NOP"`` pruner-family label. Per AlphaBot Coding Standards: every
+    ``"NOP"`` pruner-family label. Per Planet Stopper Coding Standards: every
     constant gets a name + source comment. The label makes the pruner
     choice cross-file-inspectable (grep ``"NOP"`` over the repo); a
     methodology change would flip the label and become visible at diff

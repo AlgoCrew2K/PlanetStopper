@@ -137,7 +137,7 @@ def _kw(call: ast.Call, name: str) -> ast.expr | None:
 def test_autotuner_exposes_named_env_var_constants(autotuner_module, pin_contract):
     """``OPTUNA_SAMPLER_SEED`` and ``OPTUNA_N_JOBS`` env-var names must live
     as module-level named constants in autotuner.py — not as repeated string
-    literals at the call site. Per AlphaBot Coding Standards "No magic
+    literals at the call site. Per Planet Stopper Coding Standards "No magic
     numbers in math_engine.py — every constant named + source comment";
     same discipline applies to env-var string keys driving the math engine's
     upstream sampler.

@@ -5,7 +5,7 @@ Finding (math-reaudit):
     non-issue at current scale) — at ``autotuner.py:419``.
 
 This is the BHY Yekutieli c(N) coefficient computation inside
-``benjamini_hochberg_adjust``. At AlphaBot's production scale (N_effective
+``benjamini_hochberg_adjust``. At Planet Stopper's production scale (N_effective
 ≈ n_trials = 500) the sum runs in tens of microseconds; the reaudit
 flagged it as a code-smell rather than a perf bug.
 

@@ -33,7 +33,7 @@ executor branch. Cycle B1-FU2+FU3 (this module) pins the two deferred control
 branches identified in the B1 worker's coverage notes:
 
   * The True Shadow Return override is the engine's "tracking" mode for
-    already-exited symphonies — required for AlphaBot-vs-live comparison
+    already-exited symphonies — required for Planet Stopper-vs-live comparison
     stats. A regression where the override falls through to live values would
     silently corrupt the historical comparison and the Discord post-mortem.
 

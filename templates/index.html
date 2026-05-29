@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AlphaBot Dashboard</title>
+  <title>Planet Stopper Dashboard</title>
   <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
   <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
@@ -765,7 +765,7 @@
                 <div id="guard-alpha-headline" data-testid="guard-alpha-headline" class="guard-alpha-headline {% if alpha >= 0 %}pos{% else %}neg{% endif %}">
                   {% if alpha >= 0 %}+{% endif %}{{ "%.2f"|format(alpha) }}%
                 </div>
-                <span class="guard-alpha-descriptor">AlphaBot over<br>if-held baseline</span>
+                <span class="guard-alpha-descriptor">Planet Stopper over<br>if-held baseline</span>
               </div>
             </div>
             <div data-testid="window-selector" class="window-selector">
@@ -791,7 +791,7 @@
           <div data-testid="chart-legend" class="chart-legend">
             <div class="legend-item">
               <div class="legend-swatch"></div>
-              <span>AlphaBot ({{ 'live' if meta is defined and meta.mode == 'LIVE' else 'dry-run' }})</span>
+              <span>Planet Stopper ({{ 'live' if meta is defined and meta.mode == 'LIVE' else 'dry-run' }})</span>
             </div>
             <div class="legend-item">
               <div class="legend-swatch dashed"></div>

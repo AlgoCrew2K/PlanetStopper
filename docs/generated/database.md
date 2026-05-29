@@ -1,6 +1,6 @@
 # database
 
-> SQLite state management for AlphaBot: schema, migrations, and all read/write accessors for the state DB.
+> SQLite state management for Planet Stopper: schema, migrations, and all read/write accessors for the state DB.
 
 **Source:** `database.py`
 **Last updated:** 2026-05-27
@@ -281,4 +281,4 @@ Upserts the `port_state` row for the account. Read-modify-write on existing row;
 ## Internal Dependencies
 
 - `hashlib`, `json`, `sqlite3`, `uuid` — stdlib
-- No imports from other AlphaBot modules (dependency-free base layer)
+- No imports from other Planet Stopper modules (dependency-free base layer)

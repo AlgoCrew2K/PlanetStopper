@@ -1382,7 +1382,7 @@ def test_title_content_not_rendered_in_body_on_all_screens(client):
     <head> and does not leak into the <body> area as a rendered text node.
 
     This is a structural regression guard — the exact title string (e.g.
-    "Performance — AlphaBot Dashboard v3") must not appear anywhere after </head>.
+    "Performance — Planet Stopper Dashboard v3") must not appear anywhere after </head>.
     """
     routes = [
         ("/", "Dashboard"),
@@ -1412,8 +1412,8 @@ def test_title_content_not_rendered_in_body_on_all_screens(client):
         body_area = html[head_end_idx:]
 
         # The full <title> string must not appear as a text node in the body
-        # (nav wordmark "AlphaBot" is fine; the full brand string is not)
-        brand_suffix = "AlphaBot Dashboard v3"
+        # (nav wordmark "Planet Stopper" is fine; the full brand string is not)
+        brand_suffix = "Planet Stopper Dashboard v3"
         assert brand_suffix not in body_area, (
             f"Screen '{name}' ({route}): <title> brand suffix '{brand_suffix}' "
             f"found in the body area after </head>. "
