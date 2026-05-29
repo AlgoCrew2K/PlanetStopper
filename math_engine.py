@@ -754,7 +754,11 @@ def compute_vwap_breakdown_update(
     # (vwap_cross_hwm_pct) remaining an Optuna-searched parameter within the
     # BHY haircut surface. Research note:
     # docs/research/m3-provenance/literature-pass.md §2.
-    # freeze_discipline = THEORY.
+    # Honest-flag (risk-m3): the regime-switch discretization above is an
+    # interpretive extension of Peskir 1998's continuous-boundary result,
+    # NOT a formally proven theorem in Peskir 1998 itself. The gate remains
+    # the best available THEORY anchor under NN1; empirical performance +
+    # freeze_discipline = THEORY are the binding operator guarantees.
     if safe_hwm >= vwap_cross_hwm_pct and current_return < safe_hwm:
         new_vwap_ticks = int(current_vwap_ticks) + 1
         is_vwap_broken = bool(new_vwap_ticks >= VWAP_BREAK_CONFIRM_TICKS)
