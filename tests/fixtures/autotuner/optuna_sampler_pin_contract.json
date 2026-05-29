@@ -1,0 +1,50 @@
+{
+  "_provenance": "schema-derived from math re-audit findings OPTUNA-1 (HIGH) + OPTUNA-6 (HIGH) — pin the run_autotuner Optuna sampler + parallelism so the BHY c(N) Yekutieli factor's TPE-dependency calibration is honoured and the study is reproducible.",
+  "_audit_source": "docs/research/math-audit-3/ (OPTUNA-1 + OPTUNA-6 lane)",
+  "_site": {
+    "file": "autotuner.py",
+    "anchor": "run_autotuner main study site (create_study + study.optimize around lines 1500-1507)",
+    "_anchor_provenance": "captured from cycle/fix-optuna1-6 HEAD; tests locate the site by AST, not line numbers, so refactors do not silently invalidate the pin"
+  },
+  "constants": {
+    "sampler_seed_env_var": "OPTUNA_SAMPLER_SEED",
+    "n_jobs_env_var": "OPTUNA_N_JOBS",
+    "_constant_naming_requirement": "Both env-var NAMES must be module-level named constants in autotuner.py (no string-literal repetition at the call site). Per Planet Stopper Coding Standards: every new constant gets a name + source comment."
+  },
+  "sampler_contract": {
+    "required_class": "optuna.samplers.TPESampler",
+    "_rationale": "BHY haircut Yekutieli c(N) factor is calibrated to TPE dependency assumptions; switching to RandomSampler / NSGAIISampler / CmaEsSampler would silently invalidate the haircut threshold. The pin makes the dependency explicit.",
+    "seed_kwarg": "seed",
+    "seed_source": "env",
+    "seed_env_var": "OPTUNA_SAMPLER_SEED",
+    "seed_parse": "int(os.environ[...])",
+    "seed_default_when_unset": null,
+    "_seed_default_rationale": "Unset env -> seed=None preserves prior wall-clock-seeded behaviour (no surprise to operators who do not opt in). Opt-in determinism (env set) is the new capability."
+  },
+  "parallelism_contract": {
+    "n_jobs_source": "env",
+    "n_jobs_env_var": "OPTUNA_N_JOBS",
+    "n_jobs_parse": "int(os.environ[...])",
+    "n_jobs_default_when_unset_or_invalid": 1,
+    "_default_rationale": "Default flipped from 'os.cpu_count() or 1' to literal 1 after opt-optuna review (Sprint-3 cycle/fix-optuna1-6). Rationale: the run_autotuner study uses SQLite RDBStorage (autotuner.py:1544 — sqlite:///optuna_studies.db); parallel Optuna trials writing to one SQLite DB contend on the writer lock and produce 'database is locked' OperationalError failures. n_jobs=1 is the only safe default for SQLite-backed studies. Operators with a Postgres/MySQL storage backend can opt-in to higher parallelism via OPTUNA_N_JOBS=<N>.",
+    "prohibited_literal": -1,
+    "_prohibition_rationale": "OPTUNA-6 audit finding: hardcoded n_jobs=-1 violates project rule (read n_jobs from .env, never hardcode CPU counts)."
+  },
+  "calibration_site_invariant": {
+    "function": "run_calibration_sweep",
+    "_invariant": "TPESampler(seed=random_state) pin must be preserved. n_jobs MUST now also be env-driven (was previously literal 1; flipped after opt-optuna review for uniform application of OPTUNA-6 'never hardcode CPU counts'). The literal n_jobs=1 is no longer accepted at this site — env-driven only, default 1 via the shared helper.",
+    "expected_sampler_class": "optuna.samplers.TPESampler",
+    "expected_n_jobs_source": "env",
+    "_expected_n_jobs_rationale": "Uniform OPTUNA-6 application: every n_jobs in autotuner.py reads from OPTUNA_N_JOBS; the default-of-1 policy dovetails with the SQLite-RDBStorage constraint above (calibration writes to the same optuna_studies.db) so behaviour-preserving for the no-env case."
+  },
+  "determinism_property": {
+    "_strategy": "With OPTUNA_SAMPLER_SEED set to a fixed int, two freshly constructed optuna.samplers.TPESampler(seed=<that int>) instances driving the same deterministic objective produce identical trial sequences. This is a sampler-side property test, not a run_autotuner end-to-end run — the e2e run touches DB, advisor producers, history, and is out of scope here.",
+    "objective_shape": "1-D float param x in [0, 1]; objective = -(x - 0.37)**2 (deterministic, unique argmax)",
+    "n_trials": 16,
+    "_n_trials_rationale": "Small enough to stay fast; large enough that two independent default-seeded TPESamplers diverge on at least one suggestion (negative control)."
+  },
+  "negative_control": {
+    "_purpose": "Demonstrate the test can fail on a wrong implementation: two TPESamplers with seed=None must NOT produce identical sequences on the deterministic objective (modulo Optuna's initial random startup trials, which begin to diverge from trial index >= 1).",
+    "_method": "Compare full 16-trial param sequences from two seed=None samplers; expect at least one differing value across the run."
+  }
+}

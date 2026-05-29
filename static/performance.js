@@ -3,7 +3,7 @@
  *
  * Read-only operator surface:
  *   - Fetches /api/performance and /api/performance/symphonies.
- *   - Renders cumulative-return curves (live vs AlphaBot-exited) via Chart.js.
+ *   - Renders cumulative-return curves (live vs Planet Stopper-exited) via Chart.js.
  *   - Renders a 7-metric quantstats table with delta column.
  *
  * Auto-refresh floor is 60s (post-mortem snapshots land once a day; polling
@@ -188,7 +188,7 @@
                     borderDash: [4, 4],
                 },
                 {
-                    label: 'AlphaBot-Exited (shadow)',
+                    label: 'Planet Stopper-Exited (shadow)',
                     data: botSeries,
                     borderColor: botColor,
                     backgroundColor: divFill,

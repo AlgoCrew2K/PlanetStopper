@@ -368,7 +368,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
             main_desc = main_desc[:4093] + "..."
 
         embeds = [{
-            "title": f"📊 AlphaBot EOD Analysis ({current_date_str})",
+            "title": f"📊 Planet Stopper EOD Analysis ({current_date_str})",
             "color": 3447003,
             "description": main_desc,
             "footer": {"text": "End of Day Post-Mortem"}

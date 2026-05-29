@@ -1,0 +1,35 @@
+{
+  "name": "mc_regime_match_quality_unprecedented_regime",
+  "description": "Unprecedented-regime proof fixture (vision-audit Critical Rec #2 / math-reaudit Critique #1). The historical candidate pool is a TIGHT cluster: 60 days of low SPY returns (centred at +0.001 decimal, dispersion +/-0.0005) so both kNN features (SPY return, rolling 20d vol) have small variance around a small mean. Today's query point is FAR from this pool: spy_today_return is set so that today's z-scored (return, vol) sits several standard deviations from the candidate-pool centroid in BOTH features. Under the z-score standardization already applied inside run_monte_carlo (AC-1), the squared Euclidean distance from today to each candidate-pool day is approximately the Mahalanobis-style score; the mean squared distance over the K nearest neighbours MUST exceed MC_REGIME_MATCH_CHI2_THRESHOLD (chi2(2)_{0.99} ~= 9.21). The fixture is observable two ways: (a) compute_regime_match_quality returns is_unprecedented=True; (b) the caller's downstream gate (compute_exit_confirmation called with the suppressed prob_beating=None) fires the protective stop instead of being vetoed by an MC opinion drawn from least-bad-fit neighbours.",
+  "function": "compute_regime_match_quality",
+  "provenance": "Schema-derived synthetic history (run_monte_carlo's documented {date:{ticker:{daily_ret}}} contract). The unprecedented-regime distance is constructed structurally: a tight historical cluster (low mean, low spread) PLUS a today query point pushed several candidate-pool standard deviations away in both features. The threshold MC_REGIME_MATCH_CHI2_THRESHOLD ~= 9.21 is the chi-squared 0.99-quantile with df=2 (Mahalanobis multivariate-outlier statistic; Aggarwal 2017 Outlier Analysis sec 2.3); fixture is derived from that reference, not pinned to a producer-computed score.",
+  "inputs": {
+    "historical_data_spec": {
+      "kind": "tight_cluster",
+      "num_days": 60,
+      "spy_center_decimal": 0.001,
+      "spy_dispersion_decimal": 0.0005,
+      "holding_daily_ret_decimal": 0.001
+    },
+    "holdings": [
+      {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}
+    ],
+    "spy_today_return": 5.0,
+    "neighbor_k": 8,
+    "numpy_seed": 42,
+    "simulation_paths": 2000
+  },
+  "expected_assessment": {
+    "is_unprecedented": true,
+    "mean_sq_mahalanobis_lower_bound_inclusive": 9.21034037197618,
+    "lower_bound_reference": "chi2(2)_{0.99} ~= 9.21034 (Aggarwal 2017 Outlier Analysis sec 2.3; Mahalanobis 1936)"
+  },
+  "exit_confirmation_scenario": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -2.5,
+    "stop_trigger_level": -1.0,
+    "starting_below_stop_count": 0
+  },
+  "derivation": "Construction: 60-day candidate pool with SPY daily returns alternating +/-0.0005 around +0.001 (z-score mean ~0, candidate std ~0.0005). Today's spy_today_return=5.0 pct (=0.05 decimal) is ~98 candidate-pool stds away on the return feature alone; the today_vol feature is also several stds above the cluster's tiny rolling vol. The post-z-score Euclidean^2 between today and ANY candidate day is much greater than 9.21. The MEAN squared distance over the K=8 nearest candidates is therefore far above the chi-squared threshold. Fixture asserts the inequality, not a specific producer-computed score."
+}

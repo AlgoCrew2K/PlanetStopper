@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Cycle-2-fix v4 Code Review
 **Reviewed SHA:** a0ce875  
 **Merge base:** f5fc010  

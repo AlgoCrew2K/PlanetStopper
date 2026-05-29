@@ -288,11 +288,16 @@ def _patches_for_run(
 def _run_capture(**kwargs):
     """Drive run_autotuner with the given patch parameters; capture stdout."""
     import autotuner
+    import inspect
+    from tests.autotuner.conftest import make_phase1_theory_bundle
 
     bot_state = _build_bot_state()
     buf = io.StringIO()
+    spec_bundle_id = make_phase1_theory_bundle()
+    sig = inspect.signature(autotuner.run_autotuner)
+    extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
     with _patches_for_run(**kwargs) as ctx, contextlib.redirect_stdout(buf):
-        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **extra)
     return buf.getvalue(), ctx
 
 

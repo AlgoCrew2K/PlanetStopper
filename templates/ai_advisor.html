@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Config Advisor — AlphaBot Dashboard v3</title>
+    <title>AI Config Advisor — Planet Stopper Dashboard v3</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
     <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
@@ -355,6 +355,139 @@
 
         </div>
     </div>
+
+    <!-- Advisor Observations — read-only display of advisor_observations rows. -->
+    <!-- data-testid used by tests: advisor-observations-section                 -->
+    <style>
+        .obs-section {
+            margin-top: 1.5rem;
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 1.25rem 1.5rem;
+        }
+        .obs-section-header {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+            margin-bottom: 1rem;
+        }
+        .obs-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8125rem;
+        }
+        .obs-table th {
+            text-align: left;
+            font-size: 0.625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--studio-ink-muted);
+            padding: 0.375rem 0.625rem;
+            border-bottom: 1px solid var(--studio-border);
+        }
+        .obs-table td {
+            padding: 0.5rem 0.625rem;
+            border-bottom: 1px solid var(--studio-border);
+            vertical-align: top;
+        }
+        .obs-table tr:last-child td { border-bottom: none; }
+
+        /* Verdict cell classes — color via design-system tokens, never raw hex. */
+        .verdict-clear { color: var(--studio-pos); font-weight: 700; }
+        .verdict-watch { color: var(--studio-warn); font-weight: 700; }
+        .verdict-breach { color: var(--studio-neg); font-weight: 700; }
+        .verdict-unknown { color: var(--studio-ink-dim); font-weight: 700; }
+
+        /* Advisory-only badge */
+        .advisory-only-badge {
+            display: inline-block;
+            padding: 0.1rem 0.4rem;
+            border-radius: 999px;
+            font-size: 0.5rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid var(--studio-border);
+            color: var(--studio-ink-dim);
+            white-space: nowrap;
+        }
+
+        .obs-empty {
+            color: var(--studio-ink-dim);
+            font-size: 0.875rem;
+            text-align: center;
+            padding: 1.5rem 0;
+        }
+
+        .obs-raw-preview {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+    </style>
+
+    {# Role label mapping — human-friendly names for operator display #}
+    {%- set _ROLE_LABELS = {
+        "OVERFITTING_CONSCIENCE": "Overfitting Conscience",
+        "SPEC_CRITIC": "Spec Critic",
+        "DIVERGENCE_EXPLAINER": "Divergence Explainer",
+        "NARRATOR": "Narrator",
+    } -%}
+
+    {# Verdict CSS class mapping #}
+    {%- set _VERDICT_CLASS = {
+        "CLEAR": "verdict-clear",
+        "WATCH": "verdict-watch",
+        "BREACH": "verdict-breach",
+    } -%}
+
+    <section data-testid="advisor-observations-section" class="obs-section">
+        <div class="obs-section-header">Advisor Observations</div>
+        {% if observations %}
+        <table class="obs-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Advisor</th>
+                    <th>Subject</th>
+                    <th>Verdict</th>
+                    <th>Badge</th>
+                    <th>Summary</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for obs in observations %}
+                {% set verdict = obs.verdict or "" %}
+                {% set role_label = _ROLE_LABELS.get(obs.advisor_role, obs.advisor_role) %}
+                {% set verdict_class = _VERDICT_CLASS.get(verdict, "verdict-unknown") %}
+                <tr data-obs-id="{{ obs.id }}">
+                    <td>{{ obs.created_at | e }}</td>
+                    <td>{{ role_label | e }}</td>
+                    <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | e }}</span></td>
+                    <td class="{{ verdict_class }}">{{ verdict | e }}</td>
+                    <td>
+                        <span class="advisory-only-badge" data-testid="advisory-only-badge"
+                              title="Advisory only — never moves money">
+                            advisory only
+                        </span>
+                    </td>
+                    <td class="obs-raw-preview">{{ obs.raw_response | tojson | e }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="obs-empty">No observations from advisors at this time.</div>
+        {% endif %}
+    </section>
 
     <script src="{{ url_for('static', filename='ai_advisor.js') }}"></script>
 </body>

@@ -392,6 +392,16 @@ def build_replay_day(
         # None as "MC opinion absent" and the autotuner replay's exit core
         # gates every MC-driven branch on mc_available. No fabricated value.
 
+        # Regime-match-quality guard (vision-audit Critical Rec #2): if today's
+        # query point is unprecedented vs the candidate pool, the MC bootstrap
+        # is unrepresentative — suppress the MC veto by carrying None, identical
+        # to the insufficient-history path. Production wires the same guard in
+        # alpha_bot_execution.py so both paths make bit-equivalent suppression
+        # decisions given the same historical_data and spy_today inputs.
+        _regime = math_engine.compute_regime_match_quality(hist_data_up_to_yesterday, spy_today)
+        if _regime.is_unprecedented:
+            mc_prob = None
+
         ticks.append({
             "time": ts[11:16],
             "return": agg_ret * 100.0,

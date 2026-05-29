@@ -83,7 +83,7 @@
                 labels: hist_dates,
                 datasets: [
                     {
-                        label: 'AlphaBot',
+                        label: 'Planet Stopper',
                         data: hist_bot,
                         borderColor: cs('--studio-accent'),
                         backgroundColor: 'transparent',

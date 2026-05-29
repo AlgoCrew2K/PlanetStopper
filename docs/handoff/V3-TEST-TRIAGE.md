@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # V3 Test Suite Triage — 2026-05-20
 
 **Branch:** feat/studio-design-handoff

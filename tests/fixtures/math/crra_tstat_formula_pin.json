@@ -1,0 +1,28 @@
+{
+  "name": "crra_tstat_formula_pin",
+  "purpose": "Pins compute_crra_eu_tstat to the one-sample t-stat formula t = mean(U)/(sd(U)/sqrt(T)) and rejects the H-6 Sortino-form category error t = mean(U)*sqrt(T). Fixture values are derived from a deterministic arithmetic progression U = [a + b*i for i in range(T)] with a=0.01, b=0.005, T=8, yielding sd(U) far from 1.0 so the two formulae diverge by construction.",
+  "provenance": "Non-circular: values derived by closed-form arithmetic; no autotuner/SUT output was used. Recipe: U[i] = 0.01 + 0.005*i for i in 0..7. mean = a + b*(T-1)/2 = 0.01 + 0.005*3.5 = 0.0275. sample_var (Bessel ddof=1) = b^2 * T*(T+1)/12 ... = statistics.stdev(U)^2. sd_U = sqrt(sample_var). t_correct = mean_U / (sd_U / sqrt(T)). t_sortino_form = mean_U * sqrt(T) -- the H-6 wrong form for a mean-valued objective.",
+  "recipe": {
+    "a": 0.01,
+    "b": 0.005,
+    "T": 8,
+    "U_formula": "U[i] = a + b*i for i in range(T)",
+    "mean_formula": "a + b*(T-1)/2",
+    "sd_formula": "statistics.stdev(U)  -- sample stdev, ddof=1 (Bessel-corrected)",
+    "t_correct_formula": "mean_U / (sd_U / sqrt(T))",
+    "t_sortino_form_formula": "mean_U * sqrt(T)  -- WRONG for a mean-valued objective; the H-6 category error"
+  },
+  "U_series": [0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045],
+  "T": 8,
+  "expected": {
+    "mean_U": 0.0275,
+    "sd_U": 0.012247448713915893,
+    "t_correct": 6.350852961085882,
+    "t_sortino_form": 0.07778174593052023,
+    "discriminating_note": "sd(U)=0.01225, which is not 1.0. The ratio t_correct/t_sortino_form = 81.6, meaning a Sortino-form SUT cannot accidentally pass the negative-identity assertion (the two values differ by >8000%). A SUT using mean(U)*sqrt(T) will match t_sortino_form and fail test_crra_eu_tstat_rejects_sortino_form_category_error."
+  },
+  "tolerance_notes": {
+    "positive_identity": "rel=1e-9 -- both sides are pure double-precision arithmetic on a fixed input; only last-bit rounding is allowed",
+    "negative_identity": "rel=1e-3 (loose) -- deliberately catches any near-Sortino-form implementation, even with a constant fudge factor"
+  }
+}

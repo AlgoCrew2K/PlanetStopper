@@ -1,0 +1,63 @@
+{
+  "name": "perf002_hoist_sorted_keys_curated_inputs",
+  "description": "Curated input set for PERF-002 sorted(historical_data.keys()) hoisting. Drives semantic-identity tests (pre-hoist == post-hoist) across the five math_engine functions that currently re-sort the same dict: run_monte_carlo, compute_portfolio_cvar, calculate_20d_vol, calculate_14d_atr_pct, compute_regime_match_quality. NO producer-computed values are pinned; tests compare the production callable against an in-test reference computed from the same inputs.",
+  "function_under_test": "_sorted_dates helper + the 5 math_engine consumers",
+  "provenance": "Schema-derived. Input shape (history kind, day count, amplitudes) is authored to exercise eligible-pool boundary, monotone series, and constant series. Outputs are NOT included. Day counts are derived from MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) at test time so the boundary constants are never hardcoded.",
+  "pa18_note": "No mc_prob, no cvar, no vol, no atr values are pinned. Tests assert hoisted_output == original_output where the reference is the existing production behaviour invoked through monkeypatching. The reference IS the spec.",
+  "scenarios": [
+    {
+      "id": "case_01_long_smooth_history",
+      "kind": "alternating",
+      "raw_day_offset_from_minimum": 50,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.008,
+      "bbb_amplitude": 0.004,
+      "description": "Long history (minimum + 50 days). Alternating signs exercise the kNN selection over a stationary regime."
+    },
+    {
+      "id": "case_02_at_eligible_boundary",
+      "kind": "alternating",
+      "raw_day_offset_from_minimum": 0,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.008,
+      "bbb_amplitude": 0.004,
+      "description": "Exactly minimum_raw_days. Pins that the eligible-pool sufficiency guard fires identically with or without the hoist."
+    },
+    {
+      "id": "case_03_one_above_boundary",
+      "kind": "alternating",
+      "raw_day_offset_from_minimum": 1,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.008,
+      "bbb_amplitude": 0.004,
+      "description": "minimum_raw_days + 1. Pins the off-by-one slice that a careless caching rewrite would flip."
+    },
+    {
+      "id": "case_04_monotone_returns",
+      "kind": "monotone",
+      "raw_day_offset_from_minimum": 30,
+      "spy_start": -0.02,
+      "spy_step": 0.0008,
+      "aaa_start": -0.015,
+      "aaa_step": 0.0006,
+      "description": "Monotonically-increasing returns. Tests catch a hoist that accidentally returns a stale or reordered date list."
+    },
+    {
+      "id": "case_05_constant_returns",
+      "kind": "constant_return",
+      "raw_day_offset_from_minimum": 20,
+      "spy_daily_ret": 0.001,
+      "holding_daily_ret": 0.001,
+      "description": "Constant returns. Pins degenerate-pool semantics survive the hoist."
+    }
+  ],
+  "holdings": [
+    {"ticker": "AAA", "allocation": 0.6, "last_percent_change": 0.0},
+    {"ticker": "BBB", "allocation": 0.4, "last_percent_change": 0.0}
+  ],
+  "spy_today_return": 0.0,
+  "simulation_paths": 2000,
+  "neighbor_k": 10,
+  "seed": 12345,
+  "derivation": "raw_days = MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) + raw_day_offset_from_minimum, read from math_engine at test time. last_percent_change=0.0 and spy_today_return=0.0 mirror the existing perf001 fixture so kNN matches are mid-distribution."
+}

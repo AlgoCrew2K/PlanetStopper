@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Behavioral Verification — Final Sweep
 **Branch tip:** `80afce0621bb9d01de781cecde145eef322280ff`
 **Working tree:** feat/studio-design-handoff (modified engine/test files — no template/static changes in WIP)

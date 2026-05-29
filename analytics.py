@@ -200,7 +200,7 @@ def compute_aggregate_returns(
     Returns (dates_sorted_ascending, live_returns, shadow_returns).
     Note: the parameter ordering of the returned tuple follows the DV1
     contract — the second list is live returns (from live_ret), the third
-    is the AlphaBot-exited / shadow returns (from f_ret).
+    is the Planet Stopper-exited / shadow returns (from f_ret).
     """
     out_dates: list[str] = []
     out_live: list[float] = []
@@ -410,7 +410,7 @@ def compute_quantstats_metrics(returns_series: list[float], freq: str = "D") -> 
 # ---------------------------------------------------------------------------
 # Data-source contract (binding):
 #   If-held side sourced from Composer symphony-stats-meta fields.
-#   Dry-run side sourced from bot_state (AlphaBot shadow tracking).
+#   Dry-run side sourced from bot_state (Planet Stopper shadow tracking).
 #   Network-free: callers pass already-fetched data; no fetch_symphony_stats calls here.
 
 
@@ -499,7 +499,7 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
     Returns None when fewer than 2 distinct trading days exist.
 
     AC-3: the query is scoped to the CURRENT position epoch. A Composer
-    symphony_id is long-lived and AlphaBot opens/exits/re-enters positions under
+    symphony_id is long-lived and Planet Stopper opens/exits/re-enters positions under
     it; an epoch-blind query would chain-link a prior position's returns into the
     new position. The current epoch is self-selected as the position_epoch of the
     latest row by ts_utc, and rows are filtered to it with `IS` so legacy

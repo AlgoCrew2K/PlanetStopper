@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Composer ground-truth reconciliation — HEAD 913c0194512e4f62c13a44f4f7920fc3e8f6f35b
 
 **Branch:** feat/studio-design-handoff

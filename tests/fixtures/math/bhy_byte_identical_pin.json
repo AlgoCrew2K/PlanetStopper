@@ -1,0 +1,37 @@
+{
+  "name": "bhy_byte_identical_pin",
+  "purpose": "Pins benjamini_hochberg_adjust (BHY step-up) to exact output values for N=10 p-values. Any refactor of the step-up direction, running-min order, or Yekutieli c(N) computation produces a different adjusted vector and fails this test. Tolerance 1e-15 catches numerical rearrangements.",
+  "provenance": "Hand-derived in Python using the BHY step-up algorithm independently of autotuner.py: sort p ascending; for rank k=N..1: candidate = (N*c(N)/k)*p_k; running_min = min(running_min, candidate); p_adj_k = clamp(running_min, 0, 1). References: Harvey & Liu 2015 DOI 10.3905/jpm.2015.42.1.013; Benjamini, Hochberg & Yekutieli 2001, Annals of Statistics 29(4).",
+  "N": 10,
+  "p_values": [0.001, 0.003, 0.008, 0.02, 0.05, 0.09, 0.15, 0.25, 0.4, 0.7],
+  "expected": {
+    "c_of_n": 2.9289682539682538,
+    "p_adj": [
+      0.02928968253968254,
+      0.043934523809523805,
+      0.07810582010582011,
+      0.1464484126984127,
+      0.2928968253968254,
+      0.43934523809523807,
+      0.6276360544217686,
+      0.9153025793650793,
+      1.0,
+      1.0
+    ]
+  },
+  "yekutieli_c_n_pins": {
+    "purpose": "Pin c(N) = sum(1/j, j=1..N) for N in [1,5,10,100,500]. Catches a log-approximation substitution (c(N) approx ln(N)+gamma_em) which under-corrects at small N.",
+    "values": {
+      "c_1": 1.0,
+      "c_5": 2.283333333333333,
+      "c_10": 2.9289682539682538,
+      "c_100": 5.187377517639621,
+      "c_500": 6.792823429990524
+    },
+    "log_approx_comparison": {
+      "note": "c(500) = 6.7928 vs ln(500)+0.5772 = 6.7918. The ~1% gap is small but present. At N=5: c(5) = 2.2833 vs ln(5)+0.5772 = 2.1867 -- a 4.4% under-correction that the harmonic-number test catches.",
+      "c_5_vs_log_approx": 0.09666666666666699
+    }
+  },
+  "tolerance": 1e-15
+}

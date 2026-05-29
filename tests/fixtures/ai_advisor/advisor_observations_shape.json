@@ -1,0 +1,42 @@
+{
+  "_provenance": "schema-derived from migrations/017_advisor_observations.sql and database._ADVISOR_OBSERVATION_COLUMNS; values are test sentinels, not producer-computed quant values",
+  "_columns": ["id", "created_at", "advisor_role", "subject_type", "subject_id", "verdict", "raw_response", "is_advisory_only", "spec_bundle_id"],
+  "example_rows": [
+    {
+      "id": 1,
+      "created_at": "2026-05-20T10:00:00",
+      "advisor_role": "OVERFITTING_CONSCIENCE",
+      "subject_type": "autotune_run",
+      "subject_id": "run-abc-001",
+      "verdict": "CLEAR",
+      "raw_response": {"indicators": {"I1": false, "I2": false, "I3": false}},
+      "is_advisory_only": 1,
+      "spec_bundle_id": "bundle-xyz"
+    },
+    {
+      "id": 2,
+      "created_at": "2026-05-20T10:01:00",
+      "advisor_role": "SPEC_CRITIC",
+      "subject_type": "spec_bundle",
+      "subject_id": "bundle-xyz",
+      "verdict": "WATCH",
+      "raw_response": {"flags": ["param_count_high"]},
+      "is_advisory_only": 1,
+      "spec_bundle_id": "bundle-xyz"
+    },
+    {
+      "id": 3,
+      "created_at": "2026-05-20T10:02:00",
+      "advisor_role": "DIVERGENCE_EXPLAINER",
+      "subject_type": "cvar_diagnostic",
+      "subject_id": "cvar-run-001",
+      "verdict": "BREACH",
+      "raw_response": {"narrative": "Tail exposure elevated beyond threshold."},
+      "is_advisory_only": 1,
+      "spec_bundle_id": null
+    }
+  ],
+  "valid_verdicts": ["CLEAR", "WATCH", "BREACH"],
+  "valid_roles": ["OVERFITTING_CONSCIENCE", "SPEC_CRITIC", "DIVERGENCE_EXPLAINER", "NARRATOR"],
+  "is_advisory_only_contract": "always 1 — the Advisor never moves money"
+}

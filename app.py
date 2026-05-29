@@ -1,6 +1,7 @@
-"""Flask application for AlphaBot Control Center with Account-Level settings."""
+"""Flask application for Planet Stopper Control Center with Account-Level settings."""
 
 import atexit
+import concurrent.futures
 import io
 import logging
 import os
@@ -56,6 +57,20 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
+
+# Single-worker executor for dashboard background writes (fleet alert dismiss).
+# A persistent worker thread owns the I/O so Flask request handlers return
+# immediately without blocking on SQLite.  Single-worker is intentional:
+# serialises writes so no two dismiss tasks race on fleet_alert_state.
+_DISMISS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+# CC-003: register shutdown so in-flight dismiss writes are not abandoned on exit.
+atexit.register(_DISMISS_EXECUTOR.shutdown, wait=True)
+
+# CC-NEW-001: serializes flush_resync background load+modify+save against engine
+# save_state writes.  Both flush_resync (_flush_state_async) and the engine's
+# save_state call sites in alpha_bot_execution.py must acquire this lock before
+# touching the state DB to prevent the flush from clobbering per-minute updates.
+_FLUSH_STATE_LOCK = threading.Lock()
 
 _daemon_log = logging.getLogger("alphabot")
 _daemon_log.setLevel(logging.DEBUG)
@@ -136,7 +151,7 @@ def _acquire_daemon_singleton(pidfile: str) -> None:
     """Enforce the daemon singleton contract at startup.
 
     Reads the pidfile (if present) and checks whether the stored PID refers to
-    a live AlphaBot process.
+    a live Planet Stopper process.
 
       - Live process found  → print error and exit(1).  Flask and the scheduler
         are never started.
@@ -154,7 +169,7 @@ def _acquire_daemon_singleton(pidfile: str) -> None:
         stored_pid = _read_pidfile(pidfile)
         if stored_pid is not None and _is_alphabot_process_alive(stored_pid):
             print(
-                f"Another AlphaBot daemon is already running (PID {stored_pid}); "
+                f"Another Planet Stopper daemon is already running (PID {stored_pid}); "
                 f"refusing to start. "
                 f"If this is wrong, delete {pidfile} or stop PID {stored_pid} first.",
                 file=sys.stderr,
@@ -370,6 +385,29 @@ def dashboard():
         if _k:
             accounts_map[_k] = _lbl
 
+    # M2 CVaR diagnostic — read the latest diagnostic row for the first symphony.
+    # Dashboard is a read-only observer (arch constraint 2); this is a pure DB read.
+    # Sentinel: cvar_diagnostic=None when the table has no row yet (Phase-1 warm-up).
+    #
+    # CVAR-001 Phase-1 scope limit (sprint-2-audit a6e4d9f8): only the FIRST symphony's
+    # CVaR diagnostic is surfaced on the dashboard. Multi-symphony portfolios silently
+    # omit other symphonies' diagnostics. This is intentional for Phase-1 — the M2
+    # CVaR diagnostic is a proof-of-concept single-symphony display. Phase-2 will expand
+    # this to a per-symphony dict passed to the template for multi-row rendering.
+    # TODO(Phase-2): replace _first_sym_id with a full dict keyed by symphony_id.
+    cvar_diagnostic = None
+    try:
+        _first_sym_id = next(
+            (k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v),
+            None,
+        )
+        if _first_sym_id:
+            cvar_diagnostic = database.read_cvar_diagnostic_for_symphony(
+                _first_sym_id
+            )
+    except Exception:
+        pass  # non-blocking: dashboard renders without CVaR if the read fails
+
     return render_template(
         "index.html",
         vars_locked_count=vars_locked_count,
@@ -380,6 +418,7 @@ def dashboard():
         active_syms=active_syms,
         standby_syms=standby_syms,
         accounts_map=accounts_map,
+        cvar_diagnostic=cvar_diagnostic,
     )
 
 
@@ -612,10 +651,8 @@ def get_api_state_dict() -> dict:
     Additive fields (AC-P2.12.2): port_state, exit_authority, daemon_started_at.
     No existing field is renamed or removed.
     """
-    from engine.exit_authority import get_exit_authority
-
     bot_state = database.load_state()
-    exit_authority = get_exit_authority()
+    exit_authority = os.getenv("EXIT_AUTHORITY", "per_symphony")
 
     # Read lock status directly — no dedicated helper exists for read-only lock query
     _ro = None
@@ -1494,22 +1531,27 @@ def api_triggers():
 
 @app.route("/api/fleet-alert/dismiss", methods=["POST"])
 def fleet_alert_dismiss():
-    try:
-        row = database.read_fleet_alert()
-        if row is not None:
-            now_et = datetime.now(_ET).strftime("%Y-%m-%dT%H:%M:%S")
-            payload = dict(row)
-            payload["dismissed_at_et"] = now_et
-            database.write_fleet_alert(payload)
-        return jsonify({"status": "ok"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    # Side-effect ban: write_fleet_alert must not block the request thread.
+    # Submit to the module-level executor so the handler returns immediately
+    # while the dismissed_at_et write still lands durably in fleet_alert_state.
+    def _dismiss_async():
+        try:
+            row = database.read_fleet_alert()
+            if row is not None:
+                row["dismissed_at_et"] = datetime.now(_ET).isoformat()
+                database.write_fleet_alert(row)
+        except Exception:
+            logging.error("fleet_alert_dismiss: background write failed", exc_info=True)
+
+    _DISMISS_EXECUTOR.submit(_dismiss_async)
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/trigger", methods=["POST"])
 def manual_trigger():
-    threading.Thread(target=trigger_alpha_bot, args=(True,)).start()
-    return jsonify({"status": "success", "message": "Bot execution forced."})
+    # Dashboard side-effect ban: routes must not spawn the engine (arch constraint 2).
+    # The scheduler is the only legal engine spawner.
+    return jsonify({"status": "success", "message": "Manual trigger disabled — use the scheduler."})
 
 
 @app.route("/api/accounts")
@@ -1567,7 +1609,8 @@ def force_eod():
                 discord_webhook_url=discord_webhook,
             )
             autotuner_changes = autotuner.run_autotuner(
-                bot_state, prev_date_str, account_uuids, is_forced=True
+                bot_state, prev_date_str, account_uuids, is_forced=True,
+                spec_bundle_id=database.get_or_create_phase1_theory_bundle_id(),
             )
             reporting.send_eod_discord_post(
                 prev_date_str,
@@ -2035,9 +2078,11 @@ def flush_resync():
 
     Phase 1 — File purge: scans analytics._POST_MORTEMS_DIR, removes files whose dates are
       NOT in _REAL_POST_MORTEM_DATES, keeps real ones.  Invalidates the analytics cache.
-    Phase 2 — Symphony state reset: loads bot_state, resets each per-symphony entry
-      (identified by isinstance(v, dict) and "name" in v) to a blank slate, preserving only
-      "name" and "account".  Writes a .pre-flush-backup file before mutating.  Saves state.
+    Phase 2 — Symphony state reset (background): loads bot_state, enumerates per-symphony
+      entries (isinstance(v, dict) and "name" in v), strips runtime tracking fields (stop
+      levels, returns, trigger flags), preserves "name" and "account".  Read happens on the
+      request thread for the response; write is dispatched to _DISMISS_EXECUTOR so the
+      handler returns immediately.  Exceptions are logged, not propagated.
     Phase 3 — Composer resync: triggers a background account-totals refresh.
 
     Safe + idempotent: file phase only removes synthetic dates; state phase only strips
@@ -2072,32 +2117,47 @@ def flush_resync():
     # Invalidate the analytics post_mortem cache so the next request reloads from real files.
     analytics._HISTORY_CACHE = {"key": None, "data": None}
 
-    # --- Phase 2: reset per-symphony bot_state entries ---
+    # --- Phase 2: enumerate per-symphony bot_state entries; dispatch reset to background thread ---
+    # Dashboard side-effect ban: save_state must not block the request thread.
+    # We read current state here to enumerate symphony names for the response, then
+    # submit the actual write (strip tracking fields, preserve name+account) to
+    # _DISMISS_EXECUTOR so the handler returns immediately.  Same pattern as
+    # fleet_alert_dismiss / _DISMISS_EXECUTOR.
     symphonies_reset: list[str] = []
     try:
         _state = database.load_state()
-        _db_file = database.DB_FILE
-        if not os.path.isabs(_db_file):
-            _db_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), _db_file)
-        _backup_path = _db_file + ".pre-flush-backup"
-        if os.path.exists(_db_file):
-            shutil.copy2(_db_file, _backup_path)
-
         for _sym_id, _sym_val in list(_state.items()):
             if not (isinstance(_sym_val, dict) and "name" in _sym_val):
                 continue
-            _display_name = _sym_val.get("name", _sym_id)
-            _account = _sym_val.get("account")
-            _state[_sym_id] = {"name": _display_name}
-            if _account is not None:
-                _state[_sym_id]["account"] = _account
-            symphonies_reset.append(_display_name)
-
-        database.save_state(_state)
-        _daemon_log.info("flush_resync: reset %d symphony state entries", len(symphonies_reset))
+            symphonies_reset.append(_sym_val.get("name", _sym_id))
+        _daemon_log.info("flush_resync: identified %d symphony state entries for reset", len(symphonies_reset))
     except Exception as exc:
-        _daemon_log.error("flush_resync: symphony state reset failed: %s", exc)
-        errors.append(f"state_reset: {exc}")
+        _daemon_log.error("flush_resync: symphony state read failed: %s", exc)
+        errors.append(f"state_read: {exc}")
+
+    def _flush_state_async():
+        try:
+            with _FLUSH_STATE_LOCK:
+                state = database.load_state()
+                # LATENT-001: count resets from this thread's own iteration, not
+                # the closed-over request-thread list (which may differ if the
+                # engine wrote between the two load_state calls).
+                _reset_count = 0
+                for sym_id, sym_val in list(state.items()):
+                    if not (isinstance(sym_val, dict) and "name" in sym_val):
+                        continue
+                    display_name = sym_val.get("name", sym_id)
+                    account = sym_val.get("account")
+                    state[sym_id] = {"name": display_name}
+                    if account is not None:
+                        state[sym_id]["account"] = account
+                    _reset_count += 1
+                database.save_state(state)
+            _daemon_log.info("flush_resync: background reset wrote %d symphony state entries", _reset_count)
+        except Exception:
+            logging.error("flush_resync: background state reset failed", exc_info=True)
+
+    _DISMISS_EXECUTOR.submit(_flush_state_async)
 
     # --- Phase 3: Composer resync ---
     resync_ok = False
@@ -2131,8 +2191,34 @@ def flush_resync():
 # --- 5. AI Advisor Routes ---
 @app.route("/ai-advisor", methods=["GET"])
 def ai_advisor_tab():
-    """Render the Claude AI Config Advisor tab."""
-    return render_template("ai_advisor.html", active_route="advisor", meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))))
+    """Render the Claude AI Config Advisor tab.
+
+    Passes the last _ADVISOR_OBSERVATIONS_PAGE_LIMIT advisor observations
+    to the template for the observations section.  Observations are fetched
+    across all known advisor roles using read-only accessors.
+    """
+    observations: list[dict] = []
+    for role in _ADVISOR_ROLES:
+        observations.extend(
+            database.get_advisor_observations_for_role(
+                role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+            )
+        )
+    # Deduplicate by id and apply page limit
+    seen: set = set()
+    deduped_obs: list[dict] = []
+    for obs in observations:
+        if obs["id"] not in seen:
+            seen.add(obs["id"])
+            deduped_obs.append(obs)
+    observations = deduped_obs[: _ADVISOR_OBSERVATIONS_PAGE_LIMIT]
+
+    return render_template(
+        "ai_advisor.html",
+        active_route="advisor",
+        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
+        observations=observations,
+    )
 
 
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
@@ -2140,7 +2226,7 @@ def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
 
     allowlist: key is in the suggestible allowlist.
     risk_direction: Claude's self-reported direction agrees with engine's.
-    oos: suggestion's oos_status is 'passed'.
+    oos_frozen_eval: suggestion's oos_status is 'passed'.
     locked_vars: key is NOT locked for this symphony.
     """
     allowed, _ = ai_advisor.enforce_suggestion_allowlist([suggestion])
@@ -2149,7 +2235,7 @@ def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
     return {
         "allowlist": bool(allowed),
         "risk_direction": direction_check.get("agrees", False),
-        "oos": suggestion.oos_status == "passed",
+        "oos_frozen_eval": suggestion.oos_status == "passed",
         "locked_vars": suggestion.config_key not in locked,
     }
 
@@ -2325,6 +2411,51 @@ def ai_advisor_reject():
     return jsonify({"status": "rejected"})
 
 
+# Known advisor roles — used to aggregate observations for the AI Advisor page.
+_ADVISOR_ROLES = [
+    "OVERFITTING_CONSCIENCE",
+    "SPEC_CRITIC",
+    "DIVERGENCE_EXPLAINER",
+    "NARRATOR",  # DEFERRED per Sprint 3 scope — producer not yet shipped
+]
+
+# Hard limit on observations returned per request — prevents unbounded UI renders.
+_ADVISOR_OBSERVATIONS_PAGE_LIMIT = 50
+
+
+@app.route("/api/advisor-observations", methods=["GET"])
+def api_advisor_observations():
+    """Return advisor observations as a JSON list.
+
+    ?symphony_id=<id>  — filter to rows whose denormalized symphony_id column
+                         matches; calls database.get_advisor_observations_for_symphony
+                         (single SELECT post-migration-025, S3-AUDIT-004/010).
+    No query param      — return observations across all known advisor roles;
+                         calls database.get_advisor_observations_for_role.
+
+    Response is limited to _ADVISOR_OBSERVATIONS_PAGE_LIMIT rows.
+    Read-only; POST/PUT/DELETE return 405 via Flask methods restriction.
+    """
+    symphony_id = request.args.get("symphony_id", "").strip()
+    if symphony_id:
+        # S3-AUDIT-004 + S3-AUDIT-010: single-query via the denormalized symphony_id
+        # column (migration 025).  The legacy 3x subject_type fan-out used
+        # subject_id==symphony_id which never matched: producers store subject_id
+        # as a numeric PK (OC/DE) or bundle_hash (SC), not the symphony name.
+        rows = database.get_advisor_observations_for_symphony(symphony_id)
+    else:
+        rows = []
+        for role in _ADVISOR_ROLES:
+            rows.extend(
+                database.get_advisor_observations_for_role(
+                    role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+                )
+            )
+
+    rows = rows[: _ADVISOR_OBSERVATIONS_PAGE_LIMIT]
+    return jsonify(rows)
+
+
 _BASELINE_DECISION_TOKENS = {
     "Reverted to Fallback": "fallback",
     "Applied": "apply",
@@ -2370,7 +2501,7 @@ if __name__ == "__main__":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
     # Enforce daemon singleton BEFORE starting Flask or the scheduler thread.
-    # If another AlphaBot is alive this call prints an error and exits non-zero.
+    # If another Planet Stopper is alive this call prints an error and exits non-zero.
     # If a stale pidfile exists (ungraceful prior kill) it is overwritten cleanly.
     _acquire_daemon_singleton(_PIDFILE_PATH)
 

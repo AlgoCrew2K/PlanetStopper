@@ -1,13 +1,14 @@
 {
   "name": "decay_curve_exactly_half",
-  "description": "time_ratio chosen so decay_curve = 0.5 EXACTLY: solve log10(1 + 9*tr) = 0.5 -> 1 + 9*tr = 10^0.5 = sqrt(10) -> tr = (sqrt(10) - 1) / 9 ~= 0.24025307335204216. At decay=0.5, dynamic_multiplier sits at MULT_OPEN - 0.5*(MULT_OPEN-MULT_CLOSE) = 1.0 (the midpoint of the linear-interp range), and dynamic_min_stop sits at the midpoint 0.225. This 'algebraic clean point' pins the exact midpoint of the multiplier range; a wrong impl that miscomputed the linear-interp coefficient (e.g., flipped end-points or used (MULT_OPEN + MULT_CLOSE) / 2 as the interpolant) would not produce 1.0 at this time_ratio.",
+  "description": "time_ratio = 0.75 chosen so decay_curve = 0.5 EXACTLY under the M3 re-derivation: 1 - sqrt(1 - 0.75) = 1 - sqrt(0.25) = 1 - 0.5 = 0.5 (rational sqrt; no IEEE-754 drift). At decay=0.5, dynamic_multiplier sits at MULT_OPEN - 0.5*(MULT_OPEN-MULT_CLOSE) = 1.0 EXACTLY (the midpoint of the linear-interp range), and dynamic_min_stop sits at 0.225 (with a single ulp of subtractive drift to 0.22499999999999998, absorbed by the rel-tolerance -- same 1-ulp pattern the pre-M3 fixture documented for log10's irrational midpoint). This 'algebraic clean point' pins the exact midpoint of the multiplier range under the new curve; a wrong impl that miscomputed the linear-interp coefficient would not produce 1.0 at this time_ratio. NOTE: under the OLD log10(1+9t) heuristic, decay=0.5 occurred at t ~= 0.2403; under the NEW 1-sqrt(1-t) curve, decay=0.5 occurs at t = 0.75 -- the algebraic-clean t-value MOVED because the curve shape moved. A wrong impl that left the old log10 heuristic in place would return dynamic_multiplier ~= 0.3266 here (not 1.0), making this fixture an excellent unchanged-formula detector.",
   "function": "compute_time_squeeze_decay",
+  "provenance": "DERIVED from the closed-form THEORY formula f(t) = 1 - sqrt(1 - t) (Danielsson & Zigrand, 2003, LSE FMG DP-439). NOT captured from compute_time_squeeze_decay output -- D-2 load-bearing per docs/research/m3-provenance/literature-pass.md §3.1.",
   "inputs": {
-    "time_ratio": 0.24025307335204216
+    "time_ratio": 0.75
   },
   "expected": {
     "dynamic_multiplier": 1.0,
     "dynamic_min_stop": 0.225
   },
-  "derivation": "time_ratio = (sqrt(10) - 1) / 9 was chosen so that 1 + 9*time_ratio = sqrt(10), hence decay_curve = log10(sqrt(10)) = 0.5 (analytically exact; ~1 ulp of IEEE-754 noise from sqrt accumulates, hence rel-tolerance is appropriate). dynamic_multiplier = 1.5 - (1.5 - 0.5) * 0.5 = 1.5 - 0.5 = 1.0. dynamic_min_stop = 0.3 - (0.3 - 0.15) * 0.5 = 0.3 - 0.075 = 0.225. NOTE: floating-point evaluation of dynamic_min_stop returns 0.22499999999999998 (a single-ulp negative drift from 0.225); the rel-tolerance absorbs this."
+  "derivation": "time_ratio = 0.75 was chosen so that 1 - time_ratio = 0.25 (a perfect square), hence sqrt(0.25) = 0.5 EXACTLY, hence decay_curve = 1 - 0.5 = 0.5 EXACTLY (no IEEE-754 sqrt drift, unlike the irrational cases). dynamic_multiplier = 1.5 - (1.5 - 0.5) * 0.5 = 1.5 - 0.5 = 1.0 EXACTLY. dynamic_min_stop = 0.3 - (0.3 - 0.15) * 0.5 = 0.3 - 0.075 = 0.225 (analytically exact; floating-point evaluation returns 0.22499999999999998 as a single-ulp negative drift from the final subtraction -- the rel-tolerance absorbs this, same ulp class as the pre-M3 fixture documented)."
 }

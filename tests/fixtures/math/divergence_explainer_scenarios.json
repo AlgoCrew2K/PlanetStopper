@@ -1,0 +1,114 @@
+{
+  "_provenance": "hand-derived from Sprint 3 Stream B dispatch brief; no producer-computed rates/dollars/percents. CVaR values are fictional scenario inputs; verdicts are string enums. The fixture only describes two honest CVaR values per window — never a signed divergence.",
+  "feature_flag_name": "SECOND_WINDOW_CVAR_ENABLED",
+
+  "scenarios": {
+    "flag_off_noop": {
+      "_description": "§B feature flag is disabled. Producer must write NOT_APPLICABLE and nothing else.",
+      "feature_flag_value": "0",
+      "autotune_run": {
+        "id": 1,
+        "symphony_id": "sym-flag-off",
+        "spec_bundle_id": "bundle-flag-off-001",
+        "run_timestamp": "2026-05-27T16:00:00Z"
+      },
+      "cvar_rows": [],
+      "expected_verdict": "NOT_APPLICABLE",
+      "expected_raw_response_fragment": {"feature_flag": "off"}
+    },
+
+    "flag_on_sufficient_history": {
+      "_description": "§B flag enabled, both windows produce valid CVaR estimates. Observation records both values; raw_response MUST NOT contain any signed difference field.",
+      "feature_flag_value": "1",
+      "autotune_run": {
+        "id": 2,
+        "symphony_id": "sym-two-windows",
+        "spec_bundle_id": "bundle-two-windows-002",
+        "run_timestamp": "2026-05-27T16:00:00Z"
+      },
+      "cvar_rows": [
+        {
+          "cycle_id": "cycle-2026-05-27-A",
+          "symphony_id": "sym-two-windows",
+          "cvar_5pct": -2.1,
+          "cvar_5pct_stderr": 0.3,
+          "cvar_n_tail": 5,
+          "cvar_5pct_long": -1.8,
+          "cvar_n_tail_long": 7,
+          "ts_utc": "2026-05-27T16:01:00Z"
+        }
+      ],
+      "expected_verdict": "INFORMATIONAL",
+      "expected_raw_keys_present": [
+        "short_window_cvar_pct",
+        "short_window_tail_obs",
+        "long_window_cvar_pct",
+        "long_window_tail_obs"
+      ],
+      "expected_raw_keys_absent": [
+        "divergence",
+        "signed_divergence",
+        "cvar_diff",
+        "cvar_delta",
+        "window_divergence",
+        "divergence_pct",
+        "delta"
+      ]
+    },
+
+    "flag_on_long_window_null": {
+      "_description": "§B flag enabled but long-window CVaR is NULL (insufficient history for second window). Producer must record the short-window value honestly and note the long-window insufficiency — no divergence quantity.",
+      "feature_flag_value": "1",
+      "autotune_run": {
+        "id": 3,
+        "symphony_id": "sym-short-only",
+        "spec_bundle_id": "bundle-short-only-003",
+        "run_timestamp": "2026-05-27T16:00:00Z"
+      },
+      "cvar_rows": [
+        {
+          "cycle_id": "cycle-2026-05-27-B",
+          "symphony_id": "sym-short-only",
+          "cvar_5pct": -3.4,
+          "cvar_5pct_stderr": 0.5,
+          "cvar_n_tail": 4,
+          "cvar_5pct_long": null,
+          "cvar_n_tail_long": null,
+          "ts_utc": "2026-05-27T16:01:00Z"
+        }
+      ],
+      "expected_verdict": "INFORMATIONAL",
+      "expected_raw_keys_absent": [
+        "divergence",
+        "signed_divergence",
+        "cvar_diff",
+        "cvar_delta",
+        "window_divergence",
+        "divergence_pct",
+        "delta"
+      ]
+    },
+
+    "flag_on_no_cvar_rows": {
+      "_description": "§B flag enabled but no CVaR diagnostic rows exist for the symphony. Producer must write INFORMATIONAL with both windows as null — never raise.",
+      "feature_flag_value": "1",
+      "autotune_run": {
+        "id": 4,
+        "symphony_id": "sym-no-cvar",
+        "spec_bundle_id": "bundle-no-cvar-004",
+        "run_timestamp": "2026-05-27T16:00:00Z"
+      },
+      "cvar_rows": [],
+      "expected_verdict": "INFORMATIONAL",
+      "expected_raw_keys_absent": [
+        "divergence",
+        "signed_divergence",
+        "cvar_diff",
+        "cvar_delta",
+        "window_divergence",
+        "divergence_pct",
+        "delta"
+      ]
+    }
+  }
+}

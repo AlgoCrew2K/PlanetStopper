@@ -892,7 +892,7 @@ class TestDiscordEmbedNoRegression:
 
     def test_main_eod_embed_still_present_after_dsr_changes(self, tmp_path):
         """
-        AC-7: The main AlphaBot EOD Analysis embed must be present even when
+        AC-7: The main Planet Stopper EOD Analysis embed must be present even when
         DSR optimization data is included in optimization_results.
 
         This is a regression guard — it will PASS now (main embed exists) and
@@ -952,10 +952,10 @@ class TestDiscordEmbedNoRegression:
         main_embed_titles = [
             e.get("title", "")
             for e in captured_embeds
-            if "AlphaBot EOD" in e.get("title", "") or "EOD Analysis" in e.get("title", "")
+            if "Planet Stopper EOD" in e.get("title", "") or "EOD Analysis" in e.get("title", "")
         ]
         assert main_embed_titles, (
-            "AC-7: The main 'AlphaBot EOD Analysis' embed must still be present. "
+            "AC-7: The main 'Planet Stopper EOD Analysis' embed must still be present. "
             f"All embed titles found: {[e.get('title', '') for e in captured_embeds]!r}. "
             "Regression: the implementer must not remove the main embed."
         )

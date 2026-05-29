@@ -1,0 +1,296 @@
+{
+  "_provenance": "Hand-derived from Sprint 3 Spec Critic design (team-lead dispatch brief). Scenario inputs are plain integers, enum strings, and ISO-8601 timestamps. No producer-computed rates or percents are pinned — verdicts are enum-constrained (CLEAR/WATCH/BREACH), staleness is derived from frozen_at timestamps relative to a known reference date. All spec_bundle_ids are synthetic hashes for isolation.",
+  "_design_refs": [
+    "Sprint-3 Spec Critic dispatch brief — indicator definitions",
+    "council synthesis §2.5 (Phase-1 THEORY facets: gamma, utility_family, wealth_argument)",
+    "autotuner.NN1_HONEST_DISCIPLINES (canonical honest discipline set)",
+    "database.advisor_ro_query (wall-integrity contract)"
+  ],
+
+  "phase1_required_facets": ["gamma", "utility_family", "wealth_argument"],
+
+  "canonical_phase2_facets": ["lambda", "hysteresis-threshold"],
+
+  "stale_threshold_days": 90,
+
+  "valid_verdicts": ["CLEAR", "WATCH", "BREACH"],
+
+  "scenarios": {
+    "honest_complete_fresh_clear": {
+      "_description": "Canonical Phase-1 bundle: all three THEORY facets present, all THEORY discipline, frozen < 90 days ago. Verdict CLEAR.",
+      "spec_bundle_id": "bundle-spec001",
+      "spec_facets_rows": [
+        {
+          "facet_name": "gamma",
+          "facet_value": "2.0",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__",
+          "_note": "frozen_at injected by test at reference_date - 10 days"
+        },
+        {
+          "facet_name": "utility_family",
+          "facet_value": "CRRA",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "wealth_argument",
+          "facet_value": "compounded_return",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        }
+      ],
+      "expected_verdict": "CLEAR",
+      "expected_advisor_role": "SPEC_CRITIC",
+      "expected_subject_type": "spec_bundle",
+      "expected_is_advisory_only": 1,
+      "_note": "raw_response must note 'all 3 facets present, all THEORY, frozen<90d'"
+    },
+
+    "missing_gamma_breach": {
+      "_description": "Indicator 1: bundle lacks gamma facet. Only utility_family and wealth_argument present. Verdict BREACH.",
+      "spec_bundle_id": "bundle-spec002",
+      "spec_facets_rows": [
+        {
+          "facet_name": "utility_family",
+          "facet_value": "CRRA",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "wealth_argument",
+          "facet_value": "compounded_return",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        }
+      ],
+      "expected_verdict": "BREACH",
+      "expected_missing_facets": ["gamma"],
+      "expected_advisor_role": "SPEC_CRITIC",
+      "expected_subject_type": "spec_bundle",
+      "expected_is_advisory_only": 1
+    },
+
+    "missing_utility_family_breach": {
+      "_description": "Indicator 1: bundle lacks utility_family facet. gamma and wealth_argument present. Verdict BREACH.",
+      "spec_bundle_id": "bundle-spec003",
+      "spec_facets_rows": [
+        {
+          "facet_name": "gamma",
+          "facet_value": "2.0",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "wealth_argument",
+          "facet_value": "compounded_return",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        }
+      ],
+      "expected_verdict": "BREACH",
+      "expected_missing_facets": ["utility_family"],
+      "expected_advisor_role": "SPEC_CRITIC",
+      "expected_subject_type": "spec_bundle",
+      "expected_is_advisory_only": 1
+    },
+
+    "missing_wealth_argument_breach": {
+      "_description": "Indicator 1: bundle lacks wealth_argument facet. gamma and utility_family present. Verdict BREACH.",
+      "spec_bundle_id": "bundle-spec004",
+      "spec_facets_rows": [
+        {
+          "facet_name": "gamma",
+          "facet_value": "2.0",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "utility_family",
+          "facet_value": "CRRA",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        }
+      ],
+      "expected_verdict": "BREACH",
+      "expected_missing_facets": ["wealth_argument"],
+      "expected_advisor_role": "SPEC_CRITIC",
+      "expected_subject_type": "spec_bundle",
+      "expected_is_advisory_only": 1
+    },
+
+    "empty_facets_breach": {
+      "_description": "Hostile edge: spec_facets_rows is empty. All three required facets are absent. Verdict BREACH on indicator 1.",
+      "spec_bundle_id": "bundle-spec005",
+      "spec_facets_rows": [],
+      "expected_verdict": "BREACH",
+      "expected_missing_facets": ["gamma", "utility_family", "wealth_argument"],
+      "expected_advisor_role": "SPEC_CRITIC",
+      "expected_subject_type": "spec_bundle",
+      "expected_is_advisory_only": 1
+    },
+
+    "unrecognized_discipline_breach": {
+      "_description": "Indicator 2: one facet has freeze_discipline='UNKNOWN_FUTURE_VALUE'. Not in NN1_HONEST_DISCIPLINES union BACKTEST_SELECTION. Verdict BREACH (defense-in-depth).",
+      "spec_bundle_id": "bundle-spec006",
+      "spec_facets_rows": [
+        {
+          "facet_name": "gamma",
+          "facet_value": "2.0",
+          "freeze_discipline": "UNKNOWN_FUTURE_VALUE",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "utility_family",
+          "facet_value": "CRRA",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "wealth_argument",
+          "facet_value": "compounded_return",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        }
+      ],
+      "expected_verdict": "BREACH",
+      "expected_advisor_role": "SPEC_CRITIC",
+      "expected_subject_type": "spec_bundle",
+      "expected_is_advisory_only": 1,
+      "_note": "BACKTEST_SELECTION is also unrecognized (not in NN1_HONEST_DISCIPLINES); this tests a forward-compat unknown value"
+    },
+
+    "stale_frozen_at_watch": {
+      "_description": "Indicator 3: all facets present and THEORY, but frozen_at > 90 days ago. Verdict WATCH (advisory spec age risk).",
+      "spec_bundle_id": "bundle-spec007",
+      "spec_facets_rows": [
+        {
+          "facet_name": "gamma",
+          "facet_value": "2.0",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__STALE__",
+          "_note": "frozen_at injected by test at reference_date - 91 days (stale)"
+        },
+        {
+          "facet_name": "utility_family",
+          "facet_value": "CRRA",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__STALE__"
+        },
+        {
+          "facet_name": "wealth_argument",
+          "facet_value": "compounded_return",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__STALE__"
+        }
+      ],
+      "expected_verdict": "WATCH",
+      "expected_advisor_role": "SPEC_CRITIC",
+      "expected_subject_type": "spec_bundle",
+      "expected_is_advisory_only": 1,
+      "_note": "does not block the run; advisory only"
+    },
+
+    "frozen_at_exactly_90_days_watch": {
+      "_description": "Boundary: frozen_at exactly 90 days ago. Inclusive boundary documents that 90 days is WATCH (not CLEAR).",
+      "spec_bundle_id": "bundle-spec007b",
+      "spec_facets_rows": [
+        {
+          "facet_name": "gamma",
+          "facet_value": "2.0",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__EXACTLY_90D__",
+          "_note": "frozen_at injected by test at reference_date - 90 days exactly"
+        },
+        {
+          "facet_name": "utility_family",
+          "facet_value": "CRRA",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__EXACTLY_90D__"
+        },
+        {
+          "facet_name": "wealth_argument",
+          "facet_value": "compounded_return",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__EXACTLY_90D__"
+        }
+      ],
+      "expected_verdict": "WATCH",
+      "expected_advisor_role": "SPEC_CRITIC",
+      "expected_subject_type": "spec_bundle",
+      "expected_is_advisory_only": 1,
+      "_note": "inclusive boundary: exactly 90 days is WATCH, not CLEAR (documented in dispatch brief)"
+    },
+
+    "phase2_facet_lambda_breach": {
+      "_description": "Indicator 4: bundle contains 'lambda' — a Phase-2 facet seeded prematurely. Verdict BREACH ('phase scope leak').",
+      "spec_bundle_id": "bundle-spec008",
+      "spec_facets_rows": [
+        {
+          "facet_name": "gamma",
+          "facet_value": "2.0",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "utility_family",
+          "facet_value": "CRRA",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "wealth_argument",
+          "facet_value": "compounded_return",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "lambda",
+          "facet_value": "0.05",
+          "freeze_discipline": "MANDATE",
+          "frozen_at": "__FRESH__",
+          "_note": "Phase-2 facet — must not appear in a Phase-1 bundle"
+        }
+      ],
+      "expected_verdict": "BREACH",
+      "expected_advisor_role": "SPEC_CRITIC",
+      "expected_subject_type": "spec_bundle",
+      "expected_is_advisory_only": 1
+    },
+
+    "phase2_facet_hysteresis_breach": {
+      "_description": "Indicator 4: bundle contains 'hysteresis-threshold' — a Phase-2 facet. Verdict BREACH.",
+      "spec_bundle_id": "bundle-spec009",
+      "spec_facets_rows": [
+        {
+          "facet_name": "gamma",
+          "facet_value": "2.0",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "utility_family",
+          "facet_value": "CRRA",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "wealth_argument",
+          "facet_value": "compounded_return",
+          "freeze_discipline": "THEORY",
+          "frozen_at": "__FRESH__"
+        },
+        {
+          "facet_name": "hysteresis-threshold",
+          "facet_value": "0.1",
+          "freeze_discipline": "CALIBRATION",
+          "frozen_at": "__FRESH__"
+        }
+      ],
+      "expected_verdict": "BREACH",
+      "expected_advisor_role": "SPEC_CRITIC",
+      "expected_subject_type": "spec_bundle",
+      "expected_is_advisory_only": 1
+    }
+  }
+}

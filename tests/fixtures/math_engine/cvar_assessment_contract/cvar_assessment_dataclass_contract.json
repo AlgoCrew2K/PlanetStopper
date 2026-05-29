@@ -1,0 +1,45 @@
+{
+  "pm_ruling_2026-05-24": "Structural-contract fixtures satisfy the golden-fixture rule for a computation-free frozen dataclass. No identity fixture required. The genuine drift surface for a dataclass is its schema (field set + types + __post_init__ invariants), which these fixtures pin. (PM ruling, mc-sentinel-blast-radius cycle, BLOCK-1 resolution.)",
+  "name": "cvar_assessment_dataclass_contract",
+  "description": "Phase-1 contract for the CVaRAssessment dataclass. Exact field set, types, fail-safe invariant (cvar_pct=None implies breach=False), and the Phase-1 production-consumer prohibition. This fixture is the source of truth for the structural tests — the implementer must match it exactly.",
+  "function": "math_engine.CVaRAssessment",
+  "provenance": "Derived from decision-science-council-synthesis.md §2.6 and the mc-sentinel-blast-radius plan. No producer-computed value; every field is a structural / contract assertion.",
+  "phase": "1",
+  "required_fields": [
+    {
+      "name": "cvar_pct",
+      "type": "float | None",
+      "semantics": "5th-percentile CVaR as a percentage (e.g. -4.2 means the worst-5% expected loss is 4.2%). None is the out-of-band insufficient sentinel, exactly mirroring MC_INSUFFICIENT_HISTORY_SENTINEL. A None here means the forward-path simulator could not produce a CVaR estimate (insufficient history or other data-quality gate)."
+    },
+    {
+      "name": "breach",
+      "type": "bool",
+      "semantics": "True when CVaR exceeds the operator-configured breach threshold. MUST be False when cvar_pct is None — fail-safe: an absent CVaR estimate is not a breach signal; the heuristic floor (trailing stop) still protects."
+    },
+    {
+      "name": "tail_obs_count",
+      "type": "int",
+      "semantics": "Number of tail observations used to compute cvar_pct. Drives confidence-weighting in Phase 2. Must be >= 0. When cvar_pct is None this is 0."
+    },
+    {
+      "name": "stderr",
+      "type": "float | None",
+      "semantics": "Standard error of cvar_pct, computed via std(tail_values, ddof=1)/sqrt(tail_obs_count) on the H-2 distinct-tail denominator (decision-science-council-synthesis.md §A.3 H-2 binding). None is the paired sentinel with cvar_pct: stderr is None iff cvar_pct is None. The dashboard's S-3 4-part display contract (templates/index.html:1257-1303) renders the uncertainty band from this value — without it operators see CVaR with no error bar."
+    },
+    {
+      "name": "insufficient_reason",
+      "type": "str | None",
+      "semantics": "Human-readable explanation of why cvar_pct is None. None when cvar_pct is a valid estimate."
+    }
+  ],
+  "fail_safe_invariant": {
+    "rule": "cvar_pct is None IMPLIES breach is False; stderr travels with cvar_pct (both None or both finite).",
+    "rationale": "An absent CVaR estimate must never trigger a breach. The heuristic floor (trailing stop via compute_exit_confirmation) remains the safety backstop. A dataclass that allows cvar_pct=None with breach=True violates the fail-safe guarantee and could suppress the protective stop. The stderr pairing prevents a half-broken S-3 contract — a finite cvar_pct without an uncertainty band is operator-confusing instrumentation.",
+    "enforcement": "__post_init__ raises ValueError on (a) cvar_pct=None with breach=True, (b) cvar_pct=None with stderr=<finite>, (c) cvar_pct=<finite> with stderr=None."
+  },
+  "phase_1_production_consumer_prohibition": {
+    "rule": "In Phase 1, no production module imports or constructs CVaRAssessment. Only test files and the Phase-2 simulate_forward_paths module (not yet written) are permitted consumers.",
+    "rationale": "CVaRAssessment is introduced in Phase 1 so the M2 schema migration (023_cvar_diagnostics.sql) has a stable target. A Phase-1 production caller would bypass the Phase-2 cutover ceremony and could silently activate the CVaR signal before its validation wall is cleared.",
+    "how_enforced": "test_cvar_assessment_dataclass_contract.py asserts that no production module (alpha_bot_execution.py, reporting.py, synthetic_history.py, autotuner.py, app.py, database.py) contains an import of CVaRAssessment."
+  }
+}

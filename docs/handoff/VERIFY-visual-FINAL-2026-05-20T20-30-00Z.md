@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Visual Verification — FINAL Sweep
 **Authored:** 2026-05-20T20:30:00Z
 **Scope:** Final exhaustive visual parity audit — all 5 screens, light + dark, 1440×900

@@ -1,0 +1,54 @@
+{
+  "_provenance": "Schema-derived fixture with hand-computed Rockafellar-Uryasev reference values. pool_distinct_returns is a fully-specified synthetic pool where every entry was chosen manually (not by running the SUT). Reference CVaR was computed via closed-form R-U general-distribution formula (Rockafellar & Uryasev 2002) independently of compute_portfolio_cvar or compute_cvar_5pct_general_distribution. See m2_cvar_known_pool.derivation.md for derivation steps. Conforms to D-2 non-circular provenance requirement.",
+  "_layer": "math",
+  "_binding_plan": "feature-plans/decision-science/phase-1/m2-cvar-diagnostic/plan.md",
+  "_notes": {
+    "pool_design": "N=150 entries (MC_DEFAULT_NEIGHBOR_K). First 7 values strictly below VaR, 8th value is the atom AT the alpha-quantile (alpha*N=7.5, so fractional_weight=0.5 and atom contributes half-weight). Remaining 142 values above VaR. This construction ensures the naive 'mean of k below-VaR' estimator differs from the correct R-U value, making the fixture discriminating for A-1.",
+    "atom_handling": "sorted_pool[7] = -0.01 is the alpha-quantile (5th percentile of 150 values). R-U formula: CVaR = (1/alpha)*(1/N)*(sum_below + fractional_weight*atom) = (1/0.05)*(1/150)*(-0.192 + 0.5*(-0.01)) = 20*(1/150)*(-0.197) = -0.026267. The naive estimator (mean of the 7 below-VaR values) gives -0.027429, a 4% difference. When atom handling is wrong this test fails.",
+    "H2_stderr_design": "n_tail_distinct=8 (the 7 below-VaR + 1 atom = the genuine sub-5% distinct observations). stderr_correct = std(tail_values, ddof=1)/sqrt(8) = 0.004988. stderr_wrong_resample = std(tail_values, ddof=1)/sqrt(5000) = 0.0001995. Ratio = sqrt(5000/8) = 25.0x. A 5% tolerance band around stderr_correct (0.004988) does not include stderr_wrong_resample (0.0001995), so the wrong-resample negative assertion with 50% band safely separates them.",
+    "S3_contract": "The four S-3 display elements are recorded as load-bearing strings: (a) stderr value, (b) tail_obs_count=8, (c) 'diagnostic, not a signal - do not trade on this', (d) 'known-low-biased LOWER BOUND on tail severity, not a point estimate'."
+  },
+  "cycle_id": "20260525_1430",
+  "pool_size": 150,
+  "pool_distinct_returns": [
+    -0.05, -0.04, -0.03, -0.025, -0.02, -0.015, -0.012, -0.01,
+    0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01,
+    0.011, 0.012, 0.013, 0.014, 0.015, 0.016, 0.017, 0.018, 0.019, 0.02,
+    0.021, 0.022, 0.023, 0.024, 0.025, 0.026, 0.027, 0.028, 0.029, 0.03,
+    0.031, 0.032, 0.033, 0.034, 0.035, 0.036, 0.037, 0.038, 0.039, 0.04,
+    0.041, 0.042, 0.043, 0.044, 0.045, 0.046, 0.047, 0.048, 0.049, 0.05,
+    0.051, 0.052, 0.053, 0.054, 0.055, 0.056, 0.057, 0.058, 0.059, 0.06,
+    0.061, 0.062, 0.063, 0.064, 0.065, 0.066, 0.067, 0.068, 0.069, 0.07,
+    0.071, 0.072, 0.073, 0.074, 0.075, 0.076, 0.077, 0.078, 0.079, 0.08,
+    0.081, 0.082, 0.083, 0.084, 0.085, 0.086, 0.087, 0.088, 0.089, 0.09,
+    0.091, 0.092, 0.093, 0.094, 0.095, 0.096, 0.097, 0.098, 0.099, 0.1,
+    0.101, 0.102, 0.103, 0.104, 0.105, 0.106, 0.107, 0.108, 0.109, 0.11,
+    0.111, 0.112, 0.113, 0.114, 0.115, 0.116, 0.117, 0.118, 0.119, 0.12,
+    0.121, 0.122, 0.123, 0.124, 0.125, 0.126, 0.127, 0.128, 0.129, 0.13,
+    0.131, 0.132, 0.133, 0.134, 0.135, 0.136, 0.137, 0.138, 0.139, 0.14,
+    0.141, 0.142
+  ],
+  "pool_tail_5pct": {
+    "alpha": 0.05,
+    "n_tail_distinct": 8,
+    "_note": "8 = 7 values strictly below VaR (-0.01) + 1 atom AT the VaR. The atom contributes with fractional_weight=0.5 (alpha*N=7.5, k=7, fractional_weight=7.5-7=0.5). n_tail_distinct=8 is the DISTINCT GENUINE TAIL count for the H-2 stderr denominator.",
+    "tail_values": [-0.05, -0.04, -0.03, -0.025, -0.02, -0.015, -0.012, -0.01]
+  },
+  "expected": {
+    "var_5pct": -0.01,
+    "_var_derivation": "sorted_pool[k] where k=floor(0.05*150)=7 (0-indexed). The 8th-smallest value is -0.01.",
+    "cvar_5pct": -0.026266666666666667,
+    "_cvar_derivation": "R-U formula: (1/alpha)*(1/N)*(sum_below + fractional_weight*var). sum_below=sum([-0.05,-0.04,-0.03,-0.025,-0.02,-0.015,-0.012])=-0.192. fractional_weight=7.5-7=0.5. CVaR=(1/0.05)*(1/150)*(-0.192+0.5*(-0.01))=20*(1/150)*(-0.197)=-0.026267. Naive mean of k=7 below-VaR values: -0.02743 — differs by ~4%, confirming atom-handling discriminating power.",
+    "cvar_5pct_stderr_correct": 0.004988379353199651,
+    "_stderr_correct_derivation": "std(tail_values, ddof=1)/sqrt(n_tail_distinct=8). tail_values=8 values. std(ddof=1)=0.014124. stderr=0.014124/sqrt(8)=0.004988.",
+    "cvar_5pct_stderr_wrong_resample": 0.00019953517412798607,
+    "_stderr_wrong_derivation": "std(tail_values, ddof=1)/sqrt(5000). stderr=0.014124/sqrt(5000)=0.0001995. This is the forbidden value: using the resample count understates the true stderr by sqrt(5000/8)=25x.",
+    "n_tail_displayed": 8
+  },
+  "discriminating_power": "stderr_correct / stderr_wrong_resample = sqrt(5000/8) = 25.0x. A 5% tolerance band around stderr_correct does not include stderr_wrong_resample (separated by 25x). A 50%-band negative assertion safely rejects the wrong-resample value.",
+  "s3_display_contract": {
+    "bias_warning_substring": "known-low-biased LOWER BOUND on tail severity, not a point estimate",
+    "label_c_substring": "diagnostic, not a signal",
+    "label_d_substring": "known-low-biased LOWER BOUND"
+  }
+}

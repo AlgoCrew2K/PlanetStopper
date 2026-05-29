@@ -1,5 +1,8 @@
+import dataclasses
 import hashlib
 import math
+import os
+from collections import OrderedDict
 
 import numpy as np
 
@@ -58,8 +61,8 @@ def _reject_non_finite_in_records(records, *field_names):
 # Module-level named constants (project rule: no magic numbers in math_engine)
 # ---------------------------------------------------------------------------
 
-LOOKBACK_DAYS = 20  # 20-day realized-volatility window — AlphaBot risk-sizing standard
-ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches AlphaBot's risk-sizing assumption
+LOOKBACK_DAYS = 20  # 20-day realized-volatility window — Planet Stopper risk-sizing standard
+ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches Planet Stopper's risk-sizing assumption
 PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
 
 # Monte Carlo gating constants (run_monte_carlo)
@@ -68,6 +71,18 @@ PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes
 # could not run" from a genuine probability. compute_exit_confirmation treats
 # None as "MC confirmation unavailable" — it does NOT veto the protective stop,
 # which still fires on the ticks-below-stop condition alone (fail-safe).
+# CRRA utility constants — Phase-1 HARDEN-core (M1 plan §Deliverables, W-H4 + W-H2).
+# Tolerance around gamma == 1 for the log-utility branch. Avoids 1/(1-gamma) blow-up
+# near gamma=1. The gamma->1 limit of (W^(1-gamma) - 1)/(1-gamma) is ln(W)
+# (L'Hopital; Merton 1969 / Samuelson 1969).
+# Named constant: no-magic-numbers rule (project CLAUDE.md).
+CRRA_LOG_UTILITY_GAMMA_TOL: float = 1e-9
+# Floor applied to the wealth argument W_i = max(WEALTH_ARG_FLOOR, 1 + r_i) before
+# compute_crra_utility. Prevents log(0) / W^(1-gamma) blow-up for catastrophic returns
+# (-100% or near). Floor is on INPUT W; never on output U (W-H4 contract).
+# Source: decision-science-council-synthesis.md §3.9 W-H4.
+WEALTH_ARG_FLOOR: float = 0.001
+
 MC_INSUFFICIENT_HISTORY_SENTINEL = None
 MC_MIN_HISTORY_DAYS = (
     20  # Minimum history rows for MC simulation to run; below this we short-circuit
@@ -85,14 +100,149 @@ MC_DEFAULT_NEIGHBOR_K = (
 # numpy's default_rng / SeedSequence accept the full 64-bit space.
 MC_SEED_MODULUS = 2**64
 
+# Regime-match-quality guard threshold (vision-audit Critical Rec #2 / math-reaudit Surface 3).
+# chi-squared 0.99-quantile with df=2 (number of z-scored kNN features: SPY return + rolling vol).
+# The test statistic this gate compares against is the MEAN of K squared (z-scored Euclidean)
+# distances over the K nearest candidate-pool neighbours, NOT a single squared distance. Under
+# the null that today is drawn from the same joint distribution as the candidate pool, a single
+# squared Mahalanobis distance follows chi2(df=2); the MEAN of K such draws concentrates near
+# 2 (the mean of chi2(2)) — its 99th percentile is approximately 2.40 (chi2(2*K)/K at K=150).
+# Setting the threshold to chi2(2)_{0.99} ~= 9.21 (the SINGLE-DRAW 0.99-quantile) is therefore
+# intentionally CONSERVATIVE: an effective false-positive rate well below 1% for the mean
+# statistic. This is the correct direction for operator safety — the gate fires only on
+# extreme regime breaks, not on ordinary daily variance.
+# Source: Mahalanobis (1936) "On the generalised distance in statistics"; Aggarwal (2017)
+# Outlier Analysis 2nd ed. Sec 2.3 / 4.4; Knorr & Ng (1998) VLDB '98 kNN-outlier framework.
+# chi2(2)_{0.99} = 9.21034037197618 (scipy.stats.chi2.ppf(0.99, df=2)).
+# Operator override: read from env var MC_REGIME_MATCH_CHI2_THRESHOLD at call time; module
+# constant is the default.
+MC_REGIME_MATCH_CHI2_THRESHOLD: float = 9.21034037197618
+
+# CVaR tail percentile for compute_portfolio_cvar (M2 Phase-1 anchor).
+# CVaR at 5% = expected shortfall = mean return in the worst 5% of simulated paths.
+# Source: decision-science-council-synthesis.md §2.6 / council-attack-rubric.md M-2.
+CVAR_TAIL_PCT = 0.05  # 5th-percentile tail — worst 5% of simulation paths
+
+# M2 diagnostic constants (plan §Deliverables 'Constants').
+# CVAR_ALPHA_DEFAULT: tail probability for compute_cvar_5pct_general_distribution.
+# Source: decision-science-council-synthesis.md §2.6 / H-2 binding.
+CVAR_ALPHA_DEFAULT = 0.05  # 5th-percentile expected shortfall (CVaR at 5%)
+# CVAR_MIN_TAIL_OBS: minimum distinct tail observations required to produce a
+# non-sentinel estimate. At k=0 the R-U formula degenerates; guard returns sentinel.
+CVAR_MIN_TAIL_OBS = 1  # require at least 1 genuine below-VaR (or atom) observation
+
+
+# kNN historical regime-match result (Phase-1; the forward-path co-signal was REJECTED
+# per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md CVaR-divergence wall).
+# Phase-1 rule: ZERO production consumers permitted — tests only.
+# Fail-safe invariant: cvar_pct is None IMPLIES breach is False.
+# Enforcement: __post_init__ raises ValueError on the illegal combination.
+@dataclasses.dataclass(frozen=True)
+class CVaRAssessment:
+    """Typed result for the kNN historical regime-match (Phase-1; the forward-path
+    co-signal was REJECTED per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md
+    CVaR-divergence wall).
+
+    cvar_pct: 5th-percentile CVaR as a percentage (negative = loss).
+              None is the out-of-band insufficient sentinel (mirrors
+              MC_INSUFFICIENT_HISTORY_SENTINEL). None here means the simulator
+              could not produce an estimate; the heuristic floor still protects.
+    breach:   True when CVaR exceeds the operator breach threshold.
+              MUST be False when cvar_pct is None (fail-safe).
+    tail_obs_count: tail observations used for the CVaR estimate; 0 when None.
+    insufficient_reason: human-readable explanation when cvar_pct is None.
+    """
+
+    cvar_pct: float | None
+    breach: bool
+    tail_obs_count: int
+    stderr: float | None
+    insufficient_reason: str | None
+
+    def __post_init__(self) -> None:
+        # Fail-safe: an absent CVaR estimate is never a breach signal.
+        if self.cvar_pct is None and self.breach:
+            raise ValueError(
+                "CVaRAssessment: cvar_pct is None but breach is True — fail-safe violated. "
+                "An absent CVaR estimate must not trigger a breach; the heuristic floor "
+                "(trailing stop) remains the safety backstop."
+            )
+        # Contract: no tail observations exist when the estimate is absent.
+        if self.cvar_pct is None and self.tail_obs_count != 0:
+            raise ValueError(
+                f"CVaRAssessment: cvar_pct is None but tail_obs_count is "
+                f"{self.tail_obs_count} (must be 0 for an insufficient sentinel)."
+            )
+        # Fail-safe pairing: stderr is only meaningful when cvar_pct is present.
+        if self.cvar_pct is None and self.stderr is not None:
+            raise ValueError(
+                "CVaRAssessment: cvar_pct is None but stderr is not None — fail-safe violated. "
+                "A standard error has no meaning when no estimate was produced."
+            )
+        # Fail-safe pairing: a present estimate must carry its uncertainty.
+        if self.cvar_pct is not None and self.stderr is None:
+            raise ValueError(
+                "CVaRAssessment: cvar_pct is present but stderr is None — fail-safe violated. "
+                "Every estimate must carry its standard error for S-3 display contract."
+            )
+
+
+@dataclasses.dataclass(frozen=True)
+class RegimeMatchAssessment:
+    """Typed result for the MC regime-match-quality guard (vision-audit Critical Rec #2).
+
+    mean_sq_mahalanobis: mean squared Mahalanobis-style distance from today's z-scored
+                         query point (SPY return, rolling vol) to its K nearest candidate-
+                         pool neighbours. None is the out-of-band insufficient sentinel —
+                         mirrors MC_INSUFFICIENT_HISTORY_SENTINEL; eligible pool was below
+                         MC_MIN_HISTORY_DAYS so no score can be computed.
+    is_unprecedented:    True when mean_sq_mahalanobis > threshold_used. The default threshold
+                         (chi2(2)_{0.99}) is the SINGLE-DRAW 0.99-quantile applied to a
+                         MEAN-of-K test statistic, so the gate is intentionally conservative
+                         — fires only on extreme regime breaks (effective false-positive rate
+                         well below 1%). MUST be False when mean_sq_mahalanobis is None
+                         (fail-safe: an absent diagnostic is not a suppression signal).
+    neighbor_k:          The K used for the kNN mean-squared-distance test statistic.
+    threshold_used:      The threshold actually applied at call time (the module-level
+                         MC_REGIME_MATCH_CHI2_THRESHOLD default or the env-var override).
+                         Telemetry field: lets an operator audit which threshold was in
+                         force at any suppression decision.
+    insufficient_reason: Human-readable explanation when mean_sq_mahalanobis is None.
+                         None when a score was successfully computed.
+    """
+
+    mean_sq_mahalanobis: float | None
+    is_unprecedented: bool
+    neighbor_k: int
+    threshold_used: float
+    insufficient_reason: str | None
+
+    def __post_init__(self) -> None:
+        # Fail-safe: an absent diagnostic is not a suppression signal.
+        if self.mean_sq_mahalanobis is None and self.is_unprecedented:
+            raise ValueError(
+                "RegimeMatchAssessment: mean_sq_mahalanobis is None but "
+                "is_unprecedented is True — fail-safe violated. "
+                "An absent regime-match diagnostic must not trigger MC suppression; "
+                "the insufficient-pool sentinel is (None, False)."
+            )
+
+
 # Time-squeeze decay constants (drives intraday tightening of trailing stops)
-# Rationale (AC-7 / M-4): the log10(1 + 9*t) curve is concave — it tightens the
-# stop FASTER early in the session and SLOWER near the close. The concave shape
-# is a tuned practitioner heuristic: early-session noise warrants quicker
-# give-up of slack while late-session moves are likelier to be real, so the
-# curve flattens. The shape has no formal literature provenance and is flagged
-# for a follow-up empirical review against realized intraday vol term-structure.
-DECAY_CURVE_SCALAR = 9  # log10(1 + 9*t) maps t in [0,1] to decay in [0,1]; produces the characteristic AlphaBot intraday decay curve
+# PROVENANCE: f(t) = 1 - sqrt(1 - t), the i.i.d.-returns "remaining-session
+# uncertainty" curve. Under the standard square-root-of-time scaling for
+# i.i.d. log-returns with constant per-unit-time variance, the standard
+# deviation of remaining-session returns scales as sqrt(1-t); tightness
+# (1 - remaining_std / full_std) is therefore 1 - sqrt(1-t). Endpoints
+# f(0)=0, f(1)=1. Concave, monotone, front-loaded (open-loaded). No fitted
+# constants — the formula is closed-form THEORY with zero free parameters.
+# The curve is less aggressive midday (~0.45 pp wider stop at t=0.5) than
+# the prior log10 heuristic; monotone-converging at endpoints (f(0)=0
+# exactly, f(1)=1 exactly). Cited: Danielsson & Zigrand (2003), LSE FMG
+# DP-439, https://eprints.lse.ac.uk/24827/1/dp439.pdf.
+# Research note: docs/research/m3-provenance/literature-pass.md.
+# freeze_discipline = THEORY.
+# DECAY_CURVE_SCALAR removed — closed by the sqrt-time derivation (M3).
 MULT_OPEN = 1.5  # dynamic_multiplier at market open (loosest stop)
 MULT_CLOSE = 0.5  # dynamic_multiplier at market close (tightest)
 MIN_STOP_OPEN = 0.3  # min stop floor at market open, in percentage points
@@ -148,12 +298,12 @@ def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
 
     - time_ratio MUST be in the closed interval [0.0, 1.0] (fraction of trading
       session elapsed: 0.0 = market open, 1.0 = close). A value outside that
-      range raises ValueError — reject-don't-coerce policy (M-1): a negative
-      time_ratio below -1/9 would otherwise crash math.log10 with an opaque
-      domain error, and a value above 1 would silently over-tighten the stop.
-    - decay_curve = log10(1 + DECAY_CURVE_SCALAR * time_ratio), ranges from
-      0.0 at open to 1.0 at close. See DECAY_CURVE_SCALAR for the concave-shape
-      rationale.
+      range raises ValueError — reject-don't-coerce policy (M-1).
+    - decay_curve = 1 - sqrt(1 - time_ratio), the i.i.d.-returns remaining-
+      session uncertainty curve (Danielsson & Zigrand 2003). Ranges from 0.0
+      at open to 1.0 at close. Concave, monotone, front-loaded (open-loaded).
+      Zero free parameters — THEORY provenance. Research note:
+      docs/research/m3-provenance/literature-pass.md §1.
     - dynamic_multiplier linearly interpolates from MULT_OPEN at decay=0
       to MULT_CLOSE at decay=1.
     - dynamic_min_stop linearly interpolates from MIN_STOP_OPEN at decay=0
@@ -162,14 +312,14 @@ def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
     Pure. No I/O. No state. No datetime handling.
 
     Extracted from alpha_bot_execution.py:574-585 (cycle 4 of math-layer
-    extraction).
+    extraction). Formula re-derived M3 from first principles (M3 redrive).
     """
     _reject_non_finite(time_ratio=time_ratio)
     if time_ratio < 0.0 or time_ratio > 1.0:
         raise ValueError(
             f"time_ratio must be in the range [0, 1]; got {time_ratio!r}"
         )
-    decay_curve = math.log10(1 + DECAY_CURVE_SCALAR * time_ratio)
+    decay_curve = 1.0 - math.sqrt(1.0 - time_ratio)
     dynamic_multiplier = float(MULT_OPEN - (MULT_OPEN - MULT_CLOSE) * decay_curve)
     dynamic_min_stop = float(MIN_STOP_OPEN - (MIN_STOP_OPEN - MIN_STOP_CLOSE) * decay_curve)
     return dynamic_multiplier, dynamic_min_stop
@@ -598,12 +748,29 @@ def compute_vwap_breakdown_update(
         return 0, 0, False, False
 
     # System A — profit-protection break.
-    # PROVENANCE (AC-8): the gate `safe_hwm >= vwap_cross_hwm_pct` is a tuned
-    # practitioner heuristic with no formal literature provenance. It encodes
-    # the practitioner judgement that VWAP-break profit protection should only
-    # arm once the position has banked a high-water mark above the tuned
-    # vwap_cross_hwm_pct threshold; the threshold itself is an Optuna-tuned
-    # parameter, not a derived quantity.
+    # PROVENANCE: the gate `safe_hwm >= vwap_cross_hwm_pct` is the regime
+    # boundary of a two-regime trailing-stop system. Regime 1 (below gate):
+    # primary trailing-stop only (compute_active_trailing_stop with
+    # time-squeeze decay). Regime 2 (at-or-above gate): primary stop OR
+    # VWAP-cross profit-protection (System A) — adds the System-A break
+    # tick counter once HWM has banked enough to justify a tighter exit
+    # policy. The structural choice of a regime switch is justified by the
+    # optimal-stopping formalism for trailing stops with running maxima
+    # (Leung & Zhang, 2019, "Optimal Trading with a Trailing Stop,"
+    # Applied Mathematics & Optimization 80, 669-698,
+    # DOI: 10.1007/s00245-019-09559-0). The maximality principle (Peskir,
+    # 1998, Annals of Probability 26(4), 1614-1640) characterizes the
+    # optimal trailing boundary as the maximal solution to a first-order
+    # nonlinear ODE; the regime-switch construction is a discretization of
+    # this boundary into inactive/active regions, with the boundary location
+    # (vwap_cross_hwm_pct) remaining an Optuna-searched parameter within the
+    # BHY haircut surface. Research note:
+    # docs/research/m3-provenance/literature-pass.md §2.
+    # Honest-flag (risk-m3): the regime-switch discretization above is an
+    # interpretive extension of Peskir 1998's continuous-boundary result,
+    # NOT a formally proven theorem in Peskir 1998 itself. The gate remains
+    # the best available THEORY anchor under NN1; empirical performance +
+    # freeze_discipline = THEORY are the binding operator guarantees.
     if safe_hwm >= vwap_cross_hwm_pct and current_return < safe_hwm:
         new_vwap_ticks = int(current_vwap_ticks) + 1
         is_vwap_broken = bool(new_vwap_ticks >= VWAP_BREAK_CONFIRM_TICKS)
@@ -702,6 +869,113 @@ def derive_cycle_mc_seed(cycle_id: str) -> int:
     return int(hashlib.sha256(cycle_id.encode()).hexdigest(), 16) % MC_SEED_MODULUS
 
 
+# Bounded LRU cache for _sorted_dates, keyed by id(historical_data).
+# Planet Stopper is a long-running daemon constructing a fresh historical_data
+# dict every minute during market hours (~390 dicts/day). An unbounded
+# strong-ref cache would leak ~1 MB x 390 min/day = ~400 MB/day.
+# OrderedDict-based LRU caps memory to _SORTED_DATES_CACHE_MAXSIZE entries
+# (~8 MB ceiling). Maxsize is chosen to be >= 8 so one full symphony cycle
+# (up to 5 consumers + 3 headroom for multi-symphony overlap) never evicts
+# a hot entry mid-cycle.
+# Each entry is (object_ref, sorted_list). object_ref lets us detect
+# CPython id reuse (rare: only if a prior dict is GC'd and a new one
+# allocated at the same address before the eviction runs).
+_SORTED_DATES_CACHE_MAXSIZE = 32  # >= 8 (per-cycle hot path), << 64 (memory ceiling)
+_sorted_dates_cache: OrderedDict = OrderedDict()
+
+
+def _sorted_dates(historical_data: dict) -> list[str]:
+    """Return sorted(historical_data.keys()) memoised by object identity.
+
+    Keying by id(historical_data) means:
+    - Repeated calls with the SAME dict object (one symphony cycle) pay
+      O(1) — the sorted list is returned from cache without re-sorting.
+    - A new dict object — even one with identical keys — always recomputes,
+      so no stale results can leak across cycles (id-keyed, not value-keyed).
+
+    Eviction: LRU with maxsize _SORTED_DATES_CACHE_MAXSIZE. Ensures the
+    daemon's memory footprint stays bounded over multi-day runs.
+
+    Cache validity: each entry stores the dict alongside the sorted list.
+    On lookup, `stored_dict is historical_data` guards against CPython id
+    reuse — if the ids match but the objects differ, the stale entry is
+    evicted and recomputed.
+
+    Returns a list (not a tuple) because consumers slice it:
+    `valid_dates[-LOOKBACK_DAYS:]` etc.
+    """
+    id_ = id(historical_data)
+    entry = _sorted_dates_cache.get(id_)
+    if entry is not None:
+        stored_dict, sorted_list = entry
+        if stored_dict is historical_data:
+            _sorted_dates_cache.move_to_end(id_)  # LRU bump — mark as recently used
+            return sorted_list
+        # id reuse after GC — fall through to recompute and overwrite
+
+    sorted_list = sorted(historical_data.keys())
+    _sorted_dates_cache[id_] = (historical_data, sorted_list)
+    if len(_sorted_dates_cache) > _SORTED_DATES_CACHE_MAXSIZE:
+        _sorted_dates_cache.popitem(last=False)  # evict least-recently-used entry
+    return sorted_list
+
+
+def _compute_rolling_spy_vol(spy_returns: np.ndarray) -> np.ndarray:
+    """Vectorized rolling population-std over spy_returns.
+
+    Replaces the Python for-loop in run_monte_carlo (PERF-001). Also
+    reusable by compute_portfolio_cvar (~line 1344) and
+    compute_regime_match_quality (~line 1557) which carry identical loops.
+
+    Contract:
+      - Output is same length as input.
+      - spy_vols[0] == 0.0 (pinned; matches the pre-PERF-001 production
+        behaviour where i==0 sets 0.0 unconditionally).
+      - Uses ddof=0 (population std) to match np.std default.
+      - Bit-exact with the reference Python loop for the full-window phase
+        (indices >= MC_VOL_WINDOW_DAYS - 1), which is the only phase that
+        feeds the kNN candidate pool in run_monte_carlo.
+      - Growing-window phase (indices 1..MC_VOL_WINDOW_DAYS-2) matches the
+        reference to within 1e-15 via cumsum arithmetic.
+      - Empty and 1-element inputs are handled without raising.
+      - Pure: input array is never mutated.
+    """
+    from numpy.lib.stride_tricks import as_strided
+
+    n = len(spy_returns)
+    if n == 0:
+        return np.array([], dtype=float)
+
+    w = MC_VOL_WINDOW_DAYS
+    result = np.zeros(n, dtype=float)
+
+    # Full-window phase: indices [w-1 .. n-1].
+    # as_strided produces contiguous windows; np.std(axis=1, ddof=0) is
+    # bit-exact with np.std(spy_returns[i-w+1:i+1]) for each i.
+    full_start = w - 1
+    if n > full_start:
+        full_n = n - full_start
+        s = spy_returns.strides[0]
+        windows = as_strided(spy_returns, shape=(full_n, w), strides=(s, s))
+        result[full_start:] = np.std(windows, axis=1, ddof=0)
+
+    # Growing-window phase: indices [1 .. w-2].
+    # These fall outside the kNN candidate pool (run_monte_carlo excludes the
+    # first w-1 days), but compute_portfolio_cvar / compute_regime_match_quality
+    # use the full array. Computed via cumsum: std(x[0:k])^2 = E[x^2] - E[x]^2.
+    # Matches the reference to within float64 rounding (< 1e-15).
+    grow_end = min(w - 1, n)  # indices 1..grow_end-1 (exclusive of full_start)
+    if grow_end > 1:
+        cs = np.cumsum(spy_returns[:grow_end])
+        cs2 = np.cumsum(spy_returns[:grow_end] ** 2)
+        k_vals = np.arange(2, grow_end + 1, dtype=float)
+        means = cs[1:] / k_vals
+        var = cs2[1:] / k_vals - means ** 2
+        result[1:grow_end] = np.sqrt(np.maximum(var, 0.0))
+
+    return result
+
+
 def run_monte_carlo(
     holdings,
     historical_data,
@@ -727,7 +1001,7 @@ def run_monte_carlo(
         for h in holdings
         if h.get("last_percent_change") is not None
     )
-    valid_dates = sorted(list(historical_data.keys()))
+    valid_dates = _sorted_dates(historical_data)
     # Sufficiency is judged on the ELIGIBLE kNN pool, not the raw history: the
     # first MC_VOL_WINDOW_DAYS - 1 early-window days are excluded below (their
     # rolling vol is short-sample biased), so a raw history needs at least
@@ -748,13 +1022,7 @@ def run_monte_carlo(
         [historical_data[date].get("SPY", {}).get("daily_ret", 0.0) for date in valid_dates]
     )
 
-    spy_vols = np.zeros_like(spy_returns)
-    for i in range(len(spy_returns)):
-        start_idx = max(0, i - (MC_VOL_WINDOW_DAYS - 1))
-        if i > 0:
-            spy_vols[i] = np.std(spy_returns[start_idx : i + 1])
-        else:
-            spy_vols[i] = 0.0
+    spy_vols = _compute_rolling_spy_vol(spy_returns)
 
     spy_today_ret_dec = spy_today_return / PCT_SCALAR
     # Invariant: len(spy_returns) > MC_VOL_WINDOW_DAYS - 1 because the eligible-
@@ -842,7 +1110,7 @@ def calculate_20d_vol(holdings, historical_data):
     for day_data in historical_data.values():
         for ticker_data in day_data.values():
             _reject_non_finite_in_records([ticker_data], "daily_ret")
-    valid_dates = sorted(list(historical_data.keys()))[-LOOKBACK_DAYS:]
+    valid_dates = _sorted_dates(historical_data)[-LOOKBACK_DAYS:]
     if len(valid_dates) < LOOKBACK_DAYS:
         return 0.0
 
@@ -877,7 +1145,7 @@ def calculate_14d_atr_pct(holdings, historical_data):
     for day_data in historical_data.values():
         for ticker_data in day_data.values():
             _reject_non_finite_in_records([ticker_data], "high", "low", "close")
-    valid_dates = sorted(list(historical_data.keys()))[-ATR_LOOKBACK_DAYS:]
+    valid_dates = _sorted_dates(historical_data)[-ATR_LOOKBACK_DAYS:]
     if len(valid_dates) < ATR_LOOKBACK_DAYS:
         return calculate_20d_vol(holdings, historical_data)
 
@@ -923,3 +1191,536 @@ def calculate_14d_atr_pct(holdings, historical_data):
 
     portfolio_atr_pct = atr_pct_array.dot(weights)
     return float(portfolio_atr_pct)
+
+
+@dataclasses.dataclass(frozen=True)
+class CVaREstimate:
+    """Result type for compute_cvar_5pct_general_distribution (M2 H-2 / R-U estimator).
+
+    Distinct from CVaRAssessment: carries .stderr (H-2 binding) and is the return
+    type of the pure-math kNN-pool estimator. CVaRAssessment is the typed result
+    for the kNN historical regime-match (Phase-1; the forward-path co-signal was REJECTED
+    per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md CVaR-divergence wall).
+
+    cvar_pct: Rockafellar-Uryasev general-distribution CVaR. None when the pool
+              is empty or has fewer than CVAR_MIN_TAIL_OBS genuine tail observations.
+    tail_obs_count: distinct tail observations used:
+                    tail_obs_count = floor(alpha*N) + (1 if fractional_weight > 0 else 0)
+                    (k_below + 1 if atom contributes, else k_below). This is the
+                    H-2 stderr denominator — NOT the resample count. Auditable via
+                    the persisted cvar_n_tail column.
+    stderr: std(tail_values, ddof=1)/sqrt(tail_obs_count). None when sentinel.
+    insufficient_reason: human-readable explanation when cvar_pct is None.
+    """
+
+    cvar_pct: "float | None"
+    tail_obs_count: int
+    stderr: "float | None"
+    insufficient_reason: "str | None"
+
+
+def compute_cvar_stderr_distinct_tail(
+    returns: list,
+    alpha: float = CVAR_ALPHA_DEFAULT,
+) -> "float | None":
+    """Compute CVaR stderr using the DISTINCT GENUINE tail observation count.
+
+    H-2 binding: the denominator is the number of real tail observations (k_below
+    if fractional_weight=0, else k_below+1 including the atom). This is never the
+    resample count (5000), which would understate the stderr by sqrt(5000/k)≈25x.
+
+    Returns None when the pool is empty or has fewer than CVAR_MIN_TAIL_OBS tail obs.
+    Raises ValueError on non-finite inputs (A-2 closure).
+
+    Source: decision-science-council-synthesis.md H-2; plan §Deliverables Code.
+    """
+    if not returns:
+        return None
+    # A-2 closure: reject non-finite before any arithmetic
+    for v in returns:
+        if not math.isfinite(v):
+            raise ValueError(
+                f"NaN input not allowed: value={v!r} in returns passed to "
+                "compute_cvar_stderr_distinct_tail"
+            )
+    sorted_pool = sorted(returns)
+    n = len(sorted_pool)
+    k = int(alpha * n)  # floor(alpha * N) — number of strictly-below-VaR values
+    fractional_weight = alpha * n - k  # how much of the VaR atom contributes
+
+    if k < CVAR_MIN_TAIL_OBS:
+        return None
+
+    # Distinct tail obs: k below-VaR values + 1 if atom has non-zero weight
+    n_tail_distinct = k + (1 if fractional_weight > 0 else 0)
+
+    tail_values = sorted_pool[: k + (1 if fractional_weight > 0 else 0)]
+
+    if len(tail_values) < 2:
+        # ddof=1 requires at least 2 observations; return None (sentinel).
+        return None
+
+    mean_tail = sum(tail_values) / len(tail_values)
+    variance = sum((v - mean_tail) ** 2 for v in tail_values) / (len(tail_values) - 1)
+    if variance == 0.0:
+        # Degenerate pool: all tail values identical; stderr undefined.
+        return None
+    std_tail = math.sqrt(variance)
+    return std_tail / math.sqrt(n_tail_distinct)
+
+
+def compute_cvar_5pct_general_distribution(
+    returns: list,
+    alpha: float = CVAR_ALPHA_DEFAULT,
+) -> CVaREstimate:
+    """Rockafellar-Uryasev (2002) general-distribution CVaR on a discrete pool.
+
+    Implements the R-U general-distribution formula with correct atom handling:
+      CVaR = (1/alpha) * (1/N) * (sum_below + fractional_weight * VaR)
+    where:
+      k                = floor(alpha * N)         — count strictly below VaR
+      VaR              = sorted_pool[k]            — alpha-quantile atom
+      fractional_weight = alpha*N - k             — atom partial weight [0, 1)
+      sum_below        = sum(sorted_pool[:k])
+
+    The naive estimator (mean of k strictly-below-VaR values) omits the atom
+    contribution, producing a ~4% upward bias in the N=150 fixture.
+
+    stderr uses the DISTINCT GENUINE tail count as denominator (H-2 binding).
+    Canonical formula (Acerbi-Tasche atom-contribution discipline):
+      tail_obs_count = floor(alpha*N) + (1 if fractional_weight > 0 else 0)
+
+    Returns CVaREstimate with cvar_pct=None (sentinel) when:
+      - pool is empty
+      - n_tail_distinct < CVAR_MIN_TAIL_OBS
+
+    Raises ValueError on non-finite inputs (A-2 closure).
+
+    Source: Rockafellar & Uryasev (2002), Optimization of Conditional Value-at-Risk;
+            Acerbi & Tasche (2002), On the coherence of expected shortfall — atom-contribution discipline;
+            decision-science-council-synthesis.md §2.6; plan §Deliverables Code.
+    """
+    if not returns:
+        return CVaREstimate(
+            cvar_pct=None,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason="Empty pool: no return observations to estimate CVaR.",
+        )
+
+    # A-2 closure: reject non-finite before sort or arithmetic
+    for v in returns:
+        if not math.isfinite(v):
+            raise ValueError(
+                f"NaN input not allowed: value={v!r} in returns passed to "
+                "compute_cvar_5pct_general_distribution"
+            )
+
+    sorted_pool = sorted(returns)
+    n = len(sorted_pool)
+    k = int(alpha * n)  # floor(alpha * N)
+    fractional_weight = alpha * n - k  # atom partial weight
+
+    # Sentinel guard: k=0 means no strictly-below-VaR values exist.
+    # A pool with no genuine below-VaR entries cannot produce a meaningful CVaR
+    # (the VaR atom alone is all positive returns — no tail severity to estimate).
+    # CVAR_MIN_TAIL_OBS guards on k, not on k + atom — consistent with the
+    # "data-starved" operator signal: we need at least one strictly-below-VaR observation.
+    if k < CVAR_MIN_TAIL_OBS:
+        return CVaREstimate(
+            cvar_pct=None,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason=(
+                f"Insufficient tail observations: k={k} strictly-below-VaR entries "
+                f"< CVAR_MIN_TAIL_OBS ({CVAR_MIN_TAIL_OBS}). "
+                "Pool has no genuine sub-alpha-quantile entries."
+            ),
+        )
+
+    # Distinct tail obs count (H-2 denominator): strictly-below + atom if it contributes.
+    n_tail_distinct = k + (1 if fractional_weight > 0 else 0)
+
+    var_atom = sorted_pool[k]  # alpha-quantile atom (VaR)
+    sum_below = sum(sorted_pool[:k])
+
+    # H-2 stderr on distinct tail count (never the resample count)
+    tail_values = sorted_pool[: k + (1 if fractional_weight > 0 else 0)]
+
+    if len(tail_values) < 2:
+        # Single-observation tail: std undefined; return sentinel.
+        return CVaREstimate(
+            cvar_pct=None,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason=(
+                f"Degenerate tail: only {len(tail_values)} tail observation(s); "
+                "stderr requires at least 2 distinct observations."
+            ),
+        )
+
+    mean_tail = sum(tail_values) / len(tail_values)
+    variance = sum((v - mean_tail) ** 2 for v in tail_values) / (len(tail_values) - 1)
+
+    if variance == 0.0:
+        # All tail observations are identical — degenerate pool. The CVaR is the common
+        # value but stderr = 0, violating the sentinel discipline (stderr must be positive
+        # for a non-sentinel estimate). Return sentinel so the display layer skips.
+        return CVaREstimate(
+            cvar_pct=None,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason=(
+                "Degenerate tail: all tail observations are identical "
+                "(std=0); stderr undefined for this pool."
+            ),
+        )
+
+    # R-U general-distribution formula
+    cvar_val = (1.0 / alpha) * (1.0 / n) * (sum_below + fractional_weight * var_atom)
+    stderr_val = math.sqrt(variance) / math.sqrt(n_tail_distinct)
+
+    return CVaREstimate(
+        cvar_pct=cvar_val,
+        tail_obs_count=n_tail_distinct,
+        stderr=stderr_val,
+        insufficient_reason=None,
+    )
+
+
+def compute_portfolio_cvar(
+    cycle_id: str,
+    holdings: list,
+    historical_data: dict,
+    spy_today_return: float,
+    simulation_paths: int = MC_DEFAULT_SIMULATION_PATHS,
+    neighbor_k: int = MC_DEFAULT_NEIGHBOR_K,
+    *,
+    mode: "str | None" = None,
+) -> "CVaRAssessment":
+    """M2 Phase-1 CVaR diagnostic — 5th-percentile expected shortfall.
+
+    Computes the CVaR (Expected Shortfall) at CVAR_TAIL_PCT (5%) for the
+    portfolio using the same kNN regime-matching pool as run_monte_carlo.
+    The seed is exclusively derive_cycle_mc_seed(cycle_id) fed into an
+    isolated np.random.default_rng — never the global RNG (plan risk R3).
+
+    Phase-1 anchor: this is the SINGLE replay-determinism anchor (§3.7).
+    Same (cycle_id, holdings, historical_data) → bit-identical cvar_pct and
+    tail_obs_count across independent calls (Gate-1 / §3.8).
+
+    mode: when "live" or "replay", persists the row via database.record_cvar_diagnostic
+          (the H4 helper — never a raw INSERT). When None, computes and returns
+          only (determinism tests omit mode to stay DB-free). The mode parameter
+          has no default at the H4 helper call site; callers in production always
+          pass it explicitly (plan risk R4 / arch constraint 4).
+
+    Returns CVaRAssessment. Zero broker-order symbols in this function body
+    or its call-chain (rubric M-2 / live-mode-audit.csv M2 rows = 0).
+    """
+    _reject_non_finite(spy_today_return=spy_today_return)
+    for day_data in historical_data.values():
+        for ticker_data in day_data.values():
+            _reject_non_finite_in_records([ticker_data], "daily_ret")
+    for h in holdings:
+        _reject_non_finite(
+            last_percent_change=h.get("last_percent_change", 0.0),
+            allocation=h.get("allocation", 0.0),
+        )
+
+    valid_dates = _sorted_dates(historical_data)
+    # Eligible pool mirrors run_monte_carlo: first MC_VOL_WINDOW_DAYS - 1 days
+    # are excluded (short-sample vol bias), so sufficiency is checked on the
+    # eligible count, not the raw history count.
+    eligible_days = len(valid_dates) - (MC_VOL_WINDOW_DAYS - 1)
+    if eligible_days < MC_MIN_HISTORY_DAYS:
+        result = CVaRAssessment(
+            cvar_pct=None,
+            breach=False,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason=(
+                f"Insufficient history: {eligible_days} eligible days "
+                f"< MC_MIN_HISTORY_DAYS ({MC_MIN_HISTORY_DAYS}). "
+                "CVaR estimate unavailable."
+            ),
+        )
+        if mode is not None:
+            import database as _db  # lazy import — math_engine is pure-math at module level
+            _db.record_cvar_diagnostic(
+                cycle_id=cycle_id,
+                symphony_id="",
+                cvar_5pct=None,
+                cvar_5pct_stderr=None,
+                cvar_n_tail=0,
+                cvar_5pct_long=None,
+                cvar_n_tail_long=None,
+                mode=mode,
+            )
+        return result
+
+    # 1. SPY return and rolling-vol arrays (identical to run_monte_carlo)
+    spy_returns = np.array(
+        [historical_data[date].get("SPY", {}).get("daily_ret", 0.0) for date in valid_dates]
+    )
+    spy_vols = _compute_rolling_spy_vol(spy_returns)
+
+    spy_today_ret_dec = spy_today_return / PCT_SCALAR
+    today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1) :], spy_today_ret_dec))
+
+    # Exclude early-window candidates (same logic as run_monte_carlo)
+    candidate_idx = np.arange(MC_VOL_WINDOW_DAYS - 1, len(spy_returns))
+    cand_returns = spy_returns[candidate_idx]
+    cand_vols = spy_vols[candidate_idx]
+
+    # Standardized kNN features
+    ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
+    vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
+
+    def _z(values, mean, std):
+        if std == 0.0:
+            return np.zeros_like(values, dtype=float)
+        return (values - mean) / std
+
+    cand_returns_z = _z(cand_returns, ret_mean, ret_std)
+    cand_vols_z = _z(cand_vols, vol_mean, vol_std)
+    today_ret_z = 0.0 if ret_std == 0.0 else (spy_today_ret_dec - ret_mean) / ret_std
+    today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
+
+    distances = np.sqrt(
+        (cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2
+    )
+
+    if len(distances) <= neighbor_k:
+        nearest_pool_indices = np.arange(len(distances))
+    else:
+        nearest_pool_indices = np.argpartition(distances, neighbor_k)[:neighbor_k]
+
+    nearest_days = [valid_dates[candidate_idx[i]] for i in nearest_pool_indices]
+
+    # 2. Portfolio return matrix (K days x N tickers)
+    tickers = [h["ticker"] for h in holdings]
+    weights = np.array([h.get("allocation", 0.0) for h in holdings])
+
+    returns_matrix = np.zeros((len(nearest_days), len(tickers)))
+    for i, date in enumerate(nearest_days):
+        day_data = historical_data[date]
+        spy_ret = day_data.get("SPY", {}).get("daily_ret", 0.0)
+        for j, ticker in enumerate(tickers):
+            if ticker in day_data:
+                returns_matrix[i, j] = day_data[ticker].get("daily_ret", 0.0)
+            else:
+                returns_matrix[i, j] = spy_ret
+
+    nearest_day_returns = returns_matrix.dot(weights) * PCT_SCALAR
+
+    # 3. CVaR via Rockafellar-Uryasev general-distribution estimator on the DISTINCT
+    # kNN pool (nearest_day_returns, N≈neighbor_k). The simulation_paths parameter
+    # belongs to run_monte_carlo (bootstrap MC); CVaR uses the pool directly so that
+    # tail_obs_count reflects genuine distinct observations (~8), not a resample
+    # fraction (5%*5000=250). H-2 binding: denominator is the pool's k+atom count.
+    pool = nearest_day_returns.tolist()
+    cvar_estimate = compute_cvar_5pct_general_distribution(pool, alpha=CVAR_ALPHA_DEFAULT)
+    # cvar_estimate.stderr already carries the H-2 distinct-tail denominator
+    # (computed inside compute_cvar_5pct_general_distribution); no separate
+    # compute_cvar_stderr_distinct_tail call needed.
+
+    result = CVaRAssessment(
+        cvar_pct=cvar_estimate.cvar_pct,
+        breach=False,  # Phase-1: no breach threshold defined; breach is always False
+        tail_obs_count=cvar_estimate.tail_obs_count,
+        stderr=cvar_estimate.stderr,
+        insufficient_reason=cvar_estimate.insufficient_reason,
+    )
+
+    if mode is not None:
+        import database as _db  # lazy import — math_engine is pure-math at module level
+        _db.record_cvar_diagnostic(
+            cycle_id=cycle_id,
+            symphony_id="",
+            cvar_5pct=cvar_estimate.cvar_pct,
+            cvar_5pct_stderr=cvar_estimate.stderr,
+            cvar_n_tail=cvar_estimate.tail_obs_count,
+            cvar_5pct_long=None,
+            cvar_n_tail_long=None,
+            mode=mode,
+        )
+
+    return result
+
+
+def compute_crra_utility(W: float, gamma: float) -> float:
+    """CRRA utility transform for the M1 autotuner objective.
+
+    Computes u(W; gamma) where:
+        gamma != 1: u(W) = (W^(1 - gamma) - 1) / (1 - gamma)
+        gamma == 1: u(W) = ln(W)  (log-utility limit, L'Hopital)
+
+    The '-1' numerator term MUST be present. The canonical form and the form
+    without '-1' are monotone-equivalent for argmax, but NOT mean-equivalent:
+    mean(U) is the M1 trial objective and the haircut t-stat numerator; the
+    missing '-1' would shift mean(U) by -1/(1-gamma). Fixture W-H2 uses this
+    exact form; tests validate bit-identical agreement.
+
+    W is the FLOORED wealth argument (W >= WEALTH_ARG_FLOOR). This function
+    validates that W is finite at entry via _reject_non_finite; the floor must
+    be applied by the caller (autotuner.derive_floored_wealth_argument) BEFORE
+    calling this function. Flooring inside this function would silently hide a
+    caller contract violation.
+
+    References:
+      - decision-science-council-synthesis.md §3.9 W-H2 (wealth argument)
+      - decision-science-v3-and-divergence-evaluation.md §A.1 H-1 (W-H4 floor)
+      - math_engine.py CRRA_LOG_UTILITY_GAMMA_TOL (gamma==1 branch tolerance)
+    """
+    _reject_non_finite(W=W, gamma=gamma)
+    if abs(gamma - 1.0) < CRRA_LOG_UTILITY_GAMMA_TOL:
+        # Log-utility limit: gamma -> 1  =>  u(W) = ln(W)
+        return math.log(W)
+    return (W ** (1.0 - gamma) - 1.0) / (1.0 - gamma)
+
+
+def compute_crra_eu_objective(daily_returns: list[float], gamma: float) -> float:
+    """CRRA expected-utility objective for the M1 autotuner: mean(U) over the fold.
+
+    For each daily return r_i (decimal fraction, e.g. 0.01 = 1%):
+      1. Reject non-finite r_i via _reject_non_finite (A-2 star NaN closure).
+      2. Derive floored wealth argument: W_i = max(WEALTH_ARG_FLOOR, 1 + r_i).
+         Floor is on INPUT W; never on output U (W-H4 contract).
+      3. Compute CRRA utility: U_i = compute_crra_utility(W_i, gamma).
+    Returns mean(U) = sum(U) / T. Returns 0.0 for an empty series.
+
+    The trial objective is mean(U), NOT the certainty-equivalent in return units.
+    CE = ((1 + (1-gamma)*mean(U))^(1/(1-gamma)) - 1) is a monotone transform with
+    identical trial rankings; it is computed separately for the audit display only.
+
+    References:
+      - decision-science-council-synthesis.md §3.9 W-H2 / W-H4
+      - council-attack-rubric.md A-2 (NaN-propagation closure)
+    """
+    if not daily_returns:
+        return 0.0
+    U_values = []
+    for r in daily_returns:
+        _reject_non_finite(r=r)
+        W = max(WEALTH_ARG_FLOOR, 1.0 + r)
+        U_values.append(compute_crra_utility(W, gamma))
+    return sum(U_values) / len(U_values)
+
+
+def compute_regime_match_quality(
+    historical_data: dict,
+    spy_today_return: float,
+) -> RegimeMatchAssessment:
+    """Regime-match-quality guard for the MC bootstrap (vision-audit Critical Rec #2).
+
+    Computes a Mahalanobis-style chi-squared test statistic on the K nearest
+    candidate-pool neighbours of today's query point, using the same z-score
+    standardization that run_monte_carlo applies (AC-1). If the mean squared
+    distance to the K nearest neighbours exceeds MC_REGIME_MATCH_CHI2_THRESHOLD
+    (chi2(2)_{0.99} ~= 9.21 — the SINGLE-DRAW 0.99-quantile applied as a
+    conservative threshold against the MEAN-of-K statistic; effective false-positive
+    rate well below 1%), today's joint state is far from every recent neighbour and
+    the MC bootstrap is unrepresentative; the caller should suppress the MC veto by
+    passing prob_beating=None to compute_exit_confirmation, exercising the existing
+    MC-unavailable fail-safe path. The gate fires only on extreme regime breaks.
+
+    Pure function. O(eligible pool size). No I/O, no blocking work (architecture
+    constraint #1).
+
+    The threshold is read from the MC_REGIME_MATCH_CHI2_THRESHOLD environment
+    variable at call time if present; the module-level constant is the default.
+    threshold_used on the returned assessment records the value actually applied.
+
+    References:
+      - Mahalanobis (1936) "On the generalised distance in statistics."
+        Proc. Nat. Inst. Sci. India 2, 49-55.
+      - Aggarwal (2017) Outlier Analysis 2nd ed. Springer. Sec 2.3, 4.4.
+      - Knorr & Ng (1998) "Algorithms for mining distance-based outliers
+        in large datasets." VLDB '98, 392-403.
+    """
+    _reject_non_finite(spy_today_return=spy_today_return)
+    for day_data in historical_data.values():
+        for ticker_data in day_data.values():
+            _reject_non_finite_in_records([ticker_data], "daily_ret")
+    # Operator-overridable threshold (env var beats module-level default).
+    _env_override = os.environ.get("MC_REGIME_MATCH_CHI2_THRESHOLD")
+    threshold = float(_env_override) if _env_override is not None else MC_REGIME_MATCH_CHI2_THRESHOLD
+
+    # K for the kNN test statistic — reuses the canonical MC default constant.
+    k = MC_DEFAULT_NEIGHBOR_K
+
+    valid_dates = _sorted_dates(historical_data)
+
+    # Eligible-pool sufficiency: mirrors run_monte_carlo's exact boundary so the
+    # two guards are bit-consistent on the short-history short-circuit.
+    eligible_days = len(valid_dates) - (MC_VOL_WINDOW_DAYS - 1)
+    if eligible_days < MC_MIN_HISTORY_DAYS:
+        return RegimeMatchAssessment(
+            mean_sq_mahalanobis=None,
+            is_unprecedented=False,  # fail-safe: absent diagnostic is not a suppression signal
+            neighbor_k=k,
+            threshold_used=threshold,
+            insufficient_reason=(
+                f"regime-match quality: eligible pool {eligible_days} days "
+                f"< MC_MIN_HISTORY_DAYS ({MC_MIN_HISTORY_DAYS}); "
+                "assessment unavailable"
+            ),
+        )
+
+    # Build SPY return series (decimal) from the pool — same source as run_monte_carlo.
+    spy_returns = np.array(
+        [historical_data[date].get("SPY", {}).get("daily_ret", 0.0) for date in valid_dates]
+    )
+
+    # Rolling 20-day vol for each pool day — same computation as run_monte_carlo.
+    spy_vols = _compute_rolling_spy_vol(spy_returns)
+
+    # Today's decimal return and rolling vol — same derivation as run_monte_carlo.
+    spy_today_ret_dec = spy_today_return / PCT_SCALAR
+    today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1) :], spy_today_ret_dec))
+
+    # Early-window exclusion — mirrors run_monte_carlo's candidate_idx construction.
+    candidate_idx = np.arange(MC_VOL_WINDOW_DAYS - 1, len(spy_returns))
+    cand_returns = spy_returns[candidate_idx]
+    cand_vols = spy_vols[candidate_idx]
+
+    # Z-score both features using candidate-pool statistics — same params as run_monte_carlo
+    # so squared Euclidean distances approximate Mahalanobis distances (zero-std guard
+    # collapses to 0.0 to keep output finite).
+    ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
+    vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
+
+    def _z(values, mean, std):
+        if std == 0.0:
+            return np.zeros_like(values, dtype=float)
+        return (values - mean) / std
+
+    cand_returns_z = _z(cand_returns, ret_mean, ret_std)
+    cand_vols_z = _z(cand_vols, vol_mean, vol_std)
+    today_ret_z = 0.0 if ret_std == 0.0 else (spy_today_ret_dec - ret_mean) / ret_std
+    today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
+
+    # Squared Euclidean distance from today's z-scored query to each candidate day.
+    sq_distances = (cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2
+
+    # K nearest neighbours by squared distance; when pool is smaller than K, use all.
+    if len(sq_distances) <= k:
+        nearest_sq = sq_distances
+    else:
+        nearest_idx = np.argpartition(sq_distances, k)[:k]
+        nearest_sq = sq_distances[nearest_idx]
+
+    # Mean squared Mahalanobis-style distance over K nearest neighbours (Surface 3 spec:
+    # "if the K nearest neighbours have a mean distance above a threshold, the bootstrap
+    # is unrepresentative"). This is the test statistic compared to the chi2(2)_{0.99} threshold.
+    mean_sq = float(np.mean(nearest_sq))
+    is_unprecedented = mean_sq > threshold
+
+    return RegimeMatchAssessment(
+        mean_sq_mahalanobis=mean_sq,
+        is_unprecedented=is_unprecedented,
+        neighbor_k=k,
+        threshold_used=threshold,
+        insufficient_reason=None,
+    )

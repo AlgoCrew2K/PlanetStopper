@@ -26,13 +26,6 @@ import autotuner
 import database
 import math_engine
 import reporting
-from engine.dual_altitude import initialize_port_state_if_absent
-
-# Port-mode resolver (AC-P2.*)
-from engine.exit_authority import get_exit_authority, is_authoritative
-from port_aggregator import aggregate_to_port, build_port_signal
-from port_selector import composition_hash as _port_composition_hash
-from port_selector import select_symphony_with_mc_gate
 
 
 def augment_optimization_results_with_selection_stats(optimization_results: dict) -> dict:
@@ -100,6 +93,10 @@ MAX_PARABOLIC_SQUEEZE = float(os.getenv("MAX_PARABOLIC_SQUEEZE", "0.50"))
 
 SIMULATION_PATHS = int(os.getenv("SIMULATION_PATHS", "5000"))
 NEIGHBOR_K = int(os.getenv("NEIGHBOR_K", "150"))
+# Long-window kNN neighbor count for the optional second CVaR window.
+# Wider regime pool = smoother estimate with less locality.
+# Gated on SECOND_WINDOW_CVAR_ENABLED env flag (default off).
+CVAR_LONG_NEIGHBOR_K = int(os.getenv("CVAR_LONG_NEIGHBOR_K", "300"))
 
 # --- FLEET CORRELATION CIRCUIT BREAKER (V3, AC-V3.1) ---
 # Flag when >50% of active symphonies fire the same reason within 3 minutes.
@@ -181,11 +178,11 @@ def fetch_symphony_stats(account_id):
             try:
                 return response.json().get("symphonies", [])
             except ValueError as e:
-                print(f"Error parsing Composer response JSON: HTTP {response.status_code} - {e}")
+                print(f"Error parsing Composer response JSON: HTTP {response.status_code}")
                 return []
-        print(f"Error fetching account {account_id}: HTTP {response.status_code}")
+        print(f"Error fetching symphony stats: HTTP {response.status_code}")
     except requests.RequestException as e:
-        print(f"Exception fetching account {account_id}: {e}")
+        print(f"Exception fetching symphony stats: {type(e).__name__}")
     return []
 
 
@@ -287,7 +284,7 @@ def execute_sell_to_cash(actual_symphony_id, account_id):
             time.sleep(1.5)
             return False
         except requests.RequestException as e:
-            print(f"     !!! [API CRASH]: {str(e)}")
+            print(f"     !!! [API CRASH]: {type(e).__name__}")
             if attempt < len(backoff_intervals):
                 delay = backoff_intervals[attempt]
                 print(f"     -> Retrying in {delay}s due to transient network spike...")
@@ -353,7 +350,7 @@ def fetch_alpaca_history(tickers, current_date_str):
             try:
                 data = response.json()
             except ValueError as e:
-                print(f"Error parsing Alpaca response JSON: HTTP {response.status_code} - {e}")
+                print(f"Error parsing Alpaca response JSON: HTTP {response.status_code}")
                 break
             if "bars" in data:
                 for symbol, bars in data["bars"].items():
@@ -860,11 +857,10 @@ def main():
                     bot_state[s_id]["name"] = sym.get("name", bot_state[s_id].get("name", ""))
                     bot_state[s_id]["account"] = account
 
-                    if not bot_state[s_id].get("triggered"):
-                        holdings_for_vol = sym.get("holdings", [])
-                        bot_state[s_id]["symphony_vol"] = math_engine.calculate_20d_vol(
-                            holdings_for_vol, data_phase_history
-                        )
+                    holdings_for_vol = sym.get("holdings", [])
+                    bot_state[s_id]["symphony_vol"] = math_engine.calculate_20d_vol(
+                        holdings_for_vol, data_phase_history
+                    )
 
                     # Advance HWM (monotonic — never decreases)
                     if current_return > bot_state[s_id].get(
@@ -1098,7 +1094,8 @@ def main():
                     f"  -> {'Weekend/Force' if current_et.weekday() >= 5 else 'Friday'} Detected. Starting autotune..."
                 )
                 autotuner_changes = autotuner.run_autotuner(
-                    bot_state, current_date_str, ACCOUNT_UUIDS, is_forced=force_run
+                    bot_state, current_date_str, ACCOUNT_UUIDS, is_forced=force_run,
+                    spec_bundle_id=database.get_or_create_phase1_theory_bundle_id(),
                 )
                 # run_autotuner returns a reason-carrying abort marker on a
                 # graceful history-shortfall abort — pass it straight through
@@ -1127,10 +1124,6 @@ def main():
         # ACTION PHASE — gated at EXECUTION_START_TIME (default 10:30 ET)
         # Reads warm state written by the data phase above.
         # -----------------------------------------------------------------------
-        # AC-P2.2: resolve exit-authority toggle once per cycle — never branch on the
-        # raw env-var inside math layers.
-        exit_authority = get_exit_authority()
-
         historical_data = fetch_alpaca_history(list(all_tickers), current_date_str)
         if not historical_data:
             print(
@@ -1148,16 +1141,8 @@ def main():
         print("\nEvaluating Symphonies...")
 
         execution_queue = []
-        # AC-P2.8: collect symphony snapshots per account for port-level aggregation.
-        # Populated during the per-symphony loop; consumed after it.
-        port_symphony_snapshots: dict[str, list[dict]] = {}
 
         for account, symphonies in symphony_data_cache.items():
-            # AC-P2.1.3: initialize port_state on first cycle for this account.
-            current_account_value = sum(
-                sym.get("current_value", sym.get("value", 0.0)) for sym in symphonies
-            )
-            initialize_port_state_if_absent(account, current_port_value=current_account_value)
             for sym in symphonies:
                 symphony_id = sym["id"]
                 actual_symphony_id = sym.get("symphony_id", symphony_id)
@@ -1269,7 +1254,24 @@ def main():
                     NEIGHBOR_K,
                     seed=math_engine.derive_cycle_mc_seed(current_et.strftime("%Y%m%d_%H%M")),
                 )
-                symphony_vol = math_engine.calculate_20d_vol(holdings, historical_data)
+
+                # Regime-match-quality guard (vision-audit Critical Rec #2): assess
+                # whether today's (SPY return, vol) query point is unprecedented vs the
+                # candidate pool. When is_unprecedented=True the K nearest historical days
+                # are all far outliers — the MC bootstrap is unrepresentative and must not
+                # veto the trailing stop. Suppression reuses the existing MC-unavailable
+                # fail-safe: override prob_beating=None so compute_exit_confirmation treats
+                # MC as absent and the protective stop fires on its own ticks-below-stop
+                # condition alone. mc_available is also set False so the arm/disarm/TP
+                # branches are skipped (same as the insufficient-history path).
+                _regime_assessment = math_engine.compute_regime_match_quality(
+                    historical_data,
+                    spy_today,
+                )
+                if _regime_assessment.is_unprecedented:
+                    prob_beating = None
+
+                symphony_vol = bot_state[symphony_id]["symphony_vol"]
 
                 acc_VWAP_BLEED_ARM_PCT = math_engine.compute_vwap_bleed_arm_threshold(
                     symphony_vol=symphony_vol,
@@ -1285,6 +1287,8 @@ def main():
                 # MC veto of the trailing stop (compute_exit_confirmation
                 # handles None). The protective stop still fires on its
                 # ticks-below-stop condition alone.
+                # The regime-match-quality guard above may also override prob_beating
+                # to None (unprecedented regime); both paths converge here.
                 mc_available = prob_beating is not None
 
                 if mc_available and acc_TAKE_PROFIT_MC_PCT <= prob_beating < acc_TRIGGER_THRESHOLD_PCT:
@@ -1510,39 +1514,6 @@ def main():
                         for h in holdings
                     ]
 
-                # AC-P2.8: build per-symphony snapshot for port-level aggregation.
-                # mc_sanity_gate_would_block: True if MC gate would suppress the exit (B1).
-                _sym_value = bot_state[symphony_id]["current_value"]
-                _total_account_value = sum(
-                    bot_state.get(s["id"], {}).get("current_value", 0.0)
-                    for s in symphony_data_cache.get(account, [])
-                )
-                _sym_exposure = {
-                    h.get("ticker"): (_sym_value * h.get("allocation", 0.0))
-                    for h in bot_state[symphony_id].get("current_holdings", [])
-                    if h.get("ticker")
-                }
-                port_symphony_snapshots.setdefault(account, []).append(
-                    {
-                        "symphony_id": symphony_id,
-                        "value": _sym_value,
-                        "total_value": _total_account_value,
-                        "exposure_usd": _sym_exposure,
-                        "position_open_date": bot_state[symphony_id].get(
-                            "position_open_date", "2000-01-01"
-                        ),
-                        "mc_sanity_gate_would_block": bool(
-                            mc_available and prob_beating >= acc_TRIGGER_THRESHOLD_PCT
-                        ),
-                        "per_symphony_triggered": bool(
-                            is_trailing_stop_hit
-                            or tp_triggered_now
-                            or is_vwap_broken
-                            or is_vwap_bleed_broken
-                        ),
-                    }
-                )
-
                 chart_event = None
                 if is_vwap_broken:
                     chart_event = "VWAP_Breakdown"
@@ -1591,6 +1562,50 @@ def main():
                         ),
                         "vwap": current_return - (weighted_vwap_diff * 100),
                     }
+                )
+
+                # M2: per-cycle CVaR diagnostic telemetry (Phase-1 kNN historical
+                # regime-match via math_engine.compute_portfolio_cvar).
+                # Non-blocking: database.record_cvar_diagnostic swallows OperationalError
+                # in live mode (H4 helper; shadow-logging-pattern plan).
+                # Unconditional — fires in both live and dry-run modes (telemetry is never
+                # gated on LIVE_EXECUTION; architecture constraint 4 analogue for telemetry).
+                # CVaR remains diagnostic-only: no trigger branch reads this write.
+                _cvar_short = math_engine.compute_portfolio_cvar(
+                    cycle_id=current_et.isoformat(),
+                    holdings=holdings,
+                    historical_data=historical_data,
+                    spy_today_return=spy_today,
+                )
+                # Optional second (wider-k) window: gated on SECOND_WINDOW_CVAR_ENABLED.
+                # When off: long-window columns stay None (Divergence Explainer NOT_APPLICABLE
+                # row remains the source of truth; advisors/divergence_explainer.py:99-109).
+                # When on: an independent compute with CVAR_LONG_NEIGHBOR_K produces the
+                # long-window estimate — never a copy of the short-window result.
+                # No signed divergence is ever computed (DECISIONS.md §DE-S3-005).
+                _cvar_5pct_long = None
+                _cvar_n_tail_long = None
+                if os.environ.get("SECOND_WINDOW_CVAR_ENABLED", "0") == "1":
+                    _cvar_long = math_engine.compute_portfolio_cvar(
+                        cycle_id=current_et.isoformat(),
+                        holdings=holdings,
+                        historical_data=historical_data,
+                        spy_today_return=spy_today,
+                        neighbor_k=CVAR_LONG_NEIGHBOR_K,
+                    )
+                    _cvar_5pct_long = _cvar_long.cvar_pct
+                    _cvar_n_tail_long = _cvar_long.tail_obs_count if _cvar_long.cvar_pct is not None else None
+                database.record_cvar_diagnostic(
+                    cycle_id=current_et.isoformat(),
+                    symphony_id=symphony_id,
+                    cvar_5pct=_cvar_short.cvar_pct,
+                    cvar_5pct_stderr=_cvar_short.stderr,
+                    cvar_n_tail=_cvar_short.tail_obs_count,
+                    cvar_5pct_long=_cvar_5pct_long,
+                    cvar_n_tail_long=_cvar_n_tail_long,
+                    mode="live",
+                    mc_regime_match_mean_dist2=_regime_assessment.mean_sq_mahalanobis,
+                    mc_regime_match_suppressed=1 if _regime_assessment.is_unprecedented else 0,
                 )
 
                 if (
@@ -1648,146 +1663,11 @@ def main():
                     )
 
         # -----------------------------------------------------------------------
-        # PORT-LEVEL DISPATCH (AC-P2.8, EXIT_AUTHORITY=port_level)
-        # One exit per cycle per account. Per-symphony signals are observed but
-        # not actioned (AC-P2.8.6).
-        # -----------------------------------------------------------------------
-        if is_authoritative(altitude="port_level", exit_authority=exit_authority):
-            cycle_id_str = current_et.strftime("%Y%m%d_%H%M")
-            for _account, _sym_snapshots in port_symphony_snapshots.items():
-                if not _sym_snapshots:
-                    continue
-
-                # Read port_state for composition-change detection (AC-P2.8.1)
-                _port_state = database.read_port_state(_account)
-                if _port_state is None:
-                    continue
-
-                _prev_hash = _port_state.get("composition_hash", "")
-                _current_hash = _port_composition_hash([s["symphony_id"] for s in _sym_snapshots])
-                if _current_hash != _prev_hash:
-                    # Composition changed — rebase port_state (BC-3: stop_trigger reset)
-                    _current_port_value = sum(s["value"] for s in _sym_snapshots)
-                    database.rebase_port_state_on_composition_change(
-                        _account, _current_hash, _current_port_value
-                    )
-                    _port_state = database.read_port_state(_account)
-                    if _port_state is None:
-                        continue
-
-                # Aggregate to port and build signal (AC-P2.4, AC-P2.6)
-                _port_agg = aggregate_to_port(
-                    symphonies=_sym_snapshots,
-                    account_id=_account,
-                    port_equity_series=None,
-                )
-                _port_signal = build_port_signal(_port_agg, cycle_id=cycle_id_str)
-
-                if not _port_signal.get("triggered"):
-                    continue
-
-                # B1: MC sanity gate applied at selection boundary (Amendment B1)
-                _target_reduction = _port_signal.get("target_reduction", [])
-                _selection = select_symphony_with_mc_gate(
-                    target_reduction=_target_reduction,
-                    candidates=_sym_snapshots,
-                )
-
-                if _selection.get("suppressed") or _selection.get("selected_symphony_id") is None:
-                    if _selection.get("suppressed"):
-                        print(
-                            f"  [PORT] Account {_account}: MC gate suppressed exit "
-                            f"({_selection.get('suppression_reason')})"
-                        )
-                    continue
-
-                _selected_id = _selection["selected_symphony_id"]
-                _selected_sym = next(
-                    (s for s in _sym_snapshots if s["symphony_id"] == _selected_id), None
-                )
-                if _selected_sym is None:
-                    continue
-
-                actual_selected_id = _selected_id
-                print(
-                    f"  [PORT] Account {_account}: port-level exit selected symphony "
-                    f"{_selected_id} (B4 reduction: ${_port_signal.get('port_total_reduction_usd', 0.0):,.0f})"
-                )
-
-                if LIVE_EXECUTION:
-                    _sym_actual = next(
-                        (
-                            s.get("symphony_id", _selected_id)
-                            for s in symphony_data_cache.get(_account, [])
-                            if s["id"] == _selected_id
-                        ),
-                        _selected_id,
-                    )
-                    print(f"  -> [LIVE EXECUTION] Port-driven sell-to-cash for {_selected_id}...")
-                    try:
-                        _port_success = execute_sell_to_cash(_sym_actual, _account)
-                    except (
-                        requests.RequestException,
-                        ValueError,
-                        KeyError,
-                        TypeError,
-                        AttributeError,
-                        OSError,
-                        RuntimeError,
-                    ) as _exc:
-                        print(
-                            f"     !!! [PORT EXECUTOR EXCEPTION] {_selected_id}: {type(_exc).__name__}: {_exc}"
-                        )
-                        _port_success = False
-                else:
-                    print(f"  -> [DRY RUN] Port-level execution bypassed for {_selected_id}.")
-                    _port_success = True
-
-                if _port_success:
-                    bot_state[_selected_id]["triggered"] = True
-                    bot_state[_selected_id]["triggered_reason"] = "Port-Level"
-                    bot_state[_selected_id]["triggered_at_return"] = bot_state.get(
-                        _selected_id, {}
-                    ).get("current_return", 0.0)
-                    # H1: telemetry with port_trigger_id (AC-P2.10.2, Amendment B4)
-                    import uuid as _uuid_mod
-
-                    _port_trigger_id = str(_uuid_mod.uuid4())
-                    database.record_exit_trigger(
-                        symphony_id=_selected_id,
-                        account_id=_account,
-                        triggered_reason="Port-Level",
-                        at_return=bot_state[_selected_id].get("current_return", 0.0),
-                        gate_state={
-                            "port_total_reduction_usd": _port_signal.get(
-                                "port_total_reduction_usd", 0.0
-                            ),
-                            "selected_symphony_id": _selected_id,
-                            "all_scores": _selection.get("all_scores", []),
-                        },
-                        cycle_id=cycle_id_str,
-                        math_mode="port_level",
-                        port_trigger_id=_port_trigger_id,
-                    )
-                    # Update composition hash in port_state
-                    database.write_port_state(
-                        _account,
-                        {
-                            **_port_state,
-                            "composition_hash": _current_hash,
-                        },
-                    )
-
-        # -----------------------------------------------------------------------
-        # PER-SYMPHONY EXECUTION QUEUE — only fires when EXIT_AUTHORITY=per_symphony
-        # AC-P2.2.6 / AC-P2.8.6: under port authority, per-symphony signals are
-        # observed (logged, charted) but never dispatched to the broker.
+        # PER-SYMPHONY EXECUTION QUEUE
         # -----------------------------------------------------------------------
 
         # Process Execution Queue
-        if execution_queue and is_authoritative(
-            altitude="per_symphony", exit_authority=exit_authority
-        ):
+        if execution_queue:
             print(f"\nProcessing Execution Queue ({len(execution_queue)} items)...")
 
             for i in range(0, len(execution_queue), 25):

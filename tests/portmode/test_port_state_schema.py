@@ -6,9 +6,11 @@ These tests target database.py additions:
   - port_state typed table (migration 010_port_state.sql)
   - read_port_state(account_id), write_port_state(account_id, state), clear_port_state(account_id)
   - wipe_transient_state allowlist refactor (AC-P2.5.3)
-  - new-day reset sentinel for port_state (AC-P2.5.4)
-  - composition change reset (AC-P2.5.5)
   - port_breakeven_active non-latching (AC-P2.5.6)
+
+Sprint 3 AX-3 change: new_day_reset_port_state and rebase_port_state_on_composition_change
+tests removed (those helpers are removed from database.py in this cycle).
+Absence tests live in test_port_settings_cleanup.py.
 
 All tests use in-memory SQLite (not file-based) to avoid test pollution.
 """
@@ -16,7 +18,6 @@ All tests use in-memory SQLite (not file-based) to avoid test pollution.
 from __future__ import annotations
 
 import sqlite3
-import json
 
 import pytest
 
@@ -222,100 +223,11 @@ class TestWipeTransientStateAllowlist:
         assert state["sym-AAA"]["mc_history"] == []
 
 
-# ---------------------------------------------------------------------------
-# AC-P2.5.4: new-day reset sentinel for port_state (prev_return=None)
-# ---------------------------------------------------------------------------
-
-class TestNewDayResetSentinel:
-
-    def test_new_day_reset_sets_prev_return_none(self, mem_db):
-        """
-        AC-P2.5.4: On new-day reset for each account, port_state.prev_return = None
-        so cycle-1 yields zero velocity and PARA-ARM cannot fire on the opening gap.
-        """
-        write_port_state("acct-newday", {
-            "high_water_mark": 100000.0,
-            "prev_return": 0.05,
-            "composition_hash": "hash-a",
-        })
-
-        import database
-        database.new_day_reset_port_state("acct-newday")
-
-        result = read_port_state("acct-newday")
-        assert result["prev_return"] is None, (
-            "AC-P2.5.4: port_state.prev_return must be None after new-day reset"
-        )
-
-
-# ---------------------------------------------------------------------------
-# AC-P2.5.5: Composition change reset
-# ---------------------------------------------------------------------------
-
-class TestCompositionChangeReset:
-
-    def test_composition_change_rebases_port_state(self, mem_db):
-        """
-        AC-P2.5.5: On composition change (new composition_hash detected), port_state
-        resets: prev_return=None, mc_history=[], vwap_ticks=[], vwap_bleed_ticks=[],
-        high_water_mark=current_value, port_breakeven_active=False, armed=False,
-        para_armed=False.
-        """
-        write_port_state("acct-compose", {
-            "high_water_mark": 100000.0,
-            "prev_return": 0.05,
-            "mc_history_json": "[0.8, 0.9]",
-            "vwap_ticks_json": "[1, 2, 3]",
-            "vwap_bleed_ticks_json": "[1]",
-            "armed": True,
-            "para_armed": True,
-            "port_breakeven_active": True,
-            "stop_trigger": 0.03,
-            "composition_hash": "old-hash",
-        })
-
-        import database
-        database.rebase_port_state_on_composition_change(
-            "acct-compose",
-            new_composition_hash="new-hash",
-            current_port_value=110000.0,
-        )
-
-        result = read_port_state("acct-compose")
-        assert result["prev_return"] is None
-        assert json.loads(result["mc_history_json"]) == []
-        assert json.loads(result["vwap_ticks_json"]) == []
-        assert json.loads(result["vwap_bleed_ticks_json"]) == []
-        assert result["high_water_mark"] == pytest.approx(110000.0, rel=1e-6)
-        assert result["port_breakeven_active"] == 0 or result["port_breakeven_active"] is False
-        assert result["armed"] == 0 or result["armed"] is False
-        assert result["para_armed"] == 0 or result["para_armed"] is False
-        assert result["composition_hash"] == "new-hash"
-
-    def test_composition_change_resets_stop_trigger(self, mem_db):
-        """
-        Amendment BC-3 follow-up: composition-change rebase MUST also reset
-        stop_trigger=None (in addition to port_breakeven_active=False).
-        This is required for R3a ratchet correctness.
-        """
-        write_port_state("acct-stoptrig", {
-            "high_water_mark": 100000.0,
-            "stop_trigger": 0.04,
-            "composition_hash": "old-hash-b",
-        })
-
-        import database
-        database.rebase_port_state_on_composition_change(
-            "acct-stoptrig",
-            new_composition_hash="new-hash-b",
-            current_port_value=100000.0,
-        )
-
-        result = read_port_state("acct-stoptrig")
-        assert result.get("stop_trigger") is None, (
-            "Amendment BC-3: stop_trigger must be None after composition-change rebase"
-        )
-
+# TestNewDayResetSentinel and TestCompositionChangeReset were removed in
+# Sprint 3 port-settings-cleanup (AX-3): new_day_reset_port_state and
+# rebase_port_state_on_composition_change are dead helpers with no live callers
+# after Wave 2 port-dispatch removal; both are removed from database.py in this
+# cycle. Absence-of-function tests live in test_port_settings_cleanup.py.
 
 # ---------------------------------------------------------------------------
 # AC-P2.5.6: port_breakeven_active is non-latching

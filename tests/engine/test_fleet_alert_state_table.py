@@ -880,9 +880,33 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
             f"POST /api/fleet-alert/dismiss must return 200. Got {resp.status_code}."
         )
 
-    def test_dismiss_route_calls_write_fleet_alert_with_dismissed_at_et(self, flask_client):
-        """Dismiss route must call database.write_fleet_alert() with dismissed_at_et set to a non-null string."""
-        with patch("database.write_fleet_alert") as mock_write, \
+    def test_dismiss_route_does_not_call_write_fleet_alert_on_request_thread(self, flask_client):
+        """POST /api/fleet-alert/dismiss must NOT call database.write_fleet_alert() on the Flask request thread.
+
+        Deterministic: _DISMISS_EXECUTOR.submit is stubbed to record the submitted callable
+        WITHOUT executing it.  This eliminates the timing window of the previous version
+        (which relied on the single-worker executor not having started by the time the patch
+        context exited — a scheduling assumption, not a contract guarantee).
+
+        The test verifies the side-effect-ban contract: no synchronous write_fleet_alert call
+        occurs during the handler frame, regardless of executor scheduling.
+        dashboard-side-effect-ban cycle — arch constraint 2.
+        """
+        import concurrent.futures as _cf
+        import app as flask_app
+
+        submitted_callables: list = []
+
+        def _capture_submit(fn, *args, **kwargs):
+            # Record the callable but deliberately do NOT call it —
+            # we are asserting the request-thread frame only.
+            submitted_callables.append(fn)
+            future = _cf.Future()
+            future.set_result(None)
+            return future
+
+        with patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_capture_submit) as mock_submit, \
+             patch("database.write_fleet_alert") as mock_write, \
              patch("database.read_fleet_alert", return_value={
                  "tripped_at_et": "2026-05-17T10:33:00",
                  "triggered_reason": "Trailing Stop",
@@ -890,25 +914,214 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
                  "active_count": 10,
                  "dismissed_at_et": None,
              }):
+            resp = flask_client.post("/api/fleet-alert/dismiss")
+
+        assert resp.status_code == 200, (
+            f"Handler must return 200 even when executor is stubbed. Got {resp.status_code}."
+        )
+        assert mock_submit.call_count == 1, (
+            f"Handler must call _DISMISS_EXECUTOR.submit exactly once. "
+            f"Called {mock_submit.call_count} time(s). "
+            "The dismiss write must be dispatched via the executor, not called inline."
+        )
+        # The closure was captured but NOT run — write_fleet_alert must be silent.
+        assert mock_write.call_count == 0, (
+            "POST /api/fleet-alert/dismiss must NOT call database.write_fleet_alert() directly "
+            "from the Flask request thread. The dismiss write must be dispatched to a background "
+            "thread (side-effect ban). "
+            f"write_fleet_alert was called {mock_write.call_count} time(s) on the request thread."
+        )
+        assert len(submitted_callables) == 1, (
+            "Exactly one callable must have been submitted to the executor."
+        )
+
+    def test_dismiss_background_closure_calls_write_fleet_alert_when_executed(self, flask_client):
+        """The callable dispatched by the dismiss handler must call write_fleet_alert when run.
+
+        Captures the submitted callable (without executing it during the handler frame),
+        then explicitly invokes it to prove the background work actually reaches write_fleet_alert.
+        This is the dual of the request-thread test: handler -> no write; closure() -> write.
+        Fixture: dismiss_race_isolation.json expected_calls_to_write_fleet_alert_or_similar == 1.
+        """
+        import app as flask_app
+        import concurrent.futures as _cf
+
+        fixture = _load("dismiss_race_isolation.json")
+        expected_write_calls = fixture["invariants"]["dismiss_never_touches_bot_state"][
+            "expected_calls_to_write_fleet_alert_or_similar"
+        ]
+
+        submitted_callables: list = []
+
+        def _capture_only(fn, *args, **kwargs):
+            submitted_callables.append(fn)
+            future = _cf.Future()
+            future.set_result(None)
+            return future
+
+        alert_row = {
+            "tripped_at_et": "2026-05-17T10:33:00",
+            "triggered_reason": "Trailing Stop",
+            "tripped_count": 6,
+            "active_count": 10,
+            "dismissed_at_et": None,
+        }
+
+        with patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_capture_only), \
+             patch("database.write_fleet_alert") as mock_write, \
+             patch("database.read_fleet_alert", return_value=dict(alert_row)):
             flask_client.post("/api/fleet-alert/dismiss")
 
-        assert mock_write.called, (
-            "POST /api/fleet-alert/dismiss must call database.write_fleet_alert(). "
-            "AC-6: dismiss writes dismissed_at_et to fleet_alert_state only."
+            assert len(submitted_callables) == 1, (
+                "Dismiss handler must submit exactly one callable to the executor. "
+                f"Captured {len(submitted_callables)} callable(s)."
+            )
+
+            # Explicitly run the closure while database.write_fleet_alert is still patched —
+            # the closure holds a reference to the `database` module, so the mock must be
+            # active at the moment the closure runs to intercept the call.
+            # This simulates what happens on the background thread.
+            submitted_callables[0]()
+
+        assert mock_write.call_count == expected_write_calls, (
+            f"Background closure must call database.write_fleet_alert exactly "
+            f"{expected_write_calls} time(s) (from fixture dismiss_race_isolation.json). "
+            f"Called {mock_write.call_count} time(s). "
+            "The background write is the mechanism that makes the dismiss durable."
         )
-        call_args = mock_write.call_args
-        payload_arg = call_args[0][0] if call_args[0] else call_args[1].get("payload")
-        assert payload_arg is not None, (
-            "write_fleet_alert must be called with a payload argument."
+
+    def test_dismiss_background_exception_is_logged_not_propagated(self, flask_client):
+        """If write_fleet_alert raises inside the background closure, the exception is logged and NOT re-raised.
+
+        The handler must return 200 regardless of whether the background write fails (DB locked,
+        disk full, etc.).  The closure wraps the write in a try/except that calls logging.error.
+        This test verifies that contract deterministically — no timing, no thread scheduling.
+        """
+        import app as flask_app
+        import concurrent.futures as _cf
+
+        submitted_callables: list = []
+
+        def _capture_only(fn, *args, **kwargs):
+            submitted_callables.append(fn)
+            future = _cf.Future()
+            future.set_result(None)
+            return future
+
+        with patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_capture_only), \
+             patch("database.write_fleet_alert", side_effect=OSError("DB locked")), \
+             patch("database.read_fleet_alert", return_value={
+                 "tripped_at_et": "2026-05-17T10:33:00",
+                 "triggered_reason": "Trailing Stop",
+                 "tripped_count": 6,
+                 "active_count": 10,
+                 "dismissed_at_et": None,
+             }), \
+             patch("logging.error") as mock_log_error:
+            resp = flask_client.post("/api/fleet-alert/dismiss")
+
+            assert resp.status_code == 200, (
+                "Handler must return 200 even when the background write will fail. "
+                f"Got {resp.status_code}."
+            )
+            assert len(submitted_callables) == 1, (
+                "Handler must still submit the closure even when the write will fail."
+            )
+
+            # Run the closure while both write_fleet_alert (raising) and logging.error are
+            # still patched — the closure references `database` and `logging` from app's
+            # module namespace; patches must be active when the closure body executes.
+            submitted_callables[0]()
+
+        assert mock_log_error.call_count >= 1, (
+            "Background closure must call logging.error when write_fleet_alert raises. "
+            f"logging.error was called {mock_log_error.call_count} time(s). "
+            "Exceptions from background writes must be swallowed + logged — never propagated."
         )
-        assert "dismissed_at_et" in payload_arg, (
-            f"write_fleet_alert payload must include 'dismissed_at_et'. Got keys: {list(payload_arg.keys())}"
+
+    def test_dismiss_two_rapid_posts_dispatch_two_background_tasks(self, flask_client):
+        """Two rapid POSTs must each dispatch one background task (two total submits).
+
+        SQLite last-write-wins is the durability mechanism; no deduplication at the route layer.
+        This test verifies the executor is invoked per-request, not once globally.
+        Both requests must return 200 and each must result in exactly one submit call.
+        """
+        import app as flask_app
+        import concurrent.futures as _cf
+
+        submit_call_count = 0
+
+        def _count_submits(fn, *args, **kwargs):
+            nonlocal submit_call_count
+            submit_call_count += 1
+            future = _cf.Future()
+            future.set_result(None)
+            return future
+
+        alert_row = {
+            "tripped_at_et": "2026-05-17T10:33:00",
+            "triggered_reason": "Trailing Stop",
+            "tripped_count": 6,
+            "active_count": 10,
+            "dismissed_at_et": None,
+        }
+
+        with patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_count_submits), \
+             patch("database.write_fleet_alert"), \
+             patch("database.read_fleet_alert", return_value=dict(alert_row)):
+            resp_1 = flask_client.post("/api/fleet-alert/dismiss")
+            resp_2 = flask_client.post("/api/fleet-alert/dismiss")
+
+        assert resp_1.status_code == 200, (
+            f"First dismiss POST must return 200. Got {resp_1.status_code}."
         )
-        assert payload_arg["dismissed_at_et"] is not None, (
-            "dismissed_at_et in write_fleet_alert payload must be non-null (ISO string of dismiss time)."
+        assert resp_2.status_code == 200, (
+            f"Second dismiss POST must return 200. Got {resp_2.status_code}."
         )
-        assert isinstance(payload_arg["dismissed_at_et"], str), (
-            f"dismissed_at_et must be a string. Got: {type(payload_arg['dismissed_at_et']).__name__}"
+        assert submit_call_count == 2, (
+            f"Two rapid POSTs must produce exactly 2 executor submits (one per request). "
+            f"Got {submit_call_count}. "
+            "No deduplication at the route layer — SQLite last-write-wins handles idempotency."
+        )
+
+    def test_dismiss_background_exception_logging_uses_top_level_logging_not_named_logger(self):
+        """fleet_alert_dismiss must use the top-level logging.error call, not a named logger.
+
+        The exception-swallow test patches "logging.error" globally.  If the production
+        handler ever migrates to logging.getLogger(__name__).error(...), that patch target
+        would silently stop intercepting — the exception-swallow test would then fail
+        (mock_log_error.call_count stays 0, assertion 0 >= 1 fails).  This guard catches
+        the source change first, making the failure site obvious rather than cryptic.
+
+        This test inspects the source of _dismiss_async to confirm it uses `logging.error`
+        (module-level call) and not a getLogger instance call.  Rev-t17 identified this
+        fragility; encoding it as a source guard prevents silent patch-target drift.
+        """
+        try:
+            import app
+        except ImportError:
+            pytest.fail("app not importable.")
+
+        fn = getattr(app, "fleet_alert_dismiss", None)
+        if fn is None:
+            pytest.fail("fleet_alert_dismiss not found in app.")
+
+        fn_src = inspect.getsource(fn)
+        # Confirm the closure uses logging.error (the top-level logging module call).
+        assert "logging.error" in fn_src, (
+            "fleet_alert_dismiss must call logging.error(...) from the top-level logging module. "
+            "The exception-swallow test patches 'logging.error' globally; if the handler "
+            "uses a named logger (logging.getLogger(__name__).error), the patch target must "
+            "be updated to match. This guard test enforces the source contract so patch drift "
+            "is caught at the source level, not as a silent spurious pass."
+        )
+        # Confirm it does NOT use a getLogger instance in the dismiss closure — that would
+        # invalidate the patch("logging.error") approach used in the exception-swallow test.
+        assert "getLogger" not in fn_src, (
+            "fleet_alert_dismiss must not use logging.getLogger() inside its body. "
+            "If a named logger is introduced, update the patch target in "
+            "test_dismiss_background_exception_is_logged_not_propagated to match, "
+            "then remove this assertion."
         )
 
     def test_dismiss_route_never_calls_load_state(self, flask_client):

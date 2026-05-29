@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Visual Verification — Final3 Sweep
 **Authored:** 2026-05-20T19:00:00Z  
 **Scope:** Wave 6 + 7 targeted fix verification + full 5-screen visual parity

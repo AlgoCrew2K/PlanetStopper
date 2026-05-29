@@ -1,0 +1,46 @@
+{
+  "_provenance": "schema-derived from math re-audit PERF-005 (MEDIUM) — study.optimize(n_jobs=-1) with SQLite RDBStorage was identified as a write-contention risk that was not benchmarked. Resolved during the fix-optuna1-6 cycle (merged at ed9ffce) by env-driving n_jobs with default=1. PERF-005 regression suite pins the resolution so a future PR cannot re-introduce the contention pathway without tripping a test.",
+  "_audit_source": "docs/research/math-audit-3/ — PERF-005 lane",
+  "_site": {
+    "file": "autotuner.py",
+    "anchors": [
+      "run_autotuner main study site — RDBStorage('sqlite:///optuna_studies.db') + study.optimize(..., n_jobs=_n_jobs)",
+      "run_calibration_sweep study site — same SQLite-backed storage, study.optimize(..., n_jobs=_sweep_n_jobs)",
+      "_resolve_optuna_n_jobs_from_env helper — single source of truth for the n_jobs default"
+    ],
+    "_anchor_provenance": "captured from plan/finalist-a-scaffold @ 262ef90 after merge of fix-optuna1-6. Tests locate sites by AST + helper introspection, not line numbers, so refactors that re-flow the call sites without re-introducing parallel writes still pass."
+  },
+  "storage_backend_pin": {
+    "expected_storage_class": "RDBStorage",
+    "expected_url_scheme": "sqlite:///",
+    "expected_url_database_name": "optuna_studies.db",
+    "_rationale": "PERF-005 finding scope is narrow to the SQLite RDBStorage case. Pinning the backend identifies the writer-lock dependency at the source; an operator who swaps to Postgres/MySQL would change the URL scheme and the contention rationale no longer applies (they can opt-in to n_jobs>1 via OPTUNA_N_JOBS=<N>)."
+  },
+  "default_invariant": {
+    "n_jobs_default_when_unset_or_invalid": 1,
+    "n_jobs_default_when_garbled": 1,
+    "n_jobs_default_when_empty_string": 1,
+    "prohibited_defaults": [-1, 2, 4, 8],
+    "_prohibited_rationale": "Any default > 1 (and any negative-value sentinel that Optuna interprets as cpu_count) re-introduces parallel writes to the single SQLite DB and the writer-lock contention that PERF-005 documented. The literal-1 default is THE mitigation; tests pin it three ways (unset, garbled, empty)."
+  },
+  "rationale_docstring_lock": {
+    "helper_name": "_resolve_optuna_n_jobs_from_env",
+    "required_docstring_substrings_case_insensitive": [
+      "sqlite",
+      "rdbstorage",
+      "database is locked"
+    ],
+    "_lock_rationale": "The WHY of the default-1 invariant lives in the helper's docstring. A future cleanup PR could strip the docstring without changing behaviour — at which point the invariant looks arbitrary and a well-meaning maintainer might flip it back to cpu_count(). This test ensures the rationale text travels with the code."
+  },
+  "contention_canary": {
+    "_purpose": "Empirically demonstrate that n_jobs>1 with SQLite RDBStorage can produce write-contention failures under modest concurrency. This is a CANARY, not a benchmark — its job is to ensure the PERF-005 rationale is grounded in observable behaviour, so future maintainers see WHY the default is 1.",
+    "_strategy": "Spin up a temp SQLite RDBStorage with deliberately short timeout, run a fast objective in parallel, and detect EITHER (a) sqlite3.OperationalError 'database is locked' OR (b) successful completion (some Optuna/SQLite combinations serialize cleanly via the writer lock + retry). Either outcome is acceptable — what matters is the test EXISTS and exercises the scenario so a future maintainer can run it and see the contention behaviour empirically.",
+    "n_trials": 8,
+    "n_jobs": 2,
+    "timeout_seconds": 1,
+    "_timeout_rationale": "Short timeout amplifies any contention so the canary completes in seconds rather than minutes; production code uses 60s timeout."
+  },
+  "negative_control": {
+    "_purpose": "Demonstrate the test can fail on a wrong implementation. If _resolve_optuna_n_jobs_from_env were patched to return os.cpu_count() (the OPTUNA-6 prohibited pattern), the default-invariant test would catch it. The contention canary directly exercises the failure mode the default-1 invariant prevents."
+  }
+}

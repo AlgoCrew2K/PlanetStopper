@@ -94,7 +94,12 @@ def _autotuner_patches(captured_study_names: list, captured_load_if_exists: list
 
     import database
 
-    def fake_create_study(study_name, storage, load_if_exists, direction):
+    def fake_create_study(
+        study_name, storage, load_if_exists, direction, sampler=None, **kwargs
+    ):
+        # `sampler` kwarg added by fix-optuna1-6 (autotuner.py:1567 now passes
+        # explicit TPESampler(seed=...) per OPTUNA-1). Accept it + any future
+        # kwargs to keep this mock loose-coupled to the call signature.
         captured_study_names.append(study_name)
         captured_load_if_exists.append(load_if_exists)
         return fake_study
@@ -108,7 +113,7 @@ def _autotuner_patches(captured_study_names: list, captured_load_if_exists: list
          patch("autotuner.database.get_symphony_strategy",
                return_value={"params": database.DEFAULT_STRATEGY.copy(), "locked_vars": []}), \
          patch("autotuner.database.save_symphony_strategy"), \
-         patch("autotuner.database.save_autotune_run", return_value=None), \
+         patch("autotuner.database.save_autotune_run", return_value=1), \
          patch("autotuner.database.DEFAULT_STRATEGY", database.DEFAULT_STRATEGY.copy()), \
          patch("autotuner.math_engine.compute_vwap_breakdown_update",
                return_value=(0, 0, False, False)):
@@ -117,11 +122,16 @@ def _autotuner_patches(captured_study_names: list, captured_load_if_exists: list
 
 def _run_autotuner(symphony_name: str, captured_names: list, captured_flags: list):
     import autotuner
+    import inspect
+    from tests.autotuner.conftest import make_phase1_theory_bundle
     bot_state = _build_bot_state(symphony_name)
     buf = io.StringIO()
+    spec_bundle_id = make_phase1_theory_bundle()
+    sig = inspect.signature(autotuner.run_autotuner)
+    extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
     with _autotuner_patches(captured_names, captured_flags):
         with contextlib.redirect_stdout(buf):
-            autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+            autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **extra)
 
 
 # ===========================================================================

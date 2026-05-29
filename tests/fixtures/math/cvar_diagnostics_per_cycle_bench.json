@@ -1,0 +1,24 @@
+{
+  "_provenance": "schema-derived from shadow-logging-pattern plan §Deliverable 1 + 021_cvar_diagnostics column spec; field values are named constants representing the null-sentinel case (MC_INSUFFICIENT_HISTORY) — not captured from a live run",
+  "_layer": "shadow_logging_pattern",
+  "_binding_plan": "feature-plans/decision-science/phase-1/shadow-logging-pattern/plan.md",
+  "_notes": {
+    "row_dict": "realistic cvar_diagnostics row with all seven caller-supplied columns populated; ts_utc is omitted because the migration DDL provides DEFAULT (datetime('now')) — callers never supply it",
+    "cvar_5pct": "null sentinel — mirrors MC_INSUFFICIENT_HISTORY_SENTINEL path; sufficient-case tests must derive the cvar magnitude from the fixture, not assert a hardcoded float",
+    "cvar_n_tail": "integer count of DISTINCT sub-5% tail observations; 0 here represents the insufficient sentinel case",
+    "cvar_5pct_long": "second-window CVaR (§B.6 long window); null in insufficient case",
+    "cvar_n_tail_long": "second-window tail count; null in insufficient case",
+    "mode_live": "mode='live' is the production execution-path value; benchmarks use this to exercise the swallow path (non-blocking even on DB errors)",
+    "benchmark_intent": "the fixture supplies the row shape; the benchmark itself asserts wall-clock latency — no fixture value is a timing assertion"
+  },
+  "table_name": "cvar_diagnostics",
+  "row_dict": {
+    "cycle_id": "BENCH_CYCLE_20260525_1430",
+    "symphony_id": "SYM_BENCH_ALPHA_001",
+    "cvar_5pct": null,
+    "cvar_5pct_stderr": null,
+    "cvar_n_tail": 0,
+    "cvar_5pct_long": null,
+    "cvar_n_tail_long": null
+  }
+}

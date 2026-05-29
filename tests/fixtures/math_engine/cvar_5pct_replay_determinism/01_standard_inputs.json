@@ -1,0 +1,24 @@
+{
+  "name": "cvar_5pct_replay_determinism_standard",
+  "description": "Inputs for M2 cvar_5pct bit-identical replay test (plan deliverable 3). Same (cycle_id, holdings, historical_data) must yield bit-identical cvar_5pct and cvar_n_tail across two independent calls. No expected values — reproducibility is asserted as run_a == run_b (PA-18 compliance).",
+  "function": "compute_portfolio_cvar",
+  "notes": "PA-18: no cvar_5pct or cvar_n_tail expected literals. The test asserts bit-equality of two independent calls with the same cycle_id-seeded RNG. The seed is derive_cycle_mc_seed(cycle_id) — the Phase-1 anchor. 50 days > MC_MIN_HISTORY_DAYS ensures eligible pool is non-empty.",
+  "cycle_id": "20240115_0930",
+  "inputs": {
+    "holdings": [
+      {"ticker": "AAA", "allocation": 0.6, "last_percent_change": 0.0},
+      {"ticker": "BBB", "allocation": 0.4, "last_percent_change": 0.0}
+    ],
+    "historical_data_spec": {
+      "kind": "alternating",
+      "num_days": 50,
+      "spy_amplitude": 0.005,
+      "aaa_amplitude": 0.008,
+      "bbb_amplitude": 0.004
+    },
+    "spy_today_return": 0.0,
+    "simulation_paths": 1000,
+    "neighbor_k": 10
+  },
+  "derivation": "50 days > MC_MIN_HISTORY_DAYS=20 + (VOL_WINDOW-1) so eligible pool is non-empty. cycle_id is a canonical YYYYMMDD_HHMM string. seed = derive_cycle_mc_seed(cycle_id). Two independent compute_portfolio_cvar calls with this cycle_id + same inputs must produce bit-identical cvar_5pct and cvar_n_tail. No expected values present — PA-18."
+}

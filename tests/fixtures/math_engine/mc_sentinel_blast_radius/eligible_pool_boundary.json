@@ -1,0 +1,39 @@
+{
+  "name": "mc_sentinel_blast_radius_eligible_pool_boundary",
+  "description": "Pins the exact raw-day boundary at which run_monte_carlo transitions from sentinel to a valid float. The eligible pool is raw_days - (MC_VOL_WINDOW_DAYS - 1). Sufficiency requires eligible_days >= MC_MIN_HISTORY_DAYS. Minimum raw history = MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1) = 20 + 19 = 39 days. See project memory project_mc_eligible_pool_vs_raw_day_boundary.",
+  "function": "run_monte_carlo",
+  "provenance": "Schema-derived. Raw day counts are derived from MC_MIN_HISTORY_DAYS and MC_VOL_WINDOW_DAYS constants read at test time. No producer-computed probability is pinned.",
+  "boundary_cases": [
+    {
+      "id": "case_38_raw_days",
+      "description": "38 raw days: eligible_days = 38 - 19 = 19 < MC_MIN_HISTORY_DAYS (20). Must return sentinel.",
+      "raw_day_offset_from_minimum": -1,
+      "expected": "sentinel"
+    },
+    {
+      "id": "case_39_raw_days",
+      "description": "39 raw days: eligible_days = 39 - 19 = 20 = MC_MIN_HISTORY_DAYS. Must return a float in [0.0, 100.0].",
+      "raw_day_offset_from_minimum": 0,
+      "expected": "valid_float"
+    },
+    {
+      "id": "case_20_raw_days",
+      "description": "20 raw days (the old MC_MIN_HISTORY_DAYS threshold, pre-eligible-pool fix): eligible_days = 20 - 19 = 1 < MC_MIN_HISTORY_DAYS (20). Must return sentinel — NOT the old in-band 100.0. Pins that the pre-fix fail-dangerous behavior is gone.",
+      "raw_day_offset_from_minimum": -19,
+      "expected": "sentinel"
+    }
+  ],
+  "history_spec": {
+    "kind": "constant_return",
+    "spy_daily_ret": 0.001,
+    "holding_daily_ret": 0.001
+  },
+  "holdings": [
+    {"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}
+  ],
+  "spy_today_return": 0.1,
+  "simulation_paths": 2000,
+  "neighbor_k": 8,
+  "numpy_seed": 42,
+  "derivation": "minimum_raw_days = MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1), read from math_engine at test time. The boundary is inclusive: minimum_raw_days returns a valid float; minimum_raw_days - 1 returns the sentinel."
+}

@@ -7,3 +7,6 @@ schedule
 optuna
 joblib
 scipy
+psutil
+pydantic
+

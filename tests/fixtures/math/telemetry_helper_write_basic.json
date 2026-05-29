@@ -1,0 +1,29 @@
+{
+  "_provenance": "schema-derived from h4-telemetry-helper plan deliverable (1) + 021-cvar-diagnostics column spec; field values are representative named constants, not captured from a live run",
+  "_layer": "telemetry_helper",
+  "_binding_plan": "feature-plans/decision-science/phase-1/h4-telemetry-helper/plan.md",
+  "table_name": "cvar_diagnostics",
+  "row_dict": {
+    "cycle_id": "CYCLE_20260515_1430",
+    "symphony_id": "SYM_ALPHA_001",
+    "cvar_5pct": null,
+    "cvar_5pct_stderr": null,
+    "cvar_n_tail": 0,
+    "cvar_5pct_long": null,
+    "cvar_n_tail_long": null
+  },
+  "_notes": {
+    "cvar_5pct": "null sentinel — mirrors MC_INSUFFICIENT_HISTORY_SENTINEL; sufficient-case tests supply a non-null value but must derive the magnitude from the fixture, not assert a hardcoded float",
+    "cvar_n_tail": "integer count of DISTINCT sub-5% tail observations; zero here represents the insufficient sentinel case",
+    "mode_live": "live",
+    "mode_replay": "replay",
+    "expected_shape_live": {
+      "return_value": {"type": "none", "note": "live mode returns None on success or swallowed error"},
+      "side_effects": {"log_on_error": true, "raises": false}
+    },
+    "expected_shape_replay": {
+      "return_value": {"type": "none", "note": "replay mode returns None on success"},
+      "side_effects": {"log_on_error": false, "raises_on_db_error": true}
+    }
+  }
+}

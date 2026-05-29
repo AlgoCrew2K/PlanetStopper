@@ -1,0 +1,53 @@
+{
+  "_provenance": "PA-18: Schema-derived. Column set and constraints authored from plan.md §Deliverables (016-spec-bundles/plan.md) and cross-checked against the binding constraint in docs/handoff/council-converged-migration-plan.md §3.1. The freeze_discipline enum (THEORY/MANDATE/STYLIZED_FACT/CALIBRATION/BACKTEST_SELECTION) is sourced verbatim from README.md §1 hazard NN1 and plan.md §Deliverables. No producer-computed values are captured; all assertions are shape/presence/constraint checks.",
+  "scenario": "spec_bundles_schema_validation",
+  "description": "Expected schema shape for spec_bundles and spec_facets tables after migration 016_spec_bundles.sql is applied. Used by the fixture-refresh schema-validator test.",
+
+  "spec_bundles": {
+    "table_name": "spec_bundles",
+    "columns": {
+      "bundle_hash":      { "notnull": true,  "is_pk": true,  "type_affinity": "TEXT" },
+      "frozen_at":        { "notnull": true,  "has_default": true, "type_affinity": "TEXT" },
+      "facets_json":      { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "horizon_bars":     { "notnull": false, "has_default": false, "type_affinity": "INTEGER" },
+      "cvar_alpha":       { "notnull": false, "has_default": false, "type_affinity": "REAL" },
+      "generator_family": { "notnull": false, "has_default": false, "type_affinity": "TEXT" }
+    },
+    "freeze_discipline_note": "Not stored on spec_bundles itself — lives on spec_facets rows."
+  },
+
+  "spec_facets": {
+    "table_name": "spec_facets",
+    "columns": {
+      "id":                   { "notnull": true,  "is_pk": true,  "type_affinity": "INTEGER", "autoincrement": true },
+      "bundle_hash":          { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "facet_name":           { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "facet_value":          { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "freeze_discipline":    { "notnull": true,  "has_default": false, "type_affinity": "TEXT" },
+      "justification":        { "notnull": false, "has_default": false, "type_affinity": "TEXT" },
+      "calibration_evidence": { "notnull": false, "has_default": false, "type_affinity": "TEXT" }
+    },
+    "freeze_discipline_enum": [
+      "THEORY",
+      "MANDATE",
+      "STYLIZED_FACT",
+      "CALIBRATION",
+      "BACKTEST_SELECTION"
+    ],
+    "freeze_discipline_note": "BACKTEST_SELECTION is the NN1-violating value; its presence in spec_facets increments S in BHY N_effective = N_optuna + S. Test suite pins the accepted enum and verifies the field is enforced at application level (not SQL CHECK — consistent with the codebase's app-level immutability pattern from llm_suggestions)."
+  },
+
+  "seed_bundle": {
+    "_note": "Minimal seed row for fixture DB. bundle_hash is a deterministic hex string; test code must NOT assert its exact value (it is producer-computed). Tests assert it is a non-empty string.",
+    "bundle_hash_is_nonempty_hex_string": true,
+    "facets_json_is_nonempty_string": true,
+    "frozen_at_is_nonempty_string": true
+  },
+
+  "seed_facet": {
+    "_note": "Minimal seed facet row for fixture DB. facet_value is JSON-serialised (string). Tests assert shape/presence, not value.",
+    "facet_name_is_nonempty_string": true,
+    "facet_value_is_nonempty_string": true,
+    "freeze_discipline_is_valid_enum_member": true
+  }
+}

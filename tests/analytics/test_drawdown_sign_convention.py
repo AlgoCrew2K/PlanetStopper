@@ -54,9 +54,7 @@ import pytest
 
 import analytics
 import app as app_module
-import port_aggregator
 from analytics import compute_quantstats_metrics, get_symphony_max_drawdown
-from port_aggregator import _compute_max_drawdown_from_series
 
 
 # A single equity decline of exactly 20%: peak 100 -> trough 80.
@@ -101,31 +99,12 @@ def _minimal_bot_state_with_drawdown() -> dict:
 # ---------------------------------------------------------------------------
 
 
-class TestPortAggregatorUsesNegativeConventionInternally:
-    """port_aggregator._compute_max_drawdown_from_series documents a negative
-    drawdown internally — it is consumed only by aggregate_to_port, not the
-    dashboard strip directly."""
-
-    def test_drawdown_is_negative_for_a_real_loss(self):
-        series = [
-            {"t": 0, "port_value": _PEAK},
-            {"t": 1, "port_value": _TROUGH},
-            {"t": 2, "port_value": 90.0},
-        ]
-        result = _compute_max_drawdown_from_series(series)
-        assert result is not None
-        assert result < 0.0, (
-            "port_aggregator documents the NEGATIVE drawdown convention "
-            "internally; a real loss must produce a negative value"
-        )
-        assert result == pytest.approx(-_DRAWDOWN_MAGNITUDE, rel=1e-9)
-
-
 class TestQuantstatsMetricsKeepsNegativeConventionInternally:
     """compute_quantstats_metrics keeps max_drawdown <= 0 — D8 explicitly says
     NOT to flip this producer; it is converted at the consumer boundary."""
 
     def test_quantstats_max_drawdown_is_non_positive_for_a_real_loss(self):
+        pytest.importorskip("quantstats", reason="quantstats is an optional dep — skip when absent")
         returns_pct = [1.0, -25.0, 5.0, 3.0]
         metrics = compute_quantstats_metrics(returns_pct)
         assert metrics["max_drawdown"] is not None
@@ -250,13 +229,6 @@ class TestDrawdownConventionIsDocumentedAndCrossReferenced:
     internal-negative producers must be cross-referenced so a future reader
     cannot miss the deliberate split."""
 
-    def test_port_aggregator_docstring_states_negative_convention(self):
-        doc = inspect.getdoc(port_aggregator._compute_max_drawdown_from_series) or ""
-        assert "negative" in doc.lower(), (
-            "_compute_max_drawdown_from_series docstring must state its drawdown "
-            "is the internal NEGATIVE convention"
-        )
-
     def test_get_symphony_max_drawdown_docstring_states_positive_convention(self):
         doc = inspect.getdoc(analytics.get_symphony_max_drawdown) or ""
         assert "positive" in doc.lower() or "magnitude" in doc.lower(), (
@@ -280,20 +252,3 @@ class TestDrawdownConventionIsDocumentedAndCrossReferenced:
             "the canonical positive-magnitude drawdown convention"
         )
 
-    def test_opposing_drawdown_functions_cross_reference_each_other(self):
-        """At least one of the two opposing-convention drawdown functions must
-        name the other (docstring/comment), so the deliberate internal-negative
-        vs operator-positive split is discoverable."""
-        pa_src = inspect.getsource(port_aggregator._compute_max_drawdown_from_series)
-        an_src = inspect.getsource(analytics.get_symphony_max_drawdown)
-        pa_refs_analytics = (
-            "get_symphony_max_drawdown" in pa_src or "analytics" in pa_src
-        )
-        an_refs_pa = (
-            "_compute_max_drawdown_from_series" in an_src
-            or "port_aggregator" in an_src
-        )
-        assert pa_refs_analytics or an_refs_pa, (
-            "AC-4: the two opposing-sign drawdown functions must cross-reference "
-            "each other so the deliberate convention split is documented"
-        )

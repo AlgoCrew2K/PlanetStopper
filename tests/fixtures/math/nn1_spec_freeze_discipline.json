@@ -1,0 +1,120 @@
+{
+  "_provenance": "schema-derived from feature-plans/decision-science/phase-1/nn1-spec-freeze-discipline/plan.md D1-D6 + council synthesis §2.5 §3.3 §3.7; no producer-computed values — all fields are named enum constants or structural shape assertions",
+  "_layer": "nn1_spec_freeze_discipline",
+  "_binding_plan": "feature-plans/decision-science/phase-1/nn1-spec-freeze-discipline/plan.md",
+
+  "freeze_disciplines": {
+    "honest_set": ["THEORY", "MANDATE", "STYLIZED_FACT", "POLITIS_WHITE", "CADENCE", "CALIBRATION"],
+    "violation_backtest_selection": "BACKTEST_SELECTION",
+    "violation_oos": "OOS",
+    "_note": "Any value outside honest_set is an NN1 violation. BACKTEST_SELECTION is the standard haircut-inflating violation. OOS is the stricter frozen-eval-peek violation (synthesis §2.5 NN1-VIOLATION hierarchy)."
+  },
+
+  "evidence_sources": {
+    "honest_set": ["THEORY", "MANDATE", "STYLIZED_FACT", "CALIBRATION"],
+    "violation_backtest_selection": "BACKTEST_SELECTION",
+    "violation_oos": "OOS",
+    "_note": "evidence_source='OOS' on a spec_facets row means the facet value was chosen by looking at frozen-eval returns — a stricter violation than BACKTEST_SELECTION."
+  },
+
+  "phase_1_load_bearing_facets": [
+    {
+      "facet_name": "gamma",
+      "required_freeze_discipline": "THEORY",
+      "required_evidence_source": "THEORY",
+      "_note": "CRRA risk-aversion parameter — frozen by theory (synthesis §3.3). Non-negotiable: adding gamma to OPTUNA_SEARCH_SPACE_KEYS is NN1 violation."
+    },
+    {
+      "facet_name": "utility_family",
+      "required_freeze_discipline": "THEORY",
+      "required_evidence_source": "THEORY",
+      "_note": "CRRA utility family choice — frozen by theory (synthesis §3.3)."
+    },
+    {
+      "facet_name": "wealth_argument",
+      "required_freeze_discipline": "THEORY",
+      "required_evidence_source": "THEORY",
+      "_note": "Wealth argument derivation — frozen by theory (synthesis §3.3)."
+    }
+  ],
+
+  "search_space_forbidden_facets": [
+    "gamma", "utility_family", "wealth_argument",
+    "generator_family", "horizon_convention", "lambda",
+    "regime_bucket_thresh"
+  ],
+  "_search_space_note": "These names must NEVER appear in OPTUNA_SEARCH_SPACE_KEYS. Phase-2 facets (generator_family etc.) are pre-named here as a tripwire (plan D4).",
+
+  "validate_nn1_compliance_contract": {
+    "function_name": "validate_nn1_compliance",
+    "signature": "validate_nn1_compliance(spec_bundle_id: int) -> tuple[bool, list[str]]",
+    "honest_bundle_return": [true, []],
+    "_honest_bundle_note": "All-THEORY facets: returns (True, []) — zero violations.",
+    "violation_return_shape": {
+      "first_element": false,
+      "second_element_type": "list[str]",
+      "second_element_min_length": 1,
+      "_note": "Violation message names the offending facet. Format: '<facet_name>: <discipline>' for BACKTEST_SELECTION; stricter label for OOS (frozen-eval peek)."
+    }
+  },
+
+  "validate_search_space_nn1_contract": {
+    "function_name": "validate_search_space_nn1",
+    "raises_on_forbidden_key": "RuntimeError",
+    "error_message_must_contain": ["NN1 VIOLATION", "council synthesis §2.5"],
+    "_note": "Called at top of run_autotuner BEFORE optuna.create_study. Fail-loud — NN1 violation at this level is unrecoverable."
+  },
+
+  "nn1_violation_scenarios": {
+    "all_theory_bundle": {
+      "description": "Bundle whose three Phase-1 facets all have freeze_discipline=THEORY",
+      "expected_is_honest": true,
+      "expected_violation_count": 0,
+      "expected_dof_ledger_backtest_selections_S": 0,
+      "_note": "autotuner proceeds; S=0 contributes nothing to N_effective haircut"
+    },
+    "single_backtest_selection_facet": {
+      "description": "Bundle where gamma has freeze_discipline=BACKTEST_SELECTION",
+      "offending_facet": "gamma",
+      "offending_discipline": "BACKTEST_SELECTION",
+      "expected_is_honest": false,
+      "expected_violation_message_contains": ["gamma", "BACKTEST_SELECTION"],
+      "_note": "Hard fail — autotuner refuses to run (team-lead directive, load-bearing NN1)"
+    },
+    "mixed_bundle": {
+      "description": "Bundle with some THEORY and some BACKTEST_SELECTION facets",
+      "expected_is_honest": false,
+      "_note": "Even one BACKTEST_SELECTION trips the gate — partial honesty is a fail"
+    },
+    "oos_evidence_source": {
+      "description": "Bundle where freeze_discipline=THEORY but evidence_source=OOS",
+      "expected_is_honest": false,
+      "expected_violation_message_distinguishes_oos": true,
+      "_note": "OOS-peek is a STRICTER violation than BACKTEST_SELECTION — the alarm must label it differently so the user sees the severity gradient"
+    },
+    "unknown_discipline": {
+      "description": "Bundle with a facet whose freeze_discipline is not in the accepted enum",
+      "expected_is_honest": false,
+      "_note": "Default-deny: any value NOT in NN1_HONEST_DISCIPLINES is treated as a violation (plan risk callout — silent fall-through is forbidden)"
+    },
+    "no_spec_bundle_pinned": {
+      "description": "run_autotuner called without a pinned spec bundle id (None / missing)",
+      "expected_behavior": "raises",
+      "_note": "Phase-1 strict: no implicit defaults (plan T4 / team-lead binding)"
+    },
+    "hash_mismatch": {
+      "description": "Operator-claimed bundle_hash does not match hash computed from its facets_json",
+      "expected_behavior": "refuses_to_start",
+      "_note": "Provenance integrity: a tampered bundle is a corrupt bundle — refuse, do not proceed with silent hash drift"
+    }
+  },
+
+  "dof_ledger_population": {
+    "trigger": "BACKTEST_SELECTION facets detected at validate_nn1_compliance time",
+    "evidence_source_written": "BACKTEST_SELECTION",
+    "n_configs_searched_required": true,
+    "_note": "Each detected BACKTEST_SELECTION facet is written via insert_dof_ledger_row with evidence_source='BACKTEST_SELECTION'. n_configs_searched must be populated (drives +S in the haircut).",
+    "count_dof_backtest_selections_observable": true,
+    "_count_note": "After writing, count_dof_backtest_selections(spec_bundle_id) must return a value > 0 reflecting the inserted rows' n_configs_searched sum"
+  }
+}

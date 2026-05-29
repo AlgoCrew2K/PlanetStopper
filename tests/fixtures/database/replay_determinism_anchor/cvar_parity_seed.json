@@ -1,0 +1,38 @@
+{
+  "_comment": "Fixture for replay-determinism-anchor RED tests. Provides a stable MC input spec and two cycle_ids whose seeds are pre-computed via derive_cycle_mc_seed (SHA-256 into 2^64 space). No mc_prob or cvar_5pct literals are stored here — tests assert equality across two independent replays, never against a producer-computed value (PA-18).",
+  "cycle_id_a": "20240102_0930",
+  "cycle_id_b": "20240103_1015",
+  "symphony_id": "TEST_SYM_RDA_001",
+  "mc_inputs": {
+    "description": "Minimal but non-degenerate MC input. Alternating returns give the kNN selector enough variation to pick a non-empty neighbor pool across different spy_today_return values.",
+    "historical_data_spec": {
+      "kind": "alternating",
+      "num_days": 60,
+      "spy_amplitude": 0.008,
+      "aaa_amplitude": 0.006
+    },
+    "holdings": [
+      {"ticker": "AAA", "last_percent_change": 0.5, "allocation": 1.0}
+    ],
+    "spy_today_return": 0.004,
+    "simulation_paths": 1000,
+    "neighbor_k": 20
+  },
+  "cvar_alpha": 0.05,
+  "expected_column_set": {
+    "_comment": "Exact column list for cvar_diagnostics table as defined in the 021_cvar_diagnostics plan. Tests assert PRAGMA table_info returns exactly these names. Update this list if a future migration adds a column — that is the intent of the column-add reminder test.",
+    "columns": [
+      "id",
+      "cycle_id",
+      "ts_utc",
+      "symphony_id",
+      "cvar_5pct",
+      "cvar_5pct_stderr",
+      "cvar_n_tail",
+      "cvar_5pct_long",
+      "cvar_n_tail_long",
+      "mc_regime_match_mean_dist2",
+      "mc_regime_match_suppressed"
+    ]
+  }
+}

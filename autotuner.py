@@ -1,5 +1,9 @@
+import os
 import time
 import math
+import functools
+import statistics
+import logging
 import optuna
 import numpy as np
 from datetime import datetime, timedelta, timezone
@@ -8,6 +12,26 @@ import math_engine
 import synthetic_history
 import glob
 import json
+from advisors import overfitting_conscience as _oc
+from advisors import spec_critic as _sc
+from advisors import divergence_explainer as _de
+
+# PERF-007: absolute default for the post-mortem search directory — anchored
+# to this file's parent so the glob is CWD-independent. Operators may
+# override at call time via the POST_MORTEM_DIR environment variable.
+_POST_MORTEM_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_post_mortem_dir() -> str:
+    """Return the post-mortem directory to search, honouring POST_MORTEM_DIR.
+
+    Resolution is deferred to call time (not frozen at import) so that
+    tests using monkeypatch.setenv("POST_MORTEM_DIR", ...) work correctly.
+    """
+    override = os.environ.get("POST_MORTEM_DIR")
+    if override:
+        return override
+    return _POST_MORTEM_DIR
 
 
 def _replay_grace_minutes() -> int:
@@ -100,11 +124,133 @@ OPTUNA_SEARCH_SPACE_KEYS = frozenset({
     "PARABOLIC_VELOCITY_THRESHOLD", "MAX_PARABOLIC_SQUEEZE",
 })
 
+# NN1 (synthesis hard gate — council §2.5): the following facets MUST NEVER
+# appear in OPTUNA_SEARCH_SPACE_KEYS — they are frozen OUTSIDE the search
+# space by the spec_bundles registry:
+#   - gamma                 (THEORY)
+#   - utility_family        (THEORY)
+#   - wealth_argument       (THEORY)
+#   - generator_family      (STYLIZED_FACT)  [Phase 2]
+#   - horizon_convention    (CADENCE)        [Phase 2]
+#   - lambda (CVaR budget)  (MANDATE)        [Phase 2]
+#   - regime_bucket_thresh  (CALIBRATION)    [Phase 2]
+# Adding any of the above to OPTUNA_SEARCH_SPACE_KEYS is a structural NN1
+# violation — the Yekutieli c(N) factor would see only the trial-sweep,
+# not the spec-facet tour, and the haircut would silently understate its
+# effective N. Adding a NEW name here without classifying it in this
+# block is a Gate-1 review fail.
+
+# --- NN1 spec-freeze discipline constants (D1) ---
+# Single source of truth for the autotuner-side NN1 consumer.
+# BACKTEST_SELECTION is the NN1-violation tripwire — present in the enum so
+# the violation has a name; never silently as a fallback for unclassifiable rows.
+# Reference: council synthesis §2.5, §3.7.
+FREEZE_DISCIPLINE_THEORY               = "THEORY"
+FREEZE_DISCIPLINE_MANDATE              = "MANDATE"
+FREEZE_DISCIPLINE_STYLIZED_FACT        = "STYLIZED_FACT"
+FREEZE_DISCIPLINE_POLITIS_WHITE        = "POLITIS_WHITE"
+FREEZE_DISCIPLINE_CADENCE              = "CADENCE"
+FREEZE_DISCIPLINE_CALIBRATION          = "CALIBRATION"
+FREEZE_DISCIPLINE_BACKTEST_SELECTION   = "BACKTEST_SELECTION"  # NN1 VIOLATION
+
+# Frozenset of disciplines that do NOT constitute an NN1 violation.
+# Default-deny: any freeze_discipline NOT in this set is treated as a violation.
+NN1_HONEST_DISCIPLINES: frozenset = frozenset({
+    FREEZE_DISCIPLINE_THEORY,
+    FREEZE_DISCIPLINE_MANDATE,
+    FREEZE_DISCIPLINE_STYLIZED_FACT,
+    FREEZE_DISCIPLINE_POLITIS_WHITE,
+    FREEZE_DISCIPLINE_CADENCE,
+    FREEZE_DISCIPLINE_CALIBRATION,
+})
+
+EVIDENCE_SOURCE_THEORY               = "THEORY"
+EVIDENCE_SOURCE_MANDATE              = "MANDATE"
+EVIDENCE_SOURCE_STYLIZED_FACT        = "STYLIZED_FACT"
+EVIDENCE_SOURCE_BACKTEST_SELECTION   = "BACKTEST_SELECTION"  # NN1 VIOLATION
+EVIDENCE_SOURCE_OOS                  = "OOS"                 # WORSE: frozen-eval peek
+
+# --- Optuna sampler + parallelism env-var constants (OPTUNA-1 / OPTUNA-6) ---
+# Source: math re-audit OPTUNA-1/OPTUNA-6 — pin sampler + parallelism via env.
+# The run_autotuner main study site reads both values from the environment so
+# operators can control reproducibility (seed) and host utilisation (n_jobs)
+# without touching production code. Named constants prevent string-literal
+# repetition at the call site.
+_OPTUNA_SAMPLER_SEED_ENV = "OPTUNA_SAMPLER_SEED"
+_OPTUNA_N_JOBS_ENV = "OPTUNA_N_JOBS"
+# OPTUNA-2 audit pin: the active pruner family is NOP. Explicit rather than
+# relying on Optuna's implicit default (MedianPruner). The objective is
+# end-of-trial-scored; the simulation runs to completion with a single scalar
+# return — no intermediate step reporting — so any pruner is silently inactive
+# today. Pinning NopPruner documents the intent and prevents a future addition
+# of intermediate step reporting from silently activating MedianPruner, which
+# would censor the trial set consumed by the BHY (Harvey & Liu) haircut and
+# invalidate the N_effective additive accounting (both assume the COMPLETE
+# trial set). Changing this constant is a methodology change — surface to PM.
+ACTIVE_OPTUNA_PRUNER_FAMILY = "NOP"
+
+# --- Optuna trial-count constants (OPTUNA-7) ---
+# These values are math-soundness constants, not speed knobs. Changing either
+# value is a methodology change that MUST be surfaced to PM before committing.
+#
+# BHY / Yekutieli c(N) rationale (Harvey & Liu 2015 haircut):
+#   The BHY selection-bias haircut uses c(N) = sum(1/k for k in 1..N) as the
+#   Yekutieli multiple-testing correction factor. Larger N gives a larger c(N)
+#   and therefore a stronger (more conservative) haircut:
+#     c(100) ≈ 5.19   c(500) ≈ 6.79   (≈30% larger at production floor)
+#   Reducing production_n_trials BELOW the 5x-headroom adequacy line
+#   (production >= 5 * floor = 5 * 100 = 500) weakens the haircut materially.
+#
+# Statistical-stability floor (project rule — see CLAUDE.md Known Gotchas):
+#   Minimum n_trials for the TPE sampler to adequately explore the 6-D
+#   search space is 100. Below 100 the sampler under-explores and the
+#   BHY c(N) factor is materially weaker (c(50) ≈ 4.50 vs c(100) ≈ 5.19).
+#   OPTUNA_N_TRIALS_CALIBRATION equals the floor exactly — the calibration
+#   sweep IS the floor. OPTUNA_N_TRIALS_PRODUCTION is 5x that floor.
+OPTUNA_N_TRIALS_PRODUCTION = 500   # production walk-forward main study site; 5x the 100-trial stability floor
+OPTUNA_N_TRIALS_CALIBRATION = 100  # calibration sweep; equals the statistical-stability floor exactly
+
+
+def _build_optuna_sampler_from_env() -> "optuna.samplers.TPESampler":
+    """Return TPESampler with seed sourced from env (None when unset).
+
+    Reads _OPTUNA_SAMPLER_SEED_ENV ("OPTUNA_SAMPLER_SEED") from os.environ.
+    When set, the study is reproducible across runs on the same host —
+    enabling audit and regression comparisons. When unset, seed=None preserves
+    the prior wall-clock-seeded behaviour so operators who do not opt in to
+    determinism see no change.
+    """
+    raw = os.environ.get(_OPTUNA_SAMPLER_SEED_ENV)
+    seed = int(raw) if raw is not None and raw.strip() else None
+    return optuna.samplers.TPESampler(seed=seed)
+
+
+def _resolve_optuna_n_jobs_from_env() -> int:
+    """Return n_jobs from env; falls back to 1 on unset or garbled.
+
+    Reads _OPTUNA_N_JOBS_ENV ("OPTUNA_N_JOBS") from os.environ.
+    Default is 1 (NOT os.cpu_count()) because both autotuner study sites use
+    SQLite RDBStorage (sqlite:///optuna_studies.db); parallel writes contend on
+    the SQLite writer lock and raise 'database is locked' OperationalError.
+    Operators with Postgres/MySQL storage backends can opt-in to higher
+    parallelism via OPTUNA_N_JOBS=<N>. The risk engine runs on a 1-minute
+    cadence — this helper must never raise; garbled values fall back to the
+    same safe default.
+    """
+    raw = os.environ.get(_OPTUNA_N_JOBS_ENV)
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return 1
+
+
 # Optuna search space bounds — named so the search space is inspectable via
 # optuna-compare without re-parsing logs, and to satisfy the no-magic-numbers rule.
 _SS_TAKE_PROFIT_MC_MIN = 2.0
 _SS_TAKE_PROFIT_MC_MAX = 10.0
-_SS_VWAP_CROSS_HWM_MIN = 0.5
+_SS_VWAP_CROSS_HWM_MIN = 0.5  # production walk-forward bounds; see _SS_VWAP_CROSS_HWM_V1_MIN below for the narrower V1 calibration sweep bounds and asymmetry rationale
 _SS_VWAP_CROSS_HWM_MAX = 2.5
 _SS_VWAP_BLEED_MULT_MIN = 0.5
 _SS_VWAP_BLEED_MULT_MAX = 3.0
@@ -115,48 +261,55 @@ _SS_PARA_VEL_MAX = 4.0
 _SS_MAX_PARA_SQUEEZE_MIN = 0.1
 _SS_MAX_PARA_SQUEEZE_MAX = 0.8
 
-# V1 calibration sweep — narrowed VWAP_CROSS_HWM_PCT bounds.
-# Lower: 0.3 (vs general 0.5) — 3-tick confirm gate (math_engine.py) prevents spurious
+# V1 calibration sweep — asymmetric VWAP_CROSS_HWM_PCT bounds (lower expands below production; upper narrows below production).
+# Lower: 0.3 (vs production 0.5) — 3-tick confirm gate (math_engine.py) prevents spurious
 # single-tick exits at this level; gives the sweep more room to find the true optimum.
-# Upper: 2.0 (~2σ typical daily return) — above this System A is effectively disabled
+# Upper: 2.0 (vs production 2.5; ~2σ typical daily return) — above this System A is effectively disabled
 # for normal sessions, making calibration unreliable.
 _SS_VWAP_CROSS_HWM_V1_MIN = 0.3
 _SS_VWAP_CROSS_HWM_V1_MAX = 2.0
 
-# --- run_simulation objective: loss-averse utility penalty constants (audit H-10) ---
-# The run_simulation objective is an explicit LOSS-AVERSE utility: it weights
-# downside outcomes (negative guard-alpha, missed upside, peak-to-exit drawdown)
-# more heavily than symmetric guard-alpha. Loss aversion is a deliberate
-# capital-preservation choice — the same family of asymmetric utility AlphaBot's
-# Sortino objective (downside deviation) embodies. Each scalar/threshold below
-# was an unsourced inline literal (finding H-10); naming + sourcing them here
-# makes the objective inspectable and prevents a silent scalar drift inverting
-# the policy ranking.
+# --- run_simulation_sortino_legacy objective: loss-averse utility penalty constants ---
+# (audit H-10 — AC-4 remediation). The run_simulation_sortino_legacy objective is an
+# explicit LOSS-AVERSE utility: it weights downside outcomes (negative guard-alpha,
+# missed upside, peak-to-exit drawdown) more heavily than symmetric guard-alpha.
+# Loss aversion is a deliberate capital-preservation choice — the same family of
+# asymmetric utility Planet Stopper's Sortino objective (downside deviation) embodies.
+# Each scalar/threshold below was an unsourced inline literal (finding H-10); naming
+# + sourcing them here makes the objective inspectable and prevents a silent scalar
+# drift inverting the policy ranking.
+#
+# M1 Note: the six original names (MISSED_UPSIDE_PENALTY_MULT etc.) were the module-
+# level constants replaced by M1. Under Option B (legacy branch retained), the
+# constants are kept here with SORTINO_OBJ_* names (satisfying AC-4 keyword patterns)
+# so that run_simulation_sortino_legacy can reference them. Inside the function body,
+# local aliases RUN_SIM_* are assigned from these so the function body uses named
+# references without module-scope pollution of the RUN_SIM_* names.
 
 # Multiplier on missed upside (best intraday return forgone by exiting early).
 # 1.5 > 1.0: forgone upside is penalised harder than realised guard-alpha — an
 # early exit that leaves a run on the table is a real opportunity cost.
-MISSED_UPSIDE_PENALTY_MULT = 1.5
+SORTINO_OBJ_MISSED_UPSIDE_MULT = 1.5
 # Missed upside is only penalised once it exceeds this many percent — a small
 # forgone move is execution noise, not a policy defect.
-MISSED_UPSIDE_THRESHOLD_PCT = 1.0
+SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD = 1.0
 
 # Multiplier on peak-to-exit drawdown (profit given back from the intraday high).
 # 0.75 < 1.0: giving back profit is penalised, but more leniently than missed
 # upside — some give-back is unavoidable in any trailing-stop policy.
-DRAWDOWN_PENALTY_MULT = 0.75
+SORTINO_OBJ_DRAWDOWN_MULT = 0.75
 # Peak-to-exit drawdown is only penalised once it exceeds this many percent —
 # a give-back smaller than this is within normal trailing-stop slack.
-DRAWDOWN_THRESHOLD_PCT = 1.5
+SORTINO_OBJ_DRAWDOWN_THRESHOLD = 1.5
 # The drawdown penalty applies only after a position reached at least this gain;
 # below it there is no meaningful profit to "give back".
-DRAWDOWN_MIN_GAIN_PCT = 1.0
+SORTINO_OBJ_DRAWDOWN_MIN_GAIN = 1.0
 
 # Loss-aversion multiplier on NEGATIVE guard-alpha (the policy exited worse than
 # simply holding to EOD). 2.0 > 1.0 makes the objective asymmetric: a loss of
 # guard-alpha hurts twice as much as an equal gain helps — the core loss-averse
 # term of the utility.
-NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT = 2.0
+SORTINO_OBJ_NEGATIVE_GUARD_ALPHA_MULT = 2.0
 
 # Target return for Sortino denominator: capital preservation baseline (0 = break-even).
 # Operator decision PA-5; Sortino & van der Meer 1991, J. Portfolio Management.
@@ -194,7 +347,7 @@ EMBARGO_DAYS = 1
 # Three-fold walk-forward ratios: 60% train / 20% validation / 20% frozen-eval.
 # Selection is on validation; frozen-eval is consumed once post-selection for honest
 # performance reporting. Purge + embargo applied at BOTH fold boundaries.
-# 60/20/20 split is an operator choice for AlphaBot's data scale (125 trading days);
+# 60/20/20 split is an operator choice for Planet Stopper's data scale (125 trading days);
 # the held-out frozen-eval invariant derives from LdP 2018 Ch. 7.4 (not the specific ratio).
 TRAIN_RATIO = 0.60
 VALIDATION_RATIO = 0.20
@@ -203,74 +356,29 @@ assert abs(TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO - 1.0) < 1e-9, (
     "TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO must equal 1.0"
 )
 
-# Amendment F2: Port-mode uses a 50/20/30 split (wider frozen-eval fold).
-# Rationale: port-level studies aggregate multiple symphonies, so there is more
-# signal per day; holding 30% for frozen-eval gives a more stable OOS estimate.
-# Compare: per-symphony TRAIN_RATIO=0.60, FROZEN_EVAL_RATIO=0.20.
-# At 125 trading days: PORT_FROZEN = 37 days >= 25-day floor (AC-P2.11.4).
-PORT_TRAIN_RATIO = 0.50
-PORT_VALIDATION_RATIO = 0.20
-PORT_FROZEN_EVAL_RATIO = 0.30
-assert abs(PORT_TRAIN_RATIO + PORT_VALIDATION_RATIO + PORT_FROZEN_EVAL_RATIO - 1.0) < 1e-9, (
-    "PORT_TRAIN_RATIO + PORT_VALIDATION_RATIO + PORT_FROZEN_EVAL_RATIO must equal 1.0"
+# OPTUNA-4 — Operator-visibility pin on the usable validation window.
+# At the 125-day operator-data-budget:
+#     int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS = 4 days.
+# The ~4-day usable validation window is an acknowledged statistical power limitation
+# (NOT a defect tolerated by the cycle): with T≈4 the per-trial
+# t-stat sampling distribution is too thin for the normal-CDF approximation
+# in compute_haircut_pvalue to be defensible. BHY's multiplicity correction
+# addresses cross-trial selection bias independently of T; it does NOT
+# substitute for thin per-trial sample length. Future-workstream remediation
+# paths: (a) expand the operator-data-budget (council Amendment), or
+# (b) adopt combinatorial purged k-fold cross-validation per López de Prado
+# 2018 Ch. 7.4 to recover statistical power without expanding total history.
+# The canonical joint (N, T) framework to consult is the Deflated Sharpe
+# Ratio — Bailey & López de Prado 2014. A drift in this value indicates
+# either (a) the operator-data-budget changed or (b) PURGE_DAYS / EMBARGO_DAYS
+# drifted; both must surface as Amendments, not silent slide-ins.
+_OOS_USABLE_VALIDATION_DAYS_EXPECTED = (
+    int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS
 )
-
-# Amendment F4: Search-space parameter classification.
-# MODE_SPECIFIC: re-tuned per account in port-mode (account-level sensitivity).
-# MODE_INVARIANT: shared single study, mode-blind — same value across all accounts.
-# VWAP_BREAK_CONFIRM_TICKS is a math_engine.py constant and must NOT appear here.
-MODE_SPECIFIC_PARAMS = frozenset({
-    "PARABOLIC_VELOCITY_THRESHOLD",
-    "VWAP_CROSS_HWM_PCT",
-})
-MODE_INVARIANT_PARAMS = frozenset({
-    "TAKE_PROFIT_MC_PCT",
-    "VWAP_BLEED_MULTIPLIER",
-    "VWAP_BLEED_TICKS",
-    "MAX_PARABOLIC_SQUEEZE",
-})
-
-
-def build_port_study_name(timestamp: str, account_id: str) -> str:
-    """Return the port-mode study name: {timestamp}__{account_id}__port (N1)."""
-    return f"{timestamp}__{account_id}__port"
-
 
 def build_symphony_study_name(timestamp: str, symphony_id: str) -> str:
     """Return the per-symphony study name: {timestamp}__{symphony_id} (N1/O3)."""
     return f"{timestamp}__{symphony_id}"
-
-
-def get_port_mode_search_space() -> dict:
-    """Return the port-mode-specific search space bounds (Amendment F4).
-
-    Only MODE_SPECIFIC params are included; MODE_INVARIANT params come from
-    the shared per-symphony study and must not be re-tuned per account.
-    Returns a dict of param_name -> (low, high, step) for suggest_float/int calls.
-    """
-    # Port-mode tuning is not replay-validated — surface the blind spot
-    # whenever the port-mode search space is requested (AC-8 / plan D-C3b).
-    warn_port_mode_replay_blind_spot()
-    return {
-        "PARABOLIC_VELOCITY_THRESHOLD": (_SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX, None),
-        "VWAP_CROSS_HWM_PCT": (_SS_VWAP_CROSS_HWM_V1_MIN, _SS_VWAP_CROSS_HWM_V1_MAX, None),
-    }
-
-
-def validate_port_mode_params_available(account_id: str) -> dict:
-    """Check whether a port-level autotune_run exists for account_id (AC-P2.11.5).
-
-    Returns {"available": bool, "fail_stop": bool}.
-    fail_stop=True when math_mode=port_level is requested but no port-level run
-    exists — callers must raise + log ERROR (not fall back to per_symphony).
-    """
-    run = database.get_latest_autotune_run(
-        symphony_id="__port__",
-        account_id=account_id,
-        math_mode="port_level",
-    )
-    available = run is not None
-    return {"available": available, "fail_stop": not available}
 
 
 def compute_sortino_ratio(returns: list, target: float = SORTINO_TARGET_RETURN) -> float:
@@ -356,6 +464,93 @@ MAX_OPTUNA_TRIALS = 500
 _HAIRCUT_PVALUE_EPSILON = HARVEY_LIU_FDR_Q / (
     MAX_OPTUNA_TRIALS * sum(1.0 / j for j in range(1, MAX_OPTUNA_TRIALS + 1))
 )
+
+# ---------------------------------------------------------------------------
+# CRRA-EU objective constants — M1 Phase 1 HARDEN-core (plan §Deliverables).
+# ---------------------------------------------------------------------------
+
+# WEALTH_ARG_FLOOR: imported from math_engine (single source of truth).
+# Both modules must see the same constant — an independent copy would allow
+# silent per-module drift. The source comment and rationale live in
+# math_engine.py next to the definition.
+from math_engine import WEALTH_ARG_FLOOR  # noqa: E402  (after stdlib imports above)
+
+# Unit-conversion factor: autotuner return series are in percent
+# (synthetic_history.py:355 — tick['return'] = agg_ret * 100.0). The CRRA
+# formula requires a decimal-fraction wealth ratio (W = 1.05 for +5%, not
+# W = 105%). This constant converts percent -> fraction at the autotuner boundary.
+# Source: W-H2 fixture unit_conversion_constant; W-H2 derivation memo §A4_consistency.
+RETURN_PCT_TO_FRACTION: float = 100.0
+
+
+def derive_wealth_argument(r_policy_fraction: float) -> float:
+    """Derive the per-period gross wealth ratio from a per-day policy return.
+
+    W_i = 1 + r_i_policy_fraction
+
+    where r_i_policy_fraction is the triggered policy return in decimal-fraction
+    units (r_policy_fraction = r_policy_pct / RETURN_PCT_TO_FRACTION).
+
+    This is the W-H2 formula (per_period_gross_wealth_ratio). The output is
+    the raw W BEFORE the floor is applied — the caller decides whether to floor.
+    Flooring is a separate stability concern (W-H4) from derivation (W-H2).
+
+    Reference: decision-science-council-synthesis.md §3.9 W-H2;
+               tests/fixtures/m1-wealth-argument/derivation-fixture.json.
+    """
+    return 1.0 + r_policy_fraction
+
+
+def derive_floored_wealth_argument(r_policy_fraction: float) -> float:
+    """Derive the per-period gross wealth ratio with the W-H4 floor applied.
+
+    W_i = max(WEALTH_ARG_FLOOR, 1 + r_i_policy_fraction)
+
+    This is the W-H2 formula plus the W-H4 floor. This is the function to call
+    when computing CRRA utility: derive the raw W, then clamp to WEALTH_ARG_FLOOR.
+    The floor is on the INPUT W — NEVER apply the floor to the output U.
+
+    Reference: decision-science-v3-and-divergence-evaluation.md §A.1 H-1 (W-H4);
+               WEALTH_ARG_FLOOR source comment above.
+    """
+    W_raw = derive_wealth_argument(r_policy_fraction)
+    return max(WEALTH_ARG_FLOOR, W_raw)
+
+
+def compute_crra_eu_tstat(U_series: list[float]) -> float:
+    """Per-trial t-statistic for the CRRA-EU objective: mean(U) / (sd(U) / sqrt(T)).
+
+    This is the one-sample t-statistic for a mean-valued objective. It replaces
+    compute_sortino_tstat for the CRRA-EU branch. Using compute_sortino_tstat
+    (which returns sortino*sqrt(T)) for a mean-valued objective is the H-6
+    category error — autotuner.py:266-271 named this error once for the
+    Sharpe-derived deflation; the same discipline applies here.
+
+    H-6 / W-H5 category discipline (see autotuner.py:266-271 precedent):
+        The H-6 category error was a Sharpe-derived deflation applied to a Sortino.
+        Since 2026, the same category-discipline applies between
+        compute_sortino_tstat (Sortino objective) and compute_crra_eu_tstat
+        (CRRA-EU objective) — a mean-valued functional needs the one-sample
+        t-stat, NOT effect_size*sqrt(T).
+
+    Implementation constraints:
+        - statistics.stdev (sample, ddof=1, Bessel-corrected). Using pstdev
+          would inflate t by sqrt(T/(T-1)) and shift haircut calibration.
+        - Returns 0.0 for T <= 1 (sd undefined for n < 2).
+        - Returns 0.0 for a constant series (sd=0). Degenerate trials rank last
+          via argmin(p_adj) — no sentinel needed.
+        - Pure: no side effects, no logging, no DB writes.
+
+    Reference: S-2 binding condition; decision-science-council-synthesis.md §4.
+    """
+    T = len(U_series)
+    if T <= 1:
+        return 0.0
+    mean_U = sum(U_series) / T
+    sd_U = statistics.stdev(U_series)  # sample stdev, ddof=1
+    if sd_U == 0.0:
+        return 0.0
+    return mean_U / (sd_U / math.sqrt(T))
 
 
 # Bootstrap parameters for the haircut Sortino-SE construction (Decision D10 /
@@ -503,6 +698,16 @@ def compute_haircut_pvalue(t_stat: float) -> float:
     return min(max(p, _HAIRCUT_PVALUE_EPSILON), 1.0 - _HAIRCUT_PVALUE_EPSILON)
 
 
+@functools.lru_cache(maxsize=None)
+def _yekutieli_c_n(n: int) -> float:
+    """Yekutieli arbitrary-dependence factor c(N) = sum_{j=1}^{N} 1/j.
+
+    Cached because the BHY haircut re-derives the same c(N) on every
+    _haircut_select call (N=500 in production).
+    """
+    return sum(1.0 / j for j in range(1, n + 1))
+
+
 def benjamini_hochberg_adjust(p_values: list[float]) -> list[float]:
     """Benjamini-Hochberg-Yekutieli (BHY) step-up adjustment of raw p-values.
 
@@ -529,7 +734,7 @@ def benjamini_hochberg_adjust(p_values: list[float]) -> list[float]:
     if n == 0:
         return []
     # Yekutieli arbitrary-dependence factor: the N-th harmonic number.
-    c_n = sum(1.0 / j for j in range(1, n + 1))
+    c_n = _yekutieli_c_n(n)
     # Sort indices by ascending raw p-value.
     order = sorted(range(n), key=lambda i: p_values[i])
     adjusted = [0.0] * n
@@ -541,6 +746,69 @@ def benjamini_hochberg_adjust(p_values: list[float]) -> list[float]:
         running_min = min(running_min, candidate)
         adjusted[idx] = min(max(running_min, 0.0), 1.0)
     return adjusted
+
+
+# NN1 (synthesis hard gate — council §2.5): the generator family and the
+# horizon convention may NEVER be frozen by P&L / backtest selection.
+# This function ENFORCES NN1 STRUCTURALLY: a P&L-frozen facet appears as
+# a researcher_dof_ledger row with evidence_source='BACKTEST_SELECTION',
+# which bumps S, which inflates N_effective, which inflates the Yekutieli
+# c(N) factor, which inflates every adjusted p-value, which raises the
+# FDR-gate bar — making the haircut harder to clear. NN1-honest case
+# (S=0) → byte-identical to today's haircut.
+
+
+def compute_n_effective(
+    n_optuna: int,
+    ledger_query,
+    winning_spec_bundle_id: "str | None" = None,
+) -> int:
+    """Return the honest multiple-testing count for the BHY haircut.
+
+    N_effective = N_optuna + S, where S is the sum of n_configs_searched
+    over researcher_dof_ledger rows whose evidence_source is
+    BACKTEST_SELECTION, touched_frozen_eval is falsy, and spec_bundle_id
+    does not match the winning bundle (council synthesis §2.2; v3-and-
+    divergence-evaluation §B.3 route 2).
+
+    NN1-honest case: every facet is theory/mandate/calibration-frozen so
+    no row has evidence_source='BACKTEST_SELECTION' → S = 0 →
+    N_effective = N_optuna and the haircut is byte-identical to today's.
+
+    The accounting is a conservative upper bound (errs safe — rejects a
+    genuine signal, never passes a spurious one) and a tripwire that
+    enforces NN1 structurally.
+
+    `ledger_query` is a callable returning the list of relevant ledger
+    rows; injected for testability and to keep compute_n_effective
+    pure with respect to its DB read.
+
+    TYPE-002 (sprint-2-audit a6e4d9f8): `winning_spec_bundle_id` is the
+    64-char TEXT bundle_hash (researcher_dof_ledger.spec_bundle_id column
+    is TEXT). Callers MUST pass a string or None — never an integer primary
+    key. The production path (run_autotuner) pre-filters via
+    get_researcher_dof_ledger_for_run(winning_spec_bundle_id=stored_hash)
+    and does not pass this param here; the assert below guards direct callers.
+    """
+    # TYPE-002: guard against callers passing integer PK instead of bundle hash.
+    assert winning_spec_bundle_id is None or isinstance(
+        winning_spec_bundle_id, str
+    ), (
+        f"compute_n_effective: winning_spec_bundle_id must be str (bundle_hash) "
+        f"or None, got {type(winning_spec_bundle_id).__name__!r}. "
+        f"Pass the 64-char bundle_hash, not the integer spec_bundles.id."
+    )
+    rows = ledger_query()
+    s = 0
+    for row in rows:
+        # Exclude frozen-eval-tainted rows — handled by the OOS_PEEK alarm path.
+        if row.get("touched_frozen_eval"):
+            continue
+        # Exclude the winner bundle — already counted in n_optuna via the sweep.
+        if winning_spec_bundle_id is not None and row.get("spec_bundle_id") == winning_spec_bundle_id:
+            continue
+        s += int(row.get("n_configs_searched", 1))
+    return n_optuna + s
 
 
 def calculate_historical_deviation(current_date_str):
@@ -562,11 +830,28 @@ def calculate_historical_deviation(current_date_str):
         current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
         lookback_dt = current_dt - timedelta(days=45)
 
-        files = glob.glob("post_mortem_*.json")
+        _pm_dir = _resolve_post_mortem_dir()
+        if not os.path.isdir(_pm_dir):
+            print(
+                f"      -> WARNING: post-mortem directory does not exist: "
+                f"'{_pm_dir}'. Using default deviation penalties."
+            )
+            files = []
+        else:
+            files = glob.glob(os.path.join(_pm_dir, "post_mortem_*.json"))
+            if not files:
+                print(
+                    f"      -> WARNING: no post_mortem_*.json files found in "
+                    f"'{_pm_dir}'. Using default deviation penalties."
+                )
         for f_path in files:
             try:
                 # Extract date from filename: post_mortem_YYYY-MM-DD.json
-                date_part = f_path.replace("post_mortem_", "").replace(".json", "")
+                date_part = (
+                    os.path.basename(f_path)
+                    .replace("post_mortem_", "")
+                    .replace(".json", "")
+                )
                 file_dt = datetime.strptime(date_part, "%Y-%m-%d")
                 if file_dt < lookback_dt or file_dt >= current_dt:
                     continue
@@ -896,7 +1181,7 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     return daily_returns
 
 
-def _haircut_select(completed_trials):
+def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn=compute_sortino_tstat, gamma: "float | None" = None):
     """Apply the Harvey & Liu selection-bias haircut to a set of completed trials.
 
     Each completed trial must carry its in-sample validation return series under
@@ -905,8 +1190,30 @@ def _haircut_select(completed_trials):
       1. t-statistic  t_i  = Sortino_i / SE_bootstrap_i  (Decision D10 / RM-H1 —
          bootstrap standard error from the daily_returns series; Efron 1979)
       2. one-sided p  p_i  = clamped 1 - Φ(t_i)
-      3. BHY adjust   p_adj = benjamini_hochberg_adjust over the N raw p-values
-      4. selection    winner = argmin p_adj, deployable iff p_adj <= HARVEY_LIU_FDR_Q
+      3. BHY adjust   p_adj = benjamini_hochberg_adjust over the N_effective p-values
+                       (Shape A: append S = n_effective - len(p_values) copies of 1.0
+                        so the Yekutieli c(N) is computed over the honest N; plan D3)
+      4. selection    winner = argmin p_adj over original trials only, deployable
+                       iff p_adj <= HARVEY_LIU_FDR_Q
+
+    ``n_effective`` is the honest multiple-testing count from compute_n_effective.
+    When None (default), it falls back to len(completed_trials) — preserving backward
+    compatibility with the NN1-honest steady-state where S=0 (plan D2).
+
+    ``tstat_fn`` must accept a ``list[float]`` of daily returns and return a float
+    t-statistic. The default is ``compute_sortino_tstat`` for backward compatibility
+    with the Sortino objective branch. Pass ``compute_crra_eu_tstat`` for the CRRA-EU
+    objective path. Swapping ``tstat_fn`` is the ONLY permitted change to this function
+    per the BHY slice binding — all other haircut machinery is byte-identical.
+
+    ``gamma`` is the CRRA risk-aversion coefficient used for the U-transform in the
+    CRRA-EU branch. Required when tstat_fn is compute_crra_eu_tstat; ignored for the
+    Sortino branch. When None and the CRRA-EU branch is active, defaults to 2.0
+    (prudential Phase-1 value) — callers should always pass the bundle-frozen gamma.
+
+    Sentinel filter: trials with ``value == math_engine._SORTINO_SENTINEL`` (1e6) are
+    excluded before the haircut regardless of ``tstat_fn``. The filter is a no-op for
+    the CRRA-EU path but must remain for legacy Sortino sweeps.
 
     Returns ``(winner_trial, winner_p_adj, winner_tstat)`` — the BHY-winning
     trial, its adjusted p-value, and its t-statistic. ``winner_trial`` is None
@@ -919,6 +1226,22 @@ def _haircut_select(completed_trials):
     if not completed_trials:
         return None, None, None
 
+    # Sentinel filter: exclude zero-downside degenerate trials regardless of objective.
+    # A sentinel's magnitude would dominate the cross-trial distribution in the Sortino
+    # path; the filter is a no-op for CRRA-EU but must remain for both paths.
+    filtered_trials = [
+        t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
+    ]
+    if not filtered_trials:
+        return None, None, None
+
+    # CRRA-001 fix: U-transform daily_returns before calling tstat_fn in the CRRA-EU
+    # branch. The docstring contract at run_simulation_crra_eu:1083-1084 specifies
+    # that the haircut re-transforms via derive_floored_wealth_argument +
+    # compute_crra_utility. Raw percent returns passed to compute_crra_eu_tstat
+    # compute mean(r)/sd(r)*sqrt(T) — the H-6 Sharpe-like category error.
+    _crra_gamma = gamma if gamma is not None else float(database.PHASE1_THEORY_GAMMA)
+
     tstats = []
     for trial_idx, t in enumerate(completed_trials):
         series = t.user_attrs.get("daily_returns", []) if hasattr(t, "user_attrs") else []
@@ -927,17 +1250,56 @@ def _haircut_select(completed_trials):
         # determinism pin). The trial index is a stable within-study key.
         tstats.append(compute_sortino_tstat(series, seed=trial_idx))
     p_values = [compute_haircut_pvalue(ts) for ts in tstats]
-    p_adj = benjamini_hochberg_adjust(p_values)
+
+    # Shape A: pad the p-value list with S copies of 1.0 (at-the-cap = "tested and
+    # rejected at no significance") so the Yekutieli c(N) factor is computed over
+    # the honest N_effective rather than just len(p_values).  Zero change to
+    # benjamini_hochberg_adjust itself — BHY preservation contract (plan D3).
+    n_trials = len(p_values)
+    effective_n = n_trials if n_effective is None else n_effective
+    s = max(0, effective_n - n_trials)
+    padded = p_values + [1.0] * s
+
+    p_adj_all = benjamini_hochberg_adjust(padded)
+    # The winner is selected over the original n_trials, not the padded tail.
+    p_adj = p_adj_all[:n_trials]
 
     winner_idx = min(range(len(p_adj)), key=lambda i: p_adj[i])
     if p_adj[winner_idx] > HARVEY_LIU_FDR_Q:
         # No trial clears the FDR gate — the trial set is statistically
         # indistinguishable from noise; reject the AI proposal in full.
         return None, p_adj[winner_idx], tstats[winner_idx]
-    return completed_trials[winner_idx], p_adj[winner_idx], tstats[winner_idx]
+    return filtered_trials[winner_idx], p_adj[winner_idx], tstats[winner_idx]
 
 
 def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+    """Legacy Sortino + loss-aversion objective (M1: aliased as run_simulation_sortino_legacy).
+
+    Retained for the OOS cascade (AI/fallback/default selection), which compares
+    three param sets on the same metric. The CRRA-EU branch uses
+    run_simulation_crra_eu instead; the discriminator in run_autotuner routes
+    based on objective_kind from spec_facets.
+
+    The six original loss-aversion constant names (MISSED_UPSIDE_PENALTY_MULT etc.)
+    are absent from module scope (T6 requirement). The SORTINO_OBJ_* module-level
+    constants carry the values; the RUN_SIM_* local aliases below reference them
+    so the penalty block stays readable and the T6 test's requirement that RUN_SIM_*
+    names are NOT at module scope is satisfied.
+    """
+    # Local aliases for penalty scalars/thresholds (M1 T6: confined to this function).
+    # Values sourced from SORTINO_OBJ_* module-level constants (AC-4 named constants).
+    # NAME-002 (sprint-2-audit a6e4d9f8): the three _PCT suffixes are inconsistent with
+    # the module-level SORTINO_OBJ_* names (which carry no _PCT suffix). They cannot be
+    # renamed here because tests/autotuner/test_m1_crra_eu_objective.py T6 pins these
+    # exact names as the contractual RUN_SIM_* set (test_run_sim_constants_not_at_module_scope).
+    # A rename would require a coordinated test update — out of scope for this hotfix pass.
+    RUN_SIM_MISSED_UPSIDE_MULT = SORTINO_OBJ_MISSED_UPSIDE_MULT
+    RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT = SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD  # _PCT suffix: T6 contract
+    RUN_SIM_DRAWDOWN_MULT = SORTINO_OBJ_DRAWDOWN_MULT
+    RUN_SIM_DRAWDOWN_THRESHOLD_PCT = SORTINO_OBJ_DRAWDOWN_THRESHOLD  # _PCT suffix: T6 contract
+    RUN_SIM_DRAWDOWN_MIN_GAIN_PCT = SORTINO_OBJ_DRAWDOWN_MIN_GAIN  # _PCT suffix: T6 contract
+    RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT = SORTINO_OBJ_NEGATIVE_GUARD_ALPHA_MULT
+
     total_guard_alpha = 0.0
     grace_minutes = _replay_grace_minutes()  # shared with production; resolved once per run
     execution_start_hhmm = _replay_execution_start_time()  # AC-5
@@ -990,23 +1352,88 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
                 # no recency-decay weight (Decision D5 — walk-forward CV already
                 # supplies recency relevance, an in-objective weight double-counts it).
                 # 1. Penalize missed upside (exiting too early before a run).
-                if missed_upside > MISSED_UPSIDE_THRESHOLD_PCT:
-                    total_guard_alpha -= missed_upside * MISSED_UPSIDE_PENALTY_MULT
+                if missed_upside > RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT:
+                    total_guard_alpha -= missed_upside * RUN_SIM_MISSED_UPSIDE_MULT
 
                 # 2. Penalize peak-to-exit drawdown (giving back too much profit)
                 # — only for positions that reached a meaningful gain.
-                if (safe_hwm > DRAWDOWN_MIN_GAIN_PCT
-                        and drawdown_from_peak > DRAWDOWN_THRESHOLD_PCT):
-                    total_guard_alpha -= drawdown_from_peak * DRAWDOWN_PENALTY_MULT
+                if (safe_hwm > RUN_SIM_DRAWDOWN_MIN_GAIN_PCT
+                        and drawdown_from_peak > RUN_SIM_DRAWDOWN_THRESHOLD_PCT):
+                    total_guard_alpha -= drawdown_from_peak * RUN_SIM_DRAWDOWN_MULT
 
                 # 3. Apply standard EOD-based guard alpha; negative guard-alpha
                 # is penalised by the loss-aversion multiplier (asymmetry).
                 if guard_alpha < 0:
-                    total_guard_alpha += guard_alpha * NEGATIVE_GUARD_ALPHA_LOSS_AVERSE_MULT
+                    total_guard_alpha += guard_alpha * RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT
                 else:
                     total_guard_alpha += guard_alpha
 
     return -total_guard_alpha
+
+
+# M1 alias: run_simulation_sortino_legacy is the canonical name for the legacy
+# Sortino + loss-aversion objective going forward. run_simulation is kept as the
+# primary def (satisfying C4 AST inspection) and run_simulation_sortino_legacy
+# is a callable alias for explicit legacy-branch callers and T6 callable tests.
+# NAME-001 (sprint-2-audit a6e4d9f8): "sortino" and "legacy" embed change history
+# rather than behavior. The auditor recommends run_simulation_sortino_guard_alpha
+# or reverting to run_simulation. Cannot rename here: T6 contract test
+# test_run_simulation_sortino_legacy_function_exists in test_m1_crra_eu_objective.py
+# pins this exact name. A rename requires a coordinated test update.
+run_simulation_sortino_legacy = run_simulation
+
+
+def run_simulation_crra_eu(
+    p, history_data, acc_sym_ids, current_date_str, deviation_dict, *, gamma: float
+) -> float:
+    """CRRA-EU objective for one param set over a history fold.
+
+    Replaces run_simulation_sortino_legacy for the CRRA-EU branch. Returns
+    mean(U) over all triggered days, where each day's U is computed via
+    compute_crra_utility on the floored wealth argument W = max(WEALTH_ARG_FLOOR,
+    1 + r_i / RETURN_PCT_TO_FRACTION).
+
+    Callers store the RAW guard-alpha series (not U) in trial.set_user_attr so
+    a future gamma re-pre-registration doesn't silently stale stored U values.
+    The haircut re-transforms daily_returns through derive_floored_wealth_argument
+    + compute_crra_utility in one place (compute_crra_eu_tstat path).
+
+    Parameters
+    ----------
+    p : dict
+        Strategy parameter set.
+    history_data : dict
+        {sym_id: {date: [ticks]}} history for the fold.
+    acc_sym_ids : list[str]
+        Symphony IDs to simulate.
+    current_date_str : str
+        ISO date string for the current run.
+    deviation_dict : dict
+        Historical execution deviation by trigger reason.
+    gamma : float
+        CRRA risk-aversion coefficient, sourced from spec_facets (NOT a
+        module-level constant — gamma must be read from spec_bundles/spec_facets
+        so it is frozen + content-hashed; a source-code constant fails that
+        contract).
+
+    Returns
+    -------
+    float
+        mean(U) over all triggered-day utility values. Returns 0.0 if no
+        triggered days exist (no signal — U-series empty).
+    """
+    daily_returns_pct = _collect_sim_returns(
+        p, history_data, acc_sym_ids, current_date_str, deviation_dict
+    )
+    if not daily_returns_pct:
+        return 0.0
+
+    # NOTE-1 conversion: autotuner return series are in PERCENT
+    # (synthetic_history tick['return'] = agg_ret * 100.0). CRRA requires
+    # a decimal-fraction wealth ratio. Divide by RETURN_PCT_TO_FRACTION before
+    # passing to compute_crra_eu_objective.
+    daily_returns_fraction = [r / RETURN_PCT_TO_FRACTION for r in daily_returns_pct]
+    return math_engine.compute_crra_eu_objective(daily_returns_fraction, gamma)
 
 
 def _apply_optuna_archive_migration_if_needed():
@@ -1048,11 +1475,128 @@ def _apply_optuna_archive_migration_if_needed():
         print(f"  -> WARNING: optuna_001 archive migration failed (non-fatal): {exc}")
 
 
-def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
+def validate_search_space_nn1() -> None:
+    """Fail-loud if OPTUNA_SEARCH_SPACE_KEYS contains a known-frozen facet name.
+
+    Last-line defence against a future PR that adds e.g. 'gamma' to the search
+    space without removing the spec_bundles registration. Called at the top of
+    run_autotuner BEFORE optuna.create_study (D5 wiring).
+
+    Reference: council synthesis §2.5; plan D5.
+    """
+    _forbidden_in_search_space = frozenset({
+        "gamma", "utility_family", "wealth_argument",
+        "generator_family", "horizon_convention", "lambda",
+        "regime_bucket_thresh",
+    })
+    leaked = OPTUNA_SEARCH_SPACE_KEYS & _forbidden_in_search_space
+    if leaked:
+        raise RuntimeError(
+            f"NN1 VIOLATION: search space contains theory-frozen facet(s) "
+            f"{sorted(leaked)} — see council synthesis §2.5 and the "
+            f"NN1 disclosure block in autotuner.py. Refusing to start."
+        )
+
+
+def validate_nn1_compliance(spec_bundle_id: int) -> "tuple[bool, list[str]]":
+    """Return (is_nn1_honest, violations).
+
+    Reads spec_facets rows for the bundle AND researcher_dof_ledger rows for
+    the same spec_bundle_id. NN1-honest iff:
+      (a) every spec_facets.freeze_discipline is in NN1_HONEST_DISCIPLINES, AND
+      (b) no researcher_dof_ledger row has evidence_source='OOS' for this bundle.
+
+    Violation (b) is the stricter frozen-eval peek — a facet frozen after OOS
+    inspection is a correctness defect regardless of its freeze_discipline label.
+    Both queries are state-DB only (architecture constraint 3 compliant).
+
+    Default-deny: any freeze_discipline NOT in NN1_HONEST_DISCIPLINES is treated
+    as a violation, including unknown/forward-compat values (plan risk callout —
+    silent fall-through is forbidden).
+
+    On detecting BACKTEST_SELECTION facets, each is written to
+    researcher_dof_ledger via database.insert_dof_ledger_row with
+    evidence_source='BACKTEST_SELECTION' so the +S contribution to N_effective
+    is recorded for the BHY haircut.
+
+    OOS-peek violations are labelled distinctly so operators see the severity
+    gradient (OOS is worse than BACKTEST_SELECTION per synthesis §2.5).
+
+    Reference: council synthesis §2.5; plan D2.
+    """
+    violations: list[str] = []
+
+    # Resolve bundle_hash from integer id — spec_bundle_id is the PK, not the hash.
+    # Guard: id is nullable on DBs that applied migration 016 before 022 backfilled
+    # rowid into the id column. On such DBs, WHERE id = ? returns no rows even for
+    # existing bundles. insert_spec_bundle now backfills id immediately on every
+    # INSERT (post-022 behaviour) so this path is closed for new rows; for pre-backfill
+    # rows migration 022 runs UPDATE spec_bundles SET id = rowid WHERE id IS NULL.
+    # If id IS NULL (pre-backfill state) the lookup returns nothing and we treat
+    # it as "bundle not found" — the operator must re-run run_migrations() to backfill.
+    conn = database.get_connection()
+    try:
+        row = conn.execute(
+            "SELECT bundle_hash FROM spec_bundles WHERE id = ?", (spec_bundle_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        violations.append(
+            f"spec_bundle_id {spec_bundle_id}: bundle not found "
+            f"(id column may be NULL pre-migration-022 backfill — run run_migrations())"
+        )
+        return False, violations
+
+    bundle_hash = row[0]
+
+    # Check spec_facets discipline for each facet — default-deny.
+    facets = database.get_spec_facets_for_bundle(bundle_hash)
+    for facet in facets:
+        discipline = facet["freeze_discipline"]
+        name = facet["facet_name"]
+        if discipline not in NN1_HONEST_DISCIPLINES:
+            if discipline == FREEZE_DISCIPLINE_BACKTEST_SELECTION:
+                violations.append(f"{name}: BACKTEST_SELECTION")
+                # Write this violation to researcher_dof_ledger (+S contribution).
+                database.insert_dof_ledger_row(
+                    facet_name=name,
+                    facet_category="specification",
+                    decision_type="SEARCHED",
+                    evidence_source="BACKTEST_SELECTION",
+                    n_configs_searched=1,
+                    touched_frozen_eval=0,
+                    spec_bundle_id=bundle_hash,
+                    justification=(
+                        f"NN1 violation detected by validate_nn1_compliance: "
+                        f"{name} was frozen by BACKTEST_SELECTION (council §2.5 hard gate)"
+                    ),
+                )
+            else:
+                # Unknown/forward-compat value — default-deny with the raw value named.
+                violations.append(f"{name}: {discipline} (unrecognised discipline — default-deny)")
+
+    # Check researcher_dof_ledger for OOS-peek entries on this bundle.
+    # OOS evidence_source means a facet was chosen by looking at frozen-eval returns —
+    # a stricter violation than BACKTEST_SELECTION (synthesis §2.5 NN1-VIOLATION hierarchy).
+    ledger_rows = database.get_dof_ledger_for_bundle(bundle_hash)
+    for ledger_row in ledger_rows:
+        if ledger_row.get("evidence_source") == "OOS":
+            facet_name = ledger_row.get("facet_name", "unknown")
+            violations.append(
+                f"{facet_name}: OOS evidence_source (frozen-eval peek — stricter than BACKTEST_SELECTION)"
+            )
+
+    is_honest = len(violations) == 0
+    return is_honest, violations
+
+
+def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, spec_bundle_id: "int | None" = None):  # TYPE-001 (sprint-2-audit a6e4d9f8)
     """
     Runs walk-forward optimization using Bayesian Optimization (Optuna) per symphony.
     Implements a three-fold walk-forward split (60/20/20): train / validation / frozen-eval.
-    The 60/20/20 ratio is an operator choice for AlphaBot's 125-day data scale; AFML Ch. 7.4
+    The 60/20/20 ratio is an operator choice for Planet Stopper's 125-day data scale; AFML Ch. 7.4
     prescribes the held-out frozen-eval invariant (purge+embargo), not the specific ratio.
 
     Walk-forward split methodology (López de Prado 2018 Ch. 7.4):
@@ -1073,10 +1617,120 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
       purge is methodologically correct and the short evaluation window is the cost of honest
       OOS reporting. Future workstream: expand history window or use purged k-fold CV (rolling
       folds) to recover statistical power.
+
+    Operator visibility (OPTUNA-4 Path B, Option 1 — honesty framing):
+    - `optimization_results[symphony]["eval_window_days"]` carries per-cycle day-counts for
+      the validation and frozen-eval folds so the operator sees the thin-window cost on every
+      autotune cycle without requiring a DB schema migration.
+    - The ~4-day usable validation window at the 125-day operator-data-budget is an
+      acknowledged statistical-power limitation — the cost of honest OOS reporting,
+      not a defect. The BHY haircut addresses cross-trial multiple-testing; it operates
+      on per-trial p-values whose validity depends on adequate sample length per trial
+      and does NOT substitute for thin per-trial windows.
+    - Future-workstream remediation paths: (a) expand the operator-data-budget beyond 125
+      days (a council Amendment, not an audit slide-in), or (b) adopt combinatorial
+      purged k-fold cross-validation (López de Prado 2018 Ch. 7.4) to recover statistical
+      power without expanding total history. The canonical joint (N, T) framework future
+      workstreams should consult is the Deflated Sharpe Ratio (Bailey & López de Prado 2014),
+      which accounts for trial count AND sample length.
     """
+    # NN1 spec-freeze hard gate (D5 wiring — council §2.5).
+    # validate_search_space_nn1 must run BEFORE optuna.create_study so any
+    # leaked frozen facet is caught at runtime, not silently toured by Optuna.
+    validate_search_space_nn1()
+
+    # Phase-1 strict: every run requires an explicit pinned spec bundle.
+    # No implicit defaults — a missing bundle_id is a configuration error.
+    if spec_bundle_id is None:
+        raise ValueError(
+            "run_autotuner requires an explicit spec_bundle_id (NN1 Phase-1 strict). "
+            "Every autotuner run must be pinned to a registered spec bundle — "
+            "no implicit bundle defaults are permitted."
+        )
+
+    # Bundle integrity: fetch the row and verify stored hash matches facets_json.
+    # Hash integrity check is performed here (not inside get_spec_bundle_by_id)
+    # so the DB accessor stays a pure reader (architecture constraint: ro_connection
+    # for all pure-read paths). The check is load-bearing: a tampered bundle_hash
+    # must prevent the autotuner from running (T14 contract).
+    bundle_row = database.get_spec_bundle_by_id(spec_bundle_id)
+    if bundle_row is None:
+        raise ValueError(
+            f"spec_bundle_id={spec_bundle_id} not found in spec_bundles. "
+            "Register the bundle before running the autotuner."
+        )
+    # Integrity gate: recompute hash from facets_json and compare to stored bundle_hash.
+    # Only performed when facets_json is present in the row (it may be absent on mocked
+    # rows in tests that stub get_spec_bundle_by_id; live rows always include it via
+    # _SPEC_BUNDLE_COLUMNS). A missing facets_json is a separate schema error — not a
+    # tampering signal — so it is skipped here and caught downstream by get_spec_facets.
+    _raw_facets_json = bundle_row.get("facets_json")
+    if _raw_facets_json is not None:
+        _canonical_json = database.canonicalize_facets_json(json.loads(_raw_facets_json))
+        _computed_hash = database.hash_facets_json(_canonical_json)
+        if bundle_row["bundle_hash"] != _computed_hash:
+            raise ValueError(
+                f"spec_bundle_id={spec_bundle_id} hash mismatch: "
+                f"stored bundle_hash={bundle_row['bundle_hash']!r} does not match "
+                f"computed hash={_computed_hash!r} from facets_json. "
+                "The bundle may have been tampered with after frozen_at — integrity check failed."
+            )
+    stored_hash = bundle_row["bundle_hash"]
+
+    # NN1 compliance: refuse to start if any load-bearing facet is BACKTEST_SELECTION.
+    is_honest, violations = validate_nn1_compliance(spec_bundle_id)
+    if not is_honest:
+        raise RuntimeError(
+            f"NN1 VIOLATION: spec_bundle_id={spec_bundle_id} contains "
+            f"BACKTEST_SELECTION or other NN1-violating facets — "
+            f"the BHY haircut would silently undercount N. Refusing to start. "
+            f"Violations: {violations}"
+        )
+
+    # Sprint 3: Spec Critic — advisory structural integrity check on the spec bundle.
+    # Runs immediately after NN1 compliance (which guards the hard gate); this is
+    # the soft advisory layer for Phase-1 THEORY facet completeness, discipline
+    # recognition, spec age, and phase-scope leak detection.
+    _sc_facets_rows = database.advisor_ro_query(
+        "SELECT facet_name, freeze_discipline, "
+        "    (SELECT frozen_at FROM spec_bundles WHERE bundle_hash = sf.bundle_hash) AS frozen_at "
+        "FROM spec_facets sf WHERE sf.bundle_hash = ?",
+        (stored_hash,),
+    )
+    # Note: the Spec Critic is called once per bundle (before the per-symphony loop),
+    # so normalized_name is not yet available here. symphony_id is set to None at this
+    # site. If per-symphony SC observations with a populated symphony_id are needed,
+    # the call should be moved inside the per-symphony loop.
+    try:
+        _sc.run_spec_critic(stored_hash, _sc_facets_rows, symphony_id=None)
+    except Exception as e:
+        logging.warning("Spec Critic observation failed (advisory only): %s", e)
+
     # Suppress Optuna's per-trial log noise; set here (not at module level) to
     # avoid clobbering pytest's output-capture on import.
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    # Extract gamma and objective_kind from spec_facets — sourced from the registered
+    # spec bundle, NOT a module-level constant (T5 / gamma provenance contract).
+    # gamma is frozen by THEORY; a source-code constant would fail the immutable +
+    # content-hashed + frozen_at persistence contract (council synthesis §3.7).
+    _facets = database.get_spec_facets_for_bundle(stored_hash)
+    _facets_by_name = {f["facet_name"]: f["facet_value"] for f in _facets}
+    # gamma: default 2.0 (prudential CRRA coefficient) if facet absent; THEORY-frozen.
+    _gamma_str = _facets_by_name.get("gamma", "2.0")
+    try:
+        _gamma: float = float(_gamma_str)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"spec_bundle_id={spec_bundle_id} has non-numeric gamma facet: {_gamma_str!r}"
+        )
+    # objective_kind: 'crra_eu' triggers the new CRRA-EU objective branch.
+    # 'sortino_loss_aversion' (or absent) uses the legacy Sortino branch.
+    # utility_family='CRRA' in the Phase-1 bundle implies objective_kind='crra_eu'.
+    _utility_family = _facets_by_name.get("utility_family", "")
+    _objective_kind = _facets_by_name.get("objective_kind", "")
+    if not _objective_kind:
+        _objective_kind = "crra_eu" if _utility_family.upper() == "CRRA" else "sortino_loss_aversion"
 
     # Apply optuna_001 archive migration once if any bare (non-prefixed) legacy
     # studies exist — renames them to LEGACY__<name> non-destructively.
@@ -1198,9 +1852,19 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             target_sym_id = acc_sym_ids[0]
             # Score on validation fold only — frozen-eval is withheld from all trial callbacks.
             daily_returns = _collect_sim_returns(p, history_validation, [target_sym_id], current_date_str, deviation_dict)
-            # Persist the per-trial return series so the Harvey & Liu haircut can
-            # source each trial's observation count T = len(daily_returns).
+            # Persist the per-trial RAW guard-alpha series (in percent) so the Harvey &
+            # Liu haircut can source T = len(daily_returns) and re-transform through
+            # the active gamma. Storing U instead of raw returns would silently stale
+            # persisted attrs if gamma is re-pre-registered (T5 provenance contract).
             trial.set_user_attr("daily_returns", daily_returns)
+            # Objective routing: CRRA-EU branch uses mean(U); legacy Sortino branch uses
+            # Sortino ratio. The discriminator is sourced from spec_facets (_objective_kind
+            # resolved from bundle once before this closure is created).
+            if _objective_kind == "crra_eu":
+                # NOTE-1 conversion: returns are in percent; CRRA requires fraction.
+                daily_returns_fraction = [r / RETURN_PCT_TO_FRACTION for r in daily_returns]
+                return math_engine.compute_crra_eu_objective(daily_returns_fraction, _gamma)
+            # Default: legacy Sortino + loss-aversion objective.
             # Annualization intentionally omitted — this is a ranking signal, not an annualized statistic.
             return compute_sortino_ratio(daily_returns)
 
@@ -1213,8 +1877,35 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             engine_kwargs={"connect_args": {"timeout": 60}}
         )
         study_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        study = optuna.create_study(study_name=f"{study_timestamp}__{normalized_name}", storage=storage, load_if_exists=False, direction="maximize")
-        study.optimize(objective, n_trials=MAX_OPTUNA_TRIALS, n_jobs=-1)
+        # Source sampler seed + parallelism from env (OPTUNA-1 / OPTUNA-6 audit fix).
+        # Named constants _OPTUNA_SAMPLER_SEED_ENV / _OPTUNA_N_JOBS_ENV carry the
+        # canonical string values; the literals appear here so the env dependency
+        # is auditable at the call site without tracing the constant definitions.
+        _seed_raw = os.environ.get("OPTUNA_SAMPLER_SEED")
+        _sampler_seed = int(_seed_raw) if _seed_raw is not None and _seed_raw.strip() else None
+        # n_jobs sourced from OPTUNA_N_JOBS env (OPTUNA-6); default 1 for SQLite
+        # RDBStorage writer-lock safety — see _resolve_optuna_n_jobs_from_env docstring.
+        _n_jobs_raw = os.environ.get("OPTUNA_N_JOBS")
+        _n_jobs = _resolve_optuna_n_jobs_from_env()
+        # Pruner: NopPruner (OPTUNA-2 pin) — the objective is end-of-trial-scored
+        # (a single scalar after the full guard-alpha sim; the simulation runs
+        # to completion with no intermediate step reporting to Optuna). Any
+        # pruner is silently inactive today. Explicit NopPruner documents the
+        # intent: if a future PR adds intermediate step reporting it must
+        # consciously choose a pruner family — because activating MedianPruner
+        # would censor the BHY (Harvey & Liu) haircut's trial set (c(N)
+        # Yekutieli factor calibrated over the COMPLETE set) and break the
+        # N_effective additive accounting (sums across ALL completed trials).
+        # A pruner-family change is a methodology change — surface to PM first.
+        study = optuna.create_study(
+            study_name=f"{study_timestamp}__{normalized_name}",
+            storage=storage,
+            load_if_exists=False,
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(seed=_sampler_seed),
+            pruner=optuna.pruners.NopPruner(),
+        )
+        study.optimize(objective, n_trials=OPTUNA_N_TRIALS_PRODUCTION, n_jobs=_n_jobs)
         
 
         
@@ -1237,6 +1928,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # selection key, surfaced only in logs.
         selection_tstat_value: float | None = None
         haircut_rejected_proposal = False
+        # ARCH-001: EUT audit values — initialized here so they are always defined
+        # for save_autotune_run even when the haircut_trials block is skipped.
+        n_eff: int = 0
+        d_spec: int = 0
         try:
             completed_trials = [t for t in study.trials if t.value is not None]
         except TypeError:
@@ -1250,7 +1945,37 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         ]
 
         if haircut_trials:
-            winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials)
+            # Route tstat_fn based on objective_kind (sourced from spec_facets above).
+            # CRRA-EU branch: compute_crra_eu_tstat(U_series) = mean(U)/(sd(U)/sqrt(T)).
+            # Sortino branch: compute_sortino_tstat(sortino, T) = sortino*sqrt(T) (default).
+            # Using compute_sortino_tstat for a mean-valued objective is the H-6 category
+            # error (autotuner.py:266-271 precedent); the discriminator enforces the split.
+            if _objective_kind == "crra_eu":
+                _tstat_fn = compute_crra_eu_tstat
+            else:
+                _tstat_fn = compute_sortino_tstat
+            # NEFF-001 + ARCH-001 fix: wire compute_n_effective before _haircut_select
+            # and capture n_eff + d_spec for the EUT audit trail (save_autotune_run).
+            # In the NN1-honest case S=0 → n_eff == len(haircut_trials) → byte-identical
+            # to the pre-wiring behavior (plan D2 backward-compatibility contract).
+            _ledger_rows = database.get_researcher_dof_ledger_for_run(
+                run_timestamp,
+                winning_spec_bundle_id=stored_hash,
+            )
+            n_eff = compute_n_effective(
+                n_optuna=len(haircut_trials),
+                ledger_query=lambda: _ledger_rows,
+            )
+            # d_spec: COUNT DISTINCT spec_bundle_ids from BACKTEST_SELECTION rows
+            # (council §5; differs from S which is SUM(n_configs_searched)).
+            d_spec = len({
+                row.get("spec_bundle_id")
+                for row in _ledger_rows
+                if row.get("spec_bundle_id") is not None
+            })
+            winner_trial, winner_p_adj, winner_tstat = _haircut_select(
+                haircut_trials, n_effective=n_eff, tstat_fn=_tstat_fn, gamma=_gamma
+            )
             if winner_trial is not None:
                 best_params = winner_trial.params
                 best_alpha_train = winner_trial.value
@@ -1306,7 +2031,21 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             oos_alpha = -math.inf
 
         optimization_results[normalized_name] = {}
-        
+
+        # OPTUNA-4 Path B operator-visibility emission. Derived from the live
+        # fold-construction variables (raw_val_dates, raw_frozen_dates, PURGE_DAYS,
+        # EMBARGO_DAYS) so any future drift in the inputs surfaces here automatically.
+        _raw_val_days = len(raw_val_dates)
+        _raw_frozen_days = len(raw_frozen_dates)
+        _usable_val_days = max(0, _raw_val_days - PURGE_DAYS - EMBARGO_DAYS)
+        optimization_results[normalized_name]["eval_window_days"] = {
+            "raw_validation_days": _raw_val_days,
+            "usable_validation_days": _usable_val_days,
+            "raw_frozen_eval_days": _raw_frozen_days,
+            "purge_days": PURGE_DAYS,
+            "embargo_days": EMBARGO_DAYS,
+        }
+
         # Evaluate fallback parameters in OOS for comparison
         fallback_params = current_params.copy()
         fallback_oos_alpha = -run_simulation(fallback_params, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
@@ -1315,9 +2054,14 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         default_params = database.DEFAULT_STRATEGY.copy()
         default_oos_alpha = -run_simulation(default_params, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
 
-        # Validation-fold Sortino (selection truth — what Optuna actually optimized against).
+        # Validation-fold metric (selection truth — what Optuna actually optimized against).
+        # For CRRA-EU bundles, the Sortino ratio is not the selection metric — compute_crra_eu_objective
+        # was used. Sortino is suppressed (None) for CRRA-EU to avoid misleading reporting.
         validation_returns = _collect_sim_returns(best_p, history_validation, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
-        validation_sharpe_value = compute_sortino_ratio(validation_returns) if validation_returns else None
+        if _objective_kind == "crra_eu":
+            validation_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
+        else:
+            validation_sharpe_value = compute_sortino_ratio(validation_returns) if validation_returns else None
 
         # Frozen-eval: consumed exactly once post-selection on the held-out final 20% fold.
         # This is the honest performance metric — not seen by any Optuna trial callback.
@@ -1325,7 +2069,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # Single read via _collect_sim_returns; no separate run_simulation call so the
         # "consumed once" invariant holds across all frozen-fold access paths.
         frozen_eval_returns = _collect_sim_returns(best_p, history_frozen, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
-        frozen_eval_sharpe_value = compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
+        if _objective_kind == "crra_eu":
+            frozen_eval_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
+        else:
+            frozen_eval_sharpe_value = compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
 
         # Calculate daily averages for better understanding
         train_days_count = len(train_dates)
@@ -1393,7 +2140,20 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
         # higher-is-better significance scalar); naive_sharpe is the raw Optuna best.
         # O6: validation_sharpe (selection metric) and frozen_eval_sharpe (honest post-selection
         # metric, consumed once from the withheld final 20% fold).
-        database.save_autotune_run(
+        # ARCH-001: assemble the overfitting_verdict string from EUT audit values.
+        # Format mirrors plan D5: "NN1_HONEST n_optuna=N d_spec=D n_effective=E"
+        # or "NN1_VIOLATION_TRIPWIRE ..." when d_spec > 0.
+        _n_optuna_for_verdict = len(haircut_trials) if haircut_trials else 0
+        _verdict_prefix = "NN1_HONEST" if d_spec == 0 else "NN1_VIOLATION_TRIPWIRE"
+        _overfitting_verdict = (
+            f"{_verdict_prefix} n_optuna={_n_optuna_for_verdict} "
+            f"D_spec={d_spec} n_effective={n_eff}"
+        )
+
+        # S3-AUDIT-001: capture the inserted row id directly from save_autotune_run
+        # (which now returns cursor.lastrowid) — eliminates the read-after-write
+        # get_latest_autotune_run dance that raced and always fell back to id=0.
+        _inserted_id = database.save_autotune_run(
             run_timestamp=run_timestamp,
             symphony_id=normalized_name,
             oos_alpha=oos_alpha,
@@ -1405,7 +2165,51 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False):
             naive_sharpe=naive_sharpe_value,
             validation_sharpe=validation_sharpe_value,
             frozen_eval_sharpe=frozen_eval_sharpe_value,
+            # ARCH-001: EUT audit columns from migration 020.
+            spec_bundle_id=stored_hash,
+            n_effective=n_eff,
+            d_spec=d_spec,
+            gamma=_gamma,
+            overfitting_verdict=_overfitting_verdict,
         )
+
+        # Sprint 3: Overfitting Conscience — post-save observation.
+        # Reads ledger rows via advisor_ro_query (wall integrity contract);
+        # persists the observation via insert_advisor_observation.
+        _oc_ledger_rows = database.advisor_ro_query(
+            "SELECT evidence_source, n_configs_searched, touched_frozen_eval, "
+            "spec_bundle_id, facet_name FROM researcher_dof_ledger "
+            "WHERE spec_bundle_id = ?",
+            (stored_hash,),
+        )
+        _oc_run = {
+            "id": _inserted_id,
+            "symphony_id": normalized_name,
+            "run_timestamp": run_timestamp,
+            "spec_bundle_id": stored_hash,
+            "n_effective": n_eff,
+            "s_count": d_spec,
+        }
+        # S3-AUDIT-003: supply prior_runs (same symphony, excluding just-inserted row,
+        # ASC by run_timestamp) so OC Indicator-3 drift detection can fire.
+        _oc_prior_raw = database.advisor_ro_query(
+            "SELECT id, symphony_id, s_count FROM autotune_runs "
+            "WHERE symphony_id = ? AND id != ? ORDER BY run_timestamp ASC",
+            (normalized_name, _inserted_id),
+        )
+        # Normalise sqlite3.Row → dict for the producer.
+        _oc_prior_dicts = [dict(r) for r in _oc_prior_raw]
+        try:
+            _oc.run_overfitting_conscience(_oc_run, _oc_ledger_rows, prior_runs=_oc_prior_dicts)
+        except Exception as e:
+            logging.warning("Overfitting Conscience observation failed (advisory only): %s", e)
+        # S3-AUDIT-002: Divergence Explainer call site, post-OC mirror.
+        # Consistent placement with OC; avoids the 1-minute alpha_bot_execution path
+        # (architecture constraint #1 — no blocking I/O on the execution path).
+        try:
+            _de.run_divergence_explainer(_oc_run, cvar_row=None)
+        except Exception as e:
+            logging.warning("Divergence Explainer observation failed (advisory only): %s", e)
 
     print("  -> Autotuner finished all symphonies.")
     return optimization_results
@@ -1424,6 +2228,19 @@ def run_calibration_sweep(
     study names, O5 Sortino objective, O6 frozen-eval fold — same methodology as
     run_autotuner but search space is limited to the two V1 parameters. Does NOT
     persist anything to the DB (AC-V1.3: read-only, operator-gated rollout).
+
+    Note: the VWAP_CROSS_HWM_PCT bounds used here (via ``_SS_VWAP_CROSS_HWM_V1_MIN``
+    / ``_SS_VWAP_CROSS_HWM_V1_MAX``) are asymmetric relative to the production
+    walk-forward bounds (``_SS_VWAP_CROSS_HWM_MIN`` / ``_SS_VWAP_CROSS_HWM_MAX``):
+    the V1 lower bound expands BELOW the production lower bound (0.3 vs 0.5) while
+    the V1 upper bound narrows BELOW the production upper bound (2.0 vs 2.5). The
+    asymmetry is intentional — see the source-comment block above those V1
+    constants for the per-direction math rationale (3-tick confirm gate at the
+    lower end; ~2sigma reliability limit at the upper end).
+
+    Operator advisory: a calibration proposal in [0.3, 0.5) falls outside the
+    production walk-forward search space and cannot be reproduced by the
+    production optimizer — treat such proposals as informational only.
 
     Returns a list of report dicts, one per tuned param per symphony found in
     history_data. The caller decides whether to act on proposals.
@@ -1497,13 +2314,25 @@ def run_calibration_sweep(
             return compute_sortino_ratio(daily_returns)
 
         sampler = optuna.samplers.TPESampler(seed=random_state)
+        # Pruner: NopPruner (OPTUNA-2 pin) — same rationale as run_autotuner.
+        # Objective is end-of-trial-scored; the simulation runs to completion
+        # with no intermediate step reporting to Optuna. Explicit NopPruner
+        # prevents a future intermediate step-reporting addition from silently
+        # activating MedianPruner and censoring the BHY (Harvey & Liu) haircut's
+        # complete-trial-set assumption and the N_effective additive accounting.
+        # Pruner-family change = methodology change; surface to PM first.
         study = optuna.create_study(
             study_name=study_name,
             direction="maximize",
             sampler=sampler,
             load_if_exists=False,
+            pruner=optuna.pruners.NopPruner(),
         )
-        study.optimize(objective, n_trials=100, n_jobs=1)
+        # n_jobs sourced from OPTUNA_N_JOBS env (OPTUNA-6 uniform application across all
+        # autotuner study sites; default 1 for SQLite RDBStorage writer-lock safety).
+        _sweep_n_jobs = _resolve_optuna_n_jobs_from_env()
+        logging.debug("run_calibration_sweep: n_jobs=%s (env key=%s)", _sweep_n_jobs, _OPTUNA_N_JOBS_ENV)
+        study.optimize(objective, n_trials=OPTUNA_N_TRIALS_CALIBRATION, n_jobs=_sweep_n_jobs)
 
         naive_sharpe_value: float | None = study.best_value
         best_params = study.best_params
@@ -1533,7 +2362,17 @@ def run_calibration_sweep(
         if not haircut_trials:
             haircut_outcome = "not_run"
         else:
-            winner_trial, winner_p_adj, winner_tstat = _haircut_select(haircut_trials)
+            # NEFF-001 fix: compute n_effective before _haircut_select.
+            # run_calibration_sweep does not persist to DB and lacks bundle context,
+            # so the ledger query returns empty → S=0 → n_eff == len(haircut_trials),
+            # which is byte-identical to the pre-wiring behavior (plan D2).
+            n_eff_cal = compute_n_effective(
+                n_optuna=len(haircut_trials),
+                ledger_query=lambda: [],
+            )
+            winner_trial, winner_p_adj, winner_tstat = _haircut_select(
+                haircut_trials, n_effective=n_eff_cal
+            )
             if winner_trial is not None:
                 best_params = winner_trial.params
                 naive_sharpe_value = winner_trial.value

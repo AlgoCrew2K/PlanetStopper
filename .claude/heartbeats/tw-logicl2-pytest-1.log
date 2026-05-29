@@ -1,0 +1,131 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.7, pytest-8.4.2, pluggy-1.6.0 -- C:\Users\paulm\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\logic-l-2
+configfile: pyproject.toml
+plugins: anyio-4.12.1, flaky-3.8.1, hydra-core-1.3.2, hypothesis-6.152.6, langsmith-0.7.32, asyncio-1.3.0, base-url-2.1.0, cov-7.1.0, mock-3.15.1, playwright-0.7.2, timeout-2.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 7 items
+
+tests/ai_advisor/test_logic_l_2_api_docstring.py::test_route_body_calls_for_symphony_helper PASSED [ 14%]
+tests/ai_advisor/test_logic_l_2_api_docstring.py::test_route_docstring_does_not_name_subject_helper FAILED [ 28%]
+tests/ai_advisor/test_logic_l_2_api_docstring.py::test_route_docstring_names_for_symphony_helper FAILED [ 42%]
+tests/ai_advisor/test_logic_l_2_api_docstring.py::test_route_docstring_does_not_describe_subject_id_filter FAILED [ 57%]
+tests/ai_advisor/test_logic_l_2_api_docstring.py::test_route_docstring_describes_symphony_id_column PASSED [ 71%]
+tests/ai_advisor/test_logic_l_2_api_docstring.py::test_route_source_no_three_subject_fanout_claim PASSED [ 85%]
+tests/ai_advisor/test_logic_l_2_api_docstring.py::test_route_docstring_symphony_branch_is_single_query PASSED [100%]
+
+================================== FAILURES ===================================
+______________ test_route_docstring_does_not_name_subject_helper ______________
+
+    def test_route_docstring_does_not_name_subject_helper():
+        """Pin: docstring must not say ``get_advisor_observations_for_subject``.
+    
+        Pre-fix docstring (app.py:2430-2431) reads:
+            "?symphony_id=<id>  — filter to rows whose subject_id matches; calls
+                                 database.get_advisor_observations_for_subject."
+        But the body calls ``get_advisor_observations_for_symphony``.  After fix,
+        the docstring must name the *actual* helper called by the body.
+        """
+        doc = _route_docstring()
+>       assert "get_advisor_observations_for_subject" not in doc, (
+            "Route docstring names the wrong helper "
+            "(``get_advisor_observations_for_subject``).  The body calls "
+            "``get_advisor_observations_for_symphony`` — Sprint-3 audit-fix "
+            "Cycle A.  Docstring must be updated to match. "
+            f"Current docstring:\n{doc}"
+        )
+E       AssertionError: Route docstring names the wrong helper (``get_advisor_observations_for_subject``).  The body calls ``get_advisor_observations_for_symphony`` — Sprint-3 audit-fix Cycle A.  Docstring must be updated to match. Current docstring:
+E         Return advisor observations as a JSON list.
+E         
+E             ?symphony_id=<id>  — filter to rows whose subject_id matches; calls
+E                                  database.get_advisor_observations_for_subject.
+E             No query param      — return observations across all known advisor roles;
+E                                  calls database.get_advisor_observations_for_role.
+E         
+E             Response is limited to _ADVISOR_OBSERVATIONS_PAGE_LIMIT rows.
+E             Read-only; POST/PUT/DELETE return 405 via Flask methods restriction.
+E             
+E       assert 'get_advisor..._for_subject' not in 'Return advi...ction.\n    '
+E         
+E         'get_advisor_observations_for_subject' is contained here:
+E           Return advisor observations as a JSON list.
+E           
+E               ?symphony_id=<id>  — filter to rows whose subject_id matches; calls
+E                                    database.get_advisor_observations_for_subject.
+E               No query param      — return observations across all known advisor roles;...
+E         
+E         ...Full output truncated (5 lines hidden), use '-vv' to show
+
+tests\ai_advisor\test_logic_l_2_api_docstring.py:117: AssertionError
+_______________ test_route_docstring_names_for_symphony_helper ________________
+
+    def test_route_docstring_names_for_symphony_helper():
+        """Pin: docstring must mention ``get_advisor_observations_for_symphony``.
+    
+        Positive contract — not just "absence of the wrong name", but "presence of
+        the right name".  Prevents a fix that simply deletes the helper reference
+        without re-anchoring the docstring to the actual code path.
+        """
+        doc = _route_docstring()
+>       assert "get_advisor_observations_for_symphony" in doc, (
+            "Route docstring must name the actual helper "
+            "``get_advisor_observations_for_symphony`` so the docstring describes "
+            "the real code path (Sprint-3 audit-fix Cycle A — migration 025). "
+            f"Current docstring:\n{doc}"
+        )
+E       AssertionError: Route docstring must name the actual helper ``get_advisor_observations_for_symphony`` so the docstring describes the real code path (Sprint-3 audit-fix Cycle A — migration 025). Current docstring:
+E         Return advisor observations as a JSON list.
+E         
+E             ?symphony_id=<id>  — filter to rows whose subject_id matches; calls
+E                                  database.get_advisor_observations_for_subject.
+E             No query param      — return observations across all known advisor roles;
+E                                  calls database.get_advisor_observations_for_role.
+E         
+E             Response is limited to _ADVISOR_OBSERVATIONS_PAGE_LIMIT rows.
+E             Read-only; POST/PUT/DELETE return 405 via Flask methods restriction.
+E             
+E       assert 'get_advisor_observations_for_symphony' in 'Return advisor observations as a JSON list.\n\n    ?symphony_id=<id>  — filter to rows whose subject_id matches; calls\n                         database.get_advisor_observations_for_subject.\n    No query param      — return observations across all known advisor roles;\n                         calls database.get_advisor_observations_for_role.\n\n    Response is limited to _ADVISOR_OBSERVATIONS_PAGE_LIMIT rows.\n    Read-only; POST/PUT/DELETE return 405 via Flask methods restriction.\n    '
+
+tests\ai_advisor\test_logic_l_2_api_docstring.py:139: AssertionError
+__________ test_route_docstring_does_not_describe_subject_id_filter ___________
+
+    def test_route_docstring_does_not_describe_subject_id_filter():
+        """Pin: docstring must not say the symphony_id query filters by ``subject_id``.
+    
+        The legacy framing "filter to rows whose subject_id matches" is the exact
+        drift the audit cites — producers persist ``subject_id`` as a numeric PK
+        (OC / DE) or a bundle_hash (SC), never the symphony name, so a
+        subject_id-comparison filter never matched.  The real filter is on the
+        denormalized ``symphony_id`` column added by migration 025.
+        """
+        doc = _route_docstring()
+        flat = re.sub(r"\s+", " ", doc)
+    
+        forbidden_phrases = [
+            "subject_id matches",
+            "filter to rows whose subject_id",
+            "WHERE subject_id =",
+        ]
+        for phrase in forbidden_phrases:
+>           assert phrase not in flat, (
+                f"Route docstring still contains drift phrase {phrase!r}. "
+                "The route filters on the denormalized ``symphony_id`` column "
+                "(migration 025), not on ``subject_id``. "
+                f"Current docstring (flattened):\n{flat}"
+            )
+E           AssertionError: Route docstring still contains drift phrase 'subject_id matches'. The route filters on the denormalized ``symphony_id`` column (migration 025), not on ``subject_id``. Current docstring (flattened):
+E             Return advisor observations as a JSON list. ?symphony_id=<id> — filter to rows whose subject_id matches; calls database.get_advisor_observations_for_subject. No query param — return observations across all known advisor roles; calls database.get_advisor_observations_for_role. Response is limited to _ADVISOR_OBSERVATIONS_PAGE_LIMIT rows. Read-only; POST/PUT/DELETE return 405 via Flask methods restriction. 
+E           assert 'subject_id matches' not in 'Return advi...estriction. '
+E             
+E             'subject_id matches' is contained here:
+E               Return advisor observations as a JSON list. ?symphony_id=<id> — filter to rows whose subject_id matches; calls database.get_advisor_observations_for_subject. No query param — return observations across all known advisor roles; calls database.get_advisor_observations_for_role. Response is limited to _ADVISOR_OBSERVATIONS_PAGE_LIMIT rows. Read-only; POST/PUT/DELETE return 405 via Flask methods restriction. 
+E             ?                                                                                      ++++++++++++++++++
+
+tests\ai_advisor\test_logic_l_2_api_docstring.py:170: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/ai_advisor/test_logic_l_2_api_docstring.py::test_route_docstring_does_not_name_subject_helper
+FAILED tests/ai_advisor/test_logic_l_2_api_docstring.py::test_route_docstring_names_for_symphony_helper
+FAILED tests/ai_advisor/test_logic_l_2_api_docstring.py::test_route_docstring_does_not_describe_subject_id_filter
+========================= 3 failed, 4 passed in 2.34s =========================

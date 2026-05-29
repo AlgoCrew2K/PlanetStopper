@@ -1,14 +1,16 @@
-"""SQLite state management for AlphaBot with Account-Level Strategies."""
+"""SQLite state management for Planet Stopper with Account-Level Strategies."""
 
 import hashlib
 import json
 import logging
 import math
 import os
+import re
 import sqlite3
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 
 def _finite_or_none(x):
@@ -24,6 +26,14 @@ def _finite_or_none(x):
 DB_FILE = os.environ.get("DB_PATH", "alphabot_state.db")
 # Captured at import time — used by _db_file() to detect explicit test overrides.
 _DB_FILE_DEFAULT = DB_FILE
+
+# Sentinel connection for in-memory DBs (":memory:" path).
+# sqlite3.connect(":memory:") returns a fresh, isolated DB per call; the
+# shared-cache URI ("file::memory:?cache=shared") makes all callers share one
+# instance, but it is destroyed when the last connection closes.  Holding this
+# sentinel open keeps the shared in-memory DB alive for the duration of a test
+# run.  Production code never sets DB_PATH=":memory:", so this is test-only.
+_in_memory_sentinel: "sqlite3.Connection | None" = None
 
 # DEFAULT STRATEGY PARAMETERS (Used when a new account is detected)
 DEFAULT_STRATEGY = {
@@ -50,7 +60,17 @@ def _db_file() -> str:
 
 
 def get_connection():
-    return sqlite3.connect(_db_file(), timeout=10.0)
+    global _in_memory_sentinel
+    path = _db_file()
+    if path == ":memory:":
+        # Use the shared-cache URI so all callers share the same in-memory DB.
+        # Keep a module-level sentinel connection open to prevent the in-memory
+        # DB from being destroyed when transient connections close.
+        shared_uri = "file::memory:?cache=shared"
+        if _in_memory_sentinel is None:
+            _in_memory_sentinel = sqlite3.connect(shared_uri, uri=True, timeout=10.0)
+        return sqlite3.connect(shared_uri, uri=True, timeout=10.0)
+    return sqlite3.connect(path, timeout=10.0)
 
 
 def get_ro_connection() -> sqlite3.Connection:
@@ -93,20 +113,34 @@ def init_db():
     """)
 
     # P1: Per-run Optuna validation metrics — durable audit trail for Claude context-assembly
+    # H1 DUAL-WRITE: the nine EUT audit columns below are also added by migration
+    # 020_autotune_runs_eut.sql via ALTER TABLE.  The duplicate-column-name swallow in
+    # run_migrations() (database.py:921-932) reconciles the overlap: fresh DBs have
+    # the columns here; upgraded DBs get them from the ALTER.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS autotune_runs (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_timestamp       TEXT    NOT NULL,
-            symphony_id         TEXT    NOT NULL,
-            oos_alpha           REAL    DEFAULT NULL,
-            train_alpha         REAL    DEFAULT NULL,
-            baseline_decision   TEXT    DEFAULT NULL,
-            fallback_oos_alpha  REAL    DEFAULT NULL,
-            default_oos_alpha   REAL    DEFAULT NULL,
-            selection_tstat     REAL    DEFAULT NULL,
-            naive_sharpe        REAL    DEFAULT NULL,
-            validation_sharpe   REAL    DEFAULT NULL,
-            frozen_eval_sharpe  REAL    DEFAULT NULL
+            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_timestamp             TEXT    NOT NULL,
+            symphony_id               TEXT    NOT NULL,
+            oos_alpha                 REAL    DEFAULT NULL,
+            train_alpha               REAL    DEFAULT NULL,
+            baseline_decision         TEXT    DEFAULT NULL,
+            fallback_oos_alpha        REAL    DEFAULT NULL,
+            default_oos_alpha         REAL    DEFAULT NULL,
+            selection_tstat           REAL    DEFAULT NULL,
+            naive_sharpe              REAL    DEFAULT NULL,
+            validation_sharpe         REAL    DEFAULT NULL,
+            frozen_eval_sharpe        REAL    DEFAULT NULL,
+            spec_bundle_id            TEXT    DEFAULT NULL,
+            d_spec                    INTEGER DEFAULT NULL,
+            n_effective               INTEGER DEFAULT NULL,
+            ce_metric                 REAL    DEFAULT NULL,
+            cvar_feasible             INTEGER DEFAULT NULL,
+            gamma                     REAL    DEFAULT NULL,
+            lambda_budget             REAL    DEFAULT NULL,
+            overfitting_verdict       TEXT    DEFAULT NULL,
+            paired_heuristic_study_name TEXT  DEFAULT NULL,
+            s_count                   INTEGER DEFAULT NULL
         )
     """)
 
@@ -430,8 +464,18 @@ def save_autotune_run(
     naive_sharpe=None,
     validation_sharpe=None,
     frozen_eval_sharpe=None,
-) -> None:
+    # ARCH-001: EUT audit columns from migration 020 (all Phase-1 nullable).
+    spec_bundle_id=None,
+    n_effective=None,
+    d_spec=None,
+    gamma=None,
+    overfitting_verdict=None,
+) -> int:
     """Persist one row of per-run Optuna validation metrics to autotune_runs.
+
+    Returns the new row id (cursor.lastrowid) so the OC producer can propagate
+    it directly into _oc_run["id"] without a read-after-write round-trip.
+    S3-AUDIT-001 fix: previously returned None.
 
     Called once per symphony per run_autotuner() invocation, after baseline_decision
     is finalized.  All metric columns are NULLable so partial data never fails an
@@ -450,6 +494,13 @@ def save_autotune_run(
                           trial selection. Selection truth; visible to operator for audit.
       frozen_eval_sharpe: Sortino on the frozen-eval fold (final 20% of history); consumed once
                           post-selection for honest performance reporting (López de Prado 2018 Ch. 7.4).
+
+    EUT audit columns (migration 020 — ARCH-001 fix):
+      spec_bundle_id:     bundle_hash TEXT of the spec bundle active during this run.
+      n_effective:        N_optuna + S (honest multiple-testing count from compute_n_effective).
+      d_spec:             COUNT DISTINCT BACKTEST_SELECTION spec_bundle_ids in researcher_dof_ledger.
+      gamma:              Frozen CRRA risk-aversion coefficient from spec_facets.
+      overfitting_verdict: Human-readable Overfitting Conscience summary string.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -458,8 +509,9 @@ def save_autotune_run(
         INSERT INTO autotune_runs
             (run_timestamp, symphony_id, oos_alpha, train_alpha,
              baseline_decision, fallback_oos_alpha, default_oos_alpha,
-             selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
+             spec_bundle_id, n_effective, d_spec, gamma, overfitting_verdict)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_timestamp,
@@ -473,34 +525,47 @@ def save_autotune_run(
             naive_sharpe,
             validation_sharpe,
             frozen_eval_sharpe,
+            spec_bundle_id,
+            n_effective,
+            d_spec,
+            gamma,
+            overfitting_verdict,
         ),
     )
     conn.commit()
+    row_id: int = cursor.lastrowid
     conn.close()
+    return row_id
 
 
 def _autotune_run_row_to_dict(row) -> dict:
-    """Map a raw autotune_runs SELECT row (14 columns) to a dict."""
+    """Map a raw autotune_runs SELECT row (15 columns) to a dict.
+
+    Column order matches _AUTOTUNE_RUNS_SELECT. id is projected first
+    (S3-AUDIT-001 fix) so the OC producer receives an honest row id.
+    """
     return {
-        "run_timestamp": row[0],
-        "symphony_id": row[1],
-        "oos_alpha": _finite_or_none(row[2]),
-        "train_alpha": _finite_or_none(row[3]),
-        "baseline_decision": row[4],
-        "fallback_oos_alpha": _finite_or_none(row[5]),
-        "default_oos_alpha": _finite_or_none(row[6]),
-        "selection_tstat": _finite_or_none(row[7]),
-        "naive_sharpe": _finite_or_none(row[8]),
-        "validation_sharpe": _finite_or_none(row[9]),
-        "frozen_eval_sharpe": _finite_or_none(row[10]),
-        "math_mode": row[11],
-        "account_id": row[12],
-        "sortino_sentinel_pct": _finite_or_none(row[13]),
+        "id": row[0],
+        "run_timestamp": row[1],
+        "symphony_id": row[2],
+        "oos_alpha": _finite_or_none(row[3]),
+        "train_alpha": _finite_or_none(row[4]),
+        "baseline_decision": row[5],
+        "fallback_oos_alpha": _finite_or_none(row[6]),
+        "default_oos_alpha": _finite_or_none(row[7]),
+        "selection_tstat": _finite_or_none(row[8]),
+        "naive_sharpe": _finite_or_none(row[9]),
+        "validation_sharpe": _finite_or_none(row[10]),
+        "frozen_eval_sharpe": _finite_or_none(row[11]),
+        "math_mode": row[12],
+        "account_id": row[13],
+        "sortino_sentinel_pct": _finite_or_none(row[14]),
     }
 
 
 _AUTOTUNE_RUNS_SELECT = """
-    SELECT run_timestamp, symphony_id, oos_alpha, train_alpha,
+    SELECT id,
+           run_timestamp, symphony_id, oos_alpha, train_alpha,
            baseline_decision, fallback_oos_alpha, default_oos_alpha,
            selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
            math_mode, account_id, sortino_sentinel_pct
@@ -764,6 +829,157 @@ def get_suggestions_for_session(session_id: str) -> list[dict]:
     return [_parse_llm_suggestion_row(row, _LLM_SUGGESTION_COLUMNS) for row in rows]
 
 
+# --- 017: Advisor Observations ---
+
+_ADVISOR_OBSERVATION_COLUMNS = [
+    "id",
+    "created_at",
+    "advisor_role",
+    "subject_type",
+    "subject_id",
+    "verdict",
+    "raw_response",
+    "is_advisory_only",
+    "spec_bundle_id",
+    "symphony_id",
+]
+
+
+def _parse_advisor_observation_row(row: tuple, columns: list[str]) -> dict:
+    """Convert a raw advisor_observations tuple into a typed dict.
+
+    raw_response is a JSON blob column and is deserialised to a Python dict so
+    callers receive the original object rather than a raw JSON string — consistent
+    with the llm_suggestions precedent (database.py:653-676).
+    """
+    result = {}
+    for col, val in zip(columns, row):
+        if col == "raw_response" and val is not None:
+            result[col] = json.loads(val)
+        else:
+            result[col] = val
+    return result
+
+
+def insert_advisor_observation(
+    *,
+    advisor_role: str,
+    subject_type: str,
+    subject_id: str,
+    verdict: str | None = None,
+    raw_response: "dict | str | None" = None,
+    spec_bundle_id: str | None = None,
+    symphony_id: str | None = None,
+    **kwargs,
+) -> int:
+    """Insert an advisor observation row; return the new row id.
+
+    Append-only: no update or delete accessor exists — existing rows are immutable
+    (same pattern as llm_suggestions; council plan §3.1 row 019).
+
+    is_advisory_only is always stored as 1 regardless of any caller-supplied value
+    in **kwargs — the Advisor never moves money.  raw_response defaults to '{}'
+    for computed rows that carry no LLM output.
+
+    symphony_id (S3-AUDIT-004): denormalized symphony name so the
+    /api/advisor-observations?symphony_id= filter resolves in one SELECT
+    rather than three subject-type fan-out queries.
+    """
+    # Serialise raw_response; None and empty dict both become '{}'.
+    if raw_response is None:
+        raw_response_str = "{}"
+    elif isinstance(raw_response, dict):
+        raw_response_str = json.dumps(raw_response)
+    else:
+        # Accept a pre-serialised JSON string as-is.
+        raw_response_str = raw_response
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO advisor_observations "
+        "(advisor_role, subject_type, subject_id, verdict, raw_response, is_advisory_only, spec_bundle_id, symphony_id) "
+        "VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+        (advisor_role, subject_type, subject_id, verdict, raw_response_str, spec_bundle_id, symphony_id),
+    )
+    conn.commit()
+    row_id = cursor.lastrowid
+    conn.close()
+    return row_id
+
+
+def get_advisor_observations_for_subject(
+    subject_type: str,
+    subject_id: str,
+) -> list[dict]:
+    """Return all advisor_observations rows for a given subject, oldest-first.
+
+    Returns an empty list when no rows match — never raises for an unknown subject.
+    raw_response is deserialised from JSON so callers receive a Python dict.
+    Uses get_ro_connection() per architecture constraint 5 (dashboard read-only)
+    and Advisor scope-boundary integrity I-3 — read paths are structurally isolated
+    from the write path.
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT "
+        + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+        + " FROM advisor_observations WHERE subject_type = ? AND subject_id = ? ORDER BY id ASC",
+        (subject_type, subject_id),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS) for row in rows]
+
+
+def get_advisor_observations_for_role(
+    advisor_role: str,
+    limit: int = 50,
+) -> list[dict]:
+    """Return advisor_observations rows for a given role, newest-first.
+
+    Returns an empty list when no rows match — never raises for an unknown role.
+    raw_response is deserialised from JSON so callers receive a Python dict.
+    Uses get_ro_connection() — read-only at the driver level (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT "
+        + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+        + " FROM advisor_observations WHERE advisor_role = ? ORDER BY id DESC LIMIT ?",
+        (advisor_role, limit),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS) for row in rows]
+
+
+def get_advisor_observations_for_symphony(symphony_id: str) -> list[dict]:
+    """Return all advisor_observations rows whose symphony_id matches, oldest-first.
+
+    Single-query filter via the denormalized symphony_id column added by
+    migration 025 (S3-AUDIT-004 + S3-AUDIT-010 fix).  Replaces the legacy
+    three-subject fan-out in /api/advisor-observations, which could never
+    match because subject_id stores a numeric PK or bundle_hash, not a name.
+
+    Returns an empty list when no rows match.
+    Uses get_ro_connection() — read-only (architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT "
+        + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
+        + " FROM advisor_observations WHERE symphony_id = ? ORDER BY id ASC",
+        (symphony_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS) for row in rows]
+
+
 # --- H1: Schema Migration Runner ---
 
 _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
@@ -783,6 +999,23 @@ _MIGRATION_FILES = [
     "013_fleet_alert_tripped_symphonies.sql",
     "014_autotune_runs_selection_tstat.sql",
     "015_shadow_history_position_epoch.sql",
+    "016_spec_bundles.sql",
+    "017_advisor_observations.sql",
+    "018_researcher_dof_ledger.sql",
+    "019_fold_role_columns.sql",
+    # ARCH-002 (sprint-2-audit a6e4d9f8): 021 is listed before 020 — intentional.
+    # 021_cvar_diagnostics.sql was applied to production DBs before 020_autotune_runs_eut.sql
+    # was accidentally dropped and later restored (defect-37 restoration hotfix).
+    # Reordering to numeric sequence would attempt to re-apply 021 on live DBs that already
+    # have it, causing a duplicate-column/table error. The two migrations are independent
+    # (different tables), so the out-of-order application is functionally correct.
+    "021_cvar_diagnostics.sql",
+    "020_autotune_runs_eut.sql",
+    "022_spec_bundles_add_id.sql",
+    "023_autotune_runs_s_count.sql",
+    "024_spec_facets_unique_constraint.sql",
+    "025_advisor_observations_symphony_id.sql",
+    "026_mc_regime_match_telemetry.sql",
 ]
 
 
@@ -821,7 +1054,8 @@ def run_migrations() -> None:
             )
             conn.commit()
         except Exception as exc:
-            if "duplicate column name" in str(exc).lower():
+            exc_lower = str(exc).lower()
+            if "duplicate column name" in exc_lower:
                 # initialize_db() CREATE TABLE already includes these columns — safe to mark applied.
                 logging.info(
                     "run_migrations: %s columns already present, marking applied", migration_name
@@ -835,6 +1069,816 @@ def run_migrations() -> None:
                 logging.error("run_migrations: failed to apply %s: %s", migration_name, exc)
 
     conn.close()
+
+
+# --- 016: Spec-Bundle Registry ---
+# Immutable hashed frozen-facet bundle registry.  The application layer exposes
+# only INSERT and SELECT — no UPDATE path — enforcing the NN1 spec-freeze
+# invariant at the code level (analogous to the llm_suggestions append-only
+# accessor surface at database.py:670-715).
+
+_VALID_FREEZE_DISCIPLINES: frozenset[str] = frozenset({
+    "THEORY",
+    "MANDATE",
+    "STYLIZED_FACT",
+    "POLITIS_WHITE",
+    "CADENCE",
+    "CALIBRATION",
+    "BACKTEST_SELECTION",
+})
+
+_SPEC_BUNDLE_COLUMNS = [
+    "id",
+    "bundle_hash",
+    "frozen_at",
+    "facets_json",
+    "horizon_bars",
+    "cvar_alpha",
+    "generator_family",
+]
+
+_SPEC_FACET_COLUMNS = [
+    "id",
+    "bundle_hash",
+    "facet_name",
+    "facet_value",
+    "freeze_discipline",
+    "justification",
+    "calibration_evidence",
+]
+
+
+def canonicalize_facets_json(facets: dict) -> str:
+    """Deterministic JSON serialisation of a facets dict.
+
+    Sort keys and use compact separators so the same dict always yields the
+    same byte sequence across interpreter restarts (Gate-1 parity precondition).
+    """
+    return json.dumps(facets, sort_keys=True, separators=(",", ":"))
+
+
+def hash_facets_json(canonical_json: str) -> str:
+    """Return the hex-encoded SHA-256 digest of the canonical facets JSON bytes.
+
+    Reproducible at replay time: the same canonical_json string always yields
+    the same hex digest (plan §Risk callouts — non-reproducible hash fails
+    Gate-1 parity).
+    """
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def insert_spec_bundle(
+    *,
+    bundle_hash: str,
+    facets_json: str,
+    horizon_bars: "int | None" = None,
+    cvar_alpha: "float | None" = None,
+    generator_family: "str | None" = None,
+) -> None:
+    """Insert a new spec bundle row.
+
+    Idempotent: a duplicate bundle_hash is silently ignored (INSERT OR IGNORE).
+    INSERT OR REPLACE is explicitly NOT used — that would overwrite frozen_at,
+    destroying the original freeze-timestamp provenance record.
+
+    The id column (added by migration 022) is backfilled from SQLite's implicit
+    rowid immediately after INSERT so that callers can do
+    SELECT id FROM spec_bundles WHERE bundle_hash = ? and always get a non-NULL
+    integer — including rows inserted after migration 022 has already run once.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO spec_bundles "
+            "(bundle_hash, facets_json, horizon_bars, cvar_alpha, generator_family) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (bundle_hash, facets_json, horizon_bars, cvar_alpha, generator_family),
+        )
+        # Backfill id from rowid for the just-inserted row (or any row that still
+        # has id IS NULL, e.g. rows inserted on a DB that was at migration 016 state).
+        # This is a no-op for rows already backfilled by migration 022.
+        conn.execute(
+            "UPDATE spec_bundles SET id = rowid WHERE bundle_hash = ? AND id IS NULL",
+            (bundle_hash,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# Process-local cache for the canonical Phase-1 theory bundle id.
+# Tuple of (db_path, bundle_id) so the cache automatically misses if the DB path
+# changes between calls (e.g. per-test isolation via DB_FILE monkeypatching).
+# Value is None until the first call for a given DB path completes.
+# W-H2 derivation: docs/decision-science/w-h2-wealth-argument-derivation.md §3.1
+_phase1_theory_bundle_id_cache: "tuple[str, int] | None" = None
+
+# Canonical Phase-1 theory facet values (W-H2 derivation, council synthesis §2.5).
+# gamma: risk-aversion coefficient — 2.0 is the canonical Phase-1 value per council §2.5
+#   (most risk-averse value in the W-H2 fixture set {0.5, 1.0, 2.0}).
+# utility_family: CRRA — the functional form, sourced from derivation-fixture.json
+#   crra_utility_formula section (W-H2 memo §1).
+# wealth_argument: "compounded_return" — canonical alias for per_period_gross_wealth_ratio
+#   per derivation-fixture.json selected_wealth_argument_formula.name mapping
+#   (W-H2 memo §3; test fixture FORMULA_NAME_TO_FACET_VALUE mapping).
+PHASE1_THEORY_GAMMA: str = "2.0"
+PHASE1_THEORY_UTILITY_FAMILY: str = "CRRA"
+PHASE1_THEORY_WEALTH_ARGUMENT_FORMULA: str = "compounded_return"
+
+
+def get_or_create_phase1_theory_bundle_id() -> int:
+    """Return the integer id for the canonical Phase-1 all-THEORY spec bundle.
+
+    Idempotent: INSERT OR IGNORE means repeated calls return the same id.
+    The Phase-1 bundle encodes the three theory-frozen facets (gamma, utility_family,
+    wealth_argument) with freeze_discipline='THEORY' per council synthesis §2.5.
+    W-H2 derivation: docs/decision-science/w-h2-wealth-argument-derivation.md
+
+    Called by live run_autotuner sites (alpha_bot_execution.py, app.py) to satisfy
+    the NN1 Phase-1 strict spec_bundle_id requirement without requiring an explicit
+    operator-registered bundle (Phase-2 wiring deferred).
+
+    Process-local cache: the second and subsequent calls within the same process
+    return immediately without touching the DB (sub-microsecond; H-3 budget).
+    """
+    global _phase1_theory_bundle_id_cache
+    current_db = _db_file()
+    if _phase1_theory_bundle_id_cache is not None:
+        cached_db, cached_id = _phase1_theory_bundle_id_cache
+        if cached_db == current_db:
+            return cached_id
+        # DB path changed (test isolation); fall through to re-compute.
+        _phase1_theory_bundle_id_cache = None
+
+    _canon_facets = {
+        "gamma": PHASE1_THEORY_GAMMA,
+        "utility_family": PHASE1_THEORY_UTILITY_FAMILY,
+        "wealth_argument": PHASE1_THEORY_WEALTH_ARGUMENT_FORMULA,
+    }
+    canonical_json = canonicalize_facets_json(_canon_facets)
+    bundle_hash = hash_facets_json(canonical_json)
+    insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
+
+    # Fetch the id backfilled by insert_spec_bundle (trigger or UPDATE).
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or row[0] is None:
+        raise RuntimeError(
+            f"get_or_create_phase1_theory_bundle_id: id is NULL for bundle_hash={bundle_hash!r} "
+            "after insert — run_migrations() may not have applied migration 022."
+        )
+    bundle_id: int = row[0]
+
+    # Ensure the three canonical facets are registered.
+    # INSERT OR IGNORE in insert_spec_bundle_facet makes this concurrent-safe
+    # (migration 024 adds UNIQUE(bundle_hash, facet_name) to spec_facets).
+    existing = get_spec_facets_for_bundle(bundle_hash)
+    existing_names = {r["facet_name"] for r in existing}
+    for name, value in _canon_facets.items():
+        if name not in existing_names:
+            insert_spec_bundle_facet(
+                bundle_hash=bundle_hash,
+                facet_name=name,
+                facet_value=value,
+                freeze_discipline="THEORY",
+                justification="Phase-1 canonical bundle — W-H2 derivation + council synthesis §2.5 hard gate",
+            )
+
+    _phase1_theory_bundle_id_cache = (current_db, bundle_id)
+    return bundle_id
+
+
+# Process-local cache for the Phase-1.5 M3 bundle id.
+# Tuple of (db_path, bundle_id) so the cache misses automatically if the DB
+# path changes between calls (per-test isolation via DB_FILE monkeypatching).
+_phase15_m3_bundle_id_cache: "tuple[str, int] | None" = None
+
+# Canonical Phase-1.5 M3 facet values.
+# R1: time_squeeze_decay_curve_v2 — the sqrt remaining-variance derivation
+#   (Danielsson & Zigrand 2003, LSE FMG DP-439). freeze_discipline = THEORY.
+# R2: vwap_system_a_hwm_gate_v2 — the regime-switch construction justified
+#   from optimal-stopping (Leung & Zhang 2019, Peskir 1998). THEORY.
+_M3_R1_FACET_NAME = "time_squeeze_decay_curve_v2"
+_M3_R1_FACET_VALUE = (
+    "f(t) = 1 - sqrt(1 - t). Under the standard square-root-of-time scaling "
+    "for i.i.d. log-returns with constant per-unit-time variance, the standard "
+    "deviation of remaining-session returns scales as sqrt(1-t); tightness "
+    "(1 - remaining_std / full_std) is therefore 1 - sqrt(1-t). Zero free "
+    "parameters. Danielsson & Zigrand (2003), LSE FMG DP-439."
+)
+_M3_R1_JUSTIFICATION = (
+    "THEORY provenance: the curve is derived from first principles under i.i.d. "
+    "log-returns. Cited: Danielsson & Zigrand 2003. Research note: "
+    "docs/research/m3-provenance/literature-pass.md §1.3."
+)
+_M3_R1_CALIBRATION_EVIDENCE = (
+    "intended_direction: concave, open-loaded, less aggressive midday (~0.45 pp "
+    "wider stop at t=0.5 vs prior log10 heuristic), monotone-converging at "
+    "endpoints (f(0)=0, f(1)=1 exactly). Expected effect: fewer mid-morning "
+    "exits, more late-afternoon exits."
+)
+
+_M3_R2_FACET_NAME = "vwap_system_a_hwm_gate_v2"
+_M3_R2_FACET_VALUE = (
+    "The gate safe_hwm >= vwap_cross_hwm_pct is the regime boundary of a "
+    "two-regime trailing-stop system. Regime 1 (below gate): primary trailing-"
+    "stop only. Regime 2 (at-or-above gate): primary stop OR VWAP System-A "
+    "profit-protection. Structural choice justified by optimal-stopping "
+    "formalism (Leung & Zhang, 2019; Peskir, 1998 maximality principle). "
+    "Runtime is byte-identical to pre-M3; this is a provenance-only closure."
+)
+_M3_R2_JUSTIFICATION = (
+    "THEORY provenance: the regime-switch structure is justified by Leung & "
+    "Zhang (2019) optimal-stopping for trailing stops with running maxima and "
+    "the Peskir (1998) maximality principle. The threshold value "
+    "(vwap_cross_hwm_pct) remains Optuna-searched within the BHY haircut "
+    "surface. Research note: docs/research/m3-provenance/literature-pass.md §2.3."
+)
+_M3_R2_CALIBRATION_EVIDENCE = (
+    "intended_direction: byte-identical runtime (zero behavioral change vs "
+    "pre-M3). The closure is provenance-only: the regime-switch structure is "
+    "now anchored to optimal-stopping theory rather than left as a practitioner "
+    "heuristic. Max-absolute-deviation = 0 in the S-1 Stage 2 attribution table."
+)
+
+
+def get_or_create_phase15_m3_bundle_id() -> int:
+    """Return the integer id for the canonical Phase-1.5 M3 spec bundle.
+
+    Idempotent: INSERT OR IGNORE means repeated calls return the same id.
+    The M3 bundle encodes two THEORY-frozen facets:
+      - time_squeeze_decay_curve_v2: f(t) = 1 - sqrt(1-t) per Danielsson &
+        Zigrand (2003) square-root-of-time scaling under i.i.d. returns.
+      - vwap_system_a_hwm_gate_v2: regime-switch construction per Leung &
+        Zhang (2019) optimal-stopping / Peskir (1998) maximality principle.
+
+    Process-local cache: second and subsequent calls within the same process
+    return immediately without touching the DB (sub-microsecond).
+
+    Research note: docs/research/m3-provenance/literature-pass.md.
+    freeze_discipline = THEORY for both facets per M3 plan §69 + NN1 binding.
+    """
+    global _phase15_m3_bundle_id_cache
+    current_db = _db_file()
+    if _phase15_m3_bundle_id_cache is not None:
+        cached_db, cached_id = _phase15_m3_bundle_id_cache
+        if cached_db == current_db:
+            return cached_id
+        # DB path changed (test isolation); fall through to re-compute.
+        _phase15_m3_bundle_id_cache = None
+
+    _m3_facets = {
+        _M3_R1_FACET_NAME: _M3_R1_FACET_VALUE,
+        _M3_R2_FACET_NAME: _M3_R2_FACET_VALUE,
+    }
+    canonical_json = canonicalize_facets_json(_m3_facets)
+    bundle_hash = hash_facets_json(canonical_json)
+    insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
+
+    # Fetch the id backfilled by insert_spec_bundle.
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or row[0] is None:
+        raise RuntimeError(
+            f"get_or_create_phase15_m3_bundle_id: id is NULL for bundle_hash={bundle_hash!r} "
+            "after insert — run_migrations() may not have applied migration 022."
+        )
+    bundle_id: int = row[0]
+
+    # Ensure the two M3 facets are registered.
+    # INSERT OR IGNORE in insert_spec_bundle_facet makes repeated calls safe
+    # (migration 024 adds UNIQUE(bundle_hash, facet_name) to spec_facets).
+    existing = get_spec_facets_for_bundle(bundle_hash)
+    existing_names = {r["facet_name"] for r in existing}
+
+    if _M3_R1_FACET_NAME not in existing_names:
+        insert_spec_bundle_facet(
+            bundle_hash=bundle_hash,
+            facet_name=_M3_R1_FACET_NAME,
+            facet_value=_M3_R1_FACET_VALUE,
+            freeze_discipline="THEORY",
+            justification=_M3_R1_JUSTIFICATION,
+            calibration_evidence=_M3_R1_CALIBRATION_EVIDENCE,
+        )
+
+    if _M3_R2_FACET_NAME not in existing_names:
+        insert_spec_bundle_facet(
+            bundle_hash=bundle_hash,
+            facet_name=_M3_R2_FACET_NAME,
+            facet_value=_M3_R2_FACET_VALUE,
+            freeze_discipline="THEORY",
+            justification=_M3_R2_JUSTIFICATION,
+            calibration_evidence=_M3_R2_CALIBRATION_EVIDENCE,
+        )
+
+    _phase15_m3_bundle_id_cache = (current_db, bundle_id)
+    return bundle_id
+
+
+def get_spec_bundle(bundle_hash: str) -> "dict | None":
+    """Return the spec_bundles row for the given hash as a dict, or None."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_SPEC_BUNDLE_COLUMNS)
+            + " FROM spec_bundles WHERE bundle_hash = ?",
+            (bundle_hash,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return dict(zip(_SPEC_BUNDLE_COLUMNS, row))
+
+
+def get_spec_bundle_by_id(spec_bundle_id: int) -> "dict | None":
+    """Return the spec_bundles row for the given integer id as a dict, or None.
+
+    Encapsulates the bundle-integrity check (stored hash vs recomputed hash from
+    facets_json) so callers do not need to open a raw connection. Raises ValueError
+    if the stored bundle_hash does not match the hash recomputed from facets_json —
+    this indicates the bundle was tampered with after frozen_at.
+
+    Returns None if no row exists for the given id.
+    """
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(_SPEC_BUNDLE_COLUMNS)
+            + " FROM spec_bundles WHERE id = ?",
+            (spec_bundle_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return dict(zip(_SPEC_BUNDLE_COLUMNS, row))
+
+
+def insert_spec_bundle_facet(
+    *,
+    bundle_hash: str,
+    facet_name: str,
+    facet_value: str,
+    freeze_discipline: str,
+    justification: "str | None" = None,
+    calibration_evidence: "str | None" = None,
+) -> int:
+    """Insert a spec_facets row and return the new row id.
+
+    Raises ValueError for any freeze_discipline value outside the accepted enum
+    (THEORY / MANDATE / STYLIZED_FACT / CALIBRATION / BACKTEST_SELECTION).
+    Enforcement is at the application layer — consistent with the codebase's
+    app-level constraint pattern (no SQL CHECK constraint).
+    """
+    if freeze_discipline not in _VALID_FREEZE_DISCIPLINES:
+        raise ValueError(
+            f"freeze_discipline {freeze_discipline!r} is not a valid enum value. "
+            f"Accepted: {sorted(_VALID_FREEZE_DISCIPLINES)}"
+        )
+    conn = get_connection()
+    try:
+        # INSERT OR IGNORE: if the (bundle_hash, facet_name) pair already exists
+        # (UNIQUE constraint from migration 024), the insert is silently skipped.
+        # This makes concurrent calls to get_or_create_phase1_theory_bundle_id()
+        # safe — duplicate facet inserts are idempotent.
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO spec_facets "
+            "(bundle_hash, facet_name, facet_value, freeze_discipline, "
+            "justification, calibration_evidence) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (bundle_hash, facet_name, facet_value, freeze_discipline,
+             justification, calibration_evidence),
+        )
+        conn.commit()
+        if cursor.lastrowid:
+            return cursor.lastrowid
+        # Row already existed (INSERT was ignored); return its id.
+        row = conn.execute(
+            "SELECT id FROM spec_facets WHERE bundle_hash = ? AND facet_name = ?",
+            (bundle_hash, facet_name),
+        ).fetchone()
+        return row[0]
+    finally:
+        conn.close()
+
+
+def get_spec_facets_for_bundle(bundle_hash: str) -> "list[dict]":
+    """Return all spec_facets rows for the given bundle_hash, ordered by id.
+
+    Returns an empty list if none exist — never raises for an unknown hash.
+    Uses get_ro_connection() — pure-read path; avoids write-lock contention
+    on the WAL-mode DB (architecture constraint 3).
+    """
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_SPEC_FACET_COLUMNS)
+            + " FROM spec_facets WHERE bundle_hash = ? ORDER BY id ASC",
+            (bundle_hash,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_SPEC_FACET_COLUMNS, row)) for row in rows]
+
+
+# --- 018: Researcher DOF Ledger ---
+# Append-only degrees-of-freedom ledger for the NN1 multiple-testing haircut.
+# Records every facet evaluated on a strategy P&L / strategy-return basis.
+# Consumer: autotuner.py reads count_dof_backtest_selections() to compute S
+# and writes N_effective = N_optuna + S into autotune_runs.n_effective (plan 020).
+#
+# S accumulator = SUM(n_configs_searched) WHERE evidence_source = 'BACKTEST_SELECTION'
+# This is the sub-sweep sum (v3-evaluation §A.0 Defect 2 binding), NOT
+# COUNT(DISTINCT spec_bundle_id) — the binding conservative-upper-bound property.
+#
+# Accessor surface: INSERT + SELECT only.  No UPDATE or DELETE path — the same
+# append-only immutability contract enforced for llm_suggestions and
+# advisor_observations (database.py:670-715 and advisor section below).
+
+_VALID_DOF_FACET_CATEGORIES: frozenset[str] = frozenset({
+    "specification",
+    "parameter",
+})
+
+_VALID_DOF_DECISION_TYPES: frozenset[str] = frozenset({
+    "FIXED",
+    "SEARCHED",
+    "REVISED",
+    "OOS_PEEK",
+})
+
+_VALID_DOF_EVIDENCE_SOURCES: frozenset[str] = frozenset({
+    "THEORY",
+    "MANDATE",
+    "STYLIZED_FACT",
+    "CALIBRATION",
+    "BACKTEST_SELECTION",
+    "OOS",
+})
+
+_DOF_LEDGER_COLUMNS = [
+    "id",
+    "created_at",
+    "facet_name",
+    "facet_category",
+    "decision_type",
+    "evidence_source",
+    "n_configs_searched",
+    "touched_frozen_eval",
+    "spec_bundle_id",
+    "justification",
+]
+
+
+def insert_dof_ledger_row(
+    *,
+    facet_name: str,
+    facet_category: str,
+    decision_type: str,
+    evidence_source: str,
+    n_configs_searched: int = 1,
+    touched_frozen_eval: int = 0,
+    spec_bundle_id: "str | None" = None,
+    justification: "str | None" = None,
+) -> int:
+    """Append one row to researcher_dof_ledger. Returns the new row id.
+
+    Raises ValueError for any enum column value outside the accepted set.
+    Enforcement is at the application layer — consistent with the codebase's
+    app-level constraint pattern (no SQL CHECK constraint).
+
+    This is the only write path — there is no update or delete accessor.
+    The DOF ledger is immutable by design (tripwire, not a routine ledger).
+    """
+    if facet_category not in _VALID_DOF_FACET_CATEGORIES:
+        raise ValueError(
+            f"facet_category {facet_category!r} is not valid. "
+            f"Accepted: {sorted(_VALID_DOF_FACET_CATEGORIES)}"
+        )
+    if decision_type not in _VALID_DOF_DECISION_TYPES:
+        raise ValueError(
+            f"decision_type {decision_type!r} is not valid. "
+            f"Accepted: {sorted(_VALID_DOF_DECISION_TYPES)}"
+        )
+    if evidence_source not in _VALID_DOF_EVIDENCE_SOURCES:
+        raise ValueError(
+            f"evidence_source {evidence_source!r} is not valid. "
+            f"Accepted: {sorted(_VALID_DOF_EVIDENCE_SOURCES)}"
+        )
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO researcher_dof_ledger "
+            "(facet_name, facet_category, decision_type, evidence_source, "
+            "n_configs_searched, touched_frozen_eval, spec_bundle_id, justification) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                facet_name,
+                facet_category,
+                decision_type,
+                evidence_source,
+                n_configs_searched,
+                touched_frozen_eval,
+                spec_bundle_id,
+                justification,
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_dof_ledger_for_bundle(spec_bundle_id: str) -> "list[dict]":
+    """Return all researcher_dof_ledger rows for the given spec_bundle_id, ordered by id.
+
+    Uses a read-only connection — this accessor is called from the Advisor and
+    dashboard surfaces where writes are prohibited (charter Operating Rule 3).
+    Returns an empty list if no rows exist for the bundle.
+    """
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS)
+            + " FROM researcher_dof_ledger WHERE spec_bundle_id = ? ORDER BY id ASC",
+            (spec_bundle_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_DOF_LEDGER_COLUMNS, row)) for row in rows]
+
+
+def count_dof_backtest_selections(spec_bundle_id: "str | None" = None) -> int:
+    """Return S = SUM(n_configs_searched) for BACKTEST_SELECTION rows.
+
+    This is the S accumulator in N_effective = N_optuna + S.
+
+    When spec_bundle_id is provided, S is scoped to that bundle.
+    When None, S is the global sum across all bundles (pre-bundle call sites).
+
+    The binding consumer reading is the sub-sweep SUM, NOT COUNT(DISTINCT
+    spec_bundle_id) — a single P&L-toured spec that received its own sub-sweep
+    contributes its full sub-sweep count (council §2.2 / v3-evaluation §A.0
+    Defect 2). A deliberately conservative upper bound: can reject a genuine
+    signal, never pass a spurious one (council §2.2 property 2).
+
+    Uses a read-only connection — the autotuner's read path must never hold a
+    write lock while computing the haircut.
+    """
+    conn = get_ro_connection()
+    try:
+        if spec_bundle_id is not None:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(n_configs_searched), 0) "
+                "FROM researcher_dof_ledger "
+                "WHERE evidence_source = 'BACKTEST_SELECTION' AND spec_bundle_id = ?",
+                (spec_bundle_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(n_configs_searched), 0) "
+                "FROM researcher_dof_ledger "
+                "WHERE evidence_source = 'BACKTEST_SELECTION'",
+            ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def get_researcher_dof_ledger_for_run(
+    run_timestamp: str,
+    winning_spec_bundle_id: "str | None" = None,
+) -> "list[dict]":
+    """Return researcher_dof_ledger rows whose evidence_source is BACKTEST_SELECTION
+    for the active autotune run window, excluding frozen-eval-tainted rows and
+    the winning bundle (plan D4).
+
+    Filters:
+      - evidence_source = 'BACKTEST_SELECTION'
+      - COALESCE(touched_frozen_eval, 0) = 0  (frozen-eval rows handled by OOS_PEEK alarm)
+      - spec_bundle_id != winning_spec_bundle_id  (winner already counted in n_optuna)
+
+    Returns 0 rows in the NN1-honest case → S = 0.
+    Uses a read-only connection.
+    """
+    conn = get_ro_connection()
+    try:
+        if winning_spec_bundle_id is not None:
+            rows = conn.execute(
+                "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS)
+                + " FROM researcher_dof_ledger"
+                " WHERE evidence_source = 'BACKTEST_SELECTION'"
+                "   AND COALESCE(touched_frozen_eval, 0) = 0"
+                "   AND (spec_bundle_id IS NULL OR spec_bundle_id != ?)"
+                " ORDER BY id ASC",
+                (winning_spec_bundle_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT " + ", ".join(_DOF_LEDGER_COLUMNS)
+                + " FROM researcher_dof_ledger"
+                " WHERE evidence_source = 'BACKTEST_SELECTION'"
+                "   AND COALESCE(touched_frozen_eval, 0) = 0"
+                " ORDER BY id ASC",
+            ).fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_DOF_LEDGER_COLUMNS, row)) for row in rows]
+
+
+# --- Advisor Wall: frozen-eval access guard ---
+
+# SQL bypass and bare fold_role predicate patterns that the Advisor wall must reject.
+#
+#   fold_role !=  / fold_role <>
+#     H3 SQL-NULL trap: NULL rows are silently excluded by SQL three-valued logic.
+#     Both forms evaluate NULL != 'frozen_eval' to NULL (falsy), not TRUE.
+#
+#   OR 1=1
+#     Classic tautology injection that defeats any WHERE clause predicate, including
+#     COALESCE-wrapped fold_role predicates.  A caller-supplied predicate such as
+#     COALESCE(fold_role,'') != 'frozen_eval' is rendered meaningless when followed
+#     by OR 1=1 — the entire WHERE becomes always TRUE and all rows are returned,
+#     including frozen_eval rows.  Any Advisor SQL containing OR 1=1 is a structural
+#     bypass attempt and must be rejected.
+#
+# Callers supply the inner SELECT; the helper wraps it automatically with the
+# outer COALESCE filter.  COALESCE(fold_role...) in the caller's WHERE is accepted
+# when not combined with a bypass (the outer wrap provides defence-in-depth).
+_BARE_FOLD_ROLE_PREDICATES = ("fold_role !=", "fold_role <>", "OR 1=1")
+
+
+def advisor_ro_query(sql: str, params: tuple = ()) -> list:
+    """Execute a read-only query on behalf of an Advisor code path.
+
+    This is the ONLY entry point from Advisor code to the state DB.  Calling
+    get_connection() or get_ro_connection() directly from Advisor code is a
+    structural side door that bypasses both the COALESCE guard and the
+    wall-breach tripwire — it is prohibited (enforced by the lint test in CI).
+
+    Caller contract
+    ---------------
+    - Any predicate that filters on fold_role MUST NOT use a bare inequality:
+          fold_role != 'frozen_eval'  (H3 NULL trap — silently hides NULL rows)
+          fold_role <> 'frozen_eval'  (SQL-standard form, same trap)
+      Both forms are rejected with ValueError before execution.
+    - The helper wraps the caller's SQL as a subquery and appends a
+      COALESCE(fold_role,'NULL_SENTINEL') NOT IN ('frozen_eval','NULL_SENTINEL')
+      predicate.  This filters frozen_eval rows AND untagged (NULL fold_role)
+      rows at the SQL level before they ever reach Python.
+      (M-1 safe-default: a forgotten fold_role tag must fail-safe to exclusion.)
+    - If a frozen_eval row slips through despite the wrap (e.g. the caller
+      constructed an OR 1=1 bypass), the wall-breach tripwire writes a
+      WALL_BREACH row to advisor_observations BEFORE raising — the audit record
+      survives even if the caller swallows the exception (plan §Risk callouts).
+
+    Returns a list of sqlite3.Row objects.
+    """
+    # --- Predicate guard: reject fold_role predicates in caller SQL ---
+    # Callers must NOT filter on fold_role themselves.  The helper applies the
+    # COALESCE wrap at the outer-query level.  A caller-supplied fold_role
+    # predicate is a bypass attempt — write a WALL_BREACH audit row first
+    # (write-then-raise contract: the record must survive caller-swallowed exceptions),
+    # then raise ValueError.
+    if any(pat in sql for pat in _BARE_FOLD_ROLE_PREDICATES):
+        _write_wall_breach_observation(sql)
+        raise ValueError(
+            "advisor_ro_query: fold_role predicate detected in caller SQL. "
+            "Bare != / <> carry the H3 SQL-NULL trap; COALESCE forms may be defeated "
+            "by OR 1=1 bypass.  The helper wraps the query with a COALESCE predicate "
+            "automatically — callers must not add a fold_role filter to their SQL."
+        )
+
+    # --- COALESCE wrap: exclude frozen_eval AND untagged (NULL) rows at the DB level ---
+    # Wraps the caller's SQL as an inner subquery and adds an outer WHERE that
+    # converts NULL fold_role to 'NULL_SENTINEL' so the NOT IN covers both
+    # frozen_eval and untagged rows (M-1 safe-default: fail-safe to exclusion).
+    #
+    # Fallback for non-partitioned tables: if the inner query does not project
+    # fold_role, SQLite raises OperationalError: no such column: fold_role.
+    # In that case, execute the unwrapped query — a table with no fold_role
+    # column cannot contain frozen_eval rows, so the result is structurally safe.
+    wrapped_sql = (
+        "SELECT * FROM (\n"
+        + sql
+        + "\n) AS _advisor_inner_query"
+        + " WHERE COALESCE(fold_role,'NULL_SENTINEL') NOT IN ('frozen_eval','NULL_SENTINEL')"
+    )
+
+    conn = get_ro_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        try:
+            rows = conn.execute(wrapped_sql, params).fetchall()
+        except sqlite3.OperationalError as oe:
+            if "fold_role" in str(oe).lower():
+                # Inner query does not project fold_role — no frozen_eval rows possible.
+                # Execute the caller's raw SQL directly; the post-hoc tripwire below
+                # provides the safety net should fold_role somehow appear in the result.
+                rows = conn.execute(sql, params).fetchall()
+            else:
+                raise
+    finally:
+        conn.close()
+
+    # --- Post-hoc tripwire: detect frozen_eval rows that bypassed the wrap ---
+    # Under correct operation this check never fires: the outer COALESCE filters
+    # frozen_eval at the SQL level.  If a frozen_eval row appears in the final
+    # result (e.g. an outer-wrap-defeating injection not caught by the predicate
+    # guard), write the audit row first (write-then-raise contract) then raise.
+    for row in rows:
+        try:
+            role = row["fold_role"]
+        except (IndexError, KeyError):
+            # Row does not project fold_role — cannot verify; skip.
+            # Must be `continue`, not `break`: a break would silently skip all
+            # remaining rows, letting a frozen_eval row in a later position escape.
+            continue
+        if role == "frozen_eval":
+            _write_wall_breach_observation(sql)
+            raise RuntimeError(
+                "advisor_ro_query: WALL_BREACH — a frozen_eval row reached the Advisor "
+                "result set despite the COALESCE wrap.  The frozen-eval fold is the held-out "
+                "evaluation partition; Advisor reads must never touch it.  "
+                "SQL fragment logged to advisor_observations."
+            )
+
+    return list(rows)
+
+
+def _write_wall_breach_observation(sql_fragment: str) -> None:
+    """Write a WALL_BREACH audit row to advisor_observations.
+
+    Called by advisor_ro_query before raising on a wall-breach.  Uses a
+    plain get_connection() (not the RO connection) so the write succeeds even
+    when the offending query came through the read-only path.
+
+    If the write itself fails (full disk, locked DB), the caller will still
+    raise — the audit row is best-effort; the breach detection is not.
+    """
+    try:
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO advisor_observations "
+            "(advisor_role, subject_type, subject_id, verdict, raw_response, is_advisory_only) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "WALL_BREACH",
+                "fold_role_wall",
+                "frozen_eval",
+                "BREACH",
+                sql_fragment[:2000],  # cap at 2 000 chars; avoid unbounded writes
+                1,
+            ),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:  # noqa: BLE001
+        logging.error("_write_wall_breach_observation: failed to write audit row: %s", exc)
+
+
+def query_wall_breach_tripwire() -> list:
+    """Return researcher_dof_ledger rows that represent a post-freeze frozen_eval touch.
+
+    A wall breach is defined as: a researcher_dof_ledger row with
+    touched_frozen_eval = 1 AND created_at > spec_bundles.frozen_at for the
+    associated spec bundle.  Any non-empty result is a hard CI failure (M-1 ★).
+
+    Uses canonical schema (migration 018):
+      - spec_bundle_id TEXT soft FK to spec_bundles.bundle_hash (not integer id)
+      - touched_frozen_eval INTEGER boolean (1 = wall-breach tripwire fired)
+
+    Returns a list of sqlite3.Row objects; empty list means the wall held.
+    An OperationalError is raised (not swallowed) if researcher_dof_ledger or
+    spec_bundles does not exist — this surfaces a missing-migration failure
+    rather than returning a false-clean empty result.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT r.id, r.spec_bundle_id, r.touched_frozen_eval, r.created_at,"
+            "       r.facet_name, r.evidence_source,"
+            "       b.frozen_at, b.bundle_hash"
+            "  FROM researcher_dof_ledger r"
+            "  JOIN spec_bundles b ON r.spec_bundle_id = b.bundle_hash"
+            " WHERE r.touched_frozen_eval = 1"
+            "   AND r.created_at > b.frozen_at"
+        ).fetchall()
+    finally:
+        conn.close()
+    return list(rows)
 
 
 # --- R1: Fleet Alert State Helpers ---
@@ -1028,69 +2072,6 @@ def get_all_port_states() -> "list[dict]":
     return [dict(r) for r in rows]
 
 
-def new_day_reset_port_state(account_id: str) -> None:
-    """AC-P2.5.4 + AC-11: reset port_state transient fields for the new trading day.
-
-    Resets ``prev_return`` to None (sentinel -> cycle-1 velocity = 0, preventing
-    PARA-ARM on the opening gap) and wipes the transient exit-guard fields —
-    ``triggered``, ``triggered_reason``, ``armed``, ``para_armed``,
-    ``port_breakeven_active`` — so a port_state that ended yesterday triggered
-    or armed cannot carry that stale guard into the new day and fire a spurious
-    port-wide exit on the first cycle. The port_state analogue of
-    wipe_transient_state.
-
-    No-op when the account has no port_state row (a reset, not an upsert).
-    """
-    existing = read_port_state(account_id)
-    if existing is None:
-        return
-    write_port_state(
-        account_id,
-        {
-            "prev_return": None,
-            "triggered": False,
-            "triggered_reason": None,
-            "armed": False,
-            "para_armed": False,
-            "port_breakeven_active": False,
-        },
-    )
-
-
-def rebase_port_state_on_composition_change(
-    account_id: str,
-    new_composition_hash: str,
-    current_port_value: float,
-) -> None:
-    """AC-P2.5.5 + Amendment BC-3: reset gate state when portfolio composition changes.
-
-    Resets all momentum-tracking fields to zero-velocity baseline so the new
-    composition starts clean. HWM is set to current_port_value (not the old HWM)
-    so the ratchet baseline is accurate for the new set of holdings.
-    stop_trigger is reset per BC-3 so the ratchet floor is not inherited.
-    triggered / triggered_reason are reset (AC-10) so a stale triggered=True
-    from the prior composition cannot make build_port_signal emit a spurious
-    port-wide exit on the first cycle of the new composition.
-    """
-    write_port_state(
-        account_id,
-        {
-            "composition_hash": new_composition_hash,
-            "high_water_mark": current_port_value,
-            "prev_return": None,
-            "mc_history_json": "[]",
-            "vwap_ticks_json": "[]",
-            "vwap_bleed_ticks_json": "[]",
-            "armed": False,
-            "para_armed": False,
-            "port_breakeven_active": False,
-            "stop_trigger": None,
-            "triggered": False,
-            "triggered_reason": None,
-        },
-    )
-
-
 def compute_composition_hash(symphony_ids: "list[str]") -> str:
     """Return a stable O(1)-comparable hash of the current symphony set.
 
@@ -1251,6 +2232,270 @@ def record_shadow_observation(
         conn.close()
     except Exception as exc:
         logging.error("record_shadow_observation failed for %s: %s", symphony_id, exc)
+
+
+# --- H4: Telemetry write helper ---
+
+# Valid mode values — enforced at the call boundary (project rule 4 analogue:
+# every call site must state the mode explicitly, no default).
+_TELEMETRY_VALID_MODES = frozenset({"live", "replay"})
+
+# CC-002: allowlist of tables that write_telemetry_row may target.
+# Expand this set whenever a new legitimate Phase-N consumer is added.
+# table_name arguments not in this set are rejected before any SQL is built —
+# preventing f-string interpolation of attacker-controlled identifiers.
+_WRITE_TELEMETRY_TABLES = frozenset({
+    "cvar_diagnostics",   # M2 Phase-1 consumer (record_cvar_diagnostic)
+})
+
+# CC-002: column identifier must be a safe SQLite identifier before f-string
+# interpolation.  Matches lowercase letters, digits, and underscores only.
+_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _write_telemetry_row_unsafe(table_name: str, row_dict: dict) -> None:
+    """Validate identifiers and execute the INSERT.  Not safe to call directly
+    from production — always go through write_telemetry_row which enforces the
+    mode contract (live-swallow / replay-raise) around this function.
+
+    Raises ValueError if table_name is not in _WRITE_TELEMETRY_TABLES or if
+    any column name fails the safe-identifier pattern (CC-002).
+    Raises sqlite3.Error on DB failures — callers decide whether to swallow.
+    """
+    # CC-002: validate table_name before any f-string interpolation.
+    if table_name not in _WRITE_TELEMETRY_TABLES:
+        raise ValueError(
+            f"write_telemetry_row: table_name {table_name!r} is not in the "
+            f"telemetry allowlist; add it to _WRITE_TELEMETRY_TABLES if it is "
+            f"a legitimate consumer"
+        )
+
+    # CC-002: validate every column name before f-string interpolation.
+    columns = list(row_dict.keys())
+    for col in columns:
+        if not _IDENTIFIER_RE.match(col):
+            raise ValueError(
+                f"write_telemetry_row: column name {col!r} is not a valid "
+                f"SQLite identifier (must match ^[a-z_][a-z0-9_]*$)"
+            )
+
+    # Build the INSERT — table_name and column names are provably safe after
+    # the validations above; VALUES are still parameterized.
+    placeholders = ", ".join("?" for _ in columns)
+    col_names = ", ".join(columns)
+    sql = f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders})"
+    values = tuple(row_dict[c] for c in columns)
+
+    conn = get_connection()
+    conn.execute(sql, values)
+    conn.commit()
+    conn.close()
+
+
+def write_telemetry_row(
+    table_name: str,
+    row_dict: dict,
+    *,
+    mode: Literal["live", "replay"],
+) -> None:
+    """Write one telemetry row to table_name via a short-lived connection.
+
+    Opens its own sqlite3.connect() — does NOT join the cycle's save_state
+    transaction.  Connection pattern matches record_shadow_observation (:1171).
+
+    mode="live":   swallows sqlite3.Error and ValueError; logs one WARNING
+                   with table_name, error type, and cycle_id only (gate 7 —
+                   no payload values).  Returns None.  The cycle must never
+                   fail on telemetry.
+    mode="replay": lets sqlite3.Error and ValueError propagate — a replay
+                   that cannot persist its row is loud-broken by design
+                   (H4 binding).
+
+    Raises ValueError for any mode value other than "live" or "replay".
+    Raises ValueError if table_name is not in _WRITE_TELEMETRY_TABLES
+        (CC-002: prevents f-string interpolation of arbitrary identifiers).
+    Raises ValueError if any column name in row_dict does not match the
+        safe-identifier pattern ^[a-z_][a-z0-9_]*$ (CC-002).
+    Raises TypeError (from Python) if mode is omitted — it is keyword-only
+    with no default (H4 plan risk R4).
+    """
+    if mode not in _TELEMETRY_VALID_MODES:
+        raise ValueError(
+            f"write_telemetry_row: mode must be 'live' or 'replay'; got {mode!r}"
+        )
+
+    if mode == "live":
+        try:
+            _write_telemetry_row_unsafe(table_name, row_dict)
+        except (sqlite3.Error, ValueError) as exc:
+            # Gate 7: log only table_name, error type, and cycle_id — no
+            # financial payload values from row_dict.
+            cycle_id = row_dict.get("cycle_id")
+            logging.warning(
+                "write_telemetry_row failed for table=%s error=%s cycle_id=%s",
+                table_name,
+                type(exc).__name__,
+                cycle_id,
+            )
+    else:  # mode == "replay"
+        _write_telemetry_row_unsafe(table_name, row_dict)
+
+
+def record_cvar_diagnostic(
+    cycle_id: str,
+    symphony_id: str,
+    cvar_5pct: "float | None",
+    cvar_5pct_stderr: "float | None",
+    cvar_n_tail: "int | None",
+    cvar_5pct_long: "float | None",
+    cvar_n_tail_long: "int | None",
+    *,
+    mode: Literal["live", "replay"],
+    mc_regime_match_mean_dist2: "float | None" = None,
+    mc_regime_match_suppressed: "int | None" = None,
+) -> None:
+    """Write one cvar_diagnostics telemetry row (M2 Phase-1 consumer).
+
+    Thin wrapper over write_telemetry_row — all connection management and
+    live-swallow / replay-raise logic lives there (H4 plan deliverable 6;
+    spec-h4 Finding 6 / rev-h4 REQ-7).
+
+    mode= is required (keyword-only, no default) — same contract as
+    write_telemetry_row: every call site states the mode explicitly.
+
+    mc_regime_match_mean_dist2: mean squared Mahalanobis-style kNN distance from
+        compute_regime_match_quality; None when the eligible pool was insufficient
+        (migration 026 column; defaults to None so existing call sites stay green).
+    mc_regime_match_suppressed: 1 when the MC veto was suppressed (is_unprecedented=True),
+        0 when not suppressed, None when the guard was not run (migration 026 column).
+    """
+    # F-4 sentinel discipline: cvar_n_tail is NOT NULL DEFAULT 0.
+    # SQLite only substitutes the DEFAULT when the column is absent from the statement;
+    # passing Python None explicitly raises IntegrityError (NOT NULL constraint violation).
+    # Coerce here so the constraint is satisfied at the call site, not swallowed downstream.
+    # cvar_n_tail_long is INTEGER DEFAULT NULL — NULL is the correct Phase-1 sentinel
+    # (no long window computed); do NOT coerce it.
+    cvar_n_tail = 0 if cvar_n_tail is None else cvar_n_tail
+    row_dict = {
+        "cycle_id": cycle_id,
+        "symphony_id": symphony_id,
+        "cvar_5pct": cvar_5pct,
+        "cvar_5pct_stderr": cvar_5pct_stderr,
+        "cvar_n_tail": cvar_n_tail,
+        "cvar_5pct_long": cvar_5pct_long,
+        "cvar_n_tail_long": cvar_n_tail_long,
+    }
+    # Migration 026 columns: additive-first pattern — only include in row_dict
+    # when the caller explicitly provides them. Omitting lets SQLite supply the
+    # DEFAULT NULL, so pre-026 DBs (which lack the columns) accept the write
+    # unchanged. This preserves backward compat through the migration window.
+    if mc_regime_match_mean_dist2 is not None:
+        row_dict["mc_regime_match_mean_dist2"] = mc_regime_match_mean_dist2
+    if mc_regime_match_suppressed is not None:
+        row_dict["mc_regime_match_suppressed"] = mc_regime_match_suppressed
+    write_telemetry_row("cvar_diagnostics", row_dict, mode=mode)
+
+
+# --- Replay-determinism anchor: Gate-1 parity column classification ---
+#
+# Non-persistence decision: the MC seed is a pure function of cycle_id via
+# derive_cycle_mc_seed (math_engine.py) — persisting it would create a drift
+# surface where a stored seed diverges from the re-derived value without any
+# observable error. A replay re-derives the seed from cycle_id; storing it
+# is redundant. See plan: feature-plans/decision-science/phase-1/
+# replay-determinism-anchor/plan.md §Why and §Risk callouts.
+#
+# _PARITY_DECISION_COLUMNS: decision-content columns Gate-1 asserts on —
+#   must be bit-identical across two replays of the same cycle_id.
+#   Includes second-window residue (cvar_5pct_long, cvar_n_tail_long) per
+#   council §B.6 and synthesis §A.8 A3 binding; and the regime-match
+#   telemetry pair (mc_regime_match_mean_dist2, mc_regime_match_suppressed)
+#   per rev-mc Observation 1 so suppression flips are directly auditable.
+#
+# _PARITY_EXCLUDE_COLUMNS: columns legitimately different across replays —
+#   id (AUTOINCREMENT, replay inserts a new row), ts_utc (wall-clock stamp),
+#   cycle_id and symphony_id (the lookup key pair, not parity targets).
+#   Together with _PARITY_DECISION_COLUMNS these cover every column in
+#   cvar_diagnostics; the anti-drift fence test enforces full classification.
+
+_PARITY_DECISION_COLUMNS: tuple[str, ...] = (
+    "cvar_5pct",
+    "cvar_5pct_stderr",
+    "cvar_n_tail",
+    "cvar_5pct_long",
+    "cvar_n_tail_long",
+    # Migration 026: regime-match telemetry columns — promoted to decision-content
+    # (reclassified from exclude per rev-mc Observation 1). The suppression flag and
+    # its driving distance score are direct inputs to mc_prob=None; Gate-1 parity
+    # must assert bit-identity of these values so a suppression flip across two
+    # replays of the same cycle_id is directly auditable, not inferred from cvar_5pct.
+    "mc_regime_match_mean_dist2",
+    "mc_regime_match_suppressed",
+)
+
+_PARITY_EXCLUDE_COLUMNS: tuple[str, ...] = (
+    "id",
+    "ts_utc",
+    "cycle_id",
+    "symphony_id",
+)
+
+
+def read_cvar_diagnostic_for_cycle(
+    cycle_id: str,
+    symphony_id: str,
+) -> "dict | None":
+    """Return the most-recent cvar_diagnostics row for (cycle_id, symphony_id).
+
+    Uses get_ro_connection() — read-only enforcement at the driver level,
+    consistent with the dashboard read pattern (architecture constraint 5).
+
+    Returns None when no row exists for the given pair — the replay harness
+    treats None as "no prior run to compare against" and skips parity assertion.
+
+    The returned dict includes at minimum the _PARITY_DECISION_COLUMNS keys;
+    callers that need the full row may inspect all returned keys.
+    """
+    conn = get_ro_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM cvar_diagnostics "
+            "WHERE cycle_id = ? AND symphony_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (cycle_id, symphony_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def read_cvar_diagnostic_for_symphony(symphony_id: str) -> "dict | None":
+    """Return the most-recent cvar_diagnostics row for symphony_id, or None.
+
+    Uses get_ro_connection() — read-only enforcement at the driver level,
+    consistent with the dashboard read pattern (architecture constraint 5).
+
+    Ordered by ts_utc DESC so the latest cycle's row wins when a symphony
+    has been diagnosed multiple times. idx_cvar_diag_symphony_ts covers
+    the (symphony_id, ts_utc DESC) lookup (migration 021).
+    """
+    conn = get_ro_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM cvar_diagnostics "
+            "WHERE symphony_id = ? "
+            "ORDER BY ts_utc DESC LIMIT 1",
+            (symphony_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return dict(row)
 
 
 def prune_old_shadow_history(retention_days: int) -> int:

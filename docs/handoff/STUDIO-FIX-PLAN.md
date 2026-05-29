@@ -1,3 +1,7 @@
+> **HISTORICAL** — This document is a pre-Sprint-1 or Sprint-1 cycle artifact preserved for provenance. See [docs/audit/](../audit/) for current state.
+
+---
+
 # Studio Redesign — Consolidated Fix Plan (v2)
 
 **Source audit:** `docs/handoff/COMPREHENSIVE-AUDIT.md` (163 raw findings, 4 lenses)

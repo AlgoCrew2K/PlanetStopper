@@ -135,6 +135,12 @@ def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
         }
     }
 
+    import inspect as _inspect
+    from tests.autotuner.conftest import make_phase1_theory_bundle as _make_bundle
+    _spec_id = _make_bundle()
+    _sig = _inspect.signature(autotuner.run_autotuner)
+    _extra = {"spec_bundle_id": _spec_id} if "spec_bundle_id" in _sig.parameters else {}
+
     with (
         patch("autotuner.optuna.create_study", return_value=fake_study),
         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
@@ -146,7 +152,11 @@ def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
               return_value={"params": params.copy(), "locked_vars": []}),
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", params),
-        patch("autotuner.database.save_autotune_run"),
+        # S3-AUDIT-001 fix: save_autotune_run now returns cursor.lastrowid; the
+        # autotuner immediately uses the returned id as a SQL parameter in the
+        # prior_runs SELECT.  A bare patch() returns a MagicMock, which SQLite
+        # rejects — pin to a positive int.
+        patch("autotuner.database.save_autotune_run", return_value=1),
         patch("autotuner.benjamini_hochberg_adjust", side_effect=_spy_bhy),
         patch("autotuner.math_engine.compute_para_arm_decision",
               side_effect=lambda **kw: (0.0, False)),
@@ -162,7 +172,7 @@ def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
               side_effect=lambda **kw: (0, 0, True, False)),
         contextlib.redirect_stdout(io.StringIO()),
     ):
-        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+        autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_extra)
 
     assert bhy_calls, (
         "run_autotuner did not call benjamini_hochberg_adjust. AC-2: the Harvey "
@@ -257,6 +267,12 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
             }
         }
 
+        import inspect as _inspect2
+        from tests.autotuner.conftest import make_phase1_theory_bundle as _make_bundle2
+        _spec_id2 = _make_bundle2()
+        _sig2 = _inspect2.signature(autotuner.run_autotuner)
+        _extra2 = {"spec_bundle_id": _spec_id2} if "spec_bundle_id" in _sig2.parameters else {}
+
         with (
             patch("autotuner.optuna.create_study", return_value=fake_study),
             patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
@@ -268,8 +284,13 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
                   return_value={"params": params.copy(), "locked_vars": []}),
             patch("autotuner.database.save_symphony_strategy"),
             patch("autotuner.database.DEFAULT_STRATEGY", params),
-            patch("autotuner.database.save_autotune_run",
-                  side_effect=lambda **kw: captured.append(kw)),
+            # S3-AUDIT-001 fix: save_autotune_run now returns cursor.lastrowid
+            # (a positive int) and the autotuner uses it as a SQL parameter.
+            # The side_effect must return an int — append() returns None.
+            patch(
+                "autotuner.database.save_autotune_run",
+                side_effect=lambda **kw: (captured.append(kw) or 1),
+            ),
             patch("autotuner.math_engine.compute_para_arm_decision",
                   side_effect=lambda **kw: (0.0, False)),
             patch("autotuner.math_engine.compute_time_squeeze_decay",
@@ -284,7 +305,7 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
                   side_effect=lambda **kw: (0, 0, True, False)),
             contextlib.redirect_stdout(io.StringIO()),
         ):
-            autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"])
+            autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_extra2)
 
         assert captured, "run_autotuner did not persist an autotune_run row."
         # D3 resolution (a) renamed the column deflated_sharpe -> selection_tstat;

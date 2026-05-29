@@ -1,6 +1,6 @@
 {
   "provenance": "Hand-computed against Bailey, D.H. & López de Prado, M. (2014). 'The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality.' Journal of Portfolio Management, 40(5), 94-107. DOI: 10.3905/jpm.2014.40.5.094. Expected-maximum Sharpe formula (appendix): E[max SR] = mu + sigma * ((1 - gamma_E) * Phi^-1(1 - 1/N) + gamma_E * Phi^-1(1 - 1/(N*e))). All intermediate values independently verified in Python using scipy.stats.norm.ppf and math.e.",
-  "description": "N=500 trials (AlphaBot default Optuna trial count), sr_mean=0.5, sr_std=0.3. This is the canonical production scenario. At N=500 the selection-bias correction is substantial: E[max SR]=1.416, far above mean=0.5.",
+  "description": "N=500 trials (Planet Stopper default Optuna trial count), sr_mean=0.5, sr_std=0.3. This is the canonical production scenario. At N=500 the selection-bias correction is substantial: E[max SR]=1.416, far above mean=0.5.",
   "inputs": {
     "sr_mean": 0.5,
     "sr_std": 0.3,

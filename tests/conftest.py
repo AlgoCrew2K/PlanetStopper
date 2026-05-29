@@ -1,5 +1,5 @@
 """
-Pytest configuration and shared fixtures for AlphaBot test suite.
+Pytest configuration and shared fixtures for Planet Stopper test suite.
 """
 
 import pathlib
