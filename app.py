@@ -2427,8 +2427,9 @@ _ADVISOR_OBSERVATIONS_PAGE_LIMIT = 50
 def api_advisor_observations():
     """Return advisor observations as a JSON list.
 
-    ?symphony_id=<id>  — filter to rows whose subject_id matches; calls
-                         database.get_advisor_observations_for_subject.
+    ?symphony_id=<id>  — filter to rows whose denormalized symphony_id column
+                         matches; calls database.get_advisor_observations_for_symphony
+                         (single SELECT post-migration-025, S3-AUDIT-004/010).
     No query param      — return observations across all known advisor roles;
                          calls database.get_advisor_observations_for_role.
 
