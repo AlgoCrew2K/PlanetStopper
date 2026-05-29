@@ -606,12 +606,18 @@ def test_gate1_parity_round_trip_via_accessor(isolated_db) -> None:
     symphony_id = fixture["symphony_id"]
 
     # Test-controlled inputs — not producer-computed values.
+    # Includes the migration-026 MC parity columns (mc_regime_match_mean_dist2
+    # and mc_regime_match_suppressed) which the mc-parity-postinit cycle promoted
+    # into _PARITY_DECISION_COLUMNS. Every column in _PARITY_DECISION_COLUMNS
+    # must have an entry here or the iteration below KeyErrors.
     written = {
         "cvar_5pct": -0.05,
         "cvar_5pct_stderr": 0.008,
         "cvar_n_tail": 8,
         "cvar_5pct_long": -0.06,
         "cvar_n_tail_long": 7,
+        "mc_regime_match_mean_dist2": 11.25,
+        "mc_regime_match_suppressed": 1,
     }
 
     db.record_cvar_diagnostic(
@@ -623,6 +629,8 @@ def test_gate1_parity_round_trip_via_accessor(isolated_db) -> None:
         cvar_5pct_long=written["cvar_5pct_long"],
         cvar_n_tail_long=written["cvar_n_tail_long"],
         mode="replay",
+        mc_regime_match_mean_dist2=written["mc_regime_match_mean_dist2"],
+        mc_regime_match_suppressed=written["mc_regime_match_suppressed"],
     )
 
     row = db.read_cvar_diagnostic_for_cycle(cycle_id, symphony_id)

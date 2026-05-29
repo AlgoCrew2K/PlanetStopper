@@ -2375,10 +2375,12 @@ def record_cvar_diagnostic(
 # is redundant. See plan: feature-plans/decision-science/phase-1/
 # replay-determinism-anchor/plan.md §Why and §Risk callouts.
 #
-# _PARITY_DECISION_COLUMNS: the five decision-content columns Gate-1 asserts
-#   on — must be bit-identical across two replays of the same cycle_id.
+# _PARITY_DECISION_COLUMNS: decision-content columns Gate-1 asserts on —
+#   must be bit-identical across two replays of the same cycle_id.
 #   Includes second-window residue (cvar_5pct_long, cvar_n_tail_long) per
-#   council §B.6 and synthesis §A.8 A3 binding.
+#   council §B.6 and synthesis §A.8 A3 binding; and the regime-match
+#   telemetry pair (mc_regime_match_mean_dist2, mc_regime_match_suppressed)
+#   per rev-mc Observation 1 so suppression flips are directly auditable.
 #
 # _PARITY_EXCLUDE_COLUMNS: columns legitimately different across replays —
 #   id (AUTOINCREMENT, replay inserts a new row), ts_utc (wall-clock stamp),
@@ -2392,6 +2394,13 @@ _PARITY_DECISION_COLUMNS: tuple[str, ...] = (
     "cvar_n_tail",
     "cvar_5pct_long",
     "cvar_n_tail_long",
+    # Migration 026: regime-match telemetry columns — promoted to decision-content
+    # (reclassified from exclude per rev-mc Observation 1). The suppression flag and
+    # its driving distance score are direct inputs to mc_prob=None; Gate-1 parity
+    # must assert bit-identity of these values so a suppression flip across two
+    # replays of the same cycle_id is directly auditable, not inferred from cvar_5pct.
+    "mc_regime_match_mean_dist2",
+    "mc_regime_match_suppressed",
 )
 
 _PARITY_EXCLUDE_COLUMNS: tuple[str, ...] = (
@@ -2399,13 +2408,6 @@ _PARITY_EXCLUDE_COLUMNS: tuple[str, ...] = (
     "ts_utc",
     "cycle_id",
     "symphony_id",
-    # Migration 026: regime-match telemetry columns — classified as exclude (metadata)
-    # so the existing Gate-1 round-trip test (which uses a fixed written dict scoped
-    # to the original 5 decision columns) does not KeyError on the new column names.
-    # Suppression parity is detectable through the downstream mc_prob=None propagation
-    # which the existing cvar_5pct / parity path already exercises.
-    "mc_regime_match_mean_dist2",
-    "mc_regime_match_suppressed",
 )
 
 
