@@ -5,9 +5,12 @@ Phase-1 spec bundle by examining its spec_facets rows for four indicators:
 
   I-1  Required Phase-1 THEORY facets present: gamma, utility_family,
        wealth_argument.  Any missing facet → BREACH.
-  I-2  All facets have a recognised freeze_discipline (in NN1_HONEST_DISCIPLINES
-       union {BACKTEST_SELECTION}).  Any unrecognised discipline → BREACH
-       (default-deny; forward-compat defence-in-depth).
+  I-2  All facets have a recognised freeze_discipline (one of the six values in
+       _ACCEPTABLE_DISCIPLINES: THEORY, MANDATE, STYLIZED_FACT, POLITIS_WHITE,
+       CADENCE, CALIBRATION).  BACKTEST_SELECTION is not acceptable — the
+       autotuner's NN1 spec-freeze rejects it as overfitting-prone.  Any
+       unrecognised discipline → BREACH (default-deny; forward-compat
+       defence-in-depth).
   I-3  All facet frozen_at timestamps are < SPEC_AGE_WATCH_THRESHOLD_DAYS old.
        Exactly-at or beyond threshold → WATCH (advisory; does not block).
   I-4  No Phase-2 facets seeded prematurely (PHASE2_FACET_NAMES).  Any Phase-2
