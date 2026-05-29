@@ -132,14 +132,16 @@ CVAR_ALPHA_DEFAULT = 0.05  # 5th-percentile expected shortfall (CVaR at 5%)
 CVAR_MIN_TAIL_OBS = 1  # require at least 1 genuine below-VaR (or atom) observation
 
 
-# Phase-2 CVaR typed result (defined in Phase 1 so the M2 schema migration and
-# Phase-2 simulate_forward_paths cutover have a stable single-import target).
+# kNN historical regime-match result (Phase-1; the forward-path co-signal was REJECTED
+# per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md CVaR-divergence wall).
 # Phase-1 rule: ZERO production consumers permitted — tests only.
 # Fail-safe invariant: cvar_pct is None IMPLIES breach is False.
 # Enforcement: __post_init__ raises ValueError on the illegal combination.
 @dataclasses.dataclass(frozen=True)
 class CVaRAssessment:
-    """Typed result for the Phase-2 forward-path CVaR co-signal.
+    """Typed result for the kNN historical regime-match (Phase-1; the forward-path
+    co-signal was REJECTED per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md
+    CVaR-divergence wall).
 
     cvar_pct: 5th-percentile CVaR as a percentage (negative = loss).
               None is the out-of-band insufficient sentinel (mirrors
@@ -1197,7 +1199,8 @@ class CVaREstimate:
 
     Distinct from CVaRAssessment: carries .stderr (H-2 binding) and is the return
     type of the pure-math kNN-pool estimator. CVaRAssessment is the typed result
-    for the Phase-2 forward-path co-signal (different call chain).
+    for the kNN historical regime-match (Phase-1; the forward-path co-signal was REJECTED
+    per decision-science council — see docs/audit/vision-audit-2026-05-27/SYNTHESIS.md CVaR-divergence wall).
 
     cvar_pct: Rockafellar-Uryasev general-distribution CVaR. None when the pool
               is empty or has fewer than CVAR_MIN_TAIL_OBS genuine tail observations.
