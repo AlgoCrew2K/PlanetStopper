@@ -1,6 +1,7 @@
 import os
 import time
 import math
+import functools
 import statistics
 import logging
 import optuna
@@ -487,6 +488,16 @@ def compute_haircut_pvalue(t_stat: float) -> float:
     return min(max(p, _HAIRCUT_PVALUE_EPSILON), 1.0 - _HAIRCUT_PVALUE_EPSILON)
 
 
+@functools.lru_cache(maxsize=None)
+def _yekutieli_c_n(n: int) -> float:
+    """Yekutieli arbitrary-dependence factor c(N) = sum_{j=1}^{N} 1/j.
+
+    Cached because the BHY haircut re-derives the same c(N) on every
+    _haircut_select call (N=500 in production).
+    """
+    return sum(1.0 / j for j in range(1, n + 1))
+
+
 def benjamini_hochberg_adjust(p_values: list[float]) -> list[float]:
     """Benjamini-Hochberg-Yekutieli (BHY) step-up adjustment of raw p-values.
 
@@ -513,7 +524,7 @@ def benjamini_hochberg_adjust(p_values: list[float]) -> list[float]:
     if n == 0:
         return []
     # Yekutieli arbitrary-dependence factor: the N-th harmonic number.
-    c_n = sum(1.0 / j for j in range(1, n + 1))
+    c_n = _yekutieli_c_n(n)
     # Sort indices by ascending raw p-value.
     order = sorted(range(n), key=lambda i: p_values[i])
     adjusted = [0.0] * n
