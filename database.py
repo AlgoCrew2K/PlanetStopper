@@ -2375,10 +2375,12 @@ def record_cvar_diagnostic(
 # is redundant. See plan: feature-plans/decision-science/phase-1/
 # replay-determinism-anchor/plan.md §Why and §Risk callouts.
 #
-# _PARITY_DECISION_COLUMNS: the five decision-content columns Gate-1 asserts
-#   on — must be bit-identical across two replays of the same cycle_id.
+# _PARITY_DECISION_COLUMNS: decision-content columns Gate-1 asserts on —
+#   must be bit-identical across two replays of the same cycle_id.
 #   Includes second-window residue (cvar_5pct_long, cvar_n_tail_long) per
-#   council §B.6 and synthesis §A.8 A3 binding.
+#   council §B.6 and synthesis §A.8 A3 binding; and the regime-match
+#   telemetry pair (mc_regime_match_mean_dist2, mc_regime_match_suppressed)
+#   per rev-mc Observation 1 so suppression flips are directly auditable.
 #
 # _PARITY_EXCLUDE_COLUMNS: columns legitimately different across replays —
 #   id (AUTOINCREMENT, replay inserts a new row), ts_utc (wall-clock stamp),
