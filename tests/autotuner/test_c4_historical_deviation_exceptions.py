@@ -43,13 +43,17 @@ def _import_autotuner():
 
 @pytest.fixture
 def deviation_workdir(tmp_path, monkeypatch):
-    """Run calculate_historical_deviation inside an isolated working directory.
+    """Run calculate_historical_deviation against an isolated post-mortem dir.
 
-    calculate_historical_deviation calls `glob.glob("post_mortem_*.json")` —
-    relative to the process CWD. Each test populates `tmp_path` with the
-    post-mortem files it needs, then chdir's there. Scope: function — each test
-    gets a fresh, isolated directory; no shared module-level state.
+    Post PERF-007, calculate_historical_deviation resolves its glob through
+    the `POST_MORTEM_DIR` env override (or the absolute `_POST_MORTEM_DIR`
+    default) — NOT the process CWD. This fixture writes post-mortems into
+    `tmp_path` and points the env override there so the function consumes
+    them. We also chdir so any incidental CWD-relative reads (logs, side
+    files) stay inside the sandbox. Scope: function — each test gets a
+    fresh, isolated directory; no shared module-level state.
     """
+    monkeypatch.setenv("POST_MORTEM_DIR", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -286,7 +290,9 @@ def test_keyboard_interrupt_is_not_swallowed(deviation_workdir, monkeypatch):
 
     def interrupting_open(path, *args, **kwargs):
         # Only interrupt on the post-mortem read; leave any other open() intact.
-        if isinstance(path, str) and path.startswith("post_mortem_"):
+        # Post PERF-007 the path is absolute (anchored to the resolved
+        # POST_MORTEM_DIR), so match on the filename component, not a prefix.
+        if isinstance(path, str) and pathlib.Path(path).name.startswith("post_mortem_"):
             raise KeyboardInterrupt("simulated operator interrupt during file read")
         return real_open(path, *args, **kwargs)
 
