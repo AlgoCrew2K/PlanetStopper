@@ -1751,7 +1751,9 @@ def api_performance():
             }
         ), 400
 
-    history = analytics.get_history_with_cache_invalidation(days=days)
+    history = analytics.get_history_with_cache_invalidation(
+        days=days, base_dir=analytics._POST_MORTEMS_DIR
+    )
 
     if scope == "aggregate":
         dates, live_returns, shadow_returns = analytics.compute_aggregate_returns(history)
