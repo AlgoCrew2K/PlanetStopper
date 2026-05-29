@@ -96,7 +96,7 @@ There are also tabs for autotuner history, AI advisor observations, performance 
 
 When any of the four exit triggers fires, the bot:
 
-1. Picks the canonical winner via [`resolve_trigger_priority`](math_engine.py) (`math_engine.py:736-759`). Order: VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop.
+1. Picks the canonical winner via [`resolve_trigger_priority`](math_engine.py) (`math_engine.py:836-859`). Order: VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop.
 2. Records the winner AND every co-fired trigger as telemetry (so a reviewer can see when multiple signals aligned).
 3. If `LIVE_EXECUTION=True`, fires a POST to Composer's liquidation endpoint with exponential backoff (1s, 2s, 4s, 10s) for resilience against HTTP 429.
 4. Posts a Discord webhook with the exit reason, Guard Alpha metrics (how much was saved vs holding to close), VWAP statistics, and a QuickChart summary.
@@ -143,7 +143,7 @@ stop_distance = base_stop × symphony_vol_20d × dynamic_multiplier
                                        (shrinks through the day; see §3.7)
 ```
 
-The active stop is computed by `compute_active_trailing_stop` at [`math_engine.py:245-289`](math_engine.py). The 20-day window is at [`math_engine.py:62`](math_engine.py). Reference: Andersen & Bollerslev (1997) and the RiskMetrics Technical Document (1996).
+The active stop is computed by `compute_active_trailing_stop` at [`math_engine.py:328-372`](math_engine.py). The 20-day window is at [`math_engine.py:62`](math_engine.py). Reference: Andersen & Bollerslev (1997) and the RiskMetrics Technical Document (1996).
 
 **Soundness verdict.** Mainstream and sound; the 20-day window is textbook standard. The two ratchets stacked on top (log-time squeeze and parabolic) are practitioner heuristics with provenance work scheduled but not shipped — see §[3.7](#37-volatility-scaling-time-squeeze-parabolic-ratchet--practitioner-heuristics-with-provenance-gaps).
 
@@ -157,7 +157,7 @@ AlphaBot's CVaR is computed from the **150 historically-most-similar days** to t
 CVaR_5%  ≈  mean( worst 5% of returns in the 150 nearest-neighbor days )
 ```
 
-The estimator is the general-distribution form (Rockafellar-Uryasev 2002), which works correctly on discrete pools with possible ties — the right pick for a 150-day empirical sample. The implementation is `compute_portfolio_cvar` at [`math_engine.py:1185-1345`](math_engine.py), and the typed result is `CVaRAssessment` at [`math_engine.py:120-152`](math_engine.py). The fail-safe invariant (`cvar_pct=None → breach=False`) is enforced in `__post_init__` ([`math_engine.py:139-146`](math_engine.py)) so an absent estimate can never *cause* a trigger.
+The estimator is the general-distribution form (Rockafellar-Uryasev 2002), which works correctly on discrete pools with possible ties — the right pick for a 150-day empirical sample. The implementation is `compute_portfolio_cvar` at [`math_engine.py:1391-1549`](math_engine.py), and the typed result is `CVaRAssessment` at [`math_engine.py:141-188`](math_engine.py). The fail-safe invariant (`cvar_pct=None → breach=False`) is enforced in `__post_init__` ([`math_engine.py:162-169`](math_engine.py)) so an absent estimate can never *cause* a trigger.
 
 References: Rockafellar & Uryasev (2000, 2002); Acerbi & Tasche (2002) — the latter establishes CVaR as a *coherent* risk measure where VaR is not.
 
@@ -176,7 +176,7 @@ prob_beating(today) = mean over 5000 bootstrap paths from 150 kNN-matched days
                       of [ end-of-day return > current return ]
 ```
 
-The implementation is `run_monte_carlo` at [`math_engine.py:772-900`](math_engine.py). The eligible-pool boundary requires at least 39 raw days of history before MC will return a value ([`math_engine.py:798-811`](math_engine.py)) — 20 days for the kNN match plus 19 days of rolling-vol warmup. If a symphony has less than 39 days, MC returns `None` (the `MC_INSUFFICIENT_HISTORY_SENTINEL`) and the protective stop fires on ticks-below-stop alone — the fail-safe floor described in §[4.7](#47-fail-safe-floor--the-trailing-stop-fires-even-when-upstream-signals-are-silent).
+The implementation is `run_monte_carlo` at [`math_engine.py:979-1101`](math_engine.py). The eligible-pool boundary requires at least 39 raw days of history before MC will return a value ([`math_engine.py:1012-1013`](math_engine.py)) — 20 days for the kNN match plus 19 days of rolling-vol warmup. If a symphony has less than 39 days, MC returns `None` (the `MC_INSUFFICIENT_HISTORY_SENTINEL`) and the protective stop fires on ticks-below-stop alone — the fail-safe floor described in §[4.7](#47-fail-safe-floor--the-trailing-stop-fires-even-when-upstream-signals-are-silent).
 
 References: Glasserman (2003) *Monte Carlo Methods in Financial Engineering*; Efron (1979) for the bootstrap; Kaminski & Lo (2014) for the regime caveat — stops add value under momentum and subtract under random walks, and the MC veto's behavior depends on which regime is in force.
 
@@ -195,7 +195,7 @@ For each daily return r_i:
 t-stat = mean(U) / ( sd(U, ddof=1) / sqrt(T) )       # one-sample t for a mean-valued objective
 ```
 
-The implementations are `compute_crra_utility` and `compute_crra_eu_objective` at [`math_engine.py:1348-1404`](math_engine.py); the t-stat is `compute_crra_eu_tstat` at [`autotuner.py:367-400`](autotuner.py). The wealth-argument floor of 0.001 is applied to **input W** only, never to output U — flooring U would inflate the t-stat anti-conservatively (the H-6 category-error precedent the docstring names explicitly).
+The implementations are `compute_crra_utility` and `compute_crra_eu_objective` at [`math_engine.py:1552-1608`](math_engine.py); the t-stat is `compute_crra_eu_tstat` at [`autotuner.py:367-400`](autotuner.py). The wealth-argument floor of 0.001 is applied to **input W** only, never to output U — flooring U would inflate the t-stat anti-conservatively (the H-6 category-error precedent the docstring names explicitly).
 
 Why CRRA over Sharpe ratio? Sharpe is symmetric — it treats a +2σ outcome and a -2σ outcome as equally good once squared. CRRA does not: it penalizes large losses more than equally-sized gains because `(1+r)^(1-γ)` is concave for γ > 0. For a risk overlay whose explicit job is "make sure a loss doesn't blow up the account," concave utility is the correct shape.
 
@@ -269,7 +269,7 @@ should_para_arm = (velocity ≥ PARABOLIC_VELOCITY_THRESHOLD) and not currently_
 
 The vol-scaling and 20-day window are anchored by Andersen & Bollerslev (1997) and RiskMetrics (1996) — mainstream. The 14-day ATR underneath uses Wilder (1978) — also mainstream. The **time-squeeze curve** is now first-principles-derived (M3 redrive, Danielsson & Zigrand 2003). The **PARA-ARM cross-day reset behavior** (where `prev_return=0` at the start of each new day means any symphony opening above 2% auto-arms PARA on the first cycle) still has no published precedent and remains a practitioner heuristic pending a future derivation cycle.
 
-The relevant code: [`math_engine.py:155-171`](math_engine.py) (time-squeeze constants + provenance), [`math_engine.py:211-244`](math_engine.py) (`compute_time_squeeze_decay`), [`math_engine.py:185-208`](math_engine.py) (`compute_para_arm_decision`), [`math_engine.py:903-960`](math_engine.py) (20-day vol).
+The relevant code: [`math_engine.py:231-250`](math_engine.py) (time-squeeze constants + provenance), [`math_engine.py:294-325`](math_engine.py) (`compute_time_squeeze_decay`), [`math_engine.py:268-291`](math_engine.py) (`compute_para_arm_decision`), [`math_engine.py:1104-1136`](math_engine.py) (20-day vol).
 
 References: Andersen & Bollerslev (1997) *Journal of Empirical Finance*; J.P. Morgan / Reuters (1996) *RiskMetrics Technical Document*; Wilder (1978) *New Concepts in Technical Trading Systems*; Kestner (2003) *Quantitative Trading Strategies*; Danielsson & Zigrand (2003) *On time-scaling of risk and the square-root-of-time rule*, LSE FMG DP-439.
 
@@ -293,7 +293,7 @@ This section answers the *why* behind the major design choices. Each subsection 
 
 ### 4.2 Four exit triggers fed by independent risk signals
 
-**The choice.** AlphaBot resolves every exit through `resolve_trigger_priority` ([`math_engine.py:736-759`](math_engine.py)) using exactly **four canonical exit triggers**: VWAP Breakdown, Take-Profit, VWAP Bleed Cut, and Trailing Stop. The resolver picks the canonical winner via a fixed priority order (`VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop`) and reports every co-fired trigger as telemetry alongside the winner.
+**The choice.** AlphaBot resolves every exit through `resolve_trigger_priority` ([`math_engine.py:836-859`](math_engine.py)) using exactly **four canonical exit triggers**: VWAP Breakdown, Take-Profit, VWAP Bleed Cut, and Trailing Stop. The resolver picks the canonical winner via a fixed priority order (`VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop`) and reports every co-fired trigger as telemetry alongside the winner.
 
 **The alternative considered.** A single "master signal" produced by combining all the underlying math into one number — for example, a logistic regression over the four flags, or a learned classifier. AlphaBot explicitly does not do this.
 
@@ -355,7 +355,7 @@ See §[7](#7-ai-advisor--the-three-producers) for what each of the three produce
 
 **The rationale.** A fresh symphony deployed mid-month without sufficient history cannot run a regime-locality MC. The two design options were (a) hold all positions until MC is available, or (b) fire the trailing stop on ticks-below-stop alone and allow the protective floor to do its job without the MC sanity gate. AlphaBot chose (b). The operator is **never** exposed to a "MC said hold, so we held into a -20% day" failure mode. This realizes the user's "accuracy + performance over speed" tenet: the bot won't return a fast-but-garbage MC probability; it returns `None` and the heuristic floor fires.
 
-The fail-safe code anchor: [`math_engine.py:425-428`](math_engine.py) — when `prob_beating is None`, the MC sanity gate **passes** (i.e., does not block the exit), so the trailing-stop-hit propagates to the priority resolver. The MC sentinel cannot suppress the protective stop.
+The fail-safe code anchor: [`math_engine.py:508`](math_engine.py) — when `prob_beating is None`, the MC sanity gate **passes** (i.e., does not block the exit), so the trailing-stop-hit propagates to the priority resolver. The MC sentinel cannot suppress the protective stop.
 
 ---
 
@@ -389,7 +389,7 @@ prob_beating = math_engine.run_monte_carlo(
     seed=derive_cycle_mc_seed(cycle_id),
 )
 ```
-([`alpha_bot_execution.py:1112-1119`](alpha_bot_execution.py), [`math_engine.py:762-769`](math_engine.py))
+([`alpha_bot_execution.py:1112-1119`](alpha_bot_execution.py), [`math_engine.py:862-869`](math_engine.py))
 
 `derive_cycle_mc_seed` SHA-256s the `cycle_id` (YYYYMMDD_HHMM) into a 64-bit space so two daemon restarts at the same `:00` produce identical MC results — auditability.
 
@@ -402,9 +402,9 @@ In order:
 1. **Vol-scaling.** `symphony_vol_20d = calculate_20d_vol(historical_data)` ([`math_engine.py:903-960`](math_engine.py)). This sets the base width of the trailing stop band.
 2. **Log time-squeeze decay.** `dynamic_multiplier, dynamic_min_stop = compute_time_squeeze_decay(time_ratio)` ([`math_engine.py:211-242`](math_engine.py)). The stop band shrinks through the day.
 3. **Parabolic ratchet.** `should_para_arm = compute_para_arm_decision(velocity, ...)` ([`math_engine.py:185-208`](math_engine.py)). If `velocity ≥ PARABOLIC_VELOCITY_THRESHOLD` and not already armed, the parabolic-squeeze multiplier activates and the stop tightens further.
-4. **Breakeven lock.** `(new_hold_ticks, new_breakeven_locked, stop_trigger_level) = compute_breakeven_update(...)` ([`math_engine.py:292-365`](math_engine.py)). Once locked, the stop never drops below entry — `breakeven_locked=True` is monotone.
-5. **VWAP×2.** `compute_vwap_breakdown_update(...)` returns `(new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken)`. Both are gated by `VWAP_CROSS_HWM_PCT` and `compute_vwap_bleed_arm_threshold(symphony_vol, bleed_multiplier)` ([`alpha_bot_execution.py:1307-1321`](alpha_bot_execution.py)). Suppressed during the post-open 15-minute grace window ([`math_engine.py:700-723`](math_engine.py)).
-6. **MC gating.** `compute_exit_confirmation(...)` ([`math_engine.py:374-435`](math_engine.py)) requires 3 consecutive ticks below the stop line (with a 0.10% magnitude floor) AND a Monte Carlo sanity gate (probability under 60% to permit exit). When MC is `None`, the gate passes (fail-safe).
+4. **Breakeven lock.** `(new_hold_ticks, new_breakeven_locked, stop_trigger_level) = compute_breakeven_update(...)` ([`math_engine.py:375-448`](math_engine.py)). Once locked, the stop never drops below entry — `breakeven_locked=True` is monotone.
+5. **VWAP×2.** `compute_vwap_breakdown_update(...)` returns `(new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken)`. Both are gated by `VWAP_CROSS_HWM_PCT` and `compute_vwap_bleed_arm_threshold(symphony_vol, bleed_multiplier)` ([`alpha_bot_execution.py:1307-1321`](alpha_bot_execution.py)). Suppressed during the post-open 15-minute grace window ([`math_engine.py:792-823`](math_engine.py)).
+6. **MC gating.** `compute_exit_confirmation(...)` ([`math_engine.py:457-518`](math_engine.py)) requires 3 consecutive ticks below the stop line (with a 0.10% magnitude floor) AND a Monte Carlo sanity gate (probability under 60% to permit exit). When MC is `None`, the gate passes (fail-safe).
 
 ### Step 5 — Compute the four exit-trigger flags
 
@@ -425,13 +425,13 @@ if is_trailing_stop_hit or tp_triggered_now or is_vwap_broken or is_vwap_bleed_b
         is_trailing_stop_hit=is_trailing_stop_hit,
     )
 ```
-([`alpha_bot_execution.py:1428-1441`](alpha_bot_execution.py))
+([`alpha_bot_execution.py:1478-1491`](alpha_bot_execution.py))
 
-The resolver picks the winner per `_TRIGGER_PRIORITY_ORDER` ([`math_engine.py:728-733`](math_engine.py)) and returns `(winner, also_true)` so the persisted record retains every co-fired flag.
+The resolver picks the winner per `_TRIGGER_PRIORITY_ORDER` ([`math_engine.py:826-833`](math_engine.py)) and returns `(winner, also_true)` so the persisted record retains every co-fired flag.
 
 ### Step 7 — Queue + drain
 
-If a trigger fired, append to `execution_queue` ([`alpha_bot_execution.py:1459-1469`](alpha_bot_execution.py)) with the winner reason + `also_true` co-fires + the symphony state snapshot. The queue is drained once at the end of the symphony pass — Composer's liquidation endpoint is called with exponential backoff (1s, 2s, 4s, 10s).
+If a trigger fired, append to `execution_queue` ([`alpha_bot_execution.py:1509-1530`](alpha_bot_execution.py)) with the winner reason + `also_true` co-fires + the symphony state snapshot. The queue is drained once at the end of the symphony pass — Composer's liquidation endpoint is called with exponential backoff (1s, 2s, 4s, 10s).
 
 If no trigger fired, the loop ends with a `record_cvar_diagnostic` telemetry write (populated from `compute_portfolio_cvar`; CVaR is diagnostic-only and never a trigger) and "no-action" reduces to a state-update pass.
 
@@ -673,8 +673,8 @@ Schema migrations live in `migrations/` as numbered SQL files (`001_*.sql` throu
 ### The fail-safe pattern
 
 Across every math surface, the design rule is: **if the upstream signal is unavailable, fail safe.** Specifically:
-- MC `prob_beating = None` → the trailing-stop confirmation gate **passes** (allows exit) ([`math_engine.py:425-428`](math_engine.py)).
-- CVaR `cvar_pct = None` → `breach = False` is forced by `CVaRAssessment.__post_init__` ([`math_engine.py:139-146`](math_engine.py)).
+- MC `prob_beating = None` → the trailing-stop confirmation gate **passes** (allows exit) ([`math_engine.py:508`](math_engine.py)).
+- CVaR `cvar_pct = None` → `breach = False` is forced by `CVaRAssessment.__post_init__` ([`math_engine.py:162-169`](math_engine.py)).
 - NaN/Inf at any math boundary → rejected via input validation.
 
 This is the F-4 hazard guarantee from the decision-science roadmap.
