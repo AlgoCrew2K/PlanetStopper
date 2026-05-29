@@ -1,4 +1,4 @@
-# AlphaBot v3 — Audit Reports Index
+# Planet Stopper — Audit Reports Index
 
 Cross-cycle audit reports are commissioned at the close of each sprint. Each report covers the full delta since the prior sprint tip, auditing code correctness, architectural drift, type-design, naming hygiene, test quality, provenance gaps, and documentation drift.
 

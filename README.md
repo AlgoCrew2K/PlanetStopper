@@ -1,13 +1,13 @@
-# AlphaBot v3 — Disciplined Trailing-Stop Risk Engine for Composer.trade
+# Planet Stopper — Disciplined Trailing-Stop Risk Engine for Composer.trade
 
-> A risk engine for retail Composer.trade operators. Composer holds a basket of "symphonies" (rule-based ETF rotation strategies) through the day; AlphaBot watches each one minute-by-minute and exits to cash when the math says the day's gain is at risk. The math combines four ways of catching a turn — a volatility-scaled trailing stop, a VWAP breakdown defender, a VWAP bleed-cut for slow drifts, and a take-profit trigger on exceptional moves — each gated by a Monte Carlo "is today actually bad?" sanity check against 125 days of regime-matched history. Behind the scenes the autotuner uses 500 walk-forward trials per symphony with risk-aversion-shaped utility (CRRA) and a Harvey-Liu / Benjamini-Hochberg overfitting haircut that rejects parameter sets it can't statistically distinguish from noise. Three AI Advisors flag overfitting risk, spec-bundle integrity, and (when enabled) divergence between two CVaR windows. The operator gets institutional-grade exit discipline without writing any of it themselves.
+> A risk engine for retail Composer.trade operators. Composer holds a basket of "symphonies" (rule-based ETF rotation strategies) through the day; Planet Stopper watches each one minute-by-minute and exits to cash when the math says the day's gain is at risk. The math combines four ways of catching a turn — a volatility-scaled trailing stop, a VWAP breakdown defender, a VWAP bleed-cut for slow drifts, and a take-profit trigger on exceptional moves — each gated by a Monte Carlo "is today actually bad?" sanity check against 125 days of regime-matched history. Behind the scenes the autotuner uses 500 walk-forward trials per symphony with risk-aversion-shaped utility (CRRA) and a Harvey-Liu / Benjamini-Hochberg overfitting haircut that rejects parameter sets it can't statistically distinguish from noise. Three AI Advisors flag overfitting risk, spec-bundle integrity, and (when enabled) divergence between two CVaR windows. The operator gets institutional-grade exit discipline without writing any of it themselves.
 
 ---
 
 ## Table of contents
 
 1. [Should I run this?](#1-should-i-run-this)
-2. [How AlphaBot operates — the operator's view](#2-how-alphabot-operates--the-operators-view)
+2. [How Planet Stopper operates — the operator's view](#2-how-planet-stopper-operates--the-operators-view)
 3. [The math, explained simply](#3-the-math-explained-simply)
    - [3.1 Trailing stops with regime awareness](#31-trailing-stops-with-regime-awareness)
    - [3.2 CVaR vs VaR — measuring tail risk](#32-cvar-vs-var--measuring-tail-risk)
@@ -45,13 +45,13 @@ This section is a frank decision-helper, not a sales pitch. Read it before runni
 - You hold each symphony through the day and accept that Composer itself does not actively manage intraday drawdowns. You'd like a tool that watches the symphony minute-by-minute and liquidates to cash when the math says the day's gain is at risk.
 - You're comfortable running a Python daemon on a machine you control (a home server, a small VPS, a workstation that's on during US market hours).
 - You can hold an **Alpaca** data subscription so the bot can pull 1-minute prices for the underlying ETFs.
-- You're prepared to read a dashboard and intervene if needed. AlphaBot is an exit-discipline overlay, not a hands-off product.
+- You're prepared to read a dashboard and intervene if needed. Planet Stopper is an exit-discipline overlay, not a hands-off product.
 
 ### Who this is NOT for
 
-- You want a bot that **enters** positions, picks symbols, or chooses what to hold. AlphaBot does none of those things. Position entry and sizing are entirely Composer's responsibility; AlphaBot only decides when to exit.
+- You want a bot that **enters** positions, picks symbols, or chooses what to hold. Planet Stopper does none of those things. Position entry and sizing are entirely Composer's responsibility; Planet Stopper only decides when to exit.
 - You want a high-frequency intraday trader. The cadence is one decision per minute per symphony — appropriate for end-of-day equity ETFs, not for futures or crypto.
-- You want a single signed "buy/sell with confidence X" number from a forecasting model. AlphaBot deliberately surfaces multiple independent signals and lets the operator (and the priority resolver) reconcile them. There is no master forecast.
+- You want a single signed "buy/sell with confidence X" number from a forecasting model. Planet Stopper deliberately surfaces multiple independent signals and lets the operator (and the priority resolver) reconcile them. There is no master forecast.
 - You're not prepared to read a dashboard or investigate alerts. The bot will fire exits on its own once configured, but it expects an attentive operator on the other side of the Discord webhook.
 - You expect academic-grade certainty from every layer. A few of the heuristics (log-time-squeeze curve, VWAP gate thresholds) are practitioner-grade and have provenance work scheduled but not shipped — see §[3.7](#37-volatility-scaling-time-squeeze-parabolic-ratchet--practitioner-heuristics-with-provenance-gaps) and §[12](#12-open-questions--known-limits).
 
@@ -68,9 +68,9 @@ Run the daemon in `LIVE_EXECUTION=False` (paper mode) for at least two weeks aga
 
 ---
 
-## 2. How AlphaBot operates — the operator's view
+## 2. How Planet Stopper operates — the operator's view
 
-This section describes a day with AlphaBot running, from the operator's perspective. The technical details are in §[10 Architecture](#10-architecture-for-the-technically-curious).
+This section describes a day with Planet Stopper running, from the operator's perspective. The technical details are in §[10 Architecture](#10-architecture-for-the-technically-curious).
 
 ### The :00 tick
 
@@ -121,7 +121,7 @@ The operator reads these on the `/ai-advisor` tab. They never act on the operato
 
 ## 3. The math, explained simply
 
-This section walks each math surface AlphaBot uses, with a plain-English explanation first and a formula afterward. Each surface cites a published reference, the exact code location, and a soundness verdict from the math review at [`docs/audit/vision-audit-2026-05-27/math-soundness.md`](docs/audit/vision-audit-2026-05-27/math-soundness.md).
+This section walks each math surface Planet Stopper uses, with a plain-English explanation first and a formula afterward. Each surface cites a published reference, the exact code location, and a soundness verdict from the math review at [`docs/audit/vision-audit-2026-05-27/math-soundness.md`](docs/audit/vision-audit-2026-05-27/math-soundness.md).
 
 A note on jargon. Several terms are defined inline on first use:
 - **γ (gamma)** — the risk-aversion parameter in CRRA utility. Higher γ means the operator is more averse to large losses.
@@ -135,7 +135,7 @@ A note on confidence. The math review at [`docs/audit/vision-audit-2026-05-27/ma
 
 ### 3.1 Trailing stops with regime awareness
 
-**Plain English.** A trailing stop is a stop-loss that moves up as the price rises but never moves down. When the price falls back to the stop, the bot exits to cash. AlphaBot's trailing stop is **volatility-scaled**: in a quiet symphony the stop is tighter; in a noisy symphony the stop is wider, so background noise doesn't trip an exit. The default volatility window is 20 trading days — the institutional standard, anchored by the RiskMetrics technical document.
+**Plain English.** A trailing stop is a stop-loss that moves up as the price rises but never moves down. When the price falls back to the stop, the bot exits to cash. Planet Stopper's trailing stop is **volatility-scaled**: in a quiet symphony the stop is tighter; in a noisy symphony the stop is wider, so background noise doesn't trip an exit. The default volatility window is 20 trading days — the institutional standard, anchored by the RiskMetrics technical document.
 
 ```text
 stop_distance = base_stop × symphony_vol_20d × dynamic_multiplier
@@ -151,7 +151,7 @@ The active stop is computed by `compute_active_trailing_stop` at [`math_engine.p
 
 **Plain English.** VaR (Value-at-Risk) at 5% answers: "How bad is the worst-case 1-in-20 day, roughly?" CVaR at 5% answers a strictly more useful question: "When that 1-in-20 day actually happens, how bad is it **on average**?" CVaR is the average loss in the worst 5% of outcomes. It's a more honest tail-risk number because it doesn't get confused when the loss distribution has a fat tail — VaR can flatline at the 5th percentile and miss a much worse 1st-percentile catastrophe; CVaR averages across them all.
 
-AlphaBot's CVaR is computed from the **150 historically-most-similar days** to today (a k-Nearest-Neighbors regime match on SPY return + rolling vol), not from the unconditional history. This gives a regime-aware tail estimate.
+Planet Stopper's CVaR is computed from the **150 historically-most-similar days** to today (a k-Nearest-Neighbors regime match on SPY return + rolling vol), not from the unconditional history. This gives a regime-aware tail estimate.
 
 ```text
 CVaR_5%  ≈  mean( worst 5% of returns in the 150 nearest-neighbor days )
@@ -184,7 +184,7 @@ References: Glasserman (2003) *Monte Carlo Methods in Financial Engineering*; Ef
 
 ### 3.4 CRRA-EU — picking parameters that protect against catastrophes
 
-**Plain English.** When the autotuner picks parameters, it doesn't just look for the trial with the highest average return — that would ignore risk. It uses **CRRA utility**, which is a textbook formula for an investor who hates losses more than they love equally-sized gains. Concretely: each daily return gets converted into a "utility score" with diminishing marginal benefit. A +2% day is worth more than zero, but a -2% day is worth MORE than -2% worth of bad. The autotuner picks the parameter set whose mean utility is highest — the configuration that produces the best risk-adjusted experience, not the highest raw return. The shape is set by **γ (gamma)**, where higher γ means more loss-averse; AlphaBot's default lives near γ=2, a moderately risk-averse retail investor.
+**Plain English.** When the autotuner picks parameters, it doesn't just look for the trial with the highest average return — that would ignore risk. It uses **CRRA utility**, which is a textbook formula for an investor who hates losses more than they love equally-sized gains. Concretely: each daily return gets converted into a "utility score" with diminishing marginal benefit. A +2% day is worth more than zero, but a -2% day is worth MORE than -2% worth of bad. The autotuner picks the parameter set whose mean utility is highest — the configuration that produces the best risk-adjusted experience, not the highest raw return. The shape is set by **γ (gamma)**, where higher γ means more loss-averse; Planet Stopper's default lives near γ=2, a moderately risk-averse retail investor.
 
 ```text
 For each daily return r_i:
@@ -201,11 +201,11 @@ Why CRRA over Sharpe ratio? Sharpe is symmetric — it treats a +2σ outcome and
 
 References: Pratt (1964) *Econometrica* (introduces CRRA); Merton (1969) and Samuelson (1969) *Review of Economics & Statistics* (the log-utility limit via L'Hôpital).
 
-**Soundness verdict.** Strong. CRRA is the textbook formalization of risk aversion and serves AlphaBot's "capital preservation" mandate directly. The math review notes one open product decision: should γ be documented as `γ=2` in user-facing copy, or surfaced as a configurable parameter? Currently γ lives in the Optuna search-space lower bound + the spec-bundle THEORY-frozen facet — see §[12](#12-open-questions--known-limits) OQ-11.
+**Soundness verdict.** Strong. CRRA is the textbook formalization of risk aversion and serves Planet Stopper's "capital preservation" mandate directly. The math review notes one open product decision: should γ be documented as `γ=2` in user-facing copy, or surfaced as a configurable parameter? Currently γ lives in the Optuna search-space lower bound + the spec-bundle THEORY-frozen facet — see §[12](#12-open-questions--known-limits) OQ-11.
 
 ### 3.5 Walk-forward + BHY haircut — not getting fooled by overfitting
 
-**Plain English.** Run 500 random parameter sets and the BEST of them is, on average, much better than it deserves to be — by luck alone. This is the *multiple-testing problem* and it is the central failure mode of every "I backtested 500 strategies and picked the winner" trading research process. AlphaBot corrects for it using the **BHY haircut**, named after Benjamini, Hochberg, and Yekutieli (2001). After 500 trials, the bar that any candidate must clear is RAISED in proportion to how many trials were run. If the raw winning trial doesn't clear the raised bar, the autotuner refuses to deploy and keeps the previous parameters.
+**Plain English.** Run 500 random parameter sets and the BEST of them is, on average, much better than it deserves to be — by luck alone. This is the *multiple-testing problem* and it is the central failure mode of every "I backtested 500 strategies and picked the winner" trading research process. Planet Stopper corrects for it using the **BHY haircut**, named after Benjamini, Hochberg, and Yekutieli (2001). After 500 trials, the bar that any candidate must clear is RAISED in proportion to how many trials were run. If the raw winning trial doesn't clear the raised bar, the autotuner refuses to deploy and keeps the previous parameters.
 
 There's also a tripwire — **`N_effective`**. If a researcher manually tried more variants offline before submitting to the autotuner, those count toward the bar too. So you can't game the test by pre-filtering parameters by hand.
 
@@ -224,11 +224,11 @@ Walk-forward methodology: 125 trading days split 60% train / 20% validation / 20
 
 References: Benjamini, Hochberg & Yekutieli (2001) *Annals of Statistics*; Harvey & Liu (2015) *Journal of Portfolio Management* (BHY for trading backtests); Bailey, Borwein, López de Prado & Zhu (2014) *Journal of Computational Finance* (Probability of Backtest Overfitting); López de Prado (2018) *Advances in Financial Machine Learning* Ch. 7 (purge + embargo).
 
-**Soundness verdict.** This is the **strongest single piece of math** in the engine. It is the operator-trust mechanism. The 125-day window is short by published walk-forward standards (Pardo 2008 recommends 5-10 rolling folds; AlphaBot uses 1) — after purge=20 at both fold boundaries, the validation and frozen-eval windows shrink to ~4-5 usable days each, giving the frozen-eval t-stat a wide error bar. The window size is acknowledged in code at [`autotuner.py:1301-1307`](autotuner.py). See §[12](#12-open-questions--known-limits) for the open product decision on extending it. The math is sound; the calibration window is statistically thin — both can be true simultaneously.
+**Soundness verdict.** This is the **strongest single piece of math** in the engine. It is the operator-trust mechanism. The 125-day window is short by published walk-forward standards (Pardo 2008 recommends 5-10 rolling folds; Planet Stopper uses 1) — after purge=20 at both fold boundaries, the validation and frozen-eval windows shrink to ~4-5 usable days each, giving the frozen-eval t-stat a wide error bar. The window size is acknowledged in code at [`autotuner.py:1301-1307`](autotuner.py). See §[12](#12-open-questions--known-limits) for the open product decision on extending it. The math is sound; the calibration window is statistically thin — both can be true simultaneously.
 
 ### 3.6 NN1 spec-freeze — fingerprinting our backtests for honesty
 
-**Plain English.** Each parameter in the bot is "frozen" for a reason — and that reason is recorded as a `freeze_discipline` enum value. There are **six allowed reasons** (THEORY, MANDATE, STYLIZED_FACT, POLITIS_WHITE, CADENCE, CALIBRATION) and **one banned reason** (`BACKTEST_SELECTION`). The bot's autotuner refuses to deploy a parameter set if any constant was frozen for the banned reason. This prevents the most common form of self-deception in trading research: cherry-picking parameters because the historical P&L looked good with them. NN1 is the **structural guarantee** that AlphaBot's parameters have a non-circular justification.
+**Plain English.** Each parameter in the bot is "frozen" for a reason — and that reason is recorded as a `freeze_discipline` enum value. There are **six allowed reasons** (THEORY, MANDATE, STYLIZED_FACT, POLITIS_WHITE, CADENCE, CALIBRATION) and **one banned reason** (`BACKTEST_SELECTION`). The bot's autotuner refuses to deploy a parameter set if any constant was frozen for the banned reason. This prevents the most common form of self-deception in trading research: cherry-picking parameters because the historical P&L looked good with them. NN1 is the **structural guarantee** that Planet Stopper's parameters have a non-circular justification.
 
 ```text
 NN1_HONEST_DISCIPLINES = frozenset({
@@ -285,7 +285,7 @@ This section answers the *why* behind the major design choices. Each subsection 
 
 ### 4.1 Symphony-level only, not portfolio-level
 
-**The choice.** Every decision AlphaBot makes is keyed to a single Composer symphony, not to a portfolio aggregate. If you have three symphonies in one Composer account, AlphaBot makes three independent exit decisions per minute — never a fourth "portfolio-level" decision.
+**The choice.** Every decision Planet Stopper makes is keyed to a single Composer symphony, not to a portfolio aggregate. If you have three symphonies in one Composer account, Planet Stopper makes three independent exit decisions per minute — never a fourth "portfolio-level" decision.
 
 **The alternative considered.** A "port-level" decision math layer that aggregated symphony state into a portfolio view and made one exit-or-hold call across the whole account. This existed earlier in the project's life.
 
@@ -295,9 +295,9 @@ This section answers the *why* behind the major design choices. Each subsection 
 
 ### 4.2 Four exit triggers fed by independent risk signals
 
-**The choice.** AlphaBot resolves every exit through `resolve_trigger_priority` ([`math_engine.py:836-859`](math_engine.py)) using exactly **four canonical exit triggers**: VWAP Breakdown, Take-Profit, VWAP Bleed Cut, and Trailing Stop. The resolver picks the canonical winner via a fixed priority order (`VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop`) and reports every co-fired trigger as telemetry alongside the winner.
+**The choice.** Planet Stopper resolves every exit through `resolve_trigger_priority` ([`math_engine.py:836-859`](math_engine.py)) using exactly **four canonical exit triggers**: VWAP Breakdown, Take-Profit, VWAP Bleed Cut, and Trailing Stop. The resolver picks the canonical winner via a fixed priority order (`VWAP Breakdown > Take-Profit > VWAP Bleed Cut > Trailing Stop`) and reports every co-fired trigger as telemetry alongside the winner.
 
-**The alternative considered.** A single "master signal" produced by combining all the underlying math into one number — for example, a logistic regression over the four flags, or a learned classifier. AlphaBot explicitly does not do this.
+**The alternative considered.** A single "master signal" produced by combining all the underlying math into one number — for example, a logistic regression over the four flags, or a learned classifier. Planet Stopper explicitly does not do this.
 
 **The rationale — democratizing decision-making.** Four independent signals catch different failure modes. VWAP Breakdown catches a sharp liquidity event; Take-Profit captures an exceptional upside that the regime would not normally sustain; VWAP Bleed Cut catches a slow erosion that a sharp-cross detector would miss; Trailing Stop catches everything else. By reporting **all** triggers that co-fired (not just the winner), the operator can distinguish a high-conviction "all four fired at once" exit from a single-signal noise spike. A single master signal would discard this information.
 
@@ -323,7 +323,7 @@ This section answers the *why* behind the major design choices. Each subsection 
 
 ### 4.4 Diagnostic-only CVaR — and why we rejected CVaR-divergence detectors
 
-**The choice.** AlphaBot computes CVaR (Conditional Value-at-Risk, see §[3.2](#32-cvar-vs-var--measuring-tail-risk)) as an **operator diagnostic** that surfaces on the dashboard alongside live exit signals. CVaR is **never** a live trigger. The operator sees CVaR and can decide independently to pause new positions, reduce size, or close on intuition — but the bot does not act on CVaR autonomously.
+**The choice.** Planet Stopper computes CVaR (Conditional Value-at-Risk, see §[3.2](#32-cvar-vs-var--measuring-tail-risk)) as an **operator diagnostic** that surfaces on the dashboard alongside live exit signals. CVaR is **never** a live trigger. The operator sees CVaR and can decide independently to pause new positions, reduce size, or close on intuition — but the bot does not act on CVaR autonomously.
 
 **The alternative considered.** Two stronger versions: (a) a CVaR-driven exit trigger ("if CVaR_5% < -3%, force exit"); (b) a CVaR-**divergence detector** that compared the standard kNN CVaR window against a second regime-shifted window and surfaced a signed divergence number an operator could trade on.
 
@@ -343,7 +343,7 @@ This section answers the *why* behind the major design choices. Each subsection 
 
 **The choice.** Post-autotune, three **independent** advisor producers (Overfitting Conscience, Spec Critic, Divergence Explainer) write observations into the database. They share no synthesized verdict. The operator reads each one independently on the `/ai-advisor` tab.
 
-**The alternative considered.** A single "master advisor" that synthesized all observations into one verdict. AlphaBot does not do this.
+**The alternative considered.** A single "master advisor" that synthesized all observations into one verdict. Planet Stopper does not do this.
 
 **The rationale — wall integrity.** A combined synthesis would have to either (a) cross the database read-only wall to query observations the synthesizer did not itself produce — breaking the read-only producer model — or (b) couple the three producers' termination, breaking their independent error containment. Each producer is independently testable and independently failure-resilient. If Spec Critic crashes, Overfitting Conscience still runs.
 
@@ -355,7 +355,7 @@ See §[7](#7-ai-advisor--the-three-producers) for what each of the three produce
 
 **The choice.** When the Monte Carlo gate returns `None` (insufficient history), the protective Trailing Stop **still fires** on ticks-below-stop alone. When CVaR returns `None`, no breach is reported (the `CVaRAssessment.__post_init__` invariant). The bot fails **safe**, not **open**.
 
-**The rationale.** A fresh symphony deployed mid-month without sufficient history cannot run a regime-locality MC. The two design options were (a) hold all positions until MC is available, or (b) fire the trailing stop on ticks-below-stop alone and allow the protective floor to do its job without the MC sanity gate. AlphaBot chose (b). The operator is **never** exposed to a "MC said hold, so we held into a -20% day" failure mode. This realizes the user's "accuracy + performance over speed" tenet: the bot won't return a fast-but-garbage MC probability; it returns `None` and the heuristic floor fires.
+**The rationale.** A fresh symphony deployed mid-month without sufficient history cannot run a regime-locality MC. The two design options were (a) hold all positions until MC is available, or (b) fire the trailing stop on ticks-below-stop alone and allow the protective floor to do its job without the MC sanity gate. Planet Stopper chose (b). The operator is **never** exposed to a "MC said hold, so we held into a -20% day" failure mode. This realizes the user's "accuracy + performance over speed" tenet: the bot won't return a fast-but-garbage MC probability; it returns `None` and the heuristic floor fires.
 
 The fail-safe code anchor: [`math_engine.py:508`](math_engine.py) — when `prob_beating is None`, the MC sanity gate **passes** (i.e., does not block the exit), so the trailing-stop-hit propagates to the priority resolver. The MC sentinel cannot suppress the protective stop.
 
@@ -541,15 +541,15 @@ Phase 1 ships the CRRA-EU offline objective + the CVaR diagnostic — neither of
 
 Explicit non-goals, so the operator's expectations are calibrated.
 
-- **AlphaBot does not open positions.** Entry decisions are Composer's responsibility. AlphaBot's job is exit discipline only.
-- **AlphaBot does not size positions.** Position sizing is Composer's responsibility. AlphaBot operates on the size Composer set.
-- **AlphaBot does not make alpha calls.** There is no master forecast of expected return. The bot does not say "this symphony will outperform tomorrow." It says only: "now is the time to exit *this* symphony to cash."
-- **AlphaBot does not produce a portfolio-level decision.** Every decision is symphony-level. See §[4.1](#41-symphony-level-only-not-portfolio-level).
-- **AlphaBot computes CVaR each cycle as a diagnostic.** `compute_portfolio_cvar` runs per-symphony each minute and writes to `cvar_diagnostic`. CVaR is **never** a live trigger — it is operator instrumentation only. See §[4.4](#44-diagnostic-only-cvar--and-why-we-rejected-cvar-divergence-detectors).
-- **AlphaBot does not surface a CVaR-divergence number.** This was explicitly rejected — see §[4.4](#44-diagnostic-only-cvar--and-why-we-rejected-cvar-divergence-detectors) and `DECISIONS.md §DE-S3-005`.
-- **AlphaBot does not have a "manual force-trigger" button on the dashboard.** The `/api/trigger` POST handler is intentionally disabled. The scheduler is the only legal engine spawner. See §[4.3](#43-the-dashboard-is-observability-not-action).
-- **AlphaBot does not run a Narrator advisor.** Narrator is deferred to Phase 2. See §[7](#7-ai-advisor--the-three-producers).
-- **AlphaBot does not auto-restart after a SIGTERM on Windows.** Windows SIGTERM via Bash kills CPython without `atexit`. SQLite WAL files persist and are recovered cleanly on the next start via PRAGMA wal_checkpoint. Use Ctrl+C or `restart.ps1` for a graceful shutdown.
+- **Planet Stopper does not open positions.** Entry decisions are Composer's responsibility. Planet Stopper's job is exit discipline only.
+- **Planet Stopper does not size positions.** Position sizing is Composer's responsibility. Planet Stopper operates on the size Composer set.
+- **Planet Stopper does not make alpha calls.** There is no master forecast of expected return. The bot does not say "this symphony will outperform tomorrow." It says only: "now is the time to exit *this* symphony to cash."
+- **Planet Stopper does not produce a portfolio-level decision.** Every decision is symphony-level. See §[4.1](#41-symphony-level-only-not-portfolio-level).
+- **Planet Stopper computes CVaR each cycle as a diagnostic.** `compute_portfolio_cvar` runs per-symphony each minute and writes to `cvar_diagnostic`. CVaR is **never** a live trigger — it is operator instrumentation only. See §[4.4](#44-diagnostic-only-cvar--and-why-we-rejected-cvar-divergence-detectors).
+- **Planet Stopper does not surface a CVaR-divergence number.** This was explicitly rejected — see §[4.4](#44-diagnostic-only-cvar--and-why-we-rejected-cvar-divergence-detectors) and `DECISIONS.md §DE-S3-005`.
+- **Planet Stopper does not have a "manual force-trigger" button on the dashboard.** The `/api/trigger` POST handler is intentionally disabled. The scheduler is the only legal engine spawner. See §[4.3](#43-the-dashboard-is-observability-not-action).
+- **Planet Stopper does not run a Narrator advisor.** Narrator is deferred to Phase 2. See §[7](#7-ai-advisor--the-three-producers).
+- **Planet Stopper does not auto-restart after a SIGTERM on Windows.** Windows SIGTERM via Bash kills CPython without `atexit`. SQLite WAL files persist and are recovered cleanly on the next start via PRAGMA wal_checkpoint. Use Ctrl+C or `restart.ps1` for a graceful shutdown.
 
 ---
 
@@ -567,7 +567,7 @@ Explicit non-goals, so the operator's expectations are calibrated.
 
 ```bash
 git clone <repository>
-cd AlphaBot
+cd AlphaBotPM
 python -m venv .venv
 .venv/Scripts/activate   # Windows; on Unix use: source .venv/bin/activate
 pip install -r requirements.txt
@@ -766,6 +766,6 @@ The one remaining open item is a **dashboard scope limit (CVAR-001)**: the CVaR 
 
 ---
 
-*Last updated: 2026-05-27. See [`docs/audit/vision-audit-2026-05-27/`](docs/audit/vision-audit-2026-05-27/) for the three audit reports that informed this README.*
+*Last updated: 2026-05-29. See [`docs/audit/vision-audit-2026-05-27/`](docs/audit/vision-audit-2026-05-27/) for the original audit reports and [`docs/audit/final-audit-2026-05-29/`](docs/audit/final-audit-2026-05-29/) for the final post-closure audit.*
 
-*Disclaimer: AlphaBot is an automated execution tool. Algorithmic trading carries significant risk. Always test parameters in dry-run mode before enabling `LIVE_EXECUTION`.*
+*Disclaimer: Planet Stopper is an automated execution tool. Algorithmic trading carries significant risk. Always test parameters in dry-run mode before enabling `LIVE_EXECUTION`.*

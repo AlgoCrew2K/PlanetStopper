@@ -1,6 +1,6 @@
-# AlphaBot v3 — Architectural Decisions
+# Planet Stopper — Architectural Decisions
 
-This file records binding architectural decisions made during AlphaBot v3 development. Entries are append-only. Do not edit past entries; add corrections as new entries.
+This file records binding architectural decisions made during Planet Stopper development. Entries are append-only. Do not edit past entries; add corrections as new entries.
 
 ---
 
