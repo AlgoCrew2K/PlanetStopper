@@ -15,6 +15,23 @@ from advisors import overfitting_conscience as _oc
 from advisors import spec_critic as _sc
 from advisors import divergence_explainer as _de
 
+# PERF-007: absolute default for the post-mortem search directory — anchored
+# to this file's parent so the glob is CWD-independent. Operators may
+# override at call time via the POST_MORTEM_DIR environment variable.
+_POST_MORTEM_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_post_mortem_dir() -> str:
+    """Return the post-mortem directory to search, honouring POST_MORTEM_DIR.
+
+    Resolution is deferred to call time (not frozen at import) so that
+    tests using monkeypatch.setenv("POST_MORTEM_DIR", ...) work correctly.
+    """
+    override = os.environ.get("POST_MORTEM_DIR")
+    if override:
+        return override
+    return _POST_MORTEM_DIR
+
 
 def _replay_grace_minutes() -> int:
     """Return the VWAP open-window grace minutes the replay must use.
@@ -620,11 +637,28 @@ def calculate_historical_deviation(current_date_str):
         current_dt = datetime.strptime(current_date_str, "%Y-%m-%d")
         lookback_dt = current_dt - timedelta(days=45)
 
-        files = glob.glob("post_mortem_*.json")
+        _pm_dir = _resolve_post_mortem_dir()
+        if not os.path.isdir(_pm_dir):
+            print(
+                f"      -> WARNING: post-mortem directory does not exist: "
+                f"'{_pm_dir}'. Using default deviation penalties."
+            )
+            files = []
+        else:
+            files = glob.glob(os.path.join(_pm_dir, "post_mortem_*.json"))
+            if not files:
+                print(
+                    f"      -> WARNING: no post_mortem_*.json files found in "
+                    f"'{_pm_dir}'. Using default deviation penalties."
+                )
         for f_path in files:
             try:
                 # Extract date from filename: post_mortem_YYYY-MM-DD.json
-                date_part = f_path.replace("post_mortem_", "").replace(".json", "")
+                date_part = (
+                    os.path.basename(f_path)
+                    .replace("post_mortem_", "")
+                    .replace(".json", "")
+                )
                 file_dt = datetime.strptime(date_part, "%Y-%m-%d")
                 if file_dt < lookback_dt or file_dt >= current_dt:
                     continue

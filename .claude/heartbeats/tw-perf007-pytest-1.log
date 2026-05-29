@@ -1,0 +1,269 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.7, pytest-8.4.2, pluggy-1.6.0 -- C:\Users\paulm\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\perf-007-cwd-glob
+configfile: pyproject.toml
+plugins: anyio-4.12.1, flaky-3.8.1, hydra-core-1.3.2, hypothesis-6.152.6, langsmith-0.7.32, asyncio-1.3.0, base-url-2.1.0, cov-7.1.0, mock-3.15.1, playwright-0.7.2, timeout-2.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 8 items
+
+tests/autotuner/test_perf007_cwd_relative_glob.py::test_post_mortem_glob_is_not_cwd_relative_literal FAILED [ 12%]
+tests/autotuner/test_perf007_cwd_relative_glob.py::test_post_mortem_dir_constant_exists_and_is_absolute FAILED [ 25%]
+tests/autotuner/test_perf007_cwd_relative_glob.py::test_finds_post_mortems_via_env_override_regardless_of_cwd FAILED [ 37%]
+tests/autotuner/test_perf007_cwd_relative_glob.py::test_default_post_mortem_dir_is_project_root_not_cwd FAILED [ 50%]
+tests/autotuner/test_perf007_cwd_relative_glob.py::test_warns_when_resolved_dir_has_no_post_mortems FAILED [ 62%]
+tests/autotuner/test_perf007_cwd_relative_glob.py::test_warns_when_resolved_dir_is_missing FAILED [ 75%]
+tests/autotuner/test_perf007_cwd_relative_glob.py::test_existing_happy_path_preserved_when_files_in_resolved_dir PASSED [ 87%]
+tests/autotuner/test_perf007_cwd_relative_glob.py::test_out_of_window_files_in_resolved_dir_still_ignored PASSED [100%]
+
+================================== FAILURES ===================================
+______________ test_post_mortem_glob_is_not_cwd_relative_literal ______________
+
+    def test_post_mortem_glob_is_not_cwd_relative_literal():
+        """The bare `glob.glob("post_mortem_*.json")` literal — a CWD-relative
+        pattern with no directory component — must NOT appear in
+        calculate_historical_deviation. The directory anchor must be explicit.
+    
+        AST inspection: find every glob.glob(...) call inside
+        calculate_historical_deviation and assert no argument is the bare
+        literal string "post_mortem_*.json". A path-joined argument
+        (os.path.join(...), str(Path(...) / ...), or an f-string interpolation
+        of a directory constant) is fine.
+        """
+        tree = ast.parse(_AUTOTUNER_SRC.read_text(encoding="utf-8"))
+    
+        func = next(
+            (n for n in ast.walk(tree)
+             if isinstance(n, ast.FunctionDef)
+             and n.name == "calculate_historical_deviation"),
+            None,
+        )
+        assert func is not None, (
+            "calculate_historical_deviation not found in autotuner.py."
+        )
+    
+        offenders: list[int] = []
+        for node in ast.walk(func):
+            if not isinstance(node, ast.Call):
+                continue
+            # Match glob.glob(...) and glob.iglob(...) — directly or via attribute access.
+            fn = node.func
+            is_glob = (
+                isinstance(fn, ast.Attribute)
+                and fn.attr in {"glob", "iglob"}
+                and isinstance(fn.value, ast.Name)
+                and fn.value.id == "glob"
+            )
+            if not is_glob:
+                continue
+            if not node.args:
+                continue
+            arg0 = node.args[0]
+            if isinstance(arg0, ast.Constant) and arg0.value == "post_mortem_*.json":
+                offenders.append(node.lineno)
+    
+>       assert not offenders, (
+            f"PERF-007: calculate_historical_deviation still calls "
+            f"`glob.glob(\"post_mortem_*.json\")` at line(s) {offenders}. "
+            f"A CWD-relative literal silently returns [] from any directory other "
+            f"than the project root. Anchor the glob to a module-level "
+            f"`_POST_MORTEM_DIR` constant (default `Path(__file__).parent`, "
+            f"env-overridable via POST_MORTEM_DIR)."
+        )
+E       AssertionError: PERF-007: calculate_historical_deviation still calls `glob.glob("post_mortem_*.json")` at line(s) [623]. A CWD-relative literal silently returns [] from any directory other than the project root. Anchor the glob to a module-level `_POST_MORTEM_DIR` constant (default `Path(__file__).parent`, env-overridable via POST_MORTEM_DIR).
+E       assert not [623]
+
+tests\autotuner\test_perf007_cwd_relative_glob.py:138: AssertionError
+____________ test_post_mortem_dir_constant_exists_and_is_absolute _____________
+
+    def test_post_mortem_dir_constant_exists_and_is_absolute():
+        """A module-level constant must record the resolved post-mortem directory
+        so operators (and tests) can introspect WHERE the search runs. The
+        default value must be ABSOLUTE — a CWD-relative default re-introduces
+        the very defect this ticket fixes."""
+        autotuner_mod = _import_autotuner()
+        name, value = _resolve_post_mortem_dir_attr(autotuner_mod)
+    
+>       assert name is not None, (
+            "PERF-007: autotuner must expose a module-level "
+            "`_POST_MORTEM_DIR` (or `POST_MORTEM_DIR`) constant that names the "
+            "resolved post-mortem search directory."
+        )
+E       AssertionError: PERF-007: autotuner must expose a module-level `_POST_MORTEM_DIR` (or `POST_MORTEM_DIR`) constant that names the resolved post-mortem search directory.
+E       assert None is not None
+
+tests\autotuner\test_perf007_cwd_relative_glob.py:156: AssertionError
+_________ test_finds_post_mortems_via_env_override_regardless_of_cwd __________
+
+isolated_cwd = WindowsPath('C:/Users/paulm/AppData/Local/Temp/pytest-of-paulm/pytest-2717/test_finds_post_mortems_via_en0/unrelated_cwd')
+tmp_path = WindowsPath('C:/Users/paulm/AppData/Local/Temp/pytest-of-paulm/pytest-2717/test_finds_post_mortems_via_en0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000014458B9B3E0>
+capsys = <_pytest.capture.CaptureFixture object at 0x0000014458B9B4A0>
+
+    def test_finds_post_mortems_via_env_override_regardless_of_cwd(
+        isolated_cwd, tmp_path, monkeypatch, capsys,
+    ):
+        """When POST_MORTEM_DIR points at a directory containing in-window
+        post-mortems, the function MUST find them — even though the process CWD
+        is a different, empty directory.
+    
+        Pre-fix this test fails because the literal glob runs against
+        isolated_cwd (empty), returns [], and the function keeps its default
+        deviation. Post-fix the env override anchors the glob to the real
+        location.
+        """
+        autotuner_mod = _import_autotuner()
+    
+        pm_dir = tmp_path / "post_mortems"
+        pm_dir.mkdir()
+    
+        current_date = "2026-05-10"
+        exit_return = -1.0
+        attempted = -0.5
+        expected_deviation = exit_return - attempted  # derived, never hardcoded
+    
+        _write_post_mortem(
+            pm_dir, "2026-05-03",
+            _valid_post_mortem_json("Trailing Stop", exit_return, attempted),
+        )
+    
+        monkeypatch.setenv("POST_MORTEM_DIR", str(pm_dir))
+    
+        result = autotuner_mod.calculate_historical_deviation(current_date)
+    
+        assert isinstance(result, dict)
+        assert "Trailing Stop" in result, (
+            "PERF-007: with POST_MORTEM_DIR set, the dated in-window post-mortem "
+            "must contribute to the result. A missing 'Trailing Stop' key means "
+            "the function still searched the (empty) CWD."
+        )
+>       assert result["Trailing Stop"] == pytest.approx(expected_deviation, abs=1e-3), (
+            f"PERF-007: with POST_MORTEM_DIR set, the dated post-mortem's "
+            f"deviation must be returned. Expected {expected_deviation} "
+            f"(= exit_return {exit_return} - attempted {attempted}), "
+            f"got {result['Trailing Stop']}. "
+            f"A default-equal result means the env override was ignored."
+        )
+E       AssertionError: PERF-007: with POST_MORTEM_DIR set, the dated post-mortem's deviation must be returned. Expected -0.5 (= exit_return -1.0 - attempted -0.5), got -0.2. A default-equal result means the env override was ignored.
+E       assert -0.2 == -0.5 ± 0.001
+E         
+E         comparison failed
+E         Obtained: -0.2
+E         Expected: -0.5 ± 0.001
+
+C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\perf-007-cwd-glob\tests\autotuner\test_perf007_cwd_relative_glob.py:227: AssertionError
+---------------------------- Captured stdout call -----------------------------
+  -> Historical Execution Deviation Penalties: {'Take-Profit': 0.0, 'Trailing Stop': -0.2, 'VWAP Breakdown': -0.4, 'VWAP Bleed Cut': -0.25}
+____________ test_default_post_mortem_dir_is_project_root_not_cwd _____________
+
+isolated_cwd = WindowsPath('C:/Users/paulm/AppData/Local/Temp/pytest-of-paulm/pytest-2717/test_default_post_mortem_dir_i0/unrelated_cwd')
+tmp_path = WindowsPath('C:/Users/paulm/AppData/Local/Temp/pytest-of-paulm/pytest-2717/test_default_post_mortem_dir_i0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000014458B9B800>
+
+    def test_default_post_mortem_dir_is_project_root_not_cwd(
+        isolated_cwd, tmp_path, monkeypatch,
+    ):
+        """Without POST_MORTEM_DIR set, the function must resolve the search to
+        the project root (the directory containing autotuner.py) — NOT the
+        process CWD. We assert this by checking the module constant resolves
+        to the directory of autotuner.py.
+    
+        No env override is set; the empty isolated_cwd is the process CWD; the
+        constant must STILL point at autotuner.py's directory.
+        """
+        autotuner_mod = _import_autotuner()
+        monkeypatch.delenv("POST_MORTEM_DIR", raising=False)
+    
+        name, value = _resolve_post_mortem_dir_attr(autotuner_mod)
+>       assert name is not None, (
+            "PERF-007: autotuner must expose _POST_MORTEM_DIR / POST_MORTEM_DIR."
+        )
+E       AssertionError: PERF-007: autotuner must expose _POST_MORTEM_DIR / POST_MORTEM_DIR.
+E       assert None is not None
+
+C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\perf-007-cwd-glob\tests\autotuner\test_perf007_cwd_relative_glob.py:251: AssertionError
+______________ test_warns_when_resolved_dir_has_no_post_mortems _______________
+
+isolated_cwd = WindowsPath('C:/Users/paulm/AppData/Local/Temp/pytest-of-paulm/pytest-2717/test_warns_when_resolved_dir_h0/unrelated_cwd')
+tmp_path = WindowsPath('C:/Users/paulm/AppData/Local/Temp/pytest-of-paulm/pytest-2717/test_warns_when_resolved_dir_h0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000014458BBD880>
+capsys = <_pytest.capture.CaptureFixture object at 0x0000014458BBC140>
+
+    def test_warns_when_resolved_dir_has_no_post_mortems(
+        isolated_cwd, tmp_path, monkeypatch, capsys,
+    ):
+        """When the resolved post-mortem directory exists but contains zero
+        matching files, the function must emit an operator-visible WARNING
+        that names the resolved path. The pre-fix silent [] is the defect.
+        """
+        autotuner_mod = _import_autotuner()
+    
+        empty_pm_dir = tmp_path / "empty_post_mortems"
+        empty_pm_dir.mkdir()
+        monkeypatch.setenv("POST_MORTEM_DIR", str(empty_pm_dir))
+    
+        autotuner_mod.calculate_historical_deviation("2026-05-10")
+        captured = capsys.readouterr()
+        log_text = captured.out + captured.err
+    
+>       assert "WARNING" in log_text.upper(), (
+            "PERF-007: a resolved post-mortem directory with zero matching "
+            "files must emit a WARNING-level log line. A silent zero-file "
+            "result IS the defect. No WARNING found in output:\n"
+            f"{log_text!r}"
+        )
+E       AssertionError: PERF-007: a resolved post-mortem directory with zero matching files must emit a WARNING-level log line. A silent zero-file result IS the defect. No WARNING found in output:
+E         "  -> Historical Execution Deviation Penalties: {'Take-Profit': 0.0, 'Trailing Stop': -0.2, 'VWAP Breakdown': -0.4, 'VWAP Bleed Cut': -0.25}\n"
+E       assert 'WARNING' in "  -> HISTORICAL EXECUTION DEVIATION PENALTIES: {'TAKE-PROFIT': 0.0, 'TRAILING STOP': -0.2, 'VWAP BREAKDOWN': -0.4, 'VWAP BLEED CUT': -0.25}\n"
+E        +  where "  -> HISTORICAL EXECUTION DEVIATION PENALTIES: {'TAKE-PROFIT': 0.0, 'TRAILING STOP': -0.2, 'VWAP BREAKDOWN': -0.4, 'VWAP BLEED CUT': -0.25}\n" = <built-in method upper of str object at 0x0000014458B9CF30>()
+E        +    where <built-in method upper of str object at 0x0000014458B9CF30> = "  -> Historical Execution Deviation Penalties: {'Take-Profit': 0.0, 'Trailing Stop': -0.2, 'VWAP Breakdown': -0.4, 'VWAP Bleed Cut': -0.25}\n".upper
+
+C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\perf-007-cwd-glob\tests\autotuner\test_perf007_cwd_relative_glob.py:288: AssertionError
+___________________ test_warns_when_resolved_dir_is_missing ___________________
+
+isolated_cwd = WindowsPath('C:/Users/paulm/AppData/Local/Temp/pytest-of-paulm/pytest-2717/test_warns_when_resolved_dir_i0/unrelated_cwd')
+tmp_path = WindowsPath('C:/Users/paulm/AppData/Local/Temp/pytest-of-paulm/pytest-2717/test_warns_when_resolved_dir_i0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000014458BBCDA0>
+capsys = <_pytest.capture.CaptureFixture object at 0x0000014458BBCD10>
+
+    def test_warns_when_resolved_dir_is_missing(
+        isolated_cwd, tmp_path, monkeypatch, capsys,
+    ):
+        """When the resolved post-mortem directory does NOT exist, the function
+        must emit an operator-visible WARNING that names the missing path AND
+        must not raise. A typoed POST_MORTEM_DIR env value is exactly the
+        confusing failure mode this ticket eliminates.
+        """
+        autotuner_mod = _import_autotuner()
+    
+        nonexistent = tmp_path / "definitely_not_here"  # never created
+        assert not nonexistent.exists()
+        monkeypatch.setenv("POST_MORTEM_DIR", str(nonexistent))
+    
+        # Must not raise even though the dir is missing.
+        result = autotuner_mod.calculate_historical_deviation("2026-05-10")
+        assert isinstance(result, dict)
+    
+        captured = capsys.readouterr()
+        log_text = captured.out + captured.err
+    
+>       assert "WARNING" in log_text.upper(), (
+            "PERF-007: a missing post-mortem directory must emit a WARNING. "
+            f"No WARNING found:\n{log_text!r}"
+        )
+E       AssertionError: PERF-007: a missing post-mortem directory must emit a WARNING. No WARNING found:
+E         "  -> Historical Execution Deviation Penalties: {'Take-Profit': 0.0, 'Trailing Stop': -0.2, 'VWAP Breakdown': -0.4, 'VWAP Bleed Cut': -0.25}\n"
+E       assert 'WARNING' in "  -> HISTORICAL EXECUTION DEVIATION PENALTIES: {'TAKE-PROFIT': 0.0, 'TRAILING STOP': -0.2, 'VWAP BREAKDOWN': -0.4, 'VWAP BLEED CUT': -0.25}\n"
+E        +  where "  -> HISTORICAL EXECUTION DEVIATION PENALTIES: {'TAKE-PROFIT': 0.0, 'TRAILING STOP': -0.2, 'VWAP BREAKDOWN': -0.4, 'VWAP BLEED CUT': -0.25}\n" = <built-in method upper of str object at 0x0000014458B9D470>()
+E        +    where <built-in method upper of str object at 0x0000014458B9D470> = "  -> Historical Execution Deviation Penalties: {'Take-Profit': 0.0, 'Trailing Stop': -0.2, 'VWAP Breakdown': -0.4, 'VWAP Bleed Cut': -0.25}\n".upper
+
+C:\Users\paulm\Documents\Projects\POC\AlphaBotPM\.claude\worktrees\perf-007-cwd-glob\tests\autotuner\test_perf007_cwd_relative_glob.py:323: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/autotuner/test_perf007_cwd_relative_glob.py::test_post_mortem_glob_is_not_cwd_relative_literal
+FAILED tests/autotuner/test_perf007_cwd_relative_glob.py::test_post_mortem_dir_constant_exists_and_is_absolute
+FAILED tests/autotuner/test_perf007_cwd_relative_glob.py::test_finds_post_mortems_via_env_override_regardless_of_cwd
+FAILED tests/autotuner/test_perf007_cwd_relative_glob.py::test_default_post_mortem_dir_is_project_root_not_cwd
+FAILED tests/autotuner/test_perf007_cwd_relative_glob.py::test_warns_when_resolved_dir_has_no_post_mortems
+FAILED tests/autotuner/test_perf007_cwd_relative_glob.py::test_warns_when_resolved_dir_is_missing
+========================= 6 failed, 2 passed in 2.28s =========================
