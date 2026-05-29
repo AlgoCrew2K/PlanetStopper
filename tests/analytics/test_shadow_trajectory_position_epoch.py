@@ -9,7 +9,7 @@ Audit provenance:
 
 THE FINDING. `_get_shadow_cumulative_trajectory` (analytics.py:489) selects
 EVERY shadow_history row for a symphony_id with no position boundary. A
-Composer symphony_id is long-lived; AlphaBot opens, exits, and re-enters
+Composer symphony_id is long-lived; Planet Stopper opens, exits, and re-enters
 positions under the same symphony_id across the 180-day retention window. The
 query chain-links the prior position's daily shadow_return values into the new
 position's series — get_symphony_cumulative_return and get_symphony_max_drawdown

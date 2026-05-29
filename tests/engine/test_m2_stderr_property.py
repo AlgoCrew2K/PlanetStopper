@@ -43,7 +43,7 @@ if _HYPOTHESIS_AVAILABLE:
     @st.composite
     def synthetic_knn_pool(draw):
         """
-        Generate a synthetic kNN pool in the realistic AlphaBot range.
+        Generate a synthetic kNN pool in the realistic Planet Stopper range.
 
         Pool size in [50, 1000].
         Upper bound of 1000 (not 300) is required by Property 3 (monotonicity):

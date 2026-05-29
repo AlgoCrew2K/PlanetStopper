@@ -444,7 +444,7 @@ def _build_messages(context: dict) -> list[dict]:
         {
             "role": "user",
             "content": (
-                "Analyze the following AlphaBot risk-engine context and "
+                "Analyze the following Planet Stopper risk-engine context and "
                 "propose 0..N config edits. Each suggestion must cite specific "
                 "supplied numbers in its rationale. Stay strictly within the "
                 "stated valid ranges. Never emit a suggested value for a "

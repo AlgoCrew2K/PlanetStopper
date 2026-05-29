@@ -2,7 +2,7 @@
 -- Trigger: Cluster 6 AC-3 (team-lead D7 + risk-engine-specialist 2026-05-22) —
 --          _get_shadow_cumulative_trajectory selects every shadow_history row for
 --          a symphony_id with no position-lifecycle boundary. A Composer
---          symphony_id is long-lived; AlphaBot opens/exits/re-enters positions
+--          symphony_id is long-lived; Planet Stopper opens/exits/re-enters positions
 --          under it across the 180-day retention window, so the trajectory query
 --          chain-links a prior position's returns into the new position's
 --          dry_run CR/MDD. The position_epoch column scopes each row to one

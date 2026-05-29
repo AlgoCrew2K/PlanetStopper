@@ -9,7 +9,7 @@
   "constants": {
     "sampler_seed_env_var": "OPTUNA_SAMPLER_SEED",
     "n_jobs_env_var": "OPTUNA_N_JOBS",
-    "_constant_naming_requirement": "Both env-var NAMES must be module-level named constants in autotuner.py (no string-literal repetition at the call site). Per AlphaBot Coding Standards: every new constant gets a name + source comment."
+    "_constant_naming_requirement": "Both env-var NAMES must be module-level named constants in autotuner.py (no string-literal repetition at the call site). Per Planet Stopper Coding Standards: every new constant gets a name + source comment."
   },
   "sampler_contract": {
     "required_class": "optuna.samplers.TPESampler",

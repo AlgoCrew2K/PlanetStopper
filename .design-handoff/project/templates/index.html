@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AlphaBot Dashboard v3</title>
+    <title>Planet Stopper Dashboard v3</title>
     <!-- Add Favicon -->
     <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -49,7 +49,7 @@
                 <div class="flex items-center gap-3">
                     <h1
                         class="text-2xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
-                        AlphaBot Dashboard v3
+                        Planet Stopper Dashboard v3
                     </h1>
                     <div id="dashboard-mode-badge"
                         class="px-2.5 py-0.5 bg-slate-700 text-slate-400 border border-slate-600 rounded text-[10px] font-bold tracking-widest hidden">
@@ -66,7 +66,7 @@
                         </button>
                         <button onclick="openHistoryModal(7)" id="history-btn"
                             class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700 rounded text-[10px] font-bold uppercase tracking-widest transition-colors shadow-sm w-full text-center">
-                            AlphaBot History
+                            Planet Stopper History
                         </button>
                     </div>
                 </div>
@@ -207,7 +207,7 @@
                 <span class="text-xs uppercase tracking-widest text-slate-500 font-semibold" title="Max Drawdown">MDD</span>
                 <span id="ps-mdd-dry" class="text-sm font-mono font-bold text-slate-200">---</span>
             </div>
-            <div class="ml-auto text-[10px] text-slate-600 font-mono" title="dry-run = AlphaBot; if-held = buy-and-hold Composer model">dry-run (if-held)</div>
+            <div class="ml-auto text-[10px] text-slate-600 font-mono" title="dry-run = Planet Stopper; if-held = buy-and-hold Composer model">dry-run (if-held)</div>
         </div>
 
         <!-- H1: Aggregate triggers strip — hidden when no triggers today -->
@@ -725,7 +725,7 @@
         </div>
     </div>
 
-    <!-- AlphaBot History Modal -->
+    <!-- Planet Stopper History Modal -->
     <div id="history-modal"
         class="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300">
         <div class="bg-slate-800 rounded-2xl shadow-2xl border border-slate-600 w-full max-w-2xl p-8 transform scale-95 transition-transform duration-300"
@@ -737,7 +737,7 @@
                             d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
                         </path>
                     </svg>
-                    AlphaBot Performance History
+                    Planet Stopper Performance History
                 </h3>
                 <div class="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-700" id="history-tabs">
                     <button id="hist-btn-1" onclick="updateHistoryTab(1)"

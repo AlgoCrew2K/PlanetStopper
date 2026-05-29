@@ -170,7 +170,7 @@ def test_autotuner_exposes_production_n_trials_named_constant(
     symbol name (e.g. ``OPTUNA_N_TRIALS_PRODUCTION``, ``N_TRIALS``,
     ``_N_TRIALS_PRODUCTION``); this test pins the value only.
 
-    Per AlphaBot Coding Standards "No magic numbers in math_engine.py —
+    Per Planet Stopper Coding Standards "No magic numbers in math_engine.py —
     every constant named + source comment"; same discipline applies to
     autotuner.py's math-soundness-controlling constants.
     """

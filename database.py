@@ -1,4 +1,4 @@
-"""SQLite state management for AlphaBot with Account-Level Strategies."""
+"""SQLite state management for Planet Stopper with Account-Level Strategies."""
 
 import hashlib
 import json

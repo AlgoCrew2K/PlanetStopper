@@ -1,7 +1,7 @@
-// Shared mock data — realistic AlphaBot state pulled from the user's screenshot.
+// Shared mock data — realistic Planet Stopper state pulled from the user's screenshot.
 // All three design directions render from this same source so they're comparable.
 
-window.ALPHABOT_DATA = {
+window.PLANET_STOPPER_DATA = {
   meta: {
     account: { label: 'Roth IRA', uuid_short: '880be47e' },
     mode: 'DRY RUN', // 'DRY RUN' | 'LIVE'
@@ -15,7 +15,7 @@ window.ALPHABOT_DATA = {
     triggered: 4,
     triggers_today: { trailing_stop: 1, take_profit: 3 },
     portfolio: {
-      tc: 0.38, // today's change (dry-run / alphabot)
+      tc: 0.38, // today's change (dry-run / planet stopper)
       tc_if_held: 0.45, // today's change as-if held (slightly ahead — bot exited some winners early)
       cr: 78.23, cr_if_held: 76.50, // cumulative — bot ahead by 1.73%
       mdd: -18.88, mdd_if_held: -24.47, // max drawdown — bot saved 5.59%
@@ -133,7 +133,7 @@ window.ALPHABOT_DATA = {
     { ts: '10:38:01', sym: 'LQD + EYEG 5 ways', kind: 'ARM', reason: 'TP-ARMED', detail: 'MC prob fell to 4.2%' },
     { ts: '10:12:44', sym: 'Corporate Chaos 5 ways', kind: 'LOCK', reason: 'Breakeven Lock', detail: 'Floor raised to 0.00%' },
     { ts: '09:42:19', sym: 'Planet of the Paragons', kind: 'ARM', reason: 'PARA-ARMED', detail: 'Velocity exceeded threshold' },
-    { ts: '09:30:00', sym: 'System', kind: 'INFO', reason: 'Boot', detail: 'AlphaBot scheduler started · tracking 11 symphonies' },
+    { ts: '09:30:00', sym: 'System', kind: 'INFO', reason: 'Boot', detail: 'Planet Stopper scheduler started · tracking 11 symphonies' },
   ],
 
   // Showcase detail for the per-symphony slide-over.
@@ -145,7 +145,7 @@ window.ALPHABOT_DATA = {
       times: ['09:30','09:45','10:00','10:15','10:30','10:45','11:00','11:15','11:30','11:45','12:00','12:15','12:30','12:33','12:45','13:00','13:15','13:30','13:45','14:00','14:15','14:30','14:45','15:00','15:15','15:30','15:45','16:00'],
       // Live (if-held) cumulative return %
       live: [0, 0.18, 0.42, 0.71, 0.95, 1.18, 1.42, 1.65, 1.81, 1.98, 2.14, 2.31, 2.46, 2.47, 2.62, 2.78, 2.95, 3.04, 3.08, 3.02, 2.91, 2.74, 2.52, 2.34, 2.18, 2.05, 1.98, 1.95],
-      // Shadow (what AlphaBot booked — frozen at trigger)
+      // Shadow (what Planet Stopper booked — frozen at trigger)
       shadow: [0, 0.18, 0.42, 0.71, 0.95, 1.18, 1.42, 1.65, 1.81, 1.98, 2.14, 2.31, 2.46, 2.47, 2.47, 2.47, 2.47, 2.47, 2.47, 2.47, 2.47, 2.47, 2.47, 2.47, 2.47, 2.47, 2.47, 2.47],
       // Vol-scaled trailing stop level over time (decays via log-time squeeze)
       stop: [-0.5, -0.42, -0.30, -0.18, 0.04, 0.30, 0.58, 0.85, 1.05, 1.32, 1.58, 1.84, 2.10, 2.13, null, null, null, null, null, null, null, null, null, null, null, null, null, null],

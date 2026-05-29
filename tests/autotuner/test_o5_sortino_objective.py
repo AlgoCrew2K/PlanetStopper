@@ -7,7 +7,7 @@ objective with a Sortino-ratio-based objective and exposes a
 ``compute_sortino_ratio(returns, target=0.0)`` helper at module scope.
 
 Operator decision PA-5: Sortino (Sortino & van der Meer 1994, J. Portfolio
-Management) is selected as the replacement metric. Rationale: AlphaBot is a
+Management) is selected as the replacement metric. Rationale: Planet Stopper is a
 downside-overlay strategy with an asymmetric return distribution; Sortino
 is better-matched than Sharpe for measuring risk-adjusted performance in
 this regime.
@@ -353,7 +353,7 @@ def test_no_bare_decay_rate_in_collect_sim_returns():
 
 def test_target_return_is_zero_by_default():
     """
-    Sortino's denominator measures deviation below a TARGET return. AlphaBot
+    Sortino's denominator measures deviation below a TARGET return. Planet Stopper
     uses target=0 (capital preservation baseline). Pin that
     compute_sortino_ratio with no explicit target argument uses target=0.
 

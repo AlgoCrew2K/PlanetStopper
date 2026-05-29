@@ -69,7 +69,7 @@
       },
       {
         "leg": "STYLIZED_FACT (operational impossibility region — load-bearing)",
-        "claim": "A realized per-day return r <= -99.9% implies the protective stop has catastrophically failed; in-distribution AlphaBot trailing-stop-protected long-only US-equity strategies do not see daily losses approaching -99% (Carver 2015, Systematic Trading; Chan 2013, Algorithmic Trading establish the qualitative claim; the specific empirical percentile thresholds are not pinpointed because the directional claim — -99% is not in-distribution — is what is load-bearing). The floor at 1e-3 sits well below any realistic in-distribution loss day; its purpose is numerical correctness in replay/backtest contexts with pathological synthetic inputs."
+        "claim": "A realized per-day return r <= -99.9% implies the protective stop has catastrophically failed; in-distribution Planet Stopper trailing-stop-protected long-only US-equity strategies do not see daily losses approaching -99% (Carver 2015, Systematic Trading; Chan 2013, Algorithmic Trading establish the qualitative claim; the specific empirical percentile thresholds are not pinpointed because the directional claim — -99% is not in-distribution — is what is load-bearing). The floor at 1e-3 sits well below any realistic in-distribution loss day; its purpose is numerical correctness in replay/backtest contexts with pathological synthetic inputs."
       },
       {
         "leg": "MANDATE (project no-magic-numbers rule)",

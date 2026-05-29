@@ -61,8 +61,8 @@ def _reject_non_finite_in_records(records, *field_names):
 # Module-level named constants (project rule: no magic numbers in math_engine)
 # ---------------------------------------------------------------------------
 
-LOOKBACK_DAYS = 20  # 20-day realized-volatility window — AlphaBot risk-sizing standard
-ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches AlphaBot's risk-sizing assumption
+LOOKBACK_DAYS = 20  # 20-day realized-volatility window — Planet Stopper risk-sizing standard
+ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches Planet Stopper's risk-sizing assumption
 PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
 
 # Monte Carlo gating constants (run_monte_carlo)
@@ -870,7 +870,7 @@ def derive_cycle_mc_seed(cycle_id: str) -> int:
 
 
 # Bounded LRU cache for _sorted_dates, keyed by id(historical_data).
-# AlphaBot is a long-running daemon constructing a fresh historical_data
+# Planet Stopper is a long-running daemon constructing a fresh historical_data
 # dict every minute during market hours (~390 dicts/day). An unbounded
 # strong-ref cache would leak ~1 MB x 390 min/day = ~400 MB/day.
 # OrderedDict-based LRU caps memory to _SORTED_DATES_CACHE_MAXSIZE entries
