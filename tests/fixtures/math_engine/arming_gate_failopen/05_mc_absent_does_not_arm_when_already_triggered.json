@@ -1,0 +1,16 @@
+{
+  "name": "05_mc_absent_does_not_arm_when_already_triggered",
+  "description": "When the position is already triggered (is_triggered=True), the fail-open arming must NOT flip armed=True. Arming a triggered position is a scope error and would corrupt state.",
+  "layer": "arming_gate",
+  "scenario": "mc_absent_triggered_position_stays_unaffected",
+  "inputs": {
+    "prob_beating": null,
+    "mc_available": false,
+    "currently_armed": false,
+    "is_triggered": true
+  },
+  "expected": {
+    "armed_after": false,
+    "derivation": "is_triggered=True: the arming block must respect `and not is_triggered` guard. A triggered position does not arm retroactively. mc_absent fail-open is only for unarmed, un-triggered positions."
+  }
+}
