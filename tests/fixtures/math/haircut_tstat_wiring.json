@@ -1,0 +1,82 @@
+{
+  "_provenance": "Hand-derived from U-transform formula (W = max(WEALTH_ARG_FLOOR, 1+r/RETURN_PCT_TO_FRACTION), U = compute_crra_utility(W, gamma=2.0)) applied to fixed raw-percent return series, then compute_crra_eu_tstat(U_series). The 'wrong' values document what the buggy implementation (raw pct passed directly to compute_crra_eu_tstat, or hardcoded compute_sortino_tstat ignoring tstat_fn) produces. No SUT output pinned — all values derivable by closed-form arithmetic.",
+  "_audit_finding": "H-1: _haircut_select hardcodes compute_sortino_tstat(series, seed=trial_idx) at autotuner.py:1251 and never calls tstat_fn. CRRA-EU bundles get their haircut scored by the Sortino t-stat instead of the U-transformed CRRA-EU t-stat. The fix must: (1) call tstat_fn instead of the hardcoded compute_sortino_tstat, and (2) U-transform daily_returns before calling compute_crra_eu_tstat (CRRA-001 contract, test_audit_fix_crra_neff_arch.py).",
+  "_contract_ref": "autotuner.py:1855-1859 — daily_returns stored as raw PERCENT values (e.g. 5.0 for 5%). The CRRA branch must U-transform via max(WEALTH_ARG_FLOOR, 1+r/RETURN_PCT_TO_FRACTION) -> compute_crra_utility(W, gamma) before calling compute_crra_eu_tstat. The Sortino branch calls compute_sortino_tstat(series, seed=trial_idx) directly (no U-transform).",
+  "constants": {
+    "gamma": 2.0,
+    "WEALTH_ARG_FLOOR": 0.001,
+    "RETURN_PCT_TO_FRACTION": 100.0
+  },
+  "harvey_liu_fdr_q": 0.05,
+  "scenario_1_single_all_positive_trial": {
+    "_description": "Single trial with all-positive raw-PERCENT daily_returns (T=30, values like 5.0 for 5%). After U-transform, compute_crra_eu_tstat returns ~19.91. The hardcoded compute_sortino_tstat returns 0.0 (conservative fallback: all bootstrap resamples hit SORTINO_SENTINEL for an all-positive series). So: with correct CRRA tstat_fn dispatch + U-transform -> trial passes gate. Bug (hardcoded Sortino) -> trial fails gate.",
+    "daily_returns_pct": [5.0, 3.0, 7.0, 4.0, 6.0, 5.0, 3.0, 7.0, 4.0, 6.0, 5.0, 3.0, 7.0, 4.0, 6.0, 5.0, 3.0, 7.0, 4.0, 6.0, 5.0, 3.0, 7.0, 4.0, 6.0, 5.0, 3.0, 7.0, 4.0, 6.0],
+    "T": 30,
+    "trial_value_not_sentinel": 0.5,
+    "U_series": [
+      0.04761904761904767, 0.029126213592232997, 0.06542056074766356,
+      0.03846153846153855, 0.05660377358490576, 0.04761904761904767,
+      0.029126213592232997, 0.06542056074766356, 0.03846153846153855,
+      0.05660377358490576, 0.04761904761904767, 0.029126213592232997,
+      0.06542056074766356, 0.03846153846153855, 0.05660377358490576,
+      0.04761904761904767, 0.029126213592232997, 0.06542056074766356,
+      0.03846153846153855, 0.05660377358490576, 0.04761904761904767,
+      0.029126213592232997, 0.06542056074766356, 0.03846153846153855,
+      0.05660377358490576, 0.04761904761904767, 0.029126213592232997,
+      0.06542056074766356, 0.03846153846153855, 0.05660377358490576
+    ],
+    "with_crra_eu_tstat_fn_u_transformed": {
+      "tstat": 19.91144331153949,
+      "p_raw": 1.4721419013851726e-05,
+      "p_adj_single_trial": 1.4721419013851726e-05,
+      "gate_clears": true,
+      "winner_index": 0,
+      "_note": "Correct: U-transformed series passed to compute_crra_eu_tstat. p_adj ~1.5e-5 << q=0.05."
+    },
+    "with_crra_eu_tstat_fn_wrong_raw": {
+      "tstat": 19.03943276465977,
+      "_note": "WRONG path: raw pct values passed directly to compute_crra_eu_tstat without U-transform. Differs from correct value (~19.91 vs ~19.04). This is the CRRA-001 bug separate from H-1."
+    },
+    "with_sortino_hardcoded_bug": {
+      "tstat": 0.0,
+      "p_raw": 0.5,
+      "p_adj_single_trial": 0.5,
+      "gate_clears": false,
+      "winner_index": null,
+      "_note": "H-1 bug: hardcoded compute_sortino_tstat always produces 0.0 for all-positive series (SE unavailable). Same result regardless of what tstat_fn was passed."
+    }
+  },
+  "scenario_2_two_trial_winner_discriminator": {
+    "_description": "Two trials. Trial 0: tail-heavy (from crra_haircut_u_transform_contract.json scenario_contract). Trial 1: all-positive 8-obs percent series. With CRRA tstat_fn + U-transform: trial 1 wins (high positive t), trial 0 fails gate (negative t). With hardcoded Sortino: neither trial clears gate. Discriminating: gate outcome differs (crra_clears=True, sortino_clears=False).",
+    "trial_0": {
+      "daily_returns_pct": [-50.0, 20.0, -30.0, 25.0, 10.0, -40.0, 15.0, 5.0],
+      "trial_value_not_sentinel": 0.5,
+      "U_series": [-1.0, 0.16666666666666663, -0.4285714285714286, 0.19999999999999996, 0.09090909090909094, -0.6666666666666667, 0.13043478260869557, 0.04761904761904767]
+    },
+    "trial_1": {
+      "daily_returns_pct": [5.0, 3.0, 7.0, 4.0, 6.0, 5.0, 3.0, 7.0],
+      "trial_value_not_sentinel": 0.8,
+      "U_series": [0.04761904761904767, 0.029126213592232997, 0.06542056074766356, 0.03846153846153855, 0.05660377358490576, 0.04761904761904767, 0.029126213592232997, 0.06542056074766356]
+    },
+    "with_crra_eu_tstat_fn_u_transformed": {
+      "tstat_trial_0": -1.131073144720413,
+      "tstat_trial_1": 9.218661001258694,
+      "p_raw_trial_0": 0.8709268427539014,
+      "p_raw_trial_1": 1.4721419013851726e-05,
+      "p_adj_trial_0": 1.0,
+      "p_adj_trial_1": 4.4164257041555175e-05,
+      "trial_0_clears_gate": false,
+      "trial_1_clears_gate": true,
+      "winner_index": 1,
+      "_note": "CRRA tstat_fn + U-transform: trial 1 wins (high positive t=9.22). Trial 0 has negative t (-1.13), fails gate."
+    },
+    "with_sortino_hardcoded_bug_seeds_0_and_1": {
+      "tstat_trial_0": -0.5852944213367413,
+      "tstat_trial_1": 0.0,
+      "trial_0_clears_gate": false,
+      "trial_1_clears_gate": false,
+      "winner_index": null,
+      "_note": "H-1 bug: hardcoded Sortino. Trial 1 is all-positive => Sortino tstat=0.0. Neither clears gate. Also what happens if tstat_fn is ignored regardless of what was passed."
+    }
+  }
+}
