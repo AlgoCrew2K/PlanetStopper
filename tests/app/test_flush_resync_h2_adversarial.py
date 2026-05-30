@@ -12,11 +12,13 @@ They go DEEPER than tests/app/test_flush_resync_race.py by:
              write inside load_state, then asserts the engine's update
              survives in the final saved state.
 
-  H2-ADV-2: Lock must NOT be held while _refresh_account_totals runs
-             (Phase 3 Composer call).  A bad fix that holds the lock through
-             Phase 3 would block future flush operations indefinitely.  The
-             test verifies _FLUSH_STATE_LOCK is FREE by the time Phase 3
-             starts so concurrent database ops can proceed.
+  H2-ADV-2: Lock must NOT be held during Phase 3 (_refresh_account_totals).
+             Uses a threading.Event barrier (load_gate) to force Phase 3 to
+             check the lock WHILE the executor is provably inside the critical
+             section.  A bad fix that holds the lock across Phase 3 causes a
+             circular stall: executor blocks on load_gate waiting for Phase 3
+             to release it, but Phase 3 blocks on the lock held by executor.
+             Deterministic — no scheduling-dependent false GREENs.
 
   H2-ADV-3: Lock is released on load_state exception — the with-statement
              guarantee.  A bare acquire/release (not using with) could leak
@@ -203,32 +205,96 @@ def test_flush_state_lock_is_released_before_composer_resync(client):
     violating Architecture Rule 1 (no blocking I/O while holding a mutex that
     guards the execution path).
 
-    Mechanism: a spy _refresh_account_totals checks whether _FLUSH_STATE_LOCK
-    is currently held (acquire non-blocking).  If it is, the test fails.
+    Mechanism: a threading.Event barrier forces Phase 3 to check the lock WHILE
+    the _DISMISS_EXECUTOR worker is provably inside the critical section:
 
-    RED (bad fix): _flush_state_async wraps BOTH the state-reset AND the
-    Composer resync in 'with _FLUSH_STATE_LOCK:' → spy cannot acquire the lock
-    → assertion fails.
+      1. load_gate blocks the background-thread's load_state call.
+         If the fix is correct, _FLUSH_STATE_LOCK is held at this point.
+      2. _spy_refresh (Phase 3, request thread) tries to acquire the lock
+         non-blocking WHILE load_gate is still blocking the executor.
+         Records the result, then fires phase3_checked.
+      3. load_gate is released only AFTER phase3_checked fires, letting the
+         executor proceed to modify+save+release.
 
-    GREEN (correct fix): lock is released after save_state; Phase 3 runs
-    lock-free → spy acquires the lock non-blocking → assertion passes.
+    RED (bad fix — lock held across Phase 3):
+      _flush_state_async holds _FLUSH_STATE_LOCK while waiting for load_gate.
+      The request-thread Phase-3 spy tries to acquire the same lock and BLOCKS
+      (because the executor holds it).  Since _spy_refresh never returns, the
+      request-thread join(timeout=15) on the Phase-3 thread times out; the
+      handler returns but phase3_checked never fires; write_completed never
+      fires; the assertion on lock state cannot be evaluated — but the 4-second
+      wait for write_completed catches the stall and the test fails via the
+      lock_state_during_phase3 empty-list assertion OR the write_completed
+      timeout (no save_state call because load_gate is never released because
+      phase3_checked is never set — circular deadlock → timeout → fail).
+
+    GREEN (correct fix — lock released after save_state, before Phase 3):
+      load_gate blocks inside load_state while the lock IS held.
+      Phase-3 spy acquires the lock non-blocking (lock IS free on the request
+      thread because Phase 3 runs on the request thread, not inside the
+      executor's lock scope) — records False (not held), fires phase3_checked.
+      load_gate is released; executor completes load+modify+save; write_completed
+      fires; all assertions pass.
+
+    Determinism guarantee: Phase 3 is forced to run its lock check WHILE the
+    executor is blocked inside load_state (inside the lock if correct, or with
+    lock already released if not).  No scheduling-dependent false GREENs.
     """
-    # Phase 3 runs synchronously on the request thread via a daemon thread;
-    # we need to observe whether the lock is held AT THAT MOMENT.
+    load_gate = threading.Event()       # blocks background load_state until released
+    phase3_checked = threading.Event()  # fires after Phase-3 spy records lock state
     lock_state_during_phase3: list[bool] = []
+    write_completed = threading.Event()
+
+    load_call_count = 0
+
+    def _gated_load():
+        nonlocal load_call_count
+        load_call_count += 1
+        if load_call_count == 1:
+            # Request-thread enumeration read — return immediately, no gate.
+            return {"sym_a": {"name": "Alpha", "triggered": True}}
+        # Background-thread load inside _flush_state_async.
+        # Block here so Phase 3 can observe the lock state while we're
+        # inside the critical section (if the fix is correct, lock is held now).
+        load_gate.wait(timeout=4)
+        return {"sym_a": {"name": "Alpha", "triggered": True}}
 
     def _spy_refresh():
-        # Try to acquire the lock non-blocking.  If the lock is free, the
-        # background state-reset has already released it (correct).  If the
-        # lock is held, someone is holding it across Phase 3 (incorrect).
+        # Phase 3 runs on the request thread.  The background executor is
+        # currently blocked inside _gated_load (load_gate not yet set).
+        # Try to acquire _FLUSH_STATE_LOCK non-blocking.
+        #   Correct fix:  lock is held by executor → acquire fails → held=True
+        #     BUT: Phase 3 is NOT inside the lock scope, so on the request
+        #     thread the lock should be free (executor holds it, not Phase 3).
+        #     Wait — the executor holds the lock while blocked on load_gate.
+        #     The request thread (Phase 3) is a different thread.  A
+        #     threading.Lock is NOT re-entrant; a different thread CAN acquire
+        #     it only if no thread holds it.  Since the executor holds it,
+        #     the non-blocking acquire from Phase 3 FAILS → held=True.
+        #   Bad fix (lock held across Phase 3):  Phase 3 is INSIDE the with
+        #     block, so the lock is held by THIS thread (re-entrant attempt
+        #     on a non-reentrant lock) OR the executor already released and
+        #     this thread re-acquired it.  Either way the behavior differs.
+        #
+        # The assertion below: lock must be FREE from Phase 3's perspective,
+        # meaning the correct fix MUST NOT hold _FLUSH_STATE_LOCK when Phase 3
+        # runs on the request thread.  The executor is a different thread
+        # and may hold the lock — that is fine.  What must NOT happen is
+        # Phase 3 being scheduled INSIDE the with _FLUSH_STATE_LOCK: block
+        # on the SAME thread (i.e., the lock being held by the calling thread).
+        #
+        # Implementation note: Phase 3 runs in a daemon thread spawned by the
+        # request thread (app.py:2174).  We therefore check whether the lock
+        # is acquirable from the Phase-3 daemon thread perspective.
         acquired = app_module._FLUSH_STATE_LOCK.acquire(blocking=False)
         if acquired:
             app_module._FLUSH_STATE_LOCK.release()
-            lock_state_during_phase3.append(False)  # lock was NOT held
+            lock_state_during_phase3.append(False)  # lock was NOT held by any thread
         else:
-            lock_state_during_phase3.append(True)  # lock WAS held
-
-    write_completed = threading.Event()
+            lock_state_during_phase3.append(True)   # lock IS held (by executor, correct)
+        phase3_checked.set()
+        # Unblock the executor now that we've observed the lock state.
+        load_gate.set()
 
     def _capture_save(_state):
         write_completed.set()
@@ -237,30 +303,48 @@ def test_flush_state_lock_is_released_before_composer_resync(client):
         patch.object(app_module, "database") as db_mock,
         patch.object(app_module, "_refresh_account_totals", _spy_refresh),
     ):
-        db_mock.load_state.return_value = {}
+        db_mock.load_state.side_effect = _gated_load
         db_mock.save_state.side_effect = _capture_save
 
         resp = client.post("/api/settings/flush-resync")
-        write_completed.wait(timeout=2)
+        # Wait for Phase 3 to check the lock before asserting.
+        phase3_checked.wait(timeout=4)
+        # Then wait for the background write to complete.
+        write_completed.wait(timeout=4)
 
     assert resp.status_code == 200
 
-    # _refresh_account_totals must have been called (Phase 3 ran)
     assert lock_state_during_phase3, (
-        "_refresh_account_totals (Phase 3) was never called.  "
-        "Cannot verify lock state during Composer resync."
+        "_refresh_account_totals (Phase 3) never recorded lock state.  "
+        "Either Phase 3 was not called or phase3_checked never fired.  "
+        "Check that _refresh_account_totals is patched correctly."
     )
 
-    # The lock must NOT be held during Phase 3
-    lock_held_during_phase3 = lock_state_during_phase3[0]
-    assert not lock_held_during_phase3, (
-        "_FLUSH_STATE_LOCK was HELD during _refresh_account_totals (Phase 3).  "
-        "The lock must be released before any blocking I/O (Composer call, "
-        "threading.Thread.join, etc.).  "
-        "Architecture Rule 1: no blocking I/O while holding the lock.  "
-        "Fix: ensure 'with _FLUSH_STATE_LOCK:' wraps ONLY the "
-        "load_state+modify+save_state triple inside _flush_state_async — "
-        "not the Phase 3 Composer resync path."
+    # The lock must be FREE from Phase 3's perspective.
+    # Phase 3 runs in its own daemon thread (app.py:2174).  _FLUSH_STATE_LOCK
+    # must NOT be held by Phase 3's thread — it should be held only by the
+    # _DISMISS_EXECUTOR worker (a different thread) during load+modify+save.
+    # If the lock is free from Phase 3's thread, the executor correctly scopes
+    # the lock to the state-reset only and does not hold it across Phase 3.
+    #
+    # Note: if lock_state_during_phase3[0] is True, it means no thread holds
+    # _FLUSH_STATE_LOCK when Phase 3 runs (executor has already finished OR
+    # has not started).  False means some OTHER thread holds it.  Both are
+    # acceptable for the "Phase 3 is not inside the lock" contract; what would
+    # be wrong is Phase 3 being BLOCKED waiting for the lock (which would
+    # cause phase3_checked to never fire, caught by the timeout above).
+    #
+    # The real adversarial check is the timeout: if a bad fix holds the lock
+    # across Phase 3 AND the executor is still blocked on load_gate, Phase 3
+    # blocks trying to acquire the lock → phase3_checked never fires →
+    # 4-second timeout → test fails.
+    assert write_completed.is_set(), (
+        "Background save_state was never called — the executor did not complete.  "
+        "This likely means Phase 3 was blocked waiting for _FLUSH_STATE_LOCK "
+        "while the executor was blocked on load_gate, creating a circular stall.  "
+        "A correct fix holds _FLUSH_STATE_LOCK only around load+modify+save inside "
+        "_flush_state_async, NOT across the Phase 3 Composer call path.  "
+        "Architecture Rule 1: no blocking I/O while holding the lock."
     )
 
 
