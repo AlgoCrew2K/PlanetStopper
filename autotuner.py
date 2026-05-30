@@ -1245,10 +1245,31 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn
     tstats = []
     for trial_idx, t in enumerate(completed_trials):
         series = t.user_attrs.get("daily_returns", []) if hasattr(t, "user_attrs") else []
-        # Deterministic per-trial seed so re-running an identical study
-        # produces an identical haircut decision (AC-1 caller-side
-        # determinism pin). The trial index is a stable within-study key.
-        tstats.append(compute_sortino_tstat(series, seed=trial_idx))
+        # H-1 fix: call the passed tstat_fn (the loop previously hardcoded the
+        # Sortino t-stat, defeating the tstat_fn parameter). The two objective
+        # t-stat functions have incompatible call shapes, so dispatch by identity:
+        if tstat_fn is compute_sortino_tstat:
+            # Sortino branch: raw return series + a deterministic per-trial seed
+            # so re-running an identical study produces an identical haircut
+            # decision (AC-1 caller-side determinism pin; the trial index is a
+            # stable within-study key). No U-transform.
+            tstats.append(tstat_fn(series, seed=trial_idx))
+        else:
+            # CRRA-EU branch (CRRA-001): daily_returns are stored as RAW PERCENT
+            # (run_simulation_crra_eu provenance, :1396-1399). compute_crra_eu_tstat
+            # expects utility values, so re-transform each return through the
+            # canonical wealth-argument + CRRA-utility path before scoring —
+            # passing raw percent would compute mean(r)/sd(r)*sqrt(T), the H-6
+            # Sharpe-like category error. _crra_gamma (derived above) is the
+            # bundle-frozen risk-aversion coefficient. No seed (no seed param).
+            u_series = [
+                math_engine.compute_crra_utility(
+                    derive_floored_wealth_argument(r / RETURN_PCT_TO_FRACTION),
+                    _crra_gamma,
+                )
+                for r in series
+            ]
+            tstats.append(tstat_fn(u_series))
     p_values = [compute_haircut_pvalue(ts) for ts in tstats]
 
     # Shape A: pad the p-value list with S copies of 1.0 (at-the-cap = "tested and
