@@ -66,10 +66,13 @@ _DISMISS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 # CC-003: register shutdown so in-flight dismiss writes are not abandoned on exit.
 atexit.register(_DISMISS_EXECUTOR.shutdown, wait=True)
 
-# CC-NEW-001: serializes flush_resync background load+modify+save against engine
-# save_state writes.  Both flush_resync (_flush_state_async) and the engine's
-# save_state call sites in alpha_bot_execution.py must acquire this lock before
-# touching the state DB to prevent the flush from clobbering per-minute updates.
+# CC-NEW-001: serializes flush_resync's background load+modify+save against any
+# other intra-process writer of the state DB.  This is an INTRA-PROCESS guard
+# only: it serializes concurrent _flush_state_async submissions running on the
+# _DISMISS_EXECUTOR worker within this Flask daemon.  The engine
+# (alpha_bot_execution.py) is spawned in a SEPARATE OS process and cannot see
+# this threading.Lock; cross-process isolation between the daemon and the engine
+# subprocess is provided by SQLite WAL transaction isolation, not by this lock.
 _FLUSH_STATE_LOCK = threading.Lock()
 
 _daemon_log = logging.getLogger("alphabot")
