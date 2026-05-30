@@ -1,0 +1,42 @@
+{
+  "name": "09_mc_absent_mc_sanity_irrelevant_magnitude_gates",
+  "description": "When MC is absent (prob_beating=None), the MC sanity gate in compute_exit_confirmation treats None as pass. The ONLY remaining gate is the magnitude condition. This fixture pins that behaviour: magnitude fails -> no fire, even with multiple prior ticks accumulated.",
+  "layer": "exit_confirmation_mc_absent",
+  "function": "compute_exit_confirmation",
+  "sequence": [
+    {
+      "tick": 1,
+      "description": "Return exactly AT the stop level (not below threshold - MAGNITUDE_FLOOR_PCT). Boundary: current_return=-1.0, stop=-1.0. Threshold=-1.10. -1.0 <= -1.10 is FALSE.",
+      "inputs": {
+        "armed": true,
+        "is_triggered": false,
+        "current_return": -1.0,
+        "stop_trigger_level": -1.0,
+        "prob_beating": null,
+        "current_below_stop_count": 2
+      },
+      "expected": {
+        "new_below_stop_count": 0,
+        "is_trailing_stop_hit": false
+      },
+      "derivation": "current_return=-1.0, threshold = -1.0 - 0.10 = -1.10. -1.0 <= -1.10 is FALSE. Magnitude condition fails -> count resets to 0, no fire. A fix that ignores the magnitude floor when MC is absent MUST fail this."
+    },
+    {
+      "tick": 2,
+      "description": "Return exactly at threshold boundary: -1.10 <= -1.10 -> TRUE (inclusive boundary).",
+      "inputs": {
+        "armed": true,
+        "is_triggered": false,
+        "current_return": -1.1,
+        "stop_trigger_level": -1.0,
+        "prob_beating": null,
+        "current_below_stop_count": 0
+      },
+      "expected": {
+        "new_below_stop_count": 1,
+        "is_trailing_stop_hit": false
+      },
+      "derivation": "current_return=-1.1, threshold=-1.10. -1.1 <= -1.10 is TRUE (inclusive). Condition met. count: 0+1=1. Hit=(1>=3)=False."
+    }
+  ]
+}

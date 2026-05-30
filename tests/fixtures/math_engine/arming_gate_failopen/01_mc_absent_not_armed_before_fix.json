@@ -1,0 +1,21 @@
+{
+  "name": "01_mc_absent_not_armed_before_fix",
+  "description": "Regression: before the H-3 fix, when prob_beating=None (MC absent), mc_available=False, so the arming gate `if mc_available and ...` is False, should_arm stays False, armed stays False. This fixture pins the PRE-FIX broken behavior as the STARTING STATE so tests can verify the fix changes it.",
+  "scenario": "pre_fix_broken_behavior",
+  "note": "This fixture is a documentation anchor. The tests that consume it assert the FIX produces armed=True, not the old armed=False.",
+  "layer": "arming_gate",
+  "pre_fix_inputs": {
+    "prob_beating": null,
+    "currently_armed": false,
+    "is_triggered": false
+  },
+  "pre_fix_broken_output": {
+    "should_arm": false,
+    "armed_after": false
+  },
+  "required_behavior_after_fix": {
+    "armed_after": true,
+    "arm_reason_contains": "fail-open",
+    "derivation": "MC absent (prob_beating=None) -> mc_available=False. Pre-fix: arming gate required mc_available=True -> stop never armed. Post-fix (fail-open): MC absence MUST trigger arming because the protective stop must fire on its ticks-below-stop condition alone. The arm_reason must indicate fail-open / MC-absent to distinguish it from a normal MC-probability arm."
+  }
+}

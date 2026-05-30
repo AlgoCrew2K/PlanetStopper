@@ -1,0 +1,19 @@
+{
+  "name": "08_mc_absent_return_above_stop_does_not_fire",
+  "description": "Adversarial: a fix that fires too eagerly when MC is absent regardless of magnitude. When armed (fail-open) and MC absent but return is ABOVE the stop trigger level, the stop must NOT fire and the count must reset to 0.",
+  "layer": "exit_confirmation_mc_absent",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": 2.0,
+    "stop_trigger_level": -1.0,
+    "prob_beating": null,
+    "current_below_stop_count": 2
+  },
+  "expected": {
+    "new_below_stop_count": 0,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "armed=True, MC absent (prob_beating=None). Magnitude: 2.0 <= -1.0 - 0.10 = -1.10 -> FALSE. Condition fails -> count RESETS to 0. Hit = False. A fix that ignores magnitude when MC is absent and fires anyway MUST fail this test."
+}

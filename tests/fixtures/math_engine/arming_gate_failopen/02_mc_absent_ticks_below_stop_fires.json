@@ -1,0 +1,56 @@
+{
+  "name": "02_mc_absent_ticks_below_stop_fires",
+  "description": "When MC is absent, after the fail-open fix arms the stop, compute_exit_confirmation with prob_beating=None must still fire when EXIT_CONFIRM_TICKS consecutive qualifying ticks are seen. This fixture pins the end-state: after 3 qualifying ticks (each individually incrementing), the stop fires.",
+  "layer": "exit_confirmation_mc_absent",
+  "function": "compute_exit_confirmation",
+  "sequence": [
+    {
+      "tick": 1,
+      "inputs": {
+        "armed": true,
+        "is_triggered": false,
+        "current_return": -2.0,
+        "stop_trigger_level": -1.0,
+        "prob_beating": null,
+        "current_below_stop_count": 0
+      },
+      "expected": {
+        "new_below_stop_count": 1,
+        "is_trailing_stop_hit": false
+      },
+      "derivation": "armed=True (post-fix arming). Magnitude: -2.0 <= -1.0 - 0.10 = -1.10 -> TRUE. MC sanity: prob_beating=None -> mc_sanity_ok=True (None treated as pass). Condition met. new_count = 0+1 = 1. Hit = (1 >= 3) = False."
+    },
+    {
+      "tick": 2,
+      "inputs": {
+        "armed": true,
+        "is_triggered": false,
+        "current_return": -2.0,
+        "stop_trigger_level": -1.0,
+        "prob_beating": null,
+        "current_below_stop_count": 1
+      },
+      "expected": {
+        "new_below_stop_count": 2,
+        "is_trailing_stop_hit": false
+      },
+      "derivation": "Same conditions. new_count = 1+1 = 2. Hit = (2 >= 3) = False."
+    },
+    {
+      "tick": 3,
+      "inputs": {
+        "armed": true,
+        "is_triggered": false,
+        "current_return": -2.0,
+        "stop_trigger_level": -1.0,
+        "prob_beating": null,
+        "current_below_stop_count": 2
+      },
+      "expected": {
+        "new_below_stop_count": 3,
+        "is_trailing_stop_hit": true
+      },
+      "derivation": "Same conditions. new_count = 2+1 = 3. Hit = (3 >= EXIT_CONFIRM_TICKS=3) = True. STOP FIRES."
+    }
+  ]
+}

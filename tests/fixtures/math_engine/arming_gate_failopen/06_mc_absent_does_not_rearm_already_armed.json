@@ -1,0 +1,17 @@
+{
+  "name": "06_mc_absent_does_not_rearm_already_armed",
+  "description": "When the position is already armed (armed=True) and MC is absent, the arming block must NOT call database.log_symphony_event a second time or set armed=True again (idempotent). The guard `and not bot_state[symphony_id]['armed']` must remain.",
+  "layer": "arming_gate",
+  "scenario": "mc_absent_already_armed_no_duplicate_arm",
+  "inputs": {
+    "prob_beating": null,
+    "mc_available": false,
+    "currently_armed": true,
+    "is_triggered": false
+  },
+  "expected": {
+    "arm_event_logged": false,
+    "armed_after": true,
+    "derivation": "already armed -> `and not currently_armed` guard in arming block fails. Should_arm may be True (fail-open) but the actual arm assignment and log_symphony_event call must be skipped. Armed state stays True (unchanged, not flipped). No duplicate arm log entry."
+  }
+}
