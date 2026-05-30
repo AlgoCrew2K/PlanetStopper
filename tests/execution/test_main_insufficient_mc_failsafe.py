@@ -278,23 +278,32 @@ def test_main_does_not_raise_typeerror_when_mc_history_insufficient(
 
 
 # ---------------------------------------------------------------------------
-# 2. No spurious ARM under the insufficient sentinel
+# 2. Fail-open ARM under the insufficient sentinel (audit H-3)
 # ---------------------------------------------------------------------------
 
-def test_insufficient_mc_does_not_spuriously_arm_symphony(
+def test_insufficient_mc_arms_symphony_failopen(
     patched_environment,
 ) -> None:
     """
-    AC-2 / Ruling 1. The arm gate (alpha_bot_execution.py:1132) gates on the MC
-    probability. When the MC second opinion is unavailable (insufficient
-    history) it must NOT manufacture an ARM — a disarmed symphony stays
-    disarmed. "Bypass the MC gate" means the absent opinion drives no decision.
+    Audit H-3 / FAIL-OPEN contract. When MC history is insufficient
+    (prob_beating=None, mc_available=False), the protective trailing stop
+    MUST arm so its ticks-below-stop confirmation ladder can fire.
 
-    RED against un-fixed consumers (raises TypeError before reaching this
-    assertion); GREEN once the arm gate branches on ``is None``.
+    Pre-fix (broken): the arming gate required mc_available=True, so a
+    permanently absent MC second opinion silently disabled the protective
+    stop — contradicting the code's own comment that "the protective stop
+    still fires on its ticks-below-stop condition alone."
+
+    Post-fix (correct): mc_available=False triggers the fail-open arming
+    path (`elif not mc_available: should_arm = True`). The symphony is
+    armed with arm_reason="MC Absent (fail-open)". The EXIT_CONFIRM_TICKS
+    ladder still gates actual liquidation, so a single absent tick cannot
+    trigger a sale.
     """
     env = patched_environment
-    # A modest positive return — without the MC gate nothing else arms it.
+    # A modest positive return — the fail-open arm path does not require
+    # the return to be below the stop level; arming is unconditional on
+    # MC absence so the ticks-below-stop condition can later confirm.
     env["fetch_symphony_stats"].return_value = [
         _make_symphony_payload(last_percent_change=0.03)
     ]
@@ -304,10 +313,10 @@ def test_insufficient_mc_does_not_spuriously_arm_symphony(
     alpha_bot_execution.main()
 
     sym_state = _final_symphony_state(env)
-    assert sym_state["armed"] is False, (
-        "A disarmed symphony was spuriously ARMED while MC history was "
-        "insufficient. The insufficient sentinel must not trip the arm gate — "
-        "an absent MC opinion manufactures no decision."
+    assert sym_state["armed"] is True, (
+        "Symphony was NOT armed when MC history was insufficient. "
+        "H-3 fail-open contract: absent MC must trigger arming so the "
+        "protective stop can fire on its ticks-below-stop condition alone."
     )
 
 

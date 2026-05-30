@@ -1283,10 +1283,13 @@ def main():
 
                 # run_monte_carlo returns the out-of-band insufficient sentinel
                 # (None) when MC history is too short. Insufficient MC = the MC
-                # second opinion is absent: no arm, no disarm, no TP — and no
-                # MC veto of the trailing stop (compute_exit_confirmation
-                # handles None). The protective stop still fires on its
-                # ticks-below-stop condition alone.
+                # second opinion is absent: no disarm, no TP — and no MC veto of
+                # the trailing stop (compute_exit_confirmation handles None).
+                # FAIL-OPEN (audit finding H-3): when MC is absent the stop still
+                # ARMS so its ticks-below-stop condition can confirm and fire; an
+                # absent second opinion must never silently disable the protective
+                # stop. The EXIT_CONFIRM_TICKS ladder still gates the actual
+                # liquidation, so a transient one-tick gap cannot trigger a sale.
                 # The regime-match-quality guard above may also override prob_beating
                 # to None (unprecedented regime); both paths converge here.
                 mc_available = prob_beating is not None
@@ -1294,6 +1297,9 @@ def main():
                 if mc_available and acc_TAKE_PROFIT_MC_PCT <= prob_beating < acc_TRIGGER_THRESHOLD_PCT:
                     should_arm = True
                     arm_reason = f"MC Prob {prob_beating:.1f}%"
+                elif not mc_available:
+                    should_arm = True
+                    arm_reason = "MC Absent (fail-open)"
 
                 if (
                     should_arm
