@@ -32,6 +32,16 @@ They go DEEPER than tests/app/test_flush_resync_race.py by:
              before acquiring the lock and only wraps the save in the lock
              still has the race window.
 
+  H2-ADV-6: The _FLUSH_STATE_LOCK comment must NOT claim alpha_bot_execution.py
+             (the engine subprocess) acquires this lock.  alpha_bot_execution.py
+             is spawned via subprocess.run() — it has a separate address space
+             and cannot share a threading.Lock with the Flask process.  The
+             comment claiming "the engine's save_state call sites must acquire
+             this lock" is architecturally false and would mislead maintainers
+             into believing cross-process safety is provided when it is not.
+             This test reads app.py source and asserts the misleading phrase is
+             absent, replaced by accurate intra-process-only framing.
+
 Hostile edges exercised:
   - Engine write injected deterministically between flush's load and save
     using threading.Event barriers to force the worst-case interleaving.
@@ -53,6 +63,8 @@ Scope guard (as per cycle brief): these tests must REJECT:
   - A fix that uses bare acquire/release without a context manager (H2-ADV-3
     fails on exception path).
   - A fix that deadlocks on concurrent flush calls (H2-ADV-4 fails).
+  - A comment that falsely claims the engine subprocess acquires the lock
+    (H2-ADV-6 fails — subprocess cannot share a threading.Lock).
 """
 
 from __future__ import annotations
@@ -513,3 +525,100 @@ def test_flush_state_load_happens_inside_the_lock_not_before(client):
         f"lock.release ({release_idx}).  call_log={log_snapshot!r}.  "
         "save_state must be called while the lock is held."
     )
+
+
+# ---------------------------------------------------------------------------
+# H2-ADV-6 — Comment must NOT claim the engine subprocess acquires the lock
+# ---------------------------------------------------------------------------
+
+
+def test_flush_state_lock_comment_does_not_claim_subprocess_acquires_lock():
+    """H2-ADV-6: the _FLUSH_STATE_LOCK comment in app.py must NOT assert that
+    alpha_bot_execution.py (the engine subprocess) acquires this lock.
+
+    alpha_bot_execution.py is spawned via subprocess.run() (app.py:~217) in a
+    separate OS process.  It has its own address space and its own Python
+    interpreter state.  A threading.Lock in the Flask process is invisible to
+    the subprocess; the subprocess cannot acquire it.
+
+    The original comment (CC-NEW-001, lines 69-72) states:
+      "Both flush_resync (_flush_state_async) and the engine's save_state call
+       sites in alpha_bot_execution.py must acquire this lock before touching
+       the state DB to prevent the flush from clobbering per-minute updates."
+
+    This claim is architecturally false.  It misleads maintainers into
+    believing cross-process safety is provided by _FLUSH_STATE_LOCK when it is
+    not.  The actual cross-process isolation is SQLite WAL transaction
+    isolation, not this lock.  The corrected comment must:
+      (a) state that _FLUSH_STATE_LOCK is intra-process only, and
+      (b) NOT claim alpha_bot_execution.py acquires or must acquire it.
+
+    Mechanism: read app.py source and assert the misleading phrase is absent.
+
+    RED (unfixed comment): the phrase "alpha_bot_execution.py must acquire"
+    (or equivalent) is present in the _FLUSH_STATE_LOCK comment block → the
+    assertion below fails.
+
+    GREEN (corrected comment): the comment accurately says the lock is
+    intra-process only, and does not claim the subprocess acquires it →
+    assertion passes.
+
+    Why a source-text test rather than an attribute test: the lock's
+    in-code documentation is part of the correctness contract.  A maintainer
+    reading "alpha_bot_execution.py must acquire this lock" and then adding
+    that acquisition would introduce a runtime bug (lock object not shared
+    across processes, or if app is imported from the subprocess, a separate
+    instance is created).  Encoding the accurate framing as a test prevents
+    the comment from drifting back to the false claim.
+    """
+    import inspect
+    import os
+
+    # Locate app.py relative to the app module — works in any worktree.
+    app_source_path = inspect.getfile(app_module)
+    assert os.path.exists(app_source_path), (
+        f"Cannot locate app.py source at {app_source_path!r}."
+    )
+    with open(app_source_path, encoding="utf-8") as fh:
+        app_source = fh.read()
+
+    # Find the _FLUSH_STATE_LOCK definition block — extract the comment above it.
+    # The lock is defined as a module-level: _FLUSH_STATE_LOCK = threading.Lock()
+    # We search the 10 lines immediately preceding the definition.
+    lines = app_source.splitlines()
+    lock_def_indices = [
+        i for i, line in enumerate(lines)
+        if "_FLUSH_STATE_LOCK = threading.Lock()" in line
+    ]
+    assert lock_def_indices, (
+        "Could not find '_FLUSH_STATE_LOCK = threading.Lock()' in app.py.  "
+        "The lock must be defined at module level."
+    )
+    lock_def_idx = lock_def_indices[0]
+    # Grab the comment block: up to 10 lines before the definition
+    comment_start = max(0, lock_def_idx - 10)
+    comment_block = "\n".join(lines[comment_start : lock_def_idx + 1])
+
+    # The false claim takes various forms — check for the most dangerous variants.
+    # These are the phrases that assert the subprocess must/will acquire the lock.
+    false_claim_phrases = [
+        "alpha_bot_execution.py must acquire",
+        "engine's save_state call sites in alpha_bot_execution.py must acquire",
+        "alpha_bot_execution.py must hold",
+    ]
+    for phrase in false_claim_phrases:
+        assert phrase not in comment_block, (
+            f"Found false claim in _FLUSH_STATE_LOCK comment block:\n"
+            f"  phrase: {phrase!r}\n"
+            f"  comment_block:\n{comment_block}\n\n"
+            "alpha_bot_execution.py is spawned via subprocess.run() — it runs in "
+            "a separate OS process with its own address space.  A threading.Lock "
+            "in the Flask process is invisible to the subprocess; the subprocess "
+            "CANNOT acquire it.  The comment claiming it 'must acquire' this lock "
+            "is architecturally false and will mislead maintainers.\n\n"
+            "Fix: correct the comment to say _FLUSH_STATE_LOCK serializes "
+            "intra-process writers only (concurrent _flush_state_async submissions "
+            "via _DISMISS_EXECUTOR).  Cross-process isolation between the Flask "
+            "daemon and the engine subprocess is SQLite WAL's responsibility.  "
+            "Do NOT claim alpha_bot_execution.py acquires or must acquire this lock."
+        )
