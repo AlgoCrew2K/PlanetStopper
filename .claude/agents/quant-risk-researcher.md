@@ -1,7 +1,7 @@
 ---
 name: quant-risk-researcher
 description: "Extends ~/.claude/agents/researcher.md. Synthesizes academic and practitioner literature on dynamic risk management — trailing stops, volatility scaling, Monte Carlo exit gating, VWAP-based defenses, regime detection, and drawdown control."
-tools: WebFetch, WebSearch, Read, Glob, Grep, Write, Edit
+tools: WebFetch, WebSearch, Read, Glob, Grep, Write, Edit, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput
 model: opus
 ---
 

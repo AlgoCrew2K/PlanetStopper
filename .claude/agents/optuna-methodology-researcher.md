@@ -1,7 +1,7 @@
 ---
 name: optuna-methodology-researcher
 description: "Researches Optuna best practices for walk-forward optimization — sampler choice (TPE/CMA-ES/GP/NSGAII), pruner choice, study persistence, reproducibility, parallelism patterns. Produces structured, citation-backed reference reports framed in terms of statistical validity for finance time series."
-tools: WebFetch, WebSearch, Read, Glob, Grep, Write, Edit
+tools: WebFetch, WebSearch, Read, Glob, Grep, Write, Edit, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput
 model: sonnet
 memory: project
 ---

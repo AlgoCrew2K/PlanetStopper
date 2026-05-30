@@ -62,9 +62,9 @@ python app.py          # run daemon
 `/backtest` · `/optuna-compare` · `/db-inspect` · `/api-fixture` · `/discord-test` · `/run-tests` · `/lint` · `/perf-snapshot` · `/symphony-diff`
 
 ## Agent Team Composition (HARD REQUIREMENT)
-**All new codepaths — and bug fixes that introduce new codepaths — MUST be built via Agent Teams TDD.** The PM may NOT approximate a team with sequential solo-agent RED → GREEN → review dispatches. Real Agent Teams only: shared worktree, one branch, `SendMessage` handoffs, autonomous Toxic Pair (test-writer ⇄ implementer) cycling with reviewers wrapped around it.
+**All new codepaths — and bug fixes that introduce new codepaths — MUST be built via the Toxic Pair TDD composition of Agent Teams.** The PM may NOT approximate a team with sequential solo-agent RED → GREEN → review dispatches. Real Agent Teams only: shared worktree, one branch, `SendMessage` handoffs, autonomous Toxic Pair (test-writer ⇄ implementer) cycling with reviewers wrapped around it.
 
-Standing team: **Quad** (test-writer + implementer + `quant-code-reviewer` + domain specialist matched to the surface touched).
+Standing TDD team: **Quad** (test-writer + implementer + `quant-code-reviewer` + domain specialist matched to the surface touched).
 Math-layer changes always add `quant-test-writer` as the adversarial test author.
 
-**Exceptions — no team required:** config/doc-only edits, one-line fixes to existing codepaths, behavior-preserving refactors fully covered by existing tests, and pure research/diagnosis tasks (no code written).
+**Exceptions — no TDD required (but often still a team):** config/doc-only edits, one-line fixes to existing codepaths, behavior-preserving refactors fully covered by existing tests, and pure research/diagnosis tasks (no code written). These skip the Toxic Pair because there is no code to drive RED→GREEN — but a multi-surface diagnosis or audit should still run as a **non-TDD Agent Team** (communicating auditors + a synthesizing lead), not a swarm of disconnected solo agents. Reserve solo background agents for genuinely independent single-surface tasks. See `~/.claude/CLAUDE.md` §"Agent Teams" for the composition catalogue.
