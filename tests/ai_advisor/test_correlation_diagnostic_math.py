@@ -48,6 +48,7 @@ import pytest
 
 try:
     from advisors.correlation_diagnostic import (
+        CRISIS_CAVEAT,
         THIN_DATA_THRESHOLD,
         compute_pairwise_correlations,
     )
@@ -88,6 +89,61 @@ def test_thin_data_threshold_is_thirty():
     'sufficient data' means.
     """
     assert THIN_DATA_THRESHOLD == 30
+
+
+# ---------------------------------------------------------------------------
+# RED-0b: CRISIS_CAVEAT module-level constant (AC-1.4)
+#
+# The crisis-instability caveat belongs in the module that owns the
+# measurement concept — not hardcoded in the route. The route must import
+# and use correlation_diagnostic.CRISIS_CAVEAT, not an inline string.
+# ---------------------------------------------------------------------------
+
+
+def test_crisis_caveat_constant_exists_and_is_nonempty_string():
+    """CRISIS_CAVEAT must be a non-empty str at module scope in
+    advisors/correlation_diagnostic.py.
+
+    The diagnostic module owns the concept that its correlation estimates
+    destabilize toward 1.0 in market stress (AC-1.4). Placing the caveat in
+    the module — not in the route — makes it the single source of truth:
+    if the text ever needs updating, the route automatically picks it up.
+
+    This is the companion to the route test
+    `test_correlations_tab_crisis_caveat_comes_from_module_constant`, which
+    verifies the route actually uses this constant rather than an inline copy.
+    """
+    assert isinstance(CRISIS_CAVEAT, str), (
+        f"CRISIS_CAVEAT must be a str, got {type(CRISIS_CAVEAT).__name__!r}"
+    )
+    assert CRISIS_CAVEAT, (
+        "CRISIS_CAVEAT must be a non-empty string — the caveat text cannot be blank"
+    )
+
+
+def test_crisis_caveat_mentions_market_stress_instability():
+    """CRISIS_CAVEAT must reference the core risk: correlations converge
+    toward 1.0 in market stress, precisely when de-correlation matters most.
+
+    This is the substance of AC-1.4 ("surfaces the crisis-instability caveat").
+    A generic placeholder string (e.g., "TODO" or "warning") must fail here.
+    The test checks for the presence of domain-specific language about
+    correlation behaviour under stress, not an exact string match.
+    """
+    caveat_lower = CRISIS_CAVEAT.lower()
+    assert any(
+        phrase in caveat_lower
+        for phrase in (
+            "stress",
+            "destabilize",
+            "destabilise",
+            "1.0",
+            "crisis",
+        )
+    ), (
+        f"CRISIS_CAVEAT must mention market stress or correlation convergence "
+        f"toward 1.0 (AC-1.4 content requirement). Got: {CRISIS_CAVEAT!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -58,17 +58,40 @@ import app as app_module
 # ---------------------------------------------------------------------------
 
 
+_STUB_CRISIS_CAVEAT = (
+    "Correlations destabilize toward 1.0 in market stress. "
+    "When de-correlation matters most, these estimates are least reliable. "
+    "Use as a guide, not a guarantee."
+)
+
+
 def _inject_correlation_diagnostic_stub(return_value: list):
     """Inject a minimal stub for advisors.correlation_diagnostic into sys.modules.
 
     The real module does not exist yet (RED state). The route is expected to
     import it lazily, so this stub intercepts that lazy import.
 
+    The stub exposes CRISIS_CAVEAT so tests that assert the route uses the
+    module constant (not an inline string) can verify the binding.
+
     Returns the stub module so tests can inspect or further configure it.
     """
+    # If the real module already exists, use it directly rather than the stub
+    # so CRISIS_CAVEAT assertions bind to the real constant.
+    try:
+        from advisors import correlation_diagnostic as _real
+        if hasattr(_real, "CRISIS_CAVEAT"):
+            # Real module has the constant — override compute fn for test control
+            # but keep the real CRISIS_CAVEAT so route-binding tests work.
+            _real.compute_pairwise_correlations = MagicMock(return_value=return_value)
+            return _real
+    except ImportError:
+        pass
+
     stub = types.ModuleType("advisors.correlation_diagnostic")
     stub.compute_pairwise_correlations = MagicMock(return_value=return_value)
     stub.THIN_DATA_THRESHOLD = 30
+    stub.CRISIS_CAVEAT = _STUB_CRISIS_CAVEAT
 
     # Also ensure the advisors package exposes the attribute.
     import advisors as _advisors_pkg
@@ -99,9 +122,13 @@ def _make_pair_result(
     n_obs: int = 35,
     correlation: float = 0.42,
     thin_data: bool = False,
+    window: "tuple[str, str] | None" = ("2026-01-02", "2026-05-30"),
 ) -> SimpleNamespace:
     """Build a PairResult-like object matching the contract from
     advisors.correlation_diagnostic.
+
+    window default is a representative (first_date, last_date) tuple;
+    pass window=None to simulate plain-list input with no date metadata.
     """
     return SimpleNamespace(
         sym_a=sym_a,
@@ -109,6 +136,7 @@ def _make_pair_result(
         n_obs=n_obs,
         correlation=correlation,
         thin_data=thin_data,
+        window=window,
     )
 
 
@@ -231,7 +259,8 @@ def test_correlations_tab_each_matrix_entry_has_required_fields(test_client, two
     matrix = captured.get("correlation_matrix", [])
     assert matrix, "expected at least one entry in correlation_matrix"
 
-    required_fields = {"sym_a", "sym_b", "n_obs", "correlation", "thin_data"}
+    # 'window' is the AC-1.2 date-range companion to n_obs ("obs count / window").
+    required_fields = {"sym_a", "sym_b", "n_obs", "correlation", "thin_data", "window"}
     for entry in matrix:
         # Entries may be dicts (JSON-serialised) or objects with attribute access.
         if isinstance(entry, dict):
@@ -240,7 +269,8 @@ def test_correlations_tab_each_matrix_entry_has_required_fields(test_client, two
             missing = {f for f in required_fields if not hasattr(entry, f)}
         assert not missing, (
             f"correlation_matrix entry missing fields {missing!r}; "
-            f"each entry must expose {sorted(required_fields)} for the template"
+            f"each entry must expose {sorted(required_fields)} for the template "
+            f"(AC-1.2 requires 'window' alongside 'n_obs')"
         )
 
 
@@ -249,13 +279,21 @@ def test_correlations_tab_each_matrix_entry_has_required_fields(test_client, two
 # ---------------------------------------------------------------------------
 
 
-def test_correlations_tab_context_has_crisis_caveat(test_client, two_pair_matrix):
-    """The template context must include a truthy 'crisis_caveat' string.
+def test_correlations_tab_crisis_caveat_comes_from_module_constant(
+    test_client, two_pair_matrix
+):
+    """The route must pass `correlation_diagnostic.CRISIS_CAVEAT` as the
+    'crisis_caveat' template context value — not an inline string literal.
 
-    AC-1.4: the crisis-instability caveat must be surfaced ("correlations
-    destabilize toward 1.0 in market stress"). This is not optional.
+    Binding to the module constant (not a hardcoded string in the route) is the
+    single source of truth contract: if someone updates the caveat text in
+    `correlation_diagnostic.py`, the route automatically picks it up. An inline
+    literal in the route would silently diverge.
+
+    AC-1.4: the crisis-instability caveat must be surfaced. This test ensures
+    it is the MODULE'S caveat that reaches the template, not a route-local copy.
     """
-    _inject_correlation_diagnostic_stub(two_pair_matrix)
+    stub = _inject_correlation_diagnostic_stub(two_pair_matrix)
     captured: dict = {}
 
     def _capture_render(template, **ctx):
@@ -273,9 +311,15 @@ def test_correlations_tab_context_has_crisis_caveat(test_client, two_pair_matrix
         "template context must include 'crisis_caveat' key — the crisis-instability "
         "warning is mandatory per AC-1.4"
     )
-    assert captured["crisis_caveat"], (
-        "'crisis_caveat' must be truthy (non-empty string) — the operator must "
-        "see the warning that correlations destabilize toward 1.0 in market stress"
+    # The value must be exactly the constant from the module — not a separate string.
+    # If the route uses correlation_diagnostic.CRISIS_CAVEAT, this is the same object.
+    # If the route uses an inline literal, this assertion fails on any text divergence.
+    assert captured["crisis_caveat"] == stub.CRISIS_CAVEAT, (
+        f"'crisis_caveat' in template context must equal "
+        f"correlation_diagnostic.CRISIS_CAVEAT (the module constant). "
+        f"Route must use `correlation_diagnostic.CRISIS_CAVEAT`, not an inline string. "
+        f"Expected: {stub.CRISIS_CAVEAT!r}\n"
+        f"Got: {captured.get('crisis_caveat')!r}"
     )
 
 
