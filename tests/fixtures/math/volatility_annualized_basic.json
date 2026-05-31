@@ -1,0 +1,28 @@
+{
+  "_comment": "Golden fixture for compute_quantstats_metrics — annualized volatility layer.",
+  "_provenance": "formula-derived: std(daily_returns_fraction, ddof=1) * sqrt(252). See derivation block in test_risk_adjusted_metrics.py. NOT a captured producer output.",
+  "_formula": "annualized_vol = sample_std(returns_pct / 100) * sqrt(252)",
+  "_annualization_basis": 252,
+  "_ddof": 1,
+
+  "input_returns_pct_scale": [
+    0.1, -0.2, 0.3, -0.1, 0.2, 0.4, -0.3, 0.1, 0.2, -0.1,
+    0.3, -0.2, 0.1, 0.4, -0.2, 0.2, -0.1, 0.3, 0.1, -0.2,
+    0.2, 0.1, -0.3, 0.4, -0.1, 0.2, 0.1, -0.2, 0.3, 0.1
+  ],
+  "_comment_scale": "These are percent-scale inputs as stored in post_mortem files (0.1 means 0.1%). analytics.compute_quantstats_metrics divides by 100 before calling quantstats.",
+
+  "expected": {
+    "volatility_is_positive_float": true,
+    "volatility_range_lo_frac": 0.0,
+    "volatility_range_hi_frac": 1.0,
+    "_comment_range": "Fraction-scale output: annualized_vol in (0, 1) for sane daily-return series. 3.5% annualized vol for this tame synthetic series."
+  },
+
+  "_fixture_assertions": [
+    "volatility key present in compute_quantstats_metrics output",
+    "volatility is a positive finite float when >= 2 observations",
+    "volatility in (0, 1) fraction scale for realistic daily return series",
+    "volatility returns None when fewer than 2 observations (same rule as other metrics)"
+  ]
+}

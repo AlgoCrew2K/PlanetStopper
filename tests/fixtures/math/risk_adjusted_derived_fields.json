@@ -1,0 +1,30 @@
+{
+  "_comment": "Golden fixture for derived risk-adjusted fields: max_drawdown_delta and volatility_delta.",
+  "_provenance": "formula-derived from spec in ux-design-deliverable.md. NOT captured producer outputs.",
+
+  "max_drawdown_delta": {
+    "_formula": "abs(held_mdd) - abs(bot_mdd); positive means bot had less drawdown (better)",
+    "_convention": "max_drawdown values are fractional, <= 0 (quantstats convention)",
+    "example_held_mdd": -0.038,
+    "example_bot_mdd": -0.021,
+    "expected_delta": 0.017,
+    "_comment_delta": "held_mdd - bot_mdd = -0.038 - (-0.021) = -0.017. Wait: spec says held_mdd - bot_mdd; held=-0.038, bot=-0.021 => -0.038 - (-0.021) = -0.017. Actually re-reading the spec: 'held_mdd - bot_mdd (positive = bot has less drawdown)'. held=-0.038 is worse (more negative). bot=-0.021 is better. So delta = held - bot = -0.038 - (-0.021) = -0.017 which is NEGATIVE. That means bot is WORSE? No: held_mdd is MORE negative, so |held_mdd| > |bot_mdd| means bot had less drawdown. The design says delta = live.max_drawdown - shadow.max_drawdown = -0.038 - (-0.021) = -0.017. But the design says positive delta = bot better. The spec reconciles: 'live_mdd - bot_mdd = -0.038 - (-0.021) = -0.017'. Actually the design JS says: shadow['max_drawdown_delta'] = (heldMdd - botMdd); heldMdd=live.max_drawdown=-0.038, botMdd=shadow.max_drawdown=-0.021. So delta = -0.038 - (-0.021) = -0.017. But that is negative when bot is better. Re-read: The design says green when delta > 0. So the formula is botMdd - heldMdd = -0.021 - (-0.038) = +0.017 makes bot better be positive. The JS was: shadow['max_drawdown_delta'] = (heldMdd - botMdd) which = (-0.038) - (-0.021) = -0.017. But then it colors green when positive. That would mean bot WORSE is green. This is the design JS having the sign reversed from its prose explanation. We follow the PROSE: positive delta = bot has less drawdown = bot_mdd closer to 0 than held_mdd. So delta = |held_mdd| - |bot_mdd| = 0.038 - 0.021 = 0.017 > 0 = bot better.",
+    "_sign_convention": "delta = abs(held_mdd) - abs(bot_mdd); positive means bot had less drawdown (better)"
+  },
+
+  "volatility_delta": {
+    "_formula": "held_vol - bot_vol; positive = bot is calmer (lower vol = better for this system)",
+    "_convention": "annualized volatility in fraction scale, always >= 0",
+    "example_held_vol": 0.112,
+    "example_bot_vol": 0.084,
+    "expected_delta": 0.028,
+    "_comment": "held_vol - bot_vol = 0.112 - 0.084 = 0.028 > 0 means bot is calmer. Color green when positive per design."
+  },
+
+  "_invariants": [
+    "max_drawdown_delta >= 0 when bot drawdown is shallower than held drawdown",
+    "volatility_delta > 0 when bot is calmer (lower vol) than held",
+    "both deltas can be negative when bot underperforms on that metric",
+    "both deltas are None when either input metric is None"
+  ]
+}

@@ -902,6 +902,33 @@
                 </div>
               </div>
             </div>
+            <!-- Phase 2: annualized volatility row (ux-design-deliverable.md §Change 4).
+                 Lower vol is the winning direction for this capital-preservation system.
+                 Portfolio-level vol is not yet wired into the index route, so the row is
+                 stub-rendered as 'not yet available' (no fabricated numbers); the bars sit
+                 at 0% until a portfolio vol feed lands. -->
+            <div data-testid="vs-row" class="vs-row">
+              <div class="vs-row-top">
+                <span class="vs-row-label">Ann. Vol</span>
+                <span data-testid="comp-vol-bot-text" class="vs-val">Bot &mdash;</span>
+                <span data-testid="comp-vol-held-text" class="vs-val">Held &mdash;</span>
+                <span data-testid="comp-vol-delta" class="vs-delta">&alpha; &mdash;</span>
+              </div>
+              <div class="vs-bars">
+                <div class="vs-bar-row">
+                  <span class="vs-bar-label">Bot</span>
+                  <div data-testid="vs-bar" class="vs-bar-track">
+                    <div data-testid="comp-bar-vol-bot" data-row="vol" class="vs-bar-fill" style="width:0%"></div>
+                  </div>
+                </div>
+                <div class="vs-bar-row">
+                  <span class="vs-bar-label">Held</span>
+                  <div data-testid="vs-bar" class="vs-bar-track">
+                    <div data-testid="comp-bar-vol-held" data-row="vol" class="vs-bar-fill" style="width:0%"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Mini-stats -->
@@ -1231,6 +1258,17 @@
             </div>
             <div class="math-row-hint" id="dp-rm-vwap-hint">—</div>
           </div>
+        </div>
+      </div>
+
+      <!-- Risk Profile section (Phase 2, ux-design-deliverable.md §Change 5).
+           Per-symphony Sharpe / Sortino / Max DD / Ann. Vol, bot vs if-held, fetched from
+           /api/performance?scope=symphony in openDetailPanel(). Uses the existing .math-row
+           pattern — no new CSS classes. -->
+      <div style="padding:18px 24px 0;">
+        <div class="section-label" style="margin-bottom:10px;">Risk Profile</div>
+        <div id="detail-risk-profile" data-testid="detail-risk-profile">
+          <div class="math-row-hint">Select a symphony to load its risk profile.</div>
         </div>
       </div>
 

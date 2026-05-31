@@ -72,6 +72,7 @@ def mock_analytics(monkeypatch):
         "max_drawdown": None,
         "calmar": None,
         "win_rate": None,
+        "volatility": None,  # Phase 2 addition
     }
     mock.list_available_symphonies.return_value = []
 
@@ -217,6 +218,7 @@ def test_api_performance_aggregate_happy_path_30_days(client, mock_analytics):
         "max_drawdown": -0.03,
         "calmar": 4.0,
         "win_rate": 0.6,
+        "volatility": 0.035,  # Phase 2: fraction-scale annualized vol (not a producer value)
     }
     shadow_metrics = {
         "total_return": 0.07,
@@ -226,6 +228,7 @@ def test_api_performance_aggregate_happy_path_30_days(client, mock_analytics):
         "max_drawdown": -0.025,
         "calmar": 7.2,
         "win_rate": 0.65,
+        "volatility": 0.028,  # Phase 2: bot calmer than held (lower vol = favorable)
     }
     # The route may call compute_quantstats_metrics twice (live + shadow).
     # Return different values per invocation using side_effect.
@@ -243,7 +246,9 @@ def test_api_performance_aggregate_happy_path_30_days(client, mock_analytics):
     assert len(body["dates"]) == n_days
     assert len(body["live_returns"]) == n_days
     assert len(body["shadow_returns"]) == n_days
-    # Metric dicts: 7 documented keys each.
+    # Metric dicts: 8 keys after Phase 2 addition of 'volatility'.
+    # Source: ux-design-deliverable.md §Change 2 — volatility is a Tier 1
+    # immediately-computable metric added to compute_quantstats_metrics.
     expected_metric_keys = {
         "total_return",
         "annualized_return",
@@ -252,6 +257,7 @@ def test_api_performance_aggregate_happy_path_30_days(client, mock_analytics):
         "max_drawdown",
         "calmar",
         "win_rate",
+        "volatility",  # Phase 2: annualized vol via qs_stats.volatility()
     }
     assert set(body["live_metrics"].keys()) == expected_metric_keys
     assert set(body["shadow_metrics"].keys()) == expected_metric_keys
@@ -290,6 +296,7 @@ def test_api_performance_aggregate_insufficient_history_flag(client, mock_analyt
         "max_drawdown": None,
         "calmar": None,
         "win_rate": None,
+        "volatility": None,  # Phase 2 addition
     }
 
     resp = client.get("/api/performance?scope=aggregate&days=60")
@@ -314,6 +321,7 @@ def test_api_performance_aggregate_empty_history(client, mock_analytics):
         "max_drawdown": None,
         "calmar": None,
         "win_rate": None,
+        "volatility": None,  # Phase 2 addition
     }
 
     resp = client.get("/api/performance?scope=aggregate&days=60")
@@ -363,6 +371,7 @@ def test_api_performance_symphony_happy_path(client, mock_analytics):
         "max_drawdown": -0.02,
         "calmar": 5.0,
         "win_rate": 0.55,
+        "volatility": 0.032,  # Phase 2 addition
     }
 
     resp = client.get("/api/performance?scope=symphony&symphony_id=sym-A")
@@ -435,6 +444,7 @@ def test_api_performance_symphony_unknown_id_returns_empty_state(client, mock_an
         "max_drawdown": None,
         "calmar": None,
         "win_rate": None,
+        "volatility": None,  # Phase 2 addition
     }
 
     resp = client.get("/api/performance?scope=symphony&symphony_id=does-not-exist")

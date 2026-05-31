@@ -42,6 +42,7 @@ _PERFORMANCE_METRIC_KEYS = (
     "max_drawdown",
     "calmar",
     "win_rate",
+    "volatility",  # Phase 2: annualized volatility (matches analytics.compute_quantstats_metrics)
 )
 _PERFORMANCE_NONE_METRICS = {k: None for k in _PERFORMANCE_METRIC_KEYS}
 
@@ -1712,8 +1713,8 @@ def api_performance():
           "dates": [...],
           "live_returns": [...],
           "shadow_returns": [...],
-          "live_metrics":   {7 documented keys},
-          "shadow_metrics": {7 documented keys},
+          "live_metrics":   {8 documented keys — Phase 2 adds 'volatility'},
+          "shadow_metrics": {8 documented keys — Phase 2 adds 'volatility'},
           "observation_count": int,
           "insufficient_history": bool
         }

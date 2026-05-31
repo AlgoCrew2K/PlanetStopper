@@ -184,13 +184,18 @@ def test_dashboard_hero_has_cumulative_chart(dashboard_client):
 
 
 def test_dashboard_hero_has_vs_rows(dashboard_client):
-    """Hero must contain 3 Bot-vs-Held comparison rows."""
+    """Hero must contain 4 Bot-vs-Held comparison rows after Phase 2.
+
+    Phase 2 (ux-design-deliverable.md §Change 4) adds a 4th vs-row for
+    Annualized Volatility (Ann. Vol), after the existing Today / Cumulative /
+    Max DD rows. The Phase 1 assertion of exactly 3 rows is superseded.
+    """
     html = dashboard_client.get("/").data.decode("utf-8")
     vs_rows = re.findall(r'data-testid="vs-row"', html)
-    assert len(vs_rows) == 3, (
-        f"Hero section must contain exactly 3 data-testid=\"vs-row\" elements "
-        f"(Today / Cumulative / Max DD). Found: {len(vs_rows)}. "
-        "Design: studio.jsx VsRow x3."
+    assert len(vs_rows) == 4, (
+        f"Hero section must contain 4 data-testid=\"vs-row\" elements after Phase 2 "
+        f"(Today / Cumulative / Max DD / Ann. Vol). Found: {len(vs_rows)}. "
+        "Source: ux-design-deliverable.md §Change 4 — add volatility vs-row."
     )
 
 

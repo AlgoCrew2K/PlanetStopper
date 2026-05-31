@@ -260,33 +260,48 @@ def test_performance_headline_has_guard_alpha_stat(perf_client):
     )
 
 
-def test_performance_headline_has_bot_return_stat(perf_client):
-    """Headline strip must contain data-testid=\"bot-return-stat\"."""
+def test_performance_headline_has_sharpe_delta_stat(perf_client):
+    """Headline strip must contain data-testid=\"sharpe-delta-stat\".
+
+    Phase 2 redesign (ux-design-deliverable.md §Change 1) replaces the Phase 1
+    'Bot total return' cell with 'Sharpe Delta' (bot_sharpe − held_sharpe).
+    The old data-testid='bot-return-stat' is superseded.
+    """
     html = perf_client.get("/performance").data.decode("utf-8")
-    assert 'data-testid="bot-return-stat"' in html, (
-        "Headline strip must contain data-testid=\"bot-return-stat\" — "
-        "Planet Stopper-exited total return cell. "
-        "Design: Stat with k='Bot total return'."
+    assert 'data-testid="sharpe-delta-stat"' in html, (
+        "Phase 2 headline strip must contain data-testid=\"sharpe-delta-stat\". "
+        "Source: ux-design-deliverable.md §Change 1 — "
+        "Guard Alpha | Sharpe Delta | MDD Reduction | Sortino Delta."
     )
 
 
-def test_performance_headline_has_held_return_stat(perf_client):
-    """Headline strip must contain data-testid=\"held-return-stat\"."""
+def test_performance_headline_has_mdd_reduction_stat(perf_client):
+    """Headline strip must contain data-testid=\"mdd-reduction-stat\".
+
+    Phase 2 redesign (ux-design-deliverable.md §Change 1) replaces the Phase 1
+    'If-held total return' cell with 'MDD Reduction' (|held_mdd| − |bot_mdd|).
+    The old data-testid='held-return-stat' is superseded.
+    """
     html = perf_client.get("/performance").data.decode("utf-8")
-    assert 'data-testid="held-return-stat"' in html, (
-        "Headline strip must contain data-testid=\"held-return-stat\" — "
-        "if-held baseline total return cell. "
-        "Design: Stat with k='If-held total return'."
+    assert 'data-testid="mdd-reduction-stat"' in html, (
+        "Phase 2 headline strip must contain data-testid=\"mdd-reduction-stat\". "
+        "Source: ux-design-deliverable.md §Change 1."
     )
 
 
-def test_performance_headline_has_observations_stat(perf_client):
-    """Headline strip must contain data-testid=\"observations-stat\"."""
+def test_performance_headline_has_obs_caption_not_stat(perf_client):
+    """Observation count moves from a headline stat to an obs-caption element.
+
+    Phase 2 redesign (ux-design-deliverable.md §Change 1): the 'Observations'
+    stat cell is replaced by a sortino-delta-stat, and the observation count moves
+    to a small data-testid='obs-caption' <p> element outside the headline strip.
+    The old data-testid='observations-stat' is superseded.
+    """
     html = perf_client.get("/performance").data.decode("utf-8")
-    assert 'data-testid="observations-stat"' in html, (
-        "Headline strip must contain data-testid=\"observations-stat\" — "
-        "trading-day observation count. "
-        "Design: Stat with k='Observations'."
+    assert 'data-testid="obs-caption"' in html, (
+        "Phase 2: observation count must move to data-testid=\"obs-caption\" element "
+        "(outside the headline strip). "
+        "Source: ux-design-deliverable.md §Change 1."
     )
 
 
@@ -376,14 +391,21 @@ def test_performance_metrics_table_has_header_columns(perf_client):
     )
 
 
-def test_performance_metrics_table_has_seven_rows(perf_client):
-    """Metrics table must render exactly 7 metric rows."""
+def test_performance_metrics_table_has_more_than_seven_rows(perf_client):
+    """Metrics table must render more than 7 metric rows after Phase 2.
+
+    Phase 2 (ux-design-deliverable.md §Change 2) adds new Tier 1 rows
+    (max_drawdown_delta, volatility, volatility_delta) and Tier 2 placeholder
+    rows (upside_capture, downside_capture). The Phase 1 assertion of exactly
+    7 rows is superseded — the table now has 12 rows.
+    """
     html = perf_client.get("/performance").data.decode("utf-8")
     row_count = html.count('data-testid="metric-row"')
-    assert row_count == 7, (
-        f"Metrics table must render 7 rows (got {row_count}). "
-        "Design METRICS list: total_return, annualized_return, sharpe, sortino, "
-        "max_drawdown, calmar, win_rate."
+    assert row_count > 7, (
+        f"Phase 2 metrics table must render more than 7 rows (got {row_count}). "
+        "New rows: max_drawdown_delta, volatility, volatility_delta, "
+        "upside_capture (Tier 2 placeholder), downside_capture (Tier 2 placeholder). "
+        "Source: ux-design-deliverable.md §Change 2."
     )
 
 
