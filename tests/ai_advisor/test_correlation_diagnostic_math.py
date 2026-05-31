@@ -420,7 +420,8 @@ def test_pair_result_has_required_attributes():
     assert results, "expected at least one pair"
 
     r = results[0]
-    for attr in ("sym_a", "sym_b", "n_obs", "correlation", "thin_data"):
+    # 'window' is the date-range companion to n_obs (AC-1.2: "obs count / window").
+    for attr in ("sym_a", "sym_b", "n_obs", "correlation", "thin_data", "window"):
         assert hasattr(r, attr), (
             f"PairResult must have a `{attr}` attribute; dict or tuple not acceptable. "
             f"Got: {type(r).__name__!r}"
@@ -539,3 +540,188 @@ def test_correlation_with_shifted_series_is_strictly_less_than_identical():
         "a perturbed series is not identical to the base; correlation must be < 1.0"
     )
     assert r.correlation > -1.0, "correlation must be > -1.0 for a non-perfectly-anti-correlated pair"
+
+
+# ---------------------------------------------------------------------------
+# RED-9: window field (AC-1.2 — "obs count / window" must both be present)
+#
+# The reviewer flagged that AC-1.2 says "obs count / window" — n_obs alone
+# satisfies the count but not the window. PairResult must expose 'window'
+# as the date range string (e.g., "2026-01-02 to 2026-01-08" or a tuple of
+# (first_date, last_date)) OR as None when no date information is available
+# (list[float] input without explicit dates). This lets the operator judge
+# data freshness alongside the sample count.
+# ---------------------------------------------------------------------------
+
+
+def test_pair_result_has_window_attribute():
+    """PairResult must expose a 'window' attribute (AC-1.2: obs count / window).
+
+    For date-keyed series input, 'window' must be non-None (the date range
+    of the overlapping observations). For plain-list input it may be None
+    (no date metadata available).
+
+    A GREEN implementation that omits 'window' fails to satisfy AC-1.2.
+    """
+    fixture = _load_fixture("correlation_diagnostic_basic.json")
+    series = fixture["inputs"]["return_series"]
+
+    results = compute_pairwise_correlations(series)
+    assert results, "expected at least one pair"
+
+    r = results[0]
+    assert hasattr(r, "window"), (
+        "PairResult must expose a 'window' attribute for AC-1.2 ('obs count / window'). "
+        "For plain-list input, window may be None; for date-keyed input it must be a "
+        "non-None string or (first_date, last_date) tuple."
+    )
+
+
+def test_window_is_populated_for_date_keyed_series():
+    """When series input is date-keyed dicts, 'window' must be non-None
+    and express the span of overlapping observations.
+
+    The operator needs to see the date range alongside n_obs to judge
+    whether the data is stale (AC-1.2: 'obs count / window').
+    """
+    date_keyed = {
+        "sym_x": {
+            "2026-01-02": 0.01,
+            "2026-01-03": 0.02,
+            "2026-01-06": -0.01,
+        },
+        "sym_y": {
+            "2026-01-02": 0.01,
+            "2026-01-03": 0.02,
+            "2026-01-06": -0.01,
+        },
+    }
+    results = compute_pairwise_correlations(date_keyed)
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.window is not None, (
+        "date-keyed series → window must be non-None; the operator needs to see "
+        "the date range to judge data freshness (AC-1.2)"
+    )
+    # Window must express both endpoints — assert it is either a tuple/list of
+    # two date strings or a string containing the first and last date.
+    if isinstance(r.window, (tuple, list)):
+        assert len(r.window) == 2, "window tuple/list must have exactly 2 elements (first, last date)"
+        first, last = r.window
+        assert "2026-01-02" in str(first), f"window first date must include '2026-01-02', got {first!r}"
+        assert "2026-01-06" in str(last), f"window last date must include '2026-01-06', got {last!r}"
+    else:
+        # String form — must contain both endpoints
+        assert "2026-01-02" in str(r.window), (
+            f"window string must include the first date '2026-01-02'; got {r.window!r}"
+        )
+        assert "2026-01-06" in str(r.window), (
+            f"window string must include the last date '2026-01-06'; got {r.window!r}"
+        )
+
+
+def test_window_is_none_for_plain_list_series():
+    """When series input is plain list[float] (no date metadata), 'window'
+    may be None — no date information is available to derive a range from.
+
+    This is a valid degraded state: n_obs is still present so AC-1.2's count
+    requirement is met; the window field signals 'not available' rather than
+    fabricating a date range.
+    """
+    series = {
+        "sym_a": [0.01, 0.02, -0.01],
+        "sym_b": [0.01, 0.02, -0.01],
+    }
+    results = compute_pairwise_correlations(series)
+
+    assert len(results) == 1
+    r = results[0]
+    # window must be an attribute (tested above) but its value for plain-list
+    # input is None — do NOT assert a specific date string, since none exists.
+    # assert r.window is None  (acceptable)  OR  assert isinstance(r.window, str)  (also acceptable
+    # if implementation synthesises a position-based range like "obs 1 to 3")
+    # The only thing we pin: it must not raise AttributeError.
+    assert hasattr(r, "window"), "window attribute must exist even for plain-list input"
+
+
+# ---------------------------------------------------------------------------
+# RED-10: AST guard — no bare numeric literals at module scope or in the
+# correlation function body. Every constant must be named.
+#
+# This is an architecture constraint from project CLAUDE.md:
+# "No magic numbers in math_engine.py — every constant named + source comment"
+# The same discipline applies to advisors/correlation_diagnostic.py.
+# ---------------------------------------------------------------------------
+
+
+def test_no_bare_numeric_literals_in_correlation_diagnostic():
+    """advisors/correlation_diagnostic.py must not contain bare numeric literals
+    INSIDE function bodies (i.e., as non-constant-definition expressions).
+
+    Every domain-specific numeric constant must be assigned to a named
+    module-level name (e.g., THIN_DATA_THRESHOLD = 30) and referenced by name
+    inside function bodies. A bare literal like `if n_obs < 30:` is a magic
+    number; `if n_obs < THIN_DATA_THRESHOLD:` is correct.
+
+    AST-based check:
+    - Collects all numeric Constant nodes that are children of function bodies
+      (FunctionDef / AsyncFunctionDef).
+    - Tolerates arithmetic identities: 0, 1, 2, -1, 0.0, 1.0, 2.0, -1.0
+      (unavoidable in Pearson formula: sum(…) / n, ddof=1 semantics, clamping
+      to [-1, 1], etc.).
+    - Constants that appear as the VALUE in a module-level assignment
+      (e.g., `THIN_DATA_THRESHOLD: int = 30`) are ALLOWED — that is exactly
+      where named constants must be defined.
+
+    Domain-specific values that must NOT appear as inline function literals:
+    - 30 (thin-data threshold) → must be THIN_DATA_THRESHOLD
+    - Any other domain-specific threshold not in the arithmetic-identity set
+    """
+    import ast
+    import pathlib
+
+    diag_path = pathlib.Path(__file__).parent.parent.parent / "advisors" / "correlation_diagnostic.py"
+    if not diag_path.exists():
+        pytest.skip("advisors/correlation_diagnostic.py not yet created (RED state)")
+
+    source = diag_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    # Values that are arithmetic identities — acceptable as inline literals.
+    _ARITHMETIC_IDENTITIES = frozenset({0, 1, 2, -1, 0.0, 1.0, 2.0, -1.0})
+
+    # Collect line numbers of constant VALUE nodes in module-level assignments
+    # (these are the ALLOWED places for raw literals: `NAME = 30`).
+    _allowed_lines: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            # Check if this assignment is at module scope (parent is Module).
+            # We track the value node's line to exempt it from the check below.
+            value_node = node.value if hasattr(node, "value") and node.value is not None else None
+            if value_node is not None and isinstance(value_node, ast.Constant):
+                _allowed_lines.add(value_node.lineno)
+
+    # Now find all Constant nodes inside function bodies whose line is NOT
+    # in the allowed set and whose value is not an arithmetic identity.
+    bare_literals: list[tuple[int, object]] = []
+
+    for func_node in ast.walk(tree):
+        if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(func_node):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, (int, float))
+                and node.value not in _ARITHMETIC_IDENTITIES
+                and node.lineno not in _allowed_lines
+            ):
+                bare_literals.append((node.lineno, node.value))
+
+    assert not bare_literals, (
+        "advisors/correlation_diagnostic.py contains bare numeric literals inside "
+        "function bodies that must be replaced with named module-level constants:\n"
+        + "\n".join(f"  line {ln}: {val!r}" for ln, val in sorted(set(bare_literals)))
+        + "\n\nProject rule: every domain-specific constant must be named with a "
+        "source comment. Example: `if n_obs < 30:` → `if n_obs < THIN_DATA_THRESHOLD:`"
+    )
