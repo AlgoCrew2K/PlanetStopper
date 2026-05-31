@@ -46,6 +46,15 @@ THIN_DATA_THRESHOLD: int = 30
 # At n < 2 the sample covariance is undefined (ddof=1 → division by zero).
 _MIN_OBS_FOR_PEARSON: int = 2
 
+# Always-on operator caveat surfaced alongside correlation estimates (AC-1.4).
+# Correlations are computed from historical data; in market stress they converge
+# toward 1.0 — exactly when de-correlation matters most. Source: AC-1.4 risk note.
+CRISIS_CAVEAT: str = (
+    "Correlations destabilize toward 1.0 in market stress. "
+    "When de-correlation matters most, these estimates are least reliable. "
+    "Use as a guide, not a guarantee."
+)
+
 
 # ---------------------------------------------------------------------------
 # Result type

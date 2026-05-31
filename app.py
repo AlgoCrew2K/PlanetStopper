@@ -2287,11 +2287,8 @@ def ai_advisor_correlations():
     matrix = correlation_diagnostic.compute_pairwise_correlations(series_dict)
 
     # AC-1.4: the crisis-instability caveat is mandatory and always surfaced.
-    crisis_caveat = (
-        "Correlations destabilize toward 1.0 in market stress. "
-        "When de-correlation matters most, these estimates are least reliable. "
-        "Use as a guide, not a guarantee."
-    )
+    # Single source of truth lives in the module that owns the concept.
+    crisis_caveat = correlation_diagnostic.CRISIS_CAVEAT
 
     return render_template(
         "ai_advisor_correlations.html",
