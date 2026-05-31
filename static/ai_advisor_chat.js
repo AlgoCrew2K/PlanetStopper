@@ -166,7 +166,7 @@
         var thinkingId = 'chat-thinking-' + Date.now();
         _appendBubbleWithId('ai', 'Thinking…', thinkingId, true);
 
-        fetch('/ai-advisor/chat/send', {
+        fetch('/ai-advisor/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
