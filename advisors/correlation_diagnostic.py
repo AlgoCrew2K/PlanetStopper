@@ -62,9 +62,11 @@ class PairResult:
 
     sym_a: str
     sym_b: str
-    n_obs: int          # overlapping finite observations used; Python int
-    correlation: float | None  # Pearson r ∈ [-1, 1]; None when undefined
-    thin_data: bool     # True when n_obs < THIN_DATA_THRESHOLD; Python bool
+    n_obs: int                        # overlapping finite observations used; Python int
+    correlation: float | None         # Pearson r ∈ [-1, 1]; None when undefined
+    thin_data: bool                   # True when n_obs < THIN_DATA_THRESHOLD; Python bool
+    window: tuple[str, str] | None    # (first_date, last_date) of overlap for date-keyed
+                                      # input; None for positional list input (AC-1.2)
 
 
 # ---------------------------------------------------------------------------
@@ -75,16 +77,25 @@ class PairResult:
 def _extract_aligned_pairs(
     series_a: list[float] | dict[str, float],
     series_b: list[float] | dict[str, float],
-) -> tuple[list[float], list[float]]:
-    """Return parallel lists of finite values shared by both series.
+) -> tuple[list[float], list[float], tuple[str, str] | None]:
+    """Return parallel lists of finite values shared by both series, plus the
+    date window of the overlap.
 
     List input:  aligned by position (index i of a with index i of b).
+                 window is None — positional indices are not real dates.
     Dict input:  aligned by shared date keys (intersection of key sets).
+                 window is (first_date, last_date) of the finite overlap,
+                 or None when no finite overlap exists.
     Mixed input (one list, one dict): convert the list to a positional dict
-    keyed "0", "1", ... so the dict path handles the intersection uniformly.
+                 keyed "0", "1", ... so the dict path handles intersection
+                 uniformly; window is None (indices, not dates).
 
     Only pairs where BOTH values are finite (non-NaN, non-Inf) are retained.
+    Returns (vals_a, vals_b, window).
     """
+    # Track whether both inputs are genuine date-keyed dicts (not positional lists).
+    both_date_keyed = isinstance(series_a, dict) and isinstance(series_b, dict)
+
     # Normalise both to dicts so a single code path handles alignment.
     def _to_dict(s: list[float] | dict[str, float]) -> dict[str, float]:
         if isinstance(s, dict):
@@ -98,6 +109,7 @@ def _extract_aligned_pairs(
 
     vals_a: list[float] = []
     vals_b: list[float] = []
+    finite_keys: list[str] = []
     for k in shared_keys:
         va, vb = da[k], db[k]
         try:
@@ -107,8 +119,14 @@ def _extract_aligned_pairs(
         if math.isfinite(fa) and math.isfinite(fb):
             vals_a.append(fa)
             vals_b.append(fb)
+            finite_keys.append(k)
 
-    return vals_a, vals_b
+    # Window: the span of the finite overlap, but only when input was date-keyed.
+    window: tuple[str, str] | None = None
+    if both_date_keyed and finite_keys:
+        window = (finite_keys[0], finite_keys[-1])
+
+    return vals_a, vals_b, window
 
 
 def _pearson_r(xs: list[float], ys: list[float]) -> float | None:
@@ -200,7 +218,7 @@ def compute_pairwise_correlations(
         # list, but enforce it explicitly as a contract invariant.
         sym_a, sym_b = (name_a, name_b) if name_a <= name_b else (name_b, name_a)
 
-        vals_a, vals_b = _extract_aligned_pairs(
+        vals_a, vals_b, window = _extract_aligned_pairs(
             return_series[sym_a], return_series[sym_b]
         )
 
@@ -215,6 +233,7 @@ def compute_pairwise_correlations(
                 n_obs=n_obs,
                 correlation=corr,
                 thin_data=thin,
+                window=window,
             )
         )
 
