@@ -980,6 +980,91 @@ def get_advisor_observations_for_symphony(symphony_id: str) -> list[dict]:
     return [_parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS) for row in rows]
 
 
+# --- Phase 3c: regime label cache (offline-produced, read on the live path) ---
+
+
+def save_regime_label(symphony_id: str, label: str, as_of_date: str) -> None:
+    """Persist the most-recent offline regime label for a symphony (latest wins).
+
+    Called by the OFFLINE daily job after running regime_classifier.classify_regime
+    over the symphony's daily return series. The live 1-minute execution path never
+    calls the classifier; it reads this cached row via get_cached_regime_label.
+
+    symphony_id is the primary key, so a second save for the same symphony
+    OVERWRITES the prior row (the execution path always reads the latest run).
+    as_of_date is the ISO date (YYYY-MM-DD) the label was computed for; it feeds
+    the staleness check in get_cached_regime_label.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO regime_label_cache (symphony_id, label, as_of_date) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(symphony_id) DO UPDATE SET "
+            "label = excluded.label, "
+            "as_of_date = excluded.as_of_date, "
+            "updated_at = datetime('now')",
+            (symphony_id, label, as_of_date),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_cached_regime_label(
+    symphony_id: str, staleness_cutoff_days: int | None = None
+) -> str | None:
+    """Return the cached regime label for a symphony, or None if absent/stale.
+
+    Read-only accessor for the live execution path (architecture constraint 5):
+    opens a read-only connection and never mutates state.
+
+    staleness_cutoff_days semantics:
+      - None (default): return the stored label regardless of age.
+      - 0: always return None (safety escape hatch — treat every label as stale).
+      - N > 0: return None when as_of_date is more than N days before today (UTC);
+        otherwise return the label.
+
+    Never raises: any missing table, missing row, or unparseable date returns None
+    so the caller (apply_regime_exit_adjustment) falls back to the safe default
+    (no adjustment) rather than failing on the 1-minute path.
+    """
+    try:
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT label, as_of_date FROM regime_label_cache WHERE symphony_id = ?",
+                (symphony_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+    if row is None:
+        return None
+
+    label, as_of_date = row[0], row[1]
+
+    if staleness_cutoff_days is None:
+        return label
+
+    # cutoff of 0 means "always stale": no label is ever fresh enough.
+    if staleness_cutoff_days <= 0:
+        return None
+
+    try:
+        label_date = datetime.strptime(as_of_date, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        # Unparseable stored date -> treat as stale/absent (safe default).
+        return None
+
+    age_days = (datetime.now(UTC).date() - label_date).days
+    if age_days > staleness_cutoff_days:
+        return None
+    return label
+
+
 # --- H1: Schema Migration Runner ---
 
 _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
@@ -1016,6 +1101,7 @@ _MIGRATION_FILES = [
     "024_spec_facets_unique_constraint.sql",
     "025_advisor_observations_symphony_id.sql",
     "026_mc_regime_match_telemetry.sql",
+    "027_regime_label_cache.sql",
 ]
 
 

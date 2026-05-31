@@ -461,6 +461,7 @@ def compute_exit_confirmation(
     stop_trigger_level: float,
     prob_beating: float | None,
     current_below_stop_count: int,
+    exit_confirm_ticks: int = EXIT_CONFIRM_TICKS,
 ) -> tuple[int, bool]:
     """
     Computes the trailing-stop exit-confirmation state update.
@@ -474,10 +475,18 @@ def compute_exit_confirmation(
                              and mc_sanity_ok
       if below_stop_condition:
           new_count = current_below_stop_count + 1
-          hit = (new_count >= EXIT_CONFIRM_TICKS)
+          hit = (new_count >= exit_confirm_ticks)
           return new_count, hit
       else:
           return 0, False                            # reset on miss
+
+    EXIT_CONFIRM_TICKS THRESHOLD: the number of consecutive qualifying ticks
+    required to flip is_trailing_stop_hit. ``exit_confirm_ticks`` defaults to the
+    module-level EXIT_CONFIRM_TICKS so all existing callers are unaffected. The
+    regime-conditional exit lever (Phase 3c) passes a regime-adjusted threshold
+    here via apply_regime_exit_adjustment(...) WITHOUT mutating the module-level
+    constant — keeping the per-call threshold an explicit, auditable argument
+    rather than global state.
 
     MC SANITY GATE (fail-safe): a real prob_beating >= MC_SANITY_THRESHOLD
     vetoes the exit (the count resets) — "if we still think we beat the
@@ -494,6 +503,16 @@ def compute_exit_confirmation(
     Pure. No I/O. No state. Caller handles print transitions by comparing
     input current_below_stop_count to returned new_below_stop_count.
     """
+    if exit_confirm_ticks <= 0:
+        # Reject-don't-coerce (M-2): a zero/negative threshold would arm a stop
+        # that fires on the very first qualifying tick — no confirmation ladder
+        # at all. apply_regime_exit_adjustment is bounded >= 1, so 0 can only
+        # arrive from a direct caller bypassing the adjustment; this is the
+        # last-line guard against disabling the confirmation ladder.
+        raise ValueError(
+            f"exit_confirm_ticks must be > 0 (confirmation ladder cannot be "
+            f"disabled); got {exit_confirm_ticks!r}"
+        )
     _reject_non_finite(
         current_return=current_return,
         stop_trigger_level=stop_trigger_level,
@@ -512,10 +531,95 @@ def compute_exit_confirmation(
 
     if below_stop_condition:
         new_count = int(current_below_stop_count) + 1
-        hit = bool(new_count >= EXIT_CONFIRM_TICKS)
+        hit = bool(new_count >= exit_confirm_ticks)
         return new_count, hit
     else:
         return 0, False
+
+
+# ---------------------------------------------------------------------------
+# Phase 3c — regime-conditional exit lever (single knob: the exit-confirmation
+# tick threshold). The regime LABEL is produced by an offline daily diagnostic
+# (regime_classifier.classify_regime) and read from a cached DB row on the live
+# path — regime_classifier is NEVER imported here (no blocking I/O on the
+# 1-minute execution path; PHASE3_DECISIONS.md §Sub-phase 3a). This module only
+# maps a precomputed label string to a bounded confirmation-tick count.
+# ---------------------------------------------------------------------------
+
+# Safety envelope for any regime-adjusted confirmation-tick count. No regime may
+# push the lever outside [LOWER, UPPER]: LOWER >= 1 forbids a zero-confirmation
+# stop (would fire on the first noise tick); UPPER caps how unarmed the restraint
+# direction can make the stop. UPPER is 8 (~2.7x base EXIT_CONFIRM_TICKS) — wide
+# enough for genuine restraint, tight enough that the stop still confirms within
+# a few minutes. Source: PHASE3_DECISIONS.md §Regime->response (bounded table).
+REGIME_TICKS_LOWER_BOUND = 1
+REGIME_TICKS_UPPER_BOUND = 8
+
+# Per-regime confirmation-tick targets (fixed theory-set constants, NOT learned).
+# Direction rationale (Kaminski-Lo 2014, "Strategic Allocation to Commodity
+# Factor Premiums"): serial-correlation sign governs whether a trailing stop
+# helps or hurts.
+#   TRENDING       -> returns PERSIST; a stop trigger is more likely a genuine
+#                     reversal than noise -> MORE-ACTIVE -> fewer ticks.
+#   MEAN-REVERTING -> returns REVERSE; a trigger is more likely a noise tick that
+#                     will revert -> RESTRAINT -> more ticks (harder to confirm).
+#   HIGH-VOL       -> stressed regime; keep the stop PROTECTIVE (not loosened to
+#                     restraint territory) but bounded so it cannot collapse to a
+#                     single-tick hair trigger -> at-or-below base, >= 1.
+# Source: PHASE3_DECISIONS.md §Regime->response mapping; 00-ADAPTIVE-RECOMMENDATION.md §1A.
+TRENDING_EXIT_TICKS = 2  # < EXIT_CONFIRM_TICKS (3): more-active
+MEAN_REVERTING_EXIT_TICKS = 5  # > EXIT_CONFIRM_TICKS (3): restraint, within UPPER bound
+HIGH_VOL_EXIT_TICKS = 3  # == EXIT_CONFIRM_TICKS: protective (not loosened), bounded
+
+# Explicit, auditable label -> tick mapping. Only the three production labels
+# emitted by regime_classifier.classify_regime are recognized; any other string
+# (or None) falls through to the safe default (base_ticks unchanged).
+_REGIME_EXIT_TICKS_TABLE: dict[str, int] = {
+    "trending": TRENDING_EXIT_TICKS,
+    "mean-reverting": MEAN_REVERTING_EXIT_TICKS,
+    "high-vol": HIGH_VOL_EXIT_TICKS,
+}
+
+
+def apply_regime_exit_adjustment(regime_label: str | None, base_ticks: int) -> int:
+    """Map a cached regime label to a bounded exit-confirmation tick count.
+
+    WHAT: returns the number of consecutive qualifying ticks
+    compute_exit_confirmation should require before firing the trailing stop,
+    given the current (precomputed, offline) regime label. The result is always
+    an int clamped to [REGIME_TICKS_LOWER_BOUND, REGIME_TICKS_UPPER_BOUND].
+
+    ONE-KNOB BUDGET: the regime adjustment moves exactly ONE response knob —
+    the exit_confirm_ticks threshold passed to compute_exit_confirmation. No
+    other lever (stop distance, MC_SANITY_THRESHOLD, multipliers) is touched.
+    This honours the ≈1-knob budget (00-ADAPTIVE-RECOMMENDATION.md §1A): the
+    per-regime tick values are FIXED theory-anchored constants, NOT tuned by
+    Optuna, so the adaptive layer adds essentially one bounded degree of freedom.
+
+    WHY (direction, Kaminski-Lo 2014): the sign of serial correlation decides
+    whether a stop helps. In a TRENDING regime returns persist, so a stop trigger
+    is probably a real reversal -> be MORE-ACTIVE (fewer ticks). In a
+    MEAN-REVERTING regime returns reverse, so a trigger is probably noise that
+    will bounce back -> show RESTRAINT (more ticks, harder to confirm). A HIGH-VOL
+    regime is stressed: keep the stop PROTECTIVE (at or below base) but bounded so
+    it cannot become a single-tick hair trigger.
+
+    SAFE DEFAULT (hard constraint 4): None, an empty string, or any label outside
+    the three recognized production labels returns base_ticks unchanged — current
+    behavior, no adjustment. Matching is exact and case-sensitive: the classifier
+    emits lowercase labels ('trending', 'mean-reverting', 'high-vol'); an
+    unrecognized or stale label must be treated as absent.
+
+    Pure: no I/O, no side effects, no global state. Reads only its arguments and
+    module-level named constants (project rule: no magic numbers in the body).
+    """
+    target = _REGIME_EXIT_TICKS_TABLE.get(regime_label) if regime_label is not None else None
+    if target is None:
+        # Unknown / absent / stale label -> safe default: no adjustment.
+        return int(base_ticks)
+    # Clamp the theory-set target into the safety envelope (named constants only).
+    bounded = max(REGIME_TICKS_LOWER_BOUND, min(REGIME_TICKS_UPPER_BOUND, target))
+    return int(bounded)
 
 
 # Take-profit confirmation constant (gates the take-profit trigger)
