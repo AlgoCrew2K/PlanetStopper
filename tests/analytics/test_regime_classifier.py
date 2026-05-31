@@ -279,6 +279,12 @@ def test_classifier_not_imported_by_math_engine() -> None:
     regime_classifier must NOT be imported by math_engine.py.
     math_engine.py IS on the live execution path; any import from it would
     violate the offline constraint.
+
+    Uses AST-based import detection (not a substring check) so that
+    explanatory comments in math_engine.py that mention 'regime_classifier'
+    (documenting WHY it is deliberately not imported) do not produce a
+    false positive.  Only actual `import regime_classifier` /
+    `from regime_classifier import ...` AST nodes constitute a violation.
     """
     worktree_root = pathlib.Path(__file__).parent.parent.parent
     math_engine_path = worktree_root / "math_engine.py"
@@ -288,11 +294,28 @@ def test_classifier_not_imported_by_math_engine() -> None:
     )
 
     source = math_engine_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
 
-    assert "regime_classifier" not in source, (
-        "math_engine.py imports regime_classifier. "
+    bad_imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if "regime_classifier" in alias.name:
+                    bad_imports.append(
+                        f"line {node.lineno}: import {alias.name}"
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if "regime_classifier" in module:
+                bad_imports.append(
+                    f"line {node.lineno}: from {module} import ..."
+                )
+
+    assert not bad_imports, (
+        "math_engine.py MUST NOT import regime_classifier. "
         "math_engine.py is on the live execution path; regime_classifier "
-        "must remain offline/diagnostic only."
+        "must remain offline/diagnostic only. Found: "
+        + ", ".join(bad_imports)
     )
 
 
