@@ -1008,3 +1008,93 @@ def test_classify_regime_docstring_states_fixed_threshold_not_fitted() -> None:
         "to close the claim-vs-code seam: classify_regime uses a theory-anchored "
         "constant, not a threshold fitted from history (methodologist advisory A1)."
     )
+
+
+# --- rev-3a BLOCK: HIGH_VOL_DAILY_THRESHOLD comment + unit contract --------
+
+def test_high_vol_threshold_comment_does_not_claim_fit_supersedes_it() -> None:
+    """
+    rev-3a BLOCK resolution: the HIGH_VOL_DAILY_THRESHOLD constant comment must
+    NOT claim that fit_regime_classifier's fitted threshold 'supersedes' it at
+    call time. No such mechanism exists (classify_regime takes no threshold
+    parameter), and the units are incompatible (sample std vs abs-return q90).
+
+    This test pins the contract by asserting:
+    (1) classify_regime accepts exactly one required argument (the returns series)
+        with no threshold parameter — no 'superseding' mechanism is possible.
+    (2) The module source does not contain the misleading phrase that implies
+        runtime override of the fixed constant.
+    (3) HIGH_VOL_DAILY_THRESHOLD is documented with UNIT: std (not abs-return
+        percentile) — the unit mismatch with fit_regime_classifier must be
+        stated explicitly so no future caller drops in a fitted value without
+        the ~1.645 rescaling.
+
+    Source: rev-3a review BLOCK at a2182b0, engine constants section.
+    Unit mismatch derivation: for a normal distribution,
+      q90(|r|) = sigma * qnorm(0.95) ≈ sigma * 1.645
+    so q90(|r|) = 0.04 => sigma ≈ 0.024, NOT 0.04. Substituting a fitted
+    abs-return-q90 threshold directly into the sample-std comparison would
+    produce a threshold ~1.645x too high, missing most stressed windows.
+    """
+    import inspect as _inspect
+
+    # (1) classify_regime must accept only 'returns' — no threshold parameter.
+    sig = _inspect.signature(regime_classifier.classify_regime)
+    param_names = list(sig.parameters.keys())
+    assert param_names == ["returns"], (
+        f"classify_regime signature changed: expected ['returns'], got {param_names}. "
+        "If a threshold parameter is added, the unit contract (std vs abs-return q90) "
+        "must be documented on the parameter and the '~1.645 rescaling required' note "
+        "must appear in the docstring."
+    )
+
+    # (2) The module source must not contain the 'supersedes this default' phrase
+    # that falsely implies the fitted threshold overrides the constant at call time.
+    module_file = pathlib.Path(regime_classifier.__file__)
+    source = module_file.read_text(encoding="utf-8")
+    assert "supersedes this default" not in source, (
+        "regime_classifier.py still contains 'supersedes this default' in the "
+        "HIGH_VOL_DAILY_THRESHOLD comment. This phrase is false: classify_regime "
+        "takes no threshold parameter, so no fitted value can supersede the constant. "
+        "Remove this sentence (rev-3a BLOCK, engine constants)."
+    )
+
+    # (3) The constant comment must document the UNIT as sample std (not abs-return).
+    # Search for the comment block that immediately precedes the assignment line.
+    # Strategy: find the assignment, then walk backward line-by-line collecting
+    # comment lines (starting with '#') until a non-comment, non-empty line is hit.
+    lines = source.splitlines()
+    assignment_lineno = None
+    for i, line in enumerate(lines):
+        if line.strip().startswith("HIGH_VOL_DAILY_THRESHOLD = "):
+            assignment_lineno = i
+            break
+    assert assignment_lineno is not None, (
+        "HIGH_VOL_DAILY_THRESHOLD constant not found in source"
+    )
+    # Collect comment lines immediately above the assignment.
+    comment_lines: list[str] = []
+    for j in range(assignment_lineno - 1, -1, -1):
+        stripped = lines[j].strip()
+        if stripped.startswith("#"):
+            comment_lines.insert(0, stripped)
+        elif stripped == "":
+            # blank lines between comment blocks are acceptable
+            if comment_lines:
+                break
+        else:
+            break
+    comment_block = " ".join(comment_lines).lower()
+    assert "std" in comment_block, (
+        "HIGH_VOL_DAILY_THRESHOLD comment does not mention 'std'. "
+        "The unit contract (sample std of daily returns, NOT abs-return percentile) "
+        "must be stated in the constant comment to prevent the unit-mismatch bug: "
+        "q90(|r|)=0.04 => std≈0.024, not 0.04 (factor ~1.645 for normal distribution). "
+        f"Comment block found: {comment_block[:300]!r}"
+    )
+    assert "unit" in comment_block, (
+        "HIGH_VOL_DAILY_THRESHOLD comment does not contain 'unit'. "
+        "Add 'UNIT: sample std of daily returns' to the comment so callers "
+        "cannot accidentally substitute a fitted abs-return-q90 value directly. "
+        f"Comment block found: {comment_block[:300]!r}"
+    )

@@ -74,16 +74,20 @@ MIN_FINITE_OBSERVATIONS = 2
 # are opposite signs of serial correlation).
 AUTOCORR_TREND_THRESHOLD = 0.0
 
-# High-vol (stressed) realized-volatility boundary for the bare classify_regime
-# path, expressed in DAILY return-fraction std (e.g. 0.04 = 4% daily std).
+# High-vol (stressed) realized-volatility boundary used by classify_regime,
+# expressed in DAILY return-fraction std (e.g. 0.04 = 4% daily std).
 # A normal daily equity vol is ~1.0-1.5%/day; a stressed/high-vol day-window
 # runs several multiples of that. 0.04 (~3x normal) cleanly separates a normal
 # moderate-vol window (~1-2%/day) from a stressed window (7-11%/day, ~9% std)
 # while leaving wide margin on both sides for boundary stability.
 # Source: 00-ADAPTIVE-RECOMMENDATION.md §1A high-vol/stressed tercile;
 # normal-vol anchor from the high_vol_stressed fixture derivation.
-# When thresholds are fit from real history via fit_regime_classifier, the
-# data-driven upper-quantile threshold supersedes this default.
+# UNIT: sample std of daily returns (NOT abs-return percentile). fit_regime_classifier
+# computes abs-return q90 which is NOT directly comparable — a q90(|r|) = 0.04
+# corresponds to std ~= 0.024 (factor ~1.645 for a normal distribution). The two
+# functions are independent diagnostics; the fitted threshold from fit_regime_classifier
+# is NOT wired into classify_regime and cannot be substituted without rescaling.
+# See module docstring (FIXED THRESHOLD design note).
 HIGH_VOL_DAILY_THRESHOLD = 0.04
 
 # Upper quantile used by fit_regime_classifier to derive the high-vol boundary
