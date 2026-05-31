@@ -54,7 +54,7 @@
   "_corrected_design": "For a fixture where naive average != portfolio-series vol: use sym_b with returns NOT proportional to sym_a, so covariance term breaks the equality.",
 
   "divergent_case": {
-    "_comment": "Use this case for the golden test. sym_a and sym_b have uncorrelated, equal-magnitude daily returns. Portfolio vol < naive average of individual vols (diversification benefit).",
+    "_comment": "Use this case for the golden test. sym_a and sym_b have strongly anti-correlated, equal-magnitude daily returns (r ≈ −0.82). The 50/50 portfolio combined series is near-zero-variance (only day 0 non-zero due to partial cancellation). Portfolio vol << naive average of individual vols (diversification benefit from anti-correlation).",
     "sym_a_returns_pct_scale": [
       0.20, -0.20, 0.20, -0.20, 0.20,
       0.20, -0.20, 0.20, -0.20, 0.20
