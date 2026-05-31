@@ -907,8 +907,8 @@
                  system. vol_bot / vol_held are fraction-scale (e.g. 0.028 = 2.8%); rendered
                  as percent. When vol data is absent (no shadow history) the row stub-renders
                  '—' with 0%-width bars — no fabricated numbers. -->
-            {% set vol_bot = (meta.portfolio.vol_bot if meta is defined and meta.portfolio is defined else None) %}
-            {% set vol_held = (meta.portfolio.vol_held if meta is defined and meta.portfolio is defined else None) %}
+            {% set vol_bot = (meta.portfolio.get('vol_bot') if meta is defined and meta.portfolio is defined else None) %}
+            {% set vol_held = (meta.portfolio.get('vol_held') if meta is defined and meta.portfolio is defined else None) %}
             {% set has_vol = vol_bot is not none and vol_held is not none %}
             {# Inverted winner: bot wins when its vol is <= held's. Delta = held - bot in pp
                (positive = bot calmer = improvement). Bar widths inverted: lower-vol side
