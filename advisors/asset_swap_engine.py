@@ -156,6 +156,10 @@ class SwapProposalResult:
     baseline_stats: Optional[dict] = None
     variant_stats: Optional[dict] = None
 
+    # Caveats surfaced to the operator — always non-empty for ADOPT_CANDIDATE survivors
+    # (SURVIVOR_OVERFITTING_CAVEAT is mandatory per AC-3.3).  Populated from
+    # gate_result.caveats after gating; may also be set directly by callers/tests.
+    caveats: list = field(default_factory=list)
     apply_guidance: str = ""
     backtest_error: Optional[str] = None
     data_warnings: list = field(default_factory=list)
@@ -680,6 +684,9 @@ def propose_operator_swap(
     gate_result = gate_batch.results[0]
 
     proposal_shell.gate_result = gate_result
+    # Propagate caveats from gate_result onto the proposal so callers and the
+    # route can read proposal.caveats directly (AC-3.3 / SURVIVOR_OVERFITTING_CAVEAT).
+    proposal_shell.caveats = list(gate_result.caveats)
 
     proposals = [proposal_shell]
     survivors = []
@@ -859,6 +866,8 @@ def suggest_swaps(
         gate_result = gate_result_by_id.get(shell.candidate_id)
         if gate_result is not None:
             shell.gate_result = gate_result
+            # Propagate gate caveats onto the proposal (AC-3.3 / SURVIVOR_OVERFITTING_CAVEAT).
+            shell.caveats = list(gate_result.caveats)
             if gate_result.verdict.decision == "ADOPT_CANDIDATE":
                 survivors.append(shell)
                 try:
