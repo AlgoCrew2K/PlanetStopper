@@ -198,8 +198,11 @@ class CandidateGateResult(NamedTuple):
         List of plain-text caveat strings.  Always non-empty for ADOPT_CANDIDATE
         verdicts (the survivor overfitting caveat is mandatory per AC-3.3).
     winner_p_adj:
-        The BHY-adjusted p-value for this candidate.  None if it was not the
-        BHY winner or if the BHY gate produced no winner.
+        The BHY-adjusted p-value for this candidate (``p_adj[idx]`` from the
+        batch-wide BHY correction) — always a finite float, never None.
+        A value > HARVEY_LIU_FDR_Q means this candidate did not clear the FDR
+        gate on its own; the gate still uses the batch-wide winner selection,
+        so this field is provided for operator audit trail only.
     """
 
     candidate_id: str
