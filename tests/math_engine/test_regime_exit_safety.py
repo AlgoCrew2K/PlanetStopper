@@ -537,3 +537,99 @@ def test_regime_adjustment_table_docstring_cites_one_knob_budget() -> None:
         "(e.g. '≈1 knob', '1-knob', 'one knob'). "
         "REQ-BUDGET-1: the budget constraint must be visible in the docstring."
     )
+
+
+# ---------------------------------------------------------------------------
+# risk-3c ISSUE 1b follow-up: base_ticks provenance in production wiring
+# ---------------------------------------------------------------------------
+
+
+def test_apply_regime_exit_adjustment_base_ticks_is_named_constant_not_state() -> None:
+    """
+    risk-3c ISSUE 1b clarification (from review of 396aa7d): the production
+    call site MUST pass EXIT_CONFIRM_TICKS (the module-level named constant) as
+    base_ticks, NOT current_below_stop_count or any other stateful counter.
+
+    If the caller passed current_below_stop_count as base_ticks, a trending
+    regime could see base_ticks < TRENDING_EXIT_TICKS on intermediate ticks
+    (e.g. below_stop_count=1 when TRENDING_EXIT_TICKS=2), and the adjustment
+    would return TRENDING_EXIT_TICKS=2, which is ABOVE the current stateful
+    count — raising the effective threshold per-tick rather than applying a
+    fixed adjustment.  That is a composition error, not what the one-knob
+    design intends.
+
+    This is an AST test on alpha_bot_execution.py's call site for
+    apply_regime_exit_adjustment.  The call must pass math_engine.EXIT_CONFIRM_TICKS
+    (or the module-level constant EXIT_CONFIRM_TICKS by Name reference) as
+    base_ticks — never a Name referencing below_stop_count, above_tp_count, or
+    any other state variable.
+
+    The test is RED until alpha_bot_execution.py wires the regime adjustment.
+    After wiring, it asserts the correct provenance in the call.
+    """
+    src_path = _WORKTREE_ROOT / "alpha_bot_execution.py"
+    assert src_path.exists(), f"alpha_bot_execution.py not found at {src_path}"
+    source = src_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    # Find all calls to apply_regime_exit_adjustment
+    calls: list[ast.Call] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        # Match both math_engine.apply_regime_exit_adjustment and direct name
+        if isinstance(func, ast.Attribute) and func.attr == "apply_regime_exit_adjustment":
+            calls.append(node)
+        elif isinstance(func, ast.Name) and func.id == "apply_regime_exit_adjustment":
+            calls.append(node)
+
+    assert calls, (
+        "apply_regime_exit_adjustment is not called in alpha_bot_execution.py. "
+        "The regime-conditional exit lever must be wired into the execution path "
+        "(Phase 3c scope). Add the call with base_ticks=math_engine.EXIT_CONFIRM_TICKS."
+    )
+
+    # Forbidden state-variable names that must NOT be passed as base_ticks
+    STATE_VARS = {
+        "below_stop_count",
+        "_prev_below_stop_count",
+        "new_below_stop_count",
+        "above_tp_count",
+        "hwm_hold_ticks",
+    }
+
+    for call in calls:
+        # base_ticks may be a positional arg (index 1) or keyword arg
+        base_ticks_node = None
+        if len(call.args) >= 2:
+            base_ticks_node = call.args[1]
+        for kw in call.keywords:
+            if kw.arg == "base_ticks":
+                base_ticks_node = kw.value
+                break
+
+        assert base_ticks_node is not None, (
+            f"apply_regime_exit_adjustment call at line {call.lineno} in "
+            f"alpha_bot_execution.py has no base_ticks argument. The call must "
+            f"pass base_ticks=math_engine.EXIT_CONFIRM_TICKS (or EXIT_CONFIRM_TICKS "
+            f"by Name) — never omit it."
+        )
+
+        # base_ticks must reference EXIT_CONFIRM_TICKS, not a state variable
+        if isinstance(base_ticks_node, ast.Name):
+            assert base_ticks_node.id not in STATE_VARS, (
+                f"apply_regime_exit_adjustment call at line {call.lineno}: "
+                f"base_ticks={base_ticks_node.id!r} is a state variable. "
+                f"risk-3c ISSUE 1b: base_ticks must come from EXIT_CONFIRM_TICKS "
+                f"(the named constant), not from a stateful counter. Passing a "
+                f"stateful count allows the trending adjustment to compose with "
+                f"itself across ticks."
+            )
+        elif isinstance(base_ticks_node, ast.Attribute):
+            # e.g. math_engine.EXIT_CONFIRM_TICKS
+            assert base_ticks_node.attr == "EXIT_CONFIRM_TICKS", (
+                f"apply_regime_exit_adjustment call at line {call.lineno}: "
+                f"base_ticks is an attribute access '{base_ticks_node.attr}', not "
+                f"EXIT_CONFIRM_TICKS. base_ticks must be math_engine.EXIT_CONFIRM_TICKS."
+            )
