@@ -1,0 +1,149 @@
+{
+  "_provenance": "schema-derived from ai-advisor.md §Gate-1 Resolutions #1 + acceptance_gate.py contract. No producer-computed values — inputs are hand-specified, expected decisions are structural/behavioural assertions about invariants. Captured 2026-05-31.",
+  "_design_refs": [
+    "feature-plans/ai-advisor.md §Gate-1 Resolutions #1",
+    "acceptance_gate.py:evaluate_acceptance_gate signature",
+    "feature-plans/ai-advisor.md §Capability 3 / AC-3.2 multiple-testing guardrail"
+  ],
+
+  "minimum_folds_for_gate": {
+    "_note": "Structural lower bound — not a producer-computed value. Gate withholds when there are not enough folds to form a valid distribution. The exact threshold is an implementation decision for gate; this fixture asserts WITHHOLD, not a specific fold count.",
+    "description": "Return series so short it cannot yield enough folds → gate must withhold (not fabricate a pass).",
+    "input": {
+      "daily_returns": [0.01, -0.005, 0.008, -0.003, 0.012],
+      "n_returns": 5,
+      "description": "5 daily returns — far too few to slice into meaningful walk-forward folds"
+    },
+    "expected": {
+      "verdict": "WITHHOLD",
+      "reason_contains": "insufficient",
+      "_rationale": "A transform that produces valid gate inputs from 5 days of returns would be fabricating OOS statistics. The gate must WITHHOLD here."
+    }
+  },
+
+  "degenerate_zero_variance_series": {
+    "description": "Return series with zero variance (all identical returns) → gate must withhold, not produce a passing verdict on a degenerate distribution.",
+    "input": {
+      "daily_returns": [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+                        0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+                        0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+                        0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+                        0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+                        0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+                        0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+                        0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01],
+      "n_returns": 80,
+      "description": "80 days of identical 1% returns — zero variance, degenerate Sharpe"
+    },
+    "expected": {
+      "verdict": "WITHHOLD",
+      "reason_contains": "degenerate",
+      "_rationale": "Zero-variance return series produces undefined (inf/NaN) Sharpe ratio. The transform must detect and withhold on degenerate series."
+    }
+  },
+
+  "purge_integrity_between_folds": {
+    "description": "Verifies that train/validation fold boundaries include a purge gap. If the transform does not implement purge/embargo days between folds, look-ahead contamination is possible. This scenario has deliberate date-adjacency that a naive split would fail on.",
+    "input": {
+      "n_returns": 200,
+      "n_folds": 4,
+      "purge_days": 5,
+      "description": "200 daily returns, 4 folds, 5-day purge between train and validation within each fold"
+    },
+    "expected": {
+      "folds_produced": 4,
+      "each_fold_has_purge_gap": true,
+      "train_val_index_overlap": false,
+      "_rationale": "If any fold's training indices overlap with its validation indices (accounting for the purge gap), the transform has look-ahead contamination. purge_integrity_ok must be False for such a transform."
+    }
+  },
+
+  "monotonicity_more_returns_more_folds_or_equal": {
+    "description": "Property: slicing a longer return series with the same fold parameters should never yield FEWER folds than a shorter series. Monotonicity of fold count with respect to input length.",
+    "series_a": {
+      "n_returns": 120,
+      "n_folds": 3,
+      "description": "120 returns baseline"
+    },
+    "series_b": {
+      "n_returns": 240,
+      "n_folds": 3,
+      "description": "240 returns — double the data, same fold request"
+    },
+    "expected": {
+      "folds_b_ge_folds_a": true,
+      "_rationale": "More data with the same fold count request should never reduce the number of valid folds produced."
+    }
+  },
+
+  "fold_transform_produces_gate_compatible_inputs": {
+    "description": "The transformed fold-level OOS stats must be passable to acceptance_gate.evaluate_acceptance_gate without TypeError. Shape contract: winner_trial_is_none (bool), nn1_compliant (bool), purge_integrity_ok (bool), oos_alpha (float), fallback_oos_alpha (float), default_oos_alpha (float), candidate_stability_score (float in [0,1]), candidate_prior_anchor_score (float in [0,1]), incumbent_stability_score (float in [0,1]), incumbent_prior_anchor_score (float in [0,1]).",
+    "input": {
+      "n_returns": 252,
+      "n_folds": 5,
+      "description": "Approximately 1 year of daily returns (252 trading days), 5-fold WFA"
+    },
+    "expected": {
+      "gate_inputs_shape": {
+        "winner_trial_is_none": "bool",
+        "nn1_compliant": "bool",
+        "purge_integrity_ok": "bool",
+        "oos_alpha": "float",
+        "fallback_oos_alpha": "float",
+        "default_oos_alpha": "float",
+        "candidate_stability_score": "float_0_1",
+        "candidate_prior_anchor_score": "float_0_1",
+        "incumbent_stability_score": "float_0_1",
+        "incumbent_prior_anchor_score": "float_0_1"
+      },
+      "_rationale": "The fold transform must output exactly the kwargs that acceptance_gate.evaluate_acceptance_gate accepts. Any missing or misnamed key is a contract violation."
+    }
+  },
+
+  "one_directional_brake_preserved_across_transform": {
+    "description": "The fold transform's output must NOT bypass the gate's one-directional brake. Even if every per-fold OOS stat is stellar, a transform that sets winner_trial_is_none=False without going through the BHY significance haircut on the fold distribution is faking the gate's honesty. This scenario verifies the BHY semantics are preserved (not fabricated).",
+    "input": {
+      "n_returns": 500,
+      "n_folds": 5,
+      "all_folds_stellar": true,
+      "description": "500 returns producing very high Sharpe folds — should NOT auto-set winner_trial_is_none=False; must derive from BHY test on fold distribution"
+    },
+    "expected": {
+      "winner_trial_is_none_derived_from_significance_test": true,
+      "never_hardcoded_false": true,
+      "_rationale": "The transform cannot fabricate BHY passage by hardcoding winner_trial_is_none=False. It must derive the significance verdict from a statistical test over the fold OOS distribution. A hardcoded False is the forbidden anti-pattern: noise-laundering into the gate."
+    }
+  },
+
+  "nan_in_return_series_handled_safely": {
+    "description": "A return series with NaN values must not cause an unhandled exception or silently propagate NaN into gate inputs. The transform must either strip NaN with documentation of the effect, or withhold.",
+    "input": {
+      "daily_returns_with_nan_positions": [0, 5, 10, 15, 20],
+      "n_returns": 100,
+      "nan_count": 5,
+      "description": "100 returns with 5 NaN values scattered through the series"
+    },
+    "expected": {
+      "no_unhandled_exception": true,
+      "gate_inputs_contain_no_nan": true,
+      "_rationale": "NaN propagating silently into oos_alpha or panel scores would corrupt gate decisions without any signal. Either strip+document or withhold."
+    }
+  },
+
+  "multiple_testing_fdr_semantics_intact_for_n_candidates": {
+    "_note": "AC-3.2 MANDATORY guardrail — N backtested candidates must apply FDR correction across the FULL set (not per-candidate thresholds). This fixture verifies the transform correctly raises the bar as N increases.",
+    "description": "When N candidates are evaluated, the FDR/BHY correction must be applied across all N simultaneously. A stricter threshold means winners under N=1 may not survive N=10.",
+    "scenario_single_candidate": {
+      "n_candidates": 1,
+      "description": "Single candidate — least strict FDR threshold"
+    },
+    "scenario_ten_candidates": {
+      "n_candidates": 10,
+      "description": "Ten candidates — stricter FDR threshold; same per-candidate p-value should be harder to clear"
+    },
+    "expected": {
+      "fdr_threshold_ten_ge_fdr_threshold_one": true,
+      "_rationale": "More candidates = stricter FDR correction. If threshold(N=10) < threshold(N=1), the multiple-testing correction is inverted and AC-3.2 is violated."
+    }
+  }
+}
