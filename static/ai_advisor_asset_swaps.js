@@ -213,29 +213,33 @@
 
         // "Discuss this" affordance — subtle text link, intentionally de-emphasised (AC-4.1).
         // Clicking opens the chat panel scoped to this artifact.
-        var artifactId = result.candidate_id || result.from_ticker + '_' + result.to_ticker;
+        var artifactId = result.candidate_id || (result.from_ticker + '_' + result.to_ticker);
         var artifactObjective = result.objective || '';
         var artifactGate = result.gate_decision || '';
         var artifactKeyStat = result.baseline_stats && result.baseline_stats.sharpe_ratio != null
             ? 'Sharpe (baseline) ' + fmtStat(result.baseline_stats.sharpe_ratio) : '';
-        var artifactTitle = 'Explain: ' + escHtml(result.from_ticker || '') + ' → ' + escHtml(result.to_ticker || '');
+        var artifactTitle = 'Explain: ' + (result.from_ticker || '') + ' → ' + (result.to_ticker || '');
         var artifactCtx = 'Asset Swap';
+        var swArtifactJson = JSON.stringify({
+            artifactId:      artifactId,
+            artifactType:    'asset_swap_proposal',
+            title:           artifactTitle,
+            contextLabel:    artifactCtx,
+            objective:       artifactObjective,
+            gateDecision:    artifactGate,
+            keyStat:         artifactKeyStat,
+            // artifactContext carries the full result dict for grounding (AC-4.2)
+            artifactContext: result,
+        });
         var discussLink =
             '<div style="margin-top:0.75rem;padding-top:0.625rem;' +
             'border-top:1px solid var(--studio-border);">' +
-            '<a href="/ai-advisor/chat" data-testid="discuss-this-link" ' +
-            'style="font-size:0.75rem;color:var(--studio-ink-dim);text-decoration:underline;cursor:pointer;"' +
-            ' onclick="(function(e){e.preventDefault();' +
-            'if(typeof openChatPanel===\'function\'){' +
-            'openChatPanel({' +
-            'artifactId:' + JSON.stringify(artifactId) + ',' +
-            'artifactType:\'asset_swap\',' +
-            'title:' + JSON.stringify(artifactTitle) + ',' +
-            'contextLabel:' + JSON.stringify(artifactCtx) + ',' +
-            'objective:' + JSON.stringify(artifactObjective) + ',' +
-            'gateDecision:' + JSON.stringify(artifactGate) + ',' +
-            'keyStat:' + JSON.stringify(artifactKeyStat) + '' +
-            '})}})(event)">' +
+            '<a href="/ai-advisor/chat" data-testid="discuss-this-link"' +
+            ' data-artifact-json=\'' + escHtml(swArtifactJson) + '\'' +
+            ' style="font-size:0.75rem;color:var(--studio-ink-dim);text-decoration:underline;cursor:pointer;"' +
+            ' onclick="(function(e){e.preventDefault();var d=e.currentTarget.dataset.artifactJson;' +
+            'try{if(typeof openChatPanel===\'function\'){openChatPanel(JSON.parse(d))}}' +
+            'catch(ex){}})(event)">' +
             'Discuss this' +
             '</a>' +
             '</div>';

@@ -76,13 +76,14 @@
     //
     // artifactData shape:
     //   {
-    //     artifactId:   string,      // unique id for the artifact (e.g. swap proposal id)
-    //     artifactType: string,      // e.g. "asset_swap" | "logic_change" | "correlation"
-    //     title:        string,      // panel title, e.g. "Explain: IALT swap in Symphony Alpha"
-    //     contextLabel: string,      // breadcrumb label, e.g. "Asset Swap · Symphony Alpha"
-    //     objective:    string,      // artifact objective text (AC-4.2 grounding)
-    //     gateDecision: string|null, // gate verdict decision enum
-    //     keyStat:      string,      // e.g. "Sharpe 1.42" or "Correlation 0.77"
+    //     artifactId:      string,      // unique id for the artifact (e.g. swap proposal id)
+    //     artifactType:    string,      // e.g. "asset_swap" | "logic_change" | "correlation"
+    //     title:           string,      // panel title, e.g. "Explain: IALT swap in Symphony Alpha"
+    //     contextLabel:    string,      // breadcrumb label, e.g. "Asset Swap · Symphony Alpha"
+    //     objective:       string,      // artifact objective text (AC-4.2 grounding)
+    //     gateDecision:    string|null, // gate verdict decision enum
+    //     keyStat:         string,      // e.g. "Sharpe 1.42" or "Correlation 0.77"
+    //     artifactContext: object,      // full artifact data dict sent to the backend (AC-4.2)
     //   }
     // -------------------------------------------------------------------------
 
@@ -166,12 +167,14 @@
         var thinkingId = 'chat-thinking-' + Date.now();
         _appendBubbleWithId('ai', 'Thinking…', thinkingId, true);
 
-        fetch('/ai-advisor/chat', {
+        fetch('/ai-advisor/chat/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 artifact_id:   _currentArtifact.artifactId,
                 artifact_type: _currentArtifact.artifactType,
+                // artifact context dict grounds the chat answer in actual data (AC-4.2)
+                artifact:      _currentArtifact.artifactContext || {},
                 history:       _history.slice(0, -1),   // history before current message
                 message:       message,
             }),

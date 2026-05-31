@@ -241,13 +241,15 @@
         const lcTitle = `Explain: logic change${proposal.tweak_param_key ? " (" + proposal.tweak_param_key + ")" : ""}`;
         const lcCtx = `Logic Change${proposal.symphony_id ? " · " + proposal.symphony_id : ""}`;
         const lcArtifactJson = JSON.stringify({
-            artifactId: lcArtifactId,
-            artifactType: "logic_change",
-            title: lcTitle,
-            contextLabel: lcCtx,
-            objective: lcObjective,
-            gateDecision: lcGateDecision,
-            keyStat: lcKeyStat,
+            artifactId:      lcArtifactId,
+            artifactType:    "logic_change_proposal",
+            title:           lcTitle,
+            contextLabel:    lcCtx,
+            objective:       lcObjective,
+            gateDecision:    lcGateDecision,
+            keyStat:         lcKeyStat,
+            // artifactContext carries the full proposal dict for grounding (AC-4.2)
+            artifactContext: proposal,
         });
         // onclick uses a data attribute to avoid inline JSON quoting issues
         const discussLink = `
