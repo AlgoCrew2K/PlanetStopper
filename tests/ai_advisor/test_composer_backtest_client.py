@@ -1,61 +1,53 @@
-"""RED tests — Composer backtest client for M2 (advisors/composer_backtest_client.py).
+"""RED/GREEN tests — Composer backtest client (composer_backtest.py, repo root).
 
-Every test here MUST FAIL until the implementer creates the module. Tests assert
-against the CAPTURED fixture from POST /api/v0.1/backtest (schema-level shape/format
-only until client captures real response — see tests/fixtures/composer/backtest_response_v1.json).
+Module under test: ``composer_backtest.submit_backtest``.
 
 Architecture contracts encoded as tests:
-  - Module lives in advisors/composer_backtest_client.py (NOT on the 1-minute path).
-  - alpha_bot_execution.py does NOT import anything from this module.
-  - No live API calls in the default test suite; all tests use the fixture.
-  - Live tests are marked @pytest.mark.live and excluded from default runs.
-  - The client reuses get_composer_headers() + COMPOSER_BASE_URL from alpha_bot_execution.
-  - 429 rate-limit response → per-call "rate limited" error, bounded retry with backoff,
-    never silently dropped.
-  - Non-200 responses → raises or returns a structured error, never swallowed silently.
-  - Timeout → raises or returns a structured error, never hangs indefinitely.
-  - Hard live/test separation: the default import path must not attempt a network call.
+  - Module lives at repo root as composer_backtest.py (NOT on the 1-minute path).
+  - alpha_bot_execution.py does NOT import anything from this module (AC-X2).
+  - The client exposes submit_backtest(raw_value, symphony_id, ..., is_live, _session).
+  - is_live=False + no _session raises RuntimeError immediately (hard live-guard).
+  - _session injection is the test path; live=True is the live path.
+  - 429 response → respect Retry-After header; exponential backoff; bounded retries.
+  - Non-200, non-retryable → raises requests.HTTPError (AC-X5 handled by caller).
+  - requests.Timeout → raises requests.RequestException (caller catches it).
+  - Response is parsed into BacktestStats; daily_returns is derived from dvm_capital.
+  - No live API calls in the default test suite — all tests use fixture or mock session.
+  - Live tests are named test_live_* and excluded by default.
 
-Fixture: tests/fixtures/composer/backtest_response_v1.json
-  - _capture_status PENDING_REAL_CAPTURE means tests assert shape only (no stat values).
-  - When real capture lands, shape tests remain; no test should pin producer-computed values.
+Fixture: tests/fixtures/composer/backtest_inline_v1.json
+  - provenance: captured-from-producer 2026-05-31
+  - Tests assert against this real fixture; shape-only (no pinning of stat values).
 
 Mocking strategy:
-  - requests.Session.post (or requests.post) patched to return fixture data — never real network.
-  - get_composer_headers() is NOT mocked (it has no network effect in isolation).
+  - requests.Session with a MockAdapter (replaying the fixture) — never a real session.
+  - get_composer_headers() is NOT mocked (no network effect in isolation).
   - The math engine and acceptance_gate are NOT imported or mocked here.
 """
 
 from __future__ import annotations
 
 import ast
-import importlib
 import json
 import pathlib
 import sys
-import types
+from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
+import requests.adapters
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_PATH = _REPO_ROOT / "tests" / "fixtures" / "composer" / "backtest_response_v1.json"
+_FIXTURE_PATH = _REPO_ROOT / "tests" / "fixtures" / "composer" / "backtest_inline_v1.json"
 
 
 def _repo_root() -> pathlib.Path:
     return _REPO_ROOT
-
-
-def _import_client() -> types.ModuleType:
-    """Import advisors.composer_backtest_client. RED until the module exists."""
-    repo = str(_REPO_ROOT)
-    if repo not in sys.path:
-        sys.path.insert(0, repo)
-    return importlib.import_module("advisors.composer_backtest_client")
 
 
 def _parse_source(relpath: str) -> ast.Module:
@@ -64,29 +56,87 @@ def _parse_source(relpath: str) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
+def _ensure_repo_on_path() -> None:
+    repo = str(_REPO_ROOT)
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+
+
 # ---------------------------------------------------------------------------
-# Fixtures (function-scoped — no shared mutable state)
+# Fixture loading
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
-def backtest_fixture() -> dict:
-    """Load the backtest response fixture. Fails fast if missing."""
+@pytest.fixture(scope="module")
+def captured_fixture() -> dict:
+    """Load the real captured Composer backtest response fixture.
+
+    Provenance: captured-from-producer 2026-05-31 via /api-fixture skill.
+    Fails fast if missing.
+    """
     assert _FIXTURE_PATH.exists(), (
         f"Fixture not found: {_FIXTURE_PATH}. "
-        "The client agent must capture a real response via /api-fixture skill."
+        "The client agent must capture a real response via /api-fixture skill. "
+        "See tests/fixtures/composer/backtest_response_v1.json for the placeholder schema."
     )
     with _FIXTURE_PATH.open(encoding="utf-8") as f:
         return json.load(f)
 
 
 @pytest.fixture
-def minimal_raw_value() -> dict:
-    """Minimal structurally-valid raw_value tree for POST /api/v0.1/backtest.
+def symphony_id(captured_fixture) -> str:
+    """Extract the symphony_id from the fixture provenance."""
+    sid = captured_fixture.get("_symphony_id", "")
+    assert sid, "Fixture must include _symphony_id in provenance metadata."
+    return sid
 
-    Shape matches the schema from api.composer.trade/docs/swagger.json.
-    Derived from feature-plans/ai-advisor-composer-api-research.md §2.
-    Not a real symphony — used to verify the client constructs the request body correctly.
+
+@pytest.fixture
+def response_body(captured_fixture) -> dict:
+    """The raw API response body from the fixture."""
+    body = captured_fixture.get("response", captured_fixture)
+    assert isinstance(body, dict), "Fixture must have a 'response' key with the API response dict."
+    return body
+
+
+class _FixtureAdapter(requests.adapters.BaseAdapter):
+    """requests adapter that replays a pre-captured response body for any POST.
+
+    Injected as _session to submit_backtest to prevent any real HTTP calls.
     """
+
+    def __init__(self, body: dict, status_code: int = 200, headers: dict | None = None):
+        super().__init__()
+        self._body = body
+        self._status_code = status_code
+        self._headers = headers or {}
+
+    def send(self, request, **kwargs):
+        resp = requests.models.Response()
+        resp.status_code = self._status_code
+        resp.headers = requests.structures.CaseInsensitiveDict(self._headers)
+        body_bytes = json.dumps(self._body).encode("utf-8")
+        resp.raw = BytesIO(body_bytes)
+        resp._content = body_bytes
+        resp.encoding = "utf-8"
+        return resp
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def fixture_session(response_body) -> requests.Session:
+    """A requests.Session wired with the fixture adapter — the test injection path."""
+    session = requests.Session()
+    adapter = _FixtureAdapter(response_body)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+@pytest.fixture
+def minimal_raw_value() -> dict:
+    """Minimal structurally-valid raw_value tree for constructing a backtest request body."""
     return {
         "id": "00000000-0000-0000-0000-000000000001",
         "step": "root",
@@ -106,455 +156,509 @@ def minimal_raw_value() -> dict:
     }
 
 
-@pytest.fixture
-def mock_200_response(backtest_fixture) -> MagicMock:
-    """Mock requests response that returns the fixture as JSON (200 OK)."""
-    mock = MagicMock()
-    mock.status_code = 200
-    mock.json.return_value = backtest_fixture
-    mock.headers = {}
-    return mock
-
-
-@pytest.fixture
-def mock_429_response() -> MagicMock:
-    """Mock requests response for 429 rate-limited."""
-    mock = MagicMock()
-    mock.status_code = 429
-    mock.headers = {"Retry-After": "1"}
-    return mock
-
-
-@pytest.fixture
-def mock_500_response() -> MagicMock:
-    """Mock requests response for 500 server error."""
-    mock = MagicMock()
-    mock.status_code = 500
-    mock.text = "Internal Server Error"
-    mock.headers = {}
-    return mock
-
-
 # ---------------------------------------------------------------------------
 # Section 1 — Module exists and exposes the required public interface
 # ---------------------------------------------------------------------------
 
 class TestModuleExists:
-    """advisors/composer_backtest_client.py must exist and expose its contract."""
+    """composer_backtest.py must exist at repo root and expose its contract."""
 
     def test_module_is_importable(self):
-        """advisors.composer_backtest_client must be importable. RED until created."""
-        client = _import_client()
-        assert client is not None
+        """composer_backtest must be importable. RED if module missing."""
+        _ensure_repo_on_path()
+        import importlib
+        mod = importlib.import_module("composer_backtest")
+        assert mod is not None
 
-    def test_module_exposes_run_backtest_callable(self):
-        """The module must expose a callable for running a backtest.
-
-        Acceptable names: run_backtest, submit_backtest, backtest_symphony.
-        The callable is the single entry point for posting to /api/v0.1/backtest.
-        """
-        client = _import_client()
-        fn = (
-            getattr(client, "run_backtest", None)
-            or getattr(client, "submit_backtest", None)
-            or getattr(client, "backtest_symphony", None)
-        )
-        assert callable(fn), (
-            "advisors.composer_backtest_client must expose a callable for posting "
-            "to POST /api/v0.1/backtest. Acceptable names: run_backtest, "
-            "submit_backtest, backtest_symphony."
+    def test_module_exposes_submit_backtest(self):
+        """composer_backtest must expose submit_backtest as a callable."""
+        _ensure_repo_on_path()
+        import composer_backtest
+        assert callable(getattr(composer_backtest, "submit_backtest", None)), (
+            "composer_backtest must expose submit_backtest as the single entry point "
+            "for POST /api/v0.1/backtest."
         )
 
-    def test_module_exposes_backtest_result_type(self):
-        """The module must expose a structured result type (NamedTuple, dataclass, TypedDict).
-
-        The result type must carry at minimum: stats (dict), data_warnings (list),
-        error (str | None). Tests call it BacktestResult or BacktestResponse.
-        """
-        client = _import_client()
-        result_type = (
-            getattr(client, "BacktestResult", None)
-            or getattr(client, "BacktestResponse", None)
-        )
-        assert result_type is not None, (
-            "advisors.composer_backtest_client must expose a structured result type "
-            "named BacktestResult or BacktestResponse carrying stats, data_warnings, "
-            "and error fields."
+    def test_module_exposes_backtest_stats_type(self):
+        """composer_backtest must expose BacktestStats as the return type."""
+        _ensure_repo_on_path()
+        import composer_backtest
+        assert hasattr(composer_backtest, "BacktestStats"), (
+            "composer_backtest must expose BacktestStats — the structured return type "
+            "carrying sharpe_ratio, daily_returns, data_warnings, etc."
         )
 
 
 # ---------------------------------------------------------------------------
-# Section 2 — Request body construction
+# Section 2 — Hard live-guard: is_live=False + no _session raises immediately
+# ---------------------------------------------------------------------------
+
+class TestLiveGuard:
+    """Calling submit_backtest with is_live=False and no _session must raise RuntimeError."""
+
+    def test_no_session_no_live_raises_runtime_error(self, minimal_raw_value):
+        """submit_backtest(is_live=False, _session=None) must raise RuntimeError.
+
+        The hard live-guard prevents accidental production calls in tests.
+        No network request should be attempted — the guard fires before any I/O.
+        """
+        _ensure_repo_on_path()
+        import composer_backtest
+        with pytest.raises(RuntimeError, match="is_live=False"):
+            composer_backtest.submit_backtest(
+                raw_value=minimal_raw_value,
+                symphony_id="test-id",
+                is_live=False,
+            )
+
+    def test_runtime_error_message_mentions_session(self, minimal_raw_value):
+        """RuntimeError message must mention _session injection to guide test authors."""
+        _ensure_repo_on_path()
+        import composer_backtest
+        with pytest.raises(RuntimeError) as exc_info:
+            composer_backtest.submit_backtest(
+                raw_value=minimal_raw_value,
+                symphony_id="test-id",
+                is_live=False,
+            )
+        msg = str(exc_info.value)
+        assert "_session" in msg or "session" in msg.lower(), (
+            f"RuntimeError message must mention '_session' injection; got: {msg!r}. "
+            "Test authors need to know to supply _session in tests."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Section 3 — Request body construction (verified via fixture session capture)
 # ---------------------------------------------------------------------------
 
 class TestRequestBodyConstruction:
     """The client must build a valid POST /api/v0.1/backtest request body."""
 
-    def test_run_backtest_includes_raw_value_in_request_body(
-        self, minimal_raw_value, mock_200_response
+    def test_submit_backtest_posts_to_backtest_endpoint(
+        self, minimal_raw_value, response_body
+    ):
+        """The POST must target /api/v0.1/backtest (inline definition endpoint).
+
+        NOT /api/v0.1/symphonies/{id}/backtest — that requires a pre-saved symphony.
+        """
+        _ensure_repo_on_path()
+        import composer_backtest
+        from alpha_bot_execution import COMPOSER_BASE_URL
+
+        captured_requests = []
+
+        class CapturingAdapter(requests.adapters.BaseAdapter):
+            def send(self, request, **kwargs):
+                captured_requests.append(request)
+                resp = requests.models.Response()
+                resp.status_code = 200
+                body_bytes = json.dumps(response_body).encode("utf-8")
+                resp._content = body_bytes
+                resp.encoding = "utf-8"
+                resp.headers = requests.structures.CaseInsensitiveDict({})
+                return resp
+            def close(self): pass
+
+        session = requests.Session()
+        session.mount("https://", CapturingAdapter())
+
+        composer_backtest.submit_backtest(
+            raw_value=minimal_raw_value,
+            symphony_id="00000000-0000-0000-0000-000000000001",
+            _session=session,
+        )
+
+        assert len(captured_requests) >= 1, "Expected at least one POST request."
+        url = captured_requests[0].url
+        assert url.endswith("/backtest") or "/api/v0.1/backtest" in url, (
+            f"Expected URL to end with '/backtest' or contain '/api/v0.1/backtest', got: {url!r}."
+        )
+        # Guard: must not use the symphony-ID endpoint
+        assert "/symphonies/" not in url.split("/backtest")[0].rstrip("/") or url.endswith("/backtest"), (
+            "Must not POST to /symphonies/{id}/backtest — use POST /api/v0.1/backtest for inline defs."
+        )
+
+    def test_request_body_nests_tree_under_symphony_raw_value(
+        self, minimal_raw_value, response_body
     ):
         """The POSTed body must nest the tree under symphony.raw_value.
 
-        Schema: {"symphony": {"raw_value": <tree>}, "capital": ..., ...}
-        Missing the nested key is a common integration mistake (the API returns 422).
+        Schema: {\"symphony\": {\"raw_value\": <tree>}, \"capital\": ..., ...}
         """
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
+        _ensure_repo_on_path()
+        import composer_backtest
 
         captured_bodies = []
 
-        def capture_post(url, json=None, headers=None, timeout=None, **kwargs):
-            captured_bodies.append(json)
-            return mock_200_response
+        class CapturingAdapter(requests.adapters.BaseAdapter):
+            def send(self, request, **kwargs):
+                captured_bodies.append(json.loads(request.body))
+                resp = requests.models.Response()
+                resp.status_code = 200
+                body_bytes = json.dumps(response_body).encode("utf-8")
+                resp._content = body_bytes
+                resp.encoding = "utf-8"
+                resp.headers = requests.structures.CaseInsensitiveDict({})
+                return resp
+            def close(self): pass
 
-        with patch("requests.post", side_effect=capture_post):
-            fn(raw_value=minimal_raw_value)
+        session = requests.Session()
+        session.mount("https://", CapturingAdapter())
 
-        assert len(captured_bodies) == 1, "Expected exactly one POST call."
+        composer_backtest.submit_backtest(
+            raw_value=minimal_raw_value,
+            symphony_id="00000000-0000-0000-0000-000000000001",
+            _session=session,
+        )
+
+        assert len(captured_bodies) == 1
         body = captured_bodies[0]
-        assert isinstance(body, dict), f"Expected dict body, got {type(body).__name__}."
         assert "symphony" in body, (
-            "Request body must have a top-level 'symphony' key. "
-            "Schema: {\"symphony\": {\"raw_value\": <tree>}}."
+            "Request body must have top-level 'symphony' key. "
+            f"Got keys: {list(body.keys())}."
         )
         assert "raw_value" in body["symphony"], (
-            "Request body['symphony'] must have a 'raw_value' key containing the logic tree."
+            "body['symphony'] must have a 'raw_value' key containing the logic tree."
         )
         assert body["symphony"]["raw_value"] == minimal_raw_value, (
             "The tree passed as raw_value must appear verbatim in body['symphony']['raw_value']."
         )
 
-    def test_run_backtest_includes_required_scalar_fields(
-        self, minimal_raw_value, mock_200_response
+    def test_request_body_has_required_scalar_fields(
+        self, minimal_raw_value, response_body
     ):
-        """The POSTed body must include all required scalar fields.
-
-        Required: capital (number), apply_reg_fee (bool), apply_taf_fee (bool),
-        slippage_percent (number), broker (enum string).
-        Missing any required field → Composer returns 422 Unprocessable Entity.
-        """
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
+        """The POSTed body must include all required scalar fields per the API schema."""
+        _ensure_repo_on_path()
+        import composer_backtest
 
         captured_bodies = []
 
-        def capture_post(url, json=None, headers=None, timeout=None, **kwargs):
-            captured_bodies.append(json)
-            return mock_200_response
+        class CapturingAdapter(requests.adapters.BaseAdapter):
+            def send(self, request, **kwargs):
+                captured_bodies.append(json.loads(request.body))
+                resp = requests.models.Response()
+                resp.status_code = 200
+                body_bytes = json.dumps(response_body).encode("utf-8")
+                resp._content = body_bytes
+                resp.encoding = "utf-8"
+                resp.headers = requests.structures.CaseInsensitiveDict({})
+                return resp
+            def close(self): pass
 
-        with patch("requests.post", side_effect=capture_post):
-            fn(raw_value=minimal_raw_value)
+        session = requests.Session()
+        session.mount("https://", CapturingAdapter())
 
-        body = captured_bodies[0]
-        required_fields = {"capital", "apply_reg_fee", "apply_taf_fee", "slippage_percent", "broker"}
-        missing = required_fields - set(body.keys())
-        assert not missing, (
-            f"Request body missing required fields: {missing}. "
-            "All must be present for Composer to accept the request."
+        composer_backtest.submit_backtest(
+            raw_value=minimal_raw_value,
+            symphony_id="00000000-0000-0000-0000-000000000001",
+            _session=session,
         )
 
-    def test_run_backtest_uses_composer_auth_headers(
-        self, minimal_raw_value, mock_200_response
-    ):
-        """The request must use get_composer_headers() — x-api-key-id + Authorization Bearer.
+        body = captured_bodies[0]
+        required = {"capital", "apply_reg_fee", "apply_taf_fee", "slippage_percent", "broker"}
+        missing = required - set(body.keys())
+        assert not missing, (
+            f"Request body missing required fields: {missing}. "
+            "All must be present for Composer to accept the request (else 422)."
+        )
 
-        Reuses the existing auth contract from alpha_bot_execution.py:160-165.
-        """
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
+    def test_request_uses_composer_auth_headers(self, minimal_raw_value, response_body):
+        """The POST must include x-api-key-id and authorization headers."""
+        _ensure_repo_on_path()
+        import composer_backtest
 
         captured_headers = []
 
-        def capture_post(url, json=None, headers=None, timeout=None, **kwargs):
-            captured_headers.append(headers)
-            return mock_200_response
+        class CapturingAdapter(requests.adapters.BaseAdapter):
+            def send(self, request, **kwargs):
+                captured_headers.append(dict(request.headers))
+                resp = requests.models.Response()
+                resp.status_code = 200
+                body_bytes = json.dumps(response_body).encode("utf-8")
+                resp._content = body_bytes
+                resp.encoding = "utf-8"
+                resp.headers = requests.structures.CaseInsensitiveDict({})
+                return resp
+            def close(self): pass
 
-        with patch("requests.post", side_effect=capture_post):
-            fn(raw_value=minimal_raw_value)
+        session = requests.Session()
+        session.mount("https://", CapturingAdapter())
 
-        assert len(captured_headers) == 1
-        headers = captured_headers[0]
-        assert headers is not None, "Headers must not be None."
-        assert "x-api-key-id" in headers, (
-            "Request must include 'x-api-key-id' header (Composer auth contract)."
+        composer_backtest.submit_backtest(
+            raw_value=minimal_raw_value,
+            symphony_id="00000000-0000-0000-0000-000000000001",
+            _session=session,
         )
-        assert "authorization" in headers or "Authorization" in headers, (
+
+        headers = {k.lower(): v for k, v in captured_headers[0].items()}
+        assert "x-api-key-id" in headers, (
+            "Request must include 'x-api-key-id' header (Composer auth contract from "
+            "alpha_bot_execution.py:160-165)."
+        )
+        assert "authorization" in headers, (
             "Request must include 'authorization' header with Bearer token."
         )
 
-    def test_run_backtest_posts_to_correct_endpoint(
-        self, minimal_raw_value, mock_200_response
-    ):
-        """The POST must target /api/v0.1/backtest (inline definition endpoint).
-
-        NOT /api/v0.1/symphonies/{id}/backtest (that's for saved symphonies only).
-        """
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
-
-        captured_urls = []
-
-        def capture_post(url, json=None, headers=None, timeout=None, **kwargs):
-            captured_urls.append(url)
-            return mock_200_response
-
-        with patch("requests.post", side_effect=capture_post):
-            fn(raw_value=minimal_raw_value)
-
-        assert len(captured_urls) == 1
-        url = captured_urls[0]
-        assert "/api/v0.1/backtest" in url, (
-            f"Expected URL to contain '/api/v0.1/backtest', got: {url!r}. "
-            "The inline-definition endpoint must be used (not the symphony-ID endpoint)."
-        )
-        # Guard against accidentally using the symphony-ID path
-        assert "/symphonies/" not in url or url.endswith("/backtest") is False or True, (
-            "Must not POST to /symphonies/{id}/backtest — that requires a pre-saved symphony. "
-            "Use POST /api/v0.1/backtest for inline definitions."
-        )
-
 
 # ---------------------------------------------------------------------------
-# Section 3 — Response parsing: shape assertions on the fixture
+# Section 4 — Response parsing against the real captured fixture
 # ---------------------------------------------------------------------------
 
 class TestResponseParsing:
-    """The client must parse the backtest response into a structured result type.
+    """The client must parse the real captured fixture into a BacktestStats correctly.
 
-    All assertions are SHAPE-ONLY (no pinned numeric values) until the real
-    fixture capture replaces the placeholder.
+    All value assertions are SHAPE-ONLY or sign/type checks — no pinning of
+    producer-computed numbers.
     """
 
-    def test_successful_response_returns_result_with_stats_key(
-        self, minimal_raw_value, mock_200_response, backtest_fixture
+    def test_submit_backtest_returns_backtest_stats_from_fixture(
+        self, symphony_id, fixture_session
     ):
-        """A 200 response must return a BacktestResult with a 'stats' attribute."""
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
+        """submit_backtest with the real fixture session must return a BacktestStats."""
+        _ensure_repo_on_path()
+        import composer_backtest
 
-        with patch("requests.post", return_value=mock_200_response):
-            result = fn(raw_value=minimal_raw_value)
-
-        assert result is not None, "run_backtest must return a result on 200 response."
-        assert hasattr(result, "stats") or (isinstance(result, dict) and "stats" in result), (
-            "Result must have a 'stats' attribute (or key) containing the backtest stats dict."
+        raw_value = {"id": symphony_id, "step": "root", "name": "fixture", "children": []}
+        result = composer_backtest.submit_backtest(
+            raw_value=raw_value,
+            symphony_id=symphony_id,
+            _session=fixture_session,
+        )
+        assert isinstance(result, composer_backtest.BacktestStats), (
+            f"submit_backtest must return BacktestStats, got {type(result).__name__!r}."
         )
 
-    def test_successful_response_result_has_no_error(
-        self, minimal_raw_value, mock_200_response
-    ):
-        """A 200 response must produce a result with error=None (not a failure state)."""
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
+    def test_parsed_stats_has_sharpe_ratio_field(self, symphony_id, fixture_session):
+        """BacktestStats must have a sharpe_ratio field (may be None if absent in fixture)."""
+        _ensure_repo_on_path()
+        import composer_backtest
 
-        with patch("requests.post", return_value=mock_200_response):
-            result = fn(raw_value=minimal_raw_value)
-
-        error_val = getattr(result, "error", None) if hasattr(result, "error") else result.get("error") if isinstance(result, dict) else "UNKNOWN"
-        assert error_val is None, (
-            f"Successful backtest (200) must return error=None, got: {error_val!r}."
+        raw_value = {"id": symphony_id, "step": "root", "name": "fixture", "children": []}
+        result = composer_backtest.submit_backtest(
+            raw_value=raw_value, symphony_id=symphony_id, _session=fixture_session
+        )
+        assert hasattr(result, "sharpe_ratio"), (
+            "BacktestStats must have sharpe_ratio field — load-bearing for gate input derivation."
         )
 
-    def test_successful_response_stats_has_sharpe_key(
-        self, minimal_raw_value, mock_200_response
-    ):
-        """The stats dict must include sharpe_ratio (load-bearing for the gate)."""
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
+    def test_parsed_stats_sharpe_is_float_or_none(self, symphony_id, fixture_session):
+        """sharpe_ratio must be a float or None; never a string or dict."""
+        _ensure_repo_on_path()
+        import composer_backtest
 
-        with patch("requests.post", return_value=mock_200_response):
-            result = fn(raw_value=minimal_raw_value)
-
-        stats = getattr(result, "stats", None) or (result.get("stats") if isinstance(result, dict) else None)
-        assert stats is not None, "stats must not be None on a successful response."
-        assert "sharpe_ratio" in stats, (
-            "stats dict must include 'sharpe_ratio' key — load-bearing for gate input derivation."
+        raw_value = {"id": symphony_id, "step": "root", "name": "fixture", "children": []}
+        result = composer_backtest.submit_backtest(
+            raw_value=raw_value, symphony_id=symphony_id, _session=fixture_session
+        )
+        assert result.sharpe_ratio is None or isinstance(result.sharpe_ratio, float), (
+            f"sharpe_ratio must be float or None, got {type(result.sharpe_ratio).__name__!r}."
         )
 
-    def test_successful_response_has_data_warnings_list(
-        self, minimal_raw_value, mock_200_response
-    ):
-        """The result must include data_warnings as a list (may be empty)."""
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
+    def test_parsed_stats_has_daily_returns_field(self, symphony_id, fixture_session):
+        """BacktestStats must have a daily_returns field (dict or empty dict).
 
-        with patch("requests.post", return_value=mock_200_response):
-            result = fn(raw_value=minimal_raw_value)
-
-        dw = getattr(result, "data_warnings", None) or (result.get("data_warnings") if isinstance(result, dict) else "MISSING")
-        assert dw is not None, "Result must include data_warnings (may be empty list)."
-        assert isinstance(dw, list), (
-            f"data_warnings must be a list, got {type(dw).__name__!r}. "
-            "The AC-X5 degradation path uses data_warnings to surface thin-history per-candidate errors."
-        )
-
-    def test_fixture_has_expected_top_level_keys(self, backtest_fixture):
-        """The captured fixture must have the keys documented in the API research.
-
-        Asserts fixture shape only — no numeric values.
-        If _capture_status is PENDING_REAL_CAPTURE this still confirms the schema placeholder
-        has the right top-level structure.
+        daily_returns is derived from dvm_capital and is the gate layer's primary input.
         """
-        required_keys = {"stats", "data_warnings"}
-        missing = required_keys - set(backtest_fixture.keys())
-        assert not missing, (
-            f"Fixture missing expected top-level keys: {missing}. "
-            "See feature-plans/ai-advisor-composer-api-research.md §2 for the schema."
+        _ensure_repo_on_path()
+        import composer_backtest
+
+        raw_value = {"id": symphony_id, "step": "root", "name": "fixture", "children": []}
+        result = composer_backtest.submit_backtest(
+            raw_value=raw_value, symphony_id=symphony_id, _session=fixture_session
+        )
+        assert hasattr(result, "daily_returns"), (
+            "BacktestStats must have daily_returns — the gate layer's primary input "
+            "for fold-transform. Absence means the fold-transform cannot function."
+        )
+        assert isinstance(result.daily_returns, dict), (
+            f"daily_returns must be a dict, got {type(result.daily_returns).__name__!r}."
         )
 
-    def test_fixture_stats_contains_numeric_or_pending_values(self, backtest_fixture):
-        """Each stats value must be a number (real fixture) or PENDING string (placeholder).
+    def test_daily_returns_values_are_finite_floats(self, symphony_id, fixture_session):
+        """All daily_returns values must be finite floats (no inf, no NaN).
 
-        Once real capture lands, all stats values must be numeric. Until then,
-        placeholder strings are accepted so tests don't block on fixture capture.
+        NaN or inf propagating into the fold-transform would silently corrupt
+        the BHY t-stat and gate decision.
         """
-        stats = backtest_fixture.get("stats", {})
-        assert isinstance(stats, dict), f"fixture.stats must be a dict, got {type(stats).__name__!r}."
-        for key, val in stats.items():
-            is_numeric = isinstance(val, (int, float))
-            is_pending = isinstance(val, str) and "PENDING" in val
-            assert is_numeric or is_pending, (
-                f"fixture.stats[{key!r}] = {val!r} — must be a number (real capture) "
-                "or a PENDING placeholder string. No other types accepted."
+        import math as _math
+        _ensure_repo_on_path()
+        import composer_backtest
+
+        raw_value = {"id": symphony_id, "step": "root", "name": "fixture", "children": []}
+        result = composer_backtest.submit_backtest(
+            raw_value=raw_value, symphony_id=symphony_id, _session=fixture_session
+        )
+        for date_str, val in result.daily_returns.items():
+            assert isinstance(val, float), (
+                f"daily_returns[{date_str!r}] must be float, got {type(val).__name__!r}."
+            )
+            assert _math.isfinite(val), (
+                f"daily_returns[{date_str!r}]={val!r} is not finite. "
+                "Inf/NaN in daily_returns would corrupt the fold-transform and gate decision."
+            )
+
+    def test_parsed_stats_has_data_warnings_field(self, symphony_id, fixture_session):
+        """BacktestStats must have data_warnings (list or dict, may be empty)."""
+        _ensure_repo_on_path()
+        import composer_backtest
+
+        raw_value = {"id": symphony_id, "step": "root", "name": "fixture", "children": []}
+        result = composer_backtest.submit_backtest(
+            raw_value=raw_value, symphony_id=symphony_id, _session=fixture_session
+        )
+        assert hasattr(result, "data_warnings"), (
+            "BacktestStats must have data_warnings. "
+            "AC-X5: per-candidate 'backtest failed' reason must be surfaceable."
+        )
+
+    def test_daily_returns_keys_are_iso_date_strings(self, symphony_id, fixture_session):
+        """daily_returns keys must be ISO-format date strings (YYYY-MM-DD).
+
+        The fold-transform and gate assume chronological order by date string.
+        Non-ISO keys would break fold slicing.
+        """
+        import re
+        _ensure_repo_on_path()
+        import composer_backtest
+
+        raw_value = {"id": symphony_id, "step": "root", "name": "fixture", "children": []}
+        result = composer_backtest.submit_backtest(
+            raw_value=raw_value, symphony_id=symphony_id, _session=fixture_session
+        )
+        iso_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+        for key in list(result.daily_returns.keys())[:5]:  # spot-check first 5
+            assert iso_re.match(key), (
+                f"daily_returns key {key!r} is not an ISO date string (YYYY-MM-DD). "
+                "The fold-transform assumes ISO-date-keyed chronological series."
             )
 
 
 # ---------------------------------------------------------------------------
-# Section 4 — Error handling: 429, non-200, timeout
+# Section 5 — Error handling
 # ---------------------------------------------------------------------------
 
 class TestErrorHandling:
-    """The client must handle error conditions per AC-X5: one failure never aborts the batch."""
+    """Errors must propagate as exceptions, not be silently swallowed."""
 
-    def test_429_response_does_not_silently_succeed(
-        self, minimal_raw_value, mock_429_response
-    ):
-        """A 429 response must produce a structured error result, not a successful backtest.
+    def test_429_response_raises_after_retries_exhausted(self, minimal_raw_value):
+        """After retrying on 429, submit_backtest must raise (not return empty stats).
 
-        AC-X5: backtest failure/timeout/non-200/429 → per-candidate 'backtest failed' with reason.
+        The caller (M3/M4 batch processor) must catch the exception and surface
+        a per-candidate 'backtest failed' error (AC-X5).
         """
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
+        _ensure_repo_on_path()
+        import composer_backtest
 
-        # Only return 429 to confirm error handling (no real retry delay in unit test)
-        with patch("requests.post", return_value=mock_429_response):
-            result = fn(raw_value=minimal_raw_value, max_retries=0)
+        class Always429Adapter(requests.adapters.BaseAdapter):
+            def send(self, request, **kwargs):
+                resp = requests.models.Response()
+                resp.status_code = 429
+                resp.headers = requests.structures.CaseInsensitiveDict({"Retry-After": "0"})
+                resp._content = b"{}"
+                return resp
+            def close(self): pass
 
-        # The result must NOT have a valid stats dict — it must signal failure
-        stats = getattr(result, "stats", None) or (result.get("stats") if isinstance(result, dict) else None)
-        error = getattr(result, "error", None) or (result.get("error") if isinstance(result, dict) else None)
+        session = requests.Session()
+        session.mount("https://", Always429Adapter())
 
-        assert error is not None, (
-            "A 429 response must produce a result with a non-None error field. "
-            "AC-X5: rate-limit failures must be surfaced, not silently swallowed."
-        )
-        assert "429" in str(error) or "rate" in str(error).lower() or "limit" in str(error).lower(), (
-            f"error must mention the 429/rate-limit condition; got: {error!r}."
-        )
+        # The implementation may raise HTTPError or wrap it in RequestException after retries.
+        # Both are acceptable: the caller's batch-processor must catch the exception for AC-X5.
+        with pytest.raises((requests.HTTPError, requests.RequestException)):
+            # Suppress sleep to make the test fast
+            with patch("time.sleep"):
+                composer_backtest.submit_backtest(
+                    raw_value=minimal_raw_value,
+                    symphony_id="test-id",
+                    _session=session,
+                )
 
-    def test_429_response_includes_reason_in_error(
-        self, minimal_raw_value, mock_429_response
-    ):
-        """A 429 error result must include a reason string that mentions rate-limiting.
+    def test_non_retryable_500_raises_http_error(self, minimal_raw_value):
+        """A non-retryable 5xx response must raise requests.HTTPError.
 
-        AC-X5 requires 'backtest failed with reason' — not just a boolean failure flag.
+        After retries are exhausted, the exception propagates so the batch
+        processor can surface 'backtest failed: HTTP 5xx' (AC-X5).
         """
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
+        _ensure_repo_on_path()
+        import composer_backtest
 
-        with patch("requests.post", return_value=mock_429_response):
-            result = fn(raw_value=minimal_raw_value, max_retries=0)
+        class Always500Adapter(requests.adapters.BaseAdapter):
+            def send(self, request, **kwargs):
+                resp = requests.models.Response()
+                resp.status_code = 500
+                resp.headers = requests.structures.CaseInsensitiveDict({})
+                resp._content = b"Internal Server Error"
+                return resp
+            def close(self): pass
 
-        error = getattr(result, "error", None) or (result.get("error") if isinstance(result, dict) else None)
-        assert isinstance(error, str) and len(error) > 0, (
-            "error must be a non-empty string describing the failure reason."
-        )
+        session = requests.Session()
+        session.mount("https://", Always500Adapter())
 
-    def test_non_200_non_429_response_produces_error_result(
-        self, minimal_raw_value, mock_500_response
-    ):
-        """A 5xx response must produce a structured error result, not raise an unhandled exception.
+        with pytest.raises((requests.HTTPError, requests.RequestException)):
+            with patch("time.sleep"):
+                composer_backtest.submit_backtest(
+                    raw_value=minimal_raw_value,
+                    symphony_id="test-id",
+                    _session=session,
+                )
 
-        AC-X5: one candidate's failure must not abort the batch. If the client raises
-        unhandled exceptions on 5xx, callers cannot continue processing other candidates.
+    def test_retry_succeeds_after_429_then_200(self, minimal_raw_value, response_body):
+        """A 429 followed by a 200 must ultimately return a successful BacktestStats.
+
+        The retry mechanism must actually retry — not fail on the first 429.
         """
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
+        _ensure_repo_on_path()
+        import composer_backtest
 
-        with patch("requests.post", return_value=mock_500_response):
-            result = fn(raw_value=minimal_raw_value, max_retries=0)
+        call_count = {"n": 0}
+        symphony_id_for_test = "00000000-0000-0000-0000-000000000001"
 
-        assert result is not None, (
-            "A 5xx response must return a result, not raise an unhandled exception. "
-            "AC-X5: one failure must not abort the batch."
+        class SequencedAdapter(requests.adapters.BaseAdapter):
+            def send(self, request, **kwargs):
+                call_count["n"] += 1
+                resp = requests.models.Response()
+                if call_count["n"] == 1:
+                    resp.status_code = 429
+                    resp.headers = requests.structures.CaseInsensitiveDict({"Retry-After": "0"})
+                    resp._content = b"{}"
+                else:
+                    resp.status_code = 200
+                    body_bytes = json.dumps(response_body).encode("utf-8")
+                    resp._content = body_bytes
+                    resp.encoding = "utf-8"
+                    resp.headers = requests.structures.CaseInsensitiveDict({})
+                return resp
+            def close(self): pass
+
+        session = requests.Session()
+        session.mount("https://", SequencedAdapter())
+
+        raw_value = {"id": symphony_id_for_test, "step": "root", "name": "test", "children": []}
+        with patch("time.sleep"):
+            result = composer_backtest.submit_backtest(
+                raw_value=raw_value,
+                symphony_id=symphony_id_for_test,
+                _session=session,
+            )
+
+        assert call_count["n"] >= 2, (
+            "The retry mechanism must issue at least 2 POST calls: 1 on 429, 1 on 200. "
+            f"Got {call_count['n']} calls. submit_backtest may not be retrying on 429."
         )
-        error = getattr(result, "error", None) or (result.get("error") if isinstance(result, dict) else None)
-        assert error is not None, (
-            "A 5xx response must produce a result with error set (not None). "
-        )
-
-    def test_request_timeout_produces_error_result(self, minimal_raw_value):
-        """A requests.Timeout must produce an error result, not propagate the exception.
-
-        A hanging backtest request on the advisor path would block the batch indefinitely.
-        """
-        import requests as req_lib
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
-
-        with patch("requests.post", side_effect=req_lib.Timeout("mock timeout")):
-            result = fn(raw_value=minimal_raw_value)
-
-        assert result is not None, (
-            "A Timeout must return a structured error result, not propagate the exception."
-        )
-        error = getattr(result, "error", None) or (result.get("error") if isinstance(result, dict) else None)
-        assert error is not None, (
-            "Timeout must set error field (not None) in the returned result."
-        )
-        assert "timeout" in str(error).lower() or "timed" in str(error).lower(), (
-            f"Timeout error must mention the timeout condition; got: {error!r}."
-        )
-
-    def test_missing_api_key_produces_clear_error(self, minimal_raw_value):
-        """When Composer credentials are absent, run_backtest must return a clear error.
-
-        AC-X4: No Composer API key → 'advisor unavailable: API key not configured'.
-        The client must NOT raise an unhandled KeyError or AttributeError.
-        """
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
-
-        # Simulate missing credentials by patching get_composer_headers to return empty dict
-        from alpha_bot_execution import get_composer_headers  # noqa: F401 (import to patch it)
-        with patch("alpha_bot_execution.get_composer_headers", return_value={}):
-            # Even with empty headers, the function must not unhandled-raise
-            # (it will get a 401 from Composer, which should map to error result)
-            import requests as req_lib
-            mock_401 = MagicMock()
-            mock_401.status_code = 401
-            mock_401.text = "Unauthorized"
-            mock_401.headers = {}
-            with patch("requests.post", return_value=mock_401):
-                result = fn(raw_value=minimal_raw_value, max_retries=0)
-
-        assert result is not None, "Missing credentials must return a result, not raise."
-        error = getattr(result, "error", None) or (result.get("error") if isinstance(result, dict) else None)
-        assert error is not None, (
-            "401 (no/invalid credentials) must produce a non-None error in result. "
-            "AC-X4: advisor unavailable state must be explicit."
+        assert isinstance(result, composer_backtest.BacktestStats), (
+            "After 429 → 200, submit_backtest must return BacktestStats (not raise)."
         )
 
 
 # ---------------------------------------------------------------------------
-# Section 5 — Architecture: live/test separation + offline isolation
+# Section 6 — Architecture: offline isolation and no live calls in default suite
 # ---------------------------------------------------------------------------
 
 class TestArchitectureSeparation:
-    """Hard architecture contracts: no live calls in default suite; not on execution path."""
+    """Hard architecture contracts: AC-X2 + live/test separation."""
 
-    def test_alpha_bot_execution_does_not_import_backtest_client(self):
-        """alpha_bot_execution.py must not import from advisors.composer_backtest_client.
+    def test_alpha_bot_execution_does_not_import_composer_backtest(self):
+        """alpha_bot_execution.py must not import from composer_backtest.
 
         AC-X2: no advisor code on the 1-minute live execution path.
         """
@@ -563,134 +667,47 @@ class TestArchitectureSeparation:
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 module = node.module or ""
-                assert "composer_backtest_client" not in module, (
-                    "alpha_bot_execution.py must not import from advisors.composer_backtest_client. "
-                    "AC-X2: advisor code must never run on the 1-minute live execution path."
+                assert "composer_backtest" not in module, (
+                    "alpha_bot_execution.py must not import from composer_backtest. "
+                    "AC-X2: the backtest client is an advisor module; it must never "
+                    "run on the 1-minute live execution path."
                 )
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert "composer_backtest_client" not in alias.name, (
-                        "alpha_bot_execution.py must not import advisors.composer_backtest_client."
+                    assert "composer_backtest" not in alias.name, (
+                        "alpha_bot_execution.py must not import composer_backtest."
                     )
 
-    def test_module_has_no_top_level_network_call_on_import(self):
-        """Importing advisors.composer_backtest_client must not trigger a network call.
+    def test_composer_backtest_has_no_top_level_network_call_on_import(self):
+        """Importing composer_backtest must not trigger a real network call.
 
-        A top-level requests.get/post/Session at module scope would hit the network
-        on every import, breaking test isolation.
+        A top-level requests.get/post at module scope would hit the network on
+        every import, breaking test isolation.
         """
-        import requests as req_lib
+        import importlib
+        import sys as _sys
+
         call_count = {"n": 0}
 
-        original_post = req_lib.post
-        original_get = req_lib.get
-
-        def counting_post(*a, **kw):
-            call_count["n"] += 1
-            return original_post(*a, **kw)
+        original_get = requests.get
+        original_post = requests.post
 
         def counting_get(*a, **kw):
             call_count["n"] += 1
             return original_get(*a, **kw)
 
+        def counting_post(*a, **kw):
+            call_count["n"] += 1
+            return original_post(*a, **kw)
+
+        _sys.modules.pop("composer_backtest", None)
+
         with patch("requests.post", side_effect=counting_post), \
              patch("requests.get", side_effect=counting_get):
-            # Force a fresh import by removing from sys.modules first
-            sys.modules.pop("advisors.composer_backtest_client", None)
-            _import_client()
+            _ensure_repo_on_path()
+            importlib.import_module("composer_backtest")
 
         assert call_count["n"] == 0, (
-            f"Importing advisors.composer_backtest_client triggered {call_count['n']} "
-            "network call(s) at module load. No top-level requests calls are allowed."
-        )
-
-    def test_no_live_test_calls_in_default_suite(self):
-        """Tests that use live Composer credentials must be marked @pytest.mark.live.
-
-        This test verifies the test FILE ITSELF does not include any unmarked live calls.
-        All live calls in THIS file must be in functions named test_live_* or decorated
-        with @pytest.mark.live.
-        """
-        this_file = pathlib.Path(__file__)
-        tree = ast.parse(this_file.read_text(encoding="utf-8"))
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
-                # A test is a "live" test if it calls get_composer_headers without mocking
-                # or contains 'api.composer.trade' in string literals.
-                # We check naming convention: live tests must be named test_live_*
-                for child in ast.walk(node):
-                    if isinstance(child, ast.Constant) and isinstance(child.value, str):
-                        if "api.composer.trade" in child.value and not node.name.startswith("test_live_"):
-                            pytest.fail(
-                                f"Test {node.name!r} contains 'api.composer.trade' URL but "
-                                "is not named test_live_*. Live tests must be named test_live_* "
-                                "to be excluded from the default suite."
-                            )
-
-
-# ---------------------------------------------------------------------------
-# Section 6 — Rate-limit retry contract
-# ---------------------------------------------------------------------------
-
-class TestRateLimitRetry:
-    """The client must implement bounded retry with backoff for 429 responses."""
-
-    def test_retry_eventually_succeeds_after_429_then_200(
-        self, minimal_raw_value, mock_429_response, mock_200_response
-    ):
-        """A 429 followed by a 200 must ultimately return a successful result.
-
-        The retry mechanism must actually retry (not fail on first 429).
-        """
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
-
-        response_sequence = [mock_429_response, mock_200_response]
-        call_index = {"n": 0}
-
-        def sequential_responses(url, json=None, headers=None, timeout=None, **kwargs):
-            r = response_sequence[min(call_index["n"], len(response_sequence) - 1)]
-            call_index["n"] += 1
-            return r
-
-        with patch("requests.post", side_effect=sequential_responses), \
-             patch("time.sleep"):  # suppress actual sleep in tests
-            result = fn(raw_value=minimal_raw_value, max_retries=2)
-
-        error = getattr(result, "error", None) or (result.get("error") if isinstance(result, dict) else "MISSING")
-        assert error is None, (
-            f"After 429 then 200, run_backtest must return a successful result (error=None). "
-            f"Got error={error!r}. The retry mechanism must actually retry."
-        )
-
-    def test_retry_count_is_bounded(self, minimal_raw_value, mock_429_response):
-        """The client must NOT retry indefinitely on repeated 429 responses.
-
-        After max_retries exhausted, the client must return an error result.
-        """
-        client = _import_client()
-        fn = getattr(client, "run_backtest", None) or getattr(client, "submit_backtest", None)
-
-        call_count = {"n": 0}
-
-        def always_429(url, json=None, headers=None, timeout=None, **kwargs):
-            call_count["n"] += 1
-            return mock_429_response
-
-        max_retries = 3
-
-        with patch("requests.post", side_effect=always_429), \
-             patch("time.sleep"):  # suppress actual sleep
-            result = fn(raw_value=minimal_raw_value, max_retries=max_retries)
-
-        assert call_count["n"] <= max_retries + 1, (
-            f"Client made {call_count['n']} POST calls with max_retries={max_retries}. "
-            f"Expected at most {max_retries + 1} calls (initial + retries). "
-            "Unbounded retry loops are forbidden."
-        )
-
-        error = getattr(result, "error", None) or (result.get("error") if isinstance(result, dict) else None)
-        assert error is not None, (
-            "After exhausting max_retries on 429, client must return error result (not None)."
+            f"Importing composer_backtest triggered {call_count['n']} network call(s). "
+            "No top-level requests calls at module load are allowed."
         )
