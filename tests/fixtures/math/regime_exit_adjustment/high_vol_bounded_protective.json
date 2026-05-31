@@ -1,0 +1,19 @@
+{
+  "description": "HIGH-VOL regime: apply_regime_exit_adjustment returns a bounded-protective tick count — the exit remains responsive but not excessively so. HIGH-VOL indicates stressed conditions where protective stops should remain functional but not be loosened the way mean-reverting would loosen them.",
+  "function": "apply_regime_exit_adjustment",
+  "inputs": {
+    "regime_label": "high-vol",
+    "base_ticks": 3
+  },
+  "derivation": {
+    "spec_basis": "PHASE3_DECISIONS.md §Regime->response mapping: HIGH-VOL -> bounded-protective. 00-ADAPTIVE-RECOMMENDATION.md §1A: 'HIGH-VOL: bounded-protective' — in a stressed regime, the stop should remain protective (not widened to restraint territory) but the tick-count is explicitly bounded so it cannot be pushed so tight as to trigger on a single noise spike. The HIGH_VOL_EXIT_TICKS named constant must be >= 1 and <= EXIT_CONFIRM_TICKS (base). Direction: at-or-below-base (protective, not restraint).",
+    "direction": "adjusted_ticks <= base_ticks AND adjusted_ticks >= 1 (bounded in [1, base_ticks])",
+    "tolerance_note": "Expected value is an integer. Test asserts the value is bounded in [1, EXIT_CONFIRM_TICKS]. HIGH-VOL should NOT yield the same restraint as mean-reverting (where adjusted > base). It is protective (at or tighter) but bounded above 0."
+  },
+  "expected": {
+    "direction": "at_or_below_base",
+    "lower_bound": 1,
+    "upper_bound_inclusive": 3,
+    "comment": "adjusted_ticks must be in [1, 3] inclusive (bounded-protective). It must NOT match MEAN_REVERTING_EXIT_TICKS (which would be > base). The exact value is HIGH_VOL_EXIT_TICKS in math_engine.py."
+  }
+}

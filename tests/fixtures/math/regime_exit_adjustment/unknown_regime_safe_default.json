@@ -1,0 +1,17 @@
+{
+  "description": "Unknown/absent regime label (None): apply_regime_exit_adjustment must return base_ticks unchanged. Safe default: no adjustment when the regime is unknown or absent.",
+  "function": "apply_regime_exit_adjustment",
+  "inputs": {
+    "regime_label": null,
+    "base_ticks": 3
+  },
+  "derivation": {
+    "spec_basis": "PHASE3_DECISIONS.md §Regime->response mapping: 'regime absent/unknown/stale -> current behavior (no adjustment).' Hard constraint 4 from the team brief. When the regime cache has no label (first run, stale data, DB absent), the exit logic must behave exactly as before: EXIT_CONFIRM_TICKS unchanged.",
+    "direction": "adjusted_ticks == base_ticks (identity for None/unknown/stale)",
+    "tolerance_note": "Expected value is exactly base_ticks=3. Exact integer equality."
+  },
+  "expected": {
+    "adjusted_ticks": 3,
+    "comment": "None input must return base_ticks unchanged. This is the safe default / fail-safe path."
+  }
+}

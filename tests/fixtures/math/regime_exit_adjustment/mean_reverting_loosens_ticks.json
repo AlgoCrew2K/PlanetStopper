@@ -1,0 +1,17 @@
+{
+  "description": "MEAN-REVERTING regime: apply_regime_exit_adjustment raises the confirmation ticks above the base EXIT_CONFIRM_TICKS, expressing RESTRAINT (harder to confirm = fewer exits on noise, consistent with Kaminski-Lo 2014 mean-reverting -> stops are neutral-to-harmful).",
+  "function": "apply_regime_exit_adjustment",
+  "inputs": {
+    "regime_label": "mean-reverting",
+    "base_ticks": 3
+  },
+  "derivation": {
+    "spec_basis": "PHASE3_DECISIONS.md §Regime->response mapping: MEAN-REVERTING -> RESTRAINT (hold through noise, exits LESS). 00-ADAPTIVE-RECOMMENDATION.md §1A: 'the measured intraday regime is mean-reverting, where Kaminski-Lo says stops are neutral-to-harmful. An honest adaptive layer will most often counsel restraint (stand down / widen), not more.' Kaminski-Lo (2014): returns REVERSE in mean-reverting regimes, so a triggered stop is more likely a noise tick than a genuine trend break. More confirmation ticks filter out reversions before exit fires.",
+    "direction": "adjusted_ticks > base_ticks (strictly more for mean-reverting = restraint)",
+    "tolerance_note": "Expected value is an integer. The test asserts DIRECTION (greater than base) and upper-bound safety. The exact value is determined by MEAN_REVERTING_EXIT_TICKS named constant in math_engine.py."
+  },
+  "expected": {
+    "direction": "strictly_greater_than_base",
+    "comment": "adjusted_ticks must be > base_ticks=3. The exact value is determined by the named constant MEAN_REVERTING_EXIT_TICKS in math_engine.py. There is a hard upper bound test elsewhere."
+  }
+}
