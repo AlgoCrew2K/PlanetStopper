@@ -242,7 +242,21 @@
             font-weight: 700;
             color: var(--studio-ink);
             letter-spacing: -0.01em;
-            margin-bottom: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Non-expert framing caption below the metrics heading (Phase 2). */
+        .metrics-caption {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            margin-bottom: 0.75rem;
+            line-height: 1.4;
+        }
+
+        /* Tier 2 placeholder cell — visually de-emphasized, never carries a number. */
+        .metric-unavail {
+            color: var(--studio-ink-faint);
+            opacity: 0.55;
         }
 
         .metrics-overflow {
@@ -331,6 +345,9 @@
                 <p class="perf-subtitle">
                     Live (if held) vs Planet Stopper-exited (shadow) · post-mortem snapshots
                 </p>
+                <!-- Observation count moved out of the headline strip into a caption (Phase 2,
+                     ux-design-deliverable.md §Change 1). Populated by renderObsCount(). -->
+                <p class="perf-subtitle" data-testid="obs-caption" id="obs-caption">--</p>
             </div>
             <!-- Scope + window controls right-aligned in the header (V-13) -->
             <div class="perf-controls">
@@ -363,23 +380,25 @@
             quantstats metrics. Showing what's available so far.
         </div>
 
-        <!-- Headline strip — 4 equal columns, never wraps to 2×2 (V-14) -->
+        <!-- Headline strip — 4 equal columns, never wraps to 2×2 (V-14).
+             Phase 2 leads with risk-adjusted evidence (ux-design-deliverable.md §Change 1):
+             Guard Alpha | Sharpe Delta | MDD Reduction | Sortino Delta. -->
         <div data-testid="headline-strip" class="headline-strip">
             <div data-testid="guard-alpha-stat" class="headline-stat">
                 <div class="headline-stat-label">Cumulative guard &alpha;</div>
                 <div class="headline-stat-value" id="guard-alpha-value">--</div>
             </div>
-            <div data-testid="bot-return-stat" class="headline-stat">
-                <div class="headline-stat-label">Bot total return</div>
-                <div class="headline-stat-value" id="bot-return-value">--</div>
+            <div data-testid="sharpe-delta-stat" class="headline-stat">
+                <div class="headline-stat-label">Sharpe improvement</div>
+                <div class="headline-stat-value" id="sharpe-delta-value">--</div>
             </div>
-            <div data-testid="held-return-stat" class="headline-stat">
-                <div class="headline-stat-label">If-held total return</div>
-                <div class="headline-stat-value" id="held-return-value">--</div>
+            <div data-testid="mdd-reduction-stat" class="headline-stat">
+                <div class="headline-stat-label">Max DD reduction</div>
+                <div class="headline-stat-value" id="mdd-reduction-value">--</div>
             </div>
-            <div data-testid="observations-stat" class="headline-stat">
-                <div class="headline-stat-label">Observations</div>
-                <div class="headline-stat-value" id="observation-count">--</div>
+            <div data-testid="sortino-delta-stat" class="headline-stat">
+                <div class="headline-stat-label">Sortino improvement</div>
+                <div class="headline-stat-value" id="sortino-delta-value">--</div>
             </div>
         </div>
 
@@ -407,23 +426,25 @@
         <!-- Metrics table -->
         <section data-testid="metrics-table" class="metrics-section">
             <h2 class="metrics-title">Risk Metrics</h2>
+            <!-- Non-expert framing for the delta column (Phase 2, ux-design-deliverable.md §Change 3). -->
+            <p class="metrics-caption">
+                Positive deltas on risk metrics (Sharpe, Sortino, drawdown reduction) mean the bot
+                improved risk-adjusted outcomes vs holding through.
+            </p>
             <div class="metrics-overflow">
                 <table class="metrics-tbl">
                     <thead>
                         <tr>
                             <th>Metric</th>
-                            <th style="text-align:right">Live · if held</th>
-                            <th style="text-align:right">Bot · Planet Stopper-exited</th>
-                            <th style="text-align:right">Delta</th>
+                            <th style="text-align:right">If-held baseline</th>
+                            <th style="text-align:right">Bot (Planet Stopper)</th>
+                            <th style="text-align:right">Delta (bot &minus; baseline)</th>
                         </tr>
                     </thead>
+                    <!-- Static rows are server-rendered placeholders; performance.js
+                         replaces them via renderMetrics() from /api/performance. Row order +
+                         labels mirror METRIC_LABELS (ux-design-deliverable.md §Change 2). -->
                     <tbody id="metrics-tbody">
-                        <tr data-testid="metric-row" data-primary="true">
-                            <td>Total return</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
-                        </tr>
-                        <tr data-testid="metric-row">
-                            <td>Annualized return</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
-                        </tr>
                         <tr data-testid="metric-row" data-primary="true">
                             <td>Sharpe</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
                         </tr>
@@ -434,10 +455,33 @@
                             <td>Max drawdown</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-neg)"></rect></svg>--</td>
                         </tr>
                         <tr data-testid="metric-row">
+                            <td>Max DD reduction</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row">
                             <td>Calmar</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
                         </tr>
                         <tr data-testid="metric-row">
+                            <td>Annualized volatility</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row">
+                            <td>Volatility reduction</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row" data-primary="true">
+                            <td>Total return</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row">
+                            <td>Annualized return (CAGR)</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <tr data-testid="metric-row">
                             <td>Win rate</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                        </tr>
+                        <!-- Tier 2 benchmark placeholders: no SPY/TQQQ data feed yet → never a
+                             fabricated number (ux-design-deliverable.md §2.4 Data Availability States). -->
+                        <tr data-testid="metric-row" data-unavail="true">
+                            <td>Upside capture vs SPY</td><td style="text-align:right;color:var(--studio-ink-faint)"><span class="metric-unavail" title="Requires SPY/TQQQ benchmark data feed — not yet available">&mdash;</span></td><td style="text-align:right;color:var(--studio-ink-faint)"><span class="metric-unavail" title="Requires SPY/TQQQ benchmark data feed — not yet available">&mdash;</span></td><td class="delta" style="text-align:right"></td>
+                        </tr>
+                        <tr data-testid="metric-row" data-unavail="true">
+                            <td>Downside capture vs SPY</td><td style="text-align:right;color:var(--studio-ink-faint)"><span class="metric-unavail" title="Requires SPY/TQQQ benchmark data feed — not yet available">&mdash;</span></td><td style="text-align:right;color:var(--studio-ink-faint)"><span class="metric-unavail" title="Requires SPY/TQQQ benchmark data feed — not yet available">&mdash;</span></td><td class="delta" style="text-align:right"></td>
                         </tr>
                     </tbody>
                 </table>

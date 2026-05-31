@@ -26,18 +26,39 @@
     }
 
     // Series values arrive as percentage points (e.g. -0.56 = -0.56%).
-    // total_return, annualized_return, max_drawdown come from quantstats which
-    // returns fractional values (e.g. -0.17 = -17%) — convert to pct for display.
+    // total_return, annualized_return, max_drawdown, volatility come from quantstats
+    // (fraction scale, e.g. -0.17 = -17%) — convert to pct for display.
     // win_rate is always a fraction [0,1] from .mean().
+    //
+    // Tuple shape (Phase 2): [key, label, kind, isPrimary].
+    // Order defines rendering order; risk-adjusted metrics lead per the design hierarchy
+    // (ux-design-deliverable.md §2.1 — capital preservation north star ranks risk above return).
+    // kind 'pp' = fraction-scale delta rendered as percentage points (e.g. +1.70pp).
+    // The trailing entries (upside_capture / downside_capture) are Tier 2 benchmark
+    // placeholders: they have no data feed yet, so they render as 'not yet available'
+    // (data-unavail) — never a fabricated number.
     var METRIC_LABELS = [
-        ['total_return',      'Total Return',            'pct_frac'],
-        ['annualized_return', 'Annualized Return (CAGR)', 'pct_frac'],
-        ['sharpe',            'Sharpe',                  'num'],
-        ['sortino',           'Sortino',                 'num'],
-        ['max_drawdown',      'Max Drawdown',            'pct_frac'],
-        ['calmar',            'Calmar',                  'num'],
-        ['win_rate',          'Win Rate',                'frac'],
+        // --- risk-adjusted: primary (bold) ---
+        ['sharpe',              'Sharpe',                    'num',      true],
+        ['sortino',             'Sortino',                   'num',      false],
+        ['max_drawdown',        'Max drawdown',              'pct_frac', true],
+        ['max_drawdown_delta',  'Max DD reduction',          'pp',       false],  // derived
+        ['calmar',              'Calmar',                    'num',      false],
+        // --- volatility ---
+        ['volatility',          'Annualized volatility',     'pct_frac', false],  // Tier 1
+        ['volatility_delta',    'Volatility reduction',      'pp',       false],  // Tier 1, derived
+        // --- return ---
+        ['total_return',        'Total return',              'pct_frac', true],
+        ['annualized_return',   'Annualized return (CAGR)',  'pct_frac', false],
+        ['win_rate',            'Win rate',                  'frac',     false],
+        // --- roadmap placeholders (Tier 2, no benchmark feed → 'not yet available') ---
+        ['upside_capture',      'Upside capture vs SPY',     'pct',      false],
+        ['downside_capture',    'Downside capture vs SPY',   'pct',      false],
     ];
+
+    // Tier 2 benchmark metrics: no SPY/TQQQ data feed exists yet, so these always
+    // render as unavailable placeholders (never a fabricated value).
+    var TIER2_PLACEHOLDER_KEYS = ['upside_capture', 'downside_capture'];
 
     function fmt(value, kind) {
         if (value === null || value === undefined) return '—';
@@ -46,6 +67,10 @@
         // pct_frac: quantstats returns fractions; multiply by 100 for display
         if (kind === 'pct_frac') return (value * 100).toFixed(2) + '%';
         if (kind === 'frac') return (value * 100).toFixed(2) + '%';
+        // pp: fraction-scale delta shown as percentage points (e.g. 0.017 → +1.70pp)
+        if (kind === 'pp') return (value >= 0 ? '+' : '') + (value * 100).toFixed(2) + 'pp';
+        // pct: already a percentage value (Tier 2 capture %) — rare, kept for completeness
+        if (kind === 'pct') return value.toFixed(1) + '%';
         return value.toFixed(3);
     }
 
@@ -244,8 +269,6 @@
         }
     }
 
-    var PRIMARY_METRICS = ['total_return', 'sharpe', 'max_drawdown'];
-
     function signColor(value, key) {
         if (typeof value !== 'number' || !isFinite(value)) return 'inherit';
         // max_drawdown is always negative — use neg colour; don't flip on sign
@@ -255,17 +278,55 @@
         return 'inherit';
     }
 
+    // Tier 2 placeholder row: the operator sees the roadmap metric, but the value
+    // columns render an explicit 'not yet available' dash — never a fabricated number.
+    // data-unavail='true' marks the row distinct from live data rows.
+    function placeholderRow(label) {
+        var unavail = '<span class="metric-unavail" title="Requires SPY/TQQQ benchmark data feed — not yet available">—</span>';
+        return (
+            '<tr data-testid="metric-row" data-unavail="true">'
+            + '<td>' + label + '</td>'
+            + '<td style="text-align:right;color:var(--studio-ink-faint);">' + unavail + '</td>'
+            + '<td style="text-align:right;color:var(--studio-ink-faint);">' + unavail + '</td>'
+            + '<td class="delta" style="text-align:right;"></td>'
+            + '</tr>'
+        );
+    }
+
     function renderMetrics(payload) {
         var tbody = document.getElementById('metrics-tbody');
         if (!tbody) return;
         var live   = payload.live_metrics   || {};
         var shadow = payload.shadow_metrics || {};
+
+        // Derived Tier 1 fields — computed from the metric dicts before rendering.
+        // Sign conventions (ux-design-deliverable.md §Change 2; fixture risk_adjusted_derived_fields.json):
+        //   max_drawdown_delta = abs(held_mdd) - abs(bot_mdd)  (positive = bot had less drawdown)
+        //   volatility_delta   = held_vol - bot_vol            (positive = bot is calmer)
+        // The derived row shows the reduction on the bot side against a zero baseline,
+        // so the delta column reflects the improvement directly.
+        if (typeof live.max_drawdown === 'number' && typeof shadow.max_drawdown === 'number'
+            && isFinite(live.max_drawdown) && isFinite(shadow.max_drawdown)) {
+            shadow.max_drawdown_delta = Math.abs(live.max_drawdown) - Math.abs(shadow.max_drawdown);
+            live.max_drawdown_delta = 0;  // baseline
+        }
+        if (typeof live.volatility === 'number' && typeof shadow.volatility === 'number'
+            && isFinite(live.volatility) && isFinite(shadow.volatility)) {
+            shadow.volatility_delta = live.volatility - shadow.volatility;
+            live.volatility_delta = 0;  // baseline
+        }
+
         var rows = METRIC_LABELS.map(function (spec) {
-            var key = spec[0], label = spec[1], kind = spec[2];
+            var key = spec[0], label = spec[1], kind = spec[2], isPrimary = spec[3];
+
+            // Tier 2 benchmark metrics: no data feed → always a placeholder row.
+            if (TIER2_PLACEHOLDER_KEYS.indexOf(key) !== -1) {
+                return placeholderRow(label);
+            }
+
             var liveVal   = live[key];
             var shadowVal = shadow[key];
             var dc = deltaClass(liveVal, shadowVal);
-            var isPrimary = PRIMARY_METRICS.indexOf(key) !== -1;
             var primaryAttr = isPrimary ? ' data-primary="true"' : '';
             var deltaColor = dc === 'pos' ? 'var(--studio-pos)' : dc === 'neg' ? 'var(--studio-neg)' : 'inherit';
             var barFill = key === 'max_drawdown' ? 'var(--studio-neg)' : 'var(--studio-accent)';
@@ -300,10 +361,26 @@
         banner.style.display = payload.insufficient_history ? '' : 'none';
     }
 
+    // Set a headline stat value element's text + sign color. delta is in the
+    // metric's native scale; suffix is appended verbatim (e.g. '%', 'pp', '').
+    // higherIsBetter governs which sign is rendered green.
+    function setHeadlineStat(id, value, decimals, suffix, higherIsBetter) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        if (value === null || typeof value !== 'number' || !isFinite(value)) {
+            el.textContent = '--';
+            el.style.color = 'inherit';
+            return;
+        }
+        el.textContent = (value >= 0 ? '+' : '') + value.toFixed(decimals) + suffix;
+        var good = higherIsBetter ? value >= 0 : value <= 0;
+        el.style.color = good ? 'var(--studio-pos)' : 'var(--studio-neg)';
+    }
+
     function renderHeadlineStats(payload) {
         var live   = payload.live_metrics   || {};
         var shadow = payload.shadow_metrics || {};
-        // total_return from quantstats is fractional — multiply by 100 for pct display
+        // total_return from quantstats is fractional — multiply by 100 for pct display.
         var liveTR   = typeof live.total_return   === 'number' ? live.total_return   * 100 : null;
         var shadowTR = typeof shadow.total_return === 'number' ? shadow.total_return * 100 : null;
         var guardAlpha = (liveTR !== null && shadowTR !== null) ? (shadowTR - liveTR) : null;
@@ -317,29 +394,40 @@
                 ? 'var(--studio-pos)' : 'var(--studio-neg)';
         }
 
-        var botEl = document.getElementById('bot-return-value');
-        if (botEl) {
-            botEl.textContent = shadowTR !== null
-                ? (shadowTR >= 0 ? '+' : '') + shadowTR.toFixed(2) + '%'
-                : '--';
-            botEl.style.color = shadowTR !== null && shadowTR >= 0
-                ? 'var(--studio-pos)' : 'var(--studio-neg)';
-        }
+        // Phase 2 risk-adjusted headline deltas (ux-design-deliverable.md §Change 1).
+        // sharpeDelta / sortinoDelta: bot − held; higher is better.
+        // mddReduction: abs(held_mdd) − abs(bot_mdd) in fraction scale → percentage points;
+        //   positive means the bot suffered a shallower drawdown (capital preserved).
+        var bothSharpe = typeof shadow.sharpe === 'number' && typeof live.sharpe === 'number';
+        var sharpeDelta = bothSharpe ? shadow.sharpe - live.sharpe : null;
 
-        var heldEl = document.getElementById('held-return-value');
-        if (heldEl) {
-            heldEl.textContent = liveTR !== null
-                ? (liveTR >= 0 ? '+' : '') + liveTR.toFixed(2) + '%'
-                : '--';
-            heldEl.style.color = liveTR !== null && liveTR >= 0
-                ? 'var(--studio-pos-dim, var(--studio-pos))' : 'var(--studio-neg)';
-        }
+        var bothSortino = typeof shadow.sortino === 'number' && typeof live.sortino === 'number';
+        var sortinoDelta = bothSortino ? shadow.sortino - live.sortino : null;
+
+        var bothMdd = typeof shadow.max_drawdown === 'number' && typeof live.max_drawdown === 'number';
+        var mddReduction = bothMdd
+            ? (Math.abs(live.max_drawdown) - Math.abs(shadow.max_drawdown)) * 100  // fraction → pp
+            : null;
+
+        setHeadlineStat('sharpe-delta-value', sharpeDelta, 2, '', true);
+        setHeadlineStat('sortino-delta-value', sortinoDelta, 2, '', true);
+        setHeadlineStat('mdd-reduction-value', mddReduction, 2, 'pp', true);
     }
 
     function renderObsCount(payload) {
+        // Observation count moved out of the headline strip into a caption
+        // (ux-design-deliverable.md §Change 1). Window days included for context.
+        var caption = document.getElementById('obs-caption');
+        if (caption) {
+            var n = payload.observation_count;
+            var win = payload.window_days;
+            var txt = String(n) + (n === 1 ? ' observation' : ' observations');
+            if (typeof win === 'number') txt += ' · ' + win + 'd window';
+            caption.textContent = txt;
+        }
+        // Legacy element kept harmless if present in any cached template.
         var el = document.getElementById('observation-count');
-        if (!el) return;
-        el.textContent = String(payload.observation_count);
+        if (el) el.textContent = String(payload.observation_count);
     }
 
     function segValue(id) {

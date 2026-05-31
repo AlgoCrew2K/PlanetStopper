@@ -311,7 +311,12 @@ def compute_quantstats_metrics(returns_series: list[float], freq: str = "D") -> 
 
     Keys returned (always present):
         total_return, annualized_return, sharpe, sortino,
-        max_drawdown, calmar, win_rate.
+        max_drawdown, calmar, win_rate, volatility.
+
+    `volatility` is annualized volatility (Phase 2 dashboard extension): the
+    sample standard deviation of the daily fraction-scale return series scaled
+    to a 252-trading-day year. It is returned in FRACTION scale (e.g. 0.035 =
+    3.5% annual vol) consistent with the other fraction-scale metrics.
 
     NaN / Inf inputs are filtered out before computation. If fewer than
     _MIN_QUANTSTATS_OBSERVATIONS (=2) finite values remain, every metric is
@@ -331,6 +336,7 @@ def compute_quantstats_metrics(returns_series: list[float], freq: str = "D") -> 
         "max_drawdown",
         "calmar",
         "win_rate",
+        "volatility",
     )
     none_result = {k: None for k in metric_keys}
 
@@ -401,6 +407,11 @@ def compute_quantstats_metrics(returns_series: list[float], freq: str = "D") -> 
 
     # win_rate: fraction of positive observations in [0, 1].
     metrics["win_rate"] = _safe(lambda: float((series > 0).mean()))
+
+    # volatility: annualized std dev (252-day basis) in fraction scale. quantstats
+    # operates on the same fraction-scale `series` as the other metrics, so no extra
+    # scaling is needed — the result is fraction-scale (e.g. 0.035 = 3.5% annual vol).
+    metrics["volatility"] = _safe(lambda: qs_stats.volatility(series))
 
     return metrics
 
