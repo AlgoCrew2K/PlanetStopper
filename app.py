@@ -2344,17 +2344,20 @@ def ai_advisor_asset_swaps():
 def ai_advisor_asset_swaps_evaluate():
     """Operator-initiated swap evaluation endpoint (AC-2.1).
 
-    Accepts JSON: { symphony_id, from_ticker, to_ticker }.
-    Fetches the baseline tree, applies the swap, backtests, gates, returns result.
+    Accepts JSON: { symphony_id, from_ticker, to_ticker, objective_type? }.
+    Constructs a typed SwapObjective, fetches the baseline tree via symphony_logic,
+    calls propose_operator_swap from advisors.asset_swap_engine, and returns the
+    SwapRunResult fields as JSON.
 
     Never runs a live trade; never calls Composer write endpoints (AC-X1).
-    Runs in a background thread per the dashboard rule (no blocking on request thread).
+    Persistence (advisor_observation) is handled inside propose_operator_swap (AC-X3).
 
     Returns JSON with the swap result for rendering in the UI.
     """
-    # Lazy imports (AC-X2 — keep off the live execution path).
+    # Lazy imports (AC-X2 — keep asset_swap_engine off the live execution path).
     from advisors.asset_swap_engine import (  # noqa: PLC0415
-        evaluate_single_swap,
+        propose_operator_swap,
+        SwapObjective,
         _has_composer_key,
     )
     from symphony_logic import fetch_symphony_score  # noqa: PLC0415
@@ -2366,49 +2369,69 @@ def ai_advisor_asset_swaps_evaluate():
     symphony_id = str(body.get("symphony_id", "")).strip()
     from_ticker = str(body.get("from_ticker", "")).strip().upper()
     to_ticker = str(body.get("to_ticker", "")).strip().upper()
+    # objective_type defaults to reduce_correlation for operator-initiated mode
+    # (Gate-1 Resolution #2: every swap must be objective-directed; operator can
+    # override via the optional form field).
+    objective_type = str(body.get("objective_type", "reduce_correlation")).strip()
 
     if not symphony_id or not from_ticker or not to_ticker:
         return jsonify({"error": "symphony_id, from_ticker, and to_ticker are required"}), 200
-
-    # Scrub any API-key material before building response — never in template context.
-    # (This route returns JSON; the AC-X4 contract is enforced above.)
 
     raw_value = fetch_symphony_score(symphony_id)
     if not raw_value:
         return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
 
-    symphony_name = raw_value.get("name") or symphony_id
-    objective = f"operator-initiated: replace {from_ticker} with {to_ticker} in {symphony_name}"
+    # Construct a typed SwapObjective (Gate-1 Resolution #2 — no plain string objectives).
+    objective = SwapObjective(
+        objective_type=objective_type,
+        target_pair=None,
+        measured_value=0.0,
+    )
 
     try:
-        result = evaluate_single_swap(
-            raw_value=raw_value,
+        run_result = propose_operator_swap(
             symphony_id=symphony_id,
-            symphony_name=symphony_name,
-            from_ticker=from_ticker,
-            to_ticker=to_ticker,
+            score_tree=raw_value,
+            incumbent_asset=from_ticker,
+            candidate_asset=to_ticker,
             objective=objective,
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_asset_swaps_evaluate failed: %s", exc, exc_info=True)
         return jsonify({"error": f"evaluation error: {exc}"}), 200
 
+    # Build response from the first proposal (single-candidate operator-initiated mode)
+    # plus the run-level message and gate batch metadata (AC-2.3 / AC-2.5).
+    proposal = run_result.proposals[0] if run_result.proposals else None
+    gate_result = proposal.gate_result if proposal else None
+
     return jsonify({
-        "candidate_id": result.candidate_id,
-        "symphony_id": result.symphony_id,
-        "from_ticker": result.from_ticker,
-        "to_ticker": result.to_ticker,
-        "objective": result.objective,
-        "baseline_stats": result.baseline_stats,
-        "variant_stats": result.variant_stats,
-        "gate_decision": result.gate_decision,
-        "gate_reason": result.gate_reason,
-        "validation_days": result.validation_days,
-        "oos_alpha": result.oos_alpha,
-        "caveats": result.caveats,
-        "apply_guidance": result.apply_guidance,
-        "backtest_error": result.backtest_error,
-        "data_warnings": result.data_warnings,
+        # Run-level fields (AC-2.5: always expose the message so zero-survivors is explicit)
+        "message": run_result.message,
+        "survivors": len(run_result.survivors),
+        "no_api_key": run_result.no_api_key,
+        # Proposal-level fields (AC-2.3: stats + verdict + rationale + guidance)
+        "candidate_id": proposal.candidate_id if proposal else None,
+        "symphony_id": symphony_id,
+        "from_ticker": from_ticker,
+        "to_ticker": to_ticker,
+        "objective_rationale": proposal.objective_rationale if proposal else "",
+        "baseline_stats": proposal.baseline_stats if proposal else None,
+        "variant_stats": proposal.variant_stats if proposal else None,
+        # Gate verdict — AC-2.3: operator sees decision + reason
+        "gate_decision": gate_result.verdict.decision if gate_result else None,
+        "gate_result": {
+            "decision": gate_result.verdict.decision,
+            "validation_days": gate_result.validation_days,
+            "oos_alpha": gate_result.oos_alpha,
+            "winner_p_adj": gate_result.winner_p_adj,
+        } if gate_result else None,
+        # Caveats (mandatory for survivors — SURVIVOR_OVERFITTING_CAVEAT)
+        "caveats": proposal.caveats if proposal else [],
+        # Apply guidance — plain text, no button (AC-X1)
+        "apply_guidance": proposal.apply_guidance if proposal else "",
+        "backtest_error": proposal.backtest_error if proposal else None,
+        "data_warnings": proposal.data_warnings if proposal else [],
     }), 200
 
 
