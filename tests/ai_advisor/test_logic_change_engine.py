@@ -1927,3 +1927,181 @@ class TestFixtureContract:
             "sample_tweak_invalid must be rejected by apply_logic_tweak (old_value mismatch). "
             f"Got a non-None result: {result_tree!r}."
         )
+
+
+# ===========================================================================
+# Section 14 — Named constants for scaling factors (BLOCK-1 reviewer finding)
+# ===========================================================================
+
+
+class TestNamedScalingConstants:
+    """All bare numeric scaling factors and floor thresholds must be named module-level constants.
+
+    Reviewer BLOCK-1 (HEAD 7d0e083): five scaling factors (0.80, 1.25, 1.50, 0.90, 1.30)
+    and two floor thresholds (5, 3) appear as bare numeric literals in
+    generate_objective_directed_candidates.  They are the entire overfitting-surface
+    control mechanism and must have names + source comments so a maintainer can
+    understand their origin without reverse-engineering the arithmetic.
+
+    These tests encode the contract so a bare-literal reimplementation fails.
+    """
+
+    def test_module_exposes_reduce_drawdown_tighten_factor(self):
+        """Module must expose _REDUCE_DRAWDOWN_TIGHTEN_FACTOR as a named constant (bare 0.80).
+
+        Must be a float in (0, 1): tightening multiplier reduces the parameter value.
+        """
+        engine = _import_engine()
+        const = getattr(engine, "_REDUCE_DRAWDOWN_TIGHTEN_FACTOR", None)
+        assert const is not None, (
+            "advisors.logic_change_engine must expose _REDUCE_DRAWDOWN_TIGHTEN_FACTOR "
+            "(reviewer BLOCK-1: bare 0.80 literal in generate_objective_directed_candidates). "
+            "Name the constant at module level with a source rationale comment."
+        )
+        assert isinstance(const, float), (
+            f"_REDUCE_DRAWDOWN_TIGHTEN_FACTOR must be a float. Got {type(const).__name__!r}."
+        )
+        # Tightening factor: multiplies to produce a smaller value, so must be in (0, 1).
+        assert 0.0 < const < 1.0, (
+            f"_REDUCE_DRAWDOWN_TIGHTEN_FACTOR must be in (0, 1). Got {const!r}."
+        )
+
+    def test_module_exposes_lift_risk_adjusted_loosen_factor(self):
+        """Module must expose _LIFT_RISK_ADJUSTED_LOOSEN_FACTOR as a named constant (bare 1.25).
+
+        Must be > 1.0: loosening multiplier increases the parameter value.
+        """
+        engine = _import_engine()
+        const = getattr(engine, "_LIFT_RISK_ADJUSTED_LOOSEN_FACTOR", None)
+        assert const is not None, (
+            "advisors.logic_change_engine must expose _LIFT_RISK_ADJUSTED_LOOSEN_FACTOR "
+            "(reviewer BLOCK-1: bare 1.25 literal). "
+            "Name the constant at module level with a source rationale comment."
+        )
+        assert isinstance(const, float) and const > 1.0, (
+            f"_LIFT_RISK_ADJUSTED_LOOSEN_FACTOR must be a float > 1.0. Got {const!r}."
+        )
+
+    def test_module_exposes_reduce_turnover_lengthen_factor(self):
+        """Module must expose _REDUCE_TURNOVER_LENGTHEN_FACTOR as a named constant (bare 1.50).
+
+        Must be > 1.0: lengthening multiplier.
+        """
+        engine = _import_engine()
+        const = getattr(engine, "_REDUCE_TURNOVER_LENGTHEN_FACTOR", None)
+        assert const is not None, (
+            "advisors.logic_change_engine must expose _REDUCE_TURNOVER_LENGTHEN_FACTOR "
+            "(reviewer BLOCK-1: bare 1.50 literal). "
+            "Name the constant at module level with a source rationale comment."
+        )
+        assert isinstance(const, float) and const > 1.0, (
+            f"_REDUCE_TURNOVER_LENGTHEN_FACTOR must be a float > 1.0. Got {const!r}."
+        )
+
+    def test_module_exposes_improve_momentum_timing_shorten_factor(self):
+        """Module must expose _IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR (bare 0.90).
+
+        Must be in (0, 1): shortening multiplier.
+        """
+        engine = _import_engine()
+        const = getattr(engine, "_IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR", None)
+        assert const is not None, (
+            "advisors.logic_change_engine must expose _IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR "
+            "(reviewer BLOCK-1: bare 0.90 literal). "
+            "Name the constant at module level with a source rationale comment."
+        )
+        assert isinstance(const, float) and 0.0 < const < 1.0, (
+            f"_IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR must be a float in (0, 1). Got {const!r}."
+        )
+
+    def test_module_exposes_reduce_whipsaw_lengthen_factor(self):
+        """Module must expose _REDUCE_WHIPSAW_LENGTHEN_FACTOR as a named constant (bare 1.30).
+
+        Must be > 1.0: lengthening multiplier.
+        """
+        engine = _import_engine()
+        const = getattr(engine, "_REDUCE_WHIPSAW_LENGTHEN_FACTOR", None)
+        assert const is not None, (
+            "advisors.logic_change_engine must expose _REDUCE_WHIPSAW_LENGTHEN_FACTOR "
+            "(reviewer BLOCK-1: bare 1.30 literal). "
+            "Name the constant at module level with a source rationale comment."
+        )
+        assert isinstance(const, float) and const > 1.0, (
+            f"_REDUCE_WHIPSAW_LENGTHEN_FACTOR must be a float > 1.0. Got {const!r}."
+        )
+
+    def test_module_exposes_candidate_window_floor_days(self):
+        """Module must expose _CANDIDATE_WINDOW_FLOOR_DAYS as a named constant (bare 5).
+
+        This floor gates which numeric parameters qualify for candidate generation
+        (day-scale windows vs fractional or boolean-flag values).
+        """
+        engine = _import_engine()
+        const = getattr(engine, "_CANDIDATE_WINDOW_FLOOR_DAYS", None)
+        assert const is not None, (
+            "advisors.logic_change_engine must expose _CANDIDATE_WINDOW_FLOOR_DAYS "
+            "(reviewer BLOCK-1: bare 5 floor literal). "
+            "Name the constant at module level with a source rationale comment."
+        )
+        assert isinstance(const, int) and const > 0, (
+            f"_CANDIDATE_WINDOW_FLOOR_DAYS must be a positive int. Got {const!r}."
+        )
+
+    def test_module_exposes_reduce_turnover_floor_days(self):
+        """Module must expose _REDUCE_TURNOVER_FLOOR_DAYS as a named constant (bare 3).
+
+        reduce_turnover uses a lower floor (>= 3) than the other objectives (>= 5).
+        This distinction must be named so maintainers understand why 3 was chosen.
+        """
+        engine = _import_engine()
+        const = getattr(engine, "_REDUCE_TURNOVER_FLOOR_DAYS", None)
+        assert const is not None, (
+            "advisors.logic_change_engine must expose _REDUCE_TURNOVER_FLOOR_DAYS "
+            "(reviewer BLOCK-1: bare 3 floor literal in reduce_turnover branch). "
+            "Name the constant at module level with a source rationale comment."
+        )
+        assert isinstance(const, int) and const > 0, (
+            f"_REDUCE_TURNOVER_FLOOR_DAYS must be a positive int. Got {const!r}."
+        )
+
+    def test_generate_objective_directed_candidates_uses_named_constants_not_bare_literals(self):
+        """Static analysis: generate_objective_directed_candidates must not contain bare
+        scaling-factor literals.
+
+        After BLOCK-1 is fixed, references to 0.80 / 1.25 / 1.50 / 0.90 / 1.30 inside
+        the function body must be replaced by the named constants.  A bare-literal
+        reimplementation fails this test.
+
+        Pattern matched: '* 0.80', '* 1.25', etc. (multiplication context confirms
+        these are the scaling uses, not incidental occurrences in comments or strings
+        when we use ast.unparse which strips comments).
+        """
+        engine_path = _REPO_ROOT / "advisors" / "logic_change_engine.py"
+        if not engine_path.exists():
+            pytest.skip("advisors/logic_change_engine.py not found.")
+
+        source = engine_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        fn_source = None
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name == "generate_objective_directed_candidates"
+            ):
+                fn_source = ast.unparse(node)
+                break
+
+        if fn_source is None:
+            pytest.skip("generate_objective_directed_candidates not found in source.")
+
+        # After the fix, these bare multiplication patterns must be absent from the
+        # unparsed AST (ast.unparse produces canonical Python, so bare literals are
+        # always 0.8, 1.25, 1.5, 0.9, 1.3 — no trailing zeros).
+        bare_patterns = ["* 0.8)", "* 1.25)", "* 1.5)", "* 0.9)", "* 1.3)"]
+        for pattern in bare_patterns:
+            assert pattern not in fn_source, (
+                f"generate_objective_directed_candidates still contains bare scaling "
+                f"literal pattern '{pattern}' after BLOCK-1 fix (reviewer BLOCK-1). "
+                "Replace with the corresponding named module-level constant."
+            )

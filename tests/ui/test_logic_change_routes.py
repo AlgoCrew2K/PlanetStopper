@@ -855,3 +855,84 @@ class TestTabNavigation:
         assert "ai_advisor_logic_changes" in source or "logic-changes" in source, (
             "ai_advisor_correlations.html must link to the Logic Changes tab."
         )
+
+
+# ===========================================================================
+# Section 10 — Route must not duplicate engine parse function (BLOCK-2)
+# ===========================================================================
+
+
+class TestNoDuplicateParseFunction:
+    """app.py must NOT define _parse_change_description_to_tweak at module scope.
+
+    Reviewer BLOCK-2 (HEAD 7d0e083): app.py defines a module-scope
+    _parse_change_description_to_tweak at line 2629 that is a degraded fork of the
+    identical function already in logic_change_engine.py:907.  The route layer is
+    doing engine work.  The fix: delete the app.py copy and pass change_description=
+    to propose_operator_logic_change, letting the engine's own parser run.
+
+    These tests encode the delegation contract so the duplication cannot sneak back.
+    """
+
+    def test_app_py_does_not_define_parse_change_description_at_module_scope(self):
+        """Static analysis: app.py must NOT define _parse_change_description_to_tweak
+        as a module-level function.
+
+        The route handler delegates parsing entirely to propose_operator_logic_change
+        (which calls the engine's own _parse_change_description_to_tweak internally).
+        A module-scope copy in app.py is a degraded fork that diverges from the engine
+        implementation and violates the Dashboard side-effect ban (reviewer BLOCK-2).
+        """
+        source = (_REPO_ROOT / "app.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name == "_parse_change_description_to_tweak"
+                and node.col_offset == 0  # module-level (not nested inside a function)
+            ):
+                assert False, (
+                    "app.py must NOT define _parse_change_description_to_tweak at module scope "
+                    "(reviewer BLOCK-2). "
+                    "This is a degraded fork of the engine function at "
+                    "advisors/logic_change_engine.py. "
+                    "Delete the app.py copy and pass change_description= to "
+                    "propose_operator_logic_change, which calls the engine's own parser."
+                )
+
+    def test_evaluate_route_does_not_call_module_level_parse_function(self):
+        """Static analysis: ai_advisor_logic_changes_evaluate must not call a locally-defined
+        _parse_change_description_to_tweak that bypasses the engine.
+
+        After BLOCK-2 is fixed, the route passes change_description= directly to
+        propose_operator_logic_change.  Any direct call to a module-level parse function
+        means the fix was incomplete.
+
+        This complements test_evaluate_route_calls_propose_operator_logic_change by
+        verifying the delegation goes all the way through — no intermediate parse step
+        that duplicates the engine logic.
+        """
+        source = (_REPO_ROOT / "app.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        evaluate_fn_body = None
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name == "ai_advisor_logic_changes_evaluate"
+            ):
+                evaluate_fn_body = ast.unparse(node)
+                break
+
+        if evaluate_fn_body is None:
+            pytest.skip("ai_advisor_logic_changes_evaluate not found in app.py.")
+
+        # The route body must NOT call _parse_change_description_to_tweak directly.
+        # After the fix, it passes change_description= to propose_operator_logic_change.
+        assert "_parse_change_description_to_tweak(" not in evaluate_fn_body, (
+            "ai_advisor_logic_changes_evaluate must NOT call _parse_change_description_to_tweak "
+            "directly (reviewer BLOCK-2 fix incomplete). "
+            "The route must pass change_description= to propose_operator_logic_change "
+            "and let the engine's own parser run."
+        )
