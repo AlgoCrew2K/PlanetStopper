@@ -1,0 +1,127 @@
+{
+  "_fixture_provenance": "schema-derived",
+  "_layer": "logic_change_engine_m4",
+  "_note": "No producer-computed values. Every field is a structural shape, named enum constant, or boundary condition. AC bindings are from feature-plans/ai-advisor.md AC-3.1..AC-3.4 + AC-X*. The FDR-monotonicity and single-batch-dispatch contracts are derived from the BHY/Yekutieli multiple-testing correction semantics described in Harvey & Liu 2015 and autotuner.py:_haircut_select.",
+  "_binding_spec": "feature-plans/ai-advisor.md §Capability 3 (Logic-Change Proposals)",
+
+  "logic_change_type_enum_values": {
+    "operator_initiated": {
+      "description": "Operator specifies a logic tweak to try (e.g., change lookback window, reorder conditions, adjust weight formula)",
+      "required_input_fields": ["symphony_id", "score_tree", "change_description", "objective"],
+      "_note": "AC-3.1 operator-initiated mode. The change_description is a plain-text description of the structural change; the engine applies it to the variant tree before backtesting."
+    },
+    "advisor_suggested": {
+      "description": "Advisor generates objective-directed logic-change candidates from the symphony tree and stated objective",
+      "required_input_fields": ["symphony_id", "score_tree", "objective"],
+      "candidate_generation_must": "produce candidates that address the stated objective with a clear measurable basis",
+      "candidate_generation_must_not": [
+        "generate candidates by exhaustively scanning every possible logic modification (unbounded scanning is the overfitting trap)",
+        "generate candidates without a stated objective",
+        "bypass the stated objective to surface pre-decided candidates"
+      ],
+      "_note": "AC-3.1 + Gate-1 Resolution #2. Objective-directed and BOUNDED candidate generation is the overfitting control. Not brute-force scanning."
+    }
+  },
+
+  "fdr_multiple_testing_guardrail": {
+    "_note": "AC-3.2 MANDATORY. This is the load-bearing soundness contract for M4.",
+    "batch_dispatch_contract": {
+      "requirement": "ALL candidates in a run are submitted to evaluate_candidate_batch as ONE batch",
+      "forbidden": "submitting candidates individually to avoid joint FDR correction",
+      "_note": "Per-candidate gating (n_effective=1 for each) would defeat the multiple-testing correction. n_effective MUST equal the total number of candidates backtested in this run."
+    },
+    "n_raises_bar_contract": {
+      "requirement": "Raising N (number of candidates in the batch) raises the BHY-adjusted threshold each must clear",
+      "mechanism": "Yekutieli c(N) factor grows with N; the adjusted p-value threshold q/c(N) shrinks as N grows",
+      "_note": "A candidate that passes pre-correction but not post-correction at a given N must be REJECTED when N grows further. A per-candidate implementation (n_effective=1 each) would not exhibit this monotonicity."
+    },
+    "pre_correction_only_passers_hidden": {
+      "requirement": "Candidates that pass the raw p-value threshold but NOT the BHY-adjusted threshold must NOT be surfaced as recommendations",
+      "_note": "AC-3.3. The post-correction verdict is the only valid gate verdict."
+    }
+  },
+
+  "logic_change_objective_enum_values": {
+    "improve_momentum_timing": {
+      "description": "Adjust logic to better capture momentum transitions (e.g., modify lookback window)",
+      "_note": "Objective must be measurable against backtest stats, not a vibe."
+    },
+    "reduce_whipsaw": {
+      "description": "Reduce excessive condition oscillation / churn",
+      "_note": "Measurable via trade count or turnover proxy from the backtest."
+    },
+    "improve_regime_filter": {
+      "description": "Sharpen the regime-detection condition to reduce false exits",
+      "_note": "Measurable via reduction in spurious trade events in the backtest return series."
+    }
+  },
+
+  "gating_contract": {
+    "surfaced_as_recommendation": "only ADOPT_CANDIDATE gate verdicts after post-correction FDR check",
+    "gate_failed_disposition": "NOT surfaced as recommendation; may be shown as rejected with reason",
+    "zero_survivors_is_valid": true,
+    "zero_survivors_message_required": "no logic change cleared the gate this run",
+    "_note": "AC-3.4: engine returns advisory-only result. Never auto-applies."
+  },
+
+  "overfitting_caveat_contract": {
+    "required_on_all_survivors": true,
+    "caveat_must_mention": ["selecting on backtest", "FDR correction", "post-correction verdict"],
+    "_note": "AC-3.3: every surfaced logic change must carry the mandatory overfitting caveat."
+  },
+
+  "persistence_contract": {
+    "write_function": "database.insert_advisor_observation",
+    "is_advisory_only": 1,
+    "required_fields": ["symphony_id", "is_advisory_only", "observation_type"],
+    "observation_type_value": "logic_change_proposal",
+    "_note": "AC-X3. Every surfaced logic change is persisted as an advisor_observation. is_advisory_only=1 is structural, not optional. AC-3.4 asserts it never auto-applies."
+  },
+
+  "live_path_guard": {
+    "alpha_bot_execution_imports_logic_change": false,
+    "_note": "AC-X2: logic_change_engine must not appear on the 1-minute live execution path."
+  },
+
+  "no_api_key_contract": {
+    "expected_error_substring": "advisor unavailable",
+    "must_write_nothing": true,
+    "must_not_raise_unhandled": true,
+    "_note": "AC-X4."
+  },
+
+  "advise_only_guard": {
+    "forbidden_endpoints": [
+      "POST /symphonies",
+      "PUT /symphonies",
+      "/copy",
+      "/deploy",
+      "go-to-cash"
+    ],
+    "allowed_endpoints": [
+      "GET /score",
+      "POST /api/v0.1/backtest"
+    ],
+    "_note": "AC-X1."
+  },
+
+  "apply_guidance_contract": {
+    "format": "plain text — 'To apply: open {symphony_name} in Composer and edit the logic manually.'",
+    "must_not_be": "a button, a write endpoint call, or an auto-apply action",
+    "_note": "AC-3.4 / AC-X1: the engine never auto-applies; operator applies manually."
+  },
+
+  "ui_surface_contract": {
+    "required_displayed_fields_per_candidate": [
+      "baseline_stats (Sharpe, Sortino, max_drawdown, annual_return shape)",
+      "variant_stats (same shape)",
+      "gate_verdict (decision string)",
+      "post_correction_p_adj (float)",
+      "n_candidates (int — the N in the FDR correction, for operator audit trail)",
+      "fdr_q (float — the BHY FDR level used)",
+      "caveats (non-empty list of strings for survivors)",
+      "apply_guidance (plain text string)"
+    ],
+    "_note": "UI contract: the route must surface all of these fields per the design handoff (logic-changes-light.png). Tests assert shape, not values."
+  }
+}
