@@ -532,9 +532,8 @@ def test_post_chat_send_passes_artifact_to_explain_artifact(client):
 def test_get_chat_tab_contains_artifact_summary_strip(client):
     """GET /ai-advisor/chat must render data-testid='artifact-summary-strip'.
 
-    The artifact summary strip anchors the conversation — it shows the objective,
-    gate verdict pill, and key stat for the selected artifact.  Always visible
-    once a panel is open.
+    The artifact summary strip is in the aside panel — always in the DOM regardless
+    of chat_available (it anchors the conversation when a panel opens).
     """
     resp = client.get("/ai-advisor/chat")
     _assert_route_exists(resp, "GET /ai-advisor/chat")
@@ -545,29 +544,63 @@ def test_get_chat_tab_contains_artifact_summary_strip(client):
     )
 
 
-def test_get_chat_tab_contains_chat_thread(client):
-    """GET /ai-advisor/chat must render data-testid='chat-thread'.
+def test_get_chat_tab_contains_chat_thread_when_available(client):
+    """GET /ai-advisor/chat with ANTHROPIC_API_KEY set must render data-testid='chat-thread'.
 
-    The chat-thread container is where JS appends message bubbles.
+    chat-thread is only rendered when chat_available=True (inside the {% else %} block).
+    When chat_available=False the unavailable message replaces it — input row hidden (AC-4.3).
     """
-    resp = client.get("/ai-advisor/chat")
-    _assert_route_exists(resp, "GET /ai-advisor/chat")
+    import os
+
+    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key-for-availability-check"}):
+        resp = client.get("/ai-advisor/chat")
+
+    _assert_route_exists(resp, "GET /ai-advisor/chat (with API key)")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-thread"' in body, (
-        "GET /ai-advisor/chat must render data-testid=\"chat-thread\" — "
+        "GET /ai-advisor/chat (chat_available=True) must render data-testid=\"chat-thread\" — "
         "the JS appends message bubbles to this container"
     )
 
 
-def test_get_chat_tab_contains_chat_send_btn(client):
-    """GET /ai-advisor/chat must render data-testid='chat-send-btn'.
+def test_get_chat_tab_contains_chat_send_btn_when_available(client):
+    """GET /ai-advisor/chat with ANTHROPIC_API_KEY set must render data-testid='chat-send-btn'.
 
+    chat-send-btn is only rendered when chat_available=True.
     The send button is the ONLY action button in the chat panel (AC-4.1).
     """
-    resp = client.get("/ai-advisor/chat")
-    _assert_route_exists(resp, "GET /ai-advisor/chat")
+    import os
+
+    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key-for-availability-check"}):
+        resp = client.get("/ai-advisor/chat")
+
+    _assert_route_exists(resp, "GET /ai-advisor/chat (with API key)")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-send-btn"' in body, (
-        "GET /ai-advisor/chat must render data-testid=\"chat-send-btn\" — "
+        "GET /ai-advisor/chat (chat_available=True) must render data-testid=\"chat-send-btn\" — "
         "the ONLY permitted action button in the chat panel"
+    )
+
+
+def test_get_chat_tab_hides_input_row_when_unavailable(client):
+    """GET /ai-advisor/chat without ANTHROPIC_API_KEY must NOT render chat-input-row.
+
+    AC-4.3: when chat is unavailable, the input row is absent from the DOM —
+    the operator cannot type into a non-functional chat panel.
+    This is enforced by the template's {% if chat_available %} guard.
+    """
+    import os
+
+    key_backup = os.environ.pop("ANTHROPIC_API_KEY", None)
+    try:
+        resp = client.get("/ai-advisor/chat")
+    finally:
+        if key_backup is not None:
+            os.environ["ANTHROPIC_API_KEY"] = key_backup
+
+    _assert_route_exists(resp, "GET /ai-advisor/chat (no API key)")
+    body = resp.data.decode("utf-8", errors="replace")
+    assert 'data-testid="chat-input-row"' not in body, (
+        "When chat_available=False, data-testid=\"chat-input-row\" must NOT appear "
+        "in the DOM — the operator must not see an inactive input (AC-4.3)"
     )
