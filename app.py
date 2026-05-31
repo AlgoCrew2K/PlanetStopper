@@ -2256,6 +2256,54 @@ def ai_advisor_tab():
     )
 
 
+@app.route("/ai-advisor/correlations", methods=["GET"])
+def ai_advisor_correlations():
+    """Render the M1 Correlations diagnostic tab (AC-1.1..1.4).
+
+    Pure measurement — no backtest, no gate, no write path.  The route
+    imports advisors.correlation_diagnostic lazily (inside the function)
+    so the module stays off the live execution path and sys.modules
+    injection in tests can intercept the import at call time (AC-X2).
+
+    Template context:
+      correlation_matrix  — list of PairResult objects from compute_pairwise_correlations
+      as_of               — ISO timestamp string for the operator's reference (AC-1.2)
+      crisis_caveat       — always-on instability warning string (AC-1.4)
+      insufficient_data   — True when no pairs are available (AC-1.3)
+    """
+    # Lazy import keeps the module off the live 1-minute execution path (AC-X2).
+    from advisors import correlation_diagnostic  # noqa: PLC0415
+
+    # Build per-symphony return series from post-mortem history (read-only).
+    history = analytics.get_history_with_cache_invalidation()
+    sym_ids = analytics.list_available_symphonies(history)
+    series_dict: dict[str, list[float]] = {}
+    for sym_id in sym_ids:
+        ret_series = analytics.compute_per_symphony_returns(history, sym_id)
+        if ret_series:
+            series_dict[sym_id] = ret_series
+
+    # Run the pure correlation diagnostic — no DB writes, no engine calls.
+    matrix = correlation_diagnostic.compute_pairwise_correlations(series_dict)
+
+    # AC-1.4: the crisis-instability caveat is mandatory and always surfaced.
+    crisis_caveat = (
+        "Correlations destabilize toward 1.0 in market stress. "
+        "When de-correlation matters most, these estimates are least reliable. "
+        "Use as a guide, not a guarantee."
+    )
+
+    return render_template(
+        "ai_advisor_correlations.html",
+        active_route="advisor",
+        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
+        correlation_matrix=matrix,
+        as_of=datetime.now(_ET).isoformat(),
+        crisis_caveat=crisis_caveat,
+        insufficient_data=len(matrix) == 0,
+    )
+
+
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
     """Compute four_gates_verdict booleans for one suggestion (FP-T1-05).
 
