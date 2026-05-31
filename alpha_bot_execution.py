@@ -1397,6 +1397,16 @@ def main():
                 bot_state[symphony_id]["breakeven_locked"] = new_breakeven_locked
 
                 # Check 1: Trailing Stop
+                # Phase 3c — regime-conditional exit lever (single knob: exit_confirm_ticks).
+                # The regime label is read from the PRECOMPUTED daily cache (offline
+                # diagnostic — never calls classify_regime() on this 1-minute path).
+                # base_ticks is always the module-level named constant EXIT_CONFIRM_TICKS,
+                # never current_below_stop_count or any other stateful counter, so the
+                # adjustment cannot compound across ticks (risk-3c ISSUE 1b).
+                _regime_exit_ticks = math_engine.apply_regime_exit_adjustment(
+                    regime_label=database.get_cached_regime_label(symphony_id),
+                    base_ticks=math_engine.EXIT_CONFIRM_TICKS,  # named constant, not stateful
+                )
                 _prev_below_stop_count = bot_state[symphony_id]["below_stop_count"]
                 new_below_stop_count, is_trailing_stop_hit = math_engine.compute_exit_confirmation(
                     armed=bot_state[symphony_id]["armed"],
@@ -1405,6 +1415,7 @@ def main():
                     stop_trigger_level=stop_trigger_level,
                     prob_beating=prob_beating,
                     current_below_stop_count=_prev_below_stop_count,
+                    exit_confirm_ticks=_regime_exit_ticks,
                 )
                 bot_state[symphony_id]["below_stop_count"] = new_below_stop_count
 
