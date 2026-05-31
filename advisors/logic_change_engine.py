@@ -97,6 +97,49 @@ ADVISE_ONLY_APPLY_TEMPLATE = (
     "{node_description} from {old_value} to {new_value}."
 )
 
+# ---------------------------------------------------------------------------
+# Scaling factor constants for generate_objective_directed_candidates.
+# Named here so: (a) no magic numbers in function bodies (project standard),
+# (b) the test suite can verify they exist at module level, (c) any policy
+# change is a single-point edit with a clear source comment.
+# ---------------------------------------------------------------------------
+
+# Tighten lookback by 20 % to increase signal reactivity for reduce_drawdown.
+# Source: feature-plans/ai-advisor.md §Gate-1 Resolutions #4, design
+# §Candidate generation — "shorter lookbacks respond faster to drawdown signals".
+_REDUCE_DRAWDOWN_TIGHTEN_FACTOR: float = 0.80
+
+# Loosen signal entry thresholds by 25 % to capture more trend signals.
+# Source: feature-plans/ai-advisor.md §Capability 3 design note — "wider thresholds
+# capture more trend signals, potentially improving risk-adjusted return".
+_LIFT_RISK_ADJUSTED_LOOSEN_FACTOR: float = 1.25
+
+# Lengthen lookback by 50 % to reduce rebalancing frequency.
+# Source: feature-plans/ai-advisor.md §Capability 3 design note — "longer lookbacks
+# produce fewer signal changes, reducing rebalancing frequency and thus turnover".
+_REDUCE_TURNOVER_LENGTHEN_FACTOR: float = 1.50
+
+# Shorten lookback by 10 % for faster momentum timing response.
+# Source: operational policy — a conservative 10 % shortening avoids
+# over-sensitivity while still tightening the timing window.
+_IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR: float = 0.90
+
+# Lengthen lookback by 30 % to reduce whipsaw from too-fast signal changes.
+# Source: operational policy — 30 % is large enough to damp high-frequency
+# churn without flipping to a too-slow regime-detection regime.
+_REDUCE_WHIPSAW_LENGTHEN_FACTOR: float = 1.30
+
+# Minimum parameter value (in days) for day-scale window objectives.
+# Values below this are likely fractional thresholds or binary flags, not
+# lookback windows; tweaking them directionally is not meaningful.
+# Source: empirical — daily-bar lookback windows are rarely < 5 bars.
+_CANDIDATE_WINDOW_FLOOR_DAYS: int = 5
+
+# Lower floor for the reduce_turnover objective: shorter windows still qualify
+# because the objective is to LENGTHEN them (starting from 3d is meaningful).
+# Source: operational policy — a 3-day momentum signal is a common short-end floor.
+_REDUCE_TURNOVER_FLOOR_DAYS: int = 3
+
 
 # ---------------------------------------------------------------------------
 # LogicTweak — typed representation of one parameter change
@@ -549,19 +592,19 @@ def generate_objective_directed_candidates(
     tweaks: list[LogicTweak] = []
 
     # -------------------------------------------------------------------
-    # reduce_drawdown: tighten existing lookback windows by 20 %.
+    # reduce_drawdown: tighten existing lookback windows by _REDUCE_DRAWDOWN_TIGHTEN_FACTOR.
     # Rationale: shorter lookbacks respond faster to drawdown signals.
-    # Only apply to parameters >= 5 (day-scale windows).
+    # Only apply to parameters >= _CANDIDATE_WINDOW_FLOOR_DAYS (day-scale windows).
     # -------------------------------------------------------------------
     if obj_type == "reduce_drawdown":
         for param in numeric_params:
             old_val = param["value"]
-            if not isinstance(old_val, (int, float)) or old_val < 5:
+            if not isinstance(old_val, (int, float)) or old_val < _CANDIDATE_WINDOW_FLOOR_DAYS:
                 continue
             if isinstance(old_val, int):
-                new_val = max(1, round(old_val * 0.80))
+                new_val = max(1, round(old_val * _REDUCE_DRAWDOWN_TIGHTEN_FACTOR))
             else:
-                new_val = round(old_val * 0.80, 6)
+                new_val = round(old_val * _REDUCE_DRAWDOWN_TIGHTEN_FACTOR, 6)
             if new_val == old_val:
                 continue
             tweaks.append(LogicTweak(
@@ -576,19 +619,19 @@ def generate_objective_directed_candidates(
             ))
 
     # -------------------------------------------------------------------
-    # lift_risk_adjusted: loosen signal entry thresholds by 25 %.
+    # lift_risk_adjusted: loosen signal entry thresholds by _LIFT_RISK_ADJUSTED_LOOSEN_FACTOR.
     # Rationale: wider thresholds capture more trend signals.
-    # Only apply to parameters >= 5.
+    # Only apply to parameters >= _CANDIDATE_WINDOW_FLOOR_DAYS.
     # -------------------------------------------------------------------
     elif obj_type == "lift_risk_adjusted":
         for param in numeric_params:
             old_val = param["value"]
-            if not isinstance(old_val, (int, float)) or old_val < 5:
+            if not isinstance(old_val, (int, float)) or old_val < _CANDIDATE_WINDOW_FLOOR_DAYS:
                 continue
             if isinstance(old_val, int):
-                new_val = max(1, round(old_val * 1.25))
+                new_val = max(1, round(old_val * _LIFT_RISK_ADJUSTED_LOOSEN_FACTOR))
             else:
-                new_val = round(old_val * 1.25, 6)
+                new_val = round(old_val * _LIFT_RISK_ADJUSTED_LOOSEN_FACTOR, 6)
             if new_val == old_val:
                 continue
             tweaks.append(LogicTweak(
@@ -603,19 +646,19 @@ def generate_objective_directed_candidates(
             ))
 
     # -------------------------------------------------------------------
-    # reduce_turnover: lengthen lookback windows by 50 %.
+    # reduce_turnover: lengthen lookback windows by _REDUCE_TURNOVER_LENGTHEN_FACTOR.
     # Rationale: longer lookbacks produce fewer signal changes.
-    # Apply to parameters >= 3.
+    # Apply to parameters >= _REDUCE_TURNOVER_FLOOR_DAYS (lower floor — we are lengthening).
     # -------------------------------------------------------------------
     elif obj_type == "reduce_turnover":
         for param in numeric_params:
             old_val = param["value"]
-            if not isinstance(old_val, (int, float)) or old_val < 3:
+            if not isinstance(old_val, (int, float)) or old_val < _REDUCE_TURNOVER_FLOOR_DAYS:
                 continue
             if isinstance(old_val, int):
-                new_val = round(old_val * 1.50)
+                new_val = round(old_val * _REDUCE_TURNOVER_LENGTHEN_FACTOR)
             else:
-                new_val = round(old_val * 1.50, 6)
+                new_val = round(old_val * _REDUCE_TURNOVER_LENGTHEN_FACTOR, 6)
             if new_val == old_val:
                 continue
             tweaks.append(LogicTweak(
@@ -630,18 +673,18 @@ def generate_objective_directed_candidates(
             ))
 
     # -------------------------------------------------------------------
-    # improve_momentum_timing: shorten lookback by 10 % for faster timing.
-    # Apply to parameters >= 5.
+    # improve_momentum_timing: shorten lookback by _IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR.
+    # Apply to parameters >= _CANDIDATE_WINDOW_FLOOR_DAYS.
     # -------------------------------------------------------------------
     elif obj_type == "improve_momentum_timing":
         for param in numeric_params:
             old_val = param["value"]
-            if not isinstance(old_val, (int, float)) or old_val < 5:
+            if not isinstance(old_val, (int, float)) or old_val < _CANDIDATE_WINDOW_FLOOR_DAYS:
                 continue
             if isinstance(old_val, int):
-                new_val = max(1, round(old_val * 0.90))
+                new_val = max(1, round(old_val * _IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR))
             else:
-                new_val = round(old_val * 0.90, 6)
+                new_val = round(old_val * _IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR, 6)
             if new_val == old_val:
                 continue
             tweaks.append(LogicTweak(
@@ -656,18 +699,18 @@ def generate_objective_directed_candidates(
             ))
 
     # -------------------------------------------------------------------
-    # reduce_whipsaw: lengthen lookback by 30 % to reduce signal churn.
-    # Apply to parameters >= 5.
+    # reduce_whipsaw: lengthen lookback by _REDUCE_WHIPSAW_LENGTHEN_FACTOR.
+    # Apply to parameters >= _CANDIDATE_WINDOW_FLOOR_DAYS.
     # -------------------------------------------------------------------
     elif obj_type == "reduce_whipsaw":
         for param in numeric_params:
             old_val = param["value"]
-            if not isinstance(old_val, (int, float)) or old_val < 5:
+            if not isinstance(old_val, (int, float)) or old_val < _CANDIDATE_WINDOW_FLOOR_DAYS:
                 continue
             if isinstance(old_val, int):
-                new_val = round(old_val * 1.30)
+                new_val = round(old_val * _REDUCE_WHIPSAW_LENGTHEN_FACTOR)
             else:
-                new_val = round(old_val * 1.30, 6)
+                new_val = round(old_val * _REDUCE_WHIPSAW_LENGTHEN_FACTOR, 6)
             if new_val == old_val:
                 continue
             tweaks.append(LogicTweak(

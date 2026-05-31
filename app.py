@@ -2524,26 +2524,17 @@ def ai_advisor_logic_changes_evaluate():
         rationale=change_description,
     )
 
-    # Parse the change_description to build a LogicTweak.
-    # Strategy: scan the symphony tree for the first numeric parameter whose name
-    # appears in change_description; if both an old value and a new value can be
-    # inferred, construct the tweak. On parse failure, return a clear error.
-    tweak = _parse_change_description_to_tweak(raw_value, change_description)
-    if tweak is None:
-        return jsonify({
-            "error": (
-                "Could not parse the change description into a specific tweak. "
-                "Try a more specific description, e.g.: "
-                "'change the window parameter from 20 to 10'."
-            )
-        }), 200
-
+    # Delegate parse + apply to the engine; pass change_description= so the engine's
+    # own _parse_change_description_to_tweak runs internally.  On parse failure the
+    # engine sets backtest_error on the proposal and returns zero survivors — no
+    # early-return needed here (AC-X5 isolation applies at the engine level).
     try:
         run_result = propose_operator_logic_change(
             symphony_id=symphony_id,
             score_tree=raw_value,
-            tweak=tweak,
+            tweak=None,
             objective=objective,
+            change_description=change_description,
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_logic_changes_evaluate failed: %s", exc, exc_info=True)
@@ -2624,64 +2615,6 @@ def ai_advisor_logic_changes_evaluate():
         "backtest_error": proposal.backtest_error if proposal else None,
         "objective_rationale": proposal.objective_rationale if proposal else "",
     }), 200
-
-
-def _parse_change_description_to_tweak(raw_value: dict, change_description: str):
-    """Parse a plain-text change description into a ``LogicTweak``.
-
-    Heuristic: looks for the pattern "from <old> to <new>" in the description
-    (case-insensitive), then scans the symphony tree for the first numeric
-    parameter node where the current value matches <old>.  The param_key is
-    taken from the node; node_description is constructed from the surrounding
-    context.
-
-    Returns a ``LogicTweak`` on success, or ``None`` when parsing fails.
-
-    This is deliberately simple — the operator is expected to provide a
-    description that contains explicit numeric values.  A more sophisticated
-    NLP parser is a future-milestone concern.
-    """
-    import re as _re  # noqa: PLC0415
-    from advisors.logic_change_engine import LogicTweak, extract_numeric_params  # noqa: PLC0415
-
-    # Extract "from <old_val> to <new_val>".
-    match = _re.search(
-        r"\bfrom\s+([\d.]+)\s+to\s+([\d.]+)",
-        change_description,
-        _re.IGNORECASE,
-    )
-    if not match:
-        return None
-
-    try:
-        old_raw = match.group(1)
-        new_raw = match.group(2)
-        # Prefer int when the value has no decimal point.
-        old_val = int(old_raw) if "." not in old_raw else float(old_raw)
-        new_val = int(new_raw) if "." not in new_raw else float(new_raw)
-    except (ValueError, TypeError):
-        return None
-
-    if old_val == new_val:
-        return None
-
-    # Scan the tree for the first numeric param that matches old_val.
-    numeric_params = extract_numeric_params(raw_value)
-    for param in numeric_params:
-        if param["value"] == old_val:
-            return LogicTweak(
-                node_path=param["node_path"],
-                param_key=param["param_key"],
-                old_value=old_val,
-                new_value=new_val,
-                node_description=(
-                    f"the {param['param_key']} parameter "
-                    f"(currently {old_val}) in the symphony logic"
-                ),
-            )
-
-    # No matching node found.
-    return None
 
 
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
