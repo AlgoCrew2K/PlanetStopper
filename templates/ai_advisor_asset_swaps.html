@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Advisor — Asset Swaps — Planet Stopper Dashboard v3</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: var(--studio-scroll-thumb, var(--studio-ink-faint));
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--studio-scroll-thumb-hover, var(--studio-ink-dim));
+        }
+
+        body {
+            background: var(--studio-bg);
+            color: var(--studio-ink);
+            min-height: 100vh;
+            font-family: var(--studio-sans, sans-serif);
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Page header (shared style with correlations tab)                    */
+        /* ------------------------------------------------------------------ */
+
+        .adv-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            background: var(--studio-surface);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            border: 1px solid var(--studio-border);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .adv-header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 3px;
+            background: linear-gradient(to right, var(--studio-accent), var(--studio-ink-dim));
+        }
+
+        .adv-title {
+            font-size: 2.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--studio-ink);
+        }
+
+        .adv-subtitle {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            margin-top: 0.375rem;
+        }
+
+        .back-link {
+            font-size: 0.625rem;
+            color: var(--studio-ink-dim);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            text-decoration: none;
+        }
+
+        .back-link:hover { color: var(--studio-ink); }
+
+        /* ------------------------------------------------------------------ */
+        /* Capability tab nav (shared with correlations tab)                   */
+        /* ------------------------------------------------------------------ */
+
+        .cap-nav {
+            display: flex;
+            gap: 0.25rem;
+            margin-bottom: 1.25rem;
+            border-bottom: 1px solid var(--studio-border);
+            padding-bottom: 0;
+        }
+
+        .cap-tab {
+            padding: 0.5rem 1rem;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: var(--studio-ink-dim);
+            text-decoration: none;
+            border-radius: 0.375rem 0.375rem 0 0;
+            border: 1px solid transparent;
+            border-bottom: none;
+            position: relative;
+            bottom: -1px;
+        }
+
+        .cap-tab:hover { color: var(--studio-ink); }
+
+        .cap-tab[aria-current="page"] {
+            color: var(--studio-ink);
+            background: var(--studio-surface);
+            border-color: var(--studio-border);
+            border-bottom-color: var(--studio-surface);
+        }
+
+        .cap-tab-badge {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-left: 0.25rem;
+            vertical-align: middle;
+            background: var(--studio-pos);
+        }
+
+        .cap-tab-badge--yellow { background: var(--studio-warn); }
+
+        /* ------------------------------------------------------------------ */
+        /* Advise-only caveat banner — always visible (AC-X1 / AC-2.3)        */
+        /* ------------------------------------------------------------------ */
+
+        .advise-only-banner {
+            background: var(--studio-warn-tint);
+            border: 1px solid var(--studio-warn-border);
+            border-radius: 0.625rem;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.625rem;
+        }
+
+        .advise-only-banner-icon {
+            flex-shrink: 0;
+            color: var(--studio-warn);
+            font-size: 1rem;
+            line-height: 1.4;
+        }
+
+        .advise-only-banner-text {
+            font-size: 0.8125rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.5;
+        }
+
+        .advise-only-banner-text strong {
+            color: var(--studio-ink);
+            font-weight: 700;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* No-API-key state (AC-X4)                                            */
+        /* ------------------------------------------------------------------ */
+
+        .no-api-key-state {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 3rem 2rem;
+            text-align: center;
+        }
+
+        .no-api-key-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--studio-ink);
+            margin-bottom: 0.5rem;
+        }
+
+        .no-api-key-body {
+            font-size: 0.875rem;
+            color: var(--studio-ink-dim);
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Operator-initiated "Try a swap" form                                */
+        /* ------------------------------------------------------------------ */
+
+        .try-swap-panel {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .try-swap-header {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+            margin-bottom: 1rem;
+        }
+
+        .try-swap-form {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .form-label {
+            font-size: 0.625rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-muted);
+            font-weight: 700;
+        }
+
+        .form-input {
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.4rem 0.75rem;
+            font-size: 0.875rem;
+            color: var(--studio-ink);
+            min-width: 12rem;
+        }
+
+        .form-input:focus { outline: none; border-color: var(--studio-accent); }
+
+        .form-select {
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.4rem 0.75rem;
+            font-size: 0.875rem;
+            color: var(--studio-ink);
+            min-width: 16rem;
+        }
+
+        .form-select:focus { outline: none; border-color: var(--studio-accent); }
+
+        .try-swap-btn {
+            padding: 0.5rem 1.25rem;
+            background: var(--studio-accent);
+            color: var(--studio-white);
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 700;
+            cursor: pointer;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+
+        .try-swap-btn:hover:not(:disabled) { opacity: 0.9; }
+        .try-swap-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .try-swap-error {
+            font-size: 0.8125rem;
+            color: var(--studio-neg);
+            margin-top: 0.5rem;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Proposals section header                                            */
+        /* ------------------------------------------------------------------ */
+
+        .section-header {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+            margin-bottom: 0.875rem;
+            margin-top: 1.5rem;
+        }
+
+        .section-header:first-of-type { margin-top: 0; }
+
+        /* ------------------------------------------------------------------ */
+        /* No-survivors state (AC-2.5) — valid, not an error                  */
+        /* ------------------------------------------------------------------ */
+
+        .no-survivors-state {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 2rem 1.5rem;
+            text-align: center;
+        }
+
+        .no-survivors-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--studio-ink);
+            margin-bottom: 0.5rem;
+        }
+
+        .no-survivors-body {
+            font-size: 0.875rem;
+            color: var(--studio-ink-dim);
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Loading state                                                        */
+        /* ------------------------------------------------------------------ */
+
+        .loading-state {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            color: var(--studio-ink-dim);
+            font-size: 0.875rem;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Swap proposal card                                                  */
+        /* ------------------------------------------------------------------ */
+
+        .swap-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(28rem, 1fr));
+            gap: 0.875rem;
+        }
+
+        .swap-card {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 1.25rem 1.5rem;
+        }
+
+        .swap-card--survivor {
+            border-color: var(--studio-pos);
+        }
+
+        .swap-card--rejected {
+            opacity: 0.75;
+        }
+
+        .swap-card--error {
+            border-color: var(--studio-neg);
+            opacity: 0.8;
+        }
+
+        /* Card objective line — leads the card (AC-2.3) */
+        .swap-card-objective {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--studio-accent);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.625rem;
+        }
+
+        /* From → To heading */
+        .swap-card-heading {
+            display: flex;
+            align-items: center;
+            gap: 0.625rem;
+            margin-bottom: 0.875rem;
+        }
+
+        .swap-ticker {
+            font-size: 1.125rem;
+            font-weight: 700;
+            color: var(--studio-ink);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+
+        .swap-arrow {
+            color: var(--studio-ink-muted);
+            font-size: 1.25rem;
+            line-height: 1;
+        }
+
+        .swap-ticker--new { color: var(--studio-pos); }
+
+        /* Baseline vs variant stats grid (AC-2.3) */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem 1.25rem;
+            margin-bottom: 0.875rem;
+        }
+
+        .stats-col-label {
+            font-size: 0.5625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-muted);
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding: 0.125rem 0;
+        }
+
+        .stat-label {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+        }
+
+        .stat-value {
+            font-size: 0.8125rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--studio-ink);
+        }
+
+        .stat-value--pos { color: var(--studio-pos); }
+        .stat-value--neg { color: var(--studio-neg); }
+
+        /* Gate verdict row (AC-2.3) */
+        .gate-verdict-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.5rem;
+            background: var(--studio-bg);
+        }
+
+        .gate-pill {
+            display: inline-block;
+            padding: 0.15rem 0.55rem;
+            border-radius: 999px;
+            font-size: 0.5625rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid;
+        }
+
+        .gate-pill--passed {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+            background: rgba(31,122,77,0.07);
+        }
+
+        .gate-pill--withheld {
+            color: var(--studio-warn);
+            border-color: var(--studio-warn);
+            background: var(--studio-warn-tint);
+        }
+
+        .gate-pill--rejected {
+            color: var(--studio-neg);
+            border-color: var(--studio-neg);
+            background: var(--studio-neg-tint);
+        }
+
+        .gate-reason {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+        }
+
+        .validation-days {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            margin-left: auto;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Honest caveat block (AC-2.3 / AC-3.3 — mandatory for survivors) */
+        .caveats-block {
+            margin-bottom: 0.75rem;
+        }
+
+        .caveat-text {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.5;
+            border-left: 2px solid var(--studio-warn);
+            padding-left: 0.625rem;
+            margin-bottom: 0.375rem;
+        }
+
+        /* Apply guidance — plain text, no button (AC-X1) */
+        .apply-guidance {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            line-height: 1.5;
+        }
+
+        .apply-guidance strong {
+            color: var(--studio-ink);
+            font-weight: 700;
+        }
+
+        /* Backtest error card (AC-X5) */
+        .backtest-error {
+            font-size: 0.8125rem;
+            color: var(--studio-neg);
+            margin-top: 0.5rem;
+        }
+
+        /* Data warnings */
+        .data-warnings {
+            font-size: 0.6875rem;
+            color: var(--studio-warn);
+            margin-top: 0.5rem;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Rejected candidates section — de-emphasised (AC-2.3)               */
+        /* ------------------------------------------------------------------ */
+
+        .rejected-section {
+            margin-top: 2rem;
+        }
+
+        .rejected-section .section-header {
+            color: var(--studio-ink-faint);
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Results area (injected by JS)                                        */
+        /* ------------------------------------------------------------------ */
+
+        #swap-results-area {
+            min-height: 4rem;
+        }
+    </style>
+</head>
+
+<body>
+    <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
+    {% include '_chrome.html' %}
+
+    <div class="page-wrap" data-testid="advisor-page">
+
+        <!-- Page header -->
+        <header data-testid="advisor-header" class="adv-header">
+            <div>
+                <h1 class="adv-title">AI Advisor</h1>
+                <p class="adv-subtitle">
+                    Read-only diagnostic assistant — every recommendation is applied manually by you in Composer.
+                    No trades are ever placed from this screen.
+                </p>
+            </div>
+            <a href="/" class="back-link">&larr; Dashboard</a>
+        </header>
+
+        <!-- Capability tab nav -->
+        <nav class="cap-nav" aria-label="Advisor capabilities">
+            <a href="{{ url_for('ai_advisor_correlations') }}"
+               class="cap-tab"
+               data-testid="tab-correlations">
+                Correlations
+                <span class="cap-tab-badge" title="Low risk — pure measurement"></span>
+            </a>
+            <a href="{{ url_for('ai_advisor_asset_swaps') }}"
+               aria-current="page"
+               class="cap-tab"
+               data-testid="tab-asset-swaps">
+                Asset Swaps
+                <span class="cap-tab-badge" title="Low risk when gated"></span>
+            </a>
+            <a href="#" class="cap-tab" data-testid="tab-logic-changes"
+               title="Logic Changes — coming in M4">
+                Logic Changes
+                <span class="cap-tab-badge cap-tab-badge--yellow" title="Higher overfitting risk"></span>
+            </a>
+            <a href="#" class="cap-tab" data-testid="tab-chat"
+               title="Chat — coming in M5">
+                Chat
+                <span class="cap-tab-badge cap-tab-badge--yellow" title="Explain-only"></span>
+            </a>
+        </nav>
+
+        <!-- Advise-only caveat banner — always visible (AC-X1) -->
+        <div class="advise-only-banner" data-testid="advise-only-banner" role="note">
+            <span class="advise-only-banner-icon" aria-hidden="true">&#x26A0;</span>
+            <p class="advise-only-banner-text">
+                <strong>Advise only — no trades are placed from this screen.</strong>
+                Swap proposals that survive the gate are surfaced as recommendations only.
+                To apply a swap, open the symphony in Composer and make the change manually.
+                The gate screens for statistical significance but does not eliminate selection bias.
+            </p>
+        </div>
+
+        {% if no_api_key %}
+
+        <!-- AC-X4: no API key configured -->
+        <div class="no-api-key-state" data-testid="no-api-key-state">
+            <div class="no-api-key-title">Advisor Unavailable</div>
+            <div class="no-api-key-body">
+                Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
+                <code>COMPOSER_SECRET</code> environment variables to enable swap proposals.
+            </div>
+        </div>
+
+        {% else %}
+
+        <!-- Operator-initiated "Try a swap" form (AC-2.1) -->
+        <div class="try-swap-panel" data-testid="try-swap-panel">
+            <div class="try-swap-header">Try a Swap</div>
+            <div class="try-swap-form" data-testid="try-swap-form">
+                <div class="form-group">
+                    <label class="form-label" for="swap-symphony-select">Symphony</label>
+                    <select id="swap-symphony-select" class="form-select"
+                            data-testid="swap-symphony-select"
+                            aria-label="Symphony">
+                        <option value="">Select symphony…</option>
+                        {% for sym in symphonies %}
+                        <option value="{{ sym | e }}">{{ sym | e }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="swap-from-ticker">Replace ticker</label>
+                    <input id="swap-from-ticker" class="form-input"
+                           type="text"
+                           placeholder="e.g. QQQ"
+                           maxlength="10"
+                           autocomplete="off"
+                           spellcheck="false"
+                           data-testid="swap-from-ticker"
+                           aria-label="Ticker to replace">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="swap-to-ticker">With ticker</label>
+                    <input id="swap-to-ticker" class="form-input"
+                           type="text"
+                           placeholder="e.g. IALT"
+                           maxlength="10"
+                           autocomplete="off"
+                           spellcheck="false"
+                           data-testid="swap-to-ticker"
+                           aria-label="Replacement ticker">
+                </div>
+                <button id="swap-evaluate-btn" class="try-swap-btn"
+                        data-testid="swap-evaluate-btn"
+                        disabled>
+                    Evaluate swap
+                </button>
+            </div>
+            <div id="try-swap-error" class="try-swap-error" data-testid="try-swap-error"
+                 style="display:none;" role="alert"></div>
+        </div>
+
+        <!-- Results area — populated by JS (loading / results / no-survivors / error) -->
+        <div id="swap-results-area" data-testid="swap-results-area"></div>
+
+        {% endif %}{# no_api_key #}
+
+    </div>{# .page-wrap #}
+
+    <script src="{{ url_for('static', filename='ai_advisor_asset_swaps.js') }}"></script>
+</body>
+</html>
