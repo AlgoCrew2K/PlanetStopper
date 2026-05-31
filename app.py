@@ -2303,6 +2303,138 @@ def ai_advisor_correlations():
     )
 
 
+@app.route("/ai-advisor/asset-swaps", methods=["GET"])
+def ai_advisor_asset_swaps():
+    """Render the M3 Asset Swaps tab (AC-2.1..2.5, AC-X1..X5).
+
+    Read-only surface — no writes to live positions, no Composer write endpoints.
+    All swap proposals are advisory-only (apply manually in Composer).
+
+    Template context:
+      no_api_key        — True when Composer credentials are absent (AC-X4)
+      symphonies        — list of known symphony IDs for the operator-initiated form
+    """
+    # Lazy import keeps the module off the live 1-minute execution path (AC-X2).
+    from advisors.asset_swap_engine import _has_composer_key  # noqa: PLC0415
+
+    no_api_key = not _has_composer_key()
+
+    # Provide the symphony list for the operator-initiated "Try a swap" form.
+    # Reads from the same performance API endpoint the existing advisor tab uses.
+    symphonies: list[str] = []
+    try:
+        import analytics as _analytics  # noqa: PLC0415
+        history = _analytics.get_history_with_cache_invalidation(
+            base_dir=_analytics._POST_MORTEMS_DIR
+        )
+        symphonies = _analytics.list_available_symphonies(history)
+    except Exception:
+        pass  # Symphony list is optional; the form still renders without it.
+
+    return render_template(
+        "ai_advisor_asset_swaps.html",
+        active_route="advisor",
+        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
+        no_api_key=no_api_key,
+        symphonies=symphonies,
+    )
+
+
+@app.route("/ai-advisor/asset-swaps/evaluate", methods=["POST"])
+def ai_advisor_asset_swaps_evaluate():
+    """Operator-initiated swap evaluation endpoint (AC-2.1).
+
+    Accepts JSON: { symphony_id, from_ticker, to_ticker, objective_type? }.
+    Constructs a typed SwapObjective, fetches the baseline tree via symphony_logic,
+    calls propose_operator_swap from advisors.asset_swap_engine, and returns the
+    SwapRunResult fields as JSON.
+
+    Never runs a live trade; never calls Composer write endpoints (AC-X1).
+    Persistence (advisor_observation) is handled inside propose_operator_swap (AC-X3).
+
+    Returns JSON with the swap result for rendering in the UI.
+    """
+    # Lazy imports (AC-X2 — keep asset_swap_engine off the live execution path).
+    from advisors.asset_swap_engine import (  # noqa: PLC0415
+        propose_operator_swap,
+        SwapObjective,
+        _has_composer_key,
+    )
+    from symphony_logic import fetch_symphony_score  # noqa: PLC0415
+
+    if not _has_composer_key():
+        return jsonify({"error": "advisor unavailable: API key not configured"}), 200
+
+    body = request.get_json(silent=True) or {}
+    symphony_id = str(body.get("symphony_id", "")).strip()
+    from_ticker = str(body.get("from_ticker", "")).strip().upper()
+    to_ticker = str(body.get("to_ticker", "")).strip().upper()
+    # objective_type defaults to reduce_correlation for operator-initiated mode
+    # (Gate-1 Resolution #2: every swap must be objective-directed; operator can
+    # override via the optional form field).
+    objective_type = str(body.get("objective_type", "reduce_correlation")).strip()
+
+    if not symphony_id or not from_ticker or not to_ticker:
+        return jsonify({"error": "symphony_id, from_ticker, and to_ticker are required"}), 200
+
+    raw_value = fetch_symphony_score(symphony_id)
+    if not raw_value:
+        return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
+
+    # Construct a typed SwapObjective (Gate-1 Resolution #2 — no plain string objectives).
+    objective = SwapObjective(
+        objective_type=objective_type,
+        target_pair=None,
+        measured_value=0.0,
+    )
+
+    try:
+        run_result = propose_operator_swap(
+            symphony_id=symphony_id,
+            score_tree=raw_value,
+            incumbent_asset=from_ticker,
+            candidate_asset=to_ticker,
+            objective=objective,
+        )
+    except Exception as exc:
+        _daemon_log.error("ai_advisor_asset_swaps_evaluate failed: %s", exc, exc_info=True)
+        return jsonify({"error": f"evaluation error: {exc}"}), 200
+
+    # Build response from the first proposal (single-candidate operator-initiated mode)
+    # plus the run-level message and gate batch metadata (AC-2.3 / AC-2.5).
+    proposal = run_result.proposals[0] if run_result.proposals else None
+    gate_result = proposal.gate_result if proposal else None
+
+    return jsonify({
+        # Run-level fields (AC-2.5: always expose the message so zero-survivors is explicit)
+        "message": run_result.message,
+        "survivors": len(run_result.survivors),
+        "no_api_key": run_result.no_api_key,
+        # Proposal-level fields (AC-2.3: stats + verdict + rationale + guidance)
+        "candidate_id": proposal.candidate_id if proposal else None,
+        "symphony_id": symphony_id,
+        "from_ticker": from_ticker,
+        "to_ticker": to_ticker,
+        "objective_rationale": proposal.objective_rationale if proposal else "",
+        "baseline_stats": proposal.baseline_stats if proposal else None,
+        "variant_stats": proposal.variant_stats if proposal else None,
+        # Gate verdict — AC-2.3: operator sees decision + reason
+        "gate_decision": gate_result.verdict.decision if gate_result else None,
+        "gate_result": {
+            "decision": gate_result.verdict.decision,
+            "validation_days": gate_result.validation_days,
+            "oos_alpha": gate_result.oos_alpha,
+            "winner_p_adj": gate_result.winner_p_adj,
+        } if gate_result else None,
+        # Caveats (mandatory for survivors — SURVIVOR_OVERFITTING_CAVEAT)
+        "caveats": proposal.caveats if proposal else [],
+        # Apply guidance — plain text, no button (AC-X1)
+        "apply_guidance": proposal.apply_guidance if proposal else "",
+        "backtest_error": proposal.backtest_error if proposal else None,
+        "data_warnings": proposal.data_warnings if proposal else [],
+    }), 200
+
+
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
     """Compute four_gates_verdict booleans for one suggestion (FP-T1-05).
 
