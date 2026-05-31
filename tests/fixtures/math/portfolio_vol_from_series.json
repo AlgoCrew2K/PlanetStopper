@@ -1,0 +1,91 @@
+{
+  "_comment": "Golden fixture for Phase 2b: portfolio-level annualized volatility computed from the COMBINED portfolio return series.",
+  "_provenance": "formula-derived: std(portfolio_daily_returns_frac, ddof=1) * sqrt(252). NOT averaged per-symphony vols. NOT a captured producer output.",
+  "_formula": "portfolio_annualized_vol = sample_std(portfolio_combined_returns_frac) * sqrt(252)",
+  "_annualization_basis": 252,
+  "_ddof": 1,
+  "_key_invariant": "Naive per-symphony vol averaging MUST differ from portfolio-series vol when symphony returns are correlated. This fixture is authored so the two methods produce detectably different results.",
+
+  "_why_portfolio_series_is_correct": [
+    "Portfolio volatility accounts for inter-symphony correlations.",
+    "When two symphonies move together (positive correlation), the portfolio is more volatile than the average.",
+    "When they move oppositely (negative correlation), the portfolio is calmer than the average.",
+    "Averaging per-symphony vols ignores correlations and produces the wrong number.",
+    "Source: Markowitz (1952) — portfolio variance = sum_ij(w_i * w_j * cov_ij), not sum_i(w_i * var_i)."
+  ],
+
+  "_fixture_design": "Two symphonies, equal weight (0.5/0.5). Symphony A and Symphony B have high positive correlation in this fixture (their daily returns move together). The portfolio combined series (value-weighted average of daily returns) has the SAME variance as each individually — so naive-averaging EQUALS portfolio-series vol. To make them differ, Symphony B returns are AMPLIFIED relative to A, so the portfolio series has higher variance than Symphony A's series alone but lower than Symphony B's. Naive average is midpoint; portfolio-series vol is something else.",
+
+  "symphonies": {
+    "sym_a": {
+      "_comment": "Low-vol symphony. Values weight 50/50 with sym_b.",
+      "values_pct": [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
+      "daily_returns_pct_scale": [
+        0.10, -0.15, 0.20, -0.10, 0.15,
+        0.12, -0.18, 0.22, -0.12, 0.18
+      ]
+    },
+    "sym_b": {
+      "_comment": "High-vol symphony. Returns are 3x the magnitude of sym_a — same direction (positive correlation). Values weight 50/50 with sym_a.",
+      "values_pct": [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
+      "daily_returns_pct_scale": [
+        0.30, -0.45, 0.60, -0.30, 0.45,
+        0.36, -0.54, 0.66, -0.36, 0.54
+      ]
+    }
+  },
+
+  "portfolio_combined_series_pct_scale": {
+    "_derivation": "value-weighted average per day: (sym_a_ret * w_a + sym_b_ret * w_b) / (w_a + w_b) = (ret_a + ret_b) / 2 for equal weights",
+    "daily_returns": [
+      0.20, -0.30, 0.40, -0.20, 0.30,
+      0.24, -0.36, 0.44, -0.24, 0.36
+    ]
+  },
+
+  "naive_average_per_symphony_vol": {
+    "_comment": "WRONG method: average each symphony's annualized vol. Ignores correlations.",
+    "_derivation": "sym_a_vol = std([0.0010, -0.0015, 0.0020, -0.0010, 0.0015, 0.0012, -0.0018, 0.0022, -0.0012, 0.0018], ddof=1) * sqrt(252). sym_b_vol = 3 * sym_a_vol. naive_avg = (sym_a_vol + sym_b_vol) / 2 = 2 * sym_a_vol.",
+    "_note": "The naive average vol equals 2x the sym_a single-series vol, which is NOT the same as the portfolio-series vol (which is exactly sym_a_vol * 2 in this symmetric case since equal weights + perfect correlation — see _why_they_differ)."
+  },
+
+  "_why_they_differ": "In this fixture sym_a and sym_b are PERFECTLY correlated (same direction, sym_b = 3 * sym_a). Portfolio vol = std(0.5 * sym_a + 0.5 * sym_b) = std(0.5 * sym_a + 1.5 * sym_a) = std(2 * sym_a) = 2 * std(sym_a). Naive average = (std(sym_a) + std(sym_b)) / 2 = (std(sym_a) + 3*std(sym_a)) / 2 = 2 * std(sym_a). In THIS symmetric case they are equal. Use a non-proportional fixture to demonstrate inequality.",
+
+  "_corrected_design": "For a fixture where naive average != portfolio-series vol: use sym_b with returns NOT proportional to sym_a, so covariance term breaks the equality.",
+
+  "divergent_case": {
+    "_comment": "Use this case for the golden test. sym_a and sym_b have strongly anti-correlated, equal-magnitude daily returns (r ≈ −0.82). The 50/50 portfolio combined series is near-zero-variance (only day 0 non-zero due to partial cancellation). Portfolio vol << naive average of individual vols (diversification benefit from anti-correlation).",
+    "sym_a_returns_pct_scale": [
+      0.20, -0.20, 0.20, -0.20, 0.20,
+      0.20, -0.20, 0.20, -0.20, 0.20
+    ],
+    "sym_b_returns_pct_scale": [
+      0.20,  0.20, -0.20,  0.20, -0.20,
+     -0.20,  0.20, -0.20,  0.20, -0.20
+    ],
+    "values_equal_weight": 50.0,
+    "portfolio_combined_returns_pct_scale": {
+      "_derivation": "(sym_a + sym_b) / 2 per day",
+      "values": [
+        0.20, 0.00, 0.00, 0.00, 0.00,
+        0.00, 0.00, 0.00, 0.00, 0.00
+      ]
+    },
+    "_key_assertion": "std(portfolio_combined_series) < mean([std(sym_a), std(sym_b)]). This demonstrates that naive averaging overestimates true portfolio vol when symphonies are negatively correlated."
+  },
+
+  "expected": {
+    "portfolio_vol_is_fraction_scale": true,
+    "portfolio_vol_positive_finite": true,
+    "naive_average_exceeds_portfolio_vol_for_divergent_case": true,
+    "_comment_on_equality_case": "For the perfectly-correlated case above, portfolio_vol may equal naive average — the test must use the divergent_case to distinguish the methods."
+  },
+
+  "_fixture_assertions": [
+    "compute_portfolio_annualized_vol(portfolio_combined_series) returns a positive finite float",
+    "compute_portfolio_annualized_vol is in fraction scale (0.0 < vol < 1.0 for realistic returns)",
+    "For the divergent_case fixture: portfolio_vol < naive_avg_vol (diversification benefit)",
+    "For a single-symphony portfolio: portfolio_vol equals that symphony's individual vol",
+    "portfolio_vol is None when fewer than 2 observations"
+  ]
+}

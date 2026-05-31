@@ -902,29 +902,39 @@
                 </div>
               </div>
             </div>
-            <!-- Phase 2: annualized volatility row (ux-design-deliverable.md §Change 4).
-                 Lower vol is the winning direction for this capital-preservation system.
-                 Portfolio-level vol is not yet wired into the index route, so the row is
-                 stub-rendered as 'not yet available' (no fabricated numbers); the bars sit
-                 at 0% until a portfolio vol feed lands. -->
+            <!-- Phase 2b: annualized volatility row (ux-design-deliverable.md §Change 4).
+                 INVERTED winner direction: LOWER vol wins for this capital-preservation
+                 system. vol_bot / vol_held are fraction-scale (e.g. 0.028 = 2.8%); rendered
+                 as percent. When vol data is absent (no shadow history) the row stub-renders
+                 '—' with 0%-width bars — no fabricated numbers. -->
+            {% set vol_bot = (meta.portfolio.get('vol_bot') if meta is defined and meta.portfolio is defined else None) %}
+            {% set vol_held = (meta.portfolio.get('vol_held') if meta is defined and meta.portfolio is defined else None) %}
+            {% set has_vol = vol_bot is not none and vol_held is not none %}
+            {# Inverted winner: bot wins when its vol is <= held's. Delta = held - bot in pp
+               (positive = bot calmer = improvement). Bar widths inverted: lower-vol side
+               gets 100%, higher-vol side gets proportional width. #}
+            {% set vol_alpha_pp = ((vol_held - vol_bot) * 100) if has_vol else 0 %}
+            {% set vol_bot_wins = has_vol and vol_bot <= vol_held %}
+            {% set vol_bot_width = (100 if vol_bot_wins else ((vol_held / vol_bot * 100) if (has_vol and vol_bot > 0) else 0)) %}
+            {% set vol_held_width = (100 if (has_vol and vol_held <= vol_bot) else ((vol_bot / vol_held * 100) if (has_vol and vol_held > 0) else 0)) %}
             <div data-testid="vs-row" class="vs-row">
               <div class="vs-row-top">
                 <span class="vs-row-label">Ann. Vol</span>
-                <span data-testid="comp-vol-bot-text" class="vs-val">Bot &mdash;</span>
-                <span data-testid="comp-vol-held-text" class="vs-val">Held &mdash;</span>
-                <span data-testid="comp-vol-delta" class="vs-delta">&alpha; &mdash;</span>
+                <span data-testid="comp-vol-bot-text" class="vs-val">{% if has_vol %}Bot {{ "%.1f"|format(vol_bot * 100) }}%{% else %}Bot &mdash;{% endif %}</span>
+                <span data-testid="comp-vol-held-text" class="vs-val">{% if has_vol %}Held {{ "%.1f"|format(vol_held * 100) }}%{% else %}Held &mdash;{% endif %}</span>
+                <span data-testid="comp-vol-delta" class="vs-delta {% if vol_alpha_pp >= 0 %}pos{% else %}neg{% endif %}">{% if has_vol %}&alpha; {% if vol_alpha_pp >= 0 %}+{% endif %}{{ "%.1f"|format(vol_alpha_pp) }}pp{% else %}&alpha; &mdash;{% endif %}</span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
-                  <span class="vs-bar-label">Bot</span>
+                  <span class="vs-bar-label {% if vol_bot_wins %}winner{% endif %}">Bot</span>
                   <div data-testid="vs-bar" class="vs-bar-track">
-                    <div data-testid="comp-bar-vol-bot" data-row="vol" class="vs-bar-fill" style="width:0%"></div>
+                    <div data-testid="comp-bar-vol-bot" data-row="vol" class="vs-bar-fill {% if has_vol %}{% if vol_bot_wins %}winner{% else %}loser{% endif %}{% endif %}" style="width:{{ vol_bot_width|round }}%"></div>
                   </div>
                 </div>
                 <div class="vs-bar-row">
-                  <span class="vs-bar-label">Held</span>
+                  <span class="vs-bar-label {% if has_vol and not vol_bot_wins %}winner{% endif %}">Held</span>
                   <div data-testid="vs-bar" class="vs-bar-track">
-                    <div data-testid="comp-bar-vol-held" data-row="vol" class="vs-bar-fill" style="width:0%"></div>
+                    <div data-testid="comp-bar-vol-held" data-row="vol" class="vs-bar-fill {% if has_vol %}{% if vol_bot_wins %}loser{% else %}winner{% endif %}{% endif %}" style="width:{{ vol_held_width|round }}%"></div>
                   </div>
                 </div>
               </div>

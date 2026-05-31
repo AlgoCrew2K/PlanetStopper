@@ -109,6 +109,9 @@ def _default_analytics_mock():
     m.get_symphony_today_change.return_value = {"if_held": 1.0, "dry_run": 0.9}
     m.get_symphony_cumulative_return.return_value = {"if_held": 10.0, "dry_run": 9.5}
     m.get_symphony_max_drawdown.return_value = {"if_held": 0.10, "dry_run": 0.10}
+    # Matches real contract: tuple[list[str], list[float]] | None.  None = insufficient
+    # history; _compute_portfolio_strip handles this gracefully and skips vol calculation.
+    m.get_portfolio_daily_returns_from_shadow.return_value = None
     return m
 
 
