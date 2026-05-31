@@ -5,6 +5,7 @@ import concurrent.futures
 import io
 import logging
 import os
+import secrets
 import shutil
 import signal
 import subprocess
@@ -19,7 +20,7 @@ import psutil
 import requests
 import schedule
 from dotenv import dotenv_values, set_key
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, abort, jsonify, render_template, request, session
 
 import ai_advisor
 import analytics
@@ -56,6 +57,57 @@ app = Flask(__name__)
 # a Python-code restart would interrupt live ops.
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
+
+# ---------------------------------------------------------------------------
+# CSRF protection (A-3)
+# ---------------------------------------------------------------------------
+# Per-daemon-startup secret key.  Each process restart rotates the token,
+# which is fine — the operator refreshes the dashboard naturally.
+# TESTING mode skips enforcement so test_client() POST calls work without
+# injecting a token header (tests use monkeypatch on _csrf_check_enabled).
+app.secret_key = secrets.token_hex(32)
+
+# Module-level flag — test suite sets this to False via monkeypatch to bypass
+# CSRF checks on the test client.  Never set False in production code.
+_csrf_check_enabled: bool = True
+
+# One process-lifetime CSRF token.  Operator dashboards are single-user
+# single-tab; a per-session token would require cookie round-trips that
+# complicate the JS fetch() callers.  The attacker barrier is the token
+# itself, not its rotation frequency.
+_CSRF_TOKEN: str = secrets.token_hex(32)
+
+
+def _validate_csrf() -> None:
+    """Reject POST requests that lack the correct X-CSRF-Token header.
+
+    Why a header rather than a form field: the dashboard POSTs JSON via
+    fetch(); headers are same-origin only (browsers block cross-site JS from
+    setting arbitrary request headers), so this is equivalent security to a
+    synchronizer token for a localhost UI.  No new pip dependencies required.
+    """
+    if not _csrf_check_enabled:
+        return
+    token = request.headers.get("X-CSRF-Token", "")
+    if not secrets.compare_digest(token, _CSRF_TOKEN):
+        _daemon_log.warning(
+            "CSRF check failed on %s %s (token absent or incorrect)",
+            request.method,
+            request.path,
+        )
+        abort(403, description="CSRF token missing or invalid")
+
+
+@app.route("/api/csrf-token", methods=["GET"])
+def get_csrf_token():
+    """Return the process-lifetime CSRF token for the operator dashboard.
+
+    This endpoint is same-origin accessible only; the browser's SOP prevents
+    cross-site pages from reading its response.
+    """
+    return jsonify({"csrf_token": _CSRF_TOKEN})
+
+
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
 
@@ -81,6 +133,14 @@ _daemon_log.setLevel(logging.DEBUG)
 _daemon_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
 _daemon_fh.setLevel(logging.DEBUG)
 _daemon_log.addHandler(_daemon_fh)
+
+
+@app.before_request
+def _csrf_before_request() -> None:
+    """Enforce CSRF token on every mutating (POST) request (A-3)."""
+    if request.method == "POST":
+        _validate_csrf()
+
 
 COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
 
@@ -1409,7 +1469,8 @@ def get_state():
             }
         )
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        _daemon_log.error("api route failed: %s", e, exc_info=True)
+        return jsonify({"status": "error", "message": "An internal error occurred"}), 500
     finally:
         try:
             _ro_conn.close()
@@ -1424,7 +1485,8 @@ def api_symphony_logs(symphony_id):
         logs = database.get_symphony_logs(symphony_id)
         return jsonify(logs)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        _daemon_log.error("api_symphony_logs failed for %s: %s", symphony_id, e, exc_info=True)
+        return jsonify({"error": "An internal error occurred"}), 500
     finally:
         _ro_conn.close()
 
@@ -1530,7 +1592,8 @@ def get_chart_data(symphony_id):
 
         return jsonify({"status": "success", "data": symphony_data})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        _daemon_log.error("get_chart_data failed for %s: %s", symphony_id, e, exc_info=True)
+        return jsonify({"status": "error", "message": "An internal error occurred"}), 500
     finally:
         _ro_conn.close()
 
@@ -1555,7 +1618,8 @@ def api_triggers():
         )
         return jsonify(rows)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        _daemon_log.error("api_triggers failed: %s", e, exc_info=True)
+        return jsonify({"error": "An internal error occurred"}), 500
     finally:
         _ro_conn.close()
 
@@ -1656,7 +1720,8 @@ def force_eod():
             {"status": "success", "message": "EOD Analysis initiated for " + prev_date_str}
         )
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        _daemon_log.error("force_eod failed: %s", e, exc_info=True)
+        return jsonify({"status": "error", "message": "An internal error occurred"}), 500
 
 
 @app.route("/api/resend_discord", methods=["POST"])
@@ -1689,7 +1754,8 @@ def resend_discord():
             {"status": "success", "message": "Discord push initiated for " + prev_date_str}
         )
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        _daemon_log.error("resend_discord failed: %s", e, exc_info=True)
+        return jsonify({"status": "error", "message": "An internal error occurred"}), 500
 
 
 @app.route("/api/history/<int:days>")
@@ -2068,14 +2134,40 @@ def get_settings():
     })
 
 
+# Allowlist of global keys that the operator dashboard may write to .env (A-1).
+# LIVE_EXECUTION is deliberately excluded — arming real-money execution must
+# never be possible via an unauthenticated dashboard POST.  Credential/webhook
+# keys (_MASKED_SETTINGS_KEYS) are also excluded; rotate credentials directly
+# in .env, never through the dashboard.
+_SETTINGS_WRITE_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "EXECUTION_START_TIME",
+        "EXIT_AUTHORITY",
+    }
+    | set(_ALGO_PARAM_META.keys())
+)
+
+
 @app.route("/api/settings", methods=["POST"])
 def save_settings():
-    """Saves Globals to .env and Symphony Strategies to SQLite."""
+    """Saves allowlisted globals to .env and symphony strategies to SQLite.
+
+    Rejects any key not in _SETTINGS_WRITE_ALLOWLIST (including LIVE_EXECUTION
+    and all credential keys) with a 400 so the client gets an actionable error
+    rather than a silent no-op.
+    """
     payload = request.json
 
     try:
-        # Save Globals
+        # Save Globals — allowlist enforced (A-1).
         globals_payload = payload.get("globals", {})
+        rejected = [k for k in globals_payload if k not in _SETTINGS_WRITE_ALLOWLIST]
+        if rejected:
+            return jsonify({
+                "status": "error",
+                "message": f"Rejected keys not in settings allowlist: {sorted(rejected)}",
+            }), 400
+
         for key, val in globals_payload.items():
             set_key(ENV_FILE_PATH, key, str(val))
 
@@ -2093,7 +2185,8 @@ def save_settings():
 
         return jsonify({"status": "success", "message": "Variables updated successfully!"})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        _daemon_log.error("save_settings failed: %s", e, exc_info=True)
+        return jsonify({"status": "error", "message": "An internal error occurred"}), 500
 
 
 # The 11 real post_mortem dates produced by the live engine.
@@ -2745,7 +2838,7 @@ def ai_advisor_suggest():
         return jsonify({"suggestions": suggestions})
     except Exception as _exc:
         _daemon_log.error("ai_advisor_suggest failed: %s", _exc, exc_info=True)
-        return jsonify({"error": str(_exc)}), 200
+        return jsonify({"error": "An internal error occurred"}), 200
 
 
 @app.route("/ai-advisor/accept", methods=["POST"])

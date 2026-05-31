@@ -31,3 +31,24 @@ alphabot_daemon.err.log
 alphabot.pid
 *.db-wal
 *.db-shm
+
+# SQLite database files (defense-in-depth — keep *.db out of history)
+*.db
+*.db.*backup
+*.db.postDryRun
+*.db.preDryRun*
+
+# Operational dry-run artifacts
+.dry-run-smoke.*
+
+# Claude agent infrastructure (worktrees, heartbeats, audit worktrees)
+.claude/worktrees/
+.claude/audit-worktrees/
+.claude/heartbeats/
+
+# Screenshot artifacts from UX review passes (ux-*.png etc.)
+ux-*.png
+.design-handoff/screenshots/
+
+# Playwright MCP cache
+.playwright-mcp/
