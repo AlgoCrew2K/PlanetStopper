@@ -425,6 +425,56 @@
         populateRiskMathFromState(sym, stopLevel, shadowPeak);
 
         fetchDetailChart(sym.id || symId, sym);
+
+        // Phase 2b (ux-design-deliverable.md §Change 5): Risk Profile section —
+        // per-symphony Sharpe / Sortino / Max DD / Ann. volatility, bot vs if-held.
+        // Fetched from /api/performance?scope=symphony so the panel shows the same
+        // risk-adjusted metrics as the Performance page. Read-only; no engine rerun.
+        var rpEl = document.getElementById('detail-risk-profile');
+        if (rpEl) {
+            rpEl.innerHTML = '';
+            fetch('/api/performance?scope=symphony&symphony_id=' + encodeURIComponent(symId) + '&days=60')
+                .then(function (r) { return r.json(); })
+                .then(function (p) {
+                    var bot = p.shadow_metrics || {};
+                    var held = p.live_metrics || {};
+                    // [label, botVal, heldVal, kind, invertDelta]
+                    // kind 'num' => raw value (Sharpe/Sortino); 'pct_frac' => fraction scaled to %.
+                    // invertDelta true => lower is better (Max DD, Ann. volatility).
+                    var rows = [
+                        ['Sharpe',          bot.sharpe,       held.sharpe,       'num',      false],
+                        ['Sortino',         bot.sortino,      held.sortino,      'num',      false],
+                        ['Max drawdown',    bot.max_drawdown, held.max_drawdown, 'pct_frac', true],
+                        ['Ann. volatility', bot.volatility,   held.volatility,   'pct_frac', true]
+                    ];
+                    var html = rows.map(function (row) {
+                        var label = row[0], bv = row[1], hv = row[2], kind = row[3], invert = row[4];
+                        var hasBoth = (bv != null && hv != null);
+                        var delta = hasBoth ? (bv - hv) : null;
+                        var deltaGood = invert ? (delta <= 0) : (delta >= 0);
+                        var dcol = (delta == null) ? 'inherit'
+                                 : deltaGood ? cs('--studio-pos') : cs('--studio-neg');
+                        function fmt(v) {
+                            if (v == null) return '—';
+                            return (kind === 'num') ? v.toFixed(2) : (v * 100).toFixed(1) + '%';
+                        }
+                        var deltaStr = (delta == null) ? '—'
+                            : (kind === 'num'
+                                ? (delta >= 0 ? '+' : '') + delta.toFixed(2)
+                                : (delta >= 0 ? '+' : '') + (delta * 100).toFixed(1) + 'pp');
+                        return '<div class="math-row">'
+                            + '<span class="math-row-label">' + label + '</span>'
+                            + '<span class="math-row-value" style="color:' + dcol + ';">' + deltaStr + '</span>'
+                            + '<span class="math-row-hint">Bot ' + fmt(bv) + ' · Held ' + fmt(hv) + '</span>'
+                            + '</div>';
+                    }).join('');
+                    rpEl.innerHTML = html;
+                })
+                .catch(function () {
+                    // Graceful: leave the section empty on fetch failure — no JS error surfaced.
+                    rpEl.innerHTML = '';
+                });
+        }
     }
 
     function populateRiskMathFromState(sym, stopLevel, shadowPeak) {

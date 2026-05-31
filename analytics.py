@@ -74,6 +74,11 @@ _HISTORY_CACHE: dict = {"key": None, "data": None}
 # Source: DV1 binding contract.
 _MIN_QUANTSTATS_OBSERVATIONS = 2
 
+# Trading days per year — the industry-standard annualization basis for daily
+# volatility (sqrt-time rule). Matches the 252-day basis quantstats uses in
+# compute_quantstats_metrics' `volatility` key. Source: ux-design-deliverable.md §Change 4.
+_ANNUALIZATION_TRADING_DAYS = 252
+
 
 # ---------------------------------------------------------------------------
 # load_post_mortem_history
@@ -414,6 +419,55 @@ def compute_quantstats_metrics(returns_series: list[float], freq: str = "D") -> 
     metrics["volatility"] = _safe(lambda: qs_stats.volatility(series))
 
     return metrics
+
+
+# ---------------------------------------------------------------------------
+# compute_portfolio_annualized_vol
+# ---------------------------------------------------------------------------
+
+
+def compute_portfolio_annualized_vol(
+    portfolio_daily_returns_pct: list[float],
+) -> float | None:
+    """Annualized volatility of the COMBINED portfolio daily return series.
+
+    The caller passes the portfolio's value-weighted per-day aggregate return
+    series (e.g. from get_portfolio_daily_returns_from_shadow), NOT per-symphony
+    returns. Computing vol on the combined series captures inter-symphony
+    correlations; averaging per-symphony vols does not (Markowitz 1952).
+
+    Formula: sample_std(returns_frac, ddof=1) * sqrt(252), returned in FRACTION
+    scale (e.g. 0.035 = 3.5% annual vol) to match the other fraction-scale
+    metrics in compute_quantstats_metrics.
+
+    Inputs are percent-scale daily returns (e.g. 0.20 = 0.20%); they are divided
+    by 100 to fraction scale before the std. Returns None when fewer than
+    _MIN_QUANTSTATS_OBSERVATIONS finite observations remain.
+    """
+    fracs = [
+        v / 100.0
+        for v in portfolio_daily_returns_pct
+        if _is_finite_number(v)
+    ]
+    if len(fracs) < _MIN_QUANTSTATS_OBSERVATIONS:
+        return None
+
+    n = len(fracs)
+    mean = sum(fracs) / n
+    variance = sum((r - mean) ** 2 for r in fracs) / (n - 1)  # ddof=1 (sample)
+    vol = math.sqrt(variance) * math.sqrt(_ANNUALIZATION_TRADING_DAYS)
+
+    if not math.isfinite(vol):
+        return None
+    return vol
+
+
+def _is_finite_number(value: object) -> bool:
+    """True when value coerces to a finite float (filters NaN/Inf/None/garbage)."""
+    try:
+        return math.isfinite(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
 
 
 # ---------------------------------------------------------------------------

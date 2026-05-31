@@ -515,6 +515,10 @@ def _build_meta(
         "account_value": round(ps.get("account_value") or 0.0, 2),
         "insufficient_history": _insufficient_history,
         "history_days": len(_hist_dates),
+        # Phase 2b: portfolio-level annualized vol (fraction scale) — feeds the
+        # hero Ann. Vol vs-row. None-safe: stays None when no shadow history.
+        "vol_bot": ps.get("vol_bot"),
+        "vol_held": ps.get("vol_held"),
     }
 
     return {
@@ -628,11 +632,27 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
                 symphonies_list, bot_state, trading_day=trading_day
             )
 
+        # Phase 2b: portfolio-level annualized volatility from the COMBINED
+        # portfolio return series (captures inter-symphony correlations — the
+        # correct method vs averaging per-symphony vols). Both bot and held read
+        # the same continuous shadow series; they diverge once post-trigger
+        # tracking matures. None (not 0.0) when no shadow history exists — a real
+        # 0.0 would be ambiguous with a genuine zero-vol result.
+        vol_bot: float | None = None
+        vol_held: float | None = None
+        _shadow_result = analytics.get_portfolio_daily_returns_from_shadow()
+        if _shadow_result is not None:
+            _, _port_daily_returns = _shadow_result
+            vol_bot = analytics.compute_portfolio_annualized_vol(_port_daily_returns)
+            vol_held = vol_bot
+
         return {
             "today_change": today_change,
             "cumulative_return": cumulative_return,
             "max_drawdown": max_drawdown,
             "account_value": account_value,
+            "vol_bot": vol_bot,
+            "vol_held": vol_held,
             "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
         }
     except Exception as _exc:
@@ -644,6 +664,8 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             "cumulative_return": None,
             "max_drawdown": None,
             "account_value": account_value,
+            "vol_bot": None,
+            "vol_held": None,
             "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
         }
 
