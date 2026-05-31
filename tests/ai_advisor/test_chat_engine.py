@@ -806,16 +806,19 @@ def test_app_py_chat_route_does_not_call_accept_function():
     # Extract a window around the chat route definition (~200 lines).
     window = source[chat_route_idx : chat_route_idx + 8000]
 
+    # Use call-site patterns (trailing paren) to avoid false positives on
+    # docstring mentions like "MUST NOT call revalidate_suggestion_oos".
+    # A docstring saying "must not call X" is not a mutation call.
     forbidden_in_chat_route = [
-        "ai_advisor_accept",
-        "revalidate_suggestion_oos",
-        "save_symphony_strategy",
-        "update_bot_state",
-        "flush_state",
+        "ai_advisor_accept(",
+        "revalidate_suggestion_oos(",
+        "save_symphony_strategy(",
+        "update_bot_state(",
+        "flush_state(",
     ]
     for forbidden in forbidden_in_chat_route:
         assert forbidden not in window, (
-            f"The chat route handler references '{forbidden}' — a mutation function. "
+            f"The chat route handler contains call site '{forbidden}' — a mutation function. "
             "Chat must have no write path (AC-4.1). "
             "Remove this call from the chat route handler."
         )
