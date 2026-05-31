@@ -2807,6 +2807,89 @@ def ai_advisor_reject():
     return jsonify({"status": "rejected"})
 
 
+@app.route("/ai-advisor/chat", methods=["GET"])
+def ai_advisor_chat():
+    """Render the M5 Chat (explain-only) tab (AC-4.1..4.3, AC-X1..X3).
+
+    Read-only surface — no writes to live positions, no Composer write endpoints,
+    no DB writes of any kind.  Chat explains existing advisor artifacts; it does
+    not generate new recommendations or accept/apply any changes.
+
+    Template context:
+      chat_available  — True when ANTHROPIC_API_KEY is present; the template
+                        renders the 'chat unavailable' state (data-testid=
+                        'chat-unavailable') when False (AC-4.3).
+                        NEVER pass the API key value itself to the template.
+      symphonies      — list of known symphony IDs for artifact-anchor display.
+    """
+    # chat_available: True only when the key is set.  We check existence only;
+    # the value is NEVER passed to the template (AC-4.1 / security hygiene).
+    chat_available = bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+    # Provide the symphony list for artifact-context display.
+    symphonies: list[str] = []
+    try:
+        import analytics as _analytics  # noqa: PLC0415
+        history = _analytics.get_history_with_cache_invalidation(
+            base_dir=_analytics._POST_MORTEMS_DIR
+        )
+        symphonies = _analytics.list_available_symphonies(history)
+    except Exception:
+        pass  # Symphony list is optional; the page still renders without it.
+
+    return render_template(
+        "ai_advisor_chat.html",
+        active_route="advisor",
+        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
+        chat_available=chat_available,
+        symphonies=symphonies,
+    )
+
+
+@app.route("/ai-advisor/chat/send", methods=["POST"])
+def ai_advisor_chat_send():
+    """Explain-only chat send endpoint (AC-4.1..4.3, AC-X1..X3).
+
+    Accepts JSON: { artifact_type, artifact_id, artifact, history, message }.
+    Delegates to advisors.advisor_chat.explain_artifact; returns the LLM
+    explanation as JSON.
+
+    HARD constraints (AC-4.1):
+      - MUST NOT call insert_advisor_observation, save_state, or any mutation.
+      - MUST NOT call the OOS re-validation gate, suggest_swaps, or run_backtest.
+      - MUST NOT reference Composer write endpoints.
+      - Returns {reply: str} on success, {error: str} on any failure.
+      - Never returns a 500 or an HTML error page (AC-4.3).
+
+    Missing required fields (message, artifact) → 400 JSON error.
+    LLM unavailable / error → 200 JSON {error: str} from explain_artifact.
+    """
+    # Lazy import keeps advisor_chat off the live 1-minute execution path (AC-X2).
+    from advisors.advisor_chat import explain_artifact  # noqa: PLC0415
+
+    # Parse the JSON body; malformed bodies get a 400.
+    body = request.get_json(silent=True) or {}
+
+    message = body.get("message")
+    artifact = body.get("artifact")
+
+    if not message:
+        return jsonify({"error": "missing required field: message"}), 400
+    if artifact is None:
+        return jsonify({"error": "missing required field: artifact"}), 400
+
+    # Delegate entirely to the chat backend — the explain-only boundary is
+    # enforced inside explain_artifact and its system prompt.
+    # question keyword matches explain_artifact(question, artifact) signature.
+    result = explain_artifact(question=message, artifact=artifact)
+
+    if result.answer is not None:
+        return jsonify({"reply": result.answer})
+
+    # result.error is non-None — degrade gracefully (AC-4.3).
+    return jsonify({"error": result.error or "chat unavailable"})
+
+
 # Known advisor roles — used to aggregate observations for the AI Advisor page.
 _ADVISOR_ROLES = [
     "OVERFITTING_CONSCIENCE",

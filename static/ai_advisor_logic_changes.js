@@ -230,6 +230,38 @@
             warningsHtml = `<p class="data-warnings">${_escapeHtml(proposal.data_warnings.join("; "))}</p>`;
         }
 
+        // "Discuss this" affordance — subtle text link, intentionally de-emphasised (AC-4.1).
+        // Clicking opens the chat panel scoped to this artifact.
+        const lcArtifactId = proposal.candidate_id || ("lc_" + (proposal.tweak_param_key || "unknown"));
+        const lcObjective = proposal.objective_rationale || proposal.objective_type || "";
+        const lcGateDecision = proposal.gate_decision || "";
+        const lcKeyStat = proposal.baseline_stats && proposal.baseline_stats.sharpe_ratio != null
+            ? `Sharpe (baseline) ${Number(proposal.baseline_stats.sharpe_ratio).toFixed(4)}`
+            : "";
+        const lcTitle = `Explain: logic change${proposal.tweak_param_key ? " (" + proposal.tweak_param_key + ")" : ""}`;
+        const lcCtx = `Logic Change${proposal.symphony_id ? " · " + proposal.symphony_id : ""}`;
+        const lcArtifactJson = JSON.stringify({
+            artifactId:      lcArtifactId,
+            artifactType:    "logic_change_proposal",
+            title:           lcTitle,
+            contextLabel:    lcCtx,
+            objective:       lcObjective,
+            gateDecision:    lcGateDecision,
+            keyStat:         lcKeyStat,
+            // artifactContext carries the full proposal dict for grounding (AC-4.2)
+            artifactContext: proposal,
+        });
+        // onclick uses a data attribute to avoid inline JSON quoting issues
+        const discussLink = `
+        <div style="margin-top:0.75rem;padding-top:0.625rem;border-top:1px solid var(--studio-border);">
+            <a href="/ai-advisor/chat" data-testid="discuss-this-link"
+               data-artifact-json='${_escapeHtml(lcArtifactJson)}'
+               style="font-size:0.75rem;color:var(--studio-ink-dim);text-decoration:underline;cursor:pointer;"
+               onclick="(function(e){e.preventDefault();var d=e.currentTarget.dataset.artifactJson;try{if(typeof openChatPanel==='function'){openChatPanel(JSON.parse(d))}}catch(ex){}})(event)">
+                Discuss this
+            </a>
+        </div>`;
+
         return `
         <div class="${cardClass}" data-testid="proposal-card">
             ${objLine}
@@ -240,6 +272,7 @@
             ${guidanceHtml}
             ${errorHtml}
             ${warningsHtml}
+            ${discussLink}
         </div>`;
     }
 
