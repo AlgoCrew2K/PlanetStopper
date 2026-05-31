@@ -2275,7 +2275,9 @@ def ai_advisor_correlations():
     from advisors import correlation_diagnostic  # noqa: PLC0415
 
     # Build per-symphony return series from post-mortem history (read-only).
-    history = analytics.get_history_with_cache_invalidation()
+    history = analytics.get_history_with_cache_invalidation(
+        base_dir=analytics._POST_MORTEMS_DIR
+    )
     sym_ids = analytics.list_available_symphonies(history)
     series_dict: dict[str, list[float]] = {}
     for sym_id in sym_ids:
