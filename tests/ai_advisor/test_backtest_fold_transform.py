@@ -744,3 +744,105 @@ class TestArchitectureOfflineIsolation:
                     assert "backtest_gate_engine" not in alias.name, (
                         "alpha_bot_execution.py must not import advisors.backtest_gate_engine."
                     )
+
+
+# ---------------------------------------------------------------------------
+# Section 9 — Soundness: OOS alpha uses FULL validation fold (not purge-reduced)
+# ---------------------------------------------------------------------------
+
+class TestOosAlphaUsesFullValidationFold:
+    """OOS alpha must be computed over the FULL raw validation fold, not the purge-reduced side.
+
+    This soundness test was requested by the gate agent (879f87e) to verify the design
+    choice documented in backtest_gate_engine.py: the OOS cascade uses the full raw
+    validation fold (history_validation_full in autotuner.py) rather than the
+    purge-reduced version (which is only for the Optuna objective).
+
+    The test verifies this by constructing a known return series and checking that
+    oos_alpha equals the sum of the full validation window
+    (from TRAIN_RATIO*N to (TRAIN_RATIO+VALIDATION_RATIO)*N) and NOT the sum of the
+    purge-reduced window (from TRAIN_RATIO*N to (TRAIN_RATIO*N - PURGE_DAYS - EMBARGO_DAYS)).
+
+    Reference: backtest_gate_engine.py validation_returns comment at _fold_transform_single;
+    autotuner.py history_validation_full vs history_validation (purge-reduced).
+    """
+
+    def test_oos_alpha_equals_full_validation_fold_sum_not_purge_reduced(self):
+        """oos_alpha must equal sum(validation_fold) where the fold is the FULL slice.
+
+        The full validation fold spans [val_start_idx : frozen_start_idx] where:
+          val_start_idx = int(N * TRAIN_RATIO)
+          frozen_start_idx = int(N * (TRAIN_RATIO + VALIDATION_RATIO))
+
+        NOT the purge-reduced slice which would be:
+          [val_start_idx : frozen_start_idx] with purge removed from the LEFT edge of train
+          (the purge is on the TRAIN side, not the start of validation — so for OOS alpha,
+          the full validation window is used as stated in the module docstring).
+        """
+        engine = _import_engine()
+
+        # Import the fold constants to compute the expected split exactly
+        import sys as _sys
+        repo = str(_REPO_ROOT)
+        if repo not in _sys.path:
+            _sys.path.insert(0, repo)
+        from autotuner import TRAIN_RATIO, VALIDATION_RATIO
+
+        # Build a deterministic series where each value is its index (1.0, 2.0, ...)
+        # so we can compute the exact expected sum without floating-point ambiguity.
+        n = 200
+        # Use values that are easily summed: validation returns are exactly
+        # the indices in the validation window
+        deterministic_returns = [float(i) for i in range(n)]
+
+        val_start = int(n * TRAIN_RATIO)
+        frozen_start = int(n * (TRAIN_RATIO + VALIDATION_RATIO))
+        full_validation_returns = deterministic_returns[val_start:frozen_start]
+        expected_oos_alpha = sum(full_validation_returns)
+
+        cand = _make_candidate(deterministic_returns, candidate_id="deterministic")
+        batch = engine.evaluate_candidate_batch([cand])
+        result = batch.results[0]
+
+        assert result.oos_alpha == pytest.approx(expected_oos_alpha, abs=1e-9), (
+            # tolerance: 1e-9 because oos_alpha is a sum of exact float values (indices);
+            # any floating-point error is trivially within this bound
+            f"oos_alpha={result.oos_alpha!r} does not match the expected full-validation-fold sum "
+            f"({expected_oos_alpha!r}). "
+            f"The full validation fold spans indices [{val_start}:{frozen_start}] (n={n}). "
+            "If oos_alpha matches the purge-reduced sum instead, the engine is incorrectly "
+            "removing the purge window from the OOS alpha computation. The purge applies to "
+            "the training fold only — the validation fold for OOS alpha is the FULL raw window."
+        )
+
+    def test_validation_days_equals_full_validation_fold_length(self):
+        """validation_days must equal the length of the full validation fold.
+
+        Complements test_oos_alpha_equals_full_validation_fold_sum: if validation_days
+        is shorter than the full fold, it indicates the purge is being incorrectly
+        applied to the validation side rather than just the training side.
+        """
+        engine = _import_engine()
+
+        import sys as _sys
+        repo = str(_REPO_ROOT)
+        if repo not in _sys.path:
+            _sys.path.insert(0, repo)
+        from autotuner import TRAIN_RATIO, VALIDATION_RATIO
+
+        n = 200
+        returns = _make_synthetic_returns_pct(n, seed=22)
+        val_start = int(n * TRAIN_RATIO)
+        frozen_start = int(n * (TRAIN_RATIO + VALIDATION_RATIO))
+        expected_validation_days = frozen_start - val_start
+
+        cand = _make_candidate(returns, candidate_id="val-days-check")
+        batch = engine.evaluate_candidate_batch([cand])
+        result = batch.results[0]
+
+        assert result.validation_days == expected_validation_days, (
+            f"validation_days={result.validation_days} does not match the expected full "
+            f"validation fold length ({expected_validation_days}). "
+            f"Full fold spans [{val_start}:{frozen_start}] for n={n}. "
+            "validation_days must count the full raw validation window, not a purge-reduced slice."
+        )
