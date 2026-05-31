@@ -77,6 +77,11 @@ def _default_analytics_mock():
     m.get_symphony_today_change.return_value = {"if_held": 1.2, "dry_run": 0.9}
     m.get_symphony_cumulative_return.return_value = {"if_held": 15.0, "dry_run": 15.0}
     m.get_symphony_max_drawdown.return_value = {"if_held": 0.12, "dry_run": 0.12}
+    # get_portfolio_daily_returns_from_shadow returns tuple[list[str], list[float]] | None.
+    # None is the documented "insufficient history" path; _compute_portfolio_strip guards
+    # `if _shadow_result is not None:` and skips vol calculation gracefully.  The m2 tests
+    # cover today_change / cumulative_return / max_drawdown (M1 helpers), not vol.
+    m.get_portfolio_daily_returns_from_shadow.return_value = None
     return m
 
 
