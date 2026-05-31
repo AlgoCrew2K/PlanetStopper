@@ -710,28 +710,31 @@ def test_exit_confirmation_exit_confirm_ticks_override_works() -> None:
     it must be used as the threshold.
 
     Example: EXIT_CONFIRM_TICKS=3, override=5.
-      - starting_count=3 -> count becomes 4 < 5 -> hit=False
-      - starting_count=4 -> count becomes 5 >= 5 -> hit=True
+      - starting_count=3 (override-2) -> count becomes 4 < 5 -> hit=False
+      - starting_count=4 (override-1) -> count becomes 5 >= 5 -> hit=True
     """
     base = math_engine.EXIT_CONFIRM_TICKS
     override = base + 2  # e.g. 5 when base=3
 
-    # count=override-1 should not yet fire
+    # starting_count = override-2: new_count = override-1 < override -> should NOT fire
     new_count, hit_not_yet = math_engine.compute_exit_confirmation(
         armed=True,
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
         prob_beating=None,
-        current_below_stop_count=override - 1,
+        current_below_stop_count=override - 2,
         exit_confirm_ticks=override,
     )
     assert hit_not_yet is False, (
-        f"Override threshold={override}: starting_count={override - 1} + 1 "
-        f"= {new_count} < {override} -> should not fire, got hit={hit_not_yet}"
+        f"Override threshold={override}: starting_count={override - 2} + 1 "
+        f"= {new_count} < {override} -> should NOT fire yet, got hit={hit_not_yet}"
+    )
+    assert new_count == override - 1, (
+        f"Expected new_count={override - 1}, got {new_count}"
     )
 
-    # count=override should fire
+    # starting_count = override-1: new_count = override >= override -> MUST fire
     new_count_2, hit_now = math_engine.compute_exit_confirmation(
         armed=True,
         is_triggered=False,
@@ -741,8 +744,6 @@ def test_exit_confirmation_exit_confirm_ticks_override_works() -> None:
         current_below_stop_count=override - 1,
         exit_confirm_ticks=override,
     )
-    # Wait — this is starting_count=override-1, next tick -> override, should fire
-    # (same as above; let me use override - 1 as starting to get override as new_count)
     assert new_count_2 == override, (
         f"Expected new_count={override}, got {new_count_2}"
     )
