@@ -21,6 +21,27 @@ PHASE3_DECISIONS.md / 00-ADAPTIVE-RECOMMENDATION.md §1A):
   - Otherwise the autocorrelation sign discriminates: positive lag-1 AC ->
     'trending', non-positive lag-1 AC -> 'mean-reverting'.
 
+SINGLE-WINDOW SNAPSHOT — NO TEMPORAL PERSISTENCE (design waiver, 2026-05-31):
+classify_regime is a pure function of the explicitly-supplied window. It has no
+dwell-time, confirmation-bar, or hysteresis mechanism. A window-over-window
+caller applying rolling classification across a time series will see label
+changes whenever the features cross a threshold boundary; that is expected and
+correct behaviour for a snapshot labeller. Any temporal persistence or smoothing
+is the caller's responsibility. This waiver is intentional: the function is used
+as a single-point offline diagnostic (not a streaming signal), so per-call
+stationarity is the appropriate contract.
+
+FIXED THRESHOLD — NOT FIT FROM HISTORY (design note, 2026-05-31):
+classify_regime uses the module constant HIGH_VOL_DAILY_THRESHOLD = 0.04 as its
+vol boundary. This is a theory-anchored, zero-degrees-of-freedom constant (3x
+the normal ~1-1.5%/day equity vol). It does NOT use a threshold fitted from
+external_data. fit_regime_classifier() is a SEPARATE, standalone operator
+diagnostic that derives a data-driven quantile threshold from the real (non-
+synthetic) broad daily history — its output is informational and is not wired
+into classify_regime by default. This is a deliberate design decision: keeping
+classify_regime parameter-free means it adds ~0 estimation DoF
+(00-ADAPTIVE-RECOMMENDATION.md §1A, 'theory-fixed label (~0 added DoF)').
+
 Graceful degradation: any input too short, non-numeric, or otherwise degenerate
 returns None ('unknown' regime) rather than raising — production diagnostic
 callers need no try/except wrapper.
@@ -90,10 +111,15 @@ def classify_regime(returns) -> str | None:
 
     Decision order:
       1. Insufficient / degenerate input -> None.
-      2. Realized vol above HIGH_VOL_DAILY_THRESHOLD -> 'high-vol' (overrides AC).
+      2. Realized vol above HIGH_VOL_DAILY_THRESHOLD (fixed constant, 0.04) ->
+         'high-vol' (overrides AC). The threshold is NOT derived from fitted
+         history; it is a theory-anchored zero-DoF constant. See module docstring.
       3. Otherwise: positive lag-1 AC -> 'trending'; non-positive -> 'mean-reverting'.
 
     The label is a retrospective characterization of the supplied window only.
+    This function is a SINGLE-WINDOW SNAPSHOT with no temporal persistence:
+    called repeatedly on overlapping windows, it will reflect each window's
+    features independently. See module docstring for the design waiver.
     """
     finite = _coerce_finite_series(returns)
     if finite is None or len(finite) < MIN_LABEL_SERIES_LENGTH:

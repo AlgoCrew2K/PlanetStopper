@@ -612,33 +612,31 @@ def test_output_always_in_valid_label_set_or_sentinel_for_varied_series() -> Non
 
 def test_label_at_time_t_is_identical_whether_or_not_future_data_present() -> None:
     """
-    CAUSAL (filtered) probabilities only — no look-ahead contamination.
+    Causality (Req 2) via cross-call statelessness — no look-ahead contamination.
 
-    The label computed from returns[0..t] must be identical to the label
-    computed from returns[0..T] where T > t (i.e. adding future observations
-    must not change the current-time label).
+    What this test actually checks (H1 clarification, 2026-05-31):
+    classify_regime is a PURE FUNCTION of its explicit input window. It cannot
+    "see" data beyond what is passed to it. The meaningful contamination risk for
+    this implementation class is NOT future-data leak within a single call
+    (impossible for a pure function), but rather CROSS-CALL GLOBAL STATE that
+    causes a later call to be influenced by data passed in an earlier call.
 
-    This is the single most common contamination in regime models: an impl
-    that uses full-sample smoothed probabilities (HMM Viterbi on the full
-    series) rather than filtered online inference will fail this test.
+    This test guards the cross-call statelessness contract:
+      1. Call classify_regime(prefix + trending_suffix) — expose a trending future.
+      2. Call classify_regime(prefix) — the result must be identical to calling
+         classify_regime(prefix) BEFORE any other call was made.
 
-    Source: regime-methodologist requirement 2 — 'a test feeding a series,
-    truncating at t, and asserting the label at t is identical whether or
-    not t+1..T are present.'
+    If the implementation caches computed features globally, uses a module-level
+    mutable accumulator, or otherwise bleeds state between calls, step 2 will
+    return a different label — that is a look-ahead violation at the call level.
 
-    Method: we use a 40-day mean-reverting series (strongly negative AC).
-    The first 20 days alone should yield 'mean-reverting'. Adding 20 more
-    mean-reverting days to the end MUST NOT change the label at t=20. If
-    the implementation uses full-sample smoothing and the series is long
-    enough to stabilize, the label should be the same — but if it uses any
-    look-ahead path (e.g., Viterbi on all 40 then reads state[19]), it would
-    differ when we change what follows t=20.
+    Limitation (stated honestly per H1): this test does NOT catch a hypothetical
+    full-sample HMM-Viterbi implementation that uses the entire supplied series to
+    smooth state probabilities. For this implementation (pure window function with
+    no full-sample smoothing), that contamination is structurally impossible;
+    test_label_is_deterministic_on_repeated_calls pins the determinism contract.
 
-    Adversarial twist: the SECOND half is also mean-reverting, so a look-ahead
-    impl might happen to agree by chance. We therefore also add a future-suffix
-    that is 'trending' (opposite AC) and assert the label at t=20 is UNCHANGED
-    even when the future turns trending. A causal classifier must ignore the
-    future suffix entirely.
+    Source: regime-methodologist requirement 2; H1 docstring-accuracy note.
     """
     # First 20 days: perfectly alternating (mean-reverting, AC ≈ -1.0)
     prefix = [0.02 if i % 2 == 0 else -0.02 for i in range(20)]
@@ -762,74 +760,109 @@ def test_regime_state_count_is_small_fixed_constant() -> None:
         )
 
 
-# --- Req 5: Label persistence / no noisy flip-flop ------------------------
+# --- Req 5: Persistence — DESIGN WAIVER documented and tested ---------------
+# Design decision (2026-05-31): classify_regime is a SINGLE-WINDOW SNAPSHOT with
+# no temporal persistence, dwell-time, or confirmation-bar mechanism. This is a
+# deliberate choice for an offline diagnostic: parameter-free (~0 DoF), each call
+# is an independent characterization of its supplied window. Any rolling temporal
+# smoothing is the caller's responsibility.
+#
+# The waiver replaces the original test that was falsely green: the previous
+# "borderline series" (groups of 3 same-sign days, AC≈+0.33) never actually
+# straddled the AC=0 boundary, so no oscillation was possible regardless.
+# The correct tests are:
+#   (a) Assert the waiver is explicitly stated in the module docstring.
+#   (b) Assert that a GENUINE boundary-straddling series DOES oscillate —
+#       documenting the known behavior, not hiding it.
+# Source: regime-methodologist requirement 5 review, 2026-05-31.
 
-def test_label_does_not_oscillate_on_borderline_series() -> None:
+def test_snapshot_waiver_is_documented_in_module_docstring() -> None:
     """
-    Label stability / persistence — no noisy flip-flop at the boundary.
+    Req 5 resolution: the persistence waiver must be EXPLICITLY stated in the
+    module docstring. Absence of the waiver means the module implicitly claims
+    temporal-persistence behavior it does not have.
 
-    A series near the AC=0 boundary should not produce alternating labels
-    when observed day-by-day (i.e. rolling classification of an extending
-    window should not oscillate between 'mean-reverting' and 'trending'
-    every step).
+    Required docstring language (case-insensitive substring match):
+      - 'single-window snapshot' — names the design pattern explicitly
+      - 'no temporal persistence' OR 'without temporal persistence' — states
+        the absence of persistence as a fact, not an omission
+      - 'caller' — indicates where temporal smoothing responsibility lies
 
-    Method: construct a 50-day mild-positive-AC series (AC ≈ +0.2, close
-    to the AC=0 boundary but on the trending side). Classify over rolling
-    windows [20..50] and assert the label does not oscillate every step
-    (no ABAB pattern over any 4 consecutive windows).
-
-    A correct implementation with a persistence filter / confirmation bar
-    will hold the label for multiple steps before switching. An implementation
-    with no persistence mechanism will oscillate on borderline inputs.
-
-    Source: regime-methodologist requirement 5 — 'feed a borderline series
-    and assert the label does not oscillate every step; there must be a
-    defensible smoothing/persistence mechanism.'
+    Source: regime-methodologist requirement 5 resolution — formal waiver with
+    explicit design statement (option b: stated decision, not silent absence).
     """
-    # Mild positive AC: group runs of 3, alternating +/-. This gives AC ≈ +0.33
-    # (each run produces 2 same-sign lag-1 pairs and 1 cross-sign pair per 3-day group).
-    returns = []
-    for group in range(17):  # 17 groups of 3 = 51 days
-        sign = 1 if group % 2 == 0 else -1
-        returns.extend([sign * 0.015] * 3)
-    returns = returns[:50]  # trim to 50
+    module_doc = (inspect.getdoc(regime_classifier) or "").lower()
 
-    # Collect labels over rolling windows from day 20 to day 50.
-    labels_over_time: list[str | None] = []
-    for end in range(20, 51):
-        label = regime_classifier.classify_regime(returns[:end])
-        labels_over_time.append(label)
+    assert "single-window snapshot" in module_doc, (
+        "regime_classifier module docstring does not contain 'single-window snapshot'. "
+        "The persistence waiver (Req 5 design decision) must be explicitly stated: "
+        "classify_regime is a snapshot function with no temporal persistence. "
+        "Add the waiver to the module docstring."
+    )
+    assert "no temporal persistence" in module_doc, (
+        "regime_classifier module docstring does not contain 'no temporal persistence'. "
+        "The design waiver must explicitly state that the function has no dwell-time, "
+        "confirmation-bar, or hysteresis mechanism."
+    )
+    assert "caller" in module_doc, (
+        "regime_classifier module docstring does not mention 'caller'. "
+        "The waiver must state that temporal smoothing is the caller's responsibility."
+    )
 
-    # Filter to non-sentinel labels only.
-    non_sentinel = [
-        lab for lab in labels_over_time
-        if lab is not None and lab != "unknown"
-    ]
 
-    if len(non_sentinel) < 4:
-        # Not enough data for the oscillation check — pass (implementation
-        # is being conservative with the window size, which is acceptable).
-        return
+def test_boundary_straddling_series_oscillates_as_documented() -> None:
+    """
+    Adversarial documentation test: a series engineered to straddle AC=0
+    on successive 20-day windows WILL produce oscillating labels with a pure
+    threshold classifier (no persistence). This test asserts that behavior
+    IS observed, documenting the known limitation rather than hiding it.
 
-    # Check for ABAB oscillation pattern over any 4 consecutive windows.
-    # An ABAB pattern means: label[i] != label[i+1] and label[i] == label[i+2]
-    # and label[i+1] == label[i+3] — the label alternates every step.
-    oscillation_runs = 0
-    for i in range(len(non_sentinel) - 3):
-        a, b, c, d = non_sentinel[i], non_sentinel[i+1], non_sentinel[i+2], non_sentinel[i+3]
-        if a != b and a == c and b == d:
-            oscillation_runs += 1
+    If this test FAILS (i.e. no oscillation is observed on the straddling
+    series), it means either:
+      (a) A persistence mechanism was added — which is a design change that
+          also requires updating test_snapshot_waiver_is_documented_in_module_docstring,
+          OR
+      (b) The series construction was not genuinely boundary-straddling.
 
-    # Allow at most 1 oscillation event across the full sweep (boundary
-    # crossing is permitted once; repeated oscillation is the defect).
-    # Tolerance rationale: 1 flip is a genuine regime transition; 2+ consecutive
-    # ABAB events indicate no persistence mechanism is in place.
-    assert oscillation_runs <= 1, (
-        f"classify_regime oscillates on a borderline series: {oscillation_runs} "
-        f"ABAB oscillation events over {len(non_sentinel)} consecutive labels. "
-        f"Label sequence: {non_sentinel}. "
-        "The classifier must implement a persistence/smoothing mechanism to prevent "
-        "noisy flip-flop (regime-methodologist requirement 5)."
+    Construction: alternate 20-day sub-windows between a strongly mean-reverting
+    pattern (AC ≈ -1.0) and a strongly trending pattern (AC ≈ +0.85). Each
+    window of 20 days is internally coherent; successive windows flip the AC
+    sign cleanly. A snapshot classifier must flip labels between windows.
+
+    This is an HONESTY test, not a correctness test: it proves the documented
+    limitation is real, so operators reading the waiver can trust it accurately
+    describes the behavior.
+    """
+    # Build a 60-day series: 20 days perfectly alternating (AC≈-1), then
+    # 20 days all-same-sign runs of 10 (AC≈+0.85), then back to alternating.
+    alternating_20 = [0.02 if i % 2 == 0 else -0.02 for i in range(20)]
+    trending_20 = [0.01 if i < 10 else -0.01 for i in range(20)]
+    series = alternating_20 + trending_20 + alternating_20  # 60 days
+
+    # Classify the three non-overlapping 20-day windows.
+    label_window1 = regime_classifier.classify_regime(series[0:20])    # alternating
+    label_window2 = regime_classifier.classify_regime(series[20:40])   # trending
+    label_window3 = regime_classifier.classify_regime(series[40:60])   # alternating again
+
+    # Window 1 and 3 should be mean-reverting (AC ≈ -1.0).
+    # Window 2 should be trending (AC ≈ +0.85).
+    # Verify the labels actually differ across windows — confirming the snapshot
+    # behavior and validating that the three windows have genuinely different regimes.
+    assert label_window1 != label_window2, (
+        f"Expected label_window1 (alternating, AC≈-1) != label_window2 (trending, AC≈+0.85), "
+        f"but both returned '{label_window1}'. "
+        "Either the series construction is wrong or the classifier is insensitive to AC. "
+        "The snapshot waiver cannot be documented if the boundary is not being crossed."
+    )
+    assert label_window2 != label_window3, (
+        f"Expected label_window2 (trending) != label_window3 (alternating, AC≈-1), "
+        f"but both returned '{label_window2}'. "
+        "The classifier must reflect the features of each independent window."
+    )
+    assert label_window1 == label_window3, (
+        f"Expected label_window1 == label_window3 (both alternating, AC≈-1), "
+        f"got '{label_window1}' vs '{label_window3}'. "
+        "Same construction, same window should yield same label (determinism)."
     )
 
 
@@ -928,4 +961,50 @@ def test_classify_regime_return_type_is_string_or_none_not_a_tuple_or_dict() -> 
         f"classify_regime returned type {type(result).__name__!r} (value: {result!r}). "
         "The return type must be str or None — no tuples, dicts, dataclasses, or "
         "complex objects that could embed hidden response parameters."
+    )
+
+
+# --- Advisory A1: fixed-threshold claim documented in classify_regime docstring ---
+
+def test_classify_regime_docstring_states_fixed_threshold_not_fitted() -> None:
+    """
+    Advisory A1 resolution: classify_regime uses HIGH_VOL_DAILY_THRESHOLD
+    (a fixed constant) — NOT a threshold fitted from external_data history.
+    fit_regime_classifier() is a separate, standalone operator diagnostic.
+
+    This is a deliberate design decision: the fixed-constant path adds ~0 DoF
+    (00-ADAPTIVE-RECOMMENDATION.md §1A, 'theory-fixed label (~0 added DoF)').
+    The claim-vs-code honesty seam identified by the methodologist must be
+    closed by having the docstring explicitly state which path is used.
+
+    Required language in classify_regime docstring (case-insensitive):
+      - 'high_vol_daily_threshold' or 'fixed' + 'threshold' — names the constant
+      - The module docstring must also state 'fixed threshold' (not derived/fitted)
+
+    Source: regime-methodologist advisory A1, 2026-05-31.
+    """
+    fn = getattr(regime_classifier, "classify_regime", None)
+    assert fn is not None, "classify_regime not found"
+
+    fn_doc = (inspect.getdoc(fn) or "").lower()
+
+    # The function docstring must name the fixed threshold constant.
+    names_the_constant = (
+        "high_vol_daily_threshold" in fn_doc
+        or ("fixed" in fn_doc and "threshold" in fn_doc)
+    )
+    assert names_the_constant, (
+        "classify_regime docstring does not state that it uses HIGH_VOL_DAILY_THRESHOLD "
+        "(a fixed constant). The docstring must explicitly name the threshold being used "
+        "to close the claim-vs-code honesty seam (methodologist advisory A1). "
+        "Add language like: 'Realized vol above HIGH_VOL_DAILY_THRESHOLD (fixed constant)'."
+    )
+
+    # The module docstring must also document the fixed-threshold design note.
+    module_doc = (inspect.getdoc(regime_classifier) or "").lower()
+    assert "fixed threshold" in module_doc or "fixed constant" in module_doc, (
+        "regime_classifier module docstring does not contain 'fixed threshold' or "
+        "'fixed constant'. The module-level FIXED THRESHOLD design note must be present "
+        "to close the claim-vs-code seam: classify_regime uses a theory-anchored "
+        "constant, not a threshold fitted from history (methodologist advisory A1)."
     )
