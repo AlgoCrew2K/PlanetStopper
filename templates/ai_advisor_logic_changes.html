@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Advisor — Asset Swaps — Planet Stopper Dashboard v3</title>
+    <title>AI Advisor — Logic Changes — Planet Stopper Dashboard v3</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
     <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
@@ -28,7 +28,7 @@
         }
 
         /* ------------------------------------------------------------------ */
-        /* Page header (shared style with correlations tab)                    */
+        /* Page header (shared style with other advisor tabs)                  */
         /* ------------------------------------------------------------------ */
 
         .adv-header {
@@ -77,7 +77,7 @@
         .back-link:hover { color: var(--studio-ink); }
 
         /* ------------------------------------------------------------------ */
-        /* Capability tab nav (shared with correlations tab)                   */
+        /* Capability tab nav (shared with other advisor tabs)                 */
         /* ------------------------------------------------------------------ */
 
         .cap-nav {
@@ -123,34 +123,35 @@
         .cap-tab-badge--yellow { background: var(--studio-warn); }
 
         /* ------------------------------------------------------------------ */
-        /* Advise-only caveat banner — always visible (AC-X1 / AC-2.3)        */
+        /* Persistent FDR / high-risk warning banner (AC-3.2 + AC-3.3)        */
+        /* Non-dismissible: logic changes carry the highest overfitting risk.  */
         /* ------------------------------------------------------------------ */
 
-        .advise-only-banner {
+        .fdr-warning-banner {
             background: var(--studio-warn-tint);
             border: 1px solid var(--studio-warn-border);
             border-radius: 0.625rem;
-            padding: 0.75rem 1rem;
+            padding: 0.875rem 1rem;
             margin-bottom: 1.25rem;
             display: flex;
             align-items: flex-start;
             gap: 0.625rem;
         }
 
-        .advise-only-banner-icon {
+        .fdr-warning-banner-icon {
             flex-shrink: 0;
             color: var(--studio-warn);
             font-size: 1rem;
-            line-height: 1.4;
-        }
-
-        .advise-only-banner-text {
-            font-size: 0.8125rem;
-            color: var(--studio-ink-dim);
             line-height: 1.5;
         }
 
-        .advise-only-banner-text strong {
+        .fdr-warning-banner-text {
+            font-size: 0.8125rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.6;
+        }
+
+        .fdr-warning-banner-text strong {
             color: var(--studio-ink);
             font-weight: 700;
         }
@@ -180,10 +181,10 @@
         }
 
         /* ------------------------------------------------------------------ */
-        /* Operator-initiated "Try a swap" form                                */
+        /* Operator-initiated "Try a logic tweak" form (AC-3.1)                */
         /* ------------------------------------------------------------------ */
 
-        .try-swap-panel {
+        .try-tweak-panel {
             background: var(--studio-surface);
             border: 1px solid var(--studio-border);
             border-radius: 1rem;
@@ -191,7 +192,7 @@
             margin-bottom: 1.25rem;
         }
 
-        .try-swap-header {
+        .try-tweak-header {
             font-size: 0.6875rem;
             font-weight: 700;
             text-transform: uppercase;
@@ -200,7 +201,13 @@
             margin-bottom: 1rem;
         }
 
-        .try-swap-form {
+        .try-tweak-form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.875rem;
+        }
+
+        .form-row {
             display: flex;
             align-items: flex-end;
             gap: 0.75rem;
@@ -221,18 +228,6 @@
             font-weight: 700;
         }
 
-        .form-input {
-            background: var(--studio-bg);
-            border: 1px solid var(--studio-border);
-            border-radius: 0.5rem;
-            padding: 0.4rem 0.75rem;
-            font-size: 0.875rem;
-            color: var(--studio-ink);
-            min-width: 12rem;
-        }
-
-        .form-input:focus { outline: none; border-color: var(--studio-accent); }
-
         .form-select {
             background: var(--studio-bg);
             border: 1px solid var(--studio-border);
@@ -245,7 +240,25 @@
 
         .form-select:focus { outline: none; border-color: var(--studio-accent); }
 
-        .try-swap-btn {
+        .form-textarea {
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem;
+            color: var(--studio-ink);
+            min-width: 28rem;
+            min-height: 4rem;
+            resize: vertical;
+            font-family: var(--studio-sans, sans-serif);
+            line-height: 1.5;
+        }
+
+        .form-textarea:focus { outline: none; border-color: var(--studio-accent); }
+
+        .form-textarea::placeholder { color: var(--studio-ink-muted); }
+
+        .try-tweak-btn {
             padding: 0.5rem 1.25rem;
             background: var(--studio-accent);
             color: var(--studio-white);
@@ -256,12 +269,13 @@
             cursor: pointer;
             flex-shrink: 0;
             white-space: nowrap;
+            align-self: flex-end;
         }
 
-        .try-swap-btn:hover:not(:disabled) { opacity: 0.9; }
-        .try-swap-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .try-tweak-btn:hover:not(:disabled) { opacity: 0.9; }
+        .try-tweak-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        .try-swap-error {
+        .try-tweak-error {
             font-size: 0.8125rem;
             color: var(--studio-neg);
             margin-top: 0.5rem;
@@ -284,7 +298,7 @@
         .section-header:first-of-type { margin-top: 0; }
 
         /* ------------------------------------------------------------------ */
-        /* No-survivors state (AC-2.5) — valid, not an error                  */
+        /* No-survivors state (AC-3.1) — valid, not an error                  */
         /* ------------------------------------------------------------------ */
 
         .no-survivors-state {
@@ -322,69 +336,81 @@
         }
 
         /* ------------------------------------------------------------------ */
-        /* Swap proposal card                                                  */
+        /* Logic-change proposal card                                          */
         /* ------------------------------------------------------------------ */
 
-        .swap-cards {
+        .proposal-cards {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(28rem, 1fr));
             gap: 0.875rem;
         }
 
-        .swap-card {
+        .proposal-card {
             background: var(--studio-surface);
             border: 1px solid var(--studio-border);
             border-radius: 1rem;
             padding: 1.25rem 1.5rem;
         }
 
-        .swap-card--survivor {
+        .proposal-card--survivor {
             border-color: var(--studio-pos);
         }
 
-        .swap-card--rejected {
+        .proposal-card--rejected {
             opacity: 0.75;
         }
 
-        .swap-card--error {
+        .proposal-card--error {
             border-color: var(--studio-neg);
             opacity: 0.8;
         }
 
-        /* Card objective line — leads the card (AC-2.3) */
-        .swap-card-objective {
+        /* Card objective line — leads the card (AC-3.3) */
+        .proposal-card-objective {
             font-size: 0.75rem;
             font-weight: 600;
             color: var(--studio-accent);
             text-transform: uppercase;
             letter-spacing: 0.08em;
-            margin-bottom: 0.625rem;
+            margin-bottom: 0.5rem;
         }
 
-        /* From → To heading */
-        .swap-card-heading {
+        /* Tweak heading */
+        .proposal-card-heading {
             display: flex;
-            align-items: center;
-            gap: 0.625rem;
+            align-items: baseline;
+            gap: 0.5rem;
             margin-bottom: 0.875rem;
+            flex-wrap: wrap;
         }
 
-        .swap-ticker {
+        .proposal-param-name {
             font-size: 1.125rem;
             font-weight: 700;
             color: var(--studio-ink);
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         }
 
-        .swap-arrow {
+        .proposal-change-arrow {
             color: var(--studio-ink-muted);
-            font-size: 1.25rem;
-            line-height: 1;
+            font-size: 1rem;
         }
 
-        .swap-ticker--new { color: var(--studio-pos); }
+        .proposal-value--old {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--studio-ink-dim);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
 
-        /* Baseline vs variant stats grid (AC-2.3) */
+        .proposal-value--new {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--studio-pos);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+
+        /* Baseline vs variant stats grid (AC-3.3) */
         .stats-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -423,7 +449,7 @@
         .stat-value--pos { color: var(--studio-pos); }
         .stat-value--neg { color: var(--studio-neg); }
 
-        /* Gate verdict row (AC-2.3) */
+        /* Gate verdict row (AC-3.3) */
         .gate-verdict-row {
             display: flex;
             align-items: center;
@@ -432,6 +458,7 @@
             padding: 0.5rem 0.75rem;
             border-radius: 0.5rem;
             background: var(--studio-bg);
+            flex-wrap: wrap;
         }
 
         .gate-pill {
@@ -466,16 +493,23 @@
         .gate-reason {
             font-size: 0.75rem;
             color: var(--studio-ink-dim);
+            flex: 1;
         }
 
-        .validation-days {
+        /* FDR metadata: N tested, adjusted threshold, this p — operator audit trail (AC-3.2) */
+        .fdr-metadata {
             font-size: 0.6875rem;
-            color: var(--studio-ink-dim);
-            margin-left: auto;
+            color: var(--studio-ink-muted);
             font-variant-numeric: tabular-nums;
+            margin-top: 0.25rem;
+            flex-basis: 100%;
         }
 
-        /* Honest caveat block (AC-2.3 / AC-3.3 — mandatory for survivors) */
+        .fdr-metadata strong {
+            color: var(--studio-ink-dim);
+        }
+
+        /* Honest overfitting caveat block — mandatory for survivors (AC-3.3) */
         .caveats-block {
             margin-bottom: 0.75rem;
         }
@@ -489,7 +523,7 @@
             margin-bottom: 0.375rem;
         }
 
-        /* Apply guidance — plain text, no button (AC-X1) */
+        /* Apply guidance — plain text, no button (AC-X1 / AC-3.4) */
         .apply-guidance {
             font-size: 0.6875rem;
             color: var(--studio-ink-dim);
@@ -520,7 +554,7 @@
         }
 
         /* ------------------------------------------------------------------ */
-        /* Rejected candidates section — de-emphasised (AC-2.3)               */
+        /* Rejected candidates section — de-emphasised (AC-3.1)               */
         /* ------------------------------------------------------------------ */
 
         .rejected-section {
@@ -535,7 +569,7 @@
         /* Results area (injected by JS)                                        */
         /* ------------------------------------------------------------------ */
 
-        #swap-results-area {
+        #logic-results-area {
             min-height: 4rem;
         }
     </style>
@@ -568,13 +602,13 @@
                 <span class="cap-tab-badge" title="Low risk — pure measurement"></span>
             </a>
             <a href="{{ url_for('ai_advisor_asset_swaps') }}"
-               aria-current="page"
                class="cap-tab"
                data-testid="tab-asset-swaps">
                 Asset Swaps
                 <span class="cap-tab-badge" title="Low risk when gated"></span>
             </a>
             <a href="{{ url_for('ai_advisor_logic_changes') }}"
+               aria-current="page"
                class="cap-tab"
                data-testid="tab-logic-changes">
                 Logic Changes
@@ -587,14 +621,23 @@
             </a>
         </nav>
 
-        <!-- Advise-only caveat banner — always visible (AC-X1) -->
-        <div class="advise-only-banner" data-testid="advise-only-banner" role="note">
-            <span class="advise-only-banner-icon" aria-hidden="true">&#x26A0;</span>
-            <p class="advise-only-banner-text">
-                <strong>Advise only — no trades are placed from this screen.</strong>
-                Swap proposals that survive the gate are surfaced as recommendations only.
-                To apply a swap, open the symphony in Composer and make the change manually.
-                The gate screens for statistical significance but does not eliminate selection bias.
+        <!--
+            Persistent FDR / high-risk warning banner (AC-3.2 + AC-3.3).
+            Non-dismissible: logic-change proposals carry the highest overfitting
+            risk tier. This banner MUST be visible whenever the Logic Changes tab
+            is active — it is not a one-time notice.
+        -->
+        <div class="fdr-warning-banner"
+             data-testid="fdr-warning-banner"
+             role="note"
+             aria-live="polite">
+            <span class="fdr-warning-banner-icon" aria-hidden="true">&#x26A0;</span>
+            <p class="fdr-warning-banner-text">
+                <strong>Logic-change proposals carry the highest overfitting risk.</strong>
+                A multiple-testing correction (FDR/Yekutieli) is applied across ALL
+                backtested candidates — raising the number of candidates raises the bar
+                each must clear. Survivors are <strong>sound-but-unprovable</strong>:
+                a clean gate pass is not proof of a live edge.
             </p>
         </div>
 
@@ -605,66 +648,78 @@
             <div class="no-api-key-title">Advisor Unavailable</div>
             <div class="no-api-key-body">
                 Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
-                <code>COMPOSER_SECRET</code> environment variables to enable swap proposals.
+                <code>COMPOSER_SECRET</code> environment variables to enable logic-change proposals.
             </div>
         </div>
 
         {% else %}
 
-        <!-- Operator-initiated "Try a swap" form (AC-2.1) -->
-        <div class="try-swap-panel" data-testid="try-swap-panel">
-            <div class="try-swap-header">Try a Swap</div>
-            <div class="try-swap-form" data-testid="try-swap-form">
-                <div class="form-group">
-                    <label class="form-label" for="swap-symphony-select">Symphony</label>
-                    <select id="swap-symphony-select" class="form-select"
-                            data-testid="swap-symphony-select"
-                            aria-label="Symphony">
-                        <option value="">Select symphony…</option>
-                        {% for sym in symphonies %}
-                        <option value="{{ sym | e }}">{{ sym | e }}</option>
-                        {% endfor %}
-                    </select>
+        <!-- Operator-initiated logic tweak form (AC-3.1) -->
+        <div class="try-tweak-panel" data-testid="try-tweak-panel">
+            <div class="try-tweak-header">Try a Logic Tweak</div>
+            <div class="try-tweak-form" data-testid="try-tweak-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label" for="tweak-symphony-select">Symphony</label>
+                        <select id="tweak-symphony-select"
+                                class="form-select"
+                                data-testid="tweak-symphony-select"
+                                aria-label="Symphony">
+                            <option value="">Select symphony&hellip;</option>
+                            {% for sym in symphonies %}
+                            <option value="{{ sym | e }}">{{ sym | e }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="tweak-objective-select">Objective</label>
+                        <select id="tweak-objective-select"
+                                class="form-select"
+                                data-testid="tweak-objective-select"
+                                aria-label="Objective">
+                            <option value="reduce_drawdown">Reduce drawdown</option>
+                            <option value="lift_risk_adjusted">Lift risk-adjusted return</option>
+                            <option value="reduce_turnover">Reduce turnover</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label" for="swap-from-ticker">Replace ticker</label>
-                    <input id="swap-from-ticker" class="form-input"
-                           type="text"
-                           placeholder="e.g. QQQ"
-                           maxlength="10"
-                           autocomplete="off"
-                           spellcheck="false"
-                           data-testid="swap-from-ticker"
-                           aria-label="Ticker to replace">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label" for="tweak-description">
+                            Describe the logic change
+                        </label>
+                        <textarea id="tweak-description"
+                                  class="form-textarea"
+                                  data-testid="tweak-description"
+                                  placeholder="e.g. change the momentum lookback from 20 to 10 days in symphony X"
+                                  aria-label="Logic change description"
+                                  maxlength="500"
+                                  spellcheck="true"></textarea>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label" for="swap-to-ticker">With ticker</label>
-                    <input id="swap-to-ticker" class="form-input"
-                           type="text"
-                           placeholder="e.g. IALT"
-                           maxlength="10"
-                           autocomplete="off"
-                           spellcheck="false"
-                           data-testid="swap-to-ticker"
-                           aria-label="Replacement ticker">
+                <div class="form-row">
+                    <button id="tweak-evaluate-btn"
+                            class="try-tweak-btn"
+                            data-testid="tweak-evaluate-btn"
+                            disabled>
+                        Evaluate logic change
+                    </button>
                 </div>
-                <button id="swap-evaluate-btn" class="try-swap-btn"
-                        data-testid="swap-evaluate-btn"
-                        disabled>
-                    Evaluate swap
-                </button>
             </div>
-            <div id="try-swap-error" class="try-swap-error" data-testid="try-swap-error"
-                 style="display:none;" role="alert"></div>
+            <div id="try-tweak-error"
+                 class="try-tweak-error"
+                 data-testid="try-tweak-error"
+                 style="display:none;"
+                 role="alert"></div>
         </div>
 
         <!-- Results area — populated by JS (loading / results / no-survivors / error) -->
-        <div id="swap-results-area" data-testid="swap-results-area"></div>
+        <div id="logic-results-area" data-testid="logic-results-area"></div>
 
         {% endif %}{# no_api_key #}
 
     </div>{# .page-wrap #}
 
-    <script src="{{ url_for('static', filename='ai_advisor_asset_swaps.js') }}"></script>
+    <script src="{{ url_for('static', filename='ai_advisor_logic_changes.js') }}"></script>
 </body>
 </html>
