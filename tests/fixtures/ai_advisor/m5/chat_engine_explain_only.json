@@ -1,0 +1,115 @@
+{
+  "_fixture_provenance": "schema-derived",
+  "_layer": "chat_engine_m5",
+  "_note": "No producer-computed values. Every field is a structural shape, named enum constant, or boundary condition. AC bindings are from feature-plans/ai-advisor.md AC-4.1..AC-4.3 + AC-X*. The explain-only boundary is the load-bearing M5 contract: chat has no write path, no path to accept/apply/mutation routes, issues no trade directives, proposes/applies no config/logic/asset changes.",
+  "_binding_spec": "feature-plans/ai-advisor.md §Capability 4 (Chat / Explain-only)",
+
+  "chat_explain_only_boundary": {
+    "_note": "AC-4.1 MANDATORY — the load-bearing M5 check. Chat is read-only; any implementation that could mutate/apply/trade must FAIL these tests.",
+    "chat_must_not": [
+      "call a Composer write endpoint (POST/PUT /symphonies, /copy, /deploy, go-to-cash)",
+      "place a trade or issue a trade directive",
+      "propose or apply a config change (write to symphony_strategies or bot_state)",
+      "propose or apply a logic change",
+      "propose or apply an asset swap",
+      "call the /ai-advisor/accept route or any accept/apply mutation route",
+      "call the /ai-advisor/reject route in a state-changing way beyond dismissal",
+      "write to advisor_observations with is_advisory_only=0",
+      "return a response that could be mistaken for a trade instruction"
+    ],
+    "chat_must": [
+      "return only explanatory text about the anchored artifact",
+      "ground its answer in the surfaced artifact data (observations, gate verdicts, diagnostic figures)",
+      "be anchored to a specific artifact (recommendation, diagnostic figure, or gate verdict)",
+      "degrade gracefully when no LLM key is configured (clear unavailable message, no crash)",
+      "never fabricate a trade instruction even when the LLM is unavailable"
+    ],
+    "allowed_write": "none — chat produces only LLM-generated explanatory text; zero DB writes, zero Composer calls",
+    "forbidden_write_path": "any route that touches symphony_strategies, bot_state, or Composer write endpoints"
+  },
+
+  "artifact_anchor_contract": {
+    "_note": "AC-4.2 + Gate-1 Resolution #3. Chat is contextual: anchored to ONE specific surfaced artifact, not a free-floating global chatbot.",
+    "required_input_fields": ["artifact_type", "artifact_id", "artifact_context"],
+    "artifact_type_enum_values": [
+      "asset_swap_proposal",
+      "logic_change_proposal",
+      "correlation_diagnostic",
+      "gate_verdict",
+      "advisor_observation"
+    ],
+    "chat_must_reference_artifact": true,
+    "chat_must_not_generate_new_recommendations": true,
+    "new_recommendation_means": "any suggestion of a trade, config change, asset swap, or logic tweak not already present in the anchored artifact"
+  },
+
+  "llm_mock_contract": {
+    "_note": "The LLM call MUST be mockable; no live Anthropic calls in the default test suite.",
+    "mock_seam": "advisors.chat_engine._build_chat_client or equivalent factory function",
+    "mock_return_shape": {
+      "text": "a non-empty string containing explanatory text about the artifact",
+      "model": "string — the model identifier used",
+      "stop_reason": "end_turn"
+    },
+    "live_test_marker": "@pytest.mark.live — excluded from default suite"
+  },
+
+  "chat_unavailable_contract": {
+    "_note": "AC-4.3. No LLM key / LLM error -> clear 'chat unavailable' message, never a crash, never a fabricated trade instruction.",
+    "no_api_key_behavior": {
+      "must_return_error_message": true,
+      "error_message_must_contain": "chat unavailable",
+      "must_not_raise_unhandled": true,
+      "must_not_fabricate_trade_instruction": true,
+      "must_not_write_to_db": true
+    },
+    "llm_api_error_behavior": {
+      "must_return_error_message": true,
+      "error_message_format": "non-empty string the UI can display",
+      "must_not_raise_unhandled": true,
+      "must_not_fabricate_trade_instruction": true
+    }
+  },
+
+  "route_guard_contract": {
+    "_note": "AC-4.1 route-guard: chat routes are read-only (or a constrained POST that only returns explanatory text, never mutates). Import-graph + route check.",
+    "chat_route_allowed_methods": ["GET", "POST"],
+    "chat_route_post_constraint": "returns only explanatory text JSON — no DB writes, no Composer calls, no mutation",
+    "chat_route_must_not_link_to": [
+      "/ai-advisor/accept",
+      "/ai-advisor/reject",
+      "/ai-advisor/asset-swaps/evaluate",
+      "/ai-advisor/logic-changes/evaluate"
+    ],
+    "chat_module_must_not_import": [
+      "alpha_bot_execution",
+      "autotuner"
+    ]
+  },
+
+  "live_path_guard": {
+    "alpha_bot_execution_imports_chat": false,
+    "_note": "AC-X2: chat_engine must not appear on the 1-minute live execution path."
+  },
+
+  "response_shape_contract": {
+    "_note": "Shape assertions only — no hardcoded LLM-produced text values.",
+    "success_response_shape": {
+      "explanation": "non-empty string",
+      "artifact_type": "string matching artifact_type_enum_values",
+      "artifact_id": "string",
+      "model_used": "string"
+    },
+    "error_response_shape": {
+      "error": "non-empty string",
+      "explanation": null
+    }
+  },
+
+  "advisory_only_persistence_contract": {
+    "_note": "Chat does NOT write advisor_observations. It is purely a Q&A surface. No DB writes of any kind.",
+    "must_not_call_insert_advisor_observation": true,
+    "must_not_write_symphony_strategies": true,
+    "must_not_write_bot_state": true
+  }
+}

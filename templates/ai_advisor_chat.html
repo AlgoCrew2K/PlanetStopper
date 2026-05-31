@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Advisor — Chat — Planet Stopper Dashboard v3</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: var(--studio-scroll-thumb, var(--studio-ink-faint));
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--studio-scroll-thumb-hover, var(--studio-ink-dim));
+        }
+
+        body {
+            background: var(--studio-bg);
+            color: var(--studio-ink);
+            min-height: 100vh;
+            font-family: var(--studio-sans, sans-serif);
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Page header (shared style with other advisor tabs)                   */
+        /* ------------------------------------------------------------------ */
+
+        .adv-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            background: var(--studio-surface);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            border: 1px solid var(--studio-border);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .adv-header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 3px;
+            background: linear-gradient(to right, var(--studio-accent), var(--studio-ink-dim));
+        }
+
+        .adv-title {
+            font-size: 2.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--studio-ink);
+        }
+
+        .adv-subtitle {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            margin-top: 0.375rem;
+        }
+
+        .back-link {
+            font-size: 0.625rem;
+            color: var(--studio-ink-dim);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            text-decoration: none;
+        }
+
+        .back-link:hover { color: var(--studio-ink); }
+
+        /* ------------------------------------------------------------------ */
+        /* Capability tab nav (shared with other advisor tabs)                  */
+        /* ------------------------------------------------------------------ */
+
+        .cap-nav {
+            display: flex;
+            gap: 0.25rem;
+            margin-bottom: 1.25rem;
+            border-bottom: 1px solid var(--studio-border);
+            padding-bottom: 0;
+        }
+
+        .cap-tab {
+            padding: 0.5rem 1rem;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: var(--studio-ink-dim);
+            text-decoration: none;
+            border-radius: 0.375rem 0.375rem 0 0;
+            border: 1px solid transparent;
+            border-bottom: none;
+            position: relative;
+            bottom: -1px;
+        }
+
+        .cap-tab:hover { color: var(--studio-ink); }
+
+        .cap-tab[aria-current="page"] {
+            color: var(--studio-ink);
+            background: var(--studio-surface);
+            border-color: var(--studio-border);
+            border-bottom-color: var(--studio-surface);
+        }
+
+        .cap-tab-badge {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-left: 0.25rem;
+            vertical-align: middle;
+            background: var(--studio-pos);
+        }
+
+        .cap-tab-badge--yellow { background: var(--studio-warn); }
+
+        /* ------------------------------------------------------------------ */
+        /* Chat default state — no artifact selected                            */
+        /* ------------------------------------------------------------------ */
+
+        .chat-default-state {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 3rem 2rem;
+            text-align: center;
+            max-width: 42rem;
+            margin: 0 auto;
+        }
+
+        .chat-default-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            color: var(--studio-ink-dim);
+            line-height: 1;
+        }
+
+        .chat-default-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--studio-ink);
+            margin-bottom: 0.5rem;
+        }
+
+        .chat-default-body {
+            font-size: 0.875rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.6;
+            margin-bottom: 1.25rem;
+        }
+
+        .chat-example-prompts {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+            text-align: left;
+            border-left: 2px solid var(--studio-border);
+            padding-left: 1rem;
+        }
+
+        .chat-example-prompts li {
+            font-size: 0.8125rem;
+            color: var(--studio-ink-dim);
+            font-style: italic;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Chat panel — fixed right side panel (AC-4.1)                        */
+        /* Panel must NEVER contain apply/accept/deploy/trade buttons.          */
+        /* ------------------------------------------------------------------ */
+
+        .chat-panel {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 420px;
+            height: 100vh;
+            background: var(--studio-surface);
+            border-left: 1px solid var(--studio-rule-hi);
+            z-index: 200;
+            display: flex;
+            flex-direction: column;
+            transform: translateX(100%);
+            transition: transform 0.25s ease;
+            /* Full-width overlay on narrow viewports */
+        }
+
+        @media (max-width: 768px) {
+            .chat-panel {
+                width: 100%;
+            }
+        }
+
+        .chat-panel.chat-panel--open {
+            transform: translateX(0);
+        }
+
+        /* Panel header */
+        .chat-panel-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 1rem 1.25rem 0.875rem;
+            border-bottom: 1px solid var(--studio-border);
+            flex-shrink: 0;
+        }
+
+        .chat-panel-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--studio-ink);
+            line-height: 1.3;
+        }
+
+        .chat-panel-breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+            margin-top: 0.25rem;
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+        }
+
+        .chat-panel-breadcrumb-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--studio-plum);
+            flex-shrink: 0;
+        }
+
+        .chat-panel-close {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--studio-ink-dim);
+            font-size: 1.25rem;
+            line-height: 1;
+            padding: 0.125rem 0.25rem;
+            border-radius: 0.25rem;
+            flex-shrink: 0;
+        }
+
+        .chat-panel-close:hover { color: var(--studio-ink); background: var(--studio-chip-bg); }
+
+        /* Artifact summary strip — always visible (AC-4.2 anchoring) */
+        .artifact-summary-strip {
+            background: var(--studio-chip-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.75rem;
+            padding: 0.625rem 1rem;
+            margin: 0.875rem 1.25rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.875rem;
+            flex-shrink: 0;
+        }
+
+        .artifact-summary-objective {
+            font-size: 0.75rem;
+            color: var(--studio-ink);
+            font-weight: 600;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .artifact-gate-pill {
+            display: inline-block;
+            padding: 0.1rem 0.45rem;
+            border-radius: 999px;
+            font-size: 0.5rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid;
+            flex-shrink: 0;
+        }
+
+        .artifact-key-stat {
+            font-size: 0.6875rem;
+            font-variant-numeric: tabular-nums;
+            color: var(--studio-ink-dim);
+            flex-shrink: 0;
+        }
+
+        /* Explain-only notice bar (AC-4.1 — always visible) */
+        .explain-only-notice {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            margin: 0.625rem 1.25rem 0;
+            padding: 0.5rem 0.75rem;
+            background: rgba(26, 110, 136, 0.07);
+            border: 1px solid rgba(26, 110, 136, 0.28);
+            border-radius: 0.5rem;
+            flex-shrink: 0;
+        }
+
+        .explain-only-notice-icon {
+            color: var(--studio-cyan);
+            font-size: 0.875rem;
+            flex-shrink: 0;
+            line-height: 1.5;
+        }
+
+        .explain-only-notice-text {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.5;
+        }
+
+        /* Message thread */
+        .chat-thread {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        /* AI message bubble */
+        .chat-bubble--ai {
+            align-self: flex-start;
+            max-width: 88%;
+        }
+
+        .chat-bubble--ai .chat-bubble-label {
+            font-size: 0.625rem;
+            color: var(--studio-ink-dim);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.25rem;
+        }
+
+        .chat-bubble--ai .chat-bubble-body {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.75rem;
+            padding: 0.75rem 1rem;
+            font-size: 0.875rem;
+            color: var(--studio-ink);
+            line-height: 1.55;
+        }
+
+        /* Operator message bubble */
+        .chat-bubble--operator {
+            align-self: flex-end;
+            max-width: 88%;
+        }
+
+        .chat-bubble--operator .chat-bubble-body {
+            background: var(--studio-accent-tint);
+            border: 1px solid var(--studio-accent-border);
+            border-radius: 0.75rem;
+            padding: 0.75rem 1rem;
+            font-size: 0.875rem;
+            color: var(--studio-ink);
+            line-height: 1.55;
+        }
+
+        /* In-flight skeleton bubble */
+        .chat-bubble--thinking .chat-bubble-body {
+            background: var(--studio-chip-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.75rem;
+            padding: 0.75rem 1rem;
+            color: var(--studio-ink-dim);
+            font-size: 0.875rem;
+            font-style: italic;
+        }
+
+        /* Input row — only send and close allowed (AC-4.1) */
+        .chat-input-row {
+            display: flex;
+            gap: 0.625rem;
+            padding: 0.875rem 1.25rem;
+            border-top: 1px solid var(--studio-border);
+            flex-shrink: 0;
+        }
+
+        .chat-input {
+            flex: 1;
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem;
+            color: var(--studio-ink);
+            font-family: var(--studio-sans, sans-serif);
+            resize: none;
+            min-height: 2.25rem;
+            max-height: 6rem;
+        }
+
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--studio-accent);
+        }
+
+        .chat-input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .chat-send-btn {
+            padding: 0.5rem 1rem;
+            background: var(--studio-accent);
+            color: var(--studio-white);
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 700;
+            cursor: pointer;
+            flex-shrink: 0;
+            white-space: nowrap;
+            /* send button spins while in-flight */
+        }
+
+        .chat-send-btn:hover:not(:disabled) { opacity: 0.9; }
+        .chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* ------------------------------------------------------------------ */
+        /* Chat-unavailable state (AC-4.3)                                      */
+        /* ------------------------------------------------------------------ */
+
+        .chat-unavailable {
+            background: var(--studio-warn-tint);
+            border: 1px solid var(--studio-warn-border);
+            border-radius: 0.75rem;
+            padding: 1.25rem 1.5rem;
+            margin: 0.875rem 1.25rem;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            gap: 0.5rem;
+        }
+
+        .chat-unavailable-title {
+            font-size: 0.875rem;
+            font-weight: 700;
+            color: var(--studio-warn);
+        }
+
+        .chat-unavailable-body {
+            font-size: 0.8125rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.5;
+        }
+    </style>
+</head>
+
+<body>
+    <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
+    {% include '_chrome.html' %}
+
+    <div class="page-wrap" data-testid="advisor-page">
+
+        <!-- Page header -->
+        <header data-testid="advisor-header" class="adv-header">
+            <div>
+                <h1 class="adv-title">AI Advisor</h1>
+                <p class="adv-subtitle">
+                    Read-only diagnostic assistant — every recommendation is applied manually by you in Composer.
+                    No trades are ever placed from this screen.
+                </p>
+            </div>
+            <a href="/" class="back-link">&larr; Dashboard</a>
+        </header>
+
+        <!-- Capability tab nav -->
+        <nav class="cap-nav" aria-label="Advisor capabilities">
+            <a href="{{ url_for('ai_advisor_correlations') }}"
+               class="cap-tab"
+               data-testid="tab-correlations">
+                Correlations
+                <span class="cap-tab-badge" title="Low risk — pure measurement"></span>
+            </a>
+            <a href="{{ url_for('ai_advisor_asset_swaps') }}"
+               class="cap-tab"
+               data-testid="tab-asset-swaps">
+                Asset Swaps
+                <span class="cap-tab-badge" title="Low risk when gated"></span>
+            </a>
+            <a href="{{ url_for('ai_advisor_logic_changes') }}"
+               class="cap-tab"
+               data-testid="tab-logic-changes">
+                Logic Changes
+                <span class="cap-tab-badge cap-tab-badge--yellow" title="Higher overfitting risk"></span>
+            </a>
+            <a href="{{ url_for('ai_advisor_chat') }}"
+               aria-current="page"
+               class="cap-tab"
+               data-testid="tab-chat">
+                Chat
+                <span class="cap-tab-badge cap-tab-badge--yellow" title="Explain-only"></span>
+            </a>
+        </nav>
+
+        <!-- Default state: no artifact selected (shown until a card triggers the panel) -->
+        <div data-testid="chat-default-state" class="chat-default-state">
+            <div class="chat-default-icon" aria-hidden="true">&#x1F4AC;</div>
+            <div class="chat-default-title">
+                Select a recommendation or diagnostic figure to open a contextual explanation.
+            </div>
+            <p class="chat-default-body">
+                Chat explains what the advisor found and why. It does not issue trade instructions
+                or generate new recommendations. Open a proposal card on the
+                <a href="{{ url_for('ai_advisor_asset_swaps') }}"
+                   style="color:var(--studio-accent);">Asset Swaps</a> or
+                <a href="{{ url_for('ai_advisor_logic_changes') }}"
+                   style="color:var(--studio-accent);">Logic Changes</a> tab and click
+                &ldquo;Discuss this&rdquo; to start a scoped conversation.
+            </p>
+            <ul class="chat-example-prompts" aria-label="Example questions">
+                <li>"Why did the gate reject this swap?"</li>
+                <li>"What does this correlation mean for my portfolio?"</li>
+                <li>"Why is this logic change considered high overfitting risk?"</li>
+            </ul>
+        </div>
+
+    </div>{# .page-wrap #}
+
+    <!-- -------------------------------------------------------------------- -->
+    <!-- Chat side panel — slides in from the right when an artifact is        -->
+    <!-- selected via openChatPanel(). Fixed, not modal — main page stays      -->
+    <!-- scrollable behind it.                                                  -->
+    <!--                                                                        -->
+    <!-- AC-4.1 HARD constraint: NO apply/accept/deploy/trade buttons here.    -->
+    <!-- Only send-message and close-panel are permitted.                       -->
+    <!-- -------------------------------------------------------------------- -->
+    <aside data-testid="chat-panel" class="chat-panel" aria-label="Contextual explanation panel"
+           role="complementary">
+
+        <!-- Panel header -->
+        <div data-testid="chat-panel-header" class="chat-panel-header">
+            <div>
+                <div class="chat-panel-title" id="chat-panel-title">Explain</div>
+                <div class="chat-panel-breadcrumb" id="chat-panel-breadcrumb">
+                    <span class="chat-panel-breadcrumb-dot" aria-hidden="true"></span>
+                    <span id="chat-panel-context-label">AI Advisor</span>
+                </div>
+            </div>
+            <button class="chat-panel-close"
+                    data-testid="chat-panel-close"
+                    onclick="closeChatPanel()"
+                    aria-label="Close explanation panel">
+                &times;
+            </button>
+        </div>
+
+        <!-- Artifact summary strip — always visible to anchor the conversation (AC-4.2) -->
+        <div data-testid="artifact-summary-strip" class="artifact-summary-strip" id="artifact-summary-strip">
+            <span class="artifact-summary-objective" id="artifact-objective">—</span>
+            <span class="artifact-gate-pill" id="artifact-gate-pill"
+                  style="color:var(--studio-ink-dim);border-color:var(--studio-border);">—</span>
+            <span class="artifact-key-stat" id="artifact-key-stat"></span>
+        </div>
+
+        <!-- Explain-only notice bar — always visible (AC-4.1) -->
+        <div data-testid="explain-only-notice" class="explain-only-notice" role="note">
+            <span class="explain-only-notice-icon" aria-hidden="true">&#x2139;</span>
+            <span class="explain-only-notice-text">
+                This chat explains advisor findings. It cannot apply changes, place trades,
+                or generate new recommendations.
+            </span>
+        </div>
+
+        <!-- Chat unavailable: ANTHROPIC_API_KEY not set (AC-4.3) -->
+        {% if not chat_available %}
+        <div data-testid="chat-unavailable" class="chat-unavailable">
+            <div class="chat-unavailable-title">Chat unavailable</div>
+            <p class="chat-unavailable-body">
+                Anthropic API key not configured.<br>
+                Set <code>ANTHROPIC_API_KEY</code> to enable explanations.
+            </p>
+        </div>
+        {% else %}
+
+        <!-- Message thread — scrollable -->
+        <div data-testid="chat-thread" class="chat-thread" id="chat-thread"
+             aria-live="polite" aria-label="Explanation messages">
+            <!-- Messages appended here by ai_advisor_chat.js -->
+        </div>
+
+        <!-- Input row: only send-message is permitted here (AC-4.1) -->
+        <div data-testid="chat-input-row" class="chat-input-row" id="chat-input-row">
+            <textarea data-testid="chat-input"
+                      class="chat-input"
+                      id="chat-input"
+                      rows="1"
+                      placeholder="Ask about this recommendation&#x2026;"
+                      aria-label="Chat message"></textarea>
+            <button data-testid="chat-send-btn"
+                    class="chat-send-btn"
+                    id="chat-send-btn"
+                    onclick="sendChatMessage()"
+                    disabled>
+                Send
+            </button>
+        </div>
+
+        {% endif %}{# chat_available #}
+
+    </aside>
+
+    <!-- Auto-refresh: 15 s floor — faster than the engine minute cadence makes no sense.
+         Chat panel state is client-side; no poll needed for the tab itself. -->
+
+    <script>
+        // Pass server-side availability flag to the JS module.
+        window._chatAvailable = {{ 'true' if chat_available else 'false' }};
+    </script>
+    <script src="{{ url_for('static', filename='ai_advisor_chat.js') }}"></script>
+</body>
+</html>
