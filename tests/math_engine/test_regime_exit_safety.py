@@ -325,6 +325,85 @@ def test_exit_confirm_ticks_zero_is_disallowed() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# risk-3c ISSUE 1a: REGIME_TICKS_UPPER_BOUND must be below session-length ceiling
+# ---------------------------------------------------------------------------
+
+
+def test_regime_ticks_upper_bound_is_below_session_length() -> None:
+    """
+    risk-3c REQ-BOUND-2 analog for N-confirms: an unbounded ceiling means a
+    mean-reverting restraint adjustment could require so many ticks that the
+    stop NEVER fires in a single trading session (390 minutes max).
+
+    REGIME_TICKS_UPPER_BOUND must be a named constant AND must be well below
+    any meaningful session-length ceiling.  A session has at most 390 trading
+    minutes; a stop that requires more than 30 consecutive below-stop ticks
+    would take at least half an hour of uninterrupted below-stop conditions to
+    fire — effectively disabled.  The bound must be NAMED and <= 30.
+
+    Source: 00-ADAPTIVE-RECOMMENDATION.md §1A — adjustments are bounded
+    fixed theory-set constants; an unbounded upper end is a pathological state.
+    """
+    upper = math_engine.REGIME_TICKS_UPPER_BOUND
+    # The constant was already tested for existence in test_regime_ticks_bounds_constants_exist.
+    # This test adds the session-length safety ceiling.
+    SESSION_MINUTES = 390  # NYSE regular session: 09:30-16:00 ET
+    PRACTICAL_CEILING = 30  # at most 30 consecutive below-stop ticks = ~30 min of continuous drawdown required
+    assert upper <= PRACTICAL_CEILING, (
+        f"REGIME_TICKS_UPPER_BOUND={upper} exceeds the practical safety ceiling "
+        f"of {PRACTICAL_CEILING}. A confirmation count above {PRACTICAL_CEILING} "
+        f"ticks would require more than {PRACTICAL_CEILING} consecutive below-stop "
+        f"minutes to fire — effectively disabling the trailing stop in most sessions. "
+        f"SESSION_MINUTES={SESSION_MINUTES}. Risk-3c ISSUE 1a: N-confirms ceiling "
+        f"must be meaningfully below session length."
+    )
+    assert upper >= math_engine.EXIT_CONFIRM_TICKS, (
+        f"REGIME_TICKS_UPPER_BOUND={upper} must be >= EXIT_CONFIRM_TICKS="
+        f"{math_engine.EXIT_CONFIRM_TICKS} (the upper bound must accommodate "
+        f"at least the mean-reverting restraint value)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# risk-3c ISSUE 1b: trending adjusted ticks never above EXIT_CONFIRM_TICKS
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("base_ticks", [3, 4, 5, 8])
+def test_trending_regime_adjusted_ticks_at_or_below_baseline(
+    base_ticks: int,
+) -> None:
+    """
+    risk-3c REQ-BOUND-4 analog for N-confirms: a 'trending' regime adjustment
+    that RAISES N-confirms above the baseline is the OPPOSITE of theory-
+    consistent (it makes the stop HARDER to confirm = LESS active = wrong
+    direction for trending per Kaminski-Lo 2014).
+
+    For base_ticks values >= EXIT_CONFIRM_TICKS (the normal production domain),
+    apply_regime_exit_adjustment('trending', base_ticks) must return a value
+    <= base_ticks.  The direction is more-active (fewer ticks needed), never
+    more-restraint.
+
+    Domain: base_ticks >= EXIT_CONFIRM_TICKS=3.  When base_ticks < TRENDING_EXIT_TICKS,
+    the adjustment is a floor not a target — the safe-default lower bound applies.
+    The production caller always passes EXIT_CONFIRM_TICKS (=3) as base, and
+    TRENDING_EXIT_TICKS (=2) < 3, so the production case is always <= base.
+
+    This test covers the normal production domain (base >= EXIT_CONFIRM_TICKS).
+    """
+    result = math_engine.apply_regime_exit_adjustment(
+        regime_label="trending", base_ticks=base_ticks
+    )
+    assert result <= base_ticks, (
+        f"risk-3c ISSUE 1b: trending adjusted_ticks={result} > base_ticks={base_ticks}. "
+        f"A trending regime adjustment must NEVER raise N-confirms above the baseline "
+        f"(that would make the stop LESS active = opposite of theory). "
+        f"Kaminski-Lo 2014: trending -> more-active (exits faster). "
+        f"adjusted_ticks must be <= base_ticks for base_ticks >= EXIT_CONFIRM_TICKS."
+    )
+
+
 def test_apply_regime_exit_adjustment_does_not_modify_module_constants() -> None:
     """
     REQ-BUDGET-1: the regime adjustment must move EXACTLY ONE knob.
