@@ -1,0 +1,238 @@
+{
+  "_provenance": "Hand-derived from the Phase-3b acceptance-gate design (01-acceptance-gate-design.md) and PHASE3_DECISIONS.md. All scenario inputs are synthetic — no producer-computed rates or percents are pinned. Verdicts are drawn from the defined enum {ADOPT_CANDIDATE, KEEP_INCUMBENT, REJECT_VETO_FAILED}. Panel scores are asserted as None/non-None, never as specific floats, because the gate spec says panel_score is None whenever any veto fails (the one-directional-brake property). Weight constants are named (not literals) per no-magic-numbers rule.",
+  "_design_refs": [
+    "01-acceptance-gate-design.md §Sub-question 3 (integration + lexicographic cascade)",
+    "PHASE3_DECISIONS.md (fixed-weight panel, one-directional brake, vetoes-first)",
+    "autotuner.py:1184-1272 (_haircut_select — BHY veto)",
+    "autotuner.py:1499-1582 (validate_search_space_nn1, validate_nn1_compliance)",
+    "advisors/overfitting_conscience.py (OVERFITTING_CONSCIENCE)",
+    "advisors/spec_critic.py (SPEC_CRITIC — structural integrity)"
+  ],
+
+  "veto_scenarios": {
+    "all_vetoes_pass_oos_superior_panel_adopts": {
+      "_description": "Happy path: all three vetoes pass (BHY gate cleared, NN1 spec frozen, purge integrity intact), OOS is strictly superior to both baselines, panel prefers the candidate over incumbent. Expected decision: ADOPT_CANDIDATE.",
+      "_invariant": "panel_score must be a float (not None) when all vetoes pass — the one-directional brake must NOT suppress it.",
+      "candidate": {
+        "winner_trial_is_none": false,
+        "winner_p_adj": 0.01,
+        "nn1_compliant": true,
+        "purge_integrity_ok": true,
+        "oos_alpha": 5.0,
+        "fallback_oos_alpha": 2.0,
+        "default_oos_alpha": 1.5,
+        "stability_score_vs_incumbent": 0.9,
+        "prior_anchor_score": 0.85
+      },
+      "expected": {
+        "vetoes_passed": true,
+        "panel_score_is_none": false,
+        "decision": "ADOPT_CANDIDATE"
+      }
+    },
+
+    "bhy_veto_fails_panel_score_must_be_none": {
+      "_description": "THE KEY ANTI-PATTERN TEST. BHY haircut returned winner_trial=None (no trial cleared the FDR gate). Panel score must be None — the panel must never run on a veto-failed candidate. Regardless of how stellar the candidate's discretionary metrics look, the decision is REJECT_VETO_FAILED. This makes the forbidden anti-pattern (panel outvoting a veto) structurally impossible to express.",
+      "_invariant": "panel_score MUST be None when the BHY veto fails. Any implementation where panel_score is a non-None float on a BHY-failed candidate has broken the one-directional brake.",
+      "candidate": {
+        "winner_trial_is_none": true,
+        "winner_p_adj": null,
+        "nn1_compliant": true,
+        "purge_integrity_ok": true,
+        "oos_alpha": 99.0,
+        "fallback_oos_alpha": 1.0,
+        "default_oos_alpha": 0.5,
+        "stability_score_vs_incumbent": 1.0,
+        "prior_anchor_score": 1.0,
+        "_note": "oos_alpha=99.0 is intentionally huge to confirm the panel cannot use it to outvote the veto"
+      },
+      "expected": {
+        "vetoes_passed": false,
+        "panel_score_is_none": true,
+        "decision": "REJECT_VETO_FAILED"
+      }
+    },
+
+    "nn1_violation_panel_score_must_be_none": {
+      "_description": "NN1 spec-freeze veto fires: validate_nn1_compliance returned is_nn1_honest=False. Panel score must be None regardless of all other metrics. Decision: REJECT_VETO_FAILED.",
+      "_invariant": "panel_score MUST be None when NN1 veto fails.",
+      "candidate": {
+        "winner_trial_is_none": false,
+        "winner_p_adj": 0.001,
+        "nn1_compliant": false,
+        "nn1_violations": ["BACKTEST_SELECTION facet found in spec_bundle"],
+        "purge_integrity_ok": true,
+        "oos_alpha": 10.0,
+        "fallback_oos_alpha": 1.0,
+        "default_oos_alpha": 0.5,
+        "stability_score_vs_incumbent": 0.95,
+        "prior_anchor_score": 0.9
+      },
+      "expected": {
+        "vetoes_passed": false,
+        "panel_score_is_none": true,
+        "decision": "REJECT_VETO_FAILED"
+      }
+    },
+
+    "purge_integrity_veto_fails_panel_score_must_be_none": {
+      "_description": "Purge/look-ahead integrity veto fires: the per-fold performance series was built on un-purged data. Panel score must be None. Decision: REJECT_VETO_FAILED.",
+      "_invariant": "panel_score MUST be None when look-ahead/purge integrity veto fails.",
+      "candidate": {
+        "winner_trial_is_none": false,
+        "winner_p_adj": 0.005,
+        "nn1_compliant": true,
+        "purge_integrity_ok": false,
+        "purge_integrity_violation": "fold constructed without PURGE_DAYS boundary",
+        "oos_alpha": 7.0,
+        "fallback_oos_alpha": 2.0,
+        "default_oos_alpha": 1.0,
+        "stability_score_vs_incumbent": 0.8,
+        "prior_anchor_score": 0.75
+      },
+      "expected": {
+        "vetoes_passed": false,
+        "panel_score_is_none": true,
+        "decision": "REJECT_VETO_FAILED"
+      }
+    },
+
+    "stellar_discretionary_score_cannot_outvote_bhy_failure": {
+      "_description": "THE FORBIDDEN ANTI-PATTERN IN PURE FORM. BHY veto failed (winner_trial=None). Discretionary metrics are all perfect (1.0). The panel score MUST be None and the decision MUST be REJECT_VETO_FAILED — the discretionary panel has zero ability to resurrect a veto-failed candidate. This test makes the anti-pattern a hard constraint, not a documentation note.",
+      "_invariant": "panel_score=None AND decision=REJECT_VETO_FAILED regardless of discretionary metric values.",
+      "candidate": {
+        "winner_trial_is_none": true,
+        "winner_p_adj": null,
+        "nn1_compliant": true,
+        "purge_integrity_ok": true,
+        "oos_alpha": 999.0,
+        "fallback_oos_alpha": 0.1,
+        "default_oos_alpha": 0.05,
+        "stability_score_vs_incumbent": 1.0,
+        "prior_anchor_score": 1.0,
+        "_note": "Intentionally maximal discretionary values to confirm they are irrelevant post-veto-failure"
+      },
+      "expected": {
+        "vetoes_passed": false,
+        "panel_score_is_none": true,
+        "decision": "REJECT_VETO_FAILED"
+      }
+    },
+
+    "stellar_discretionary_score_cannot_outvote_nn1_failure": {
+      "_description": "Same anti-pattern: NN1 veto failed with a structurally invalid spec. Discretionary scores are all maximal. Panel score MUST be None. Decision: REJECT_VETO_FAILED.",
+      "candidate": {
+        "winner_trial_is_none": false,
+        "winner_p_adj": 0.001,
+        "nn1_compliant": false,
+        "nn1_violations": ["gamma is in OPTUNA_SEARCH_SPACE_KEYS"],
+        "purge_integrity_ok": true,
+        "oos_alpha": 999.0,
+        "fallback_oos_alpha": 0.1,
+        "default_oos_alpha": 0.05,
+        "stability_score_vs_incumbent": 1.0,
+        "prior_anchor_score": 1.0
+      },
+      "expected": {
+        "vetoes_passed": false,
+        "panel_score_is_none": true,
+        "decision": "REJECT_VETO_FAILED"
+      }
+    }
+  },
+
+  "panel_weight_scenarios": {
+    "weights_are_named_constants_not_magic_numbers": {
+      "_description": "The panel's criteria weights must be named constants in the acceptance_gate module — not inline float literals. This fixture documents the requirement; the test is an AST inspection of the implementation.",
+      "_required_constants": [
+        "PANEL_WEIGHT_STABILITY",
+        "PANEL_WEIGHT_PRIOR_ANCHOR"
+      ],
+      "_note": "Names must encode the criterion; literals (0.5, 0.5) with no name are a violation."
+    },
+
+    "weights_sum_to_one": {
+      "_description": "Panel criteria weights must sum to 1.0 (a valid probability weighting) to ensure the composite panel_score is bounded on a consistent scale. This is a structural invariant, not a producer value.",
+      "_invariant": "sum(all PANEL_WEIGHT_* constants) == 1.0 (pytest.approx with tolerance 1e-9)"
+    },
+
+    "panel_score_bounded_zero_one": {
+      "_description": "panel_score for a veto-passing candidate must be in [0.0, 1.0]. The panel takes weighted averages of per-criterion sub-scores; if sub-scores are in [0,1] and weights sum to 1, the composite is bounded. Bounded output is a structural property the implementer must guarantee.",
+      "_invariant": "0.0 <= panel_score <= 1.0 for any veto-passing candidate"
+    }
+  },
+
+  "one_directional_brake_scenarios": {
+    "panel_cannot_adopt_when_candidate_loses_oos": {
+      "_description": "Even when vetoes pass and panel score is non-None, the panel CANNOT adopt a candidate that did NOT beat both OOS baselines. The gate is a one-directional BRAKE — it can only withhold adoption, never promote a non-OOS-superior candidate.",
+      "_invariant": "decision = KEEP_INCUMBENT when oos_alpha <= fallback_oos_alpha OR oos_alpha <= default_oos_alpha, regardless of panel_score value.",
+      "candidate": {
+        "winner_trial_is_none": false,
+        "winner_p_adj": 0.01,
+        "nn1_compliant": true,
+        "purge_integrity_ok": true,
+        "oos_alpha": 1.5,
+        "fallback_oos_alpha": 3.0,
+        "default_oos_alpha": 0.5,
+        "_note": "oos_alpha < fallback_oos_alpha — candidate lost OOS comparison",
+        "stability_score_vs_incumbent": 1.0,
+        "prior_anchor_score": 1.0
+      },
+      "expected": {
+        "vetoes_passed": true,
+        "panel_score_is_none": false,
+        "decision": "KEEP_INCUMBENT"
+      }
+    },
+
+    "panel_can_withhold_adoption_from_oos_superior_candidate": {
+      "_description": "The panel's legitimate use: a candidate beats OOS baselines (all vetoes pass) but its discretionary panel score is so poor (parameter instability / theory-anchor distance) that the gate withholds adoption. Decision: KEEP_INCUMBENT.",
+      "_invariant": "decision = KEEP_INCUMBENT when panel_score(candidate) < panel_score(incumbent) + PANEL_ADOPT_MARGIN_THRESHOLD even when oos_alpha is strictly superior.",
+      "candidate": {
+        "winner_trial_is_none": false,
+        "winner_p_adj": 0.02,
+        "nn1_compliant": true,
+        "purge_integrity_ok": true,
+        "oos_alpha": 4.0,
+        "fallback_oos_alpha": 2.0,
+        "default_oos_alpha": 1.0,
+        "stability_score_vs_incumbent": 0.1,
+        "prior_anchor_score": 0.05,
+        "_note": "Deliberately poor discretionary scores"
+      },
+      "incumbent": {
+        "stability_score_vs_incumbent": 1.0,
+        "prior_anchor_score": 1.0
+      },
+      "expected": {
+        "vetoes_passed": true,
+        "panel_score_is_none": false,
+        "decision": "KEEP_INCUMBENT"
+      }
+    }
+  },
+
+  "divergence_explainer_exclusion_scenario": {
+    "divergence_explainer_must_not_affect_gate_decision": {
+      "_description": "The Divergence Explainer is INERT by binding constraint (forbidden-keys doctrine; project_cvar_divergence_validation_wall). It must not appear as a scored criterion in the panel, must not appear in panel_breakdown keys, and its verdict must not influence the gate decision in any form. This test asserts structural exclusion.",
+      "_invariant": "The acceptance_gate module must not import from advisors.divergence_explainer, must not read its verdict, and panel_breakdown must contain no 'divergence_explainer' key."
+    }
+  },
+
+  "verdict_struct_schema": {
+    "_description": "Every AcceptanceVerdict returned by the gate must contain exactly these keys at a minimum. Shape-only assertion — no producer values pinned.",
+    "required_keys": [
+      "vetoes_passed",
+      "panel_score",
+      "panel_breakdown",
+      "decision"
+    ],
+    "decision_enum": [
+      "ADOPT_CANDIDATE",
+      "KEEP_INCUMBENT",
+      "REJECT_VETO_FAILED"
+    ],
+    "panel_score_type_when_vetoes_pass": "float",
+    "panel_score_type_when_vetoes_fail": "NoneType"
+  }
+}
