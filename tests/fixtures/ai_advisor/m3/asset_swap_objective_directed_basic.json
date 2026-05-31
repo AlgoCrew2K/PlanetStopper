@@ -1,0 +1,89 @@
+{
+  "_fixture_provenance": "schema-derived",
+  "_layer": "asset_swap_engine_m3",
+  "_note": "No producer-computed values. Every field is either a structural shape, a named enum constant, or a boundary condition. The objective enum values and required fields are specified by feature-plans/ai-advisor.md AC-2.1..AC-2.5 + Gate-1 Resolution #2.",
+  "_binding_spec": "feature-plans/ai-advisor.md §Capability 2 (Asset-Swap Proposals)",
+
+  "objective_enum_values": {
+    "reduce_correlation": {
+      "description": "Reduce measured pairwise correlation between this symphony and another",
+      "required_fields": ["target_pair", "measured_correlation"],
+      "_note": "objective must be derived from a measured correlation reading — not a heuristic or a user preference string"
+    },
+    "reduce_drawdown": {
+      "description": "Reduce maximum drawdown relative to the incumbent asset",
+      "required_fields": ["incumbent_asset", "measured_drawdown_pct"],
+      "_note": "measured_drawdown_pct is from the backtest stats, never hardcoded"
+    },
+    "lift_risk_adjusted": {
+      "description": "Lift risk-adjusted return (Sharpe/Sortino) relative to incumbent",
+      "required_fields": ["incumbent_asset", "measured_sharpe"],
+      "_note": "measured_sharpe is from the backtest stats, never hardcoded"
+    }
+  },
+
+  "operator_initiated_mode": {
+    "required_input_fields": ["symphony_id", "incumbent_asset", "candidate_asset", "objective"],
+    "_note": "Operator specifies the exact swap to try. objective must be a valid SwapObjective enum value, not a free-form string."
+  },
+
+  "advisor_suggested_mode": {
+    "required_input_fields": ["symphony_id", "objective"],
+    "candidate_generation_must": "select candidates that address the stated objective",
+    "candidate_generation_must_not": [
+      "generate candidates by brute-forcing the full ETF universe without objective filtering",
+      "generate candidates based on vibes (random or popularity-based selection)",
+      "bypass the objective to surface pre-decided candidates"
+    ],
+    "_note": "Per Gate-1 Resolution #2: every swap must be OBJECTIVE-DIRECTED. A naive generator that ignores the objective must produce a test FAIL."
+  },
+
+  "gating_contract": {
+    "surfaced_as_recommendation": "only ADOPT_CANDIDATE gate verdicts",
+    "gate_failed_disposition": "NOT surfaced as recommendation; may be shown as rejected with reason",
+    "zero_survivors_is_valid": true,
+    "zero_survivors_message_required": "no swap cleared the gate this run",
+    "_note": "AC-2.3 / AC-2.5. The gate is evaluate_candidate_batch from advisors.backtest_gate_engine — reused, not reimplemented."
+  },
+
+  "invalid_variant_contract": {
+    "structurally_invalid_tree": "must produce per-candidate 'could not backtest this variant' error",
+    "must_not_abort_batch": true,
+    "_note": "AC-2.4: one bad variant tree must not stop other candidates from being backtested and gated."
+  },
+
+  "persistence_contract": {
+    "write_function": "database.insert_advisor_observation",
+    "is_advisory_only": 1,
+    "required_fields": ["symphony_id", "is_advisory_only", "observation_type"],
+    "observation_type_value": "asset_swap_proposal",
+    "_note": "AC-X3. Every surfaced swap is persisted as an advisor_observation. is_advisory_only=1 is structural, not optional."
+  },
+
+  "advise_only_guard": {
+    "forbidden_endpoints": [
+      "POST /symphonies",
+      "PUT /symphonies",
+      "/copy",
+      "/deploy",
+      "go-to-cash"
+    ],
+    "allowed_endpoints": [
+      "GET /score",
+      "POST /api/v0.1/backtest"
+    ],
+    "_note": "AC-X1: the asset swap engine must be statically verifiable as using ONLY read + inline-backtest endpoints."
+  },
+
+  "live_path_guard": {
+    "alpha_bot_execution_imports_asset_swap": false,
+    "_note": "AC-X2: no advisor module may appear on the 1-minute live execution path. Verified by static import-graph test."
+  },
+
+  "no_api_key_contract": {
+    "expected_error_substring": "advisor unavailable",
+    "must_write_nothing": true,
+    "must_not_raise_unhandled": true,
+    "_note": "AC-X4: when Composer API key is absent, the engine must return a clear message and persist nothing."
+  }
+}
