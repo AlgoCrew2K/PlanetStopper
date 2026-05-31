@@ -204,15 +204,23 @@ def test_get_settings_anthropic_key_also_masked_for_consistency(
 
 
 # ---------------------------------------------------------------------------
-# RED 6: POST /api/settings write path is unaffected — secrets still saveable
+# RED 6: POST /api/settings — credential keys are NOT writable via the dashboard
+#         (A-1 security fix: credential rotation must happen via .env directly)
 # ---------------------------------------------------------------------------
 
-def test_post_settings_can_still_write_secret_keys(
+def test_post_settings_rejects_secret_key_writes(
     client, mock_database, monkeypatch
 ):
-    """
-    POST /api/settings must accept and persist secret keys. The masking is
-    display-only (GET). Writing a new COMPOSER_KEY_ID value must succeed.
+    """POST /api/settings must REJECT credential key submissions.
+
+    A-1 security fix: _SETTINGS_WRITE_ALLOWLIST excludes all credential keys
+    (_MASKED_SETTINGS_KEYS).  The rationale: an unauthenticated dashboard endpoint
+    must not be able to overwrite live credentials.  Credential rotation must
+    happen via direct .env editing, not through the dashboard.
+
+    This supersedes the pre-A-1 contract where credentials were writable via the
+    settings route.  The masking on GET is now a documentation artifact; the POST
+    is structurally blocked.
     """
     set_key_calls = []
 
@@ -237,14 +245,22 @@ def test_post_settings_can_still_write_secret_keys(
         "symphonies": {},
     }
     resp = client.post("/api/settings", json=payload)
-    assert resp.status_code == 200
-    body = resp.get_json()
-    assert body["status"] == "success", f"POST must succeed; got: {body}"
 
+    # A-1: credential key submissions must be rejected with 400.
+    assert resp.status_code == 400, (
+        f"POST /api/settings with credential keys must return 400 (A-1 allowlist); "
+        f"got {resp.status_code}: {resp.get_json()!r}. "
+        "Credential rotation must happen via .env, not the unauthenticated dashboard."
+    )
+    body = resp.get_json()
+    assert body.get("status") == "error", f"Credential submission must return status=error; got: {body!r}"
+
+    # No credential must have reached set_key.
     written_keys = {k for (k, _v) in set_key_calls}
     for key in SECRET_KEYS:
-        assert key in written_keys, (
-            f"POST must write {key} to .env; masking must NOT block the write path"
+        assert key not in written_keys, (
+            f"Credential key {key!r} must not reach set_key — the allowlist check must "
+            f"run BEFORE any set_key calls. Captured calls: {set_key_calls}"
         )
 
 

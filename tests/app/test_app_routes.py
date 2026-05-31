@@ -188,14 +188,24 @@ def test_api_state_returns_waiting_when_state_empty(client, mock_database, monke
 
 
 def test_api_state_returns_500_on_database_failure(client, mock_database, monkeypatch):
-    """A database exception is wrapped into a 500 JSON error, never propagated."""
+    """A database exception is wrapped into a 500 JSON error, never propagated.
+
+    D-1 security fix: the error response must NOT echo the raw exception message
+    to the client.  The response carries a generic message; internal detail is
+    logged server-side only.
+    """
     mock_database.load_state.side_effect = RuntimeError("db down")
     monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
     resp = client.get("/api/state")
     assert resp.status_code == 500
     body = resp.get_json()
     assert body["status"] == "error"
-    assert "db down" in body["message"]
+    # D-1: generic message only — must NOT echo "db down" (raw exception text).
+    assert "db down" not in body["message"], (
+        "D-1 fix: raw exception text must not appear in the HTTP response body. "
+        "Return a generic message; log detail server-side with exc_info=True."
+    )
+    assert body["message"], "Error response must include a non-empty generic message"
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +438,13 @@ def test_get_settings_returns_globals_and_symphony_strategies(
 def test_post_settings_writes_env_and_saves_symphony_strategy(
     client, mock_database, isolated_env_file, monkeypatch
 ):
-    """POST /api/settings calls set_key for each global and database.save_symphony_strategy per symphony."""
+    """POST /api/settings calls set_key for allowlisted globals and save_symphony_strategy per symphony.
+
+    A-1 security fix: only keys in _SETTINGS_WRITE_ALLOWLIST may be written.
+    LIVE_EXECUTION and credential keys (DISCORD_WEBHOOK_URL) are NOT allowlisted —
+    attempting to submit them results in a 400 rejection.  This test now uses
+    EXIT_AUTHORITY (a legitimate operator-configurable global in the allowlist).
+    """
     set_key_calls = []
 
     def fake_set_key(path, key, val, *_a, **_kw):
@@ -439,24 +455,28 @@ def test_post_settings_writes_env_and_saves_symphony_strategy(
 
     payload = {
         "globals": {
-            "LIVE_EXECUTION": "True",
-            "DISCORD_WEBHOOK_URL": "https://hook",
+            "EXIT_AUTHORITY": "per_symphony",
         },
         "symphonies": {
             "alpha": {
-                "params": {"k_atr": "1.5", "k_floor": "0.005"},
-                "locked_vars": ["k_atr"],
+                "params": {"TRIGGER_THRESHOLD_PCT": "1.5", "MAX_SQUEEZE_FLOOR": "0.5"},
+                "locked_vars": ["TRIGGER_THRESHOLD_PCT"],
             }
         },
     }
     resp = client.post("/api/settings", json=payload)
-    assert resp.status_code == 200
+    assert resp.status_code == 200, (
+        f"POST with allowlisted globals must succeed; got {resp.status_code}: {resp.get_json()!r}"
+    )
     body = resp.get_json()
     assert body["status"] == "success"
 
-    # set_key invoked for each global with isolated env path
+    # set_key invoked for allowlisted globals only.
     written_keys = {k for (_p, k, _v) in set_key_calls}
-    assert written_keys == {"LIVE_EXECUTION", "DISCORD_WEBHOOK_URL"}
+    assert "EXIT_AUTHORITY" in written_keys
+    # A-1: LIVE_EXECUTION and credential keys must never appear in set_key calls.
+    assert "LIVE_EXECUTION" not in written_keys
+    assert "DISCORD_WEBHOOK_URL" not in written_keys
     for (path, _k, _v) in set_key_calls:
         assert path == str(isolated_env_file)
 
@@ -467,17 +487,51 @@ def test_post_settings_writes_env_and_saves_symphony_strategy(
     assert sym_name_arg == "alpha"
     # params must have been coerced to float
     assert all(isinstance(v, float) for v in params_arg.values())
-    assert locked_arg == ["k_atr"]
+    assert locked_arg == ["TRIGGER_THRESHOLD_PCT"]
+
+
+def test_post_settings_rejects_non_allowlisted_globals(client, mock_database, isolated_env_file, monkeypatch):
+    """POST /api/settings must return 400 when any submitted global key is not in the allowlist.
+
+    A-1 security fix: LIVE_EXECUTION and credential keys are explicitly excluded from
+    _SETTINGS_WRITE_ALLOWLIST.  Submitting them must produce a 400 with status=error,
+    not a silent write or a 500 crash.
+    """
+    set_key_calls = []
+    monkeypatch.setattr(app_module, "set_key", lambda *a, **kw: set_key_calls.append((a[1], a[2])) or (True, a[1], a[2]))
+
+    for disallowed_key in ("LIVE_EXECUTION", "DISCORD_WEBHOOK_URL", "ARBITRARY_KEY"):
+        payload = {"globals": {disallowed_key: "some-value"}, "symphonies": {}}
+        resp = client.post("/api/settings", json=payload)
+        assert resp.status_code == 400, (
+            f"Non-allowlisted key {disallowed_key!r} must produce 400; got {resp.status_code}"
+        )
+        body = resp.get_json()
+        assert body.get("status") == "error", f"Response must be status=error for {disallowed_key!r}"
+        assert disallowed_key not in {k for (k, _) in set_key_calls}, (
+            f"Non-allowlisted key {disallowed_key!r} must not reach set_key"
+        )
 
 
 def test_post_settings_returns_500_on_save_failure(client, mock_database, isolated_env_file, monkeypatch):
-    """Errors from set_key or DB are wrapped into a 500 JSON envelope."""
+    """Errors from set_key or DB on allowlisted keys are wrapped into a 500 JSON envelope.
+
+    A-1 security fix: the payload must use an allowlisted key (EXIT_AUTHORITY) to reach
+    the set_key call path.  LIVE_EXECUTION is rejected before set_key is called.
+    D-1 security fix: the error message must be generic, NOT the raw exception text.
+    """
     monkeypatch.setattr(app_module, "set_key", lambda *_a, **_kw: (_ for _ in ()).throw(IOError("disk")))
-    resp = client.post("/api/settings", json={"globals": {"LIVE_EXECUTION": "True"}, "symphonies": {}})
+    # Use an allowlisted key so we reach the set_key exception path.
+    resp = client.post("/api/settings", json={"globals": {"EXIT_AUTHORITY": "per_symphony"}, "symphonies": {}})
     assert resp.status_code == 500
     body = resp.get_json()
     assert body["status"] == "error"
-    assert "disk" in body["message"]
+    # D-1: raw exception text must not appear in the response.
+    assert "disk" not in body["message"], (
+        "D-1 fix: raw exception text ('disk') must not echo to client. "
+        "Return a generic message; log detail server-side."
+    )
+    assert body["message"], "Error response must include a non-empty generic message"
 
 
 # ---------------------------------------------------------------------------
@@ -638,11 +692,22 @@ def test_api_logs_returns_database_logs(client, mock_database):
 
 
 def test_api_logs_returns_500_on_database_error(client, mock_database):
-    """Database failure on logs route yields 500 with error key."""
+    """Database failure on logs route yields 500 with error key.
+
+    D-1 security fix: the error response must NOT echo the raw exception message.
+    Returns a generic message; internal detail is logged server-side only.
+    """
     mock_database.get_symphony_logs.side_effect = RuntimeError("logs unavailable")
     resp = client.get("/api/logs/sym_x")
     assert resp.status_code == 500
-    assert "logs unavailable" in resp.get_json()["error"]
+    body = resp.get_json()
+    assert "error" in body, "Response must include an 'error' key"
+    # D-1: raw exception text must not appear in the HTTP response body.
+    assert "logs unavailable" not in body["error"], (
+        "D-1 fix: raw exception text must not echo to the client. "
+        "Return a generic message; log detail server-side with exc_info=True."
+    )
+    assert body["error"], "Error response must include a non-empty generic message"
 
 
 def test_api_chart_returns_per_symphony_history(client, mock_database):
