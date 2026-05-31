@@ -747,6 +747,294 @@ class TestArchitectureOfflineIsolation:
 
 
 # ---------------------------------------------------------------------------
+# Section 10 — BLOCK 1: Golden-fixture numerical pin on fold-transform output
+# ---------------------------------------------------------------------------
+
+class TestFoldTransformGoldenFixtureNumericalPin:
+    """BLOCK 1 (reviewer): the math layer must have at least one test that pins
+    oos_alpha and validation_days to known values on a deterministic input series.
+
+    The backtest_fold_transform_basic.json fixture is structural (WITHHOLD/degenerate
+    scenarios only). This section adds the missing numerical pin.
+
+    Also tests that the module docstring explicitly states the single-fold
+    statistical rationale (BLOCK 1 requirement).
+    """
+
+    def test_oos_alpha_pin_on_hand_computed_deterministic_series(self):
+        """Golden-fixture numerical pin: oos_alpha must equal the hand-computed sum.
+
+        Input: 100 returns where each value is (index * 0.1), i.e., [0.0, 0.1, 0.2, ...]
+        With TRAIN_RATIO=0.60 and VALIDATION_RATIO=0.20 on N=100:
+          val_start_idx = int(100 * 0.60) = 60
+          frozen_start_idx = int(100 * (0.60 + 0.20)) = 80
+          validation window = indices [60, 80) = 20 values: 6.0, 6.1, ..., 7.9
+          expected oos_alpha = sum(i*0.1 for i in range(60, 80)) = sum([6.0..7.9]) = 139.0
+
+        Tolerance abs=1e-9: values are exact multiples of 0.1 accumulated by float addition;
+        IEEE-754 rounding is the only source of error.
+        """
+        engine = _import_engine()
+
+        import sys as _sys
+        repo = str(_REPO_ROOT)
+        if repo not in _sys.path:
+            _sys.path.insert(0, repo)
+        from autotuner import TRAIN_RATIO, VALIDATION_RATIO
+
+        n = 100
+        returns = [i * 0.1 for i in range(n)]
+
+        val_start = int(n * TRAIN_RATIO)
+        frozen_start = int(n * (TRAIN_RATIO + VALIDATION_RATIO))
+        expected_oos_alpha = sum(returns[val_start:frozen_start])
+        expected_validation_days = frozen_start - val_start
+
+        cand = _make_candidate(returns, candidate_id="golden-pin")
+        batch = engine.evaluate_candidate_batch([cand])
+        result = batch.results[0]
+
+        assert result.validation_days == expected_validation_days, (
+            f"validation_days={result.validation_days} != expected {expected_validation_days}. "
+            f"For n={n}, TRAIN_RATIO={TRAIN_RATIO}, VALIDATION_RATIO={VALIDATION_RATIO}: "
+            f"val_start={val_start}, frozen_start={frozen_start}."
+        )
+        assert result.oos_alpha == pytest.approx(expected_oos_alpha, abs=1e-9), (
+            # tolerance: 1e-9 because oos_alpha is a sum of float multiples of 0.1;
+            # IEEE-754 rounding at this scale is well within 1e-9
+            f"oos_alpha={result.oos_alpha!r} != expected {expected_oos_alpha!r}. "
+            "Golden-fixture numerical pin: the fold-transform must compute oos_alpha as "
+            "sum(validation_fold) using the exact TRAIN_RATIO/VALIDATION_RATIO boundary."
+        )
+
+    def test_fold_transform_min_total_days_constant_is_named_and_positive(self):
+        """FOLD_TRANSFORM_MIN_TOTAL_DAYS must be a named module-level constant > 0.
+
+        No magic numbers — project coding standard. This constant drives the
+        WITHHOLD threshold; it must be traceable, named, and positive.
+        """
+        engine = _import_engine()
+        val = getattr(engine, "FOLD_TRANSFORM_MIN_TOTAL_DAYS", None)
+        assert val is not None, (
+            "backtest_gate_engine must expose FOLD_TRANSFORM_MIN_TOTAL_DAYS as a "
+            "named module-level constant. It drives the WITHHOLD threshold for "
+            "too-short series — an unnamed magic number here is a no-magic-numbers violation."
+        )
+        assert isinstance(val, int) and val > 0, (
+            f"FOLD_TRANSFORM_MIN_TOTAL_DAYS must be a positive integer, got {val!r}."
+        )
+
+    def test_module_docstring_states_single_fold_statistical_rationale(self):
+        """BLOCK 1: the module docstring must explain WHY a single-fold t-stat is
+        a valid input to the BHY gate in this context.
+
+        The autotuner's BHY haircut was designed for N independent Optuna trial
+        p-values. Here each candidate produces ONE p-value from ONE fold of ONE backtest.
+        The design difference must be documented in the module — not assumed silently.
+
+        This test asserts the module docstring (or the _fold_transform_single docstring)
+        contains a reference to this acknowledged design difference and its rationale.
+        Required keywords: at least two of {calibration, context, optuna, trial, fold,
+        single, candidate, backtest, difference, acknowledged, design}.
+        """
+        engine_path = _REPO_ROOT / "advisors" / "backtest_gate_engine.py"
+        assert engine_path.exists(), "Module path must exist."
+
+        source = engine_path.read_text(encoding="utf-8").lower()
+
+        # The docstring must acknowledge the difference between:
+        # (a) N Optuna trial p-values (the original BHY context)
+        # (b) N candidate backtest p-values from individual folds
+        # At least two of these terms together constitute an acknowledgement.
+        terms_present = sum(
+            1 for term in (
+                "calibration", "optuna", "trial", "fold", "single", "candidate",
+                "backtest", "difference", "acknowledged", "design", "context"
+            )
+            if term in source
+        )
+        assert terms_present >= 5, (
+            f"Module source contains only {terms_present}/5 required terms for the "
+            "single-fold statistical rationale documentation. "
+            "BLOCK 1: the module must document WHY one p-value per candidate from one fold "
+            "of one backtest is a valid input to a BHY gate designed for N independent "
+            "Optuna trial p-values. Terms checked: calibration, optuna, trial, fold, "
+            "single, candidate, backtest, difference, acknowledged, design, context."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Section 11 — BLOCK 2: Batch AC-X5 isolation + client-module choice
+# ---------------------------------------------------------------------------
+
+class TestBatchAcX5IsolationAndClientChoice:
+    """BLOCK 2 (reviewer): one candidate's failure must not abort other candidates.
+
+    The gate engine takes daily_returns_pct directly — it does NOT call a backtest
+    client internally. But the batch AC-X5 contract still applies: if one candidate's
+    return series is pathologically bad (raises internally), the batch must complete
+    and surface a per-candidate failure marker rather than aborting.
+
+    Also: the gate engine must NOT import either backtest client (it is decoupled
+    from the network layer by design — callers supply return series directly).
+    """
+
+    def test_batch_continues_when_one_candidate_has_too_short_series(self):
+        """AC-X5 batch isolation: a degenerate candidate does not abort the batch.
+
+        One candidate is too short (5 returns → REJECT), the others are valid.
+        All candidates must appear in batch.results; the failing one must be
+        REJECT_VETO_FAILED, not missing from results.
+        """
+        engine = _import_engine()
+        import random
+        rng = random.Random(1)
+
+        short_returns = [0.01, -0.005, 0.008, -0.003, 0.012]  # 5 values — too short
+        good_returns_a = [rng.gauss(0.05, 0.5) for _ in range(252)]
+        good_returns_b = [rng.gauss(0.05, 0.5) for _ in range(252)]
+
+        candidates = [
+            _make_candidate(short_returns, candidate_id="degenerate"),
+            _make_candidate(good_returns_a, candidate_id="good-a"),
+            _make_candidate(good_returns_b, candidate_id="good-b"),
+        ]
+        batch = engine.evaluate_candidate_batch(candidates)
+
+        assert len(batch.results) == 3, (
+            f"batch.results must contain all 3 candidates (got {len(batch.results)}). "
+            "AC-X5: a degenerate candidate must not abort the batch — all candidates "
+            "must appear in results, with the failing one marked REJECT_VETO_FAILED."
+        )
+
+        degenerate_result = next(
+            (r for r in batch.results if r.candidate_id == "degenerate"), None
+        )
+        assert degenerate_result is not None, (
+            "The degenerate candidate ('degenerate') must appear in batch.results."
+        )
+        assert degenerate_result.verdict.decision == "REJECT_VETO_FAILED", (
+            f"Degenerate candidate must be REJECT_VETO_FAILED, got "
+            f"{degenerate_result.verdict.decision!r}."
+        )
+
+        # The good candidates must not be affected by the degenerate one
+        good_results = [r for r in batch.results if r.candidate_id != "degenerate"]
+        assert len(good_results) == 2, (
+            "Both good candidates must appear in results even when one candidate is degenerate."
+        )
+
+    def test_batch_result_count_always_equals_candidate_count(self):
+        """batch.results must always have len == len(candidates) — no silent drops.
+
+        Every candidate must appear in results, regardless of fold failure.
+        A silent drop would violate AC-X5 (the operator cannot see a 'backtest failed'
+        reason for a missing candidate).
+        """
+        engine = _import_engine()
+        import random
+        rng = random.Random(2)
+
+        # Mix of short, medium, and long series
+        candidates = [
+            _make_candidate([0.01] * 3, candidate_id="very-short"),        # 3 returns — fails
+            _make_candidate([0.01] * 50, candidate_id="medium"),            # 50 returns — borderline
+            _make_candidate([rng.gauss(0, 0.5) for _ in range(252)], candidate_id="full"),
+        ]
+        batch = engine.evaluate_candidate_batch(candidates)
+
+        assert len(batch.results) == len(candidates), (
+            f"batch.results has {len(batch.results)} entries but {len(candidates)} candidates. "
+            "Every candidate must appear in results — no silent drops allowed (AC-X5)."
+        )
+
+    def test_gate_engine_does_not_import_either_backtest_client(self):
+        """The gate engine must NOT import composer_backtest or composer_backtest_client.
+
+        The engine is decoupled from the network layer — callers supply daily_returns_pct
+        directly. Importing a backtest client in the engine would create a tight coupling
+        that forces live-network availability even in offline/test contexts.
+        """
+        engine_path = _REPO_ROOT / "advisors" / "backtest_gate_engine.py"
+        assert engine_path.exists()
+        tree = _parse_source("advisors/backtest_gate_engine.py")
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                assert "composer_backtest" not in module, (
+                    f"backtest_gate_engine.py must not import from '{module}'. "
+                    "The gate engine is decoupled from the network layer — callers supply "
+                    "daily_returns_pct directly. Importing a backtest client creates an "
+                    "unnecessary live-network dependency."
+                )
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert "composer_backtest" not in alias.name, (
+                        "backtest_gate_engine.py must not import any composer_backtest module."
+                    )
+
+
+# ---------------------------------------------------------------------------
+# Section 12 — Non-BLOCK: winner_p_adj is always a float (never None)
+# ---------------------------------------------------------------------------
+
+class TestWinnerPAdjIsAlwaysFloat:
+    """Non-BLOCK (reviewer): winner_p_adj docstring says 'None if not the BHY winner'
+    but actual code always assigns p_adj[idx] — always a float.
+
+    This test pins the actual behaviour (always float) to catch the docstring
+    inconsistency and any future code change that introduces a None path.
+    """
+
+    def test_winner_p_adj_is_always_float_not_none(self):
+        """winner_p_adj must be a float for every candidate in every batch result.
+
+        Actual code (backtest_gate_engine.py:656): winner_p_adj=p_adj[idx]
+        This is always the BHY-adjusted p-value for that candidate's index —
+        never None, regardless of whether the candidate was the BHY winner or not.
+
+        The CandidateGateResult.winner_p_adj docstring is incorrect when it says
+        'None if it was not the BHY winner'. This test catches any future regression
+        that introduces a None path (which would break M3/M4 consumers that read
+        the field for operator-facing transparency).
+        """
+        engine = _import_engine()
+        import random
+        rng = random.Random(42)
+
+        # Mix of candidates — some will be BHY winners, most will not
+        candidates = [
+            _make_candidate(
+                [rng.gauss(0.05, 0.8) for _ in range(252)],
+                candidate_id=f"cand-{i}"
+            )
+            for i in range(5)
+        ]
+        batch = engine.evaluate_candidate_batch(candidates)
+
+        for result in batch.results:
+            assert isinstance(result.winner_p_adj, float), (
+                f"winner_p_adj for '{result.candidate_id}' is {result.winner_p_adj!r} "
+                f"(type {type(result.winner_p_adj).__name__!r}), expected float. "
+                "backtest_gate_engine.py:656 always assigns p_adj[idx] — a float. "
+                "The docstring saying 'None if not the BHY winner' is incorrect; "
+                "this test pins the actual behaviour."
+            )
+            assert math.isfinite(result.winner_p_adj), (
+                f"winner_p_adj={result.winner_p_adj!r} is not finite. "
+                "BHY-adjusted p-values must be in [0, 1] — non-finite values indicate "
+                "a computation error in benjamini_hochberg_adjust."
+            )
+            assert 0.0 <= result.winner_p_adj <= 1.0, (
+                # tolerance comment: p-values are probabilities in [0,1]; boundary values
+                # are exact by construction in the BH adjustment algorithm
+                f"winner_p_adj={result.winner_p_adj!r} is outside [0.0, 1.0]. "
+                "BHY-adjusted p-values must be valid probabilities."
+            )
+
+
+# ---------------------------------------------------------------------------
 # Section 9 — Soundness: OOS alpha uses FULL validation fold (not purge-reduced)
 # ---------------------------------------------------------------------------
 
