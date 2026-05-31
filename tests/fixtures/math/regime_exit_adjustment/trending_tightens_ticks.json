@@ -1,0 +1,18 @@
+{
+  "description": "TRENDING regime: apply_regime_exit_adjustment reduces the confirmation ticks below the base EXIT_CONFIRM_TICKS, making the exit more active (tighter confirmation, consistent with Kaminski-Lo 2014 trending -> follow through).",
+  "function": "apply_regime_exit_adjustment",
+  "inputs": {
+    "regime_label": "trending",
+    "base_ticks": 3
+  },
+  "derivation": {
+    "spec_basis": "PHASE3_DECISIONS.md §Regime->response mapping: TRENDING -> more-active. More-active means fewer confirmation ticks required before the stop fires. Direction: Kaminski-Lo (2014) — returns PERSIST in trending regimes, so a stop trigger is more likely to be a genuine trend reversal than a noise spike. Restraint is counterproductive when momentum is real.",
+    "direction": "adjusted_ticks < base_ticks (strictly less for trending)",
+    "tolerance_note": "Expected value is an integer. Exact equality. The test does NOT pin the specific adjusted value (only the implementer's named constant does); it asserts the DIRECTION (less than base) and the lower-bound safety (adjusted_ticks >= 1). The adjustment table (REGIME_EXIT_CONFIRM_TICKS_TABLE or named constants TRENDING_EXIT_TICKS etc.) must be auditable named constants in math_engine.py."
+  },
+  "expected": {
+    "direction": "strictly_less_than_base",
+    "lower_bound": 1,
+    "comment": "adjusted_ticks must be >= 1 (can't confirm on 0 ticks) and < base_ticks=3. The exact value is determined by the named constant TRENDING_EXIT_TICKS in math_engine.py."
+  }
+}

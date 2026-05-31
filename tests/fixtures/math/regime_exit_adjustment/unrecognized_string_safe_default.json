@@ -1,0 +1,17 @@
+{
+  "description": "Unrecognized string regime label: apply_regime_exit_adjustment must return base_ticks unchanged. Future labels or misspelled values must not silently apply an adjustment.",
+  "function": "apply_regime_exit_adjustment",
+  "inputs": {
+    "regime_label": "sideways",
+    "base_ticks": 3
+  },
+  "derivation": {
+    "spec_basis": "PHASE3_DECISIONS.md §Regime->response mapping: 'regime absent/unknown/stale -> current behavior (no adjustment).' An unrecognized string is treated as 'unknown'. This ensures forward-compatibility: if a future regime label is added to the classifier but not yet added to the adjustment table, the safe default applies (no change to exit behavior).",
+    "direction": "adjusted_ticks == base_ticks (identity for any unrecognized string)",
+    "tolerance_note": "Expected value is exactly base_ticks=3. Exact integer equality."
+  },
+  "expected": {
+    "adjusted_ticks": 3,
+    "comment": "Unrecognized label -> safe default. No exception raised, no adjustment applied."
+  }
+}
