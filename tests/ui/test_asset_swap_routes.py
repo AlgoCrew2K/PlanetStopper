@@ -94,7 +94,6 @@ def _make_swap_run_result(survivors: bool = False, no_api_key: bool = False) -> 
         objective_rationale="IALT has low correlation with the target pair.",
         gate_result=None,
         apply_guidance="To apply: open sym-test in Composer and swap SPY → IALT manually.",
-        caveats=["Gate pass is resistance to noise, not proof of live edge."] if survivors else [],
     )
 
     message = "1 swap survived the gate" if survivors else NO_SURVIVORS_MESSAGE
@@ -557,3 +556,130 @@ class TestInputValidation:
         assert resp.status_code == 200
         data = resp.get_json()
         assert "error" in data
+
+
+# ===========================================================================
+# Section 9 — Reviewer BLOCK: route-importability static check
+# (quant-code-reviewer finding: every name imported by app.py's new asset-swap
+#  routes must exist as a public name in advisors.asset_swap_engine)
+# ===========================================================================
+
+class TestRouteImportability:
+    """Every name app.py's new routes import from asset_swap_engine must exist.
+
+    This prevents the evaluate_single_swap class of silent name-mismatch bugs.
+    The canonical public API of asset_swap_engine is:
+      propose_operator_swap, suggest_swaps, generate_objective_directed_candidates,
+      SwapObjective, SwapProposalResult, SwapRunResult, apply_ticker_swap,
+      extract_tickers, NO_SURVIVORS_MESSAGE, SWAP_SURVIVOR_CAVEAT.
+    The route must use propose_operator_swap — NOT evaluate_single_swap (which
+    does not exist in the new engine and would cause ImportError at request time).
+    """
+
+    def test_all_names_imported_by_evaluate_route_exist_in_asset_swap_engine(self):
+        """Static analysis: every name the evaluate route imports from asset_swap_engine
+        must be a real public attribute of that module.
+
+        This is the reviewer's RED test 2: a name-mismatch check that prevents
+        the evaluate_single_swap ImportError class of bug from reaching production.
+        """
+        _ensure_repo_on_path()
+
+        # Parse app.py and find all names imported from asset_swap_engine inside
+        # the ai_advisor_asset_swaps_evaluate function body.
+        source = (_REPO_ROOT / "app.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        imported_names: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "ai_advisor_asset_swaps_evaluate":
+                for inner in ast.walk(node):
+                    if isinstance(inner, ast.ImportFrom):
+                        module = inner.module or ""
+                        if "asset_swap_engine" in module:
+                            for alias in inner.names:
+                                imported_names.append(alias.name)
+
+        if not imported_names:
+            # Route doesn't import from asset_swap_engine at all — that's also a failure
+            # (it must at minimum import propose_operator_swap).
+            pytest.fail(
+                "ai_advisor_asset_swaps_evaluate does not import anything from "
+                "advisors.asset_swap_engine. It must import at minimum "
+                "propose_operator_swap and SwapObjective."
+            )
+
+        # Import the actual module and check each name exists.
+        engine = importlib.import_module("advisors.asset_swap_engine")
+        missing = [name for name in imported_names if not hasattr(engine, name)]
+
+        assert not missing, (
+            f"ai_advisor_asset_swaps_evaluate imports these names from "
+            f"advisors.asset_swap_engine that DO NOT EXIST in that module: {missing}. "
+            f"Imported names found in route: {imported_names}. "
+            "A missing name causes an ImportError at request time. "
+            "The route must use propose_operator_swap (not evaluate_single_swap — "
+            "that function was in the old stub and does not exist in the new engine)."
+        )
+
+    def test_evaluate_route_imports_propose_operator_swap(self):
+        """The evaluate route must import propose_operator_swap — the M3 typed entry point.
+
+        This is the reviewer's RED test 1 (option b): the route must call
+        propose_operator_swap, not an alias or the old evaluate_single_swap.
+        propose_operator_swap accepts a typed SwapObjective and returns SwapRunResult
+        — the contract that gate_batch, objective_rationale, and AC-2.3 depend on.
+        """
+        source = (_REPO_ROOT / "app.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        propose_imported = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "ai_advisor_asset_swaps_evaluate":
+                for inner in ast.walk(node):
+                    if isinstance(inner, ast.ImportFrom):
+                        module = inner.module or ""
+                        if "asset_swap_engine" in module:
+                            names = [alias.name for alias in inner.names]
+                            if "propose_operator_swap" in names:
+                                propose_imported = True
+
+        assert propose_imported, (
+            "ai_advisor_asset_swaps_evaluate must import propose_operator_swap from "
+            "advisors.asset_swap_engine. "
+            "propose_operator_swap is the M3 typed entry point that accepts SwapObjective "
+            "and returns SwapRunResult with gate_batch, objective_rationale, and message. "
+            "Using evaluate_single_swap (old API, does not exist) or a plain string "
+            "objective bypasses the typed contract."
+        )
+
+    def test_evaluate_route_imports_swap_objective(self):
+        """The evaluate route must import SwapObjective to construct a typed objective.
+
+        Gate-1 Resolution #2: every swap must be objective-directed with a typed,
+        measurable objective. A plain string objective is not verifiable as
+        objective-directed — it could be 'operator-initiated' (a description, not
+        a SwapObjective with objective_type, target_pair, and measured_value).
+        """
+        source = (_REPO_ROOT / "app.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        swap_objective_imported = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "ai_advisor_asset_swaps_evaluate":
+                for inner in ast.walk(node):
+                    if isinstance(inner, ast.ImportFrom):
+                        module = inner.module or ""
+                        if "asset_swap_engine" in module:
+                            names = [alias.name for alias in inner.names]
+                            if "SwapObjective" in names:
+                                swap_objective_imported = True
+
+        assert swap_objective_imported, (
+            "ai_advisor_asset_swaps_evaluate must import SwapObjective from "
+            "advisors.asset_swap_engine. "
+            "The route must construct a typed SwapObjective (objective_type, target_pair, "
+            "measured_value) and pass it to propose_operator_swap. "
+            "Without SwapObjective, the route cannot satisfy the objective-direction "
+            "contract (Gate-1 Resolution #2)."
+        )
