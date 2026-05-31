@@ -1,0 +1,43 @@
+{
+  "_provenance": "hand-derived; return series are synthetic; Pearson correlations computed independently in the derivation note below",
+  "_derivation": "series_a = [0.01, 0.02, -0.01, 0.03, -0.02]; series_b = [0.01, 0.02, -0.01, 0.03, -0.02] (identical copy of a). Pearson r(a,b) = 1.0 exactly. n_obs = 5. series_c = [-0.01, -0.02, 0.01, -0.03, 0.02] (perfect inverse of a). Pearson r(a,c) = -1.0 exactly. r(b,c) = -1.0 exactly. All computed with population-corrected sample Pearson (ddof=1 implicit in the formula; Pearson r is scale-invariant so ddof choice does not affect the result).",
+  "_thin_data_threshold": 30,
+  "_comment": "n_obs=5 is below thin-data threshold (30). Correlations are well-defined but flagged as thin.",
+  "inputs": {
+    "return_series": {
+      "symphony_a": [0.01, 0.02, -0.01, 0.03, -0.02],
+      "symphony_b": [0.01, 0.02, -0.01, 0.03, -0.02],
+      "symphony_c": [-0.01, -0.02, 0.01, -0.03, 0.02]
+    },
+    "dates": ["2026-01-02", "2026-01-03", "2026-01-06", "2026-01-07", "2026-01-08"]
+  },
+  "expected_pairs": [
+    {
+      "sym_a": "symphony_a",
+      "sym_b": "symphony_b",
+      "n_obs": 5,
+      "correlation": 1.0,
+      "thin_data": true,
+      "_comment": "Perfect positive correlation; n_obs=5 < 30 so thin_data=true"
+    },
+    {
+      "sym_a": "symphony_a",
+      "sym_b": "symphony_c",
+      "n_obs": 5,
+      "correlation": -1.0,
+      "thin_data": true,
+      "_comment": "Perfect negative correlation (perfect anti-correlation)"
+    },
+    {
+      "sym_a": "symphony_b",
+      "sym_b": "symphony_c",
+      "n_obs": 5,
+      "correlation": -1.0,
+      "thin_data": true,
+      "_comment": "Also -1.0 because b is identical to a and c is the inverse"
+    }
+  ],
+  "expected_diagonal": 1.0,
+  "_correlation_tolerance": 1e-9,
+  "_tolerance_rationale": "Exact algebraic result for these synthetic series; only floating-point rounding contributes error; 1e-9 captures that while remaining tighter than any implementation bug"
+}
