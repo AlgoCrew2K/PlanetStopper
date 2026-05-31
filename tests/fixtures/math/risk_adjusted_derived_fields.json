@@ -3,7 +3,7 @@
   "_provenance": "formula-derived from spec in ux-design-deliverable.md. NOT captured producer outputs.",
 
   "max_drawdown_delta": {
-    "_formula": "held_mdd - bot_mdd (both <= 0; delta >= 0 when bot has less drawdown)",
+    "_formula": "abs(held_mdd) - abs(bot_mdd); positive means bot had less drawdown (better)",
     "_convention": "max_drawdown values are fractional, <= 0 (quantstats convention)",
     "example_held_mdd": -0.038,
     "example_bot_mdd": -0.021,

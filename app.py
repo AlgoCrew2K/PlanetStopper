@@ -1713,8 +1713,8 @@ def api_performance():
           "dates": [...],
           "live_returns": [...],
           "shadow_returns": [...],
-          "live_metrics":   {7 documented keys},
-          "shadow_metrics": {7 documented keys},
+          "live_metrics":   {8 documented keys — Phase 2 adds 'volatility'},
+          "shadow_metrics": {8 documented keys — Phase 2 adds 'volatility'},
           "observation_count": int,
           "insufficient_history": bool
         }
