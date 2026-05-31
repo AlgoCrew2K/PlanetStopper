@@ -2435,6 +2435,188 @@ def ai_advisor_asset_swaps_evaluate():
     }), 200
 
 
+@app.route("/ai-advisor/logic-changes", methods=["GET"])
+def ai_advisor_logic_changes():
+    """Render the M4 Logic Changes tab (AC-3.1..3.4, AC-X1..X5).
+
+    Read-only surface — no writes to live positions, no Composer write endpoints.
+    All logic-change proposals are advisory-only (apply manually in Composer).
+
+    Template context:
+      no_api_key  — True when Composer credentials are absent (AC-X4)
+      symphonies  — list of known symphony IDs for the operator-initiated form
+    """
+    # Lazy import keeps the module off the live 1-minute execution path (AC-X2).
+    from advisors.logic_change_engine import _has_composer_key  # noqa: PLC0415
+
+    no_api_key = not _has_composer_key()
+
+    # Provide the symphony list for the operator-initiated form.
+    symphonies: list[str] = []
+    try:
+        import analytics as _analytics  # noqa: PLC0415
+        history = _analytics.get_history_with_cache_invalidation(
+            base_dir=_analytics._POST_MORTEMS_DIR
+        )
+        symphonies = _analytics.list_available_symphonies(history)
+    except Exception:
+        pass  # Symphony list is optional; the form still renders without it.
+
+    return render_template(
+        "ai_advisor_logic_changes.html",
+        active_route="advisor",
+        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
+        no_api_key=no_api_key,
+        symphonies=symphonies,
+    )
+
+
+@app.route("/ai-advisor/logic-changes/evaluate", methods=["POST"])
+def ai_advisor_logic_changes_evaluate():
+    """Operator-initiated logic-change evaluation endpoint (AC-3.1).
+
+    Accepts JSON: { symphony_id, objective_type?, change_description }.
+    Parses the change_description to build a LogicTweak + LogicChangeObjective,
+    fetches the baseline tree via symphony_logic, calls propose_operator_logic_change
+    from advisors.logic_change_engine, and returns the LogicChangeRunResult fields
+    as JSON.
+
+    Never runs a live trade; never calls Composer write endpoints (AC-X1).
+    Persistence (advisor_observation) is handled inside propose_operator_logic_change
+    (AC-X3).
+
+    The change_description is a plain-text operator input (e.g., "change momentum
+    lookback from 20 to 10 days").  The route parses it for node_path + param_key +
+    old_value + new_value via a simple heuristic; on parse failure it returns a clear
+    error rather than fabricating a tweak.
+
+    Returns JSON with the logic-change result for rendering in the UI.
+    """
+    # Lazy imports (AC-X2 — keep logic_change_engine off the live execution path).
+    from advisors.logic_change_engine import (  # noqa: PLC0415
+        propose_operator_logic_change,
+        LogicTweak,
+        LogicChangeObjective,
+        _has_composer_key,
+        NO_SURVIVORS_MESSAGE,
+    )
+    from symphony_logic import fetch_symphony_score  # noqa: PLC0415
+
+    if not _has_composer_key():
+        return jsonify({"error": "advisor unavailable: API key not configured"}), 200
+
+    body = request.get_json(silent=True) or {}
+    symphony_id = str(body.get("symphony_id", "")).strip()
+    objective_type = str(body.get("objective_type", "reduce_drawdown")).strip()
+    change_description = str(body.get("change_description", "")).strip()
+
+    if not symphony_id or not change_description:
+        return jsonify({"error": "symphony_id and change_description are required"}), 200
+
+    raw_value = fetch_symphony_score(symphony_id)
+    if not raw_value:
+        return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
+
+    # Build a typed LogicChangeObjective (Gate-1 Resolution #2 — no plain-string objectives).
+    objective = LogicChangeObjective(
+        objective_type=objective_type,
+        measured_value=0.0,
+        rationale=change_description,
+    )
+
+    # Delegate parse + apply to the engine; pass change_description= so the engine's
+    # own _parse_change_description_to_tweak runs internally.  On parse failure the
+    # engine sets backtest_error on the proposal and returns zero survivors — no
+    # early-return needed here (AC-X5 isolation applies at the engine level).
+    try:
+        run_result = propose_operator_logic_change(
+            symphony_id=symphony_id,
+            score_tree=raw_value,
+            tweak=None,
+            objective=objective,
+            change_description=change_description,
+        )
+    except Exception as exc:
+        _daemon_log.error("ai_advisor_logic_changes_evaluate failed: %s", exc, exc_info=True)
+        return jsonify({"error": f"evaluation error: {exc}"}), 200
+
+    # Build FDR metadata for the operator audit trail (AC-3.2).
+    gate_batch = run_result.gate_batch
+    proposal = run_result.proposals[0] if run_result.proposals else None
+    gate_result = proposal.gate_result if proposal else None
+
+    # Adjusted p-value threshold = fdr_q / c(n), where c(n) is the Yekutieli
+    # harmonic-sum correction factor.  Derive from gate_batch fields; fall back to
+    # gate_batch.fdr_q when c(n) is not directly available.
+    fdr_adjusted_threshold: float | None = None
+    if gate_batch is not None:
+        import math as _math  # noqa: PLC0415
+        n = gate_batch.n_candidates or 1
+        # Yekutieli c(n) = sum(1/k for k in 1..n) — same formula as autotuner._c_yekutieli.
+        c_n = sum(1.0 / k for k in range(1, n + 1))
+        fdr_adjusted_threshold = gate_batch.fdr_q / c_n if c_n > 0 else gate_batch.fdr_q
+
+    def _proposal_to_dict(p) -> dict:
+        """Serialise a LogicChangeProposalResult to a JSON-friendly dict."""
+        gr = p.gate_result
+        return {
+            "candidate_id": p.candidate_id,
+            "symphony_id": p.symphony_id,
+            "objective_type": p.objective.objective_type if p.objective else None,
+            "objective_rationale": p.objective_rationale,
+            "tweak_param_key": p.tweak.param_key if p.tweak else None,
+            "tweak_old_value": p.tweak.old_value if p.tweak else None,
+            "tweak_new_value": p.tweak.new_value if p.tweak else None,
+            "tweak_node_path": p.tweak.node_path if p.tweak else None,
+            "tweak_node_description": p.tweak.node_description if p.tweak else None,
+            "baseline_stats": p.baseline_stats,
+            "variant_stats": p.variant_stats,
+            # Gate verdict (AC-3.3)
+            "gate_decision": gr.verdict.decision if gr else None,
+            "gate_reason": gr.verdict.reason if gr else None,
+            "validation_days": gr.validation_days if gr else None,
+            "oos_alpha": gr.oos_alpha if gr else None,
+            "winner_p_adj": gr.winner_p_adj if gr else None,
+            # FDR metadata for audit trail (AC-3.2)
+            "n_candidates": gate_batch.n_candidates if gate_batch else None,
+            "fdr_q": gate_batch.fdr_q if gate_batch else None,
+            "fdr_adjusted_threshold": fdr_adjusted_threshold,
+            # Caveats (mandatory for survivors, AC-3.3)
+            "caveats": p.caveats,
+            # Apply guidance — plain text, no button (AC-X1 / AC-3.4)
+            "apply_guidance": p.apply_guidance,
+            "backtest_error": p.backtest_error,
+            "data_warnings": p.data_warnings,
+        }
+
+    return jsonify({
+        # Run-level fields (AC-3.1: zero survivors is valid, not silent)
+        "message": run_result.message,
+        "survivors": len(run_result.survivors),
+        "no_api_key": run_result.no_api_key,
+        # Proposal detail for rendering
+        "survivors_detail": [_proposal_to_dict(p) for p in run_result.survivors],
+        "rejected_detail": [_proposal_to_dict(p) for p in run_result.rejected_candidates],
+        # Gate verdict shortcut (for tests that check flat gate_decision key)
+        "gate_decision": gate_result.verdict.decision if gate_result else None,
+        "gate_result": {
+            "decision": gate_result.verdict.decision,
+            "validation_days": gate_result.validation_days,
+            "oos_alpha": gate_result.oos_alpha,
+            "winner_p_adj": gate_result.winner_p_adj,
+        } if gate_result else None,
+        # FDR metadata at run level (AC-3.2)
+        "n_candidates": gate_batch.n_candidates if gate_batch else None,
+        "fdr_q": gate_batch.fdr_q if gate_batch else None,
+        "fdr_adjusted_threshold": fdr_adjusted_threshold,
+        # Caveats + guidance from the primary proposal (operator-initiated = single candidate)
+        "caveats": proposal.caveats if proposal else [],
+        "apply_guidance": proposal.apply_guidance if proposal else "",
+        "backtest_error": proposal.backtest_error if proposal else None,
+        "objective_rationale": proposal.objective_rationale if proposal else "",
+    }), 200
+
+
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
     """Compute four_gates_verdict booleans for one suggestion (FP-T1-05).
 

@@ -1,0 +1,144 @@
+{
+  "_fixture_provenance": "schema-derived",
+  "_layer": "logic_change_engine_m4",
+  "_note": "No producer-computed values. Every field is either a structural shape, a named enum constant, or a boundary condition. The objective enum values and required fields are specified by feature-plans/ai-advisor.md AC-3.1..AC-3.4 + Gate-1 Resolution #2.",
+  "_binding_spec": "feature-plans/ai-advisor.md §Capability 3 (Logic-Change Proposals)",
+  "objective_enum_values": {
+    "reduce_drawdown": {
+      "description": "Reduce maximum drawdown relative to the incumbent logic parameters",
+      "required_fields": [
+        "measured_value",
+        "rationale"
+      ],
+      "_note": "measured_value is from the backtest stats (max-drawdown fraction, negative), never hardcoded"
+    },
+    "lift_risk_adjusted": {
+      "description": "Lift risk-adjusted return (Sharpe/Sortino) relative to incumbent params",
+      "required_fields": [
+        "measured_value",
+        "rationale"
+      ],
+      "_note": "measured_value is the current Sharpe ratio from backtest stats, never hardcoded"
+    },
+    "reduce_turnover": {
+      "description": "Reduce rebalancing frequency / portfolio turnover",
+      "required_fields": [
+        "measured_value",
+        "rationale"
+      ],
+      "_note": "measured_value is the signal-change rate from backtest stats, never hardcoded"
+    }
+  },
+  "operator_initiated_mode": {
+    "required_input_fields": [
+      "symphony_id",
+      "score_tree",
+      "tweak",
+      "objective"
+    ],
+    "tweak_required_fields": [
+      "node_path",
+      "param_key",
+      "old_value",
+      "new_value",
+      "node_description"
+    ],
+    "_note": "Operator specifies the exact parameter change to try. old_value must match the current value at the node_path or the variant is rejected as structurally invalid."
+  },
+  "advisor_suggested_mode": {
+    "required_input_fields": [
+      "symphony_id",
+      "score_tree",
+      "objective"
+    ],
+    "candidate_generation_must": "select tweaks that address the stated objective",
+    "candidate_generation_must_not": [
+      "generate candidates by brute-forcing all numeric parameters without objective filtering",
+      "generate candidates based on vibes (random selection or popularity-based)",
+      "bypass the objective to surface pre-decided candidates"
+    ],
+    "_note": "Per Gate-1 Resolution #2: every logic change must be OBJECTIVE-DIRECTED. A naive generator that ignores the objective MUST produce a test FAIL. The objective type determines WHICH parameters to target and in WHICH direction."
+  },
+  "multiple_testing_guardrail": {
+    "ac_binding": "AC-3.2",
+    "mandate": "ALL N backtested candidates submitted as ONE batch to evaluate_candidate_batch",
+    "forbidden": "gating candidates individually (per-candidate calls to evaluate_candidate_batch)",
+    "test_vector": "submit N=3 candidates → verify gate_batch.n_candidates == 3 (not 1, not None)",
+    "_note": "Raising N raises the BHY adjusted threshold. Individual gating silently disables the FDR denominator and is a test FAIL."
+  },
+  "gating_contract": {
+    "surfaced_as_recommendation": "only ADOPT_CANDIDATE gate verdicts",
+    "gate_failed_disposition": "NOT surfaced as recommendation; may be shown as rejected with reason",
+    "zero_survivors_is_valid": true,
+    "zero_survivors_message_required": "no logic change cleared the gate this run",
+    "overfitting_caveat_mandatory_for_survivors": true,
+    "_note": "AC-3.1 / AC-3.3 / AC-3.4. Every surfaced survivor must carry SURVIVOR_OVERFITTING_CAVEAT from backtest_gate_engine."
+  },
+  "invalid_tweak_contract": {
+    "structurally_invalid_tweak": "must produce per-candidate 'could not backtest this variant' error",
+    "must_not_abort_batch": true,
+    "_note": "AC-X5. A tweak whose old_value does not match the current value in the tree — or whose node_path cannot be navigated — is structurally invalid and must not cause an unhandled exception or abort other candidates."
+  },
+  "apply_guidance_contract": {
+    "must_be_present_for_all_survivors": true,
+    "must_contain": "To apply:",
+    "must_not_contain_action_verb": [
+      "Deploy",
+      "Submit",
+      "Apply automatically",
+      "Click Apply"
+    ],
+    "_note": "AC-X1 / AC-3.4. The advisor never auto-applies changes. Guidance is always 'To apply: open {symphony} in Composer and manually adjust ...' — always an instruction for the operator, never an automated action."
+  },
+  "persistence_contract": {
+    "advisor_role": "LOGIC_CHANGE",
+    "observation_type": "logic_change_proposal",
+    "is_advisory_only": 1,
+    "verdict": "ADOPT_CANDIDATE",
+    "_note": "AC-X3. Every ADOPT_CANDIDATE survivor is persisted via database.insert_advisor_observation with is_advisory_only=1 and observation_type='logic_change_proposal'."
+  },
+  "no_api_key_contract": {
+    "message_must_contain": "advisor unavailable: API key not configured",
+    "must_write_nothing": true,
+    "no_unhandled_error": true,
+    "_note": "AC-X4. An absent Composer API key must produce a clear error, zero observations written, and no exception propagating to the caller."
+  },
+  "sample_score_tree_for_tests": {
+    "_note": "Minimal score tree with one numeric parameter; suitable for testing apply_logic_tweak and extract_numeric_params",
+    "id": "test-symphony-id",
+    "name": "Test Symphony",
+    "children": [
+      {
+        "type": "momentum",
+        "window": 20,
+        "threshold": 0.05,
+        "children": []
+      },
+      {
+        "type": "moving_average",
+        "window": 50,
+        "children": [
+          {
+            "ticker": "SPY"
+          }
+        ]
+      }
+    ]
+  },
+  "sample_tweak_reduce_drawdown": {
+    "_note": "Example reduce_drawdown tweak for the sample_score_tree above",
+    "node_path": ["children", 0],
+    "param_key": "window",
+    "old_value": 20,
+    "new_value": 16,
+    "node_description": "window=20 at path [children, 0]"
+  },
+  "sample_tweak_invalid": {
+    "_note": "Example tweak whose old_value does not match — must produce structurally invalid error",
+    "node_path": ["children", 0],
+    "param_key": "window",
+    "old_value": 999,
+    "new_value": 799,
+    "node_description": "window=999 (this value does not exist in the tree)"
+  }
+}
