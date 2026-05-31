@@ -635,16 +635,19 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # Phase 2b: portfolio-level annualized volatility from the COMBINED
         # portfolio return series (captures inter-symphony correlations — the
         # correct method vs averaging per-symphony vols). Both bot and held read
-        # the same continuous shadow series; they diverge once post-trigger
-        # tracking matures. None (not 0.0) when no shadow history exists — a real
-        # 0.0 would be ambiguous with a genuine zero-vol result.
+        # None (not 0.0) when no shadow history — a real 0.0 would be ambiguous
+        # with a genuine zero-vol result.
+        # vol_held stays None: no portfolio-level held daily return series exists in
+        # shadow_history (no live_return column). Setting vol_held = vol_bot would
+        # fabricate a false tie (delta always 0). The hero row stubs held to '—'
+        # via the has_vol guard — honest, not misleading. Deriving held vol from
+        # shadow_history.current_return is deferred to a future cycle.
         vol_bot: float | None = None
         vol_held: float | None = None
         _shadow_result = analytics.get_portfolio_daily_returns_from_shadow()
         if _shadow_result is not None:
             _, _port_daily_returns = _shadow_result
             vol_bot = analytics.compute_portfolio_annualized_vol(_port_daily_returns)
-            vol_held = vol_bot
 
         return {
             "today_change": today_change,

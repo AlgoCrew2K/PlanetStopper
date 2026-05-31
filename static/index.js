@@ -462,10 +462,14 @@
                             : (kind === 'num'
                                 ? (delta >= 0 ? '+' : '') + delta.toFixed(2)
                                 : (delta >= 0 ? '+' : '') + (delta * 100).toFixed(1) + 'pp');
+                        // Match the existing .math-row pattern (index.html:1223-1258):
+                        // label + value share a flex row; hint sits below on its own line.
                         return '<div class="math-row">'
+                            + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">'
                             + '<span class="math-row-label">' + label + '</span>'
                             + '<span class="math-row-value" style="color:' + dcol + ';">' + deltaStr + '</span>'
-                            + '<span class="math-row-hint">Bot ' + fmt(bv) + ' · Held ' + fmt(hv) + '</span>'
+                            + '</div>'
+                            + '<div class="math-row-hint">Bot ' + fmt(bv) + ' · Held ' + fmt(hv) + '</div>'
                             + '</div>';
                     }).join('');
                     rpEl.innerHTML = html;
