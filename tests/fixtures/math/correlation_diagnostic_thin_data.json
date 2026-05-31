@@ -1,0 +1,23 @@
+{
+  "_provenance": "hand-derived; synthetic series with exactly 29 overlapping observations (one below the thin-data threshold of 30)",
+  "_derivation": "series_x has 29 observations: alternating +0.01 and -0.01. series_y is identical (copy). Pearson r(x,y) = 1.0 exactly. n_obs = 29. thin_data = true because 29 < 30 (threshold from Bailey/de-Prado 2014 interpretability floor, same _V1_BOOTSTRAP_MIN_DAYS used elsewhere in the codebase).",
+  "_thin_data_threshold": 30,
+  "inputs": {
+    "return_series": {
+      "symphony_x": [0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01,
+                     0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01,
+                     0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01],
+      "symphony_y": [0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01,
+                     0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01,
+                     0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01]
+    }
+  },
+  "expected_pair": {
+    "sym_a": "symphony_x",
+    "sym_b": "symphony_y",
+    "n_obs": 29,
+    "correlation": 1.0,
+    "thin_data": true,
+    "_comment": "29 obs < 30 threshold — result is valid but must be flagged thin"
+  }
+}

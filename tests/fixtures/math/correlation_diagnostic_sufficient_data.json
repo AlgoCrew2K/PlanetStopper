@@ -1,0 +1,23 @@
+{
+  "_provenance": "hand-derived; synthetic series with exactly 30 overlapping observations (meets the thin-data threshold)",
+  "_derivation": "series_p has 30 observations: alternating +0.01 and -0.01. series_q is identical. Pearson r(p,q) = 1.0 exactly. n_obs = 30. thin_data = false because 30 >= 30.",
+  "_thin_data_threshold": 30,
+  "inputs": {
+    "return_series": {
+      "symphony_p": [0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01,
+                     0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01,
+                     0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01],
+      "symphony_q": [0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01,
+                     0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01,
+                     0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01]
+    }
+  },
+  "expected_pair": {
+    "sym_a": "symphony_p",
+    "sym_b": "symphony_q",
+    "n_obs": 30,
+    "correlation": 1.0,
+    "thin_data": false,
+    "_comment": "30 obs == 30 threshold — sufficient data, thin_data=false"
+  }
+}
