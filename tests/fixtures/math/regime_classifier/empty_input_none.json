@@ -1,0 +1,14 @@
+{
+  "description": "Empty returns list: must return None/'unknown' without raising, never produce a label.",
+  "function": "classify_regime",
+  "inputs": {
+    "returns": [],
+    "description": "Completely empty input."
+  },
+  "derivation": {
+    "expected_label": "No data -> None or 'unknown'. Same sentinel contract as insufficient_data_none.",
+    "tolerance_note": "Test checks: result is None or result == 'unknown'."
+  },
+  "expected": null,
+  "expected_alternatives": ["unknown"]
+}

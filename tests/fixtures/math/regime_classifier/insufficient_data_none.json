@@ -1,0 +1,15 @@
+{
+  "description": "Fewer returns than the minimum window required for a reliable classification; expect None/'unknown' (graceful degradation, not an error).",
+  "function": "classify_regime",
+  "inputs": {
+    "returns": [0.01, -0.01, 0.02],
+    "description": "Only 3 observations. AC and vol estimates are unreliable at N<some minimum (e.g. N<20). Must degrade gracefully, never raise."
+  },
+  "derivation": {
+    "minimum_observations": "Any AC/vol-based classifier needs at minimum enough observations to compute a meaningful rolling autocorrelation. 3 observations yield only 2 lag-1 pairs; this is statistically meaningless. The function must return None or a sentinel 'unknown' string rather than produce a spurious label.",
+    "expected_label": "None or 'unknown' — the specific sentinel depends on implementation choice, but the test asserts is_none_or_unknown(result) so either is valid. Fixture records None as the canonical expectation; test code asserts the actual result is falsy OR == 'unknown'.",
+    "tolerance_note": "No float comparison needed. Test checks: result is None or result == 'unknown'."
+  },
+  "expected": null,
+  "expected_alternatives": ["unknown"]
+}

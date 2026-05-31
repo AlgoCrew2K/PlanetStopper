@@ -1,0 +1,18 @@
+{
+  "description": "High-vol/stressed regime: returns have large magnitude regardless of sign pattern; volatility is the dominant signal. Expected label: 'high-vol'.",
+  "function": "classify_regime",
+  "inputs": {
+    "returns": [
+      0.08, -0.09, 0.07, -0.10, 0.09, -0.08, 0.11, -0.07, 0.10, -0.09,
+      0.08, -0.10, 0.07, -0.08, 0.09, -0.11, 0.08, -0.09, 0.10, -0.07
+    ],
+    "description": "20-day series of large-magnitude alternating returns (~7-11% per day). The alternating pattern means AC < 0 (mean-reverting), but the volatility is so elevated that the high-vol signal dominates."
+  },
+  "derivation": {
+    "lag1_ac": "Alternating sign series -> lag-1 AC < 0 (mean-reverting by sign pattern). However, high-vol label takes priority when realized_vol exceeds HIGH_VOL_DAILY_THRESHOLD = 0.04 (a theory-anchored fixed constant, ~3x normal equity vol; classify_regime does NOT use a fitted threshold). These returns (7-11%/day) produce vol ~0.089, which is more than 2x the fixed threshold.",
+    "realized_vol": "Values alternate between approximately +0.09 and -0.09 with small variation. For a simplified bound: if all values were exactly +-0.09, sample std = sqrt(20*0.0081/19) = sqrt(0.008526) ≈ 0.0924. Actual values vary from 0.07 to 0.11; the sample std will be approximately 0.089-0.092. This is 5-10x above a 'normal' daily equity vol of ~1.0-1.5% per day, placing it in the extreme upper tail of any historical daily-return distribution.",
+    "expected_label": "Vol dominates: even with negative AC (mean-reverting signal), the extreme vol magnitude triggers 'high-vol' label because high-vol overrides AC-based labels when realized vol exceeds HIGH_VOL_DAILY_THRESHOLD = 0.04 (theory-anchored fixed constant, NOT a fitted threshold). Vol ~0.089 >> 0.04.",
+    "tolerance_note": "Expected label is a string, compared exactly. This fixture ALSO tests that vol-dominance over AC applies."
+  },
+  "expected": "high-vol"
+}

@@ -1,0 +1,18 @@
+{
+  "description": "Strong mean-reverting regime: returns strictly alternate sign, producing strongly negative lag-1 autocorrelation. Vol is moderate. Expected label: 'mean-reverting'.",
+  "function": "classify_regime",
+  "inputs": {
+    "returns": [
+      0.02, -0.02, 0.02, -0.02, 0.02, -0.02, 0.02, -0.02, 0.02, -0.02,
+      0.02, -0.02, 0.02, -0.02, 0.02, -0.02, 0.02, -0.02, 0.02, -0.02
+    ],
+    "description": "20-day perfectly alternating +0.02/-0.02 series. Lag-1 AC = -1.0 (population) by construction: every up day is followed by a down day and vice versa. Rolling 20-day std = 0.02 (moderate vol)."
+  },
+  "derivation": {
+    "lag1_ac": "For x_t = +A on even, -A on odd indices: cov(x_t, x_{t-1}) = E[(+A)(-A)] = -A^2; var(x_t) = A^2. So rho = -1.0 (population). The sample estimate with N=20 will be close to -1.0 but not exact due to endpoint effects; any correct AC computation will yield a strongly negative value, well below any 'trending' threshold.",
+    "realized_vol": "std(series) = sqrt(sum((x_t - mean)^2) / (N-1)) with mean=0. All 20 values are +-0.02. Sample var = (20 * 0.0004) / 19 = 0.008/19 = 0.000421... Vol = sqrt(0.000421) ≈ 0.02052. This is a mid-range vol, well within 'normal' vol territory, not 'high-vol'.",
+    "expected_label": "Lag-1 AC strongly negative (-1.0 population) -> mean-reverting regardless of vol tercile assignment, because the AC signal is the primary discriminator for mean-reverting vs trending.",
+    "tolerance_note": "Expected label is a string, compared exactly."
+  },
+  "expected": "mean-reverting"
+}

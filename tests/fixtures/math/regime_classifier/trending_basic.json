@@ -1,0 +1,18 @@
+{
+  "description": "Strong trending regime: returns run in the same direction for extended periods, producing positive lag-1 autocorrelation. Vol is moderate. Expected label: 'trending'.",
+  "function": "classify_regime",
+  "inputs": {
+    "returns": [
+      0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01,
+      -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01
+    ],
+    "description": "20-day series: first 10 days all +0.01, last 10 days all -0.01. This step function produces strong positive lag-1 AC within each run and only one sign-change at the midpoint."
+  },
+  "derivation": {
+    "lag1_ac": "Series: 10x(+0.01) then 10x(-0.01). Mean = 0. Lag-1 pairs: (x_1,x_0) = (+0.01,+0.01) for 9 pairs in first run, (+0.01,-0.01) once at transition, (-0.01,-0.01) for 9 pairs in second run. Sum of x_t*x_{t-1} over 19 pairs = 9*(0.0001) + 1*(-0.0001) + 9*(0.0001) = 0.0009 - 0.0001 + 0.0009 = 0.0017. Sample AC numerator (centered by mean=0) = 0.0017/19 ≈ 0.0000895. Sample variance = (20*0.0001)/19 = 0.0001053. AC = 0.0000895/0.0001053 ≈ +0.85. Strongly positive -> trending.",
+    "realized_vol": "All values +/-0.01 with mean=0. Sample var = 20*0.0001/19 = 0.000105. Vol = sqrt(0.000105) ≈ 0.01026. Low-to-moderate vol, not in 'high-vol' territory.",
+    "expected_label": "Lag-1 AC ≈ +0.85 (strongly positive, well above any reasonable trending threshold ~0.1-0.3) -> trending.",
+    "tolerance_note": "Expected label is a string, compared exactly."
+  },
+  "expected": "trending"
+}
