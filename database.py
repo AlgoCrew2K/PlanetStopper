@@ -140,7 +140,9 @@ def init_db():
             lambda_budget             REAL    DEFAULT NULL,
             overfitting_verdict       TEXT    DEFAULT NULL,
             paired_heuristic_study_name TEXT  DEFAULT NULL,
-            s_count                   INTEGER DEFAULT NULL
+            s_count                   INTEGER DEFAULT NULL,
+            -- migration 028: pbo column (H1 DUAL-WRITE HAZARD — also added via ALTER TABLE)
+            pbo                       REAL    DEFAULT NULL
         )
     """)
 
@@ -470,6 +472,8 @@ def save_autotune_run(
     d_spec=None,
     gamma=None,
     overfitting_verdict=None,
+    # migration 028: Phase-3 PBO acceptance gate result.
+    pbo=None,
 ) -> int:
     """Persist one row of per-run Optuna validation metrics to autotune_runs.
 
@@ -501,6 +505,11 @@ def save_autotune_run(
       d_spec:             COUNT DISTINCT BACKTEST_SELECTION spec_bundle_ids in researcher_dof_ledger.
       gamma:              Frozen CRRA risk-aversion coefficient from spec_facets.
       overfitting_verdict: Human-readable Overfitting Conscience summary string.
+
+    Phase-3 PBO column (migration 028):
+      pbo: Probability of Backtest Overfitting from CSCV (Bailey et al. 2017).
+           In (0, 1); higher means more overfitting evidence.  None when PBO
+           could not be computed (insufficient CSCV paths).
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -510,8 +519,9 @@ def save_autotune_run(
             (run_timestamp, symphony_id, oos_alpha, train_alpha,
              baseline_decision, fallback_oos_alpha, default_oos_alpha,
              selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
-             spec_bundle_id, n_effective, d_spec, gamma, overfitting_verdict)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             spec_bundle_id, n_effective, d_spec, gamma, overfitting_verdict,
+             pbo)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_timestamp,
@@ -530,6 +540,7 @@ def save_autotune_run(
             d_spec,
             gamma,
             overfitting_verdict,
+            pbo,
         ),
     )
     conn.commit()
@@ -539,10 +550,11 @@ def save_autotune_run(
 
 
 def _autotune_run_row_to_dict(row) -> dict:
-    """Map a raw autotune_runs SELECT row (15 columns) to a dict.
+    """Map a raw autotune_runs SELECT row (16 columns) to a dict.
 
     Column order matches _AUTOTUNE_RUNS_SELECT. id is projected first
     (S3-AUDIT-001 fix) so the OC producer receives an honest row id.
+    migration 028: pbo added at index 15.
     """
     return {
         "id": row[0],
@@ -560,6 +572,7 @@ def _autotune_run_row_to_dict(row) -> dict:
         "math_mode": row[12],
         "account_id": row[13],
         "sortino_sentinel_pct": _finite_or_none(row[14]),
+        "pbo": _finite_or_none(row[15]),
     }
 
 
@@ -568,7 +581,8 @@ _AUTOTUNE_RUNS_SELECT = """
            run_timestamp, symphony_id, oos_alpha, train_alpha,
            baseline_decision, fallback_oos_alpha, default_oos_alpha,
            selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
-           math_mode, account_id, sortino_sentinel_pct
+           math_mode, account_id, sortino_sentinel_pct,
+           pbo
     FROM autotune_runs
 """
 
@@ -1102,6 +1116,7 @@ _MIGRATION_FILES = [
     "025_advisor_observations_symphony_id.sql",
     "026_mc_regime_match_telemetry.sql",
     "027_regime_label_cache.sql",
+    "028_autotune_runs_pbo.sql",
 ]
 
 
