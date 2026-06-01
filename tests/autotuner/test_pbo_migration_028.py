@@ -74,15 +74,30 @@ class TestMigration028Existence:
         )
 
     def test_migration_does_not_add_dsr_column(self):
-        """028 migration must NOT add a dsr column — DSR is dropped from this cycle."""
+        """028 migration must NOT define a dsr SQL column — DSR is dropped from this cycle.
+
+        The guard matches the column-definition pattern only (ADD COLUMN ... dsr or
+        dsr ... REAL/INTEGER), not any mention of the three-letter string.  This
+        allows comments that explain WHY the metric was dropped without false-positiving.
+        """
+        import re
         path = _MIGRATIONS_DIR / _MIGRATION_FILE
         if not path.exists():
             pytest.skip("Migration file missing")
-        sql = path.read_text(encoding="utf-8").lower()
-        assert "dsr" not in sql, (
-            f"{_MIGRATION_FILE} must NOT contain a 'dsr' column — "
+        sql = path.read_text(encoding="utf-8")
+        # Match an actual column definition: ADD COLUMN dsr ... or a column named dsr
+        # followed by a SQL type keyword.  Case-insensitive.
+        col_def_pattern = re.compile(
+            r"add\s+column\s+dsr\b"          # ADD COLUMN dsr ...
+            r"|"
+            r"\bdsr\s+(?:real|integer|text|blob|numeric)\b",  # dsr REAL / dsr INTEGER etc.
+            re.IGNORECASE,
+        )
+        match = col_def_pattern.search(sql)
+        assert match is None, (
+            f"{_MIGRATION_FILE} must NOT define a 'dsr' column — "
             "DSR was dropped entirely from this cycle (team-lead ruling 2026-06-01). "
-            "Only the pbo column belongs in migration 028."
+            f"Matched pattern at: {match.group()!r}"
         )
 
     def test_migration_is_additive_alter_table_not_drop(self):
