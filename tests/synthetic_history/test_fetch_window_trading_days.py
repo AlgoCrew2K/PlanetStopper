@@ -885,7 +885,8 @@ def test_daily_warmup_floor_is_enforced_on_the_returned_daily_bars() -> None:
 #   -> short: WIDEN the window + REFETCH (bounded retry)
 #   -> still short after the bounded retry: HARD failure (raise / abort) —
 #      never proceed-degenerate.
-# The returned-bar count against the FULL 174 floor (125 + 39 warmup + 10)
+# The returned-bar count against the FULL production floor
+# (_WALK_FORWARD_TRADING_DAYS + _MC_WARMUP_TRADING_DAYS + _FETCH_WINDOW_BUFFER)
 # also discharges BLOCKER 2 — the MC warmup is inside that floor.
 #
 # Testability: the widen+refetch loop must live in a PURE, importable helper
@@ -893,6 +894,17 @@ def test_daily_warmup_floor_is_enforced_on_the_returned_daily_bars() -> None:
 # exercised with an injected stub — no live Alpaca call. These tests are
 # import-guarded; a not-yet-extracted helper fails RED with a clear message.
 # ---------------------------------------------------------------------------
+
+# The actual production floor enforced by the widen+refetch helper — derived
+# from synthetic_history's named constant, NOT from the test-local
+# _MIN_REQUIRED_TRADING_DAYS (which pins only the bare walk-forward + MC warmup
+# minimum, without the fetch buffer). Using the production constant means these
+# tests remain correct across future changes to _WALK_FORWARD_TRADING_DAYS,
+# _MC_WARMUP_TRADING_DAYS, or _FETCH_WINDOW_BUFFER_TRADING_DAYS without
+# requiring manual stub-count updates.
+import synthetic_history as _synth_mod  # noqa: E402 — needed for floor constant
+
+_PRODUCTION_FETCH_FLOOR = _synth_mod._REQUIRED_FETCH_TRADING_DAYS  # noqa: SLF001
 
 
 def _make_daily_bars(num_trading_days: int, symbol: str = "SPY") -> dict:
@@ -965,12 +977,16 @@ def _resolve_widen_refetch_helper():
 
 
 def test_widen_refetch_helper_returns_first_fetch_when_floor_is_met() -> None:
-    """When the first fetch already clears the 174 floor, the helper returns
-    it WITHOUT a second fetch.
+    """When the first fetch already clears the production floor, the helper
+    returns it WITHOUT a second fetch.
 
     The widen+refetch path is a fallback — it must not fire when the first
     window is already sufficient. The injected fetch stub counts its calls;
     a sufficient first return must leave the count at exactly 1.
+
+    Stub sizing is derived from synthetic_history._REQUIRED_FETCH_TRADING_DAYS
+    (the same floor the helper enforces) so this test stays correct across
+    future changes to the walk-forward window or buffer without manual updates.
     """
     helper = _resolve_widen_refetch_helper()
 
@@ -978,8 +994,11 @@ def test_widen_refetch_helper_returns_first_fetch_when_floor_is_met() -> None:
 
     def fetch_stub(*args, **kwargs):
         calls["n"] += 1
-        # A generous return well over the 174 floor.
-        return _make_daily_bars(_MIN_REQUIRED_TRADING_DAYS + 30)
+        # A generous return well over the production floor — derived from the
+        # production constant, not a hardcoded literal, so a window extension
+        # (e.g. 125->250 trading days) does not silently make this stub
+        # fall below the floor and change the test's observable behaviour.
+        return _make_daily_bars(_PRODUCTION_FETCH_FLOOR + 30)
 
     result = helper(fetch_stub)
     assert calls["n"] == 1, (
@@ -987,20 +1006,24 @@ def test_widen_refetch_helper_returns_first_fetch_when_floor_is_met() -> None:
         f"the first fetch already cleared the floor — it must fetch exactly "
         f"once on the happy path."
     )
-    assert _distinct_trading_days(result) >= _MIN_REQUIRED_TRADING_DAYS, (
+    assert _distinct_trading_days(result) >= _PRODUCTION_FETCH_FLOOR, (
         "the helper must return a bar set that clears the required "
-        f"{_MIN_REQUIRED_TRADING_DAYS}-trading-day floor."
+        f"{_PRODUCTION_FETCH_FLOOR}-trading-day floor."
     )
 
 
 def test_widen_refetch_triggers_a_second_fetch_on_first_short_return() -> None:
-    """A first fetch SHORT of the 174 floor must trigger a WIDENED REFETCH.
+    """A first fetch SHORT of the production floor must trigger a WIDENED REFETCH.
 
     This is the core widen+refetch contract. The injected stub returns a
     short payload on the first call and a sufficient one on the second; the
     helper must call the fetch a SECOND time (the widen+refetch) and return
     the sufficient set. A log-only guard would call fetch exactly once and
     return the short set — RED against that.
+
+    Stub sizing is derived from synthetic_history._REQUIRED_FETCH_TRADING_DAYS
+    (the same floor the helper enforces) so this test stays correct across
+    future changes to the walk-forward window or buffer without manual updates.
     """
     helper = _resolve_widen_refetch_helper()
 
@@ -1009,22 +1032,26 @@ def test_widen_refetch_triggers_a_second_fetch_on_first_short_return() -> None:
     def fetch_stub(*args, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            # First window too narrow — under the floor.
-            return _make_daily_bars(_MIN_REQUIRED_TRADING_DAYS - 20)
-        # Widened window now clears the floor.
-        return _make_daily_bars(_MIN_REQUIRED_TRADING_DAYS + 10)
+            # First window too narrow — strictly under the production floor.
+            # Derived from _PRODUCTION_FETCH_FLOOR so a floor change (e.g.
+            # 125->250 trading-day window extension) does not silently make
+            # this stub clear the floor on the first call and mask the widen
+            # path entirely.
+            return _make_daily_bars(_PRODUCTION_FETCH_FLOOR - 20)
+        # Widened window now clears the production floor.
+        return _make_daily_bars(_PRODUCTION_FETCH_FLOOR + 10)
 
     result = helper(fetch_stub)
     assert calls["n"] >= 2, (
-        f"a first fetch returning fewer than {_MIN_REQUIRED_TRADING_DAYS} "
+        f"a first fetch returning fewer than {_PRODUCTION_FETCH_FLOOR} "
         f"trading days must trigger a WIDENED REFETCH — the helper called the "
         f"fetch only {calls['n']} time(s). A log-only shortfall guard is "
         f"insufficient: the too-narrow window must be recovered, not just "
         f"reported."
     )
-    assert _distinct_trading_days(result) >= _MIN_REQUIRED_TRADING_DAYS, (
+    assert _distinct_trading_days(result) >= _PRODUCTION_FETCH_FLOOR, (
         "after the widened refetch the helper must return a bar set that "
-        f"clears the {_MIN_REQUIRED_TRADING_DAYS}-trading-day floor."
+        f"clears the {_PRODUCTION_FETCH_FLOOR}-trading-day floor."
     )
 
 
@@ -1045,7 +1072,10 @@ def test_widen_refetch_is_bounded_and_hard_fails_on_persistent_shortfall() -> No
     def always_short_fetch(*args, **kwargs):
         calls["n"] += 1
         # Every window — including every widened one — comes back short.
-        return _make_daily_bars(_MIN_REQUIRED_TRADING_DAYS - 30)
+        # Derived from _PRODUCTION_FETCH_FLOOR so a floor increase never
+        # accidentally makes this stub satisfy the floor and convert a
+        # "hard-fail path" test into a "happy-path succeeds" test silently.
+        return _make_daily_bars(_PRODUCTION_FETCH_FLOOR - 30)
 
     # Persistent shortfall must surface as a hard failure, not a short return.
     with pytest.raises(Exception) as excinfo:
