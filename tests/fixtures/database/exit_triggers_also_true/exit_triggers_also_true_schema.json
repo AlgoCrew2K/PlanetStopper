@@ -34,8 +34,9 @@
 
   "gate_state_blob_design": {
     "also_true_in_gate_state_dict": true,
-    "also_true_popped_before_json_dumps": true,
-    "rationale": "Dedicated column is the single DB source of truth; gate_state_json blob does NOT redundantly store also_true. The in-memory gate_state dict still carries also_true for backward-compat with tests asserting gate_state kwarg shape.",
-    "no_test_reads_also_true_from_gate_state_json_blob": true
+    "also_true_popped_before_json_dumps": false,
+    "rationale": "Option A (dual-storage): also_true remains in gate_state_json blob AND is written to the dedicated also_true_json column. The two values are populated from the same source and cannot diverge. The dedicated column is the queryable source of truth for exit-attribution analysis; the blob copy is legacy context. The 4 existing GREEN tests (test_trigger_priority_dispatch.py) assert 'also_true' in gate_state and must stay GREEN unchanged.",
+    "column_is_queryable_source": true,
+    "blob_copy_is_legacy": true
   }
 }

@@ -7,17 +7,27 @@ already computed by math_engine.resolve_trigger_priority, carried through the ex
 queue, and serialised inside the gate_state_json TEXT blob.  Migration 029 promotes it
 to a first-class column so exit-attribution analysis is clean SQL, not blob-scanning.
 
-THE 4 CHANGES (all four must land before any test here can go GREEN):
+DESIGN (Option A — dual-storage, ruling 2026-06-01):
+  also_true stays in gate_state_json blob AND is written to the new dedicated
+  also_true_json column.  The two values are populated from the same source; they
+  cannot diverge.  The dedicated column is the queryable source of truth for
+  exit-attribution analysis; the blob copy is legacy context.  The 4 existing GREEN
+  tests (test_trigger_priority_dispatch.py) assert "also_true" in gate_state and
+  stay GREEN unchanged.  Do NOT pop also_true from gate_state before json.dumps.
+
+THE 5 CHANGES (all must land before any test here can go GREEN):
   1. migrations/029_exit_triggers_also_true.sql:
        ALTER TABLE exit_triggers ADD COLUMN also_true_json TEXT NULL DEFAULT NULL;
-  2. database.record_exit_trigger: add kwarg also_true: list[str] | None = None;
-       writes also_true_json = json.dumps(also_true) if also_true is not None else None.
-  3. alpha_bot_execution.py ~:1783-1797: pass also_true=item["also_true"] to
+  2. database._MIGRATION_FILES: append '029_exit_triggers_also_true.sql' after 028.
+  3. database.init_db() CREATE TABLE exit_triggers: add also_true_json column inline
+       (H1 dual-write mirror — fresh DBs must have the column without run_migrations).
+  4. database.record_exit_trigger: add kwarg also_true: list[str] | None = None;
+       INSERT writes also_true_json = json.dumps(also_true) if also_true is not None
+       else None.  gate_state dict is NOT modified — blob retains its also_true key.
+  5. alpha_bot_execution.py ~:1783-1797: pass also_true=item["also_true"] to
        record_exit_trigger.
-  4. Design decision (pop from gate_state before json.dumps): also_true is popped
-       from the gate_state dict before json.dumps so the dedicated column is the
-       single DB source of truth.  Verified: no test reads also_true from the
-       gate_state_json DB blob — existing tests inspect the in-memory gate_state kwarg.
+  Also: get_triggers and get_recent_exit_triggers must SELECT also_true_json so
+       callers get the column in the returned dicts.
 
 Coverage (all tests FAIL RED until GREEN implementation lands):
   M1: migration file exists on disk
@@ -38,8 +48,12 @@ Coverage (all tests FAIL RED until GREEN implementation lands):
   R6: existing pre-029 rows (NULL also_true_json) survive the migration unharmed
 
   D1: also_true_json column is TEXT, NULLable, DEFAULT NULL
-  D2: also_true popped from gate_state before json.dumps — gate_state_json blob does
-       NOT contain a redundant "also_true" key after the change
+  D2: also_true_json column is queryable — written value survives round-trip through
+       both get_triggers and get_recent_exit_triggers (the two public read paths);
+       also_true key is still present in gate_state_json blob (Option A — no pop)
+
+  RP1: get_triggers returns also_true_json in result dicts (read-path coverage)
+  RP2: get_recent_exit_triggers returns also_true_json in result dicts (read-path coverage)
 
   L1: no blocking I/O — record_exit_trigger call with also_true on a tiny list
        completes without sleeping (json.dumps of a small list is trivial)
@@ -654,49 +668,52 @@ def test_pre_029_rows_survive_migration_with_null_also_true_json(tmp_path, monke
 
 
 # ---------------------------------------------------------------------------
-# D2: gate_state_json blob does NOT contain "also_true" after the change
+# D2: also_true_json column is the queryable source of truth AND gate_state_json
+#     blob STILL contains the also_true key (Option A — dual-storage, no pop)
 # ---------------------------------------------------------------------------
 
 
-def test_gate_state_json_blob_does_not_contain_also_true_key(tmp_path, monkeypatch):
+def test_also_true_column_populated_and_blob_retains_also_true_key(tmp_path, monkeypatch):
     """
-    D2: After the also_true promotion, the gate_state_json TEXT blob must NOT
-    contain a redundant "also_true" key.
+    D2: Option A dual-storage contract — two assertions in one scenario:
 
-    Design decision: also_true is popped from the gate_state dict before json.dumps
-    so the dedicated column is the single DB source of truth.  Dual storage in both
-    the blob and the column would cause divergence if one path is updated and the
-    other is not.
+    (a) also_true_json column is populated from the also_true kwarg.
+    (b) gate_state_json blob still contains an "also_true" key — do NOT pop.
 
-    This test calls record_exit_trigger with a gate_state dict that carries
-    also_true (as alpha_bot_execution does) and asserts the persisted blob
-    has no "also_true" key — verifying the implementer popped it before serialisation.
+    Rationale: the 4 existing GREEN tests in test_trigger_priority_dispatch.py
+    (lines 345/484/604/658) assert "also_true" in gate_state; they must stay GREEN
+    without modification.  The dedicated column adds queryability without removing
+    the blob copy.  The two values are populated from the same source and cannot
+    diverge.
 
-    Fixture: fixture["gate_state_blob_design"]["also_true_popped_before_json_dumps"]
+    Fixture: fixture["gate_state_blob_design"]["also_true_popped_before_json_dumps"] == false
     """
     assert _FIXTURE_PATH.is_file(), f"Fixture missing: {_FIXTURE_PATH}"
     fx = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
     design = fx["gate_state_blob_design"]
-    assert design["also_true_popped_before_json_dumps"] is True, (
-        "Fixture design decision mismatch: also_true_popped_before_json_dumps must be True."
+    assert design["also_true_popped_before_json_dumps"] is False, (
+        "Fixture design mismatch: also_true_popped_before_json_dumps must be false "
+        "(Option A — dual-storage, no pop)."
     )
+    assert design["column_is_queryable_source"] is True
 
-    db_path = str(tmp_path / "d2_gate_state.db")
+    db_path = str(tmp_path / "d2_dual_storage.db")
     monkeypatch.setattr(db_module, "DB_FILE", db_path)
     init_db()
     run_migrations()
 
+    # Pass gate_state with also_true key — as alpha_bot_execution does at line 1794.
     gate_state_with_also_true = {
         "high_water_mark": 5.0,
         "vwap_ticks": 3,
         "vwap_bleed_ticks": 2,
         "mc_prob": 50.0,
         "symphony_vol": 0.012,
-        "also_true": ["VWAP Bleed Cut"],  # this should be popped before json.dumps
+        "also_true": ["VWAP Bleed Cut"],
     }
 
     db_module.record_exit_trigger(
-        symphony_id="sym-d2-gate-state",
+        symphony_id="sym-d2-dual",
         triggered_reason="VWAP Breakdown",
         also_true=["VWAP Bleed Cut"],
         gate_state=gate_state_with_also_true,
@@ -708,7 +725,7 @@ def test_gate_state_json_blob_does_not_contain_also_true_key(tmp_path, monkeypat
     try:
         row = conn.execute(
             "SELECT gate_state_json, also_true_json FROM exit_triggers "
-            "WHERE symphony_id = 'sym-d2-gate-state'"
+            "WHERE symphony_id = 'sym-d2-dual'"
         ).fetchone()
     finally:
         conn.close()
@@ -716,25 +733,142 @@ def test_gate_state_json_blob_does_not_contain_also_true_key(tmp_path, monkeypat
     assert row is not None, "record_exit_trigger did not write a row."
     gate_state_raw, also_true_raw = row
 
-    # The dedicated column must carry the co-fire data
+    # (a) Dedicated column carries the co-fire data.
     assert also_true_raw is not None, (
         "also_true_json must be non-NULL when also_true=['VWAP Bleed Cut'] is passed."
     )
-    parsed_also_true = json.loads(also_true_raw)
-    assert "VWAP Bleed Cut" in parsed_also_true, (
-        f"also_true_json must contain 'VWAP Bleed Cut'; got {parsed_also_true!r}"
+    parsed_col = json.loads(also_true_raw)
+    assert "VWAP Bleed Cut" in parsed_col, (
+        f"also_true_json column must contain 'VWAP Bleed Cut'; got {parsed_col!r}"
     )
 
-    # The blob must NOT contain a redundant "also_true" key
-    if gate_state_raw is not None:
-        blob = json.loads(gate_state_raw)
-        assert "also_true" not in blob, (
-            f"gate_state_json blob must NOT contain 'also_true' after the column promotion. "
-            f"Found keys: {list(blob.keys())}. "
-            "Design decision: also_true is popped from gate_state before json.dumps so "
-            "the dedicated column is the single DB source of truth. "
-            "Dual storage would cause divergence and confuse exit-attribution analysis."
-        )
+    # (b) Blob STILL contains "also_true" key — Option A: do NOT pop.
+    assert gate_state_raw is not None, (
+        "gate_state_json blob must be populated when gate_state dict is passed."
+    )
+    blob = json.loads(gate_state_raw)
+    assert "also_true" in blob, (
+        f"gate_state_json blob must still contain 'also_true' key (Option A dual-storage — "
+        f"do NOT pop before json.dumps). "
+        f"The 4 existing GREEN tests in test_trigger_priority_dispatch.py assert "
+        f"'also_true' in gate_state and must stay GREEN. "
+        f"Blob keys found: {list(blob.keys())}"
+    )
+    assert blob["also_true"] == ["VWAP Bleed Cut"], (
+        f"Blob also_true value must match input; got {blob['also_true']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# RP1: get_triggers returns also_true_json in result dicts
+# ---------------------------------------------------------------------------
+
+
+def test_get_triggers_returns_also_true_json_in_result(tmp_path, monkeypatch):
+    """
+    RP1: database.get_triggers must include also_true_json in the returned dicts.
+
+    get_triggers is the primary read path for exit-attribution analysis.  If it
+    does not SELECT also_true_json, callers get dicts without the column and the
+    entire promotion is invisible to consumers.
+
+    Implementation requirement: the SELECT list in get_triggers must include
+    also_true_json alongside the existing columns.
+    """
+    db_path = str(tmp_path / "rp1_get_triggers.db")
+    monkeypatch.setattr(db_module, "DB_FILE", db_path)
+    init_db()
+    run_migrations()
+
+    db_module.record_exit_trigger(
+        symphony_id="sym-rp1",
+        triggered_reason="Trailing Stop",
+        also_true=["VWAP Bleed Cut"],
+        ts_utc="2026-06-01T15:10:00Z",
+        ts_et="2026-06-01T11:10:00",
+    )
+
+    results = db_module.get_triggers(symphony_id="sym-rp1")
+
+    assert len(results) == 1, (
+        f"Expected 1 result from get_triggers; got {len(results)}."
+    )
+    row = results[0]
+
+    assert "also_true_json" in row, (
+        f"get_triggers result dict must include 'also_true_json' key. "
+        f"Keys present: {list(row.keys())}. "
+        "Fix: add also_true_json to the SELECT list in database.get_triggers "
+        "(database.py:2783-2786)."
+    )
+
+    raw = row["also_true_json"]
+    assert raw is not None, (
+        "also_true_json must be non-NULL in get_triggers result when "
+        "also_true=['VWAP Bleed Cut'] was written."
+    )
+    parsed = json.loads(raw)
+    assert "VWAP Bleed Cut" in parsed, (
+        f"also_true_json from get_triggers must contain 'VWAP Bleed Cut'; got {parsed!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# RP2: get_recent_exit_triggers returns also_true_json in result dicts
+# ---------------------------------------------------------------------------
+
+
+def test_get_recent_exit_triggers_returns_also_true_json_in_result(tmp_path, monkeypatch):
+    """
+    RP2: database.get_recent_exit_triggers must include also_true_json in the
+    returned dicts.
+
+    get_recent_exit_triggers is used by the /api/triggers dashboard route.
+    If it does not SELECT also_true_json, the dashboard (and any future
+    SIP re-decision tooling) cannot access co-fire attribution without a
+    separate query.
+
+    Implementation requirement: the SELECT list in get_recent_exit_triggers must
+    include also_true_json alongside the existing columns.
+    """
+    db_path = str(tmp_path / "rp2_get_recent.db")
+    monkeypatch.setattr(db_module, "DB_FILE", db_path)
+    init_db()
+    run_migrations()
+
+    db_module.record_exit_trigger(
+        symphony_id="sym-rp2",
+        triggered_reason="VWAP Breakdown",
+        also_true=["Take-Profit", "Trailing Stop"],
+        ts_utc="2026-06-01T15:11:00Z",
+        ts_et="2026-06-01T11:11:00",
+    )
+
+    results = db_module.get_recent_exit_triggers(limit=10)
+
+    matching = [r for r in results if r.get("symphony_id") == "sym-rp2"]
+    assert len(matching) == 1, (
+        f"Expected 1 matching row from get_recent_exit_triggers; got {len(matching)}."
+    )
+    row = matching[0]
+
+    assert "also_true_json" in row, (
+        f"get_recent_exit_triggers result dict must include 'also_true_json' key. "
+        f"Keys present: {list(row.keys())}. "
+        "Fix: add also_true_json to the SELECT list in database.get_recent_exit_triggers "
+        "(database.py:2262-2265)."
+    )
+
+    raw = row["also_true_json"]
+    assert raw is not None, (
+        "also_true_json must be non-NULL in get_recent_exit_triggers result when "
+        "also_true=['Take-Profit','Trailing Stop'] was written."
+    )
+    parsed = json.loads(raw)
+    assert set(parsed) == {"Take-Profit", "Trailing Stop"}, (
+        f"also_true_json from get_recent_exit_triggers must contain the written co-fires; "
+        f"got {parsed!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
