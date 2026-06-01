@@ -1284,3 +1284,197 @@ class TestAC1SiblingJsCsrfFix:
             f"The CSRF guard must pass when the correct token is supplied. "
             f"Body: {resp.get_data(as_text=True)[:200]!r}"
         )
+
+
+# ===========================================================================
+# B-1 (reviewer BLOCK) — CHAT_MAX_REQUEST_BODY_BYTES must be enforced
+#
+# reviewer confirmed: the constant exists but no Flask MAX_CONTENT_LENGTH
+# assignment and no in-route content_length check are present.  A large body
+# with individually-valid fields still reaches explain_artifact.
+# ===========================================================================
+
+
+class TestB1RequestBodySizeCap:
+    """B-1: The request body size cap must be actively enforced, not just defined."""
+
+    def test_flask_max_content_length_is_set_or_route_checks_content_length(self):
+        """CHAT_MAX_REQUEST_BODY_BYTES must be wired to actual enforcement.
+
+        Two acceptable implementations:
+          A) app.config['MAX_CONTENT_LENGTH'] <= CHAT_MAX_REQUEST_BODY_BYTES
+          B) The route source contains a content_length / request.content_length check
+
+        A constant that is defined but never wired to any enforcement mechanism
+        is dead code and provides no protection (reviewer B-1).
+        """
+        max_body = getattr(app_module, "CHAT_MAX_REQUEST_BODY_BYTES", None)
+        if max_body is None:
+            pytest.skip("CHAT_MAX_REQUEST_BODY_BYTES not defined — GREEN adds it")
+
+        # Check option A: Flask MAX_CONTENT_LENGTH
+        flask_limit = app_module.app.config.get("MAX_CONTENT_LENGTH")
+        if flask_limit is not None and flask_limit <= max_body:
+            return  # Option A satisfied
+
+        # Check option B: in-route content_length check in source
+        import pathlib
+        app_source = (
+            pathlib.Path(__file__).parent.parent.parent / "app.py"
+        ).read_text(encoding="utf-8")
+
+        chat_route_idx = app_source.find("def ai_advisor_chat_send")
+        assert chat_route_idx != -1, "ai_advisor_chat_send not found in app.py"
+
+        route_window = app_source[chat_route_idx: chat_route_idx + 3000]
+        has_check = (
+            "content_length" in route_window
+            or "MAX_CONTENT_LENGTH" in route_window
+        )
+
+        assert flask_limit is not None or has_check, (
+            f"CHAT_MAX_REQUEST_BODY_BYTES={max_body} is defined but never enforced. "
+            f"app.config['MAX_CONTENT_LENGTH'] = {flask_limit!r} (not set to the cap). "
+            f"No content_length check found in ai_advisor_chat_send(). "
+            f"Fix A: add `app.config['MAX_CONTENT_LENGTH'] = CHAT_MAX_REQUEST_BODY_BYTES` "
+            f"near other app.config lines. "
+            f"Fix B: add `if (request.content_length or 0) > CHAT_MAX_REQUEST_BODY_BYTES: "
+            f"return jsonify(...), 400` at the top of ai_advisor_chat_send()."
+        )
+
+    def test_body_exceeding_max_bytes_is_rejected_before_explain_artifact(
+        self, client, csrf_token
+    ):
+        """A request body larger than CHAT_MAX_REQUEST_BODY_BYTES must return 400/413
+        and must NOT reach explain_artifact.
+
+        reviewer B-1: the constant is defined but not enforced.  A body that
+        is individually valid per field (message < CHAT_MAX_MESSAGE_CHARS,
+        artifact < CHAT_MAX_ARTIFACT_BYTES) but large in total must still be
+        capped at the body level.
+
+        This test only runs when the body cap is larger than the sum of the
+        individual field caps — otherwise the individual caps already provide
+        sufficient protection and this test is vacuous.
+        """
+        max_body = getattr(app_module, "CHAT_MAX_REQUEST_BODY_BYTES", 65536)
+        max_msg = getattr(app_module, "CHAT_MAX_MESSAGE_CHARS", 2000)
+        max_artifact = getattr(app_module, "CHAT_MAX_ARTIFACT_BYTES", 8192)
+        overhead = 300  # JSON structure overhead
+
+        if max_body <= max_msg + max_artifact + overhead:
+            pytest.skip(
+                f"CHAT_MAX_REQUEST_BODY_BYTES={max_body} <= "
+                f"CHAT_MAX_MESSAGE_CHARS + CHAT_MAX_ARTIFACT_BYTES + overhead "
+                f"({max_msg}+{max_artifact}+{overhead}=={max_msg+max_artifact+overhead}) — "
+                "individual-field caps already enforce the body cap."
+            )
+
+        # Build a body that exceeds max_body using fields each within their
+        # individual limits but whose total pushes over max_body.
+        large_message = "Q" * max_msg
+        large_artifact = {
+            "artifact_type": "asset_swap_proposal",
+            "artifact_id": "swap-001",
+            "symphony_id": "sym-alpha",
+            "regime_context": "R" * (max_artifact - 150),
+        }
+
+        with patch(
+            _EXPLAIN_ARTIFACT_PATCH_TARGET,
+            return_value=_make_fake_explain_response(),
+        ) as mock_explain:
+            resp = client.post(
+                "/ai-advisor/chat/send",
+                json={"message": large_message, "artifact": large_artifact},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+        assert resp.status_code in (400, 413), (
+            f"A body exceeding CHAT_MAX_REQUEST_BODY_BYTES={max_body} must return "
+            f"400 or 413. Got {resp.status_code}. "
+            f"CHAT_MAX_REQUEST_BODY_BYTES is a dead constant — no body-size check "
+            f"exists in the route or Flask config. "
+            f"Body: {resp.get_data(as_text=True)[:200]!r}"
+        )
+        assert mock_explain.call_count == 0, (
+            "explain_artifact must NOT be called when the body exceeds "
+            f"CHAT_MAX_REQUEST_BODY_BYTES — got {mock_explain.call_count} calls."
+        )
+
+
+# ===========================================================================
+# B-2 (reviewer BLOCK) — rate limiter dict must not grow unboundedly
+#
+# reviewer confirmed: _CHAT_RATE_LIMITER has no max-tracked-IPs bound.
+# The stale-eviction fix removes zero-length deques but does not cap
+# simultaneous active IPs.
+# ===========================================================================
+
+
+class TestB2RateLimiterBoundedGrowth:
+    """B-2: Rate limiter dict must have a documented maximum tracked-IP bound."""
+
+    def test_chat_rate_limiter_max_tracked_ips_constant_exists(self):
+        """app.py must define CHAT_RATE_LIMITER_MAX_TRACKED_IPS.
+
+        reviewer B-2: the dict grows one entry per unique remote_addr.  A named
+        constant makes the bound explicit and testable.
+        """
+        assert hasattr(app_module, "CHAT_RATE_LIMITER_MAX_TRACKED_IPS"), (
+            "app.py must define CHAT_RATE_LIMITER_MAX_TRACKED_IPS — "
+            "the maximum number of distinct IPs tracked simultaneously in "
+            "_CHAT_RATE_LIMITER. "
+            "Reasonable value: 1000 (localhost operator dashboard will never "
+            "see more than a handful of distinct IPs in practice)."
+        )
+        val = app_module.CHAT_RATE_LIMITER_MAX_TRACKED_IPS
+        assert isinstance(val, int) and val > 0, (
+            f"CHAT_RATE_LIMITER_MAX_TRACKED_IPS must be a positive integer. Got: {val!r}"
+        )
+
+    def test_rate_limiter_does_not_exceed_max_tracked_ips(self, client, csrf_token):
+        """_CHAT_RATE_LIMITER must not grow beyond CHAT_RATE_LIMITER_MAX_TRACKED_IPS.
+
+        When the cap is reached the implementation may reject new IPs (429),
+        evict the oldest entry, or any other bounded strategy.  Unbounded
+        growth is not acceptable.
+        """
+        max_ips = getattr(app_module, "CHAT_RATE_LIMITER_MAX_TRACKED_IPS", None)
+        if max_ips is None:
+            pytest.skip(
+                "CHAT_RATE_LIMITER_MAX_TRACKED_IPS not defined — GREEN adds it"
+            )
+
+        limiter = getattr(app_module, "_CHAT_RATE_LIMITER", None)
+        if limiter is None:
+            pytest.skip("_CHAT_RATE_LIMITER not defined")
+
+        # Override the cap to a small value to keep the test fast.
+        test_cap = 5
+        original_cap = app_module.CHAT_RATE_LIMITER_MAX_TRACKED_IPS
+        try:
+            app_module.CHAT_RATE_LIMITER_MAX_TRACKED_IPS = test_cap
+
+            with patch(
+                _EXPLAIN_ARTIFACT_PATCH_TARGET,
+                return_value=_make_fake_explain_response(),
+            ):
+                for i in range(test_cap + 3):
+                    test_ip = f"10.0.1.{i + 1}"
+                    client.post(
+                        "/ai-advisor/chat/send",
+                        json=_MINIMAL_BODY,
+                        headers={"X-CSRF-Token": csrf_token},
+                        environ_base={"REMOTE_ADDR": test_ip},
+                    )
+        finally:
+            app_module.CHAT_RATE_LIMITER_MAX_TRACKED_IPS = original_cap
+
+        dict_size = len(limiter)
+        assert dict_size <= test_cap, (
+            f"_CHAT_RATE_LIMITER grew to {dict_size} entries after {test_cap + 3} "
+            f"requests from distinct IPs (cap={test_cap}). "
+            f"The dict must not exceed CHAT_RATE_LIMITER_MAX_TRACKED_IPS. "
+            f"Implement eviction when the cap is hit."
+        )
