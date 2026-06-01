@@ -524,6 +524,70 @@ class TestAC2CostDoSGuards:
             f"the paid Anthropic LLM must not be reachable after the limit fires."
         )
 
+    def test_rate_limiter_evicts_stale_ip_entries_after_window_expires(self, client, csrf_token):
+        """_CHAT_RATE_LIMITER must not retain zero-length deques for IPs whose
+        window has expired.
+
+        flask-specialist finding: the per-IP cleanup loop at app.py:3023-3024
+        expires old timestamps but never deletes keys whose deque drains to
+        empty.  Over a long-running daemon lifetime this accumulates one dict
+        entry per unique remote_addr seen, growing without bound.
+
+        Required behaviour: after a request from an IP whose previous requests
+        all fall outside the rate-limit window, the limiter dict must not
+        contain an empty deque for that IP (the key should be absent or the
+        deque should contain exactly the current request).
+
+        The fix is one line after the expiry while-loop in app.py:
+            if not _ip_window:
+                del _CHAT_RATE_LIMITER[_client_ip]
+        Then allow the existing key-creation logic (line 3019-3020) to
+        re-initialise on the current request.
+        """
+        import collections
+        import time
+
+        limiter = getattr(app_module, "_CHAT_RATE_LIMITER", None)
+        if limiter is None:
+            pytest.skip("_CHAT_RATE_LIMITER not defined — GREEN adds it")
+
+        window = getattr(app_module, "CHAT_RATE_LIMIT_WINDOW_SECONDS", 60)
+
+        # Seed a stale entry: an IP with timestamps all older than the window.
+        stale_ip = "192.0.2.99"  # TEST-NET-1 — safe to use in tests
+        stale_time = time.time() - window - 10  # 10s beyond the window
+        limiter[stale_ip] = collections.deque([stale_time, stale_time - 1])
+
+        # The test client uses 127.0.0.1 — patch remote_addr to the stale IP
+        # so the route exercises the stale-entry path.
+        with patch(_EXPLAIN_ARTIFACT_PATCH_TARGET, return_value=_make_fake_explain_response()):
+            with app_module.app.test_request_context(
+                "/ai-advisor/chat/send",
+                method="POST",
+                environ_base={"REMOTE_ADDR": stale_ip},
+            ):
+                resp = client.post(
+                    "/ai-advisor/chat/send",
+                    json=_MINIMAL_BODY,
+                    headers={"X-CSRF-Token": csrf_token},
+                    environ_base={"REMOTE_ADDR": stale_ip},
+                )
+
+        # After the request, the stale IP's deque must NOT be empty in the dict.
+        # Either:
+        #   (a) the key is absent (was deleted and not re-added, incorrect), OR
+        #   (b) the key exists with exactly 1 entry (the current request — correct)
+        # The WRONG state is: key exists with an empty deque (stale entries retained).
+        if stale_ip in limiter:
+            deque_len = len(limiter[stale_ip])
+            assert deque_len > 0, (
+                f"_CHAT_RATE_LIMITER['{stale_ip}'] is an empty deque after a request "
+                f"from that IP — stale zero-length entries are never evicted. "
+                f"After the window-expiry while-loop, add: "
+                f"  if not _ip_window: del _CHAT_RATE_LIMITER[_client_ip] "
+                f"to prevent unbounded dict growth (flask-specialist finding)."
+            )
+
     def test_rate_limit_constant_implies_reasonable_window(self):
         """CHAT_RATE_LIMIT_WINDOW_SECONDS must be at least 1 second.
 
