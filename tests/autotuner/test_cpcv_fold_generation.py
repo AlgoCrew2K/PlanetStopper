@@ -1093,36 +1093,45 @@ def _find_test_blocks(
 
 
 # ===========================================================================
-# AC-2 (Revise) — 1-factorization: paths must be COMPLETE OOS backtest paths
+# AC-2 (Revise) - Canonical mlfinlab path assignment: paths must be COMPLETE
 # ===========================================================================
 #
 # DEFECT FOUND IN 80de941 (PM code review 2026-06-01):
 # _generate_cpcv_folds used `path_membership = [split_idx % n_paths]` (modulo
-# round-robin). This produces INCOMPLETE paths — each path covers only 4/6 or
-# 5/6 of the date range, with groups duplicated across splits in the same path.
-# E.g. path0 got splits (0,1),(1,2),(2,4) → groups {0,1,2,4}, missing 3 and 5.
+# round-robin). This produces INCOMPLETE paths - each path covers only 4-5 of
+# the 6 groups, biasing the CRRA-EU objective aggregate.
 #
-# FIX REQUIRED: The 15 splits must be assigned to the 5 paths via a valid
-# 1-factorization of K6 (round-robin tournament for even N=6):
-#   path0=(0,1),(2,3),(4,5)  path1=(0,2),(1,4),(3,5)  path2=(0,3),(1,5),(2,4)
-#   path3=(0,4),(1,3),(2,5)  path4=(0,5),(1,2),(3,4)
-# Each path then covers ALL N=6 groups exactly once → unbiased CRRA-EU aggregate.
+# FIX REQUIRED: Replace modulo with the canonical mlfinlab CombinatorialPurgedKFold
+# _fill_backtest_paths algorithm (first-available-slot fill):
+#   For each combination in lexicographic order, for each test-group (lower index
+#   first), assign that group's OOS prediction to the LOWEST-indexed path whose
+#   slot for that group is still empty.
 #
-# The existing test_all_dates_appear_in_at_least_one_path PASSES silently on
-# the defect because it only checks the UNION over all paths; these new tests
-# check the stronger per-path completeness invariant.
+# This produces VARIABLE membership lengths:
+#   - Adjacent pairs (0,1),(1,2),(2,3),(3,4),(4,5): both groups fill the SAME path
+#     -> path_membership has 1 unique path (length 1)
+#   - Non-adjacent pairs: the two groups fill TWO DIFFERENT paths
+#     -> path_membership has 2 unique paths (length 2)
+# Sum of membership lengths = 25 = 5 paths x 5 combos per path
 #
-# Citation: LdP 2018 Ch.7.4 (CPCV path completeness); PM code review 2026-06-01.
+# Each path uses exactly 5 combos and covers all 6 groups exactly once.
+#
+# The prior framing-A tests encoded a 1-factorization (single-membership-per-split)
+# that is WRONG for the canonical algorithm. Those tests have been replaced below
+# with tests that assert the canonical mlfinlab ground truth.
+#
+# Citation: mlfinlab CombinatorialPurgedKFold._fill_backtest_paths;
+#           LdP 2018 Ch.7.4 (CPCV path completeness); PM code review 2026-06-01.
 
 
-class TestAC2OnefactorizationPathCompleteness:
+class TestAC2CanonicalPathCompleteness:
     """
-    Revise cycle for AC-2: each of the phi[6,2]=5 assembled paths must cover
-    ALL N=6 groups exactly once (a perfect matching / 1-factorization of K6).
+    Revise cycle for AC-2: reconciled to the canonical mlfinlab _fill_backtest_paths
+    algorithm. Each of the phi[6,2]=5 assembled paths must cover ALL N=6 groups
+    exactly once, using the first-available-slot fill (not 1-factorization).
 
-    These tests are RED against the modulo round-robin implementation at
-    80de941 and will go GREEN once the implementer replaces it with the
-    canonical round-robin tournament assignment.
+    RED tests against the modulo implementation at 80de941; GREEN after the
+    implementer replaces modulo with canonical first-available-slot fill.
     """
 
     @pytest.fixture
@@ -1143,14 +1152,12 @@ class TestAC2OnefactorizationPathCompleteness:
 
     def test_each_path_covers_all_n_groups_exactly_once(self, folds_and_paths):
         """
-        Each of the 5 assembled paths must include test-fold dates from ALL
-        N=6 groups — not 4/6 or 5/6. A path that scores only 4 groups
-        produces a biased CRRA-EU aggregate (dates for missing groups never
-        appear in the OOS evaluation).
+        Each of the 5 assembled paths must include test-fold dates from ALL N=6
+        groups. A path that scores only 4 or 5 groups produces a biased CRRA-EU
+        aggregate (dates for missing groups never appear in OOS evaluation).
 
-        Uses the fixture's group_definitions to map dates back to group indices.
-        Adversarial: the modulo round-robin produces paths covering only 4-5
-        groups and FAILS this test.
+        Adversarial: modulo round-robin produces paths covering only 4-5 groups
+        and FAILS this test.
         """
         fix, folds, paths = folds_and_paths
         n_groups = fix["parameters"]["n_groups"]
@@ -1172,134 +1179,137 @@ class TestAC2OnefactorizationPathCompleteness:
                 missing = set(range(n_groups)) - groups_covered
                 extra = groups_covered - set(range(n_groups))
                 failures.append(
-                    f"path {i}: covers groups {sorted(groups_covered)}, "
-                    f"missing={sorted(missing)}, unexpected={sorted(extra)}. "
-                    f"Path has {len(path_dates)} dates."
+                    "path {}: covers groups {}, "
+                    "missing={}, unexpected={}. "
+                    "Path has {} dates.".format(
+                        i, sorted(groups_covered), sorted(missing),
+                        sorted(extra), len(path_dates)
+                    )
                 )
 
         assert not failures, (
-            f"1-factorization completeness FAILED on {len(failures)} path(s):\n"
+            "Path completeness FAILED on {} path(s):\n".format(len(failures))
             + "\n".join(failures)
             + "\n\nEach CPCV backtest path must cover ALL N=6 groups exactly once "
-            "(1-factorization of K6 per LdP Ch.7.4). The modulo round-robin "
-            "path_membership=[split_idx % n_paths] produces incomplete paths. "
-            "Fix: replace with the canonical round-robin tournament assignment:\n"
-            "  path0=(0,1),(2,3),(4,5)  path1=(0,2),(1,4),(3,5)\n"
-            "  path2=(0,3),(1,5),(2,4)  path3=(0,4),(1,3),(2,5)\n"
-            "  path4=(0,5),(1,2),(3,4)"
+            "(canonical mlfinlab _fill_backtest_paths per LdP Ch.7.4). "
+            "The modulo round-robin path_membership=[split_idx % n_paths] produces "
+            "incomplete paths - replace with canonical first-available-slot fill."
         )
 
-    def test_splits_partition_into_paths_no_split_reused_or_dropped(self, folds_and_paths):
+    def test_no_group_duplicated_within_a_path(self, folds_and_paths):
         """
-        The 15 splits must PARTITION into the 5 paths — every split assigned
-        to exactly one path, no split duplicated, no split dropped.
+        Within each path, no group index may appear more than once.
+        A path with duplicate groups would double-score one group's dates in the
+        CRRA-EU aggregate, biasing the objective toward that group's regime.
 
-        Required by LdP Ch.7.4: each split contributes OOS data to exactly
-        one path. Reuse would double-count OOS dates in a path; dropping a
-        split would leave some test-fold dates with no path contribution.
+        Each group has exactly 10 dates in the fixture; >10 appearances in a path
+        means duplication across multiple splits assigned to that path.
 
-        Adversarial: the modulo round-robin satisfies this (each split_idx % 5
-        maps to exactly one path) — so this test alone does NOT catch the
-        completeness defect. It guards against a future over-correction where
-        the implementer drops splits or assigns a split to multiple paths.
+        Adversarial: modulo round-robin path0 gets splits (0,1),(1,2),(2,4) giving
+        groups {0,1,2,1,2,4} with 1 and 2 duplicated - this test catches it.
         """
         fix, folds, paths = folds_and_paths
-        n_splits_expected = fix["derived_constants"]["n_splits"]
 
-        # Count how many paths each split contributes to (via path_membership)
-        split_path_counts: dict[int, list[int]] = {i: [] for i in range(len(folds))}
-        for path_idx, path in enumerate(paths):
-            path_test_set = frozenset(
-                d for d in (list(path) if not isinstance(path, list) else path)
-            )
-            for split_idx, fold in enumerate(folds):
-                fold_test_set = frozenset(fold["test_dates"])
-                # A split contributes to a path if its test dates are a subset of the path
-                if fold_test_set <= path_test_set:
-                    split_path_counts[split_idx].append(path_idx)
+        date_to_group: dict[str, int] = {}
+        for g_str, dates in fix["group_definitions"].items():
+            for d in dates:
+                date_to_group[d] = int(g_str)
+
+        # Each group has exactly 10 dates in the fixture
+        group_size = len(fix["group_definitions"]["0"])
 
         failures = []
-        for split_idx, contributing_paths in split_path_counts.items():
-            if len(contributing_paths) != 1:
+        for i, path in enumerate(paths):
+            path_dates = list(path) if not isinstance(path, list) else path
+            group_appearances: dict[int, int] = {}
+            for d in path_dates:
+                g = date_to_group.get(d)
+                if g is not None:
+                    group_appearances[g] = group_appearances.get(g, 0) + 1
+
+            duplicated = {g: cnt for g, cnt in group_appearances.items() if cnt > group_size}
+            if duplicated:
                 failures.append(
-                    f"split {split_idx} (test_dates[0]={sorted(folds[split_idx]['test_dates'])[0]}) "
-                    f"contributes to {len(contributing_paths)} paths {contributing_paths} "
-                    f"(must be exactly 1)."
+                    "path {}: groups with duplicate appearances (>{} dates): "
+                    "{}. All 6 groups should appear exactly {} times each.".format(
+                        i, group_size, duplicated, group_size
+                    )
                 )
 
         assert not failures, (
-            f"Split partition invariant FAILED on {len(failures)} split(s):\n"
+            "Group duplication found in {} path(s):\n".format(len(failures))
             + "\n".join(failures)
-            + "\nEach of the 15 splits must contribute to EXACTLY ONE path (1-factorization). "
-            "No split should be reused across paths or dropped."
+            + "\nNo group may appear more than once within a single CPCV path. "
+            "The modulo round-robin assigns splits with overlapping groups to the "
+            "same path, causing group duplication."
         )
 
-    def test_each_path_has_exactly_n_over_k_splits(self, folds_and_paths):
+    def test_path_monotonic_date_order(self, folds_and_paths):
         """
-        Each path must consist of exactly N/k = 6/2 = 3 splits.
-        phi[N,k]=5 paths × 3 splits per path = 15 total = C(6,2). The modulo
-        round-robin gives 3 splits to paths 0-4 (15/5=3 exact) so this test
-        alone does not catch completeness, but it guards against degenerate
-        implementations that assign unequal split counts across paths.
+        Within each assembled path, the OOS dates must be monotonically sorted
+        (chronological order). A path that outputs test dates out of order would
+        produce incorrect CRRA-EU calculations (since the series is treated as
+        a time-ordered sequence of returns).
+
+        Adversarial: any implementation that appends test-fold sets in a non-sorted
+        order and returns them unsorted would FAIL this test.
         """
         fix, folds, paths = folds_and_paths
-        n_groups = fix["parameters"]["n_groups"]
-        k_test = fix["parameters"]["k_test_groups"]
-        expected_splits_per_path = n_groups // k_test  # 6 // 2 = 3
-
-        # Determine splits per path via path_membership in the folds
-        # (path_membership records which path each split belongs to)
-        path_split_counts: dict[int, int] = {}
-        for fold in folds:
-            pm = fold["path_membership"]
-            pm_list = list(pm) if not isinstance(pm, list) else pm
-            for p in pm_list:
-                path_split_counts[p] = path_split_counts.get(p, 0) + 1
 
         failures = []
-        for p_idx in range(len(paths)):
-            count = path_split_counts.get(p_idx, 0)
-            if count != expected_splits_per_path:
+        for i, path in enumerate(paths):
+            path_dates = list(path) if not isinstance(path, list) else path
+            if path_dates != sorted(path_dates):
+                out_of_order = [
+                    (path_dates[j - 1], path_dates[j])
+                    for j in range(1, len(path_dates))
+                    if path_dates[j] < path_dates[j - 1]
+                ][:3]
                 failures.append(
-                    f"path {p_idx}: has {count} splits (expected {expected_splits_per_path})"
+                    "path {}: dates are NOT monotonically sorted. "
+                    "First violations: {}".format(i, out_of_order)
                 )
 
         assert not failures, (
-            f"Splits-per-path invariant FAILED:\n" + "\n".join(failures)
-            + f"\nEach of the {len(paths)} paths must have exactly "
-            f"N/k={expected_splits_per_path} splits."
+            "Chronological monotonicity violated on {} path(s):\n".format(len(failures))
+            + "\n".join(failures)
+            + "\n_aggregate_cpcv_paths must return dates sorted in chronological order "
+            "within each path."
         )
 
-    def test_path_membership_matches_canonical_1factorization(self, folds_and_paths):
+    def test_canonical_path_membership_exact_fixture_match(self, folds_and_paths):
         """
-        Each split's path_membership must match the canonical 1-factorization
-        stored in the fixture. This is the golden-fixture cross-check: the
-        fixture encodes the only correct assignment for N=6, k=2.
+        PRIMARY exact-fixture test: each combination's path_membership (as a sorted
+        list of UNIQUE path indices) must exactly match the canonical mlfinlab
+        _fill_backtest_paths ground truth encoded in the fixture.
 
-        The canonical mapping (from fixture['one_factorization']['split_to_path']):
-          (0,1)->path0  (0,2)->path1  (0,3)->path2  (0,4)->path3  (0,5)->path4
-          (1,2)->path4  (1,3)->path3  (1,4)->path1  (1,5)->path2
-          (2,3)->path0  (2,4)->path2  (2,5)->path3
-          (3,4)->path4  (3,5)->path1
-          (4,5)->path0
+        The canonical mapping (fixture['canonical_path_membership']['combo_to_unique_paths']):
+          (0,1):[0]    (0,2):[0,1]  (0,3):[0,2]  (0,4):[0,3]  (0,5):[0,4]
+          (1,2):[1]    (1,3):[1,2]  (1,4):[1,3]  (1,5):[1,4]
+          (2,3):[2]    (2,4):[2,3]  (2,5):[2,4]
+          (3,4):[3]    (3,5):[3,4]
+          (4,5):[4]
 
-        Adversarial: any round-robin or modulo scheme that produces a different
-        assignment must FAIL here — there is only one canonical 1-factorization
-        (up to path labelling, and the fixture pins the labelling).
+        Membership length is VARIABLE: adjacent pairs have len=1 (both groups
+        fill the SAME path); non-adjacent pairs have len=2.
+
+        DO NOT assert len(pm) == k (= 2) - that is WRONG for the canonical algorithm.
+        DO NOT assert len(pm) == 1 - that is the 1-factorization model (WRONG).
+        test_path_membership_field_is_consistent (len >= 1) is correct - leave it.
+
+        Adversarial: both the modulo round-robin and the 1-factorization model
+        produce different memberships and FAIL this test.
         """
         fix, folds, paths = folds_and_paths
-        canonical = fix["one_factorization"]["split_to_path"]
-
-        # canonical keys are like "[0, 1]" (JSON stringified lists)
-        # Rebuild as tuple keys for easy lookup
-        canonical_tuple: dict[tuple, int] = {}
         import json as _json
-        for k, v in canonical.items():
-            pair = tuple(sorted(_json.loads(k)))
-            canonical_tuple[pair] = v
 
-        # For each fold, we need to know which groups are its test groups.
-        # We infer test groups by finding which fixture group's dates appear in test_dates.
+        canonical_raw = fix["canonical_path_membership"]["combo_to_unique_paths"]
+        # canonical_raw keys are "[0, 1]" style - convert to tuple
+        canonical: dict[tuple, list] = {}
+        for k, v in canonical_raw.items():
+            canonical[tuple(sorted(_json.loads(k)))] = sorted(v)
+
+        # Build date-to-group mapping
         date_to_group: dict[str, int] = {}
         for g_str, dates in fix["group_definitions"].items():
             for d in dates:
@@ -1311,41 +1321,45 @@ class TestAC2OnefactorizationPathCompleteness:
                 date_to_group[d] for d in fold["test_dates"]
                 if d in date_to_group
             )))
-            expected_path = canonical_tuple.get(test_groups)
-            if expected_path is None:
+            expected_paths = canonical.get(test_groups)
+            if expected_paths is None:
                 failures.append(
-                    f"split {split_idx}: test_groups={test_groups} not in canonical map."
+                    "split {}: test_groups={} not in canonical map.".format(
+                        split_idx, test_groups
+                    )
                 )
                 continue
-            actual_pm = list(fold["path_membership"])
-            if len(actual_pm) != 1 or actual_pm[0] != expected_path:
+            actual_pm = sorted(set(fold["path_membership"]))
+            if actual_pm != expected_paths:
                 failures.append(
-                    f"split {split_idx} (test_groups={test_groups}): "
-                    f"path_membership={actual_pm}, "
-                    f"expected=[{expected_path}] per canonical 1-factorization."
+                    "split {} (test_groups={}): "
+                    "path_membership={}, "
+                    "expected={} per canonical mlfinlab _fill_backtest_paths.".format(
+                        split_idx, test_groups, actual_pm, expected_paths
+                    )
                 )
 
         assert not failures, (
-            f"Canonical 1-factorization mismatch on {len(failures)} split(s):\n"
+            "Canonical path membership mismatch on {} split(s):\n".format(len(failures))
             + "\n".join(failures)
-            + "\n\nThe fixture encodes the canonical round-robin tournament assignment "
-            "for N=6, k=2. path_membership=[split_idx % n_paths] (modulo) is WRONG — "
-            "it does not produce complete paths. Implementer must replace modulo with "
-            "the canonical 1-factorization:\n"
-            "  path0=(0,1),(2,3),(4,5)  path1=(0,2),(1,4),(3,5)\n"
-            "  path2=(0,3),(1,5),(2,4)  path3=(0,4),(1,3),(2,5)\n"
-            "  path4=(0,5),(1,2),(3,4)"
+            + "\n\nThe fixture encodes the canonical mlfinlab _fill_backtest_paths "
+            "assignment for N=6, k=2. Adjacent pairs (0,1),(1,2),(2,3),(3,4),(4,5) "
+            "must have membership=[single_path]; non-adjacent pairs must have "
+            "membership=[two_different_paths]. Modulo round-robin and "
+            "1-factorization models are BOTH WRONG."
         )
 
-    def test_no_group_duplicated_within_a_path(self, folds_and_paths):
+    def test_adjacent_combos_have_single_path_membership(self, folds_and_paths):
         """
-        Within each path, no group index may appear more than once.
-        A path with duplicate groups (e.g., groups {0,1,2,1,4,5}) would
-        double-score one group's dates in the CRRA-EU aggregate, biasing
-        the objective toward overweighting that group's regime.
+        The 5 adjacent combinations (0,1),(1,2),(2,3),(3,4),(4,5) must each have
+        path_membership of length 1 (both test-groups fill slots in the SAME path).
 
-        Adversarial: modulo round-robin path0=(0,1),(1,2),(2,4) has groups
-        {0,1,2,1,2,4} with 1 and 2 duplicated — this test catches it.
+        In the canonical algorithm, when two consecutive groups are tested together,
+        the first-available-slot fill assigns both their slots to the same path
+        (both are freshly unoccupied in that path at first encounter).
+
+        Adversarial: any assignment scheme that spreads adjacent pairs across two
+        paths would FAIL this test.
         """
         fix, folds, paths = folds_and_paths
 
@@ -1354,71 +1368,161 @@ class TestAC2OnefactorizationPathCompleteness:
             for d in dates:
                 date_to_group[d] = int(g_str)
 
-        failures = []
-        for i, path in enumerate(paths):
-            path_dates = list(path) if not isinstance(path, list) else path
-            group_appearances: dict[int, int] = {}
-            for d in path_dates:
-                g = date_to_group.get(d)
-                if g is not None:
-                    group_appearances[g] = group_appearances.get(g, 0) + 1
+        # Adjacent pairs in N=6: (0,1),(1,2),(2,3),(3,4),(4,5)
+        adjacent_pairs = {(i, i + 1) for i in range(fix["parameters"]["n_groups"] - 1)}
 
-            duplicated = {g: cnt for g, cnt in group_appearances.items() if cnt > 10}
-            # Each group has 10 dates; more than 10 appearances means a group is duplicated
-            if duplicated:
-                failures.append(
-                    f"path {i}: groups with duplicate appearances (>10 dates): "
-                    f"{duplicated}. All 6 groups should appear exactly 10 times each."
-                )
+        failures = []
+        for split_idx, fold in enumerate(folds):
+            test_groups = tuple(sorted(set(
+                date_to_group[d] for d in fold["test_dates"]
+                if d in date_to_group
+            )))
+            if len(test_groups) == 2 and test_groups in adjacent_pairs:
+                unique_paths = sorted(set(fold["path_membership"]))
+                if len(unique_paths) != 1:
+                    failures.append(
+                        "split {} (adjacent pair {}): "
+                        "path_membership={} has {} unique paths; must be exactly 1 "
+                        "(both groups fill the same path in canonical algorithm).".format(
+                            split_idx, test_groups, list(fold["path_membership"]),
+                            len(unique_paths)
+                        )
+                    )
 
         assert not failures, (
-            f"Group duplication found in {len(failures)} path(s):\n"
+            "Adjacent-pair single-membership violated on {} split(s):\n".format(len(failures))
             + "\n".join(failures)
-            + "\nNo group may appear more than once within a single CPCV path. "
-            "The modulo round-robin assigns splits (0,1),(1,2),(2,4) to the same path, "
-            "causing groups 1 and 2 to appear twice."
         )
 
-    def test_each_path_date_coverage_equals_eligible_history(self, folds_and_paths):
+    def test_nonadjacent_combos_have_two_path_membership(self, folds_and_paths):
         """
-        After purge+embargo, each path's OOS date count should equal the
-        sum of the 3 contributing splits' test_date counts. The path covers
-        exactly the test folds of its 3 assigned splits — no more, no less.
+        The 10 non-adjacent combinations must each have path_membership of length 2
+        (the two test-groups fill slots in two DIFFERENT paths).
 
-        This is a shape/coverage test: if a path covers 40+40+40=120 dates
-        but the history only has 60 dates, something is wrong (dates duplicated
-        across splits in the same path). If a path has fewer dates than
-        3 × group_size, something was dropped.
+        In the canonical algorithm, when two non-adjacent groups are tested together,
+        one group's slot in the lowest available path may already be occupied by an
+        earlier combination, so the groups fall into different paths.
+
+        Adversarial: the modulo round-robin always produces len=1; the 1-factorization
+        also produces len=1. Both FAIL this test for non-adjacent pairs.
         """
         fix, folds, paths = folds_and_paths
 
-        # Determine which splits belong to each path via path_membership
-        path_to_splits: dict[int, list[int]] = {}
+        date_to_group: dict[str, int] = {}
+        for g_str, dates in fix["group_definitions"].items():
+            for d in dates:
+                date_to_group[d] = int(g_str)
+
+        n_groups = fix["parameters"]["n_groups"]
+        adjacent_pairs = {(i, i + 1) for i in range(n_groups - 1)}
+
+        failures = []
         for split_idx, fold in enumerate(folds):
-            for p in fold["path_membership"]:
-                path_to_splits.setdefault(p, []).append(split_idx)
+            test_groups = tuple(sorted(set(
+                date_to_group[d] for d in fold["test_dates"]
+                if d in date_to_group
+            )))
+            if len(test_groups) == 2 and test_groups not in adjacent_pairs:
+                unique_paths = sorted(set(fold["path_membership"]))
+                if len(unique_paths) != 2:
+                    failures.append(
+                        "split {} (non-adjacent pair {}): "
+                        "path_membership={} has {} unique paths; must be exactly 2 "
+                        "(the two groups fill different paths in canonical algorithm).".format(
+                            split_idx, test_groups, list(fold["path_membership"]),
+                            len(unique_paths)
+                        )
+                    )
+
+        assert not failures, (
+            "Non-adjacent-pair two-path membership violated on {} split(s):\n".format(
+                len(failures)
+            )
+            + "\n".join(failures)
+        )
+
+    def test_each_path_uses_exactly_n_minus_one_combos(self, folds_and_paths):
+        """
+        Each of the 5 paths must aggregate contributions from exactly N-1=5 combinations.
+        In the canonical algorithm each path fills 6 group-slots via 5 combos:
+          - 1 adjacent pair contributes both its groups (2 slots from 1 combo)
+          - 4 non-adjacent pairs each contribute 1 group (4 slots from 4 combos)
+          Total: 6 slots from 5 combos per path.
+
+        Adversarial: modulo round-robin gives exactly C(N,k)/n_paths = 3 combos per path
+        (15/5=3), not 5 - this test catches the modulo defect directly.
+        """
+        fix, folds, paths = folds_and_paths
+        n_groups = fix["parameters"]["n_groups"]
+        n_paths_expected = fix["derived_constants"]["n_paths"]
+
+        # Count distinct combos contributing to each path (via path_membership)
+        path_combo_counts: dict[int, int] = {p: 0 for p in range(n_paths_expected)}
+        for fold in folds:
+            for p in set(fold["path_membership"]):
+                if 0 <= p < n_paths_expected:
+                    path_combo_counts[p] += 1
+
+        expected_combos_per_path = n_groups - 1  # = 5 for N=6
+
+        failures = []
+        for p_idx in range(n_paths_expected):
+            count = path_combo_counts[p_idx]
+            if count != expected_combos_per_path:
+                failures.append(
+                    "path {}: uses {} combos (expected {})".format(
+                        p_idx, count, expected_combos_per_path
+                    )
+                )
+
+        assert not failures, (
+            "Combos-per-path invariant FAILED:\n" + "\n".join(failures)
+            + "\nEach of the {} paths must receive contributions from "
+            "exactly N-1={} combinations. "
+            "Modulo round-robin gives 15/5=3 combos per path - wrong.".format(
+                n_paths_expected, expected_combos_per_path
+            )
+        )
+
+    def test_each_path_date_coverage_from_membership(self, folds_and_paths):
+        """
+        Each path's assembled dates must equal the union of test_dates from all
+        combinations whose path_membership includes that path.
+
+        Consistency check between path_membership and _aggregate_cpcv_paths:
+        the assembled paths must faithfully reflect the membership assignments.
+        No test-fold date should be dropped; no extra dates injected.
+        """
+        fix, folds, paths = folds_and_paths
+
+        # Collect expected dates per path from path_membership
+        expected_per_path: dict[int, set] = {}
+        for fold in folds:
+            for p in set(fold["path_membership"]):
+                if p not in expected_per_path:
+                    expected_per_path[p] = set()
+                expected_per_path[p].update(fold["test_dates"])
 
         failures = []
         for path_idx, path in enumerate(paths):
             path_dates = set(list(path) if not isinstance(path, list) else path)
-            assigned_splits = path_to_splits.get(path_idx, [])
+            expected_dates = expected_per_path.get(path_idx, set())
 
-            # Union of test dates across the 3 assigned splits
-            expected_dates: set[str] = set()
-            for split_idx in assigned_splits:
-                expected_dates.update(folds[split_idx]["test_dates"])
-
-            if path_dates != expected_dates:
-                extra = path_dates - expected_dates
-                missing = expected_dates - path_dates
+            extra = path_dates - expected_dates
+            missing = expected_dates - path_dates
+            if extra or missing:
                 failures.append(
-                    f"path {path_idx}: date mismatch. "
-                    f"extra={len(extra)} dates, missing={len(missing)} dates. "
-                    f"assigned_splits={assigned_splits}"
+                    "path {}: extra={} dates, "
+                    "missing={} dates. "
+                    "Expected {}, got {}.".format(
+                        path_idx, len(extra), len(missing),
+                        len(expected_dates), len(path_dates)
+                    )
                 )
 
         assert not failures, (
-            f"Path date coverage mismatch on {len(failures)} path(s):\n"
+            "Path date coverage mismatch on {} path(s):\n".format(len(failures))
             + "\n".join(failures)
-            + "\nEach path's dates must equal the union of its 3 assigned splits' test_dates."
+            + "\nEach path's dates must be the union of test_dates from all "
+            "combinations in its path_membership."
         )
