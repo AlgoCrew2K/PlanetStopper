@@ -126,6 +126,200 @@
       ],
       "expected_verdict": "WATCH",
       "_note": "S/N_optuna = 0.1 exactly triggers WATCH (Indicator 1: S > 0) but NOT BREACH (Indicator 2: strict >)"
+    },
+
+    "prior_runs_all_none_s_count": {
+      "_description": "I-3 None-guard: prior_runs where every s_count is None (pre-migration rows). Must NOT raise TypeError. Expected: no drift detected, verdict determined by I-1/I-2 only.",
+      "_provenance": "Hand-derived. Reproduces the live crash: '<' not supported between instances of NoneType and NoneType at I-3 comparison.",
+      "autotune_run": {
+        "id": 101,
+        "symphony_id": "sym-none-series",
+        "run_timestamp": "2026-05-30T16:00:00Z",
+        "spec_bundle_id": "bundle-none-series-101",
+        "n_effective": 502,
+        "s_count": 2
+      },
+      "prior_runs": [
+        {
+          "id": 98,
+          "symphony_id": "sym-none-series",
+          "s_count": null,
+          "n_effective": 500,
+          "spec_bundle_id": "bundle-none-98",
+          "run_timestamp": "2026-05-28T16:00:00Z",
+          "_note": "pre-migration row: s_count is NULL"
+        },
+        {
+          "id": 99,
+          "symphony_id": "sym-none-series",
+          "s_count": null,
+          "n_effective": 500,
+          "spec_bundle_id": "bundle-none-99",
+          "run_timestamp": "2026-05-29T16:00:00Z",
+          "_note": "pre-migration row: s_count is NULL"
+        }
+      ],
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 2,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-none-series-101",
+          "facet_name": "facet-none-test"
+        }
+      ],
+      "expected_verdict": "WATCH",
+      "_note": "S=2 fires I-1 → WATCH. Prior None rows must not crash the drift check. No drift detected because non-None run count < 2."
+    },
+
+    "prior_runs_mixed_none_and_int_s_count": {
+      "_description": "I-3 None-guard: prior_runs with a mix of None and valid int s_counts. The None entries must be dropped before the monotonicity check. With one valid prior run + current, that is < 2 valid prior runs — insufficient for drift detection.",
+      "_provenance": "Hand-derived. Tests that None-dropping logic discards nulls and also requires >= 2 valid prior run rows.",
+      "autotune_run": {
+        "id": 102,
+        "symphony_id": "sym-mixed-none",
+        "run_timestamp": "2026-05-30T16:00:00Z",
+        "spec_bundle_id": "bundle-mixed-none-102",
+        "n_effective": 503,
+        "s_count": 3
+      },
+      "prior_runs": [
+        {
+          "id": 95,
+          "symphony_id": "sym-mixed-none",
+          "s_count": null,
+          "n_effective": 500,
+          "spec_bundle_id": "bundle-mixed-95",
+          "run_timestamp": "2026-05-27T16:00:00Z",
+          "_note": "None — skip"
+        },
+        {
+          "id": 96,
+          "symphony_id": "sym-mixed-none",
+          "s_count": 1,
+          "n_effective": 501,
+          "spec_bundle_id": "bundle-mixed-96",
+          "run_timestamp": "2026-05-28T16:00:00Z",
+          "_note": "valid int"
+        },
+        {
+          "id": 97,
+          "symphony_id": "sym-mixed-none",
+          "s_count": null,
+          "n_effective": 500,
+          "spec_bundle_id": "bundle-mixed-97",
+          "run_timestamp": "2026-05-29T16:00:00Z",
+          "_note": "None — skip"
+        }
+      ],
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 3,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-mixed-none-102",
+          "facet_name": "facet-mixed-test"
+        }
+      ],
+      "expected_verdict": "WATCH",
+      "_note": "After dropping Nones: one valid prior (s=1) + current (s=3). Only 1 valid prior run remains — insufficient for monotonicity check (need >= 2 prior runs). No drift detected. S=3 fires I-1 → WATCH."
+    },
+
+    "prior_runs_none_mixed_sufficient_for_drift": {
+      "_description": "I-3 None-guard + drift preserved: prior_runs with some Nones but enough non-None rows after dropping to still detect monotonic drift. Three valid prior runs with increasing S + None interleaved.",
+      "_provenance": "Hand-derived. Ensures None-dropping does NOT silently suppress a real drift signal when enough valid rows remain.",
+      "autotune_run": {
+        "id": 103,
+        "symphony_id": "sym-drift-with-nones",
+        "run_timestamp": "2026-05-30T16:00:00Z",
+        "spec_bundle_id": "bundle-drift-nones-103",
+        "n_effective": 507,
+        "s_count": 7
+      },
+      "prior_runs": [
+        {
+          "id": 90,
+          "symphony_id": "sym-drift-with-nones",
+          "s_count": null,
+          "n_effective": 500,
+          "spec_bundle_id": "bundle-driften-90",
+          "run_timestamp": "2026-05-26T16:00:00Z",
+          "_note": "None — skip"
+        },
+        {
+          "id": 91,
+          "symphony_id": "sym-drift-with-nones",
+          "s_count": 2,
+          "n_effective": 502,
+          "spec_bundle_id": "bundle-driften-91",
+          "run_timestamp": "2026-05-27T16:00:00Z",
+          "_note": "valid int"
+        },
+        {
+          "id": 92,
+          "symphony_id": "sym-drift-with-nones",
+          "s_count": null,
+          "n_effective": 500,
+          "spec_bundle_id": "bundle-driften-92",
+          "run_timestamp": "2026-05-28T16:00:00Z",
+          "_note": "None — skip"
+        },
+        {
+          "id": 93,
+          "symphony_id": "sym-drift-with-nones",
+          "s_count": 4,
+          "n_effective": 504,
+          "spec_bundle_id": "bundle-driften-93",
+          "run_timestamp": "2026-05-29T16:00:00Z",
+          "_note": "valid int"
+        }
+      ],
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 7,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-drift-nones-103",
+          "facet_name": "facet-drift-nones"
+        }
+      ],
+      "expected_verdict": "WATCH",
+      "_note": "After dropping Nones: [2, 4] + current [7] = [2, 4, 7] strictly increasing → drift detected. S=7 fires I-1 and I-3 → WATCH."
+    },
+
+    "prior_runs_single_none_entry": {
+      "_description": "Edge: exactly one prior_run entry and its s_count is None. After dropping: zero valid prior runs — no drift possible. Must not crash.",
+      "_provenance": "Hand-derived. Tests the len < 2 guard with a single None entry.",
+      "autotune_run": {
+        "id": 104,
+        "symphony_id": "sym-single-none",
+        "run_timestamp": "2026-05-30T16:00:00Z",
+        "spec_bundle_id": "bundle-single-none-104",
+        "n_effective": 501,
+        "s_count": 1
+      },
+      "prior_runs": [
+        {
+          "id": 88,
+          "symphony_id": "sym-single-none",
+          "s_count": null,
+          "n_effective": 500,
+          "spec_bundle_id": "bundle-single-88",
+          "run_timestamp": "2026-05-29T16:00:00Z",
+          "_note": "None — skip"
+        }
+      ],
+      "ledger_rows": [
+        {
+          "evidence_source": "BACKTEST_SELECTION",
+          "n_configs_searched": 1,
+          "touched_frozen_eval": 0,
+          "spec_bundle_id": "bundle-single-none-104",
+          "facet_name": "facet-single-none"
+        }
+      ],
+      "expected_verdict": "WATCH",
+      "_note": "Single None prior run → 0 valid prior rows → no drift. S=1 fires I-1 → WATCH."
     }
   }
 }
