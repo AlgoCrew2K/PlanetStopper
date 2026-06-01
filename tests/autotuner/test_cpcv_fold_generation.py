@@ -788,8 +788,16 @@ class TestAC4ObjectiveScoredOnAggregate:
         )
         # The production trial count must remain as-is (500); it was set for
         # statistical stability, not for CPCV expansion.
-        from tests.fixtures.autotuner import optuna_n_trials_pin_contract
-        pass  # The existing test_optuna_n_trials_named.py guards the exact value.
+        # The existing test_optuna_n_trials_named.py guards the exact value via
+        # tests/fixtures/autotuner/optuna_n_trials_pin_contract.json.
+        pin_fixture = (
+            _WORKTREE_ROOT / "tests" / "fixtures" / "autotuner"
+            / "optuna_n_trials_pin_contract.json"
+        )
+        assert pin_fixture.exists(), (
+            f"Expected optuna_n_trials_pin_contract.json at {pin_fixture}. "
+            "This fixture guards OPTUNA_N_TRIALS_PRODUCTION via test_optuna_n_trials_named.py."
+        )
 
 
 # ===========================================================================
