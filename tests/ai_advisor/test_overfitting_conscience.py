@@ -933,3 +933,357 @@ def test_autotuner_calls_run_overfitting_conscience_after_save_autotune_run():
         "run_overfitting_conscience must appear AFTER the last save_autotune_run call "
         "in autotuner.py — the producer fires post-save, not before"
     )
+
+
+# ===========================================================================
+# Test 13 — NoneType crash guard (AC-1 / AC-2): prior_runs with None s_count
+#            values must NOT raise TypeError — the live production crash.
+#
+# The bug: s_series[i] < s_series[i+1] blows up when either value is None.
+# The correct semantics (AC-2):
+#   - Drop/skip None entries from the monotonicity series before comparison.
+#   - "Insufficient non-None values" (fewer than 2 non-None prior rows) → no
+#     drift detected, not an error.
+#   - When enough non-None prior rows remain, drift detection is PRESERVED for
+#     clean data.
+#   - A naive try/except that silently swallows every comparison result MUST
+#     fail the adversarial drift tests below.
+# ===========================================================================
+
+@pytest.fixture
+def all_none_prior_runs_fixture(conscience_fixture) -> tuple[dict, list, list]:
+    """Scenario: all prior_run rows have s_count=None (pre-migration)."""
+    s = conscience_fixture["scenarios"]["prior_runs_all_none_s_count"]
+    return s["autotune_run"], s["ledger_rows"], s["prior_runs"]
+
+
+@pytest.fixture
+def mixed_none_prior_runs_fixture(conscience_fixture) -> tuple[dict, list, list]:
+    """Scenario: prior_runs with a mix of None and int s_count values; only 1 valid prior."""
+    s = conscience_fixture["scenarios"]["prior_runs_mixed_none_and_int_s_count"]
+    return s["autotune_run"], s["ledger_rows"], s["prior_runs"]
+
+
+@pytest.fixture
+def none_interleaved_drift_fixture(conscience_fixture) -> tuple[dict, list, list]:
+    """Scenario: None entries interleaved but enough valid prior rows for drift detection."""
+    s = conscience_fixture["scenarios"]["prior_runs_none_mixed_sufficient_for_drift"]
+    return s["autotune_run"], s["ledger_rows"], s["prior_runs"]
+
+
+@pytest.fixture
+def single_none_prior_run_fixture(conscience_fixture) -> tuple[dict, list, list]:
+    """Scenario: single prior_run entry with s_count=None."""
+    s = conscience_fixture["scenarios"]["prior_runs_single_none_entry"]
+    return s["autotune_run"], s["ledger_rows"], s["prior_runs"]
+
+
+def test_none_s_count_in_all_prior_runs_does_not_raise(all_none_prior_runs_fixture):
+    """AC-1: all prior_runs have s_count=None — must NOT raise TypeError.
+
+    This is the exact production crash: '<' not supported between instances of
+    NoneType and NoneType at the I-3 monotonicity comparison (line 121).
+    The fix must handle None entries without blowing up.
+    """
+    mod = _import_conscience()
+    autotune_run, ledger_rows, prior_runs = all_none_prior_runs_fixture
+    # Must not raise — any exception here IS the bug.
+    result = mod.compute_overfitting_conscience_observation(
+        autotune_run, ledger_rows, prior_runs=prior_runs
+    )
+    assert isinstance(result, dict), (
+        "compute_overfitting_conscience_observation must return a dict even when "
+        "all prior_run s_count values are None"
+    )
+
+
+def test_none_s_count_in_all_prior_runs_produces_valid_verdict(all_none_prior_runs_fixture):
+    """AC-1: when all prior_runs have s_count=None, the returned verdict is a valid enum.
+
+    No drift can be detected (no non-None values to compare). Verdict is driven
+    by I-1/I-2 alone. S=2 (from ledger) fires I-1 → WATCH.
+    """
+    mod = _import_conscience()
+    autotune_run, ledger_rows, prior_runs = all_none_prior_runs_fixture
+    result = mod.compute_overfitting_conscience_observation(
+        autotune_run, ledger_rows, prior_runs=prior_runs
+    )
+    assert result["verdict"] in {"CLEAR", "WATCH", "BREACH"}, (
+        f"verdict must be a valid enum even with all-None prior s_counts; "
+        f"got {result['verdict']!r}"
+    )
+    # S=2 fires I-1 → WATCH (not CLEAR, not BREACH unless ratio > 0.1).
+    assert result["verdict"] == "WATCH", (
+        "S=2 with all-None prior runs must produce WATCH (I-1 fires, no drift); "
+        f"got {result['verdict']!r}"
+    )
+
+
+def test_none_s_count_in_prior_runs_does_not_set_drift_detected(all_none_prior_runs_fixture):
+    """AC-2: no drift must be detected when all prior s_count values are None.
+
+    Insufficient non-None values means the monotonicity check cannot be computed.
+    The correct semantics: treat as 'no drift detected', not an error. The
+    raw_response must NOT claim a drift/trend.
+    """
+    mod = _import_conscience()
+    autotune_run, ledger_rows, prior_runs = all_none_prior_runs_fixture
+    result = mod.compute_overfitting_conscience_observation(
+        autotune_run, ledger_rows, prior_runs=prior_runs
+    )
+    raw = result["raw_response"]
+    # drift key absent or False → no drift claimed.
+    drift_claimed = raw.get("drift", False)
+    assert not drift_claimed, (
+        "drift must not be detected when all prior s_count values are None; "
+        f"raw_response drift key: {drift_claimed!r}"
+    )
+
+
+def test_mixed_none_and_int_prior_runs_does_not_raise(mixed_none_prior_runs_fixture):
+    """AC-1: prior_runs with a mix of None and int s_count — must NOT raise TypeError."""
+    mod = _import_conscience()
+    autotune_run, ledger_rows, prior_runs = mixed_none_prior_runs_fixture
+    result = mod.compute_overfitting_conscience_observation(
+        autotune_run, ledger_rows, prior_runs=prior_runs
+    )
+    assert isinstance(result, dict), (
+        "compute_overfitting_conscience_observation must not raise with mixed "
+        "None/int prior s_counts"
+    )
+
+
+def test_single_valid_prior_run_after_none_drop_is_insufficient_for_drift(
+    mixed_none_prior_runs_fixture,
+):
+    """AC-2: after dropping Nones, only 1 valid prior run remains — insufficient for
+    drift detection (need >= 2 valid prior runs to form a trend).
+
+    Monotonicity requires at least 2 prior runs + current (3 total) to assert a
+    growing trend. With 1 valid prior + current = 2 points, the comparison is
+    between exactly 2 values — this IS a valid comparison but not a meaningful
+    trend. The correct semantics: require >= 2 prior rows (i.e. len(valid_series) >= 3
+    total, meaning >= 2 priors + current) before declaring drift.
+    """
+    mod = _import_conscience()
+    autotune_run, ledger_rows, prior_runs = mixed_none_prior_runs_fixture
+    result = mod.compute_overfitting_conscience_observation(
+        autotune_run, ledger_rows, prior_runs=prior_runs
+    )
+    raw = result["raw_response"]
+    drift_claimed = raw.get("drift", False)
+    # With only 1 valid prior (s=1) + current (s=3), the original code would
+    # only enter the drift block if len(same_symphony_prior) >= 2. After None-
+    # dropping, if we have exactly 1 valid prior, drift must NOT be claimed.
+    assert not drift_claimed, (
+        "drift must not be detected when only 1 valid prior run survives after "
+        "None-dropping — need >= 2 valid prior runs to detect a trend; "
+        f"raw_response: {raw!r}"
+    )
+
+
+def test_none_interleaved_drift_is_still_detected_when_sufficient_valid_priors(
+    none_interleaved_drift_fixture,
+):
+    """AC-2 adversarial: None-dropping must NOT suppress a real drift signal.
+
+    When enough non-None prior runs remain after dropping (>= 2), and they form
+    a strictly increasing sequence with the current run, drift MUST be detected.
+
+    A naive try/except that silently swallows all None comparisons and sets
+    drift_detected=False would pass the crash tests but FAIL this test.
+    """
+    mod = _import_conscience()
+    autotune_run, ledger_rows, prior_runs = none_interleaved_drift_fixture
+    # Verify fixture: after None-drop, valid prior s_counts are [2, 4] + current [7].
+    valid_prior_s = [r["s_count"] for r in prior_runs
+                     if r.get("symphony_id") == autotune_run["symphony_id"]
+                     and r["s_count"] is not None]
+    assert len(valid_prior_s) >= 2, (
+        f"fixture must have >= 2 valid prior s_counts after None-drop; "
+        f"got {valid_prior_s!r}"
+    )
+    current_s = autotune_run["s_count"]
+    combined = valid_prior_s + [current_s]
+    assert all(combined[i] < combined[i + 1] for i in range(len(combined) - 1)), (
+        f"fixture must form a strictly increasing series; got {combined!r}"
+    )
+
+    result = mod.compute_overfitting_conscience_observation(
+        autotune_run, ledger_rows, prior_runs=prior_runs
+    )
+    raw = result["raw_response"]
+    drift_claimed = raw.get("drift", False)
+    assert drift_claimed, (
+        "drift MUST be detected when >= 2 valid non-None prior runs survive and "
+        "form a strictly increasing series with the current run. "
+        "A try/except that silently swallows None comparisons must fail here. "
+        f"raw_response: {raw!r}"
+    )
+
+
+def test_none_interleaved_drift_monotonic_trend_in_raw_response(
+    none_interleaved_drift_fixture,
+):
+    """AC-2: when drift is detected after None-dropping, raw_response must include
+    a trend that lists only the non-None values (the valid comparison series).
+
+    The monotonic_trend field must NOT include None values — it shows the actual
+    series used for comparison.
+    """
+    mod = _import_conscience()
+    autotune_run, ledger_rows, prior_runs = none_interleaved_drift_fixture
+    result = mod.compute_overfitting_conscience_observation(
+        autotune_run, ledger_rows, prior_runs=prior_runs
+    )
+    raw = result["raw_response"]
+    trend = raw.get("monotonic_trend")
+    if trend is not None:
+        assert None not in trend, (
+            "monotonic_trend in raw_response must not contain None values; "
+            f"got {trend!r}. The trend must show only the valid (non-None) series."
+        )
+        assert len(trend) >= 3, (
+            "monotonic_trend must contain >= 3 entries (>= 2 valid priors + current); "
+            f"got {trend!r}"
+        )
+
+
+def test_single_none_prior_run_does_not_raise(single_none_prior_run_fixture):
+    """AC-1: a single prior_run with s_count=None must not crash.
+
+    Minimal crash reproduction: 1 prior run, s_count=None.
+    After None-drop: 0 valid priors — no drift check performed.
+    """
+    mod = _import_conscience()
+    autotune_run, ledger_rows, prior_runs = single_none_prior_run_fixture
+    result = mod.compute_overfitting_conscience_observation(
+        autotune_run, ledger_rows, prior_runs=prior_runs
+    )
+    assert isinstance(result, dict)
+    assert result["verdict"] in {"CLEAR", "WATCH", "BREACH"}
+
+
+def test_none_s_count_crash_is_specifically_typeerror():
+    """Regression documentation: the UNFIXED code raises TypeError at the I-3 comparison.
+
+    This test verifies the CURRENT BROKEN behavior (before the fix) raises
+    TypeError — it confirms the test suite is targeting the right exception class.
+    After the fix, this test will no longer trigger the TypeError path. The
+    test is structured to pass after the fix (because we call the function and
+    assert it does NOT raise — we just document that the pre-fix behavior was TypeError).
+
+    Note: this test is asserting the FIXED state — that the call completes
+    without TypeError. It is RED against the unfixed code.
+    """
+    mod = _import_conscience()
+    prior_runs_with_nones = [
+        {"id": 200, "symphony_id": "sym-typeerror-test", "s_count": None,
+         "n_effective": 500, "spec_bundle_id": "bundle-te-200",
+         "run_timestamp": "2026-05-28T16:00:00Z"},
+        {"id": 201, "symphony_id": "sym-typeerror-test", "s_count": None,
+         "n_effective": 500, "spec_bundle_id": "bundle-te-201",
+         "run_timestamp": "2026-05-29T16:00:00Z"},
+    ]
+    current_run = {
+        "id": 202,
+        "symphony_id": "sym-typeerror-test",
+        "run_timestamp": "2026-05-30T16:00:00Z",
+        "spec_bundle_id": "bundle-te-202",
+        "n_effective": 502,
+        "s_count": 2,
+    }
+    ledger_rows = [
+        {
+            "evidence_source": "BACKTEST_SELECTION",
+            "n_configs_searched": 2,
+            "touched_frozen_eval": 0,
+            "spec_bundle_id": "bundle-te-202",
+            "facet_name": "facet-te",
+        }
+    ]
+    # Must NOT raise TypeError (or any exception).
+    try:
+        result = mod.compute_overfitting_conscience_observation(
+            current_run, ledger_rows, prior_runs=prior_runs_with_nones
+        )
+    except TypeError as exc:
+        pytest.fail(
+            f"compute_overfitting_conscience_observation raised TypeError with None "
+            f"s_count values in prior_runs — this is the production bug (AC-1). "
+            f"Error: {exc}"
+        )
+    assert isinstance(result, dict), "must return a dict after None-guard fix"
+
+
+def test_none_in_s_count_naive_swallow_still_detects_real_drift():
+    """AC-2 adversarial: a naive implementation that swallows ALL None comparisons
+    via try/except and always returns drift_detected=False must FAIL this test.
+
+    We construct a case where None is only in one position but 2+ valid
+    non-None prior runs exist, forming an increasing series. The fix must
+    detect drift. An implementation that uses `except: pass` to silently
+    return drift_detected=False would never detect drift on any None-containing
+    series — this test catches that.
+    """
+    mod = _import_conscience()
+    # Prior runs: [None, 1, None, 3] — after dropping Nones: [1, 3] (2 valid priors).
+    # Current run: s_count=6. Series: [1, 3, 6] strictly increasing → drift.
+    prior_runs = [
+        {"id": 300, "symphony_id": "sym-adv-drift", "s_count": None,
+         "n_effective": 500, "spec_bundle_id": "bundle-adv-300",
+         "run_timestamp": "2026-05-26T16:00:00Z"},
+        {"id": 301, "symphony_id": "sym-adv-drift", "s_count": 1,
+         "n_effective": 501, "spec_bundle_id": "bundle-adv-301",
+         "run_timestamp": "2026-05-27T16:00:00Z"},
+        {"id": 302, "symphony_id": "sym-adv-drift", "s_count": None,
+         "n_effective": 500, "spec_bundle_id": "bundle-adv-302",
+         "run_timestamp": "2026-05-28T16:00:00Z"},
+        {"id": 303, "symphony_id": "sym-adv-drift", "s_count": 3,
+         "n_effective": 503, "spec_bundle_id": "bundle-adv-303",
+         "run_timestamp": "2026-05-29T16:00:00Z"},
+    ]
+    current_run = {
+        "id": 304,
+        "symphony_id": "sym-adv-drift",
+        "run_timestamp": "2026-05-30T16:00:00Z",
+        "spec_bundle_id": "bundle-adv-304",
+        "n_effective": 506,
+        "s_count": 6,
+    }
+    ledger_rows = [
+        {
+            "evidence_source": "BACKTEST_SELECTION",
+            "n_configs_searched": 6,
+            "touched_frozen_eval": 0,
+            "spec_bundle_id": "bundle-adv-304",
+            "facet_name": "facet-adv-drift",
+        }
+    ]
+
+    result = mod.compute_overfitting_conscience_observation(
+        current_run, ledger_rows, prior_runs=prior_runs
+    )
+    raw = result["raw_response"]
+    drift_claimed = raw.get("drift", False)
+    assert drift_claimed, (
+        "drift MUST be detected for series [1, 3, 6] (after dropping Nones). "
+        "A naive try/except that always returns drift_detected=False must fail here. "
+        f"raw_response: {raw!r}"
+    )
+
+
+def test_prior_runs_with_none_s_count_is_advisory_only(all_none_prior_runs_fixture):
+    """AC-3 regression: is_advisory_only must remain 1 even when prior_runs contain None.
+
+    The None-guard fix must not accidentally change the advisory-only flag.
+    """
+    mod = _import_conscience()
+    autotune_run, ledger_rows, prior_runs = all_none_prior_runs_fixture
+    result = mod.compute_overfitting_conscience_observation(
+        autotune_run, ledger_rows, prior_runs=prior_runs
+    )
+    assert result["is_advisory_only"] == 1, (
+        "is_advisory_only must remain 1 with None prior runs; "
+        f"got {result['is_advisory_only']!r}"
+    )
