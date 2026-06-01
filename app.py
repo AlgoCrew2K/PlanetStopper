@@ -132,9 +132,11 @@ _FLUSH_STATE_LOCK = threading.Lock()
 # AI Advisor chat — cost-DoS guard constants (AC-2)
 # ---------------------------------------------------------------------------
 # Maximum JSON-encoded size of the entire request body.  Limits flood payloads
-# before any body parsing occurs (Flask / Werkzeug uses MAX_CONTENT_LENGTH for
-# hard 413s, but we apply a soft check inside the route for a clean JSON 400).
+# before any body parsing occurs.  Werkzeug enforces MAX_CONTENT_LENGTH at the
+# WSGI layer (returns 413 automatically); we wire the same constant so the
+# limit is expressed once (AC-2 / B-1).
 CHAT_MAX_REQUEST_BODY_BYTES: int = 65536  # 64 KB
+app.config["MAX_CONTENT_LENGTH"] = CHAT_MAX_REQUEST_BODY_BYTES
 
 # Maximum character count for the operator's chat message.  Prevents a single
 # oversized message from exhausting the LLM token budget.
@@ -149,6 +151,11 @@ CHAT_RATE_LIMIT_MAX_REQUESTS: int = 10
 
 # Duration of the sliding rate-limit window in seconds.
 CHAT_RATE_LIMIT_WINDOW_SECONDS: int = 60
+
+# Maximum distinct IPs tracked simultaneously in _CHAT_RATE_LIMITER.
+# Bounds memory growth; the operator dashboard is single-user and rarely
+# sees more than a handful of distinct source IPs (B-2).
+CHAT_RATE_LIMITER_MAX_TRACKED_IPS: int = 1000
 
 # Per-IP timestamp deque for the sliding-window rate limiter.
 # Maps remote_addr -> collections.deque of float timestamps (time.time()).
@@ -3017,6 +3024,12 @@ def ai_advisor_chat_send():
     _now = time.time()
     _client_ip = request.remote_addr or "unknown"
     if _client_ip not in _CHAT_RATE_LIMITER:
+        # B-2: cap the total number of tracked IPs to bound memory growth.
+        # When the dict is full, reject new IPs with 429 rather than growing
+        # the dict further.  Existing tracked IPs are always admitted (their
+        # key is already present) so legitimate operators are unaffected.
+        if len(_CHAT_RATE_LIMITER) >= CHAT_RATE_LIMITER_MAX_TRACKED_IPS:
+            return jsonify({"error": "rate limit exceeded — too many requests"}), 429
         _CHAT_RATE_LIMITER[_client_ip] = _collections.deque()
     _ip_window = _CHAT_RATE_LIMITER[_client_ip]
     # Expire timestamps outside the rolling window.
