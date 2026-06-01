@@ -683,14 +683,18 @@ def test_get_settings_includes_anthropic_api_key(client, mock_database, monkeypa
     )
 
 
-def test_post_settings_with_anthropic_api_key_calls_set_key(
+def test_post_settings_with_anthropic_api_key_is_rejected(
     client, mock_database, isolated_env_file, monkeypatch
 ):
-    """POST /api/settings with ANTHROPIC_API_KEY must call set_key for that key.
+    """POST /api/settings with ANTHROPIC_API_KEY must be REJECTED (A-1 allowlist).
 
-    The ANTHROPIC_API_KEY must follow the same persistence mechanism as all
-    other globals: set_key(ENV_FILE_PATH, key, str(val)).  Using a different
-    mechanism would break the settings round-trip.
+    A-1 security fix: ANTHROPIC_API_KEY is a credential key in _MASKED_SETTINGS_KEYS
+    and is therefore excluded from _SETTINGS_WRITE_ALLOWLIST.  Credential keys must
+    be rotated via direct .env editing, not through the unauthenticated dashboard.
+
+    This supersedes the pre-A-1 contract where ANTHROPIC_API_KEY was writable via
+    the settings route.  The key is still masked in GET responses; it is now also
+    blocked on POST.
     """
     set_key_calls = []
 
@@ -711,15 +715,20 @@ def test_post_settings_with_anthropic_api_key_calls_set_key(
         content_type="application/json",
     )
 
-    assert resp.status_code == 200
+    # A-1: ANTHROPIC_API_KEY is not in the allowlist — must return 400.
+    assert resp.status_code == 400, (
+        f"POST /api/settings with ANTHROPIC_API_KEY must return 400 (A-1 allowlist); "
+        f"got {resp.status_code}: {resp.get_json()!r}. "
+        "Rotate ANTHROPIC_API_KEY via .env directly."
+    )
     body = resp.get_json()
-    assert body["status"] == "success"
+    assert body.get("status") == "error"
 
+    # The key must not have reached set_key.
     written_keys = {k for (_p, k, _v) in set_key_calls}
-    assert "ANTHROPIC_API_KEY" in written_keys, (
-        "set_key must be called with 'ANTHROPIC_API_KEY' when it appears in the "
-        "POST /api/settings globals payload — it must use the same persistence "
-        "mechanism as COMPOSER_KEY_ID, ALPACA_KEY, etc."
+    assert "ANTHROPIC_API_KEY" not in written_keys, (
+        "ANTHROPIC_API_KEY must not reach set_key — the allowlist check runs first. "
+        f"Captured set_key calls: {set_key_calls}"
     )
 
 
