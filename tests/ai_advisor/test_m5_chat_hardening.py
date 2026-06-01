@@ -70,6 +70,25 @@ def _enable_csrf(monkeypatch):
     monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Clear the module-level rate limiter dict before each test.
+
+    _CHAT_RATE_LIMITER is a module-level dict that persists across tests in
+    the same process.  Without this reset, the rate-limit burst tests leak
+    state and cause subsequent tests to receive 429 unexpectedly.  The rate
+    limit tests that deliberately fill the window still work because they run
+    in their own isolated turn starting from an empty dict.
+    """
+    limiter = getattr(app_module, "_CHAT_RATE_LIMITER", None)
+    if limiter is not None:
+        limiter.clear()
+    yield
+    # Clear again after the test so the next test starts clean.
+    if limiter is not None:
+        limiter.clear()
+
+
 def _make_fake_explain_response(answer="This gate verdict means the candidate passed the BHY threshold."):
     """Fake explain_artifact result — a successful ChatResponse-like object."""
     from types import SimpleNamespace
