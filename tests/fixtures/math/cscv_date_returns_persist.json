@@ -1,0 +1,41 @@
+{
+  "provenance": "Fixture for Change 1 — _collect_sim_returns date-labeling and cscv_date_returns user_attr persistence. All structural properties are derived from the CPCV partition invariant: CPCV path dates are contiguous, non-overlapping partitions of the eligible window, so the UNION of (date, return) pairs across paths covers each date AT MOST ONCE. This is a shape/invariant fixture — no dollar/pct values from the producer are hardcoded; assertions check structure (unique dates, only triggered days present, dates within eligible window) not specific return magnitudes.",
+  "partition_invariant": {
+    "description": "CPCV folds partition the eligible dates into non-overlapping groups. Each of the C(N_groups, K_test) test paths covers a different subset of groups, so no date appears in two paths' test sets simultaneously. The union of per-path {date: guard_alpha} dicts therefore has NO collision — the 'union covers eligible window once' property holds by construction.",
+    "consequence": "The cscv_date_returns user_attr, built as the UNION of per-path (date, return) pairs, must: (1) have len <= len(eligible_dates), (2) have no duplicate date keys, (3) contain only dates within the eligible window, (4) contain only TRIGGERED days (triggered_return is not None)."
+  },
+  "scenarios": {
+    "no_triggered_returns": {
+      "description": "A simulation where no day triggers an exit. cscv_date_returns must be an empty dict {}.",
+      "eligible_window_size": 10,
+      "triggered_dates": [],
+      "expected_cscv_date_returns_length": 0,
+      "expected_is_empty": true
+    },
+    "single_triggered_day": {
+      "description": "One triggered day. cscv_date_returns must contain exactly one key.",
+      "eligible_window_size": 10,
+      "triggered_dates": ["2024-01-05"],
+      "expected_cscv_date_returns_length": 1,
+      "expected_keys": ["2024-01-05"],
+      "assertion": "is positive float (guard_alpha is triggered_return - eod_return)"
+    },
+    "multi_path_union_no_collision": {
+      "description": "Two paths with non-overlapping test dates. The union must have both paths' triggered dates with no overwrites. This directly tests the partition-invariant property: if path A covers [2024-01-01..2024-01-05] and path B covers [2024-01-06..2024-01-10], the union has all triggered dates from both without collision.",
+      "path_a_triggered_dates": ["2024-01-02", "2024-01-04"],
+      "path_b_triggered_dates": ["2024-01-07", "2024-01-09"],
+      "eligible_dates": [
+        "2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05",
+        "2024-01-06", "2024-01-07", "2024-01-08", "2024-01-09", "2024-01-10"
+      ],
+      "expected_union_keys": ["2024-01-02", "2024-01-04", "2024-01-07", "2024-01-09"],
+      "expected_union_length": 4,
+      "expected_no_collision": true
+    },
+    "dates_within_eligible_window_only": {
+      "description": "Verifies that cscv_date_returns contains NO dates outside the eligible window (sorted_dates[:frozen_start_idx]). The frozen eval fold dates must not appear.",
+      "assertion_kind": "set_membership",
+      "rule": "all(date in eligible_dates for date in cscv_date_returns.keys())"
+    }
+  }
+}
