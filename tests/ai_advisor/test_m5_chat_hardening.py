@@ -1034,3 +1034,170 @@ class TestGuardOrdering:
             f"Got {resp.status_code}. "
             f"Body: {resp.get_data(as_text=True)[:200]!r}"
         )
+
+
+# ===========================================================================
+# AC-1 Sibling JS files — same-pattern-trivial CSRF fix
+#
+# flask-specialist confirmed: ALL dashboard POST-issuing JS files are missing
+# the X-CSRF-Token header on their fetch calls.  The fix is same-pattern-trivial
+# (a shared token variable or utility) so the scope includes them per the A/C.
+#
+# These tests verify the sibling files are also fixed after GREEN.
+# ===========================================================================
+
+
+class TestAC1SiblingJsCsrfFix:
+    """AC-1 sibling: All dashboard POST JS files must include X-CSRF-Token header."""
+
+    def test_settings_js_attaches_x_csrf_token_header(self):
+        """settings.js must reference X-CSRF-Token on its POST calls.
+
+        flask-specialist confirmed settings.js:288 (flush-resync) and
+        settings.js:551 (settings save) both lack the header.  These are
+        operator-critical mutating routes that need the same fix.
+        """
+        import pathlib
+        js_path = (
+            pathlib.Path(__file__).parent.parent.parent
+            / "static"
+            / "settings.js"
+        )
+        assert js_path.exists(), f"settings.js not found at {js_path}"
+
+        source = js_path.read_text(encoding="utf-8")
+        assert "X-CSRF-Token" in source, (
+            "settings.js must include 'X-CSRF-Token' header on its POST fetch calls. "
+            "settings.js:288 (flush-resync) and settings.js:551 (settings save) both "
+            "POST to mutating routes without the CSRF header. The server guard at "
+            "app.py:138 will reject these with 403 when CSRF is enforced."
+        )
+
+    def test_ai_advisor_js_attaches_x_csrf_token_header(self):
+        """ai_advisor.js must reference X-CSRF-Token on its POST calls.
+
+        flask-specialist confirmed ai_advisor.js:243 (suggest), :281 (accept),
+        and :309 (reject) all lack the header.  These routes include the /accept
+        mutation path — particularly important to protect.
+        """
+        import pathlib
+        js_path = (
+            pathlib.Path(__file__).parent.parent.parent
+            / "static"
+            / "ai_advisor.js"
+        )
+        assert js_path.exists(), f"ai_advisor.js not found at {js_path}"
+
+        source = js_path.read_text(encoding="utf-8")
+        assert "X-CSRF-Token" in source, (
+            "ai_advisor.js must include 'X-CSRF-Token' header on its POST fetch calls. "
+            "ai_advisor.js:243 (suggest), :281 (accept), :309 (reject) all POST to "
+            "mutating routes without the CSRF header. The /accept route writes live "
+            "config — a particularly critical mutation to protect with CSRF."
+        )
+
+    def test_chrome_js_attaches_x_csrf_token_header(self):
+        """chrome.js must reference X-CSRF-Token on its POST calls.
+
+        flask-specialist confirmed chrome.js:9 (/api/trigger) and
+        chrome.js:180-183 (/api/sell_account) both lack the header.
+        """
+        import pathlib
+        js_path = (
+            pathlib.Path(__file__).parent.parent.parent
+            / "static"
+            / "chrome.js"
+        )
+        assert js_path.exists(), f"chrome.js not found at {js_path}"
+
+        source = js_path.read_text(encoding="utf-8")
+        assert "X-CSRF-Token" in source, (
+            "chrome.js must include 'X-CSRF-Token' header on its POST fetch calls. "
+            "chrome.js:9 (/api/trigger) and chrome.js:180-183 (/api/sell_account) "
+            "both POST to mutating routes without the CSRF header."
+        )
+
+    def test_asset_swaps_js_attaches_x_csrf_token_header(self):
+        """ai_advisor_asset_swaps.js must reference X-CSRF-Token on its POST calls.
+
+        flask-specialist confirmed ai_advisor_asset_swaps.js:342
+        (/ai-advisor/asset-swaps/evaluate) lacks the header.
+        """
+        import pathlib
+        js_path = (
+            pathlib.Path(__file__).parent.parent.parent
+            / "static"
+            / "ai_advisor_asset_swaps.js"
+        )
+        assert js_path.exists(), f"ai_advisor_asset_swaps.js not found at {js_path}"
+
+        source = js_path.read_text(encoding="utf-8")
+        assert "X-CSRF-Token" in source, (
+            "ai_advisor_asset_swaps.js must include 'X-CSRF-Token' header on its POST fetch. "
+            "ai_advisor_asset_swaps.js:342 (/ai-advisor/asset-swaps/evaluate) posts without "
+            "the CSRF header."
+        )
+
+    def test_logic_changes_js_attaches_x_csrf_token_header(self):
+        """ai_advisor_logic_changes.js must reference X-CSRF-Token on its POST calls.
+
+        flask-specialist confirmed ai_advisor_logic_changes.js:351
+        (/ai-advisor/logic-changes/evaluate) lacks the header.
+        """
+        import pathlib
+        js_path = (
+            pathlib.Path(__file__).parent.parent.parent
+            / "static"
+            / "ai_advisor_logic_changes.js"
+        )
+        assert js_path.exists(), f"ai_advisor_logic_changes.js not found at {js_path}"
+
+        source = js_path.read_text(encoding="utf-8")
+        assert "X-CSRF-Token" in source, (
+            "ai_advisor_logic_changes.js must include 'X-CSRF-Token' header on its POST fetch. "
+            "ai_advisor_logic_changes.js:351 (/ai-advisor/logic-changes/evaluate) posts without "
+            "the CSRF header."
+        )
+
+    def test_index_js_attaches_x_csrf_token_header(self):
+        """index.js must reference X-CSRF-Token on its POST calls.
+
+        flask-specialist confirmed index.js:352-355 (/api/sell_account) lacks the header.
+        """
+        import pathlib
+        js_path = (
+            pathlib.Path(__file__).parent.parent.parent
+            / "static"
+            / "index.js"
+        )
+        assert js_path.exists(), f"index.js not found at {js_path}"
+
+        source = js_path.read_text(encoding="utf-8")
+        assert "X-CSRF-Token" in source, (
+            "index.js must include 'X-CSRF-Token' header on its POST fetch call. "
+            "index.js:352-355 (/api/sell_account) posts without the CSRF header."
+        )
+
+    def test_sibling_routes_with_csrf_token_are_not_403(self, client, csrf_token):
+        """POST to /api/trigger with valid CSRF token must not return 403.
+
+        Integration check: if the sibling JS files fetch and attach the token
+        correctly, the server-side guard passes.  We test the server side of
+        one sibling route (/api/trigger is a safe canary — it exists and is POST).
+        """
+        from unittest.mock import patch as _patch
+        # /api/trigger posts a market-trigger — stub out its implementation
+        # to avoid side effects; we only care about the CSRF guard passing.
+        with _patch.object(app_module, "_daemon_log"):
+            resp = client.post(
+                "/api/trigger",
+                json={},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+        # 403 = CSRF rejected; anything else = CSRF passed (route logic may 400/500)
+        assert resp.status_code != 403, (
+            f"POST /api/trigger with valid CSRF token must NOT return 403. "
+            f"Got {resp.status_code}. "
+            f"The CSRF guard must pass when the correct token is supplied. "
+            f"Body: {resp.get_data(as_text=True)[:200]!r}"
+        )
