@@ -128,6 +128,41 @@ atexit.register(_DISMISS_EXECUTOR.shutdown, wait=True)
 # subprocess is provided by SQLite WAL transaction isolation, not by this lock.
 _FLUSH_STATE_LOCK = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# AI Advisor chat — cost-DoS guard constants (AC-2)
+# ---------------------------------------------------------------------------
+# Maximum JSON-encoded size of the entire request body.  Limits flood payloads
+# before any body parsing occurs.  Werkzeug enforces MAX_CONTENT_LENGTH at the
+# WSGI layer (returns 413 automatically); we wire the same constant so the
+# limit is expressed once (AC-2 / B-1).
+CHAT_MAX_REQUEST_BODY_BYTES: int = 65536  # 64 KB
+app.config["MAX_CONTENT_LENGTH"] = CHAT_MAX_REQUEST_BODY_BYTES
+
+# Maximum character count for the operator's chat message.  Prevents a single
+# oversized message from exhausting the LLM token budget.
+CHAT_MAX_MESSAGE_CHARS: int = 2000
+
+# Maximum JSON-encoded size of the artifact dict sent with each request.
+# M1–M4 artifacts are typically <1 KB; 8 KB is generous but bounded.
+CHAT_MAX_ARTIFACT_BYTES: int = 8192  # 8 KB
+
+# Sliding-window rate limit: max requests allowed per remote IP within the window.
+CHAT_RATE_LIMIT_MAX_REQUESTS: int = 10
+
+# Duration of the sliding rate-limit window in seconds.
+CHAT_RATE_LIMIT_WINDOW_SECONDS: int = 60
+
+# Maximum distinct IPs tracked simultaneously in _CHAT_RATE_LIMITER.
+# Bounds memory growth; the operator dashboard is single-user and rarely
+# sees more than a handful of distinct source IPs (B-2).
+CHAT_RATE_LIMITER_MAX_TRACKED_IPS: int = 1000
+
+# Per-IP timestamp deque for the sliding-window rate limiter.
+# Maps remote_addr -> collections.deque of float timestamps (time.time()).
+# Module-level so state persists across requests within a process lifetime.
+import collections as _collections  # noqa: E402 — stdlib, late import for locality
+_CHAT_RATE_LIMITER: dict = {}
+
 _daemon_log = logging.getLogger("alphabot")
 _daemon_log.setLevel(logging.DEBUG)
 _daemon_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
@@ -2958,7 +2993,7 @@ def ai_advisor_chat_send():
     LLM unavailable / error → 200 JSON {error: str} from explain_artifact.
     """
     # Lazy import keeps advisor_chat off the live 1-minute execution path (AC-X2).
-    from advisors.advisor_chat import explain_artifact  # noqa: PLC0415
+    from advisors.advisor_chat import explain_artifact, validate_artifact  # noqa: PLC0415
 
     # Parse the JSON body; malformed bodies get a 400.
     body = request.get_json(silent=True) or {}
@@ -2971,10 +3006,55 @@ def ai_advisor_chat_send():
     if artifact is None:
         return jsonify({"error": "missing required field: artifact"}), 400
 
+    # --- AC-2b: message length cap ---
+    # Reject oversized messages before they reach the paid LLM call.
+    if len(message) > CHAT_MAX_MESSAGE_CHARS:
+        return jsonify({"error": f"message exceeds maximum length of {CHAT_MAX_MESSAGE_CHARS} characters"}), 400
+
+    # --- AC-2c: artifact size cap ---
+    # Measure the artifact's JSON footprint before passing it to the LLM.
+    import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+    artifact_json_size = len(_json.dumps(artifact))
+    if artifact_json_size > CHAT_MAX_ARTIFACT_BYTES:
+        return jsonify({"error": f"artifact exceeds maximum size of {CHAT_MAX_ARTIFACT_BYTES} bytes"}), 400
+
+    # --- AC-2d: per-client sliding-window rate limit ---
+    # Track requests per remote IP using a deque of timestamps.  No external
+    # dependency required — collections.deque + time.time() is sufficient.
+    _now = time.time()
+    _client_ip = request.remote_addr or "unknown"
+    if _client_ip not in _CHAT_RATE_LIMITER:
+        # B-2: cap the total number of tracked IPs to bound memory growth.
+        # When the dict is full, reject new IPs with 429 rather than growing
+        # the dict further.  Existing tracked IPs are always admitted (their
+        # key is already present) so legitimate operators are unaffected.
+        if len(_CHAT_RATE_LIMITER) >= CHAT_RATE_LIMITER_MAX_TRACKED_IPS:
+            return jsonify({"error": "rate limit exceeded — too many requests"}), 429
+        _CHAT_RATE_LIMITER[_client_ip] = _collections.deque()
+    _ip_window = _CHAT_RATE_LIMITER[_client_ip]
+    # Expire timestamps outside the rolling window.
+    while _ip_window and _now - _ip_window[0] > CHAT_RATE_LIMIT_WINDOW_SECONDS:
+        _ip_window.popleft()
+    # Evict the key when the window has fully expired — prevents unbounded dict
+    # growth over a long daemon lifetime (IPs that stop requesting stay forever
+    # otherwise, since the deque drains to empty but the key remains).
+    if not _ip_window:
+        del _CHAT_RATE_LIMITER[_client_ip]
+        _CHAT_RATE_LIMITER[_client_ip] = _collections.deque()
+        _ip_window = _CHAT_RATE_LIMITER[_client_ip]
+    if len(_ip_window) >= CHAT_RATE_LIMIT_MAX_REQUESTS:
+        return jsonify({"error": "rate limit exceeded — too many requests"}), 429
+    _ip_window.append(_now)
+
+    # --- AC-3: server-side artifact scoping ---
+    # Strip unknown fields and bound string values before the artifact reaches
+    # the Anthropic prompt.  validate_artifact is a pure function (no I/O).
+    scoped_artifact = validate_artifact(artifact)
+
     # Delegate entirely to the chat backend — the explain-only boundary is
     # enforced inside explain_artifact and its system prompt.
     # question keyword matches explain_artifact(question, artifact) signature.
-    result = explain_artifact(question=message, artifact=artifact)
+    result = explain_artifact(question=message, artifact=scoped_artifact)
 
     if result.answer is not None:
         return jsonify({"reply": result.answer})

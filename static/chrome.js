@@ -1,12 +1,21 @@
 'use strict';
 
+/** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
+var _chromeCsrfToken = null;
+document.addEventListener('DOMContentLoaded', function () {
+  fetch('/api/csrf-token')
+    .then(function (r) { return r.json(); })
+    .then(function (b) { _chromeCsrfToken = b.csrf_token || null; })
+    .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
+});
+
 // ── Force-run button (FP-T3-02) ────────────────────────────────────────────
 function forceRun(e) {
   var btn = document.querySelector('[data-testid="force-run-btn"]');
   if (!btn || btn.disabled) return;
   btn.disabled = true;
   btn.textContent = 'Running…';
-  fetch('/api/trigger', { method: 'POST' })
+  fetch('/api/trigger', { method: 'POST', headers: { 'X-CSRF-Token': _chromeCsrfToken || '' } })
     .then(function (r) {
       btn.textContent = r.ok ? 'Triggered!' : 'Error';
       setTimeout(function () {
@@ -179,7 +188,7 @@ function submitPanicLiquidation() {
   if (phrase !== 'LIQUIDATE') return;
   fetch('/api/sell_account', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _chromeCsrfToken || '' },
     body: JSON.stringify({ account_id: accountId, confirm_account_id: accountId, confirm_phrase: phrase }),
   }).then(function (r) { return r.json(); }).then(function (d) {
     closePanicModal();

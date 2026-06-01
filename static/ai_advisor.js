@@ -8,6 +8,15 @@
 (function () {
     'use strict';
 
+    /** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
+    var _csrfToken = null;
+    document.addEventListener('DOMContentLoaded', function () {
+        fetch('/api/csrf-token')
+            .then(function (r) { return r.json(); })
+            .then(function (b) { _csrfToken = b.csrf_token || null; })
+            .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
+    });
+
     // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
@@ -241,7 +250,7 @@
 
         fetch('/ai-advisor/suggest', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
             body: JSON.stringify({ symphony_id: symphonyId }),
         })
             .then(function (resp) { return resp.json(); })
@@ -279,7 +288,7 @@
         card.style.opacity = '0.5';
         fetch('/ai-advisor/accept', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
             body: JSON.stringify({ symphony_id: symphonyId, suggestion: suggestion }),
         })
             .then(function (resp) { return resp.json(); })
@@ -307,7 +316,7 @@
         card.style.opacity = '0.5';
         fetch('/ai-advisor/reject', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
             body: JSON.stringify({ symphony_id: symphonyId, suggestion: suggestion }),
         })
             .then(function () {

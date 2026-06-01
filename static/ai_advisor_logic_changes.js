@@ -14,6 +14,15 @@
 (function () {
     "use strict";
 
+    /** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
+    var _csrfToken = null;
+    document.addEventListener("DOMContentLoaded", function () {
+        fetch("/api/csrf-token")
+            .then(function (r) { return r.json(); })
+            .then(function (b) { _csrfToken = b.csrf_token || null; })
+            .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
+    });
+
     // ---------------------------------------------------------------------------
     // DOM references
     // ---------------------------------------------------------------------------
@@ -349,7 +358,7 @@
 
         fetch("/ai-advisor/logic-changes/evaluate", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": _csrfToken || "" },
             body: JSON.stringify({
                 symphony_id: symphonyId,
                 objective_type: objectiveType,

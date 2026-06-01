@@ -47,6 +47,120 @@ from typing import Optional
 
 import ai_advisor
 
+# ---------------------------------------------------------------------------
+# AC-3 — Artifact scoping constants
+# ---------------------------------------------------------------------------
+
+# Allowlist of top-level field names permitted in a client-supplied artifact.
+# Derived from the known M1–M4 artifact schemas:
+#   M1 (diagnostic):  artifact_type, artifact_id, symphony_id, diagnostic_type,
+#                     regime_context, correlation_score, pair_results, summary,
+#                     timestamp, run_id, asset_a, asset_b, p_value, fdr_threshold
+#   M2 (gate):        gate_verdict, score, threshold, bhy_adjusted, n_candidates,
+#                     n_survivors, fold_count, haircut_rate
+#   M3 (swap):        incumbent, candidate, swap_type, reason, approved, vetoed,
+#                     veto_reason, objective, context
+#   M4 (logic):       logic_change_type, description, before_value, after_value,
+#                     impact_estimate, approval_status
+#   Shared advisor observation fields: advisor_role, observation_id, created_at,
+#                                      subject_type, subject_id, raw_response,
+#                                      verdict, weight, symbol
+CHAT_ARTIFACT_ALLOWED_FIELDS: frozenset = frozenset({
+    # Identity — present on every artifact type
+    "artifact_type",
+    "artifact_id",
+    "symphony_id",
+    # M1 — diagnostic
+    "diagnostic_type",
+    "regime_context",
+    "correlation_score",
+    "pair_results",
+    "summary",
+    "timestamp",
+    "run_id",
+    "asset_a",
+    "asset_b",
+    "p_value",
+    "fdr_threshold",
+    # M2 — gate verdict
+    "gate_verdict",
+    "score",
+    "threshold",
+    "bhy_adjusted",
+    "n_candidates",
+    "n_survivors",
+    "fold_count",
+    "haircut_rate",
+    # M3 — swap proposal
+    "incumbent",
+    "candidate",
+    "swap_type",
+    "reason",
+    "approved",
+    "vetoed",
+    "veto_reason",
+    "objective",
+    "context",
+    # M4 — logic change
+    "logic_change_type",
+    "description",
+    "before_value",
+    "after_value",
+    "impact_estimate",
+    "approval_status",
+    # Shared advisor observation fields
+    "advisor_role",
+    "observation_id",
+    "created_at",
+    "subject_type",
+    "subject_id",
+    "raw_response",
+    "verdict",
+    "weight",
+    "symbol",
+})
+
+# Maximum nesting depth for artifact field values.  We strip rather than
+# recurse into nested structures — the outer allowlist is the boundary.
+# Depth-1 means we scope the top level only; nested dicts are passed through
+# as-is (string-bounded by CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS on serialisation).
+CHAT_ARTIFACT_MAX_DEPTH: int = 2
+
+# Maximum characters for a single string field value.  Prevents a client from
+# stuffing the LLM prompt via a known allowed field (e.g. "reason": "A"*100000).
+# 500 chars is sufficient for any real M1–M4 diagnostic string.
+CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS: int = 500
+
+
+def validate_artifact(artifact: dict) -> dict:
+    """Scope a client-supplied artifact to the known M1–M4 field allowlist.
+
+    Strips any top-level field not in CHAT_ARTIFACT_ALLOWED_FIELDS and
+    truncates string values to CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS.  Returns
+    a new dict; never mutates the input.  Never raises — returns {} on
+    empty or all-unknown input.
+
+    Args:
+        artifact: raw dict from the client POST body.
+
+    Returns:
+        Scoped dict containing only allowed fields with bounded string values.
+    """
+    if not isinstance(artifact, dict):
+        return {}
+
+    scoped: dict = {}
+    for key, value in artifact.items():
+        if key not in CHAT_ARTIFACT_ALLOWED_FIELDS:
+            # Unknown field — strip it (prompt injection defence, AC-3).
+            continue
+        if isinstance(value, str) and len(value) > CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS:
+            # Truncate oversized string values to prevent prompt-stuffing.
+            value = value[:CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS]
+        scoped[key] = value
+
+    return scoped
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
