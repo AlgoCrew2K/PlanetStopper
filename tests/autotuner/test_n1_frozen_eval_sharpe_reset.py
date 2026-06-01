@@ -33,6 +33,7 @@ fixed number — only None / non-None / type.
 
 from __future__ import annotations
 
+import contextlib
 import types
 from unittest.mock import MagicMock, patch
 
@@ -117,47 +118,98 @@ def _run_autotuner_with_patches(
 
     Reuses one patch stack across the four scenario classes so each test
     only varies (a) the haircut decision and (b) the OOS ordering.
+
+    Note: run_autotuner now requires an explicit spec_bundle_id (NN1 Phase-1
+    strict). The harness satisfies this by:
+      1. Passing spec_bundle_id=1.
+      2. Patching database.get_spec_bundle_by_id to return a stub row without
+         facets_json — this skips the hash integrity check (autotuner.py:1664).
+      3. Patching validate_nn1_compliance to return (True, []) — no violations.
+      4. Patching database.get_spec_facets_for_bundle to return Sortino-branch
+         facets (objective_kind absent → falls back to sortino_loss_aversion).
     """
     captured: dict = {}
 
     def _capture_save(**kwargs):
         captured.update(kwargs)
 
-    with patch.object(autotuner, "_haircut_select", return_value=haircut_return), \
-         patch.object(autotuner, "compute_sortino_ratio", return_value=sortino_return), \
-         patch.object(
-             autotuner, "run_simulation",
-             **(
-                 {"side_effect": sim_side_effect}
-                 if sim_side_effect is not None
-                 else {"return_value": sim_return}
-             ),
-         ), \
-         patch.object(autotuner, "_collect_sim_returns",
-                      return_value=[0.01, -0.005, 0.008]), \
-         patch.object(autotuner, "calculate_historical_deviation",
-                      return_value={"Take-Profit": 0.0,
-                                    "Trailing Stop": -0.2,
-                                    "VWAP Breakdown": -0.4,
-                                    "VWAP Bleed Cut": -0.25}), \
-         patch.object(autotuner.synthetic_history,
-                      "generate_synthetic_history",
-                      return_value=_synthetic_history_payload()), \
-         patch.object(autotuner, "_apply_optuna_archive_migration_if_needed"), \
-         patch("autotuner.optuna.create_study") as mock_create_study, \
-         patch.object(autotuner.optuna.storages, "RDBStorage"), \
-         patch.object(autotuner.database, "save_autotune_run",
-                      side_effect=_capture_save), \
-         patch.object(autotuner.database, "save_symphony_strategy"), \
-         patch.object(autotuner.database, "save_chart_archive"), \
-         patch.object(autotuner.database, "load_chart_history",
-                      return_value={"date": "2026-05-21", "symphonies": {}}), \
-         patch.object(autotuner.database, "get_symphony_strategy",
-                      return_value={"params": _full_params(), "locked_vars": []}), \
-         patch.object(autotuner.database, "DEFAULT_STRATEGY",
-                      new=_full_params()), \
-         patch.object(autotuner.database, "normalize_name",
-                      side_effect=lambda s: (s or "").strip().lower()):
+    # Stub bundle row: no facets_json → hash integrity check skipped (per
+    # autotuner.py:1664: "may be absent on mocked rows in tests"). No facet
+    # entries → objective_kind absent → sortino_loss_aversion branch. N1 tests
+    # specifically test frozen_eval_sharpe behavior on the Sortino branch;
+    # using a CRRA-EU bundle would set frozen_eval_sharpe=None by design
+    # (autotuner.py:2073) and break the accepted-proposal regression guard.
+    _stub_bundle_row = {"bundle_hash": "test-stub-hash"}
+    _stub_facets: list = []
+
+    _sim_patch_kwargs: dict = (
+        {"side_effect": sim_side_effect}
+        if sim_side_effect is not None
+        else {"return_value": sim_return}
+    )
+
+    # ExitStack flattens the deep nesting; avoids "too many statically nested
+    # blocks" SyntaxError from Python's 20-level hard limit.
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            patch.object(autotuner, "_haircut_select",
+                         return_value=haircut_return))
+        stack.enter_context(
+            patch.object(autotuner, "compute_sortino_ratio",
+                         return_value=sortino_return))
+        stack.enter_context(
+            patch.object(autotuner, "run_simulation", **_sim_patch_kwargs))
+        stack.enter_context(
+            patch.object(autotuner, "_collect_sim_returns",
+                         return_value=[0.01, -0.005, 0.008]))
+        stack.enter_context(
+            patch.object(autotuner, "calculate_historical_deviation",
+                         return_value={"Take-Profit": 0.0,
+                                       "Trailing Stop": -0.2,
+                                       "VWAP Breakdown": -0.4,
+                                       "VWAP Bleed Cut": -0.25}))
+        stack.enter_context(
+            patch.object(autotuner.synthetic_history,
+                         "generate_synthetic_history",
+                         return_value=_synthetic_history_payload()))
+        stack.enter_context(
+            patch.object(autotuner, "_apply_optuna_archive_migration_if_needed"))
+        mock_create_study = stack.enter_context(
+            patch("autotuner.optuna.create_study"))
+        stack.enter_context(
+            patch.object(autotuner.optuna.storages, "RDBStorage"))
+        stack.enter_context(
+            patch.object(autotuner.database, "save_autotune_run",
+                         side_effect=_capture_save))
+        stack.enter_context(
+            patch.object(autotuner.database, "save_symphony_strategy"))
+        stack.enter_context(
+            patch.object(autotuner.database, "save_chart_archive"))
+        stack.enter_context(
+            patch.object(autotuner.database, "load_chart_history",
+                         return_value={"date": "2026-05-21", "symphonies": {}}))
+        stack.enter_context(
+            patch.object(autotuner.database, "get_symphony_strategy",
+                         return_value={"params": _full_params(),
+                                       "locked_vars": []}))
+        stack.enter_context(
+            patch.object(autotuner.database, "DEFAULT_STRATEGY",
+                         new=_full_params()))
+        stack.enter_context(
+            patch.object(autotuner.database, "normalize_name",
+                         side_effect=lambda s: (s or "").strip().lower()))
+        stack.enter_context(
+            patch.object(autotuner.database, "get_spec_bundle_by_id",
+                         return_value=_stub_bundle_row))
+        stack.enter_context(
+            patch.object(autotuner.database, "get_spec_facets_for_bundle",
+                         return_value=_stub_facets))
+        stack.enter_context(
+            patch.object(autotuner.database, "advisor_ro_query",
+                         return_value=[]))
+        stack.enter_context(
+            patch.object(autotuner, "validate_nn1_compliance",
+                         return_value=(True, [])))
 
         study = MagicMock()
         study.best_value = 0.5
@@ -171,6 +223,7 @@ def _run_autotuner_with_patches(
                 bot_state,
                 current_date_str="2026-05-21",
                 account_uuids=["acct-test"],
+                spec_bundle_id=1,
             )
         except Exception as exc:  # pragma: no cover - diagnostic only
             # The harness may raise from an unrelated branch (warning emit,

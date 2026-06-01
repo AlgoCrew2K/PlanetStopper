@@ -100,13 +100,9 @@ def _replay_in_open_window_grace(
 # The autotuner replay (run_simulation / _collect_sim_returns /
 # replay_exit_sequence) simulates ONLY the per-symphony altitude — it iterates
 # per sym_id and replays each symphony's exit path in isolation. There is no
-# port-level altitude replay: no port aggregation, no port-level exit. So
-# port-mode autotuning results are NOT replay-validated — the objective the
-# optimizer maximizes in port mode does not reflect a port-level exit
-# simulation. Port-level exiting is currently dormant (the standing config runs
-# per_symphony); a full port-level replay simulation is a separate, larger
-# feature. warn_port_mode_replay_blind_spot() makes this gap visible so
-# port-mode tuning cannot be silently trusted.
+# port-level altitude replay: no port aggregation, no port-level exit.
+# Port-level autotuning is deprecated (Sprint-3 port-level deprecation
+# directive); all autotuner code now operates at symphony level only.
 
 # Required keys for a complete Optuna best_params payload.
 # MUST be kept in sync with the suggest_* calls in the objective() closure
@@ -888,23 +884,6 @@ def calculate_historical_deviation(current_date_str):
 
     print(f"  -> Historical Execution Deviation Penalties: {deviation_dict}")
     return deviation_dict
-
-def warn_port_mode_replay_blind_spot():
-    """Surface the per-symphony-only replay limitation for port-mode autotuning.
-
-    The autotuner replay validates only the per-symphony altitude; the
-    port-level exit altitude is NOT replay-validated (plan D-C3b). The
-    port-mode autotuning path calls this guard so port-mode results cannot be
-    silently trusted. Pure and idempotent — it only prints a warning, never
-    mutates state or raises, so it is safe to call on every port-mode run.
-    """
-    print(
-        "  -> WARNING: port-mode autotuning is NOT replay-validated. The "
-        "autotuner replay simulates only the per-symphony altitude; the "
-        "port-level exit altitude has no replay simulation. Treat port-mode "
-        "tuning results as un-validated for the port-level exit path."
-    )
-
 
 def _replay_exit_tick(
     state, tick, tick_idx, n_ticks, p, grace_minutes,

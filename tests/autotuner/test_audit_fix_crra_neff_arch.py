@@ -305,8 +305,9 @@ class TestHaircutSelectCrraEUUTransformContract:
         """Guard: the Sortino branch must NOT apply the U-transform.
 
         CRRA-001 fix scope is strictly the CRRA-EU branch. The Sortino branch
-        uses compute_sortino_tstat(t.value, len(series)), which takes the trial's
-        Sortino value and series length — it does NOT use a U-series.
+        passes the raw daily_returns series to compute_sortino_tstat (Decision
+        D10 / RM-H1 bootstrap contract) with the trial index as seed. It does
+        NOT transform the series through the CRRA utility function.
 
         Asserting the Sortino path is unchanged ensures the fix does not
         accidentally break the default branch.
@@ -323,17 +324,22 @@ class TestHaircutSelectCrraEUUTransformContract:
             tstat_fn=autotuner.compute_sortino_tstat,
         )
 
-        # Sortino branch: t = sortino * sqrt(T) = 1.5 * sqrt(5)
+        # Sortino branch (D10 / RM-H1): _haircut_select calls
+        # tstat_fn(series, seed=trial_idx). For trial_idx=0, seed=0.
+        # Expected value is the same call so the test always stays in sync
+        # regardless of bootstrap parameter tuning.
+        # Tolerance exact equality: same function, same inputs, same seed.
         expected_sortino_tstat = autotuner.compute_sortino_tstat(
-            sortino_value, len(r_pct)
+            r_pct, seed=0
         )
 
-        # rel=1e-9: deterministic arithmetic.
+        # rel=1e-9: deterministic arithmetic (same bootstrap RNG path).
         assert winner_tstat == pytest.approx(expected_sortino_tstat, rel=1e-9), (
             f"Sortino branch _haircut_select returned t={winner_tstat!r}.\n"
-            f"  expected (sortino * sqrt(T)): {expected_sortino_tstat!r}\n"
+            f"  expected (bootstrap t-stat on r_pct, seed=0): "
+            f"{expected_sortino_tstat!r}\n"
             f"  The CRRA-001 fix must NOT affect the Sortino branch. The\n"
-            f"  Sortino branch uses t.value + len(series) — no U-transform."
+            f"  Sortino branch passes the raw series — no U-transform."
         )
 
 

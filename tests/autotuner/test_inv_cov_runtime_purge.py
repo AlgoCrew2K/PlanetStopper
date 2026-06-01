@@ -45,6 +45,7 @@ import pytest
 
 import autotuner
 import synthetic_history
+from tests.autotuner.conftest import make_phase1_theory_bundle
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +88,17 @@ def _default_params() -> dict:
 @contextlib.contextmanager
 def _autotuner_patches(best_params: dict, history: dict):
     """Patch the autotuner's heavy dependencies so the per-symphony loop
-    runs end-to-end without live I/O."""
+    runs end-to-end without live I/O.
+
+    Note: run_autotuner now requires an explicit spec_bundle_id (NN1 Phase-1
+    strict). This harness satisfies the guard by inserting a real all-THEORY
+    Phase-1 spec bundle via make_phase1_theory_bundle() before entering the
+    patch context. The _isolate_db autouse fixture (tests/conftest.py) ensures
+    a fresh per-test isolated SQLite DB — no production DB is touched.
+    Callers must pass the returned spec_bundle_id to run_autotuner.
+    """
+    spec_bundle_id = make_phase1_theory_bundle()
+
     fake_study = MagicMock(name="fake_optuna_study")
     fake_study.best_params = best_params.copy()
     fake_study.best_value = 1.0
@@ -120,7 +131,7 @@ def _autotuner_patches(best_params: dict, history: dict):
         patch("autotuner.math_engine.compute_vwap_breakdown_update",
               side_effect=lambda **kw: (0, 0, False, False)),
     ):
-        yield fake_study
+        yield fake_study, spec_bundle_id
 
 
 # ---------------------------------------------------------------------------
@@ -198,13 +209,14 @@ class TestTrainValidationPurgeRuntimeDisjoint:
         params = _default_params()
         history = _build_history(125)
         buf = io.StringIO()
-        with _autotuner_patches(params, history):
+        with _autotuner_patches(params, history) as (_study, spec_bundle_id):
             with patch("autotuner._collect_sim_returns",
                        side_effect=spy_collect):
                 with contextlib.redirect_stdout(buf):
                     try:
                         autotuner.run_autotuner(
-                            bot_state, "2026-05-10", ["acc-1"]
+                            bot_state, "2026-05-10", ["acc-1"],
+                            spec_bundle_id=spec_bundle_id,
                         )
                     except Exception:
                         # Side-effect failure beyond the purge surface is
@@ -291,13 +303,14 @@ class TestValidationFrozenEvalPurgeRuntimeDisjoint:
         params = _default_params()
         history = _build_history(125)
         buf = io.StringIO()
-        with _autotuner_patches(params, history):
+        with _autotuner_patches(params, history) as (_study, spec_bundle_id):
             with patch("autotuner._collect_sim_returns",
                        side_effect=spy_collect):
                 with contextlib.redirect_stdout(buf):
                     try:
                         autotuner.run_autotuner(
-                            bot_state, "2026-05-10", ["acc-1"]
+                            bot_state, "2026-05-10", ["acc-1"],
+                            spec_bundle_id=spec_bundle_id,
                         )
                     except Exception:
                         pass
