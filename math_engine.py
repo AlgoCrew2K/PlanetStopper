@@ -65,6 +65,19 @@ LOOKBACK_DAYS = 20  # 20-day realized-volatility window — Planet Stopper risk-
 ATR_LOOKBACK_DAYS = 15  # 14-day true-range window (standard ATR period) + 1 prior close required to compute the first TR; matches Planet Stopper's risk-sizing assumption
 PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes to pct)
 
+# ---------------------------------------------------------------------------
+# CSCV PBO gate constants (compute_pbo — Phase-3 reduced-N CSCV acceptance gate)
+# Source: Bailey & López de Prado 2014, "The Probability of Backtest Overfitting",
+# Journal of Computational Finance 20(4), DOI 10.21314/JCF.2014.005.
+# ---------------------------------------------------------------------------
+_CSCV_TOP_K: int = 20  # top-K PRE-BHY configs fed into compute_pbo (selection-process robustness)
+_CSCV_S: int = 8       # number of contiguous chronological blocks for the IS/OOS partition
+# Reject threshold: derived — random config selection implies PBO=0.5 (IS-best ranks
+# uniformly over 1..K on OOS, so lambda<=0 with probability 0.5). PBO>0.5 means the
+# IS-best performs WORSE-than-random on OOS — definitive evidence of backtest overfitting.
+# Source: Bailey&LdP 2014 §3.4 "Interpretation of PBO".
+PBO_REJECT_THRESHOLD: float = 0.5
+
 # Monte Carlo gating constants (run_monte_carlo)
 # Out-of-band sentinel returned when MC history is insufficient. run_monte_carlo
 # returns None (NOT an in-band probability) so the caller can distinguish "MC
@@ -1828,3 +1841,135 @@ def compute_regime_match_quality(
         threshold_used=threshold,
         insufficient_reason=None,
     )
+
+
+def compute_pbo(
+    configs_date_returns: "list[dict[str, float]]",
+    eligible_dates: "list[str]",
+    gamma: float,
+    S: "int | None" = None,
+) -> float:
+    """Compute the Probability of Backtest Overfitting (PBO) via reduced-N CSCV.
+
+    Canonical reduced-N Combinatorially Symmetric Cross-Validation per Bailey &
+    López de Prado 2014, "The Probability of Backtest Overfitting", Journal of
+    Computational Finance 20(4), DOI 10.21314/JCF.2014.005.
+
+    Algorithm:
+      1. Partition eligible_dates into S=_CSCV_S contiguous chronological blocks
+         (even tiling: extra dates distributed one-each to the earliest blocks).
+      2. For each of C(S, S//2) = C(8,4) = 70 IS/OOS combinations (S//2 IS blocks,
+         S//2 OOS blocks):
+         a. Score each config on IS-block dates using CRRA-EU mean utility.
+         b. Find the IS-best config (argmax).
+         c. Score all K configs on OOS-block dates; rank the IS-best 1-based ascending
+            (rank_c=1 means worst OOS, rank_c=K means best OOS).
+         d. omega_bar_c = (rank_c - 0.5) / K
+         e. lambda_c    = ln(omega_bar_c / (1 - omega_bar_c))
+      3. PBO = (count of combos where lambda_c <= 0) / (total combos).
+
+    PBO > PBO_REJECT_THRESHOLD (0.5) means the IS-best performs worse-than-random
+    on OOS — definitive evidence of backtest overfitting. Veto fires when
+    pbo > PBO_REJECT_THRESHOLD (strict inequality; pbo=0.5 exactly is accepted).
+
+    Parameters
+    ----------
+    configs_date_returns:
+        K config dicts, each mapping date-string -> decimal return. Dates not
+        present in a config score 0.0 CRRA-EU (matching compute_crra_eu_objective
+        empty-series contract).
+    eligible_dates:
+        Sorted list of date strings covering the CPCV-eligible window
+        (sorted_dates[:frozen_start_idx]).
+    gamma:
+        CRRA risk-aversion coefficient passed through to compute_crra_eu_objective.
+    S:
+        Block count override (default: _CSCV_S=8). Exposed for test tractability
+        with smaller grids; production always uses the default.
+
+    Returns
+    -------
+    float in [0.0, 1.0] — fraction of IS/OOS combinations where the IS-best
+    config ranked at or below the median on OOS (lambda_c <= 0). Fully
+    deterministic (no random or wall-clock dependency).
+
+    Notes
+    -----
+    compute_pbo is ORTHOGONAL to _haircut_select / compute_n_effective:
+      - BHY/n_effective = multiplicity axis (how many independent tests were run)
+      - PBO             = sample-robustness axis (does IS-selection generalise OOS?)
+    Never call _haircut_select, compute_n_effective, or any BHY symbol here.
+
+    Reference: Bailey & López de Prado 2014 §3.4 "Interpretation of PBO".
+    """
+    import itertools
+
+    n_blocks = S if S is not None else _CSCV_S
+    K = len(configs_date_returns)
+    n_dates = len(eligible_dates)
+
+    if K == 0 or n_dates == 0:
+        return 0.0
+
+    # --- Step 1: partition eligible_dates into n_blocks contiguous chronological blocks.
+    # Even tiling: divide n_dates as evenly as possible; extra dates go to the first
+    # (remainder) blocks (one extra each), so block sizes differ by at most 1.
+    base_size, remainder = divmod(n_dates, n_blocks)
+    blocks: list[list[str]] = []
+    start = 0
+    for i in range(n_blocks):
+        size = base_size + (1 if i < remainder else 0)
+        blocks.append(eligible_dates[start : start + size])
+        start += size
+
+    # --- Step 2: iterate over C(n_blocks, n_blocks//2) IS/OOS combinations.
+    half = n_blocks // 2
+    all_block_indices = range(n_blocks)
+    combinations = list(itertools.combinations(all_block_indices, half))
+
+    lambda_lte_zero_count = 0
+    total_combos = len(combinations)
+
+    for is_indices in combinations:
+        oos_indices = tuple(i for i in all_block_indices if i not in set(is_indices))
+
+        # Build IS and OOS date sets for this combination.
+        is_dates: set[str] = set()
+        for idx in is_indices:
+            is_dates.update(blocks[idx])
+        oos_dates: set[str] = set()
+        for idx in oos_indices:
+            oos_dates.update(blocks[idx])
+
+        # --- Step 2a-b: score each config on IS dates; find IS-best.
+        is_scores: list[float] = []
+        for cfg in configs_date_returns:
+            is_returns = [cfg[d] for d in is_dates if d in cfg]
+            is_scores.append(compute_crra_eu_objective(is_returns, gamma))
+
+        is_best_idx = is_scores.index(max(is_scores))
+
+        # --- Step 2c: score all K configs on OOS dates; rank IS-best 1-based ascending.
+        oos_scores: list[float] = []
+        for cfg in configs_date_returns:
+            oos_returns = [cfg[d] for d in oos_dates if d in cfg]
+            oos_scores.append(compute_crra_eu_objective(oos_returns, gamma))
+
+        is_best_oos = oos_scores[is_best_idx]
+        # 1-based ascending rank: rank_c=1 → worst OOS (lowest score), rank_c=K → best OOS.
+        rank_c = sum(1 for s in oos_scores if s <= is_best_oos)
+
+        # --- Step 2d-e: omega_bar and lambda.
+        omega_bar = (rank_c - 0.5) / K
+        # Clamp omega_bar away from 0 and 1 to prevent log domain errors on
+        # degenerate inputs (all configs identical → all ties → omega_bar could be 0 or 1
+        # depending on tie-breaking; the clamp is epsilon-level, not distorting).
+        omega_bar = max(1e-15, min(1.0 - 1e-15, omega_bar))
+        lambda_c = math.log(omega_bar / (1.0 - omega_bar))
+
+        if lambda_c <= 0.0:
+            lambda_lte_zero_count += 1
+
+    if total_combos == 0:
+        return 0.0
+    return lambda_lte_zero_count / total_combos
