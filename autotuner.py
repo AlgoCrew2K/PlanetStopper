@@ -336,14 +336,14 @@ PURGE_DAYS = 20
 # persistence. The remaining DIRECT lag-1 autocorrelation of the guard-alpha series
 # decays into the noise band within ~1 trading day; the guard-alpha sign shows no
 # meaningful persistence. Estimated horizon <= 1 day. This also matches LdP Ch. 7.4's
-# ~1%-of-observations embargo guidance (~1.25 days at the ~125-day window). The 1-day
+# ~1%-of-observations embargo guidance (~2.5 days at the ~250-day window). The 1-day
 # embargo is therefore vindicated, not a floor.
 EMBARGO_DAYS = 1
 
 # Three-fold walk-forward ratios: 60% train / 20% validation / 20% frozen-eval.
 # Selection is on validation; frozen-eval is consumed once post-selection for honest
 # performance reporting. Purge + embargo applied at BOTH fold boundaries.
-# 60/20/20 split is an operator choice for Planet Stopper's data scale (125 trading days);
+# 60/20/20 split is an operator choice for Planet Stopper's data scale (250 trading days);
 # the held-out frozen-eval invariant derives from LdP 2018 Ch. 7.4 (not the specific ratio).
 TRAIN_RATIO = 0.60
 VALIDATION_RATIO = 0.20
@@ -353,23 +353,28 @@ assert abs(TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO - 1.0) < 1e-9, (
 )
 
 # OPTUNA-4 — Operator-visibility pin on the usable validation window.
-# At the 125-day operator-data-budget:
-#     int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS = 4 days.
-# The ~4-day usable validation window is an acknowledged statistical power limitation
-# (NOT a defect tolerated by the cycle): with T≈4 the per-trial
-# t-stat sampling distribution is too thin for the normal-CDF approximation
-# in compute_haircut_pvalue to be defensible. BHY's multiplicity correction
-# addresses cross-trial selection bias independently of T; it does NOT
-# substitute for thin per-trial sample length. Future-workstream remediation
-# paths: (a) expand the operator-data-budget (council Amendment), or
+# At the 250-day operator-data-budget (Phase-1 extension, 2026-06-01):
+#     int(synthetic_history._WALK_FORWARD_TRADING_DAYS * VALIDATION_RATIO)
+#     - PURGE_DAYS - EMBARGO_DAYS = int(250*0.20) - 20 - 1 = 29 days.
+# The ~29-day usable validation window is a meaningful improvement over the
+# prior ~4-day window (at 125 days), while remaining an acknowledged
+# statistical power limitation: the BHY haircut addresses cross-trial
+# selection bias independently of T; it does NOT substitute for thin
+# per-trial sample length. Future-workstream remediation paths:
+# (a) further expand the operator-data-budget (council Amendment), or
 # (b) adopt combinatorial purged k-fold cross-validation per López de Prado
-# 2018 Ch. 7.4 to recover statistical power without expanding total history.
+# 2018 Ch. 7.4 to recover additional statistical power without expanding
+# total history.
 # The canonical joint (N, T) framework to consult is the Deflated Sharpe
 # Ratio — Bailey & López de Prado 2014. A drift in this value indicates
 # either (a) the operator-data-budget changed or (b) PURGE_DAYS / EMBARGO_DAYS
 # drifted; both must surface as Amendments, not silent slide-ins.
+# References synthetic_history._WALK_FORWARD_TRADING_DAYS (not a hardcoded
+# literal) so the two constants cannot drift independently.
 _OOS_USABLE_VALIDATION_DAYS_EXPECTED = (
-    int(125 * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS
+    int(synthetic_history._WALK_FORWARD_TRADING_DAYS * VALIDATION_RATIO)
+    - PURGE_DAYS
+    - EMBARGO_DAYS
 )
 
 def build_symphony_study_name(timestamp: str, symphony_id: str) -> str:
@@ -1596,11 +1601,11 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
     """
     Runs walk-forward optimization using Bayesian Optimization (Optuna) per symphony.
     Implements a three-fold walk-forward split (60/20/20): train / validation / frozen-eval.
-    The 60/20/20 ratio is an operator choice for Planet Stopper's 125-day data scale; AFML Ch. 7.4
+    The 60/20/20 ratio is an operator choice for Planet Stopper's 250-day data scale; AFML Ch. 7.4
     prescribes the held-out frozen-eval invariant (purge+embargo), not the specific ratio.
 
     Walk-forward split methodology (López de Prado 2018 Ch. 7.4):
-    - 125-day history is split 60/20/20: ~75 train days, ~25 validation days, ~25 frozen-eval days.
+    - 250-day history is split 60/20/20: ~150 train days, ~50 validation days, ~50 frozen-eval days.
     - Purge (PURGE_DAYS=20) and Embargo (EMBARGO_DAYS=1) applied at BOTH fold boundaries:
         (a) train | validation boundary
         (b) validation | frozen-eval boundary
@@ -1611,28 +1616,28 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
       post-selection performance metric (frozen_eval_sharpe).
 
     OOS-fold-collapse v2 (PA-26 extended):
-    - At 125-day history, the three raw folds are 75/25/25 days.
-    - After PURGE_DAYS=20 at each boundary, the usable validation and frozen-eval windows
-      each shrink to approximately 4-5 usable days. This is an acknowledged tradeoff — the
-      purge is methodologically correct and the short evaluation window is the cost of honest
-      OOS reporting. Future workstream: expand history window or use purged k-fold CV (rolling
-      folds) to recover statistical power.
+    - At 250-day history, the three raw folds are 150/50/50 days.
+    - After PURGE_DAYS=20 at each boundary, the usable validation window shrinks to ~29 days
+      (int(250*0.20) - 20 - 1 = 29). This is an acknowledged tradeoff — the purge is
+      methodologically correct and the ~29-day usable window is the cost of honest OOS
+      reporting. Future workstream: further expand history window or use purged k-fold CV
+      (rolling folds) to recover additional statistical power.
 
     Operator visibility (OPTUNA-4 Path B, Option 1 — honesty framing):
     - `optimization_results[symphony]["eval_window_days"]` carries per-cycle day-counts for
       the validation and frozen-eval folds so the operator sees the thin-window cost on every
       autotune cycle without requiring a DB schema migration.
-    - The ~4-day usable validation window at the 125-day operator-data-budget is an
+    - The ~29-day usable validation window at the 250-day operator-data-budget is an
       acknowledged statistical-power limitation — the cost of honest OOS reporting,
       not a defect. The BHY haircut addresses cross-trial multiple-testing; it operates
       on per-trial p-values whose validity depends on adequate sample length per trial
       and does NOT substitute for thin per-trial windows.
-    - Future-workstream remediation paths: (a) expand the operator-data-budget beyond 125
-      days (a council Amendment, not an audit slide-in), or (b) adopt combinatorial
-      purged k-fold cross-validation (López de Prado 2018 Ch. 7.4) to recover statistical
-      power without expanding total history. The canonical joint (N, T) framework future
-      workstreams should consult is the Deflated Sharpe Ratio (Bailey & López de Prado 2014),
-      which accounts for trial count AND sample length.
+    - Future-workstream remediation paths: (a) further expand the operator-data-budget
+      (a council Amendment, not an audit slide-in), or (b) adopt combinatorial
+      purged k-fold cross-validation (López de Prado 2018 Ch. 7.4) to recover additional
+      statistical power without expanding total history. The canonical joint (N, T) framework
+      future workstreams should consult is the Deflated Sharpe Ratio (Bailey & López de Prado
+      2014), which accounts for trial count AND sample length.
     """
     # NN1 spec-freeze hard gate (D5 wiring — council §2.5).
     # validate_search_space_nn1 must run BEFORE optuna.create_study so any
@@ -1736,7 +1741,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
     # studies exist — renames them to LEGACY__<name> non-destructively.
     _apply_optuna_archive_migration_if_needed()
 
-    print(f"  -> Starting EOD Autotune (125-day WFA: 60% Train / 20% Validation / 20% Frozen-Eval per Symphony)...")
+    print(f"  -> Starting EOD Autotune (250-day WFA: 60% Train / 20% Validation / 20% Frozen-Eval per Symphony)...")
 
     # 0. Calculate Historical Execution Deviation
     deviation_dict = calculate_historical_deviation(current_date_str)
@@ -1747,7 +1752,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         for sym_id, data in chart_history.get("symphonies", {}).items():
             database.save_chart_archive(current_date_str, sym_id, data)
 
-    # 2. Fetch the rolling 125-trading-day synthetic forward-looking data.
+    # 2. Fetch the rolling 250-trading-day synthetic forward-looking data.
     # A persistent history shortfall surfaces as HistoryShortfallError — the
     # autotuner is a secondary optimisation step, so catch it (narrowly, never
     # a bare except) and convert it to a graceful abort. The abort return
