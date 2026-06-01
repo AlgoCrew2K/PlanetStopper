@@ -110,13 +110,17 @@ def compute_overfitting_conscience_observation(
     ratio = s / n_optuna if s > 0 else 0.0
 
     # --- I-3: Operator drift (monotonically growing S across same-symphony runs) ---
+    # Drop None s_count entries before comparison — prior runs from before migration
+    # 020 may have s_count=None, which raises TypeError in the < comparison.
+    # Semantics: require >= 2 valid (non-None) prior rows; fewer means no drift signal.
     drift_detected = False
     same_symphony_prior = [
         r for r in (prior_runs or [])
         if r.get("symphony_id") == symphony_id
     ]
-    if len(same_symphony_prior) >= 2:
-        s_series = [r["s_count"] for r in same_symphony_prior] + [s]
+    valid_prior_s = [r["s_count"] for r in same_symphony_prior if r["s_count"] is not None]
+    if len(valid_prior_s) >= 2:
+        s_series = valid_prior_s + [s]
         drift_detected = all(
             s_series[i] < s_series[i + 1] for i in range(len(s_series) - 1)
         )
@@ -157,7 +161,8 @@ def compute_overfitting_conscience_observation(
             "breach_threshold": S_RATIO_BREACH_THRESHOLD,
         }
         if drift_detected:
-            s_series_for_log = [r["s_count"] for r in same_symphony_prior] + [s]
+            # Use valid_prior_s (None-filtered) so monotonic_trend contains no None values.
+            s_series_for_log = valid_prior_s + [s]
             raw_response["drift"] = True
             raw_response["monotonic_trend"] = s_series_for_log
             raw_response["drift_note"] = (
