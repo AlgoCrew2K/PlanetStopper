@@ -26,6 +26,9 @@
 
     var _inFlight = false;
 
+    /** CSRF token fetched from GET /api/csrf-token on DOMContentLoaded (AC-1). */
+    var _csrfToken = null;
+
     // -------------------------------------------------------------------------
     // DOM refs (resolved lazily so this module works when the panel is not
     // present on page-load, e.g. when landing on a different advisor tab)
@@ -169,7 +172,10 @@
 
         fetch('/ai-advisor/chat/send', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': _csrfToken || '',
+            },
             body: JSON.stringify({
                 artifact_id:   _currentArtifact.artifactId,
                 artifact_type: _currentArtifact.artifactType,
@@ -256,6 +262,14 @@
     // -------------------------------------------------------------------------
 
     document.addEventListener('DOMContentLoaded', function () {
+        // Fetch the process-lifetime CSRF token so chat POSTs can attach it
+        // as X-CSRF-Token (AC-1).  Failure is soft — the POST will 403 but
+        // the UI will surface the error through normal error handling.
+        fetch('/api/csrf-token')
+            .then(function (resp) { return resp.json(); })
+            .then(function (body) { _csrfToken = body.csrf_token || null; })
+            .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
+
         var input = el('chat-input');
         if (!input) return;
 
