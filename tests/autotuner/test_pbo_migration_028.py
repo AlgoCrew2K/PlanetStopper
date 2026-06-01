@@ -1,24 +1,23 @@
-"""RED tests — Change 4: migration 028 and pbo/dsr round-trip in autotune_runs.
+"""RED tests — Change 4: migration 028 — pbo column only on autotune_runs.
 
-Migration 028 adds two NULLable columns to autotune_runs:
+DSR is DROPPED ENTIRELY from this cycle (team-lead ruling 2026-06-01): DSR is
+Sharpe-based, mismatched to the CRRA-EU objective, and redundant given PBO +
+the existing BHY/n_effective gate. No dsr column, no dsr param, no dsr tests.
+test_c4_dsr_machinery_removed.py (D3 tripwire) stays completely untouched and GREEN.
+
+Migration 028 adds ONE NULLable column to autotune_runs:
   - pbo  REAL DEFAULT NULL  (Phase-3 PBO gate result)
-  - dsr  REAL DEFAULT NULL  (forward-compat placeholder, UNUSED in this cycle — DSR
-                              computation requires a logged D3 amendment / user sign-off)
 
-schema contract (additive-first, project rule):
-  - Both columns are NULLable with DEFAULT NULL — existing rows must read NULL.
-  - New rows may supply a float pbo; dsr stays NULL until a later amendment.
+Schema contract (additive-first, project rule):
+  - Column is NULLable with DEFAULT NULL — existing rows must read NULL.
+  - New rows may supply a float pbo.
   - The migration must be idempotent (safe to re-run on a DB that already has it).
-  - Migration file: migrations/028_autotune_runs_pbo_dsr.sql
-  - _MIGRATION_FILES list in database.py must include "028_autotune_runs_pbo_dsr.sql"
+  - Migration file: migrations/028_autotune_runs_pbo.sql
+  - _MIGRATION_FILES list in database.py must include "028_autotune_runs_pbo.sql"
     as the last (highest-numbered) entry.
 
 save_autotune_run must accept an optional `pbo` parameter (default None) and
 persist the value to the pbo column.
-
-IMPORTANT: dsr computation is DEFERRED (pending D3 amendment). The dsr column
-exists for forward-compat only. test_c4_dsr_machinery_removed.py (D3 tripwire)
-must remain GREEN — do NOT add dsr computation anywhere.
 
 Every test here MUST FAIL until the implementation is in place.
 """
@@ -34,7 +33,7 @@ import pytest
 
 _WORKTREE_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MIGRATIONS_DIR = _WORKTREE_ROOT / "migrations"
-_MIGRATION_FILE = "028_autotune_runs_pbo_dsr.sql"
+_MIGRATION_FILE = "028_autotune_runs_pbo.sql"
 
 
 def _import_database():
@@ -51,14 +50,14 @@ def _import_database():
 # ---------------------------------------------------------------------------
 
 class TestMigration028Existence:
-    """migrations/028_autotune_runs_pbo_dsr.sql must exist and be well-formed."""
+    """migrations/028_autotune_runs_pbo.sql must exist and be well-formed."""
 
     def test_migration_file_exists(self):
-        """migrations/028_autotune_runs_pbo_dsr.sql must exist."""
+        """migrations/028_autotune_runs_pbo.sql must exist."""
         path = _MIGRATIONS_DIR / _MIGRATION_FILE
         assert path.exists(), (
             f"Migration file not found: {path}. "
-            "Change 4 requires adding migrations/028_autotune_runs_pbo_dsr.sql."
+            "Change 4 requires adding migrations/028_autotune_runs_pbo.sql."
         )
 
     def test_migration_adds_pbo_column(self):
@@ -74,14 +73,16 @@ class TestMigration028Existence:
             f"{_MIGRATION_FILE} pbo column must be REAL type"
         )
 
-    def test_migration_adds_dsr_column(self):
-        """028 migration SQL must add a dsr REAL DEFAULT NULL column (forward-compat)."""
+    def test_migration_does_not_add_dsr_column(self):
+        """028 migration must NOT add a dsr column — DSR is dropped from this cycle."""
         path = _MIGRATIONS_DIR / _MIGRATION_FILE
         if not path.exists():
             pytest.skip("Migration file missing")
-        sql = path.read_text(encoding="utf-8")
-        assert "dsr" in sql.lower(), (
-            f"{_MIGRATION_FILE} must reference a 'dsr' column (forward-compat placeholder)"
+        sql = path.read_text(encoding="utf-8").lower()
+        assert "dsr" not in sql, (
+            f"{_MIGRATION_FILE} must NOT contain a 'dsr' column — "
+            "DSR was dropped entirely from this cycle (team-lead ruling 2026-06-01). "
+            "Only the pbo column belongs in migration 028."
         )
 
     def test_migration_is_additive_alter_table_not_drop(self):
@@ -93,12 +94,8 @@ class TestMigration028Existence:
         assert "drop table" not in sql, (
             f"{_MIGRATION_FILE} must not DROP TABLE — additive-first rule"
         )
-        assert "create table" not in sql or "if not exists" in sql, (
-            f"{_MIGRATION_FILE} must not CREATE TABLE without IF NOT EXISTS — "
-            "it must be purely additive (ALTER TABLE ADD COLUMN)"
-        )
         assert "alter table" in sql, (
-            f"{_MIGRATION_FILE} should use ALTER TABLE ADD COLUMN to add pbo and dsr"
+            f"{_MIGRATION_FILE} should use ALTER TABLE ADD COLUMN to add pbo"
         )
 
 
@@ -107,10 +104,10 @@ class TestMigration028Existence:
 # ---------------------------------------------------------------------------
 
 class TestMigrationListRegistration:
-    """database.py _MIGRATION_FILES must include '028_autotune_runs_pbo_dsr.sql'."""
+    """database.py _MIGRATION_FILES must include '028_autotune_runs_pbo.sql'."""
 
     def test_migration_028_in_migration_files_list(self):
-        """_MIGRATION_FILES must contain '028_autotune_runs_pbo_dsr.sql'."""
+        """_MIGRATION_FILES must contain '028_autotune_runs_pbo.sql'."""
         db = _import_database()
         assert hasattr(db, "_MIGRATION_FILES"), (
             "database module must expose _MIGRATION_FILES list"
@@ -126,7 +123,7 @@ class TestMigrationListRegistration:
         mf = db._MIGRATION_FILES
         last = mf[-1]
         assert last == _MIGRATION_FILE, (
-            f"'028_autotune_runs_pbo_dsr.sql' must be the last entry in _MIGRATION_FILES. "
+            f"'028_autotune_runs_pbo.sql' must be the last entry in _MIGRATION_FILES. "
             f"Current last entry: {last!r}"
         )
 
@@ -149,17 +146,17 @@ class TestMigrationListRegistration:
 
 
 # ---------------------------------------------------------------------------
-# Idempotency: migration safe to re-run
+# Idempotency + pbo column present after run_migrations
 # ---------------------------------------------------------------------------
 
 class TestMigration028Idempotency:
-    """Running migration 028 on a DB that already has the columns must not fail."""
+    """run_migrations() must add the pbo column; running it twice must not raise."""
 
-    def test_migration_idempotent_pbo_dsr_columns_present_after_run_migrations(self):
-        """After run_migrations(), autotune_runs must have pbo and dsr columns.
+    def test_migration_idempotent_pbo_column_present_after_run_migrations(self):
+        """After run_migrations(), autotune_runs must have a pbo column.
 
-        This test is RED until migration 028 is in _MIGRATION_FILES and the SQL exists:
-        run_migrations() currently does NOT add pbo/dsr columns so they are absent.
+        RED until migration 028 is in _MIGRATION_FILES and the SQL file exists:
+        run_migrations() currently does NOT add a pbo column.
         """
         db = _import_database()
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -170,7 +167,6 @@ class TestMigration028Idempotency:
             importlib.reload(db)
             db.run_migrations()
             conn = db.get_connection()
-            # Verify column names via PRAGMA table_info.
             cols = [
                 row[1]
                 for row in conn.execute("PRAGMA table_info(autotune_runs)").fetchall()
@@ -178,14 +174,15 @@ class TestMigration028Idempotency:
             conn.close()
             assert "pbo" in cols, (
                 f"autotune_runs must have a 'pbo' column after run_migrations(). "
-                f"Current columns: {cols}. Add migrations/028_autotune_runs_pbo_dsr.sql "
-                f"and register it in _MIGRATION_FILES."
+                f"Current columns: {cols}. Add migrations/028_autotune_runs_pbo.sql "
+                "and register it in _MIGRATION_FILES."
             )
-            assert "dsr" in cols, (
-                f"autotune_runs must have a 'dsr' column after run_migrations(). "
-                f"Current columns: {cols}."
+            # dsr must NOT be present — dropped from this cycle.
+            assert "dsr" not in cols, (
+                f"autotune_runs must NOT have a 'dsr' column — "
+                f"DSR was dropped entirely. Found columns: {cols}"
             )
-            # Second run must also be idempotent (no duplicate column error).
+            # Second run must be idempotent (no duplicate-column error).
             db.run_migrations()
         finally:
             os.environ.pop("DB_PATH", None)
@@ -196,18 +193,18 @@ class TestMigration028Idempotency:
 
 
 # ---------------------------------------------------------------------------
-# Existing rows read NULL for pbo and dsr
+# Existing rows read NULL for pbo
 # ---------------------------------------------------------------------------
 
 class TestMigration028ExistingRowsNullable:
-    """Pre-existing autotune_runs rows must read NULL for pbo and dsr after migration."""
+    """Pre-existing autotune_runs rows must read NULL for pbo after migration."""
 
     def test_existing_rows_have_null_pbo_after_migration(self):
         """A row inserted before migration 028 must have pbo=NULL after the migration runs."""
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             tmp_path = f.name
         try:
-            # Create a minimal DB with a pre-existing autotune_runs row (without pbo/dsr).
+            # Create a minimal DB with a pre-existing autotune_runs row (without pbo).
             conn = sqlite3.connect(tmp_path)
             conn.execute(
                 """CREATE TABLE autotune_runs (
@@ -231,7 +228,6 @@ class TestMigration028ExistingRowsNullable:
             conn.commit()
             conn.close()
 
-            # Now apply the migration SQL directly.
             migration_path = _MIGRATIONS_DIR / _MIGRATION_FILE
             if not migration_path.exists():
                 pytest.skip("Migration file missing")
@@ -241,20 +237,16 @@ class TestMigration028ExistingRowsNullable:
                 conn2.executescript(sql)
             except sqlite3.OperationalError as e:
                 if "duplicate column" in str(e).lower():
-                    pass  # idempotent path — columns already existed
+                    pass  # idempotent path — column already existed
                 else:
                     raise
             conn2.commit()
 
-            # The pre-existing row must now have pbo=NULL.
-            row = conn2.execute("SELECT pbo, dsr FROM autotune_runs").fetchone()
+            row = conn2.execute("SELECT pbo FROM autotune_runs").fetchone()
             assert row is not None, "Pre-existing row must survive migration"
-            pbo_val, dsr_val = row
+            pbo_val = row[0]
             assert pbo_val is None, (
                 f"Pre-existing row pbo must be NULL after migration, got {pbo_val!r}"
-            )
-            assert dsr_val is None, (
-                f"Pre-existing row dsr must be NULL after migration, got {dsr_val!r}"
             )
             conn2.close()
         finally:
@@ -272,7 +264,7 @@ class TestSaveAutotuneRunPboRoundTrip:
     """save_autotune_run must accept pbo kwarg and persist it to autotune_runs.pbo."""
 
     def test_save_autotune_run_accepts_pbo_kwarg(self):
-        """save_autotune_run must accept pbo= without raising TypeError."""
+        """save_autotune_run must have a 'pbo' parameter defaulting to None."""
         db = _import_database()
         import inspect
         sig = inspect.signature(db.save_autotune_run)
@@ -285,7 +277,7 @@ class TestSaveAutotuneRunPboRoundTrip:
         )
 
     def test_pbo_value_persisted_and_round_trips(self):
-        """A pbo float written via save_autotune_run must be readable back from autotune_runs."""
+        """A pbo float written via save_autotune_run must be readable back as a positive float."""
         db = _import_database()
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             tmp_path = f.name
@@ -295,10 +287,6 @@ class TestSaveAutotuneRunPboRoundTrip:
             importlib.reload(db)
             db.run_migrations()
 
-            # Write a row with a specific pbo value.
-            # The pbo value is a float — we assert it is a positive float in (0, 1)
-            # but do NOT hardcode a specific numeric value (fixture-provenance rule).
-            # We write 0.3 as an in-range test value.
             row_id = db.save_autotune_run(
                 run_timestamp="2024-01-01T00:00:00Z",
                 symphony_id="test_sym",
@@ -313,7 +301,6 @@ class TestSaveAutotuneRunPboRoundTrip:
                 f"save_autotune_run must return a positive integer row id, got {row_id!r}"
             )
 
-            # Read back the pbo value.
             conn = db.get_connection()
             row = conn.execute(
                 "SELECT pbo FROM autotune_runs WHERE id = ?", (row_id,)
@@ -321,14 +308,11 @@ class TestSaveAutotuneRunPboRoundTrip:
             conn.close()
             assert row is not None, f"Row id={row_id} not found in autotune_runs"
             pbo_persisted = row[0]
-            assert pbo_persisted is not None, (
-                "pbo value 0.3 must persist to DB (not NULL)"
-            )
+            assert pbo_persisted is not None, "pbo value must persist to DB (not NULL)"
             assert isinstance(pbo_persisted, float), (
                 f"pbo must be stored as REAL (float), got type {type(pbo_persisted)}"
             )
-            # Assert it is a positive float in (0, 1) — format/shape assertion,
-            # not a hardcoded producer value.
+            # Format/shape assertion — not a hardcoded producer value.
             assert 0.0 < pbo_persisted < 1.0, (
                 f"pbo={pbo_persisted} must be in (0, 1)"
             )
@@ -378,49 +362,34 @@ class TestSaveAutotuneRunPboRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# DSR deferred: dsr computation must not appear anywhere (D3 tripwire stays GREEN)
+# DSR dropped entirely: must not appear in migration, schema, or save_autotune_run
 # ---------------------------------------------------------------------------
 
-class TestDsrColumnDeferral:
-    """dsr column exists for forward-compat only — NO dsr computation in this cycle."""
-
-    def test_dsr_column_exists_in_migration(self):
-        """028 migration adds dsr column (forward-compat) but no computation anywhere."""
-        path = _MIGRATIONS_DIR / _MIGRATION_FILE
-        if not path.exists():
-            pytest.skip("Migration file missing")
-        sql = path.read_text(encoding="utf-8").lower()
-        assert "dsr" in sql, (
-            "028 migration must add the dsr column for forward-compat (DSR computation deferred)"
-        )
-
-    def test_no_dsr_computation_in_autotuner(self):
-        """autotuner.py must NOT compute dsr values (deferred per D3 amendment requirement)."""
-        src = (_WORKTREE_ROOT / "autotuner.py").read_text(encoding="utf-8")
-        # "compute_dsr" must not appear (D3 deleted it; forward-compat dsr column is NOT
-        # the same as re-implementing dsr computation).
-        assert "compute_dsr" not in src, (
-            "autotuner.py must not call compute_dsr — DSR computation is DEFERRED pending "
-            "a D3 amendment and user sign-off. Only the dsr column was added for forward-compat."
-        )
-        assert "compute_deflated_sharpe" not in src, (
-            "autotuner.py must not call compute_deflated_sharpe_ratio — "
-            "it was deleted in Decision D3 and must not be resurrected."
-        )
+class TestDsrDroppedEntirely:
+    """DSR is dropped from this cycle — no dsr column, no dsr param, no dsr tests."""
 
     def test_save_autotune_run_does_not_take_dsr_param(self):
-        """save_autotune_run must NOT add a dsr parameter in this cycle.
+        """save_autotune_run must NOT have a 'dsr' parameter.
 
-        The dsr column forward-compat exists in the schema but is always NULL.
-        save_autotune_run keeps NULL by not accepting a dsr argument — this
-        prevents accidental plumbing of a dsr value before the D3 amendment is approved.
+        DSR was dropped entirely (team-lead ruling 2026-06-01): Sharpe-based,
+        mismatched to CRRA-EU objective, redundant with PBO + BHY/n_effective.
         """
         db = _import_database()
         import inspect
         sig = inspect.signature(db.save_autotune_run)
-        # dsr must NOT be a parameter — it is not yet plumbed.
         assert "dsr" not in sig.parameters, (
-            "save_autotune_run must NOT accept a 'dsr' parameter in this cycle. "
-            "The dsr column is a forward-compat placeholder; its computation requires "
-            "a D3 amendment and user sign-off (pending)."
+            "save_autotune_run must NOT accept a 'dsr' parameter — "
+            "DSR was dropped entirely from this cycle."
+        )
+
+    def test_no_dsr_computation_in_autotuner(self):
+        """autotuner.py must NOT compute dsr values (dropped from this cycle)."""
+        src = (_WORKTREE_ROOT / "autotuner.py").read_text(encoding="utf-8")
+        assert "compute_dsr" not in src, (
+            "autotuner.py must not call compute_dsr — "
+            "DSR was dropped entirely from this cycle."
+        )
+        assert "compute_deflated_sharpe" not in src, (
+            "autotuner.py must not call compute_deflated_sharpe_ratio — "
+            "deleted in Decision D3; must not be resurrected."
         )
