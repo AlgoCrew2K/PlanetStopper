@@ -87,12 +87,26 @@ def _default_params() -> dict:
 @contextlib.contextmanager
 def _autotuner_patches(best_params: dict, history: dict):
     """Patch the autotuner's heavy dependencies so the per-symphony loop
-    runs end-to-end without live I/O."""
+    runs end-to-end without live I/O.
+
+    Note: run_autotuner now requires an explicit spec_bundle_id (NN1 Phase-1
+    strict). This harness satisfies the guard by:
+      - Patching database.get_spec_bundle_by_id to return a stub row without
+        facets_json (skips integrity check per autotuner.py:1664).
+      - Patching validate_nn1_compliance to return (True, []).
+      - Patching database.get_spec_facets_for_bundle to return [] (sortino
+        branch: objective_kind absent → sortino_loss_aversion).
+      - Patching database.advisor_ro_query to return [].
+    Callers must pass spec_bundle_id=1 to run_autotuner.
+    """
     fake_study = MagicMock(name="fake_optuna_study")
     fake_study.best_params = best_params.copy()
     fake_study.best_value = 1.0
     fake_study.optimize = MagicMock(return_value=None)
     fake_study.trials = []
+
+    # Stub bundle row: no facets_json → integrity check skipped.
+    _stub_bundle_row = {"bundle_hash": "test-stub-hash"}
 
     with (
         patch("autotuner.optuna.create_study", return_value=fake_study),
@@ -107,6 +121,14 @@ def _autotuner_patches(best_params: dict, history: dict):
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", best_params.copy()),
         patch("autotuner.database.save_autotune_run"),
+        patch("autotuner.database.get_spec_bundle_by_id",
+              return_value=_stub_bundle_row),
+        patch("autotuner.database.get_spec_facets_for_bundle",
+              return_value=[]),
+        patch("autotuner.database.advisor_ro_query",
+              return_value=[]),
+        patch("autotuner.validate_nn1_compliance",
+              return_value=(True, [])),
         patch("autotuner.math_engine.compute_para_arm_decision",
               side_effect=lambda **kw: (0.0, False)),
         patch("autotuner.math_engine.compute_time_squeeze_decay",
@@ -204,7 +226,8 @@ class TestTrainValidationPurgeRuntimeDisjoint:
                 with contextlib.redirect_stdout(buf):
                     try:
                         autotuner.run_autotuner(
-                            bot_state, "2026-05-10", ["acc-1"]
+                            bot_state, "2026-05-10", ["acc-1"],
+                            spec_bundle_id=1,
                         )
                     except Exception:
                         # Side-effect failure beyond the purge surface is
@@ -297,7 +320,8 @@ class TestValidationFrozenEvalPurgeRuntimeDisjoint:
                 with contextlib.redirect_stdout(buf):
                     try:
                         autotuner.run_autotuner(
-                            bot_state, "2026-05-10", ["acc-1"]
+                            bot_state, "2026-05-10", ["acc-1"],
+                            spec_bundle_id=1,
                         )
                     except Exception:
                         pass
