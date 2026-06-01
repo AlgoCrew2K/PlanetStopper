@@ -1,0 +1,28 @@
+{
+  "description": "Anti-double-count regression fixture for AC-5 (feature-plans/walk-forward-overhaul.md Phase 2). compute_n_effective output must be identical whether CPCV uses 1 path or 5 paths. CPCV changes WHAT data each trial is scored on, not HOW MANY tests exist. Hardcoding n_paths into n_effective would inflate N by C(N,k) -- the forbidden pattern.",
+  "citation": "feature-plans/walk-forward-overhaul.md AC-5 multiplicity anti-double-count",
+  "scenarios": {
+    "single_path_n_effective": {
+      "description": "CPCV with 1 path (degenerate): n_effective must equal n_optuna (S=0, NN1-honest)",
+      "n_optuna": 500,
+      "n_cpcv_paths": 1,
+      "expected_n_effective": 500,
+      "rationale": "S=0 (empty ledger), so n_effective = n_optuna regardless of n_cpcv_paths"
+    },
+    "five_path_n_effective": {
+      "description": "CPCV with 5 paths (production): n_effective must STILL equal n_optuna (S=0, NN1-honest)",
+      "n_optuna": 500,
+      "n_cpcv_paths": 5,
+      "expected_n_effective": 500,
+      "rationale": "S=0 (empty ledger), so n_effective = n_optuna regardless of n_cpcv_paths"
+    },
+    "fifteen_splits_would_be_wrong": {
+      "description": "If n_effective were inflated by C(N,k)=15, this would be the wrong value",
+      "n_optuna": 500,
+      "forbidden_n_effective_if_inflated_by_n_splits": 7500,
+      "forbidden_n_effective_if_inflated_by_n_paths": 2500,
+      "correct_n_effective": 500,
+      "rationale": "CPCV does NOT multiply the number of statistical tests. The 15 splits are the same 500 Optuna trials scored on different data windows. n_effective = n_optuna + S (from researcher DOF ledger), never *= n_splits or n_paths."
+    }
+  }
+}

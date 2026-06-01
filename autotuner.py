@@ -1,6 +1,7 @@
 import os
 import time
 import math
+import itertools
 import functools
 import statistics
 import logging
@@ -376,6 +377,188 @@ _OOS_USABLE_VALIDATION_DAYS_EXPECTED = (
     - PURGE_DAYS
     - EMBARGO_DAYS
 )
+
+# --- CPCV constants (Phase 2 — Combinatorial Purged Cross-Validation) ---
+# N=6 groups, k=2 test groups per split → C(6,2)=15 splits → φ[6,2]=5 backtest paths.
+# Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4
+# (Combinatorial Purged Cross-Validation; purge+embargo per-seam arithmetic).
+# See also: docs/research/optuna/sources.md — CPCV/Purged-Embargoed CV section;
+# feature-plans/walk-forward-overhaul.md Phase 2.
+#
+# N_GROUPS and K_TEST_GROUPS are operator dials (not magic literals) so that
+# changing the CV configuration propagates to _CPCV_N_SPLITS and _CPCV_N_PATHS
+# automatically, without manual re-derivation. Changing these constants is a
+# methodology change — surface to PM first.
+_CPCV_N_GROUPS = 6      # N: number of contiguous date groups to partition history into
+_CPCV_K_TEST_GROUPS = 2  # k: number of groups held out as test per split
+# C(N, k) — total splits; derived so it tracks N and k automatically.
+_CPCV_N_SPLITS = math.comb(_CPCV_N_GROUPS, _CPCV_K_TEST_GROUPS)
+# φ[N,k] = (k/N)·C(N,k) — number of complete OOS backtest paths.
+# At N=6, k=2: φ = (2/6)·15 = 5 paths, each assembled from N/k=3 non-overlapping splits.
+_CPCV_N_PATHS = int((_CPCV_K_TEST_GROUPS / _CPCV_N_GROUPS) * _CPCV_N_SPLITS)
+
+
+def _generate_cpcv_folds(
+    sorted_dates: list,
+    n_groups: int = _CPCV_N_GROUPS,
+    k_test: int = _CPCV_K_TEST_GROUPS,
+    purge_days: int = PURGE_DAYS,
+    embargo_days: int = EMBARGO_DAYS,
+) -> list:
+    """Partition dates into combinatorial purged-cross-validation (CPCV) folds.
+
+    Splits ``sorted_dates`` into ``n_groups`` contiguous groups, then generates
+    every C(n_groups, k_test) combination of groups as the test fold. For each
+    split, purge+embargo is applied at EVERY seam between train and test segments
+    (both the train→test and test→train boundaries for each contiguous test block).
+
+    Each returned fold descriptor is a dict:
+        ``train_dates``     — set of effective (post-purge/embargo) training dates
+        ``test_dates``      — set of raw test dates (all k_test groups, unpurged)
+        ``path_membership`` — list of path indices this split contributes to
+
+    Path assignment: canonical mlfinlab ``_fill_backtest_paths`` first-available-slot
+    algorithm. Each group tracks a "next available path pointer" initialised to 0.
+    Combinations are iterated in lexicographic order; for each combination, each of
+    its k test-groups (lower group index first) is assigned to that group's current
+    pointer, then that group's pointer is incremented. A fold's ``path_membership``
+    is the UNIQUE (deduplicated, sorted) set of path indices its k groups were
+    assigned to. Membership length is VARIABLE: adjacent pairs share one path
+    (length 1) while non-adjacent pairs span two paths (length 2).
+
+    Purge/embargo per-seam arithmetic (LdP 2018 Ch.7.4):
+        For each contiguous train segment adjacent to a test block, remove
+        ``purge_days + embargo_days`` positions from the end touching the test
+        boundary. Applied independently at each seam so non-contiguous test groups
+        (e.g., groups 0 and 3) each get their own purge/embargo on both flanking
+        train-group edges.
+
+    Pure function of the date list — no I/O, no DB calls.
+
+    Args:
+        sorted_dates:  Chronologically sorted date strings.
+        n_groups:      Number of contiguous partitions (default _CPCV_N_GROUPS=6).
+        k_test:        Number of groups held out per split (default _CPCV_K_TEST_GROUPS=2).
+        purge_days:    Feature-lookback purge window in trading days (default PURGE_DAYS).
+        embargo_days:  Serial-dependence embargo in trading days (default EMBARGO_DAYS).
+
+    Returns:
+        List of C(n_groups, k_test) fold descriptor dicts, one per combination.
+
+    Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
+    """
+    n_dates = len(sorted_dates)
+    n_paths = int((k_test / n_groups) * math.comb(n_groups, k_test))
+    # Build group index boundaries (contiguous equal-ish partitions).
+    # Using integer floor partitioning: group g contains indices [starts[g], starts[g+1]).
+    group_size, remainder = divmod(n_dates, n_groups)
+    starts = []
+    pos = 0
+    for g in range(n_groups):
+        starts.append(pos)
+        pos += group_size + (1 if g < remainder else 0)
+    starts.append(n_dates)  # sentinel
+
+    # Precompute each group's date set.
+    groups: list[list] = [sorted_dates[starts[g]:starts[g + 1]] for g in range(n_groups)]
+
+    # Canonical first-available-slot path assignment (mlfinlab _fill_backtest_paths):
+    # each group tracks the index of the next unoccupied path slot.
+    group_path_ptr: list[int] = [0] * n_groups
+
+    folds = []
+    for split_idx, test_combo in enumerate(itertools.combinations(range(n_groups), k_test)):
+        test_group_set = set(test_combo)
+        train_group_indices = [g for g in range(n_groups) if g not in test_group_set]
+
+        # Raw test dates — all dates from the k_test groups, no purge on test side.
+        raw_test_dates: set = set()
+        for g in test_combo:
+            raw_test_dates.update(groups[g])
+
+        # Build effective train dates with per-seam purge+embargo.
+        # Strategy: identify contiguous train segments (runs of adjacent train groups),
+        # then for each segment trim from each end that is adjacent to a test group.
+        # A "run" boundary exists between train group g and train group g+1 if there
+        # is at least one test group between them in the global order.
+        purge_embargo = purge_days + embargo_days
+
+        # Determine, for each date, whether it is a candidate train date.
+        # We process group by group: for each train group, check its left and right
+        # neighbours in the global group ordering to decide trimming.
+        effective_train_dates: set = set()
+        for g in train_group_indices:
+            g_dates = groups[g]
+            if not g_dates:
+                continue
+            n_g = len(g_dates)
+            trim_left = 0
+            trim_right = 0
+
+            # Left trim: if the group immediately to the left (g-1) is a test group,
+            # trim the first purge_embargo positions of this train group.
+            if (g - 1) >= 0 and (g - 1) in test_group_set:
+                trim_left = purge_embargo
+
+            # Right trim: if the group immediately to the right (g+1) is a test group,
+            # trim the last purge_embargo positions of this train group.
+            if (g + 1) < n_groups and (g + 1) in test_group_set:
+                trim_right = purge_embargo
+
+            # Apply trims; skip the group entirely if nothing survives.
+            start_pos = trim_left
+            end_pos = n_g - trim_right
+            if start_pos < end_pos:
+                effective_train_dates.update(g_dates[start_pos:end_pos])
+
+        # Canonical first-available-slot path assignment (mlfinlab _fill_backtest_paths).
+        # For each test group (lower index first), assign its OOS prediction to that
+        # group's current pointer slot, then advance the pointer.  The fold's membership
+        # is the UNIQUE (deduplicated) set of path indices used, kept in sorted order so
+        # _aggregate_cpcv_paths assembles paths in chronological sequence.
+        assigned_paths: set[int] = set()
+        for g in sorted(test_combo):  # lower group index first (lexicographic)
+            assigned_paths.add(group_path_ptr[g])
+            group_path_ptr[g] += 1
+
+        folds.append({
+            "train_dates": effective_train_dates,
+            "test_dates": raw_test_dates,
+            "path_membership": sorted(assigned_paths),
+        })
+
+    return folds
+
+
+def _aggregate_cpcv_paths(folds: list, n_paths: int = _CPCV_N_PATHS) -> list:
+    """Assemble φ OOS backtest paths from CPCV fold descriptors.
+
+    Each path is the union of test dates from all folds whose ``path_membership``
+    includes that path's index. Returns a list of n_paths sets, where path i
+    contains all test dates contributed by splits assigned to path i.
+
+    The paths are returned as a list of sorted date lists so callers can index
+    directly into them (path[i] is a list of date strings for the i-th path).
+
+    Pure function — no I/O, no DB calls.
+
+    Args:
+        folds:    List of fold descriptors from _generate_cpcv_folds.
+        n_paths:  Number of paths to assemble (default _CPCV_N_PATHS=5).
+
+    Returns:
+        List of n_paths sorted date lists, one per path.
+
+    Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
+    """
+    path_date_sets: list[set] = [set() for _ in range(n_paths)]
+    for fold in folds:
+        for path_idx in fold.get("path_membership", []):
+            if 0 <= path_idx < n_paths:
+                path_date_sets[path_idx].update(fold["test_dates"])
+    # Return sorted lists so paths are deterministically ordered for the objective.
+    return [sorted(s) for s in path_date_sets]
+
 
 def build_symphony_study_name(timestamp: str, symphony_id: str) -> str:
     """Return the per-symphony study name: {timestamp}__{symphony_id} (N1/O3)."""
@@ -1843,6 +2026,34 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         current_params = strat_data.get("params", {})
         original_params = current_params.copy()
 
+        # CPCV Phase 2: pre-compute the C(N,k)=15 fold descriptors and the 5 backtest paths
+        # ONCE per symphony (not inside the trial callback) so the path structure is stable
+        # across all trials and the per-trial cost is exactly _CPCV_N_PATHS simulations.
+        # frozen_dates is the held-out group — it is EXCLUDED from CPCV and consumed once
+        # post-selection as the honest post-selection read (unchanged from the pre-CPCV design).
+        #
+        # The CPCV folds cover the non-frozen portion of history: sorted_dates up to (but not
+        # including) the frozen-eval split. The frozen fold is never passed to _generate_cpcv_folds
+        # so it cannot appear in any fold's train_dates or test_dates.
+        _cpcv_eligible_dates = sorted_dates[:frozen_start_idx]
+        _cpcv_folds = _generate_cpcv_folds(
+            sorted_dates=_cpcv_eligible_dates,
+            n_groups=_CPCV_N_GROUPS,
+            k_test=_CPCV_K_TEST_GROUPS,
+            purge_days=PURGE_DAYS,
+            embargo_days=EMBARGO_DAYS,
+        )
+        _cpcv_paths = _aggregate_cpcv_paths(_cpcv_folds, n_paths=_CPCV_N_PATHS)
+        # Pre-build per-path history dicts (sliced from history_125d) so the objective
+        # callback does not repeat the set-intersection each trial (pure performance).
+        _cpcv_path_histories: list[dict] = []
+        for _path_dates in _cpcv_paths:
+            _path_date_set = set(_path_dates)
+            _ph: dict = {}
+            for _sid, _sym_data in history_125d.items():
+                _ph[_sid] = {d: t for d, t in _sym_data.items() if d in _path_date_set}
+            _cpcv_path_histories.append(_ph)
+
         def objective(trial):
             p = current_params.copy()
             p["TAKE_PROFIT_MC_PCT"] = trial.suggest_float("TAKE_PROFIT_MC_PCT", _SS_TAKE_PROFIT_MC_MIN, _SS_TAKE_PROFIT_MC_MAX)
@@ -1855,23 +2066,34 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             acc_sym_ids = [k for k, v in bot_state.items() if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == normalized_name]
             if not acc_sym_ids: return 0.0
             target_sym_id = acc_sym_ids[0]
-            # Score on validation fold only — frozen-eval is withheld from all trial callbacks.
-            daily_returns = _collect_sim_returns(p, history_validation, [target_sym_id], current_date_str, deviation_dict)
-            # Persist the per-trial RAW guard-alpha series (in percent) so the Harvey &
-            # Liu haircut can source T = len(daily_returns) and re-transform through
-            # the active gamma. Storing U instead of raw returns would silently stale
-            # persisted attrs if gamma is re-pre-registered (T5 provenance contract).
-            trial.set_user_attr("daily_returns", daily_returns)
-            # Objective routing: CRRA-EU branch uses mean(U); legacy Sortino branch uses
-            # Sortino ratio. The discriminator is sourced from spec_facets (_objective_kind
-            # resolved from bundle once before this closure is created).
-            if _objective_kind == "crra_eu":
-                # NOTE-1 conversion: returns are in percent; CRRA requires fraction.
-                daily_returns_fraction = [r / RETURN_PCT_TO_FRACTION for r in daily_returns]
-                return math_engine.compute_crra_eu_objective(daily_returns_fraction, _gamma)
-            # Default: legacy Sortino + loss-aversion objective.
-            # Annualization intentionally omitted — this is a ranking signal, not an annualized statistic.
-            return compute_sortino_ratio(daily_returns)
+
+            # CPCV aggregate: score this trial on the mean across the _CPCV_N_PATHS paths.
+            # Each path is simulated ONCE per trial (NOT 15 separate Optuna evaluations).
+            # The 15-split expansion is reserved for the Phase-3 PBO gate on the single
+            # BHY-winning config; it must never appear here (15× trial count blowup).
+            # n_optuna / compute_n_effective / BHY are UNTOUCHED — CPCV changes WHAT data
+            # each trial scores on, not HOW MANY tests exist (AC-5 anti-double-count).
+            path_scores: list[float] = []
+            all_path_returns: list[float] = []
+            for _path_hist in _cpcv_path_histories:
+                path_returns = _collect_sim_returns(p, _path_hist, [target_sym_id], current_date_str, deviation_dict)
+                path_scores.append(
+                    math_engine.compute_crra_eu_objective(
+                        [r / RETURN_PCT_TO_FRACTION for r in path_returns], _gamma
+                    ) if _objective_kind == "crra_eu" else compute_sortino_ratio(path_returns)
+                )
+                all_path_returns.extend(path_returns)
+
+            # Persist the CPCV-aggregated return series (all paths concatenated) so
+            # _haircut_select can source T = len(daily_returns) and re-transform through
+            # the active gamma. Raw percent (T5 provenance contract — not U values).
+            trial.set_user_attr("daily_returns", all_path_returns)
+
+            # Trial score: mean across the _CPCV_N_PATHS path scores.
+            # An empty path contributes 0.0 (same fallback as the pre-CPCV single-fold path).
+            if not path_scores:
+                return 0.0
+            return sum(path_scores) / len(path_scores)
 
         start_time = time.time()
         
