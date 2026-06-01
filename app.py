@@ -3022,6 +3022,13 @@ def ai_advisor_chat_send():
     # Expire timestamps outside the rolling window.
     while _ip_window and _now - _ip_window[0] > CHAT_RATE_LIMIT_WINDOW_SECONDS:
         _ip_window.popleft()
+    # Evict the key when the window has fully expired — prevents unbounded dict
+    # growth over a long daemon lifetime (IPs that stop requesting stay forever
+    # otherwise, since the deque drains to empty but the key remains).
+    if not _ip_window:
+        del _CHAT_RATE_LIMITER[_client_ip]
+        _CHAT_RATE_LIMITER[_client_ip] = _collections.deque()
+        _ip_window = _CHAT_RATE_LIMITER[_client_ip]
     if len(_ip_window) >= CHAT_RATE_LIMIT_MAX_REQUESTS:
         return jsonify({"error": "rate limit exceeded — too many requests"}), 429
     _ip_window.append(_now)
