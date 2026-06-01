@@ -17,6 +17,11 @@ Two-stage architecture (design: 01-acceptance-gate-design.md §Sub-question 1, 3
     3. Look-ahead / purge integrity (``purge_integrity_ok``) — the per-fold
        performance series feeding the significance veto was built on the
        purged validation fold.
+    4. PBO sample-robustness veto (``pbo > PBO_REJECT_THRESHOLD``).  Fires when
+       the Probability of Backtest Overfitting exceeds 0.5, indicating the IS-best
+       config performs worse-than-random on OOS across date partitions.
+       Source: Bailey & López de Prado 2014, DOI 10.21314/JCF.2014.005.
+       ``pbo=None`` means not computed (fewer than 2 configs) — veto does not fire.
 
   STAGE 2 — WEIGHTED DISCRETIONARY SURVIVOR PANEL (scores veto-survivors only):
     A fixed-weight composite over the zero-sample-cost parameter-distance
@@ -35,6 +40,15 @@ ONE-DIRECTIONAL BRAKE (the load-bearing invariant):
   vetoes pass, the panel can only WITHHOLD adoption (bias toward incumbent
   persistence); it can never promote a candidate that did not beat both OOS
   baselines (design §Sub-question 3, lexicographic vetoes-dominant cascade).
+
+Orthogonality of BHY and PBO (anti-double-count invariant):
+  BHY/n_effective = multiplicity axis — corrects for testing many parameter
+    configurations (Harvey & Liu 2015); its veto requires a winner from
+    ``_haircut_select``.
+  PBO = sample-robustness axis — measures whether IS-selection generalises OOS
+    across date-partitions (Bailey & López de Prado 2014); its veto fires when
+    ``pbo > PBO_REJECT_THRESHOLD``.
+  These axes are orthogonal: PBO must NOT alter n_effective or _haircut_select.
 
 The Overfitting Conscience and Spec Critic producers are the panel's
 discretionary advisor members (design §Sub-question 1); they are imported and
@@ -146,6 +160,7 @@ def evaluate_acceptance_gate(
     candidate_prior_anchor_score: float,
     incumbent_stability_score: float,
     incumbent_prior_anchor_score: float,
+    pbo: "float | None" = None,
 ) -> AcceptanceVerdict:
     """Evaluate the democratized OFFLINE acceptance gate for one candidate.
 
@@ -179,12 +194,26 @@ def evaluate_acceptance_gate(
         Candidate discretionary sub-scores in [0, 1].
     incumbent_stability_score, incumbent_prior_anchor_score:
         Incumbent discretionary sub-scores in [0, 1] (for the margin comparison).
+    pbo:
+        Probability of Backtest Overfitting from ``math_engine.compute_pbo``
+        (Bailey & López de Prado 2014).  ``None`` means not computed (fewer
+        than 2 configs had ``cscv_date_returns`` — veto does not fire).
+        When ``pbo > PBO_REJECT_THRESHOLD`` the PBO veto fires as a STAGE-1
+        hard veto (orthogonal to BHY/n_effective — sample-robustness axis).
+        The AI-Advisor call site (``advisors/backtest_gate_engine.py``) passes
+        ``pbo=None`` — NO behavior change on the Advisor path.
     """
+    from math_engine import PBO_REJECT_THRESHOLD
+
     # --- STAGE 1: HARD VETOES (un-outvotable, sequenced first) ---
+    # PBO veto: pbo > PBO_REJECT_THRESHOLD (strict inequality — pbo=0.5 exactly
+    # equals the threshold and must NOT veto; pbo=None means not computed → pass).
+    _pbo_veto_passed = (pbo is None) or (pbo <= PBO_REJECT_THRESHOLD)
     vetoes_passed = (
         (not winner_trial_is_none)  # BHY haircut produced a deployable winner
         and nn1_compliant  # NN1 spec-freeze intact
         and purge_integrity_ok  # look-ahead/purge integrity intact
+        and _pbo_veto_passed  # PBO sample-robustness veto (Bailey&LdP 2014)
     )
 
     # ONE-DIRECTIONAL BRAKE: the panel is NEVER computed on a veto-failed

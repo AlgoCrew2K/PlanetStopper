@@ -62,11 +62,12 @@ def _load_fixture() -> dict:
 
 
 def _make_raw_row(overrides: dict) -> tuple:
-    """Build a 15-element tuple matching _autotune_run_row_to_dict's SELECT order.
+    """Build a 16-element tuple matching _autotune_run_row_to_dict's SELECT order.
 
     Position 0 is `id` (added by the S3-AUDIT-001 fix so the OC subject_id can
-    propagate the autotune_runs PK).  These coercion tests assert numeric-field
-    coercion only; any positive int suffices for id.
+    propagate the autotune_runs PK).  Position 15 is `pbo` (added by migration 028).
+    These coercion tests assert numeric-field coercion only; any positive int
+    suffices for id.
     """
     defaults = {
         "id": 1,
@@ -84,6 +85,7 @@ def _make_raw_row(overrides: dict) -> tuple:
         "math_mode": "per_symphony",
         "account_id": "ACC-INDIVIDUAL",
         "sortino_sentinel_pct": None,
+        "pbo": None,
     }
     defaults.update(overrides)
     return (
@@ -102,6 +104,7 @@ def _make_raw_row(overrides: dict) -> tuple:
         defaults["math_mode"],
         defaults["account_id"],
         defaults["sortino_sentinel_pct"],
+        defaults["pbo"],
     )
 
 

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 import database
 import math_engine
 import synthetic_history
+import acceptance_gate as _acceptance_gate
 import glob
 import json
 from advisors import overfitting_conscience as _oc
@@ -1293,7 +1294,7 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
     return out
 
 
-def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviation_dict, *, return_dates=False):
     """Run the guard-alpha simulation and return per-triggered-day guard_alpha values.
 
     Identical tick logic to run_simulation; returns a list instead of a scalar
@@ -1303,8 +1304,19 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     (Decision D5): walk-forward CV already supplies recency relevance by testing on
     the most recent fold, so an in-objective decay weight would double-count it and
     bias selection toward the last few weeks.
+
+    Parameters
+    ----------
+    return_dates : bool (keyword-only, default False)
+        When False (default): returns ``list[float]`` of guard_alpha values —
+        the existing contract used by _haircut_select's daily_returns.
+        When True: returns ``list[tuple[str, float]]`` of (date, guard_alpha)
+        pairs — date-label explicit so the CSCV PBO gate can build a
+        collision-free union dict across CPCV paths without the fragile
+        positional pairing that path-concatenation would require.
     """
-    daily_returns = []
+    daily_returns: list = []
+
     grace_minutes = _replay_grace_minutes()  # shared with production; resolved once per run
     execution_start_hhmm = _replay_execution_start_time()  # AC-5
 
@@ -1343,9 +1355,55 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
 
             if triggered_return is not None:
                 guard_alpha = triggered_return - eod_return
-                daily_returns.append(guard_alpha)
+                if return_dates:
+                    daily_returns.append((date, guard_alpha))
+                else:
+                    daily_returns.append(guard_alpha)
 
     return daily_returns
+
+
+def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+    """Date-labeled variant of _collect_sim_returns for the CSCV PBO gate.
+
+    Returns ``list[tuple[str, float]]`` of (date, guard_alpha) pairs so the
+    objective closure can build a collision-free cscv_date_returns union dict
+    across CPCV paths.
+
+    This function is intentionally NOT a wrapper around _collect_sim_returns —
+    it has its own implementation so that test mocks of ``autotuner._collect_sim_returns``
+    (which return flat floats) do not intercept the dated-variant call.  The two
+    functions share the same per-tick exit logic via ``_replay_exit_tick`` and
+    ``_fresh_replay_state``; the only difference is the return type.
+    """
+    dated_returns: list[tuple[str, float]] = []
+    grace_minutes = _replay_grace_minutes()
+    execution_start_hhmm = _replay_execution_start_time()
+
+    for sym_id in acc_sym_ids:
+        dates_data = history_data.get(sym_id, {})
+        for date, ticks in dates_data.items():
+            if not ticks:
+                continue
+            day_state = _fresh_replay_state()
+            triggered_return = None
+            eod_return = ticks[-1]["return"]
+            n_ticks = len(ticks)
+            for tick_idx, tick in enumerate(ticks):
+                reason_str = _replay_exit_tick(
+                    day_state, tick, tick_idx, n_ticks, p,
+                    grace_minutes,
+                    execution_start_hhmm=execution_start_hhmm,
+                )
+                if reason_str is not None:
+                    penalty = deviation_dict.get(reason_str, -0.20)
+                    triggered_return = tick.get("return", 0.0) + penalty
+                    break
+            if triggered_return is not None:
+                guard_alpha = triggered_return - eod_return
+                dated_returns.append((date, guard_alpha))
+
+    return dated_returns
 
 
 def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn=compute_sortino_tstat, gamma: "float | None" = None):
@@ -2075,6 +2133,15 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             # each trial scores on, not HOW MANY tests exist (AC-5 anti-double-count).
             path_scores: list[float] = []
             all_path_returns: list[float] = []
+            # cscv_date_returns: date-labeled union of per-path triggered returns.
+            # Built as a dict (date -> guard_alpha) via union/update — NOT via list.extend.
+            # The CPCV partition invariant guarantees no date collision: each CPCV test-path
+            # covers a non-overlapping subset of the eligible window, so the union has
+            # exactly one entry per triggered date. This date-label-explicit approach
+            # avoids the path-concatenation contamination that a positional list would
+            # produce (the same date could appear in up to _CPCV_N_PATHS paths' outputs
+            # if we used extend, making CSCV block-partitioning ill-defined).
+            cscv_date_returns: dict[str, float] = {}
             for _path_hist in _cpcv_path_histories:
                 path_returns = _collect_sim_returns(p, _path_hist, [target_sym_id], current_date_str, deviation_dict)
                 path_scores.append(
@@ -2083,11 +2150,22 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
                     ) if _objective_kind == "crra_eu" else compute_sortino_ratio(path_returns)
                 )
                 all_path_returns.extend(path_returns)
+                # Date-labeled union for the CSCV PBO gate. Uses _collect_sim_returns_dated
+                # (not an inline return_dates=True call) to avoid conflating the mock
+                # boundary: tests that patch _collect_sim_returns for flat-return assertions
+                # must not intercept the dated-variant call that feeds the CSCV dict.
+                for _date, _ga in _collect_sim_returns_dated(p, _path_hist, [target_sym_id], current_date_str, deviation_dict):
+                    cscv_date_returns[_date] = _ga
 
             # Persist the CPCV-aggregated return series (all paths concatenated) so
             # _haircut_select can source T = len(daily_returns) and re-transform through
             # the active gamma. Raw percent (T5 provenance contract — not U values).
             trial.set_user_attr("daily_returns", all_path_returns)
+            # Persist the date-labeled union for the Phase-3 CSCV PBO gate.
+            # Keys are date strings within the CPCV-eligible window (sorted_dates[:frozen_start_idx]).
+            # Values are decimal guard_alpha returns (percent / RETURN_PCT_TO_FRACTION not applied —
+            # raw percent, same provenance contract as daily_returns).
+            trial.set_user_attr("cscv_date_returns", cscv_date_returns)
 
             # Trial score: mean across the _CPCV_N_PATHS path scores.
             # An empty path contributes 0.0 (same fallback as the pre-CPCV single-fold path).
@@ -2218,6 +2296,36 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
                 )
         # ----------------------------------------------------
 
+        # --- PHASE-3 PBO GATE: compute_pbo on top-K PRE-BHY configs ---
+        # PBO (Probability of Backtest Overfitting) is computed on the top-_CSCV_TOP_K
+        # trials by RAW Optuna value (pre-BHY). This measures SELECTION-PROCESS
+        # overfitting — does the IS-best config from the optimization generalize OOS
+        # across all CSCV date-partitions? It is the sample-robustness axis, ORTHOGONAL
+        # to the BHY multiplicity axis (n_effective / _haircut_select unchanged).
+        # Reference: Bailey & López de Prado 2014, DOI 10.21314/JCF.2014.005.
+        _pbo_value: "float | None" = None
+        if haircut_trials:
+            # Sort by raw Optuna value descending, take top _CSCV_TOP_K pre-BHY.
+            _top_k_trials = sorted(
+                haircut_trials,
+                key=lambda t: t.value if t.value is not None else float("-inf"),
+                reverse=True,
+            )[:math_engine._CSCV_TOP_K]
+            # Build list[dict[str, float]]: one cscv_date_returns dict per config.
+            # Trials without cscv_date_returns (e.g. very old study rows) are skipped.
+            _top_k_configs: list[dict[str, float]] = [
+                t.user_attrs["cscv_date_returns"]
+                for t in _top_k_trials
+                if "cscv_date_returns" in t.user_attrs
+            ]
+            if len(_top_k_configs) >= 2:
+                _pbo_value = math_engine.compute_pbo(
+                    _top_k_configs,
+                    _cpcv_eligible_dates,
+                    _gamma,
+                )
+        # -------------------------------------------------------
+
         # --- BEST_PARAMS SCHEMA VALIDATION (B2-FU2) ---
         # An empty best_params or one missing any required search-space key indicates
         # a degenerate/aborted study. Reject the WHOLE AI proposal (no key-by-key
@@ -2309,6 +2417,56 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         avg_oos_alpha = oos_alpha / test_days_count if test_days_count > 0 else 0
 
         baseline_decision = ""
+
+        # --- PHASE-3 ACCEPTANCE GATE (evaluate_acceptance_gate) ---
+        # Democratized offline gate: BHY haircut (winner_trial_is_none) + NN1
+        # spec-freeze + purge integrity vetoes → survivor panel → PBO veto.
+        # PBO veto (pbo > PBO_REJECT_THRESHOLD) is a STAGE-1 hard veto orthogonal
+        # to the BHY/n_effective multiplicity axis. pbo=None means not computed
+        # (fewer than 2 configs with cscv_date_returns) — no PBO veto fires.
+        # Stability and prior-anchor scores are computed as placeholder 1.0/1.0
+        # until the full advisor wiring is in place; the gate's load-bearing
+        # invariants (vetoes-dominant, one-directional brake) hold regardless.
+        _gate_verdict = _acceptance_gate.evaluate_acceptance_gate(
+            winner_trial_is_none=(winner_trial is None if haircut_trials else True),
+            winner_p_adj=(winner_p_adj if haircut_trials else None),
+            nn1_compliant=(d_spec == 0),
+            purge_integrity_ok=True,  # purge invariant enforced at fold-build time above
+            oos_alpha=oos_alpha,
+            fallback_oos_alpha=fallback_oos_alpha,
+            default_oos_alpha=default_oos_alpha,
+            candidate_stability_score=1.0,
+            candidate_prior_anchor_score=1.0,
+            incumbent_stability_score=1.0,
+            incumbent_prior_anchor_score=1.0,
+            pbo=_pbo_value,
+        )
+        # PBO veto: only fire if the gate rejects AND the rejection is specifically
+        # caused by PBO exceeding the threshold (not BHY, which is already handled
+        # by the haircut block above, and not NN1/purge which have no current wiring).
+        # Guard: pbo_value is not None (veto only fires when PBO was actually computed)
+        # AND pbo > PBO_REJECT_THRESHOLD AND the BHY haircut DID produce a winner
+        # (haircut_rejected_proposal is False means BHY passed — the gate must have
+        # rejected on PBO specifically).
+        _pbo_veto_fired = (
+            _gate_verdict.decision == _acceptance_gate.DECISION_REJECT_VETO_FAILED
+            and not haircut_rejected_proposal
+            and _pbo_value is not None
+            and _pbo_value > math_engine.PBO_REJECT_THRESHOLD
+        )
+        if _pbo_veto_fired:
+            haircut_rejected_proposal = True
+            selection_tstat_value = None
+            naive_sharpe_value = None
+            ai_proposal_invalid = True
+            oos_alpha = -math.inf
+            print(
+                f"       Acceptance gate VETOED AI proposal for '{normalized_name}' "
+                f"(PBO={_pbo_value:.3f} > {math_engine.PBO_REJECT_THRESHOLD}). "
+                f"Cascading to Fallback/Default."
+            )
+        # ---------------------------------------------------
+
         # B2-FU1: Asymmetric tie rule -- STRICT-POSITIVE on the AI branch
         # (over-fit risk: an AI proposal that only TIES the validated fallback
         # is not worth displacing the last-known-good params for), LENIENT
