@@ -58,13 +58,13 @@
       ],
       "expected": {
         "pbo": 0.0,
-        "pbo_comment": "Config 0 dominates IS and OOS in every partition. IS-best always has rank K (best, 1-based ascending means rank=1 is worst). Wait — 1-based ascending: rank_c=1 means the IS-best came 1st when sorted ascending by OOS score (i.e., it is the WORST OOS config). rank_c=K means the IS-best is the BEST OOS config. omega_bar = (K-0.5)/K; lambda = ln(omega_bar/(1-omega_bar)) > 0 when rank > K/2. Config 0 is OOS-best so rank_c=K=4, omega_bar=3.5/4=0.875, lambda=ln(0.875/0.125)=ln(7)=1.946>0. All 6 combos have lambda>0 → PBO=0/6=0.0.",
+        "pbo_comment": "Config 0 dominates IS and OOS in every partition. rank_c=K=4 for all combos (IS-best is also OOS-best). omega_bar=(4-0.5)/4=0.875, lambda=ln(0.875/0.125)=1.9459>0. All 6 combos have lambda>0 → PBO=0/6=0.0.",
         "all_lambdas_positive": true
       }
     },
     "is_best_always_worst_oos": {
-      "description": "K=4, S=4. Config 0 always wins IS (highest IS score) but is always worst OOS (rank 1, ascending). Every combo → lambda <= 0 → PBO=1.0. This represents maximum overfitting.",
-      "note": "IS-best config 0 has high returns only on the first half of each block (which appears in the IS partition). OOS (second half of each block) it has the worst returns. Configs 1-3 have uniform moderate returns everywhere.",
+      "description": "Block-singleton design: K=4 configs, S=4 blocks (6 dates each = 24 dates total). Config k has positive returns ONLY on block k; absent from all other blocks (scored as empty = 0.0 CRRA-EU). Strictly decreasing magnitudes (r0=10%>r1=8%>r2=6%>r3=4%) break all IS-score ties. For every IS/OOS combination the IS-best config has zero OOS returns (its block is always in IS, not OOS), making it the lowest-scoring or joint-lowest OOS config in every combo. PBO = 6/6 = 1.0.",
+      "provenance_note": "Hand-derived from first principles. Original alternating-sign design was WRONG (PBO=0.0 — CRRA risk aversion penalises the ±5% alternating config more than the flat-0% config, so the alternating config never wins IS). This block-singleton design was verified by enumerating all 6 combos by hand and confirmed with compute_pbo returning 1.0. See team-pbo-gate Revise log 2026-06-01.",
       "S": 4,
       "K": 4,
       "gamma": 2.0,
@@ -76,55 +76,124 @@
         "2024-01-17", "2024-01-18", "2024-01-19", "2024-01-20",
         "2024-01-21", "2024-01-22", "2024-01-23", "2024-01-24"
       ],
-      "configs_date_returns_comment": "Config 0: +5% on even-indexed dates (in-sample blocks) but -5% on odd-indexed dates (out-of-sample blocks). Configs 1-3: constant 0%, -0.2%, -0.4%. For any IS selection of 2 blocks the even-indexed dates dominate IS-scoring; OOS uses odd-indexed dates where config 0 has -5%. Manual derivation: with 24 dates / 4 blocks = 6 dates per block, block 0=[01..06], block 1=[07..12], block 2=[13..18], block 3=[19..24]. All dates 01,03,05,07,09,11,13,15,17,19,21,23 are 'odd-indexed' (0-indexed), all even positions are positive. In IS combinations, config 0's high even-date returns win. In OOS it has -5% on odd-indexed dates which dominate any 2-block OOS combination. Rank of config 0 OOS = 1 (worst). PBO = 6/6 = 1.0.",
+      "block_layout": {
+        "block_0": ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06"],
+        "block_1": ["2024-01-07", "2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12"],
+        "block_2": ["2024-01-13", "2024-01-14", "2024-01-15", "2024-01-16", "2024-01-17", "2024-01-18"],
+        "block_3": ["2024-01-19", "2024-01-20", "2024-01-21", "2024-01-22", "2024-01-23", "2024-01-24"]
+      },
+      "configs_date_returns_comment": "Config k has return r_k ONLY on block k dates; absent from all other dates (treated as empty = 0 CRRA-EU). r0=0.10, r1=0.08, r2=0.06, r3=0.04 (strictly decreasing to break IS ties). CRRA-EU with gamma=2: U(W)=1-1/W. U(1.10)=0.09091, U(1.08)=0.07407, U(1.06)=0.05660, U(1.04)=0.03846. IS score for cfg k in a 2-block IS set = U(1+r_k)/2 (6 active dates + 6 zero dates, 12 total). OOS score for cfg k when its block is in IS = 0.0 (no dates in OOS blocks).",
+      "hand_derivation": {
+        "IS_scores_when_cfg_k_is_in_IS_set": {
+          "cfg0": "U(1.10)/2 = 0.09091/2 = 0.04545",
+          "cfg1": "U(1.08)/2 = 0.07407/2 = 0.03704",
+          "cfg2": "U(1.06)/2 = 0.05660/2 = 0.02830",
+          "cfg3": "U(1.04)/2 = 0.03846/2 = 0.01923"
+        },
+        "combo_trace": [
+          {
+            "IS": [0, 1], "OOS": [2, 3],
+            "IS_scores": [0.04545, 0.03704, 0.0, 0.0],
+            "IS_best": "cfg0",
+            "OOS_scores_of_IS_best": 0.0,
+            "configs_with_OOS_lte_IS_best_OOS": ["cfg0", "cfg1"],
+            "rank_c": 2,
+            "omega_bar": 0.375,
+            "lambda": -0.5108256237659907,
+            "counted": true
+          },
+          {
+            "IS": [0, 2], "OOS": [1, 3],
+            "IS_scores": [0.04545, 0.0, 0.02830, 0.0],
+            "IS_best": "cfg0",
+            "OOS_scores_of_IS_best": 0.0,
+            "configs_with_OOS_lte_IS_best_OOS": ["cfg0", "cfg2"],
+            "rank_c": 2,
+            "omega_bar": 0.375,
+            "lambda": -0.5108256237659907,
+            "counted": true
+          },
+          {
+            "IS": [0, 3], "OOS": [1, 2],
+            "IS_scores": [0.04545, 0.0, 0.0, 0.01923],
+            "IS_best": "cfg0",
+            "OOS_scores_of_IS_best": 0.0,
+            "configs_with_OOS_lte_IS_best_OOS": ["cfg0", "cfg3"],
+            "rank_c": 2,
+            "omega_bar": 0.375,
+            "lambda": -0.5108256237659907,
+            "counted": true
+          },
+          {
+            "IS": [1, 2], "OOS": [0, 3],
+            "IS_scores": [0.0, 0.03704, 0.02830, 0.0],
+            "IS_best": "cfg1",
+            "OOS_scores_of_IS_best": 0.0,
+            "configs_with_OOS_lte_IS_best_OOS": ["cfg1", "cfg2"],
+            "rank_c": 2,
+            "omega_bar": 0.375,
+            "lambda": -0.5108256237659907,
+            "counted": true
+          },
+          {
+            "IS": [1, 3], "OOS": [0, 2],
+            "IS_scores": [0.0, 0.03704, 0.0, 0.01923],
+            "IS_best": "cfg1",
+            "OOS_scores_of_IS_best": 0.0,
+            "configs_with_OOS_lte_IS_best_OOS": ["cfg1", "cfg3"],
+            "rank_c": 2,
+            "omega_bar": 0.375,
+            "lambda": -0.5108256237659907,
+            "counted": true
+          },
+          {
+            "IS": [2, 3], "OOS": [0, 1],
+            "IS_scores": [0.0, 0.0, 0.02830, 0.01923],
+            "IS_best": "cfg2",
+            "OOS_scores_of_IS_best": 0.0,
+            "configs_with_OOS_lte_IS_best_OOS": ["cfg2", "cfg3"],
+            "rank_c": 2,
+            "omega_bar": 0.375,
+            "lambda": -0.5108256237659907,
+            "counted": true
+          }
+        ],
+        "summary": "All 6 combos: IS-best has OOS score=0.0 (its block is always in IS, not OOS). The other IS config also scores 0.0 OOS. rank_c=2 for all combos. omega_bar=1.5/4=0.375, lambda=ln(0.375/0.625)=-0.5108<0. PBO=6/6=1.0."
+      },
       "configs_date_returns": [
         {
-          "2024-01-01": 0.05, "2024-01-02": -0.05, "2024-01-03": 0.05, "2024-01-04": -0.05,
-          "2024-01-05": 0.05, "2024-01-06": -0.05, "2024-01-07": 0.05, "2024-01-08": -0.05,
-          "2024-01-09": 0.05, "2024-01-10": -0.05, "2024-01-11": 0.05, "2024-01-12": -0.05,
-          "2024-01-13": 0.05, "2024-01-14": -0.05, "2024-01-15": 0.05, "2024-01-16": -0.05,
-          "2024-01-17": 0.05, "2024-01-18": -0.05, "2024-01-19": 0.05, "2024-01-20": -0.05,
-          "2024-01-21": 0.05, "2024-01-22": -0.05, "2024-01-23": 0.05, "2024-01-24": -0.05
+          "2024-01-01": 0.10, "2024-01-02": 0.10, "2024-01-03": 0.10,
+          "2024-01-04": 0.10, "2024-01-05": 0.10, "2024-01-06": 0.10
         },
         {
-          "2024-01-01": 0.00, "2024-01-02": 0.00, "2024-01-03": 0.00, "2024-01-04": 0.00,
-          "2024-01-05": 0.00, "2024-01-06": 0.00, "2024-01-07": 0.00, "2024-01-08": 0.00,
-          "2024-01-09": 0.00, "2024-01-10": 0.00, "2024-01-11": 0.00, "2024-01-12": 0.00,
-          "2024-01-13": 0.00, "2024-01-14": 0.00, "2024-01-15": 0.00, "2024-01-16": 0.00,
-          "2024-01-17": 0.00, "2024-01-18": 0.00, "2024-01-19": 0.00, "2024-01-20": 0.00,
-          "2024-01-21": 0.00, "2024-01-22": 0.00, "2024-01-23": 0.00, "2024-01-24": 0.00
+          "2024-01-07": 0.08, "2024-01-08": 0.08, "2024-01-09": 0.08,
+          "2024-01-10": 0.08, "2024-01-11": 0.08, "2024-01-12": 0.08
         },
         {
-          "2024-01-01": -0.002, "2024-01-02": -0.002, "2024-01-03": -0.002, "2024-01-04": -0.002,
-          "2024-01-05": -0.002, "2024-01-06": -0.002, "2024-01-07": -0.002, "2024-01-08": -0.002,
-          "2024-01-09": -0.002, "2024-01-10": -0.002, "2024-01-11": -0.002, "2024-01-12": -0.002,
-          "2024-01-13": -0.002, "2024-01-14": -0.002, "2024-01-15": -0.002, "2024-01-16": -0.002,
-          "2024-01-17": -0.002, "2024-01-18": -0.002, "2024-01-19": -0.002, "2024-01-20": -0.002,
-          "2024-01-21": -0.002, "2024-01-22": -0.002, "2024-01-23": -0.002, "2024-01-24": -0.002
+          "2024-01-13": 0.06, "2024-01-14": 0.06, "2024-01-15": 0.06,
+          "2024-01-16": 0.06, "2024-01-17": 0.06, "2024-01-18": 0.06
         },
         {
-          "2024-01-01": -0.004, "2024-01-02": -0.004, "2024-01-03": -0.004, "2024-01-04": -0.004,
-          "2024-01-05": -0.004, "2024-01-06": -0.004, "2024-01-07": -0.004, "2024-01-08": -0.004,
-          "2024-01-09": -0.004, "2024-01-10": -0.004, "2024-01-11": -0.004, "2024-01-12": -0.004,
-          "2024-01-13": -0.004, "2024-01-14": -0.004, "2024-01-15": -0.004, "2024-01-16": -0.004,
-          "2024-01-17": -0.004, "2024-01-18": -0.004, "2024-01-19": -0.004, "2024-01-20": -0.004,
-          "2024-01-21": -0.004, "2024-01-22": -0.004, "2024-01-23": -0.004, "2024-01-24": -0.004
+          "2024-01-19": 0.04, "2024-01-20": 0.04, "2024-01-21": 0.04,
+          "2024-01-22": 0.04, "2024-01-23": 0.04, "2024-01-24": 0.04
         }
       ],
       "expected": {
         "pbo": 1.0,
-        "pbo_comment": "Config 0 always wins IS (high +5% on days that fall in IS partitions), always ranks worst OOS (its -5% on OOS days dominates). rank_c=1 for all 6 combos. omega_bar=(1-0.5)/K=0.5/4=0.125; lambda=ln(0.125/0.875)=ln(1/7)=-1.946<0. All 6 combos have lambda<=0 → PBO=6/6=1.0."
+        "pbo_comment": "IS-best always has OOS score=0.0 (its block is in IS, not OOS). The other IS-side config also has OOS=0.0 (its block is also in IS). rank_c=2 (tied at bottom with the other IS config), omega_bar=(2-0.5)/4=0.375, lambda=ln(0.375/0.625)=-0.5108<0. All 6 combos counted → PBO=6/6=1.0.",
+        "all_lambdas_value": -0.5108256237659907,
+        "all_lambdas_negative": true
       }
     },
     "lambda_formula_pin": {
       "description": "Direct verification of the lambda formula for specific (rank_c, K) pairs. lambda_c = ln((rank_c - 0.5) / (K - (rank_c - 0.5))). These are hand-computed values that the implementation must reproduce exactly.",
-      "note": "For K=4: rank 1 (worst OOS) → omega_bar=0.125, lambda=ln(0.125/0.875)=-1.9459101090932196. rank 2 → omega_bar=0.375, lambda=ln(0.375/0.625)=-0.5108256237659907. rank 3 → omega_bar=0.625, lambda=ln(0.625/0.375)=0.5108256237659907. rank 4 (best OOS) → omega_bar=0.875, lambda=ln(0.875/0.125)=1.9459101090932196.",
+      "note": "For K=4: rank 1 (worst OOS) → omega_bar=0.125, lambda=ln(0.125/0.875)=-1.9459101490553135. rank 2 → omega_bar=0.375, lambda=ln(0.375/0.625)=-0.5108256237659907. rank 3 → omega_bar=0.625, lambda=ln(0.625/0.375)=0.5108256237659907. rank 4 (best OOS) → omega_bar=0.875, lambda=ln(0.875/0.125)=1.9459101490553132. All values computed via Python math.log(omega/(1-omega)).",
       "K": 4,
       "cases": [
-        {"rank_c": 1, "K": 4, "expected_omega_bar": 0.125,  "expected_lambda": -1.9459101090932196, "lambda_sign": "negative"},
+        {"rank_c": 1, "K": 4, "expected_omega_bar": 0.125,  "expected_lambda": -1.9459101490553135, "lambda_sign": "negative"},
         {"rank_c": 2, "K": 4, "expected_omega_bar": 0.375,  "expected_lambda": -0.5108256237659907, "lambda_sign": "negative"},
         {"rank_c": 3, "K": 4, "expected_omega_bar": 0.625,  "expected_lambda": 0.5108256237659907,  "lambda_sign": "positive"},
-        {"rank_c": 4, "K": 4, "expected_omega_bar": 0.875,  "expected_lambda": 1.9459101090932196,  "lambda_sign": "positive"}
+        {"rank_c": 4, "K": 4, "expected_omega_bar": 0.875,  "expected_lambda": 1.9459101490553132,  "lambda_sign": "positive"}
       ],
       "boundary_case": {
         "description": "At exactly K/2 = rank_c, lambda must equal exactly 0.0 (boundary). With K=4, rank=2 gives lambda<0, rank=3 gives lambda>0. PBO=0.5 boundary occurs when exactly half the combos have rank<=K/2.",
