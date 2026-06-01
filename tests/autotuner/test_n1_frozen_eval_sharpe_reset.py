@@ -133,10 +133,13 @@ def _run_autotuner_with_patches(
     def _capture_save(**kwargs):
         captured.update(kwargs)
 
-    # Stub bundle row: no facets_json → integrity check skipped (per
-    # autotuner.py:1664 comment: "may be absent on mocked rows in tests").
+    # Stub bundle row: no facets_json → hash integrity check skipped (per
+    # autotuner.py:1664: "may be absent on mocked rows in tests"). No facet
+    # entries → objective_kind absent → sortino_loss_aversion branch. N1 tests
+    # specifically test frozen_eval_sharpe behavior on the Sortino branch;
+    # using a CRRA-EU bundle would set frozen_eval_sharpe=None by design
+    # (autotuner.py:2073) and break the accepted-proposal regression guard.
     _stub_bundle_row = {"bundle_hash": "test-stub-hash"}
-    # Empty facets list: objective_kind absent → sortino_loss_aversion branch.
     _stub_facets: list = []
 
     _sim_patch_kwargs: dict = (

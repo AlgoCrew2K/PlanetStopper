@@ -45,6 +45,7 @@ import pytest
 
 import autotuner
 import synthetic_history
+from tests.autotuner.conftest import make_phase1_theory_bundle
 
 
 # ---------------------------------------------------------------------------
@@ -90,23 +91,19 @@ def _autotuner_patches(best_params: dict, history: dict):
     runs end-to-end without live I/O.
 
     Note: run_autotuner now requires an explicit spec_bundle_id (NN1 Phase-1
-    strict). This harness satisfies the guard by:
-      - Patching database.get_spec_bundle_by_id to return a stub row without
-        facets_json (skips integrity check per autotuner.py:1664).
-      - Patching validate_nn1_compliance to return (True, []).
-      - Patching database.get_spec_facets_for_bundle to return [] (sortino
-        branch: objective_kind absent → sortino_loss_aversion).
-      - Patching database.advisor_ro_query to return [].
-    Callers must pass spec_bundle_id=1 to run_autotuner.
+    strict). This harness satisfies the guard by inserting a real all-THEORY
+    Phase-1 spec bundle via make_phase1_theory_bundle() before entering the
+    patch context. The _isolate_db autouse fixture (tests/conftest.py) ensures
+    a fresh per-test isolated SQLite DB — no production DB is touched.
+    Callers must pass the returned spec_bundle_id to run_autotuner.
     """
+    spec_bundle_id = make_phase1_theory_bundle()
+
     fake_study = MagicMock(name="fake_optuna_study")
     fake_study.best_params = best_params.copy()
     fake_study.best_value = 1.0
     fake_study.optimize = MagicMock(return_value=None)
     fake_study.trials = []
-
-    # Stub bundle row: no facets_json → integrity check skipped.
-    _stub_bundle_row = {"bundle_hash": "test-stub-hash"}
 
     with (
         patch("autotuner.optuna.create_study", return_value=fake_study),
@@ -121,14 +118,6 @@ def _autotuner_patches(best_params: dict, history: dict):
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", best_params.copy()),
         patch("autotuner.database.save_autotune_run"),
-        patch("autotuner.database.get_spec_bundle_by_id",
-              return_value=_stub_bundle_row),
-        patch("autotuner.database.get_spec_facets_for_bundle",
-              return_value=[]),
-        patch("autotuner.database.advisor_ro_query",
-              return_value=[]),
-        patch("autotuner.validate_nn1_compliance",
-              return_value=(True, [])),
         patch("autotuner.math_engine.compute_para_arm_decision",
               side_effect=lambda **kw: (0.0, False)),
         patch("autotuner.math_engine.compute_time_squeeze_decay",
@@ -142,7 +131,7 @@ def _autotuner_patches(best_params: dict, history: dict):
         patch("autotuner.math_engine.compute_vwap_breakdown_update",
               side_effect=lambda **kw: (0, 0, False, False)),
     ):
-        yield fake_study
+        yield fake_study, spec_bundle_id
 
 
 # ---------------------------------------------------------------------------
@@ -220,14 +209,14 @@ class TestTrainValidationPurgeRuntimeDisjoint:
         params = _default_params()
         history = _build_history(125)
         buf = io.StringIO()
-        with _autotuner_patches(params, history):
+        with _autotuner_patches(params, history) as (_study, spec_bundle_id):
             with patch("autotuner._collect_sim_returns",
                        side_effect=spy_collect):
                 with contextlib.redirect_stdout(buf):
                     try:
                         autotuner.run_autotuner(
                             bot_state, "2026-05-10", ["acc-1"],
-                            spec_bundle_id=1,
+                            spec_bundle_id=spec_bundle_id,
                         )
                     except Exception:
                         # Side-effect failure beyond the purge surface is
@@ -314,14 +303,14 @@ class TestValidationFrozenEvalPurgeRuntimeDisjoint:
         params = _default_params()
         history = _build_history(125)
         buf = io.StringIO()
-        with _autotuner_patches(params, history):
+        with _autotuner_patches(params, history) as (_study, spec_bundle_id):
             with patch("autotuner._collect_sim_returns",
                        side_effect=spy_collect):
                 with contextlib.redirect_stdout(buf):
                     try:
                         autotuner.run_autotuner(
                             bot_state, "2026-05-10", ["acc-1"],
-                            spec_bundle_id=1,
+                            spec_bundle_id=spec_bundle_id,
                         )
                     except Exception:
                         pass
