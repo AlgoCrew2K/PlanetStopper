@@ -262,7 +262,7 @@ Both are suppressed during a short post-open grace window so opening volatility 
 
 The engine computes **Conditional Value-at-Risk** — the average loss in the worst slice of outcomes — from today's regime-matched neighbors, using the general-distribution estimator (Rockafellar–Uryasev) that behaves correctly on a discrete empirical sample. CVaR is a more honest tail-risk number than plain VaR because it averages across the whole tail rather than reading a single percentile.
 
-CVaR is computed each cycle and persisted, but it is **never a live trigger** — it is operator instrumentation only. The estimate carries genuine uncertainty: a kNN pool at a small tail yields only a handful of distinct tail observations, so the dashboard treats the value as a discussion prompt, not a forecast. A stronger "CVaR-divergence detector" idea was deliberately **not** built: comparing two CVaR windows only relocates the same small-sample problem rather than escaping it. A fail-safe invariant guarantees that an absent CVaR estimate can never itself cause a breach signal.
+CVaR is computed each cycle and persisted, but it is **never a live trigger** — it is an **operator diagnostic**, not a signal. The estimate carries genuine uncertainty: a kNN pool at a small tail yields only a handful of distinct tail observations, so the dashboard treats the value as a discussion prompt, not a forecast. A stronger "CVaR-divergence detector" idea was deliberately **not** built: comparing two CVaR windows only relocates the same small-sample problem rather than escaping it. A fail-safe invariant guarantees that an absent CVaR estimate can never itself cause a breach signal.
 
 ### 7.7 CRRA-EU utility (the autotuner's objective)
 
