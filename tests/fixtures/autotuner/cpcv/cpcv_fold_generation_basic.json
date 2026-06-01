@@ -1414,5 +1414,119 @@
       "2025-02-12"
     ],
     "train_test_intersection_empty": true
+  },
+  "one_factorization": {
+    "description": "Canonical 1-factorization of K6 into 5 perfect matchings. Each path is a set of 3 non-overlapping splits (perfect matching) that together cover all N=6 groups exactly once. Source: round-robin tournament construction for even N=6. PM-verified 2026-06-01 per LdP Ch.7.4 path completeness requirement.",
+    "paths": [
+      {
+        "path_idx": 0,
+        "splits": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ]
+        ]
+      },
+      {
+        "path_idx": 1,
+        "splits": [
+          [
+            0,
+            2
+          ],
+          [
+            1,
+            4
+          ],
+          [
+            3,
+            5
+          ]
+        ]
+      },
+      {
+        "path_idx": 2,
+        "splits": [
+          [
+            0,
+            3
+          ],
+          [
+            1,
+            5
+          ],
+          [
+            2,
+            4
+          ]
+        ]
+      },
+      {
+        "path_idx": 3,
+        "splits": [
+          [
+            0,
+            4
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            5
+          ]
+        ]
+      },
+      {
+        "path_idx": 4,
+        "splits": [
+          [
+            0,
+            5
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ]
+      }
+    ],
+    "split_to_path": {
+      "[0, 1]": 0,
+      "[0, 2]": 1,
+      "[0, 3]": 2,
+      "[0, 4]": 3,
+      "[0, 5]": 4,
+      "[1, 2]": 4,
+      "[1, 3]": 3,
+      "[1, 4]": 1,
+      "[1, 5]": 2,
+      "[2, 3]": 0,
+      "[2, 4]": 2,
+      "[2, 5]": 3,
+      "[3, 4]": 4,
+      "[3, 5]": 1,
+      "[4, 5]": 0
+    },
+    "invariants": {
+      "each_path_covers_all_6_groups": true,
+      "each_split_in_exactly_one_path": true,
+      "n_splits_per_path": 3,
+      "total_splits": 15,
+      "n_paths": 5
+    }
   }
 }
