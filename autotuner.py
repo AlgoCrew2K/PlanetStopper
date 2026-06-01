@@ -417,9 +417,14 @@ def _generate_cpcv_folds(
         ``test_dates``      — set of raw test dates (all k_test groups, unpurged)
         ``path_membership`` — list of path indices this split contributes to
 
-    Path assignment: split index (0-based lexicographic order) modulo ``n_paths``
-    places each split in exactly one path. Since C(N,k)/n_paths = N/k splits fall
-    in each path, every path receives the same number of OOS test-fold batches.
+    Path assignment: canonical mlfinlab ``_fill_backtest_paths`` first-available-slot
+    algorithm. Each group tracks a "next available path pointer" initialised to 0.
+    Combinations are iterated in lexicographic order; for each combination, each of
+    its k test-groups (lower group index first) is assigned to that group's current
+    pointer, then that group's pointer is incremented. A fold's ``path_membership``
+    is the UNIQUE (deduplicated, sorted) set of path indices its k groups were
+    assigned to. Membership length is VARIABLE: adjacent pairs share one path
+    (length 1) while non-adjacent pairs span two paths (length 2).
 
     Purge/embargo per-seam arithmetic (LdP 2018 Ch.7.4):
         For each contiguous train segment adjacent to a test block, remove
@@ -454,9 +459,12 @@ def _generate_cpcv_folds(
         pos += group_size + (1 if g < remainder else 0)
     starts.append(n_dates)  # sentinel
 
-    # Precompute each group's date set and the global date→position index.
+    # Precompute each group's date set.
     groups: list[list] = [sorted_dates[starts[g]:starts[g + 1]] for g in range(n_groups)]
-    date_to_idx: dict = {d: i for i, d in enumerate(sorted_dates)}
+
+    # Canonical first-available-slot path assignment (mlfinlab _fill_backtest_paths):
+    # each group tracks the index of the next unoccupied path slot.
+    group_path_ptr: list[int] = [0] * n_groups
 
     folds = []
     for split_idx, test_combo in enumerate(itertools.combinations(range(n_groups), k_test)):
@@ -503,14 +511,20 @@ def _generate_cpcv_folds(
             if start_pos < end_pos:
                 effective_train_dates.update(g_dates[start_pos:end_pos])
 
-        # Path assignment: split_idx mod n_paths places this split in exactly one path.
-        # Each path therefore receives C(N,k)/n_paths = N/k splits.
-        path_idx = split_idx % n_paths if n_paths > 0 else 0
+        # Canonical first-available-slot path assignment (mlfinlab _fill_backtest_paths).
+        # For each test group (lower index first), assign its OOS prediction to that
+        # group's current pointer slot, then advance the pointer.  The fold's membership
+        # is the UNIQUE (deduplicated) set of path indices used, kept in sorted order so
+        # _aggregate_cpcv_paths assembles paths in chronological sequence.
+        assigned_paths: set[int] = set()
+        for g in sorted(test_combo):  # lower group index first (lexicographic)
+            assigned_paths.add(group_path_ptr[g])
+            group_path_ptr[g] += 1
 
         folds.append({
             "train_dates": effective_train_dates,
             "test_dates": raw_test_dates,
-            "path_membership": [path_idx],
+            "path_membership": sorted(assigned_paths),
         })
 
     return folds
