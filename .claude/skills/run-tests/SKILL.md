@@ -14,7 +14,7 @@ allowed-tools: Read, Glob, Bash
 ## Steps
 
 1. **Check pytest** — run `python -m pytest --version`. If missing, print:
-   > pytest not found. Install with: `pip install pytest pytest-cov`
+   > pytest not found. Install with: `pip install pytest pytest-cov pytest-xdist`
    Then stop. Do NOT install anything.
 
 2. **Check tests/** — if `tests/` does not exist, print:
@@ -22,18 +22,27 @@ allowed-tools: Read, Glob, Bash
    Then stop.
 
 3. **Build the command** — start with `python -m pytest`.
-   - No args → full suite (exclude `test_live_*.py` unless `--include-live` is passed).
+   - No args → full suite in parallel (xdist `-n auto --dist loadfile` is in addopts; parallel is the default).
    - `<path>` arg → append the path.
    - `-k <expr>` → append `-k <expr>`.
    - `--fast` → append `-x --ff`.
    - Always append `-v --tb=short` for readable output.
    - Always exclude live tests: append `--ignore=tests` patterns or use `--deselect` for any `test_live_*.py` unless `--include-live` was passed.
+   - For single-file or small targeted runs, pass `-n0` to disable parallelism (faster startup, no worker overhead).
 
 4. **Run** — execute the built command via Bash.
 
 5. **Parse results** — extract the summary line (e.g. `5 passed`, `2 failed`).
    - On failure: surface the first 3 failed test IDs and their assertion messages.
    - Suggest `/run-tests --fast` if any tests failed and `--fast` was not already used.
+
+### Serial / meta-test invocation
+
+`test_full_suite_reports_zero_skips_and_zero_xfails` is **deselected from the default run** because it
+spawns the entire suite as a subprocess (50-minute timeout). Run it explicitly:
+```
+python -m pytest tests/meta/test_zero_skip_xfail_close.py -n0 -v --tb=short
+```
 
 ## What You Must NOT Do
 
