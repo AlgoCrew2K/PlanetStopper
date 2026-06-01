@@ -67,16 +67,21 @@ def compute_vwap_from_bars(bars):
     return total_pv / total_v
 
 # --- Fetch-window sizing (trading-day counted, not calendar-day literal) ----
-# The autotuner slices the last 125 trading days of synthetic history for its
+# The autotuner slices the last 250 trading days of synthetic history for its
 # walk-forward replay. Pinned to the autotuner replay-window length — also the
 # minimum replay-day floor: fewer than this and the validation fold is
 # degenerate (the shortfall guard below logs an ERROR).
-_WALK_FORWARD_TRADING_DAYS = 125
+# Phase-1 walk-forward window extension (feature-plans/walk-forward-overhaul.md,
+# Gate-2 approved 2026-06-01): the prior half-year window collapsed to ~4 usable
+# OOS validation days after the 60/20/20 split + purge(20)/embargo(1); 250 days
+# yields ~29 usable validation days, providing meaningful statistical power for
+# the CRRA-EU objective.
+_WALK_FORWARD_TRADING_DAYS = 250
 # The Monte-Carlo gate on the FIRST replay day still needs MC_MIN_HISTORY_DAYS
 # eligible days of prior history, and each eligible day needs
 # MC_VOL_WINDOW_DAYS - 1 raw days of vol-window warmup behind it
 # (math_engine.run_monte_carlo eligible-pool guard). That warmup PRECEDES the
-# replay window, so it is additive to the 125-day slice.
+# replay window, so it is additive to the 250-day slice.
 _MC_WARMUP_TRADING_DAYS = (
     math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
 )
@@ -438,12 +443,15 @@ def generate_synthetic_history(bot_state, current_date_str):
     
     cache_dir = "cache"
     os.makedirs(cache_dir, exist_ok=True)
-    # Cache marker bumped v2 -> v3: a v2 file was written under the old fixed
-    # 180-calendar-day fetch window and holds a history sized under that short
-    # window. The Cluster-5 trading-day-counted window changes what a cache
-    # file represents, so stale v2 files must never match and load verbatim —
-    # bypassing the new replay-window floor check.
-    cache_file = os.path.join(cache_dir, f"synthetic_history_v3_{current_date_str}_{holdings_hash}.json")
+    # Cache marker bumped v2 -> v3 -> v4:
+    # v2: old fixed 180-calendar-day window (Cluster-5 fix bumped to v3).
+    # v3: trading-day-counted window sized for 125-day replay + MC warmup.
+    # v4: Phase-1 window extension to 250 trading days (2026-06-01). A v3 file
+    #     holds at most ~125 days of intraday history — exactly half the 250-day
+    #     replay expectation. Loading it verbatim would feed the autotuner a
+    #     degenerate half-window. v4 forces regeneration; stale v3 files are
+    #     orphaned on disk (harmless — no matching key).
+    cache_file = os.path.join(cache_dir, f"synthetic_history_v4_{current_date_str}_{holdings_hash}.json")
     
     if os.path.exists(cache_file):
         print(f"  -> Loading cached synthetic history from {cache_file}...")
