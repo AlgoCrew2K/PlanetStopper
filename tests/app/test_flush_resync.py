@@ -339,8 +339,8 @@ def test_flush_resync_invalidates_analytics_cache(client, tmp_path, monkeypatch)
     pm_dir = str(tmp_path / "pm")
     monkeypatch.setattr(analytics, "_POST_MORTEMS_DIR", pm_dir)
 
-    # Pre-populate the cache with stale data
-    analytics._HISTORY_CACHE = {"key": "stale-key", "data": {"2026-01-01": {}}}
+    # Pre-populate the cache with stale data (monkeypatch ensures teardown after test)
+    monkeypatch.setattr(analytics, "_HISTORY_CACHE", {"key": "stale-key", "data": {"2026-01-01": {}}})
 
     write_completed = threading.Event()
 

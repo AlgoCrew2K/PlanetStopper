@@ -13,9 +13,23 @@ quote-style = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-ra --strict-markers -m 'not live and not slow and not perf'"
+addopts = """
+    -ra --strict-markers -m 'not live and not slow and not perf'
+    -n auto --dist loadfile
+    --deselect tests/meta/test_zero_skip_xfail_close.py::test_full_suite_reports_zero_skips_and_zero_xfails
+"""
 markers = [
     "live: tests that hit live APIs (deselect via -m 'not live')",
     "slow: long-running property/calibration tests (deselected by default; opt in via -m 'slow')",
     "perf: wall-clock latency benchmarks; excluded from default run (opt-in: pytest -m perf)",
 ]
+
+# xdist parallelization notes (Phase 1 — 2026-06-01):
+# - "-n auto --dist loadfile": each file's tests run together on one worker,
+#   preserving within-file ordering invariants and maximizing DB-isolation safety.
+# - "test_full_suite_reports_zero_skips_and_zero_xfails" is permanently deselected
+#   from the default run because it spawns the ENTIRE suite as a subprocess with a
+#   50-minute timeout.  Run it explicitly: pytest tests/meta/test_zero_skip_xfail_close.py
+# - All other tests are safe under xdist: _isolate_db (autouse, function-scoped,
+#   monkeypatch.setenv) gives per-test DB isolation, and xdist workers are separate
+#   processes so within-worker ordering is neutralized by --dist loadfile.

@@ -529,7 +529,7 @@ def _make_optimization_results(n_symphonies):
     }
 
 
-def test_discord_chunking_15_embeds_calls_post_twice(tmp_path):
+def test_discord_chunking_15_embeds_calls_post_twice(tmp_path, monkeypatch):
     """When send_eod_discord_post produces 15 embeds, it must chunk into
     [10, 5] and call requests.post exactly twice.
 
@@ -542,6 +542,11 @@ def test_discord_chunking_15_embeds_calls_post_twice(tmp_path):
     """
     date_str = "2026-01-17"
     report_file = tmp_path / f"post_mortem_{date_str}.json"
+
+    # Redirect _POST_MORTEMS_DIR to tmp_path so the historical glob finds
+    # our report file (not the real post_mortems/ directory).  This makes
+    # the test self-contained and independent of leaked test artifacts.
+    monkeypatch.setattr(reporting, "_POST_MORTEMS_DIR", str(tmp_path))
 
     # Write a minimal valid report file so the function can open it
     minimal_report = {
@@ -570,26 +575,21 @@ def test_discord_chunking_15_embeds_calls_post_twice(tmp_path):
     # Call order: [quickchart, discord_batch_1, discord_batch_2]
     # We need to handle that the report file itself gets picked up by glob.
 
-    original_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        with patch.object(reporting.requests, "post") as mock_post, \
-             patch.object(reporting.time, "sleep"):
+    with patch.object(reporting.requests, "post") as mock_post, \
+         patch.object(reporting.time, "sleep"):
 
-            mock_post.side_effect = [
-                quickchart_response,  # QuickChart POST
-                discord_response,     # Discord batch 1 (10 embeds)
-                discord_response,     # Discord batch 2 (5 embeds)
-            ]
+        mock_post.side_effect = [
+            quickchart_response,  # QuickChart POST
+            discord_response,     # Discord batch 1 (10 embeds)
+            discord_response,     # Discord batch 2 (5 embeds)
+        ]
 
-            reporting.send_eod_discord_post(
-                current_date_str=date_str,
-                report_file=str(report_file),
-                optimization_results=optimization_results,
-                discord_webhook_url=_SENTINEL_WEBHOOK,
-            )
-    finally:
-        os.chdir(original_cwd)
+        reporting.send_eod_discord_post(
+            current_date_str=date_str,
+            report_file=str(report_file),
+            optimization_results=optimization_results,
+            discord_webhook_url=_SENTINEL_WEBHOOK,
+        )
 
     # Total POST calls: 1 QuickChart + 2 Discord batches = 3
     assert mock_post.call_count == 3, (
@@ -623,13 +623,18 @@ def test_discord_chunking_15_embeds_calls_post_twice(tmp_path):
     )
 
 
-def test_discord_no_chunking_when_10_or_fewer_embeds(tmp_path):
+def test_discord_no_chunking_when_10_or_fewer_embeds(tmp_path, monkeypatch):
     """Boundary: exactly 1 optimization embed → 2 total embeds → single batch.
     requests.post is called exactly once for Discord (plus possibly one for
     QuickChart).  The Discord call must use the multipart form (first batch path).
     """
     date_str = "2026-01-18"
     report_file = tmp_path / f"post_mortem_{date_str}.json"
+
+    # Redirect _POST_MORTEMS_DIR to tmp_path so the historical glob finds
+    # our report file (not the real post_mortems/ directory).  This makes
+    # the test self-contained and independent of leaked test artifacts.
+    monkeypatch.setattr(reporting, "_POST_MORTEMS_DIR", str(tmp_path))
 
     minimal_report = {
         "summary": {"total_monitored": 1, "total_triggered": 0},
@@ -645,25 +650,20 @@ def test_discord_no_chunking_when_10_or_fewer_embeds(tmp_path):
     quickchart_response.json.return_value = {"url": _SENTINEL_CHART_URL}
     discord_response = MagicMock()
 
-    original_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        with patch.object(reporting.requests, "post") as mock_post, \
-             patch.object(reporting.time, "sleep"):
+    with patch.object(reporting.requests, "post") as mock_post, \
+         patch.object(reporting.time, "sleep"):
 
-            mock_post.side_effect = [
-                quickchart_response,
-                discord_response,
-            ]
+        mock_post.side_effect = [
+            quickchart_response,
+            discord_response,
+        ]
 
-            reporting.send_eod_discord_post(
-                current_date_str=date_str,
-                report_file=str(report_file),
-                optimization_results=optimization_results,
-                discord_webhook_url=_SENTINEL_WEBHOOK,
-            )
-    finally:
-        os.chdir(original_cwd)
+        reporting.send_eod_discord_post(
+            current_date_str=date_str,
+            report_file=str(report_file),
+            optimization_results=optimization_results,
+            discord_webhook_url=_SENTINEL_WEBHOOK,
+        )
 
     # 1 QuickChart + 1 Discord = 2 calls total (no second Discord batch)
     assert mock_post.call_count == 2, (
@@ -688,7 +688,7 @@ def test_discord_no_chunking_when_10_or_fewer_embeds(tmp_path):
 #    a 'chart' key whose value has 'type', 'data', and 'options'.
 # ===========================================================================
 
-def test_quickchart_post_payload_is_well_formed(tmp_path):
+def test_quickchart_post_payload_is_well_formed(tmp_path, monkeypatch):
     """Pins that the QuickChart POST contains the required chart config
     structure: top-level 'chart' key with nested 'type', 'data' (containing
     'labels' and 'datasets'), and 'options'.  Also asserts 'width' and
@@ -699,6 +699,13 @@ def test_quickchart_post_payload_is_well_formed(tmp_path):
     """
     date_str = "2026-01-19"
     report_file = tmp_path / f"post_mortem_{date_str}.json"
+
+    # Redirect _POST_MORTEMS_DIR to tmp_path so the historical glob picks up
+    # the trigger-containing report file we create here.  Without this, the
+    # scan uses the project-root post_mortems/ directory whose contents are
+    # not guaranteed (especially on a fresh checkout), making the QuickChart
+    # branch non-deterministically skipped.
+    monkeypatch.setattr(reporting, "_POST_MORTEMS_DIR", str(tmp_path))
 
     # Report with one trigger so the historical aggregation finds data
     report_with_trigger = {
@@ -729,20 +736,15 @@ def test_quickchart_post_payload_is_well_formed(tmp_path):
             return quickchart_response
         return discord_response
 
-    original_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        with patch.object(reporting.requests, "post", side_effect=_capture_post), \
-             patch.object(reporting.time, "sleep"):
+    with patch.object(reporting.requests, "post", side_effect=_capture_post), \
+         patch.object(reporting.time, "sleep"):
 
-            reporting.send_eod_discord_post(
-                current_date_str=date_str,
-                report_file=str(report_file),
-                optimization_results=None,
-                discord_webhook_url=_SENTINEL_WEBHOOK,
-            )
-    finally:
-        os.chdir(original_cwd)
+        reporting.send_eod_discord_post(
+            current_date_str=date_str,
+            report_file=str(report_file),
+            optimization_results=None,
+            discord_webhook_url=_SENTINEL_WEBHOOK,
+        )
 
     assert captured_quickchart_kwargs, (
         "QuickChart POST was not captured — either it was not called or URL "
@@ -823,10 +825,16 @@ def test_send_eod_discord_post_no_op_when_webhook_url_is_none(tmp_path):
     mock_post.assert_not_called()
 
 
-def test_generate_eod_snapshot_stage1_idempotent(tmp_path):
+def test_generate_eod_snapshot_stage1_idempotent(tmp_path, monkeypatch):
     """Stage 1 must not overwrite an existing snapshot (the guard
     ``if os.path.exists(report_file): return`` protects production state).
     """
+    # Redirect _POST_MORTEMS_DIR to tmp_path so generate_eod_snapshot reads
+    # and writes within the test's temp directory.  Without this, the
+    # idempotency guard checks the real project post_mortems/ directory and
+    # the test accidentally leaks files to disk.
+    monkeypatch.setattr(reporting, "_POST_MORTEMS_DIR", str(tmp_path))
+
     date_str = "2026-01-21"
     report_file = tmp_path / f"post_mortem_{date_str}.json"
 
@@ -845,18 +853,13 @@ def test_generate_eod_snapshot_stage1_idempotent(tmp_path):
     patch_norm, patch_strat = _db_stubs()
 
     with patch_norm, patch_strat:
-        original_cwd = os.getcwd()
-        os.chdir(tmp_path)
-        try:
-            reporting.generate_eod_snapshot(
-                bot_state,
-                date_str,
-                is_post_rebalance=False,
-                discord_webhook_url=None,
-                live_prices=None,
-            )
-        finally:
-            os.chdir(original_cwd)
+        reporting.generate_eod_snapshot(
+            bot_state,
+            date_str,
+            is_post_rebalance=False,
+            discord_webhook_url=None,
+            live_prices=None,
+        )
 
     with open(report_file, "r", encoding="utf-8") as fh:
         content = json.load(fh)
