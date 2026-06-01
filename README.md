@@ -147,7 +147,7 @@ This is the end-to-end walkthrough of what happens each minute during market hou
 
 ## 5. The dashboard
 
-The dashboard is a Flask web UI on `http://localhost:8080`. **It is an observability surface, never an action surface for live trades.** It has no button that places, cancels, or modifies a normal trade, and it cannot spawn the engine — the scheduler is the only legal engine spawner.
+The dashboard is a Flask web UI on `http://localhost:5000` (overridable via the `PORT` env var). **It is an observability surface, never an action surface for live trades.** It has no button that places, cancels, or modifies a normal trade, and it cannot spawn the engine — the scheduler is the only legal engine spawner.
 
 This read-only stance is enforced in depth:
 
@@ -404,8 +404,6 @@ Tunable algorithm parameters (the autotuner overrides these once it has run; def
 TRIGGER_THRESHOLD_PCT=15.0      # MC arming ceiling; 2x is the disarm level
 TAKE_PROFIT_MC_PCT=5.0          # MC floor below which take-profit arms
 VWAP_CROSS_HWM_PCT=1.0
-VWAP_BLEED_MULTIPLIER=1.5
-VWAP_BLEED_TICKS=10
 PARABOLIC_VELOCITY_THRESHOLD=2.0
 VWAP_OPEN_WINDOW_GRACE_MINUTES=15
 SECOND_WINDOW_CVAR_ENABLED=0    # leave off; enables the Divergence Explainer
@@ -417,7 +415,7 @@ SECOND_WINDOW_CVAR_ENABLED=0    # leave off; enables the Divergence Explainer
 python app.py
 ```
 
-This starts the Flask dashboard on `http://localhost:8080` and the minute scheduler. To confirm it is healthy: the bot-status badge reads active, your deployed symphonies appear in the table within a minute, and the next-tick countdown decrements.
+This starts the Flask dashboard on `http://localhost:5000` (overridable via the `PORT` env var) and the minute scheduler. To confirm it is healthy: the bot-status badge reads active, your deployed symphonies appear in the table within a minute, and the next-tick countdown decrements.
 
 ### Dry-run vs. live
 
