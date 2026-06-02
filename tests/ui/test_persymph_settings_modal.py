@@ -1052,3 +1052,80 @@ def test_post_symphony_settings_route_exists(
         "POST /api/symphony-settings/<sym> returned 404 — the route is not registered. "
         "The modal save button calls this endpoint."
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-3 robustness — confirm gate must reject non-bool live_mode values
+# (reviewer finding: string "true" falls through both branches as a no-op)
+# ---------------------------------------------------------------------------
+
+
+def test_post_live_mode_string_true_does_not_silently_arm_live(
+    client, mock_db_one_symphony, monkeypatch
+):
+    """AC-3 robustness: POST with live_mode='true' (string) must NOT silently arm live mode.
+
+    The confirm gate checks `live_mode_raw is True or live_mode_raw == 1`.
+    A crafted request sending the JSON string "true" fails both checks and
+    falls through as a silent no-op — set_symphony_live_mode is never called,
+    no 400 is returned, and the route returns 200 as if the save succeeded.
+
+    This is an API invariant gap: the confirm gate is a server-side safety
+    boundary, not just a JS convention.  A string "true" from a crafted
+    request must either:
+      (a) be rejected with 400 (invalid type for a boolean field), or
+      (b) be treated as truthy and rejected with 400 because confirm is absent.
+
+    It must NEVER silently succeed as a no-op while returning 200.
+
+    Reviewer finding from quant-code-reviewer review of 49de1af.
+    """
+    _disable_csrf(monkeypatch)
+    _mock_env(monkeypatch)
+    set_live_calls = []
+
+    def fake_set_live(name, live, operator):
+        set_live_calls.append({"name": name, "live": live})
+
+    with patch.object(app_module.database, "set_symphony_live_mode", side_effect=fake_set_live):
+        resp = client.post(
+            "/api/symphony-settings/alpha_momentum",
+            json={"live_mode": "true"},  # string, not bool — crafted request
+            content_type="application/json",
+        )
+
+    # The response must NOT be a silent 200 success while doing nothing.
+    # Either 400 (type rejected) or 200 with set_symphony_live_mode NOT called
+    # with live=1 is acceptable. A 200 that silently no-ops is the failure case.
+    if resp.status_code == 200:
+        # If 200, set_symphony_live_mode must not have been called with live=1
+        # (i.e., the string was not treated as a live-arm without confirm).
+        live_armed = any(c["live"] in (1, True) for c in set_live_calls)
+        assert not live_armed, (
+            "AC-3: POST with live_mode='true' (string) silently called "
+            "set_symphony_live_mode(live=1) without requiring confirm. "
+            "The confirm gate is an API invariant — non-bool values must not bypass it."
+        )
+        # Additionally: a 200 with zero calls is a silent no-op — the route
+        # must signal the caller that the string was unrecognized/invalid.
+        assert resp.get_json() is not None, "Response must have a JSON body"
+        # A silent no-op that returns {"status": "success"} is incorrect —
+        # the caller would think live_mode was saved when it was not.
+        body = resp.get_json()
+        if len(set_live_calls) == 0:
+            # No DB call was made — the response must not claim success on live_mode
+            # (it may claim success if only locked_vars was processed, but since
+            # no locked_vars were sent, a success here is misleading).
+            # The route should return 400 for an unrecognized live_mode type.
+            assert body.get("status") != "success" or resp.status_code == 400, (
+                "AC-3: POST with live_mode='true' (string) returned 200 status='success' "
+                "with no DB calls made. This is a silent no-op on a real-money toggle "
+                "endpoint. The route must reject unrecognized live_mode types with 400."
+            )
+    else:
+        # Any non-200 is acceptable (400 = explicit type rejection)
+        assert resp.status_code in (400, 422), (
+            f"AC-3: POST with live_mode='true' (string) returned {resp.status_code}; "
+            f"expected 400 (type rejection) or 200 with no live-arm. "
+            f"Got: {resp.get_json()!r}"
+        )
