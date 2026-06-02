@@ -166,9 +166,9 @@
                 'border-radius:1rem;padding:1.25rem 1.5rem;' +
                 (isOosRejected ? 'opacity:0.7;' : '') + '">' +
 
-                '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;">' +
+                '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">' +
 
-                '<div style="flex:1;">' +
+                '<div style="flex:1;min-width:0;">' +
                 '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">' +
                 confidenceRing +
                 '<span style="font-size:0.625rem;font-weight:700;text-transform:uppercase;' +
@@ -220,6 +220,47 @@
                 '</div>' +
 
                 '</div>' +
+
+                (function () {
+                    // "Chat about this" button — mirrors the pattern in
+                    // ai_advisor_asset_swaps.js lines 246-260.
+                    // Artifact JSON scoped to this config suggestion.
+                    var cfgArtifact = {
+                        artifactId:      'config-suggestion-' + i,
+                        artifactType:    'config_suggestion',
+                        title:           'Explain: ' + (s.config_key || ''),
+                        contextLabel:    'Config Suggestion',
+                        objective:       s.rationale || '',
+                        gateDecision:    s.oos_status || 'pending',
+                        keyStat:         s.confidence || '',
+                        artifactContext: {
+                            config_key:      s.config_key,
+                            current_value:   s.current_value,
+                            suggested_value: s.suggested_value,
+                            rationale:       s.rationale,
+                            oos_status:      s.oos_status,
+                            four_gates_verdict: s.four_gates_verdict,
+                        },
+                    };
+                    var cfgArtifactJson = JSON.stringify(cfgArtifact);
+                    return (
+                        '<div class="card-actions" style="margin-top:0.75rem;padding-top:0.625rem;' +
+                        'border-top:1px solid var(--studio-border);display:flex;flex-wrap:wrap;gap:0.5rem;">' +
+                        '<button class="chat-about-btn" data-testid="chat-about-this-btn"' +
+                        ' data-artifact-json=\'' + escHtml(cfgArtifactJson) + '\'' +
+                        ' style="padding:0.375rem 0.875rem;background:var(--studio-accent);color:var(--studio-white);' +
+                        'border:none;border-radius:0.5rem;font-size:0.8125rem;font-weight:600;cursor:pointer;' +
+                        'white-space:nowrap;"' +
+                        ' onclick="(function(e){var d=e.currentTarget.dataset.artifactJson;' +
+                        'try{if(typeof openChatPanel===\'function\'){openChatPanel(JSON.parse(d));}' +
+                        'else{window.location.href=\'/ai-advisor/chat\';}}' +
+                        'catch(ex){window.location.href=\'/ai-advisor/chat\';}})(event)">' +
+                        'Chat about this' +
+                        '</button>' +
+                        '</div>'
+                    );
+                }()) +
+
                 '</div>'
             );
         }).join('');
