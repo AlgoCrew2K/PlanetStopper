@@ -1,0 +1,36 @@
+{
+  "_comment": "Golden fixture for locked_vars enforcement in run_autotuner (AC-1 through AC-4).",
+  "_provenance": "Derived from OPTUNA_SEARCH_SPACE_KEYS in autotuner.py and DEFAULT_LOCKED_VARS in database.py. The locked_var_value and unlocked_var_initial_value fields are representative legal values within the Optuna search space bounds — they are NOT hardcoded producer outputs; tests derive assertions from them via the fixture's structure (key presence, value identity) only.",
+
+  "search_space_keys": [
+    "TAKE_PROFIT_MC_PCT",
+    "VWAP_CROSS_HWM_PCT",
+    "VWAP_BLEED_MULTIPLIER",
+    "VWAP_BLEED_TICKS",
+    "PARABOLIC_VELOCITY_THRESHOLD",
+    "MAX_PARABOLIC_SQUEEZE"
+  ],
+
+  "ac1_locked_var": {
+    "key": "VWAP_BLEED_MULTIPLIER",
+    "value": 1.23,
+    "_rationale": "VWAP_BLEED_MULTIPLIER is in OPTUNA_SEARCH_SPACE_KEYS (autotuner.py:2119). Value 1.23 is mid-range within _SS_VWAP_BLEED_MULT bounds [0.5, 3.0]. Must remain unchanged after run_autotuner regardless of which result branch fires (Adopted AI / Fallback / Default)."
+  },
+
+  "ac2_unlocked_var": {
+    "key": "VWAP_CROSS_HWM_PCT",
+    "initial_value": 0.75,
+    "ai_value": 1.50,
+    "_rationale": "VWAP_CROSS_HWM_PCT is in OPTUNA_SEARCH_SPACE_KEYS. Both 0.75 and 1.50 are within _SS_VWAP_CROSS_HWM bounds [0.5, 2.5]. The AI proposal sets it to ai_value; when the AI branch wins, the unlocked var MUST change from initial to ai_value. This proves over-restriction did not occur."
+  },
+
+  "ac3_default_locked_var": {
+    "key": "TRIGGER_THRESHOLD_PCT",
+    "_rationale": "TRIGGER_THRESHOLD_PCT is in DEFAULT_LOCKED_VARS (database.py) and is OUTSIDE OPTUNA_SEARCH_SPACE_KEYS. Its enforcement is independent of the AC-1 path. The test asserts it is PRESERVED in all branches (no regression from the fix)."
+  },
+
+  "ac4_assertion": {
+    "description": "run_autotuner must complete without an unhandled exception when at least one locked var is in OPTUNA_SEARCH_SPACE_KEYS. The OPTUNA_SEARCH_SPACE_KEYS.issubset(best_params.keys()) assertion at autotuner.py:2339 must not blow up the run.",
+    "_rationale": "If the fix excludes locked vars from suggest_*, best_params will not carry them. The fix must inject the locked vars' current values back into best_params before the issubset check, OR relax the check to UNLOCKED keys only. Either way the run must complete and exactly one save_symphony_strategy call must be made."
+  }
+}
