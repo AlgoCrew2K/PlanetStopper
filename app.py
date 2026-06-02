@@ -2278,8 +2278,17 @@ def save_symphony_settings(symphony_name: str):
     payload = request.json or {}
 
     try:
-        # AC-3: live_mode=True without confirm=True is rejected at the API layer.
+        # AC-3: live_mode must be a boolean or integer (0/1).  Reject strings and other
+        # non-bool types with 400 — a crafted POST sending "true" (string) would fall
+        # through the bool/int identity checks as a silent no-op, bypassing the confirm
+        # gate entirely (reviewer finding on 49de1af).
         live_mode_raw = payload.get("live_mode")
+        if live_mode_raw is not None and not isinstance(live_mode_raw, (bool, int)):
+            return jsonify({
+                "status": "error",
+                "message": "live_mode must be a boolean (true/false), not a string or other type.",
+            }), 400
+
         if live_mode_raw is True or live_mode_raw == 1:
             if not payload.get("confirm"):
                 return jsonify({
