@@ -240,17 +240,23 @@
             // artifactContext carries the full result dict for grounding (AC-4.2)
             artifactContext: result,
         });
-        var discussLink =
-            '<div style="margin-top:0.75rem;padding-top:0.625rem;' +
-            'border-top:1px solid var(--studio-border);">' +
-            '<a href="/ai-advisor/chat" data-testid="discuss-this-link"' +
+        // "Chat about this" — prominent action button replacing the old de-emphasised
+        // "Discuss this" link (AC-4). card-actions container uses flex-wrap:wrap so
+        // buttons stay within card bounds at narrow viewports (AC-2).
+        var chatBtn =
+            '<div class="card-actions" style="margin-top:0.75rem;padding-top:0.625rem;' +
+            'border-top:1px solid var(--studio-border);display:flex;flex-wrap:wrap;gap:0.5rem;">' +
+            '<button class="chat-about-btn" data-testid="chat-about-this-btn"' +
             ' data-artifact-json=\'' + escHtml(swArtifactJson) + '\'' +
-            ' style="font-size:0.75rem;color:var(--studio-ink-dim);text-decoration:underline;cursor:pointer;"' +
-            ' onclick="(function(e){e.preventDefault();var d=e.currentTarget.dataset.artifactJson;' +
-            'try{if(typeof openChatPanel===\'function\'){openChatPanel(JSON.parse(d))}}' +
-            'catch(ex){}})(event)">' +
-            'Discuss this' +
-            '</a>' +
+            ' style="padding:0.375rem 0.875rem;background:var(--studio-accent);color:var(--studio-white);' +
+            'border:none;border-radius:0.5rem;font-size:0.8125rem;font-weight:600;cursor:pointer;' +
+            'white-space:nowrap;"' +
+            ' onclick="(function(e){var d=e.currentTarget.dataset.artifactJson;' +
+            'try{if(typeof openChatPanel===\'function\'){openChatPanel(JSON.parse(d));}' +
+            'else{window.location.href=\'/ai-advisor/chat\';}}' +
+            'catch(ex){window.location.href=\'/ai-advisor/chat\';}})(event)">' +
+            'Chat about this' +
+            '</button>' +
             '</div>';
 
         return (
@@ -262,7 +268,7 @@
             caveatsHtml +
             applyGuidance +
             dataWarnings +
-            discussLink +
+            chatBtn +
             '</div>'
         );
     }

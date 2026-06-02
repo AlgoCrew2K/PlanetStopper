@@ -572,6 +572,32 @@
         #logic-results-area {
             min-height: 4rem;
         }
+
+        /* Card action button row — flex-wrap:wrap keeps buttons within card
+           bounds at 1024px and 768px viewports (AC-2). */
+        .card-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+            padding-top: 0.625rem;
+            border-top: 1px solid var(--studio-border);
+        }
+
+        /* "Chat about this" button — visible primary action (AC-4) */
+        .chat-about-btn {
+            padding: 0.375rem 0.875rem;
+            background: var(--studio-accent);
+            color: var(--studio-white);
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .chat-about-btn:hover { opacity: 0.9; }
     </style>
 </head>
 

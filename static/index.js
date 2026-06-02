@@ -497,8 +497,7 @@
         var beVal = sym.breakeven_locked ? 'Active' : 'Off';
         var rawMc = sentinelToNull(typeof sym.mc_prob === 'number' ? sym.mc_prob : null);
         var mcVal = rawMc != null ? rawMc.toFixed(1) + '%' : '--';
-        var rawVol = sentinelToNull(typeof sym.volatility === 'number' ? sym.volatility
-                   : (typeof sym.vol === 'number' ? sym.vol : null));
+        var rawVol = sentinelToNull(typeof sym.symphony_vol === 'number' ? sym.symphony_vol : null);
         var volVal = rawVol != null ? rawVol.toFixed(3) : '--';
         var rawPara = sentinelToNull(typeof sym.para_velocity === 'number' ? sym.para_velocity : null);
         var paraVal = rawPara != null ? rawPara.toFixed(2) + '%' : '--';
