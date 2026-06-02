@@ -95,7 +95,7 @@ These decisions were made during the advisor hardening session (autotuner remedi
 ### DE-S4-003: M5 chat hardening — CSRF fix, cost-DoS guards, artifact allowlist
 
 **Decision:** Three hardening changes were applied to the M5 chat surface:
-1. `X-CSRF-Token` header added to all 7 dashboard POST JavaScript files (including the sell_account panic button), resolving the 403 on chat POST.
+1. `X-CSRF-Token` header added to all 8 dashboard POST JavaScript files (including the sell_account panic button and settings-modal.js added after initial hardening), resolving the 403 on chat POST.
 2. Cost-DoS guards added before the paid Anthropic LLM call: per-message length cap, per-artifact size cap, request body size cap, and a bounded per-IP rate limiter — all as named constants.
 3. `validate_artifact()` server-side function added: allowlists accepted artifact types and truncates oversized content before prompt serialization. Advise-only boundary preserved throughout.
 
@@ -132,3 +132,36 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** Concurrent SQLite writers on the Optuna study DB is a data-integrity risk, not a performance concern. The go/no-go on re-tune timing is a business decision (operator controls when the live autotune window is clear). A paper Alpaca key with the IEX free feed would suffice if an online run is desired outside the live daemon's schedule.
 
 **Status:** Deferred pending operator go/no-go. No automated re-tune should be dispatched without explicit clearance that the live daemon's autotune is not running concurrently.
+
+
+---
+
+## Walk-forward overhaul (2026-06-01)
+
+### DE-WF-001: Walk-forward window expanded to 250 trading days (Phase 1)
+
+**Decision:** `_WALK_FORWARD_TRADING_DAYS` increased from 125 to 250 (). `_REQUIRED_FETCH_TRADING_DAYS` updated to 299 (250 + MC warmup 39 + buffer 10). All fold arithmetic follows; ~29 usable validation days (vs. ~4 prior).
+
+**Rationale:** The 125-day window collapsed to ~4 usable OOS validation days after the 60/20/20 split + purge/embargo — statistically too thin for meaningful CRRA-EU t-statistics. The 250-day extension is a council Amendment; the cost is one more month of Alpaca history per symphony.
+
+**Status:** Merged (Phase 1). Full tree clean.
+
+---
+
+### DE-WF-002: CPCV folds added to Optuna walk-forward (Phase 2)
+
+**Decision:** Each Optuna trial now scores across N=6 combinatorial purged-cross-validation groups, k=2 held out per split, C(6,2)=15 splits, yielding φ=5 complete OOS backtest paths. Each trial persists `cscv_date_returns` in its Optuna user attributes for use by the Phase-3 PBO gate. Canonical mlfinlab first-available-slot path assembly; path membership is VARIABLE-length (permissive `len>=1`).
+
+**Rationale:** A single validation fold is the minimum honest check; CPCV provides the distribution of OOS performance across all combinatorial splits, exposing selection-process overfitting that the BHY correction alone cannot see. Partition/completeness is the primary invariant; modulo round-robin was evaluated and rejected as categorically wrong for k>=2.
+
+**Status:** Merged (b3775e0). Full tree clean at 5089/0.
+
+---
+
+### DE-WF-003: PBO acceptance gate (STAGE-1 veto, CSCV S=8) added (Phase 3)
+
+**Decision:** After BHY, the top-`_CSCV_TOP_K` (=20) pre-BHY configs are scored by `compute_pbo` (math_engine.py; Bailey & López de Prado 2014). PBO > `PBO_REJECT_THRESHOLD` (=0.5) triggers a STAGE-1 veto — the run deploys nothing. CSCV uses S=8 sub-matrix partitions. `cscv_date_returns` persisted per trial (migration 028); `pbo` column on `autotune_runs` (migration 028). DSR (Deflated Sharpe Ratio, D3) was evaluated and not adopted.
+
+**Rationale:** PBO is a sample-robustness check orthogonal to BHY (which addresses multiplicity). PBO > 0.5 means the IS-best config generalizes OOS less than half the time across the CPCV partitions — a straightforward disqualifying signal. The combination of BHY + PBO closes two independent overfitting axes.
+
+**Status:** Merged (849a11e). Full tree clean at 5146/0.

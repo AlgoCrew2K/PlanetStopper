@@ -11,14 +11,15 @@
 ## Key Files (quick reference for workers)
 | File | Role |
 |------|------|
-| `app.py` | Flask dashboard + minute-by-minute scheduler; `_DISMISS_EXECUTOR` (background dismiss thread) + `_FLUSH_STATE_LOCK` (flush serialization); spawns `alpha_bot_execution.py` at :00 |
+| `app.py` | Flask dashboard + minute-by-minute scheduler; `_DISMISS_EXECUTOR` (background dismiss thread) + `_FLUSH_STATE_LOCK` (flush serialization); spawns `alpha_bot_execution.py` at :00; CSRF infrastructure (`_validate_csrf`, `_csrf_before_request`); `_SETTINGS_WRITE_ALLOWLIST` gates the two guarded write paths |
 | `alpha_bot_execution.py` | Core engine — per-cycle execution; wired to canonical THEORY spec bundle via `get_or_create_phase1_theory_bundle_id` |
-| `math_engine.py` | Risk math: volatility scaling, log time squeeze, parabolic ratchet, MC gating, VWAP, breakeven, exit confirm; CRRA-EU utility (`compute_crra_eu_objective`, `compute_crra_eu_tstat`); CVaR diagnostic (`compute_portfolio_cvar`, `CVaRAssessment`); 6-layer exit decision (`resolve_trigger_priority`) |
-| `autotuner.py` | Optuna walk-forward (125 trading days, 500 trials per symphony); CRRA-EU `_haircut_select` objective with `compute_n_effective` additive accounting; NN1 spec-freeze enforcement at entry; invokes Overfitting Conscience + Spec Critic + Divergence Explainer post-walk-forward; OC reads `prior_runs` via `advisor_ro_query`; `save_autotune_run` returns the inserted row id |
-| `database.py` | State DB: 25 migration SQL files (001–025); `_MIGRATION_FILES` applies 004–025 in declared order (021 precedes 020 — intentional, see ARCH-002 inline comment); public accessors include Phase-1 originals (`record_cvar_diagnostic`, `read_cvar_diagnostic_for_symphony`, `get_or_create_phase1_theory_bundle_id`, `insert_researcher_dof_ledger`, `query_wall_breach_tripwire`) plus Sprint-3 additions: `insert_advisor_observation` (accepts `symphony_id`), `get_advisor_observations_for_symphony`; `compute_composition_hash` promoted here from deleted `port_selector.py` |
+| `math_engine.py` | Risk math: volatility scaling, sqrt-time squeeze (`1-sqrt(1-t)`), parabolic ratchet, MC gating, VWAP, breakeven, exit confirm, regime-match guard; CRRA-EU utility (`compute_crra_eu_objective`); CVaR diagnostic (`compute_portfolio_cvar`, `CVaRAssessment`); PBO (`compute_pbo`); 6-layer exit decision (`resolve_trigger_priority`) |
+| `autotuner.py` | Optuna walk-forward (250 trading days, 500 trials per symphony); CPCV folds (`_generate_cpcv_folds`, N=6, k=2, 15 splits, 5 paths); CRRA-EU `_haircut_select` objective with `compute_n_effective` additive accounting; PHASE-3 PBO gate (`compute_pbo`, top-20 pre-BHY, PBO>0.5 veto); `compute_crra_eu_tstat` lives here (not math_engine); NN1 spec-freeze enforcement at entry; invokes Overfitting Conscience + Spec Critic + Divergence Explainer post-walk-forward; OC reads `prior_runs` via `advisor_ro_query`; `save_autotune_run` returns the inserted row id |
+| `database.py` | State DB: 30 numbered migration SQL files (001–030); `_MIGRATION_FILES` wires 27 entries (004–030, 021 precedes 020 — intentional, see ARCH-002 inline comment); public accessors include Phase-1 originals (`record_cvar_diagnostic`, `read_cvar_diagnostic_for_symphony`, `get_or_create_phase1_theory_bundle_id`, `insert_dof_ledger_row`, `query_wall_breach_tripwire`) plus post-Sprint-3 additions: `insert_advisor_observation` (accepts `symphony_id`), `get_advisor_observations_for_symphony`, `get_symphony_live_mode`, `set_symphony_live_mode`, `save_regime_label`, `get_cached_regime_label`, `get_or_create_phase15_m3_bundle_id`; `compute_composition_hash` promoted here from deleted `port_selector.py` |
 | `reporting.py` | Discord webhooks + QuickChart embeds |
-| `synthetic_history.py` | 125-day live Alpaca historical fetcher (parallel + file cache); feeds autotuner replay |
-| `advisors/` | Phase-1 Advisor producers: `overfitting_conscience.py`, `spec_critic.py`, `divergence_explainer.py`. Narrator deferred. All write to `advisor_observations` keyed by `symphony_id`. Called post-walk-forward from `autotuner.py`. |
+| `synthetic_history.py` | 250-day live Alpaca historical fetcher (parallel + file cache); feeds autotuner replay |
+| `acceptance_gate.py` | Reusable overfitting acceptance gate — used by autotuner and AI Advisor proposal suite |
+| `advisors/` | Phase-1 Advisor producers: `overfitting_conscience.py`, `spec_critic.py`, `divergence_explainer.py`. Narrator deferred. AI Advisor proposal suite: `correlation_diagnostic.py`, `composer_backtest_client.py`, `backtest_gate_engine.py`, `asset_swap_engine.py`, `logic_change_engine.py`, `advisor_chat.py`. All observations write to `advisor_observations` keyed by `symphony_id`. Called post-walk-forward from `autotuner.py`. |
 
 ## Build / Run
 ```
@@ -29,7 +30,7 @@ python app.py          # run daemon
 
 ## Architecture Constraints (hard rules for workers)
 1. Engine runs 1-minute cadence during market hours — **no blocking I/O on the execution path.**
-2. Dashboard is a read-only operator surface — **never an action surface for live trades.**
+2. Dashboard has two guarded write paths: `POST /api/settings` (`app.py:2186`) writes allowlisted .env keys; `POST /api/symphony-settings/<name>` (`app.py:2265`) calls `database.set_symphony_live_mode`. Both are CSRF-protected and enforced by `_SETTINGS_WRITE_ALLOWLIST`. **The dashboard is NOT a live-trade-action surface** — settings are operator config, not trade orders. `LIVE_EXECUTION` and all credential keys are excluded from the allowlist.
 3. Two-DB pattern: state DB owns live positions/decisions; optimization DB owns Optuna studies. **Never cross-join across DBs in app code** — copy needed rows.
 4. `is_live=True` is explicit, never a default.
 5. Templates open SQLite read-only; UI never reruns the engine.
@@ -57,6 +58,9 @@ python app.py          # run daemon
 
 **Domain researchers:**
 `composer-api-researcher` · `alpaca-api-researcher` · `quant-risk-researcher` · `optuna-methodology-researcher` · `viz-library-researcher` · `trading-compliance-researcher`
+
+**Cross-cutting:**
+`security-auditor` · `synthesizer` · `verifier`
 
 ## Project-Local Skills (`.claude/skills/`)
 `/backtest` · `/optuna-compare` · `/db-inspect` · `/api-fixture` · `/discord-test` · `/run-tests` · `/lint` · `/perf-snapshot` · `/symphony-diff`

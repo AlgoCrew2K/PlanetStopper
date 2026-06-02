@@ -159,9 +159,10 @@ python recalibrate.py
 
 The autotuner runs one Optuna study per active symphony. Runtime per symphony:
 
-- **Window:** 125 trading days of synthetic history, split 80/20 (`autotuner.py` lines 69, 98). Approximately 100 training days and 25 OOS test days.
-- **Trials:** 500 per symphony (`autotuner.py` line 308), run in parallel (`n_jobs=-1`, line 308 — uses all available CPU cores).
-- **Per-trial cost:** Each trial replays a full intraday tick simulation (~390 ticks/day × 100 training days = ~39,000 ticks per trial). On a 4-core host, wall-clock time is roughly 500/4 = 125 effective trial-iterations of the replay loop. At ~50–200ms per trial (depending on CPU), expect **1–5 minutes per symphony**.
+- **Window:** 250 trading days of synthetic history, split 60/20/20 (60% train / 20% validation / 20% frozen-eval; `autotuner.py` constants `TRAIN_RATIO`, `VALIDATION_RATIO`, `FROZEN_EVAL_RATIO`). Approximately 150 raw train days; ~29 usable validation days after purge (20 days) and embargo (1 day).
+- **Trials:** 500 per symphony with the TPE sampler; PHASE-3 PBO gate applied to the top-20 pre-BHY configs.
+- **Parallelism:** `n_jobs` is sourced from the `OPTUNA_N_JOBS` environment variable via `_resolve_optuna_n_jobs_from_env()`; defaults to `1` (NOT `-1`) for SQLite RDBStorage safety. Increase `OPTUNA_N_JOBS` explicitly if parallelism is desired.
+- **Per-trial cost:** Each trial replays a full intraday tick simulation (~390 ticks/day × 150 training days = ~58,500 ticks per trial). At ~50–200ms per trial, expect **2–8 minutes per symphony** at `n_jobs=1`.
 - **Total:** Multiply by the number of active symphonies in `bot_state`. Three symphonies → approximately 3–15 minutes total. The exact elapsed time is printed to stdout per symphony: `Optimization completed in {elapsed:.2f}s` (`autotuner.py` line 367).
 
 These are honest estimates. Actual timing depends on host hardware and symphony tick density. Let the process run to completion — do not interrupt.
@@ -169,7 +170,7 @@ These are honest estimates. Actual timing depends on host hardware and symphony 
 Progress is logged to stdout:
 
 ```
--> Starting EOD Autotune (125-day WFA: 80% Train / 20% OOS per Symphony)...
+-> Starting EOD Autotune (250-day WFA: 60% Train / 20% Validation / 20% Frozen-Eval per Symphony)...
    Optimizing Symphony: my_symphony_name
      OOS validation passed! OOS Guard Alpha: +2.34% (Average: 0.09%)
      Optimization completed in 87.42s. Train Alpha: +5.61% (Average: 0.06%)
@@ -231,13 +232,26 @@ Once verification in Section 5 passes, restart `app.py` via your process manager
 
 - **Do not recalibrate during market hours.** The autotuner's EOD path and the live execution path both write to `alphabot_state.db`. Interleaving them risks parameter overwrites mid-cycle.
 
-- **Do not reuse study names.** Optuna study names in this project follow the pattern `<normalized_symphony_name>` (set by `database.normalize_name()` at `autotuner.py` line 307). If `optuna_studies.db.bak_*` is restored and reused, `load_if_exists=True` (`autotuner.py` line 307) will resume the old study rather than start a clean one. Start fresh with a new `optuna_studies.db` every recalibration. See the Known Gotchas in `.claude/CLAUDE.md`: "Walk-forward study names: `<timestamp>__<symphony>`; never reuse a study name."
+- **Do not reuse study names.** Optuna study names in this project follow the pattern `{timestamp}__{normalized_name}` (set at `autotuner.py:2215-2218`) with `load_if_exists=False`. Each recalibration run creates a fresh study. If `optuna_studies.db.bak_*` is restored and reused under the same timestamp prefix, a naming collision is possible — start fresh with a new `optuna_studies.db` every recalibration. See the Known Gotchas in `.claude/CLAUDE.md`: "Walk-forward study names: `<timestamp>__<symphony>`; never reuse a study name."
 
 - **Do not skip the provenance check.** If a change has a cleared provenance audit on record, recalibration is unnecessary and wastes 15–30 minutes of compute. Always run the decision tree in Section 2 first. Example: task #25's IEX feed-pin fix is explicitly cleared — see `docs/research/alpaca/optuna-provenance-audit.md`.
 
 - **Do not delete `optuna_studies.db.bak_*` files immediately.** These files contain the pre-fix trial history needed to compare old vs. new parameter distributions and to diagnose unexpected behavior changes. Retain until the next quarterly cleanup.
 
 - **Do not recalibrate for a byte-equivalent refactor.** Math extractions into `math_engine` that pass golden-fixture tests produce identical per-tick outputs. The study scores are unaffected. Running an unnecessary recalibration discards valid trial history.
+
+---
+
+## Walk-forward architecture notes (Phase 1/2/3 overhaul)
+
+This runbook covers recalibration mechanics. For architecture context on the walk-forward phases introduced after the initial recalibration runbook was written:
+
+- **Phase 1** (window expansion): `_WALK_FORWARD_TRADING_DAYS` increased from 125 to 250. Yields ~29 usable validation days vs. the prior ~4 days.
+- **Phase 2** (CPCV): `_generate_cpcv_folds` assembles N=6 groups, k=2 test groups, C(6,2)=15 splits, φ=5 OOS backtest paths. Each trial scores across all 15 CPCV splits and persists `cscv_date_returns` in its user attributes.
+- **Phase 3** (PBO gate): `compute_pbo` on the top-`_CSCV_TOP_K` (=20) pre-BHY configs. PBO > `PBO_REJECT_THRESHOLD` (=0.5) vetoes as STAGE-1 before BHY. This is a sample-robustness check orthogonal to the BHY multiplicity correction.
+- **`locked_vars`**: Optuna search space gates every `suggest_*` call on `if KEY not in locked_vars`. Operator-locked parameters are excluded from the trial search.
+
+All three phases are consistent with recalibration triggers in Section 2 (any change to the scoring model — tick fields, gate thresholds, or the fold structure — requires recalibration).
 
 ---
 

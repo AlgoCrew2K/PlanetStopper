@@ -71,8 +71,8 @@ At startup (before any execution cycle), `alpha_bot_execution.py` calls `databas
 
 ## Internal Dependencies
 
-- `database` — `acquire_lock`, `release_lock`, `load_state`, `save_state`, `get_or_create_phase1_theory_bundle_id`, `record_exit_trigger`, `record_shadow_observation`
-- `math_engine` — all per-tick decision primitives, `run_monte_carlo`, `resolve_trigger_priority`
+- `database` — `acquire_lock`, `release_lock`, `load_state`, `save_state`, `get_or_create_phase1_theory_bundle_id`, `record_exit_trigger`, `record_shadow_observation`, `get_symphony_live_mode` (per-symphony dry-run/live dispatch)
+- `math_engine` — all per-tick decision primitives, `run_monte_carlo`, `resolve_trigger_priority`, `compute_regime_match_quality`, `apply_regime_exit_adjustment` (regime-exit-adjustment on the live path)
 - `autotuner` — `run_autotuner` (post-market)
 - `reporting` — `generate_eod_snapshot`, Discord notifications
 - `analytics` — performance metric computation

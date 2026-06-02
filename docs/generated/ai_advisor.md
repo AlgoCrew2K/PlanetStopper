@@ -3,13 +3,13 @@
 > Claude-backed config advisor: context assembly, structured-output Claude call, and safety gates (allowlist enforcement, risk-direction cross-check, OOS re-validation).
 
 **Source:** `ai_advisor.py`
-**Last updated:** 2026-05-27
+**Last updated:** 2026-06-02
 
 ## Overview
 
 `ai_advisor.py` is the operator-assist config advisory surface. It is split into two cycles:
 
-- **C1** — Context assembly + synchronous Claude call. `assemble_advisor_context` reads a curated 9-item allowlist of config values, never `os.environ`. `request_suggestions` calls Claude with structured output (`ConfigSuggestionsResponse`). Never raises — every failure degrades to `(None, error_message)`.
+- **C1** — Context assembly + synchronous Claude call. `assemble_advisor_context` reads a curated 8-item allowlist of config values, never `os.environ`. `request_suggestions` calls Claude with structured output (`ConfigSuggestionsResponse`). Never raises — every failure degrades to `(None, error_message)`.
 
 - **C2** — Safety gates. Three independent defense-in-depth layers on top of C1's context allowlist: `enforce_suggestion_allowlist`, `check_risk_direction_agreement`, `revalidate_suggestion_oos`.
 
@@ -63,7 +63,7 @@ An empty `suggestions` list is a valid non-error response ("no edit is well-supp
 
 #### `enforce_suggestion_allowlist(suggestions: list[ConfigSuggestion]) → tuple[list[ConfigSuggestion], list[ConfigSuggestion]]`
 
-Partitions suggestions into `(allowed, rejected)` by `config_key`. Any key not in the 9-item suggestible allowlist is routed to `rejected`. Defense-in-depth: even if Claude hallucinates a key or emits a credential, it can never reach a live config write.
+Partitions suggestions into `(allowed, rejected)` by `config_key`. Any key not in the 8-item suggestible allowlist is routed to `rejected`. Defense-in-depth: even if Claude hallucinates a key or emits a credential, it can never reach a live config write.
 
 **Returns:** `(allowed, rejected)` — order-preserving; every suggestion in exactly one partition.
 
@@ -95,7 +95,7 @@ The `autotuner` import is lazy (inside the function body) to avoid import-collis
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `config_key` | `str` | One of the 9 suggestible keys |
+| `config_key` | `str` | One of the 8 suggestible keys |
 | `current_value` | `float \| int \| str` | Current live value |
 | `suggested_value` | `float \| int \| str` | Claude's proposed value |
 | `rationale` | `str` | Claude's reasoning, citing supplied numbers |
@@ -114,7 +114,7 @@ The `autotuner` import is lazy (inside the function body) to avoid import-collis
 
 ### Suggestible Config Surface
 
-The 9-item allowlist: 7 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`.
+The 8-item allowlist (7 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`):
 
 | Key | Risk Polarity |
 |-----|---------------|

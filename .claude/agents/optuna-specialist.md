@@ -21,7 +21,7 @@ model: sonnet
 
 3. `study_name` must include a timestamp and symphony-id (e.g., `symphony_A_20260512T1430`). Never reuse a `study_name` across runs — Optuna will append trials to an existing study and corrupt comparisons.
 
-4. Walk-forward windows: validate that `window_length` and `step_size` are consistent with the project's 125-trading-day standard before changing either value. If a change is warranted, document the reason in the commit message.
+4. Walk-forward windows: validate that `window_length` and `step_size` are consistent with the project's 250-trading-day standard (`synthetic_history._WALK_FORWARD_TRADING_DAYS = 250`) before changing either value. If a change is warranted, document the reason in the commit message.
 
 5. Parallelism: read `n_jobs` from `.env`; never hardcode CPU counts. Joblib backend choice must match the existing pattern in `autotuner.py`.
 
