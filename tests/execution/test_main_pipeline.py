@@ -201,7 +201,13 @@ def patched_environment():
         mock_db.load_chart_history.return_value = {
             "date": _FIXED_ET.strftime("%Y-%m-%d"), "symphonies": {}
         }
-        mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
+        # live_mode=True: the patched_environment is shared by dry-run (pipeline)
+        # and live-execution tests alike.  The master-switch gate
+        # (LIVE_EXECUTION and item["live_mode"]) requires both flags set for real
+        # trades to fire.  Dry-run tests override LIVE_EXECUTION=False, so
+        # live_mode=True here has no effect on them; live-execution tests set
+        # LIVE_EXECUTION=True and rely on live_mode=True to pass the gate.
+        mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}, "live_mode": True}
         mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
         mock_db.wipe_transient_state.side_effect = lambda s: s  # identity
 
