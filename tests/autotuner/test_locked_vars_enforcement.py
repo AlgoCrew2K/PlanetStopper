@@ -1006,103 +1006,114 @@ def test_locked_vars_list_is_persisted_verbatim_by_save_symphony_strategy(golden
 
 
 # ---------------------------------------------------------------------------
-# BLOCK-2 (reviewer finding) — FrozenTrial.params mutation
+
+
+# ---------------------------------------------------------------------------
+# BLOCK-2 (reviewer finding) -- FrozenTrial.params must not be mutated
 #
-# When the haircut path runs (autotuner.py:2294), best_params is assigned
-# directly from winner_trial.params — the FrozenTrial's internal dict.
-# The locked-vars injection at :2354-2356 then does:
+# On the haircut path (autotuner.py:2294), best_params = winner_trial.params.
+# The locked-vars injection block must copy best_params first:
+#     best_params = dict(best_params)
+# so the FrozenTrial's internal dict is never modified in-place.
 #
-#     best_params[_lk] = current_params[_lk]
-#
-# This mutates winner_trial.params in-place. Optuna's FrozenTrial.params
-# IS a plain dict (not MappingProxyType), so no exception is raised — but
-# modifying a completed trial's internal state is an unexpected side-effect
-# that could corrupt any Optuna machinery that caches or re-reads trial params
-# (e.g. study.best_trial.params, study.best_params, serialization to RDB
-# storage on a future Optuna version that re-reads the dict by reference).
-#
-# The fix: copy best_params before the injection block so the FrozenTrial's
-# internal dict is never touched:
-#
-#     best_params = dict(best_params)    # defensive copy before locked-var injection
-#     for _lk in _locked_search_space:
-#         ...
-#
-# We test this directly by reproducing the injection logic and asserting
-# copy semantics. The run_autotuner mock harness cannot exercise the real
-# haircut path (which requires a live Optuna study to produce
-# winner_trial.params), so this is a focused unit test of the injection
-# contract.
-#
-# RED on current HEAD @ 0486402: the injection at autotuner.py:2353-2356
-# has no copy — best_params[_lk] writes into whatever dict best_params
-# references, which IS winner_trial.params on the haircut path.
+# We test this via run_autotuner: study.best_params is a shared dict
+# reference (simulating winner_trial.params missing the locked key),
+# then we verify the ORIGINAL dict is unchanged after run_autotuner.
 # ---------------------------------------------------------------------------
 
 
-
 def test_locked_var_injection_does_not_mutate_original_best_params_dict(golden):
-    """BLOCK-2: the locked-var injection into best_params must NOT mutate
-    the dict that was originally assigned to best_params.
+    """BLOCK-2: the locked-var injection must NOT mutate the original
+    best_params dict (winner_trial.params on the haircut path).
 
-    On the haircut path (autotuner.py:2294), best_params = winner_trial.params
-    -- the FrozenTrial's internal dict. The injection at :2353-2356 then
-    writes best_params[_lk] = current_params[_lk] in-place.
+    study.best_params is fed as a shared dict reference missing the locked
+    key (simulating post-fix winner_trial.params). After run_autotuner the
+    original dict must be unchanged -- proving a copy was made before injection.
 
-    The fix is to copy before injection:
-        best_params = dict(best_params)
-
-    We reproduce the injection logic directly (the mock harness cannot
-    exercise the real haircut path without running actual Optuna), then
-    assert the original dict object is unchanged while the working copy
-    carries the locked key.
-
-    RED on 0486402: no copy is made before injection, so the original
-    dict is mutated in-place.
+    RED on 0486402 if best_params = dict(best_params) is absent before
+    the injection loop at autotuner.py:2353.
     """
-    import autotuner
+    import database
 
     locked_key = golden["ac1_locked_var"]["key"]
+    unlocked_key = golden["ac2_unlocked_var"]["key"]
 
-    # Simulate winner_trial.params: contains only unlocked search-space keys.
-    # Post-fix the locked key is absent from the trial (suggest_* excluded it).
-    unlocked_keys = [k for k in golden["search_space_keys"] if k != locked_key]
-    original_trial_params: dict = {}
-    for k in unlocked_keys:
-        original_trial_params[k] = 1.0
-    if "VWAP_BLEED_TICKS" in original_trial_params:
-        original_trial_params["VWAP_BLEED_TICKS"] = 10
+    current_params = _make_current_params(
+        golden,
+        locked_key=locked_key,
+        locked_value=LOCKED_MARKER,
+        unlocked_key=unlocked_key,
+        unlocked_value=UNLOCKED_INITIAL,
+    )
+    # Build ai_params WITHOUT the locked key -- this is what winner_trial.params
+    # looks like post-fix (locked var was excluded from suggest_*).
+    ai_params_full = _make_ai_best_params(golden, locked_key=locked_key,
+                                           unlocked_key=unlocked_key)
+    # shared_ref simulates winner_trial.params: absent locked key, same object.
+    shared_ref: dict = {k: v for k, v in ai_params_full.items() if k != locked_key}
+    snapshot_before = dict(shared_ref)
+    original_id = id(shared_ref)
 
-    # Snapshot BEFORE injection.
-    snapshot_before = dict(original_trial_params)
-
-    # Simulate: best_params = winner_trial.params (same object reference).
-    best_params = original_trial_params
-
-    # Reproduce the injection logic from autotuner.py:2353-2356.
-    # Without the copy fix, best_params IS original_trial_params and
-    # the loop mutates it. With the fix, best_params is a new dict.
-    _locked_search_space = autotuner.OPTUNA_SEARCH_SPACE_KEYS & {locked_key}
-    for _lk in _locked_search_space:
-        if _lk not in best_params:
-            best_params[_lk] = LOCKED_MARKER
-
-    # Assertion 1: original dict must be unchanged (requires copy semantics).
-    assert original_trial_params == snapshot_before, (
-        f"BLOCK-2 FAIL: the locked-var injection mutated the original "
-        f"best_params dict (winner_trial.params on the haircut path at "
-        f"autotuner.py:2294). "
-        f"Before injection: {snapshot_before}. "
-        f"After injection:  {original_trial_params}. "
-        f"Injected key: '{locked_key}' (value {LOCKED_MARKER!r}). "
-        f"The fix at autotuner.py:2353 must add `best_params = dict(best_params)` "
-        f"BEFORE the injection loop so winner_trial.params is never mutated. "
-        f"Mutating a FrozenTrial's internal params dict could corrupt Optuna "
-        f"under RDB storage or future versions that cache trial state by reference."
+    default_params = database.DEFAULT_STRATEGY.copy()
+    default_hwm = float(default_params.get(unlocked_key, 0.90))
+    side_effect = _make_vwap_side_effect_for_key(
+        marker=UNLOCKED_AI_MARKER,
+        broken_for_markers={default_hwm, UNLOCKED_INITIAL},
     )
 
-    # Assertion 2: locked key IS in the working copy (injection succeeded).
-    assert locked_key in best_params, (
-        f"BLOCK-2 secondary: locked key '{locked_key}' must be present in "
-        f"best_params after injection. Keys: {list(best_params.keys())}."
+    import autotuner as _autotuner
+    import inspect
+    from tests.autotuner.conftest import make_phase1_theory_bundle
+
+    history = _build_history_5d()
+    save_calls: list[tuple] = []
+
+    def _capture_save(symphony_name, params, lv):
+        save_calls.append((symphony_name, dict(params), list(lv)))
+
+    fake_study = MagicMock(name="fake_optuna_study")
+    # study.best_params IS shared_ref -- same object as winner_trial.params.
+    # autotuner reads study.best_params at ~line 2295 (non-haircut path uses
+    # this directly). The injection at ~2360 must copy before writing.
+    fake_study.best_params = shared_ref
+    fake_study.best_value = 1.0
+    fake_study.optimize = MagicMock(return_value=None)
+
+    spec_bundle_id = make_phase1_theory_bundle()
+    sig = inspect.signature(_autotuner.run_autotuner)
+    extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
+    buf = io.StringIO()
+
+    with patch("autotuner._replay_grace_minutes", return_value=0), \
+         patch("autotuner.optuna.create_study", return_value=fake_study), \
+         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
+         patch("autotuner.synthetic_history.generate_synthetic_history",
+               return_value=history), \
+         patch("autotuner.database.load_chart_history", return_value={}), \
+         patch("autotuner.database.save_chart_archive"), \
+         patch("autotuner.database.get_symphony_strategy",
+               return_value={"params": current_params.copy(),
+                              "locked_vars": [locked_key]}), \
+         patch("autotuner.database.save_symphony_strategy",
+               side_effect=_capture_save), \
+         patch("autotuner.database.DEFAULT_STRATEGY", default_params), \
+         patch("autotuner.math_engine.compute_vwap_breakdown_update",
+               side_effect=side_effect), \
+         contextlib.redirect_stdout(buf):
+        _autotuner.run_autotuner(_build_bot_state(), "2026-05-10", ["acc-1"], **extra)
+
+    # shared_ref must be unchanged: no locked key injected into the original.
+    # If best_params = dict(best_params) is present, injection operates on a
+    # copy and shared_ref stays as-is. If absent, shared_ref gains locked_key.
+    assert shared_ref == snapshot_before, (
+        f"BLOCK-2 FAIL: the original best_params dict was mutated by the "
+        f"locked-var injection (autotuner.py injection block). "
+        f"Before run: {snapshot_before}. "
+        f"After run:  {dict(shared_ref)}. "
+        f"Extra keys added: {set(shared_ref) - set(snapshot_before)}. "
+        f"The fix requires `best_params = dict(best_params)` BEFORE the "
+        f"injection loop so winner_trial.params is not mutated."
+    )
+    assert id(shared_ref) == original_id, (
+        "Precondition: shared_ref identity must be stable across the run."
     )
