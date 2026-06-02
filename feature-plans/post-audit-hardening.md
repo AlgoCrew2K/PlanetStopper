@@ -20,7 +20,7 @@ Branches from `main @ 3b7d775`. The audit reports + the consolidated brief are a
 - [ ] AC-7 (INV-COV-2 — O6 second-boundary runtime test): same runtime conversion applied to the O6 second-boundary purge.
 - [ ] AC-8 (INV-COV-3 — synthetic_history VWAP runtime test): the synthetic_history VWAP numeric value test (currently AST-only) is replaced with a runtime test that constructs a known input series and asserts the function's output against an independently hand-computed VWAP.
 - [ ] AC-9 (INV-COV-4 — consumer-side stop-monotonicity audit): every consumer of `stop_level` / `active_trailing_stop` (reporting.py Discord embeds, app.py templates, dashboard tooltips, telemetry, charts) is audited for any stale "stop never decreases" assumption introduced before Cluster 1's HWM-anchored ratchet. Each consumer that handles the value gets a runtime pin test for the stop-decreasing case. If any consumer turns out to assume monotonic-up, it is corrected with a small additive fix.
-- [ ] AC-10 (migration 016 + RM-M1 citation): additive migration `016_shadow_history_sym_ts_index.sql` creates `idx_shadow_history_sym_ts ON shadow_history (symphony_id, ts_utc)` — closes the shadow-trajectory warm-cache perf watch (245×-9700× regression, dashboard-only). Separately, `math_engine.py:273` Fu & Zhang citation initials corrected to "Fu, Y.B. & Zhang, Z.G." per Semantic Scholar verification. Bundled because both are one-line fixes.
+- [x] AC-10 (migration 031 + RM-M1 citation): additive migration `031_shadow_history_sym_ts_index.sql` creates `idx_shadow_history_sym_ts ON shadow_history (symphony_id, ts_utc)` — closes the shadow-trajectory warm-cache perf watch (245×-9700× regression, dashboard-only). BUG-001 fix: file was orphaned as 016 (slot occupied by spec_bundles); renamed to 031 and registered in _MIGRATION_FILES after 030. Separately, `math_engine.py:273` Fu & Zhang citation initials corrected to "Fu, Y.B. & Zhang, Z.G." per Semantic Scholar verification. Bundled because both are one-line fixes.
 - [ ] AC-11 (regression): every changed layer ships a golden-fixture or property test; the full tree stays green; behavior shifts (the bootstrap SE will re-rank haircut outcomes; the intraday-rotation reset will change bot_state lifecycle) re-pinned with provenance; genuine whole-tree count + HEAD SHA quoted in every handoff.
 
 ## Decisions
@@ -44,7 +44,7 @@ Branches from `main @ 3b7d775`. The audit reports + the consolidated brief are a
 | INV-COV-2 | `tests/autotuner/test_o6_frozen_eval.py` (second boundary) | Same. |
 | INV-COV-3 | `tests/synthetic_history/...` | AST → runtime VWAP fixture test. |
 | INV-COV-4 | `reporting.py`, `app.py`, templates, telemetry | Consumer-side audit + pin tests + any required correction. |
-| Migration 016 | `migrations/016_shadow_history_sym_ts_index.sql` | Additive composite index. |
+| Migration 031 | `migrations/031_shadow_history_sym_ts_index.sql` | Additive composite index (BUG-001: renamed from orphaned 016 slot). |
 | RM-M1 | `math_engine.py:273` | One-line citation initials fix. |
 
 ## Edge Cases
