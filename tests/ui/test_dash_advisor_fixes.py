@@ -318,14 +318,31 @@ class TestAC3bMddColumnNotInflated:
         import app as _app
 
         # Construct a minimal accounts_map with one account + one symphony.
+        # Include all fields accessed by table_partial.html to avoid Jinja2
+        # UndefinedError on attribute access (e.g. sym.mc_prob, sym.stop_trigger).
         sym = {
             "id": "test_sym",
             "name": "Test Symphony",
             "position": 0.9,
             "armed": True,
             "triggered": False,
+            "para_armed": False,
+            "tp_armed": False,
+            "breakeven_locked": False,
             "current_return": 5.0,
             "current_value": 100000.0,
+            "mc_prob": 62.5,
+            "stop_trigger": -8.0,
+            "shadow_hwm": 6.2,
+            "below_stop_count": 0,
+            "above_tp_count": 0,
+            "triggered_reason": None,
+            "triggered_at_return": None,
+            "triggered_at_hwm": None,
+            "triggered_at_stop": None,
+            "triggered_at_time": None,
+            "last_trigger": None,
+            "is_live": False,
             # _mdd is percent-scale (as returned by analytics.get_symphony_max_drawdown).
             "_mdd": {"dry_run": mdd_dry_run, "if_held": mdd_if_held},
             "_tc": {"dry_run": 0.5, "if_held": 0.4},
