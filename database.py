@@ -442,18 +442,26 @@ def get_symphony_strategy(symphony_name):
     symphony_name = normalize_name(symphony_name)
     conn = get_connection()
     cursor = conn.cursor()
+    # SELECT live_mode alongside params/locked_vars so the exec path reads
+    # symphony_strat.get("live_mode", False) — no second DB query on the hot path
+    # (arch constraint 1: no blocking I/O per minute cycle).
     cursor.execute(
-        "SELECT parameters, locked_vars FROM symphony_strategies WHERE symphony_name = ?",
+        "SELECT parameters, locked_vars, live_mode FROM symphony_strategies WHERE symphony_name = ?",
         (symphony_name,),
     )
     row = cursor.fetchone()
     conn.close()
     if row:
-        return {"params": json.loads(row[0]), "locked_vars": json.loads(row[1])}
+        return {
+            "params": json.loads(row[0]),
+            "locked_vars": json.loads(row[1]),
+            "live_mode": bool(row[2]) if row[2] is not None else False,
+        }
 
-    # Initialize with defaults if not found
+    # Initialize with defaults if not found — live_mode defaults to False (dry-run).
+    # arch rule 4: is_live=True is explicit, never by omission.
     save_symphony_strategy(symphony_name, DEFAULT_STRATEGY, DEFAULT_LOCKED_VARS)
-    return {"params": DEFAULT_STRATEGY.copy(), "locked_vars": DEFAULT_LOCKED_VARS.copy()}
+    return {"params": DEFAULT_STRATEGY.copy(), "locked_vars": DEFAULT_LOCKED_VARS.copy(), "live_mode": False}
 
 
 def save_symphony_strategy(symphony_name, params, locked_vars):
