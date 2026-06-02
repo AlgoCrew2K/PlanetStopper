@@ -1,7 +1,7 @@
 ---
 name: optuna-specialist
 description: "Manages walk-forward hyperparameter optimization via Optuna — autotuner.py, the optimization SQLite DB, and study/trial lifecycle."
-tools: Read, Edit, Write, Glob, Grep, Bash
+tools: Read, Edit, Write, Glob, Grep, Bash, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput
 model: sonnet
 ---
 
