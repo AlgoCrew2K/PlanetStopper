@@ -1793,6 +1793,7 @@ def main():
                                 "symphony_vol": item["symphony_vol"],
                                 "also_true": item["also_true"],
                             },
+                            also_true=item["also_true"],
                             cycle_id=bot_state.get("last_successful_cycle_at"),
                         )
 

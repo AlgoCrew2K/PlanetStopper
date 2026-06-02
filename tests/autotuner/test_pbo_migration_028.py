@@ -14,7 +14,7 @@ Schema contract (additive-first, project rule):
   - The migration must be idempotent (safe to re-run on a DB that already has it).
   - Migration file: migrations/028_autotune_runs_pbo.sql
   - _MIGRATION_FILES list in database.py must include "028_autotune_runs_pbo.sql"
-    as the last (highest-numbered) entry.
+    after "027_regime_label_cache.sql" (append-chronological convention).
 
 save_autotune_run must accept an optional `pbo` parameter (default None) and
 persist the value to the pbo column.
@@ -132,14 +132,32 @@ class TestMigrationListRegistration:
             f"(current list has {len(db._MIGRATION_FILES)} entries)"
         )
 
-    def test_migration_028_is_last_in_list(self):
-        """028 migration must be the last (highest-numbered) entry in _MIGRATION_FILES."""
+    def test_migration_028_ordered_after_027_and_before_any_later_migration(self):
+        """028 must appear after 027 and before any higher-numbered migration in _MIGRATION_FILES.
+
+        The original 'is last' assertion was a brittle pin that broke whenever the
+        next migration was appended (e.g. 029_exit_triggers_also_true.sql).  This
+        replacement asserts the durable invariant: 028 is present, comes after 027,
+        and does not appear after any entry whose numeric prefix exceeds 028.
+        """
         db = _import_database()
         mf = db._MIGRATION_FILES
-        last = mf[-1]
-        assert last == _MIGRATION_FILE, (
-            f"'028_autotune_runs_pbo.sql' must be the last entry in _MIGRATION_FILES. "
-            f"Current last entry: {last!r}"
+        assert _MIGRATION_FILE in mf, (
+            f"'028_autotune_runs_pbo.sql' must be present in _MIGRATION_FILES"
+        )
+        idx_028 = mf.index(_MIGRATION_FILE)
+
+        # Must not appear after a higher-numbered migration.
+        import re
+        _num = re.compile(r"^0*(\d+)_")
+        violations = []
+        for i, name in enumerate(mf):
+            m = _num.match(name)
+            if m and int(m.group(1)) > 28 and i < idx_028:
+                violations.append(f"{name!r} (index {i}) is higher-numbered but appears before 028 (index {idx_028})")
+        assert not violations, (
+            f"028_autotune_runs_pbo.sql appears after a higher-numbered migration — "
+            f"ordering violation: {violations}"
         )
 
     def test_migration_028_not_listed_before_027(self):

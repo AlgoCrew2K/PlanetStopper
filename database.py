@@ -169,6 +169,44 @@ def init_db():
         )
     """)
 
+    # H1: Trigger Attribution Telemetry — exit_triggers table.
+    # H1 DUAL-WRITE: all columns (including those added by migrations 011 and 029
+    # via ALTER TABLE) are listed here so fresh deployments have the full schema
+    # without requiring run_migrations() to be called first.  The duplicate-column-name
+    # swallow in run_migrations() (database.py:1159-1168) reconciles the overlap:
+    # migration 005 and 011 ALTER TABLE calls are silently marked applied on fresh DBs
+    # where the columns already exist; migration 029 likewise.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS exit_triggers (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_utc           TEXT    NOT NULL,
+            ts_et            TEXT    NOT NULL,
+            symphony_id      TEXT    NOT NULL,
+            account_id       TEXT    DEFAULT NULL,
+            triggered_reason TEXT    NOT NULL,
+            at_return        REAL    DEFAULT NULL,
+            gate_state_json  TEXT    DEFAULT NULL,
+            cycle_id         TEXT    DEFAULT NULL,
+            math_mode        TEXT    DEFAULT NULL,
+            port_trigger_id  TEXT    DEFAULT NULL,
+            -- migration 029: also_true co-fire list (H1 DUAL-WRITE — also added via ALTER TABLE)
+            also_true_json   TEXT    DEFAULT NULL
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_exit_triggers_ts "
+        "ON exit_triggers (ts_utc DESC)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_exit_triggers_symphony_ts "
+        "ON exit_triggers (symphony_id, ts_utc DESC)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_exit_triggers_port_trigger_id "
+        "ON exit_triggers (port_trigger_id) "
+        "WHERE port_trigger_id IS NOT NULL"
+    )
+
     cursor.execute(
         "INSERT OR IGNORE INTO execution_lock (id, is_locked, timestamp) VALUES (1, 0, 0)"
     )
@@ -1117,6 +1155,7 @@ _MIGRATION_FILES = [
     "026_mc_regime_match_telemetry.sql",
     "027_regime_label_cache.sql",
     "028_autotune_runs_pbo.sql",
+    "029_exit_triggers_also_true.sql",
 ]
 
 
@@ -2200,6 +2239,7 @@ def record_exit_trigger(
     ts_et: "str | None" = None,
     math_mode: "str | None" = None,
     port_trigger_id: "str | None" = None,
+    also_true: "list[str] | None" = None,
 ) -> None:
     """Write one exit-trigger telemetry row.
 
@@ -2212,6 +2252,11 @@ def record_exit_trigger(
     or as a dict via gate_state; gate_state_json takes precedence.
     ts_utc/ts_et may be supplied by callers (tests, replays); generated from
     system clock when absent.
+    also_true: list of other exit-layer names that co-fired when the primary
+    trigger won (from math_engine.resolve_trigger_priority).  None means not
+    provided (legacy/pre-029 rows); [] means a clean single-winner exit with
+    no co-fires.  Stored as JSON via json.dumps — dual-stored in also_true_json
+    column AND retained in the gate_state_json blob (Option A, ruling 2026-06-01).
     """
     from datetime import timedelta
 
@@ -2224,13 +2269,15 @@ def record_exit_trigger(
     if gate_state_json is None and gate_state is not None:
         gate_state_json = json.dumps(gate_state)
 
+    also_true_json = json.dumps(also_true) if also_true is not None else None
+
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.execute(
             "INSERT INTO exit_triggers "
             "(ts_utc, ts_et, symphony_id, account_id, triggered_reason, at_return, "
-            " gate_state_json, cycle_id, math_mode, port_trigger_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " gate_state_json, cycle_id, math_mode, port_trigger_id, also_true_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ts_utc,
                 ts_et,
@@ -2242,6 +2289,7 @@ def record_exit_trigger(
                 cycle_id,
                 math_mode,
                 port_trigger_id,
+                also_true_json,
             ),
         )
         conn.commit()
@@ -2261,7 +2309,7 @@ def get_recent_exit_triggers(limit: int = 50) -> "list[dict]":
     try:
         rows = conn.execute(
             "SELECT id, ts_utc, ts_et, symphony_id, account_id, triggered_reason, "
-            "at_return, gate_state_json, cycle_id, math_mode, port_trigger_id "
+            "at_return, gate_state_json, cycle_id, math_mode, port_trigger_id, also_true_json "
             "FROM exit_triggers ORDER BY ts_utc DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -2781,7 +2829,7 @@ def get_triggers(
         params.append(reason)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(
-        f"SELECT id, ts_utc, ts_et, symphony_id, triggered_reason, at_return, gate_state_json, cycle_id "
+        f"SELECT id, ts_utc, ts_et, symphony_id, triggered_reason, at_return, gate_state_json, cycle_id, also_true_json "
         f"FROM exit_triggers {where} ORDER BY ts_utc DESC LIMIT ?",
         params + [limit],
     ).fetchall()

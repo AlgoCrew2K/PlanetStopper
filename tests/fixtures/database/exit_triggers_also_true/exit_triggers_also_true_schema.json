@@ -1,0 +1,42 @@
+{
+  "_comment": "Fixture for migration 029_exit_triggers_also_true.sql — schema-derived, zero hardcoded producer values.",
+  "_provenance": "captured-from-source: field names, types, and constraints derived directly from the mission brief and database.py record_exit_trigger call at alpha_bot_execution.py:1783-1797.",
+
+  "migration_file": "029_exit_triggers_also_true.sql",
+  "target_table": "exit_triggers",
+  "new_column": {
+    "name": "also_true_json",
+    "type": "TEXT",
+    "notnull": false,
+    "default": null
+  },
+
+  "round_trip_cases": [
+    {
+      "id": "multi_cofires",
+      "also_true_input": ["VWAP Bleed Cut", "Trailing Stop"],
+      "expected_json": "[\"VWAP Bleed Cut\", \"Trailing Stop\"]",
+      "description": "Two co-firing layers stored as JSON array; round-trips via json.loads back to the original list."
+    },
+    {
+      "id": "empty_cofires",
+      "also_true_input": [],
+      "expected_json": "[]",
+      "description": "Empty co-fire list (single trigger wins cleanly) stored as '[]', not NULL."
+    },
+    {
+      "id": "null_cofires",
+      "also_true_input": null,
+      "expected_json": null,
+      "description": "None input stores NULL — no co-fire information available (e.g. legacy rows, pre-029 data)."
+    }
+  ],
+
+  "gate_state_blob_design": {
+    "also_true_in_gate_state_dict": true,
+    "also_true_popped_before_json_dumps": false,
+    "rationale": "Option A (dual-storage): also_true remains in gate_state_json blob AND is written to the dedicated also_true_json column. The two values are populated from the same source and cannot diverge. The dedicated column is the queryable source of truth for exit-attribution analysis; the blob copy is legacy context. The 4 existing GREEN tests (test_trigger_priority_dispatch.py) assert 'also_true' in gate_state and must stay GREEN unchanged.",
+    "column_is_queryable_source": true,
+    "blob_copy_is_legacy": true
+  }
+}
