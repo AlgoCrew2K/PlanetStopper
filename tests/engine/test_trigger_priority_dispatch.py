@@ -188,7 +188,9 @@ def patched_env():
         mock_db.load_chart_history.return_value = {
             "date": _FIXED_ET.strftime("%Y-%m-%d"), "symphonies": {}
         }
-        mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
+        # live_mode=True: these tests exercise live execution paths; the master-switch
+        # gate (LIVE_EXECUTION and item["live_mode"]) requires both flags set.
+        mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}, "live_mode": True}
         mock_db.normalize_name.side_effect = lambda x: x
         mock_db.wipe_transient_state.side_effect = lambda s: s
 

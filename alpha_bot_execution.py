@@ -1150,6 +1150,10 @@ def main():
                 symphony_name = sym.get("name", "Unknown Symphony")
                 normalized_name = database.normalize_name(symphony_name)
                 symphony_strat = database.get_symphony_strategy(normalized_name)
+                # Per-symphony live_mode — piggybacks the already-called
+                # get_symphony_strategy SELECT; no second DB round-trip (arch rule 1).
+                # Default False (dry-run) satisfies arch rule 4: is_live explicit.
+                symphony_live_mode = bool(symphony_strat.get("live_mode", False))
                 acc_params = symphony_strat.get("params", {})
 
                 acc_TRIGGER_THRESHOLD_PCT = acc_params.get(
@@ -1676,6 +1680,9 @@ def main():
                             "acc_VWAP_BLEED_TICKS": acc_VWAP_BLEED_TICKS,
                             "vwap_ticks": bot_state[symphony_id]["vwap_ticks"],
                             "acc_TAKE_PROFIT_MC_PCT": acc_TAKE_PROFIT_MC_PCT,
+                            # Per-symphony live_mode — determines effective is_live
+                            # under the MASTER-SWITCH (LIVE_EXECUTION AND live_mode).
+                            "live_mode": symphony_live_mode,
                         }
                     )
 
@@ -1704,7 +1711,10 @@ def main():
 
                     sym_chart_data = chart_history["symphonies"].get(sym_id, [])
 
-                    if LIVE_EXECUTION:
+                    if LIVE_EXECUTION and item["live_mode"]:
+                        # MASTER-SWITCH: real trade fires only when both the global
+                        # arm (LIVE_EXECUTION) AND the per-symphony gate (live_mode)
+                        # are set.  Either alone is dry-run (arch rule 4).
                         print(
                             f"  -> [LIVE EXECUTION] Sending sell-to-cash command for {item['symphony_name']}..."
                         )
@@ -1825,7 +1835,7 @@ def main():
                             item["prob_beating"],
                             item["stop_trigger_level"],
                             item["safe_hwm"],
-                            LIVE_EXECUTION,
+                            LIVE_EXECUTION and item["live_mode"],  # per-symphony effective mode
                             DISCORD_WEBHOOK_URL,
                             exit_reason=reason,
                             vwap_bleed_arm_pct=item["acc_VWAP_BLEED_ARM_PCT"],
