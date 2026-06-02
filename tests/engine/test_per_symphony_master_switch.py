@@ -11,14 +11,24 @@ This cycle adds per-symphony live_mode under a MASTER-SWITCH:
 A symphony fires a real trade ONLY when BOTH conditions are satisfied.  The global
 flag stays the master arm — per-symphony=1 with global=0 is still dry-run.
 
-THE 2 IMPLEMENTATION CHANGES (both must land before these tests go GREEN):
+READER CONTRACT (PM ruling 2026-06-02):
+  database.get_symphony_strategy() is extended to include 'live_mode' (bool) in its
+  return dict.  The exec path reads live_mode from the ALREADY-CALLED get_symphony_strategy
+  return value at ~:1152, via symphony_strat.get("live_mode", False) — NO additional
+  DB query.  This keeps the 1-min hot path at a single SELECT per symphony.
 
-  1. alpha_bot_execution.py ~:1152:
-       symphony_live_mode = database.get_symphony_live_mode(normalized_name)
-     Store as part of the per-symphony read block, then carry it into the
-     execution_queue item dict.
+THE IMPLEMENTATION CHANGES (all must land before these tests go GREEN):
 
-  2. alpha_bot_execution.py ~:1659-1680:
+  1. database.py get_symphony_strategy (~:441):
+       SELECT parameters, locked_vars, live_mode FROM symphony_strategies
+       Return: {"params": ..., "locked_vars": ..., "live_mode": bool(live_mode_col)}
+       Default (no-row) path must also return "live_mode": False.
+
+  2. alpha_bot_execution.py ~:1153 (immediately after the existing get_symphony_strategy call):
+       symphony_live_mode = bool(symphony_strat.get("live_mode", False))
+     — reads from the already-fetched dict, no second query.
+
+  3. alpha_bot_execution.py ~:1659-1680:
        execution_queue.append({
            ...existing keys...,
            "live_mode": symphony_live_mode,
@@ -29,7 +39,7 @@ THE 2 IMPLEMENTATION CHANGES (both must land before these tests go GREEN):
        else:
            # [DRY RUN] ...
 
-  3. alpha_bot_execution.py:1828:
+  4. alpha_bot_execution.py:1828:
        reporting.send_discord_alert(
            ...existing args...,
            LIVE_EXECUTION and item["live_mode"],   # <- per-symphony effective mode
@@ -42,8 +52,8 @@ Coverage (all FAIL RED until GREEN implementation lands):
   MS2: global off, symphony on → execute_sell_to_cash NOT called (dry-run)
   MS3: global on, symphony off → execute_sell_to_cash NOT called (dry-run)
   MS4: both off → execute_sell_to_cash NOT called (dry-run)
-  MS5: symphony with no live_mode row (default-dry) + global on → dry-run
-  MS6: execution_queue item carries 'live_mode' key (implementation check)
+  MS5: symphony with no live_mode (default-dry via get_symphony_strategy) + global on → dry-run
+  MS6: get_symphony_strategy is called with a live_mode-aware mock (structural check)
 
   AU1: autotuner does not read live_mode from the parameters dict
   AU2: autotuner save_symphony_strategy call does not pass live_mode key in params
@@ -53,15 +63,14 @@ Coverage (all FAIL RED until GREEN implementation lands):
 
   EX1: resolve_trigger_priority (6-layer exit) is not modified — the gate change
        must not alter the exit-layer priority logic
-  EX2: no blocking I/O introduced — execution_queue processing loop must not
-       add a DB read per symphony AFTER the queue is built (live_mode must be
-       read during queue construction, not at dispatch time)
+  EX2: live_mode is read from get_symphony_strategy dict, not via a separate
+       get_symphony_live_mode call — no extra DB read per symphony per cycle
 
 Mocking philosophy (inherits from test_trigger_priority_dispatch.py):
   - No real network — fetch_symphony_stats / fetch_alpaca_history /
     fetch_intraday_vwaps patched.
-  - database.* mocked except get_symphony_live_mode which is routed through
-    the test's control (monkeypatched return value).
+  - database.* mocked; get_symphony_strategy.return_value includes "live_mode" key
+    so the exec path's symphony_strat.get("live_mode", False) returns the test value.
   - Math engine NOT mocked wholesale; run_monte_carlo returns a fixed 50.0 so
     MC history shortage doesn't suppress the trigger.
   - execute_sell_to_cash mocked to return True so full side-effect block runs.
@@ -264,11 +273,16 @@ class _PatchStack:
         mock_db.load_chart_history.return_value = {
             "date": date_str, "symphonies": {}
         }
-        mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
+        # Include live_mode in the get_symphony_strategy return dict so the exec
+        # path's symphony_strat.get("live_mode", False) returns the test-controlled
+        # value (PM ruling 2026-06-02: reader contract — no second DB query).
+        mock_db.get_symphony_strategy.return_value = {
+            "params": {},
+            "locked_vars": {},
+            "live_mode": bool(self._symphony_live_mode),
+        }
         mock_db.normalize_name.side_effect = lambda x: x
         mock_db.wipe_transient_state.side_effect = lambda s: s
-        # Per-symphony live_mode read
-        mock_db.get_symphony_live_mode.return_value = self._symphony_live_mode
 
         mock_fetch_sym.return_value = [_make_symphony_payload(last_percent_change=0.05)]
         mock_fetch_hist.return_value = _make_minimal_history(date_str)
@@ -454,46 +468,50 @@ def test_master_switch_default_dry_run_when_no_live_mode_row():
 
 
 # ---------------------------------------------------------------------------
-# MS6: execution_queue item carries 'live_mode' key
+# MS6: exec path reads live_mode from get_symphony_strategy return dict
 # ---------------------------------------------------------------------------
 
 
-def test_execution_queue_item_carries_live_mode_key():
+def test_exec_path_reads_live_mode_from_get_symphony_strategy_dict():
     """
-    MS6: The execution_queue dict item for a triggered symphony must include a
-    'live_mode' key.
+    MS6: The exec path must read live_mode from get_symphony_strategy()'s return
+    dict (symphony_strat.get("live_mode", False)) — NOT via a separate
+    get_symphony_live_mode call.
 
-    This is a structural contract test: the exec path reads live_mode during
-    queue construction (~:1152) and must carry it through to the dispatch gate
-    (~:1707). Without this key, any refactoring of the queue-dispatch block
-    cannot safely re-implement the master-switch gate.
+    This structural test verifies the reader contract (PM ruling 2026-06-02):
+    the live_mode read piggybacks the already-called get_symphony_strategy SELECT
+    rather than adding a new DB round-trip.  We confirm this by:
+      (a) get_symphony_strategy is called (always true; existing call at :1152)
+      (b) When get_symphony_strategy returns {"live_mode": True}, the real trade
+          fires — meaning the exec path consumed the live_mode from the dict.
+      (c) When get_symphony_strategy returns {"live_mode": False}, trade is blocked
+          — same structural proof from the other side.
 
-    We capture the queue by intercepting execute_sell_to_cash and inspecting
-    the enclosing scope via database.record_exit_trigger call args — or we
-    verify indirectly that get_symphony_live_mode was called once per symphony.
+    The (b)/(c) pair is already covered by MS1/MS3; this test just anchors the
+    structural explanation explicitly.
     """
-    # Verify get_symphony_live_mode is called for the symphony in the cycle.
-    # This is the most testable proxy for "live_mode was read during queue construction".
+    # With live_mode=True in the get_symphony_strategy dict and global=True,
+    # execute_sell_to_cash must be called — proving the dict's live_mode is consumed.
     with _PatchStack(
         _FIXED_ET.strftime("%Y-%m-%d"),
         global_live=True,
-        symphony_live_mode=1,
+        symphony_live_mode=1,  # → get_symphony_strategy returns {"live_mode": True}
         extra_patches={},
     ) as mocks:
         alpha_bot_execution.main()
 
-    assert mocks["db"].get_symphony_live_mode.called, (
-        "MS6 FAILED: database.get_symphony_live_mode was never called during run_bot_cycle(). "
-        "The exec path must read live_mode for each symphony during queue construction "
-        "(alpha_bot_execution.py ~:1152). "
-        "Fix: add symphony_live_mode = database.get_symphony_live_mode(normalized_name) "
-        "after the existing symphony_strat read and carry it in the execution_queue item."
+    assert mocks["db"].get_symphony_strategy.called, (
+        "MS6 FAILED: database.get_symphony_strategy was not called during main(). "
+        "The exec path at alpha_bot_execution.py:1152 must call get_symphony_strategy "
+        "for each symphony — this is the existing call; it must not have been removed."
     )
-
-    call_args = mocks["db"].get_symphony_live_mode.call_args_list
-    assert len(call_args) >= 1, (
-        f"get_symphony_live_mode called {len(call_args)} time(s); expected at least 1 "
-        "(once per symphony in the cycle)."
+    # Trade must fire when the dict carries live_mode=True and global is on.
+    assert mocks["sell"].call_count == 1, (
+        f"MS6 FAILED: execute_sell_to_cash called {mocks['sell'].call_count} time(s) "
+        "when get_symphony_strategy returned live_mode=True and LIVE_EXECUTION=True. "
+        "The exec path must consume live_mode from the get_symphony_strategy return dict "
+        "(symphony_strat.get('live_mode', False)) and carry it in item['live_mode'] "
+        "for the gate at :1707."
     )
 
 
@@ -676,23 +694,23 @@ def test_resolve_trigger_priority_signature_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# EX2: get_symphony_live_mode called during queue construction, not during dispatch
+# EX2: live_mode sourced from get_symphony_strategy dict, no extra query
 # ---------------------------------------------------------------------------
 
 
-def test_get_symphony_live_mode_not_called_during_execution_dispatch():
+def test_live_mode_sourced_from_get_symphony_strategy_no_extra_query():
     """
-    EX2: database.get_symphony_live_mode must be called during queue construction
-    (the per-symphony evaluation loop ~:1145-1680) and the result carried in the
-    queue item — NOT fetched a second time inside the queue dispatch loop (~:1699-1842).
+    EX2: live_mode must be read from get_symphony_strategy()'s return dict, NOT
+    via a separate get_symphony_live_mode call.
 
-    Architecture constraint 1: no new blocking I/O in the execution dispatch loop.
-    The live_mode read must piggyback the existing symphony_strat SELECT, not add
-    a separate query per item inside the chunk loop.
+    Architecture constraint 1: no new blocking I/O on the 1-min execution path.
+    The live_mode value must piggyback the EXISTING get_symphony_strategy SELECT
+    at ~:1152; it must not cause a second DB round-trip.
 
-    We verify this by checking that get_symphony_live_mode is NOT called inside
-    the chunk-dispatch block. The most practical proxy: get_symphony_live_mode
-    call_count equals the number of symphonies (1 in this test), not 2.
+    We verify this by checking that database.get_symphony_live_mode is NOT called
+    (i.e., call_count == 0) during a full main() cycle.  The live_mode value reaches
+    item["live_mode"] via symphony_strat.get("live_mode", False) from the already-
+    called get_symphony_strategy — no separate accessor needed.
     """
     with _PatchStack(
         _FIXED_ET.strftime("%Y-%m-%d"),
@@ -702,12 +720,20 @@ def test_get_symphony_live_mode_not_called_during_execution_dispatch():
     ) as mocks:
         alpha_bot_execution.main()
 
-    call_count = mocks["db"].get_symphony_live_mode.call_count
-    # One symphony in the test → exactly 1 call during construction.
-    # If 2 calls, the dispatch loop is also calling it (blocking I/O violation).
-    assert call_count == 1, (
-        f"EX2 FAILED: get_symphony_live_mode called {call_count} time(s) but expected 1. "
-        "If called >1 time, the execution dispatch loop is re-querying live_mode for "
-        "each item — this is a blocking I/O violation (arch constraint 1). "
-        "Read live_mode once during queue construction and carry it in item['live_mode']."
+    # get_symphony_live_mode must NOT be called — live_mode comes from
+    # get_symphony_strategy's return dict (no extra SELECT).
+    live_mode_call_count = mocks["db"].get_symphony_live_mode.call_count
+    assert live_mode_call_count == 0, (
+        f"EX2 FAILED: database.get_symphony_live_mode was called {live_mode_call_count} time(s). "
+        "It must NOT be called — live_mode must be read from the get_symphony_strategy "
+        "return dict via symphony_strat.get('live_mode', False). "
+        "A separate get_symphony_live_mode call adds an extra DB SELECT per symphony "
+        "on the 1-min hot path (arch constraint 1 violation)."
+    )
+    # get_symphony_strategy MUST still be called (the existing per-symphony read).
+    strat_call_count = mocks["db"].get_symphony_strategy.call_count
+    assert strat_call_count >= 1, (
+        f"EX2 pre-condition FAILED: get_symphony_strategy was called {strat_call_count} time(s). "
+        "It must be called at least once — it is the existing per-symphony strategy read "
+        "that live_mode now piggybacks."
     )

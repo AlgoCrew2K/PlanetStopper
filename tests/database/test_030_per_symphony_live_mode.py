@@ -866,3 +866,180 @@ def test_get_symphony_live_mode_does_not_block(migrated_db, monkeypatch):
         f"get_symphony_live_mode took {elapsed:.3f}s — exceeds 50ms budget. "
         "Architecture constraint 1: no blocking I/O on the 1-minute execution path."
     )
+
+
+# ---------------------------------------------------------------------------
+# R1: get_symphony_strategy returns a 'live_mode' key (exec-path reader contract)
+# ---------------------------------------------------------------------------
+
+
+def test_get_symphony_strategy_returns_live_mode_key(migrated_db, monkeypatch):
+    """
+    R1: database.get_symphony_strategy must include 'live_mode' (bool) in its
+    return dict alongside 'params' and 'locked_vars'.
+
+    The exec path at alpha_bot_execution.py:1152 calls get_symphony_strategy once
+    per symphony per cycle. Per PM ruling 2026-06-02: the implementer reads
+    symphony_live_mode = symphony_strat.get("live_mode", False) — NO additional
+    DB query. This removes the need for a separate get_symphony_live_mode call on
+    the hot 1-min path.
+
+    Implementation requirement: get_symphony_strategy must SELECT live_mode from
+    symphony_strategies alongside parameters and locked_vars, and include it in
+    the returned dict as a bool (0/False → dry-run, 1/True → live).
+    """
+    monkeypatch.setattr(db_module, "DB_FILE", migrated_db)
+    save_symphony_strategy("r1-sym", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS)
+
+    result = db_module.get_symphony_strategy("r1-sym")
+
+    assert "live_mode" in result, (
+        f"get_symphony_strategy must include 'live_mode' in its return dict. "
+        f"Keys present: {list(result.keys())}. "
+        "Implementation: SELECT parameters, locked_vars, live_mode FROM symphony_strategies "
+        "and include 'live_mode': bool(row[2]) in the returned dict. "
+        "The exec path reads symphony_strat.get('live_mode', False) — no second query."
+    )
+
+
+# ---------------------------------------------------------------------------
+# R2: get_symphony_strategy returns live_mode=False for a new/unconfigured symphony
+# ---------------------------------------------------------------------------
+
+
+def test_get_symphony_strategy_returns_live_mode_false_for_new_symphony(migrated_db, monkeypatch):
+    """
+    R2: get_symphony_strategy must return live_mode=False (falsy) for a symphony
+    that has no row yet — the auto-insert via DEFAULT_STRATEGY path must also
+    default to dry-run (arch rule 4).
+
+    This tests the no-row branch of get_symphony_strategy (lines ~450-456 in
+    database.py), which calls save_symphony_strategy and returns a synthetic dict.
+    That synthetic dict must also carry live_mode=False.
+    """
+    monkeypatch.setattr(db_module, "DB_FILE", migrated_db)
+
+    # Call on a symphony that does not yet have a row — triggers auto-insert.
+    result = db_module.get_symphony_strategy("brand-new-r2-sym")
+
+    assert "live_mode" in result, (
+        "get_symphony_strategy must include 'live_mode' in its return dict even "
+        "for the no-row (auto-insert) path."
+    )
+    assert not result["live_mode"], (
+        f"get_symphony_strategy must return live_mode=False for a new symphony; "
+        f"got live_mode={result['live_mode']!r}. "
+        "Default-dry: unconfigured symphonies are never live (arch rule 4)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# R3: get_symphony_strategy returns live_mode=True when DB has live_mode=1
+# ---------------------------------------------------------------------------
+
+
+def test_get_symphony_strategy_returns_live_mode_true_when_column_is_one(migrated_db, monkeypatch):
+    """
+    R3: get_symphony_strategy must return live_mode=True (truthy) when the
+    symphony_strategies row has live_mode=1.
+
+    This is the critical path check: an operator-enabled symphony must appear as
+    live_mode=True in the dict the exec path uses to build item["live_mode"].
+    """
+    monkeypatch.setattr(db_module, "DB_FILE", migrated_db)
+    save_symphony_strategy("r3-live-sym", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS)
+    db_module.set_symphony_live_mode("r3-live-sym", live=1, operator="admin")
+
+    result = db_module.get_symphony_strategy("r3-live-sym")
+
+    assert "live_mode" in result, (
+        "get_symphony_strategy must include 'live_mode' in its return dict."
+    )
+    assert result["live_mode"], (
+        f"get_symphony_strategy must return live_mode=True (truthy) when live_mode=1 "
+        f"in the DB; got live_mode={result['live_mode']!r}. "
+        "The exec path uses this value as item['live_mode'] in the master-switch gate."
+    )
+
+
+# ---------------------------------------------------------------------------
+# R4: get_symphony_strategy returns live_mode=False when DB has live_mode=0
+# ---------------------------------------------------------------------------
+
+
+def test_get_symphony_strategy_returns_live_mode_false_when_column_is_zero(migrated_db, monkeypatch):
+    """
+    R4: get_symphony_strategy must return live_mode=False (falsy) when the
+    symphony_strategies row has live_mode=0.
+
+    Belt-and-suspenders: explicitly tests that 0 → False mapping is correct,
+    not just that the key exists.
+    """
+    monkeypatch.setattr(db_module, "DB_FILE", migrated_db)
+    save_symphony_strategy("r4-dry-sym", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS)
+    # live_mode defaults to 0; no set_symphony_live_mode call.
+
+    result = db_module.get_symphony_strategy("r4-dry-sym")
+
+    assert "live_mode" in result, (
+        "get_symphony_strategy must include 'live_mode' in its return dict."
+    )
+    assert not result["live_mode"], (
+        f"get_symphony_strategy must return live_mode=False (falsy) when live_mode=0 "
+        f"in the DB; got live_mode={result['live_mode']!r}."
+    )
+
+
+# ---------------------------------------------------------------------------
+# R5: get_symphony_strategy live_mode survives save_symphony_strategy clobber
+#     (head-on clobber test — the essential correctness check)
+# ---------------------------------------------------------------------------
+
+
+def test_get_symphony_strategy_live_mode_survives_autotuner_clobber(migrated_db, monkeypatch):
+    """
+    R5: The clobber-preservation head-on test.
+
+    Steps:
+      1. Create a symphony_strategies row.
+      2. Operator enables live_mode=1.
+      3. Autotuner writes new params via save_symphony_strategy (simulates a tune run).
+      4. Assert get_symphony_strategy returns live_mode=True.
+
+    If save_symphony_strategy used INSERT OR REPLACE (DELETE+INSERT), live_mode
+    would be reset to DEFAULT (0) silently. That would flip a live symphony to
+    dry-run on the next autotune — a silent real-money safety regression (arch rule 4).
+
+    The ON CONFLICT DO UPDATE SET parameters=..., locked_vars=... (deliberately
+    omitting live_mode) must preserve the operator-set value.
+    """
+    monkeypatch.setattr(db_module, "DB_FILE", migrated_db)
+    save_symphony_strategy("clobber-sym", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS)
+
+    # Operator enables live for this symphony.
+    db_module.set_symphony_live_mode("clobber-sym", live=1, operator="admin")
+
+    # Pre-condition: live_mode is True before the autotune write.
+    pre = db_module.get_symphony_strategy("clobber-sym")
+    assert pre.get("live_mode"), "Pre-condition: live_mode must be truthy after set_symphony_live_mode(1)."
+
+    # Autotuner writes new tuned params (simulates autotuner.py:2518).
+    updated_params = {**db_module.DEFAULT_STRATEGY, "TRIGGER_THRESHOLD_PCT": 12.0}
+    save_symphony_strategy("clobber-sym", updated_params, db_module.DEFAULT_LOCKED_VARS)
+
+    # Post-condition: live_mode must be UNCHANGED — still True.
+    post = db_module.get_symphony_strategy("clobber-sym")
+    assert "live_mode" in post, (
+        "get_symphony_strategy must include 'live_mode' in its return dict after a "
+        "save_symphony_strategy call."
+    )
+    assert post["live_mode"], (
+        f"CLOBBER DETECTED: get_symphony_strategy returned live_mode={post['live_mode']!r} "
+        "after save_symphony_strategy overwrote params. "
+        "This is the critical correctness failure: a live symphony was silently flipped "
+        "to dry-run by the autotuner's param write. "
+        "Fix: save_symphony_strategy must use ON CONFLICT DO UPDATE SET "
+        "parameters=excluded.parameters, locked_vars=excluded.locked_vars "
+        "(live_mode deliberately omitted — preserved). "
+        "INSERT OR REPLACE is DELETE+INSERT and resets live_mode to DEFAULT(0)."
+    )
