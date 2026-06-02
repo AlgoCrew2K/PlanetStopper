@@ -1,15 +1,17 @@
 # math_engine
 
-> Pure risk-math primitives: trailing-stop mechanics, CRRA-EU utility, CVaR diagnostic type, Monte Carlo gating, VWAP signals, and the 6-layer exit-trigger resolver.
+> Pure risk-math primitives: trailing-stop mechanics, CRRA-EU utility, CVaR diagnostics, Monte Carlo gating, regime-match guard, VWAP signals, and the 6-layer exit-trigger resolver.
 
 **Source:** `math_engine.py`
-**Last updated:** 2026-05-27
+**Last updated:** 2026-06-02
 
 ## Overview
 
 `math_engine.py` contains all decision-math functions extracted from the execution path. Every function is pure (no I/O, no state, no DB writes) unless explicitly noted. Functions that accept float parameters call `_reject_non_finite` at entry — NaN/Inf inputs raise `ValueError` rather than propagating silently into exit decisions.
 
 The module is the single source of truth for all named math constants (project no-magic-numbers rule). It is imported by `alpha_bot_execution.py`, `autotuner.py`, and `synthetic_history.py`.
+
+Note: the CRRA-EU derivation helpers (`derive_wealth_argument`, `derive_floored_wealth_argument`, `compute_crra_eu_tstat`) and the Harvey & Liu haircut helpers (`compute_sortino_tstat`, `compute_haircut_pvalue`, `benjamini_hochberg_adjust`, `compute_n_effective`) all live in **`autotuner.py`**, not in this module. See `autotuner.md` for those functions.
 
 ## API Reference
 
@@ -30,63 +32,73 @@ Removes `_SORTINO_SENTINEL` (1e6) entries from the trial Sortino series before t
 
 ---
 
-### CRRA-EU Utility (Phase-1 M1)
-
-#### `derive_wealth_argument(r_policy_fraction: float) → float`
-Returns the raw per-period gross wealth ratio `W = 1 + r_policy_fraction`. This is the W-H2 formula. The floor is NOT applied here — use `derive_floored_wealth_argument` when feeding into CRRA utility.
-
-**Reference:** `docs/decision-science/w-h2-wealth-argument-derivation.md §3`
-
-#### `derive_floored_wealth_argument(r_policy_fraction: float) → float`
-Returns `max(WEALTH_ARG_FLOOR, 1 + r_policy_fraction)`. This is the complete W-H2 + W-H4 construction. Call this before `compute_crra_utility`. The floor is on the INPUT `W`, never on the output `U`.
+### CRRA-EU Utility
 
 #### `compute_crra_utility(W: float, gamma: float) → float`
-<!-- TODO: Add documentation -->
 Computes CRRA utility `u(W; γ)`:
 - `(W^(1-γ) - 1) / (1-γ)` for `γ ≠ 1` (within `CRRA_LOG_UTILITY_GAMMA_TOL`)
 - `ln(W)` for the `γ → 1` log-utility limit
 
-#### `compute_crra_eu_tstat(U_series: list[float]) → float`
-Per-trial t-statistic for the CRRA-EU objective: `mean(U) / (sd(U) / sqrt(T))`. Uses sample stdev (ddof=1). Returns `0.0` for T ≤ 1 or a constant series. This is the correct form for a mean-valued objective — do NOT use `compute_sortino_tstat` for CRRA-EU (that is the H-6 category error).
+W must be the floored wealth argument (`W >= WEALTH_ARG_FLOOR`). The floor is applied by the caller; flooring inside this function would hide a caller contract violation.
 
-**Returns:** `float` — t-statistic; `0.0` for degenerate series.
+**Reference:** `decision-science-council-synthesis.md §3.9 W-H2 / W-H4`
 
-**Reference:** S-2 binding condition; council synthesis §4.
+#### `compute_crra_eu_objective(daily_returns: list[float], gamma: float) → float`
+CRRA expected-utility objective: `mean(U)` over the fold. For each decimal-fraction return `r_i`:
+1. Reject non-finite via `_reject_non_finite`
+2. Floor wealth argument: `W_i = max(WEALTH_ARG_FLOOR, 1 + r_i)`
+3. Compute `U_i = compute_crra_utility(W_i, gamma)`
 
----
-
-### Harvey & Liu BHY Haircut
-
-#### `compute_sortino_tstat(sortino: float, T: int) → float`
-Per-trial t-statistic for the Sortino objective: `sortino * sqrt(T)`. Appropriate ONLY for ratio-valued objectives. Using this for a mean-valued objective (e.g. CRRA-EU) is the H-6 category error.
+Returns `mean(U) = sum(U) / T`. Returns `0.0` for an empty series.
 
 **Parameters:**
 | Name | Type | Description |
 |------|------|-------------|
-| `sortino` | `float` | Sortino ratio |
-| `T` | `int` | In-sample observation count |
+| `daily_returns` | `list[float]` | Decimal-fraction returns (not percent) |
+| `gamma` | `float` | CRRA risk-aversion coefficient |
 
-**Returns:** `float`
+**Returns:** `float` — mean CRRA utility over the fold.
 
-#### `compute_haircut_pvalue(t_stat: float) → float`
-One-sided p-value `1 - Φ(t)`, clamped to `[_HAIRCUT_PVALUE_EPSILON, 1 - _HAIRCUT_PVALUE_EPSILON]`. Prevents IEEE-754 underflow/saturation for extreme t-statistics.
+---
 
-#### `benjamini_hochberg_adjust(p_values: list[float]) → list[float]`
-Benjamini-Hochberg-Yekutieli (BHY) step-up adjustment. The Yekutieli `c(N) = sum(1/j)` factor corrects for arbitrary dependence (Optuna TPE concentrates the search; plain BH assumes independence). Returns one adjusted p-value per input in the original order.
+### Regime-Match Guard
 
-**Reference:** Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013; Benjamini-Hochberg-Yekutieli 2001.
+#### `class RegimeMatchAssessment`
+Frozen dataclass for the MC regime-match-quality guard (vision-audit Critical Rec #2).
 
-#### `compute_n_effective(n_optuna: int, ledger_query, winning_spec_bundle_id: str | None = None) → int`
-Returns `N_optuna + S`, the honest multiple-testing count. `S` is the sum of `n_configs_searched` over `BACKTEST_SELECTION` ledger rows, excluding frozen-eval-tainted rows and the winning bundle. NN1-honest case (S=0) makes this byte-identical to today's haircut. `ledger_query` is a callable injected for testability.
+**Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `mean_sq_mahalanobis` | `float \| None` | Mean squared Mahalanobis-style distance to K nearest neighbours; `None` = insufficient eligible pool |
+| `is_unprecedented` | `bool` | True when `mean_sq_mahalanobis > threshold_used`. MUST be False when `mean_sq_mahalanobis is None` (fail-safe) |
+| `neighbor_k` | `int` | K used for the kNN test statistic |
+| `threshold_used` | `float` | Threshold actually applied (`MC_REGIME_MATCH_CHI2_THRESHOLD` or env override) |
+| `insufficient_reason` | `str \| None` | Human-readable explanation when `mean_sq_mahalanobis is None` |
+
+`__post_init__` enforces: `mean_sq_mahalanobis is None → is_unprecedented is False` (fail-safe).
+
+#### `compute_regime_match_quality(historical_data: dict, spy_today_return: float) → RegimeMatchAssessment`
+Regime-match-quality guard for the MC bootstrap. Computes a Mahalanobis-style chi-squared test statistic on the K nearest candidate-pool neighbours of today's query point (SPY return, rolling vol). Uses the same z-score standardization as `run_monte_carlo`. Fires only on extreme regime breaks (`MC_REGIME_MATCH_CHI2_THRESHOLD = chi2(2)_{0.99} ≈ 9.21`).
+
+Pure function, O(eligible pool size). No I/O. No blocking work (architecture constraint #1).
+
+#### `apply_regime_exit_adjustment(regime_label: str | None, base_ticks: int) → int`
+Maps a cached regime label to a bounded exit-confirmation tick count. Moves exactly one knob — the `exit_confirm_ticks` threshold. Constants are fixed theory-anchored values, not tuned by Optuna.
+
+Safe default: `None`, empty string, or any unrecognized label returns `base_ticks` unchanged. Labels are exact case-sensitive matches (`'trending'`, `'mean-reverting'`, `'high-vol'`).
+
+**Returns:** `int` clamped to `[REGIME_TICKS_LOWER_BOUND, REGIME_TICKS_UPPER_BOUND]`.
 
 ---
 
 ### Intraday Stop Mechanics
 
 #### `compute_time_squeeze_decay(time_ratio: float) → tuple[float, float]`
-Returns `(dynamic_multiplier, dynamic_min_stop)`. `time_ratio` must be in `[0.0, 1.0]` (fraction of session elapsed). Raises `ValueError` outside that range. Decay curve: `log10(1 + 9 * time_ratio)` — concave, tightening faster early and slower near the close.
+Returns `(dynamic_multiplier, dynamic_min_stop)`. `time_ratio` must be in `[0.0, 1.0]` (fraction of session elapsed). Raises `ValueError` outside that range. Decay curve: `1 - sqrt(1 - time_ratio)` — i.i.d.-returns remaining-session uncertainty curve (Danielsson & Zigrand 2003). Zero free parameters, THEORY provenance.
 
 **Returns:** `(dynamic_multiplier, dynamic_min_stop)` — both floats.
+
+**Reference:** `docs/research/m3-provenance/literature-pass.md §1`
 
 #### `compute_active_trailing_stop(symphony_vol, dynamic_multiplier, dynamic_min_stop, para_armed, breakeven_locked, parabolic_squeeze_multiplier) → float`
 Returns the active trailing-stop distance in percentage points. `parabolic_squeeze_multiplier` must be strictly positive (rejects with `ValueError`). If `para_armed` or `breakeven_locked`, the stop is multiplied by `parabolic_squeeze_multiplier`.
@@ -101,8 +113,8 @@ Returns `(velocity, should_arm_transition)`. Velocity is `current_return - prev_
 
 ### Exit Confirmation
 
-#### `compute_exit_confirmation(armed, is_triggered, current_return, stop_trigger_level, prob_beating: float | None, current_below_stop_count) → tuple[int, bool]`
-Returns `(new_below_stop_count, is_trailing_stop_hit)`. `EXIT_CONFIRM_TICKS` consecutive qualifying ticks required. MC sanity gate: when `prob_beating >= MC_SANITY_THRESHOLD`, the exit is vetoed. When `prob_beating is None` (MC unavailable), the gate passes — insufficient MC data must never disable the protective stop.
+#### `compute_exit_confirmation(armed, is_triggered, current_return, stop_trigger_level, prob_beating: float | None, current_below_stop_count, exit_confirm_ticks=EXIT_CONFIRM_TICKS) → tuple[int, bool]`
+Returns `(new_below_stop_count, is_trailing_stop_hit)`. `exit_confirm_ticks` consecutive qualifying ticks required (defaulting to `EXIT_CONFIRM_TICKS=3`; the regime-adjusted threshold is passed by the execution path). MC sanity gate: when `prob_beating >= MC_SANITY_THRESHOLD`, the exit is vetoed. When `prob_beating is None` (MC unavailable), the gate passes — insufficient MC data must never disable the protective stop.
 
 #### `compute_tp_confirmation(mc_available, prob_beating, take_profit_mc_pct, current_return, is_triggered, tp_armed, above_tp_count) → tuple[bool, int, bool]`
 Returns `(new_tp_armed, new_above_tp_count, is_tp_hit)`. Arms when MC drops below `take_profit_mc_pct`; confirms when MC rises back above and `TP_CONFIRM_TICKS` ticks elapse. MC-unavailable ticks reset the counter.
@@ -154,10 +166,21 @@ Returns a deterministic 64-bit seed from the SHA-256 of the cycle_id string. Pur
 
 ---
 
-### CVaR Diagnostic Type
+### CVaR Diagnostics
+
+#### `class CVaREstimate`
+Frozen dataclass for the pure-math kNN-pool CVaR estimator result (distinct from `CVaRAssessment`).
+
+**Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `cvar_pct` | `float \| None` | R-U general-distribution CVaR; `None` when pool is empty or has fewer than `CVAR_MIN_TAIL_OBS` tail observations |
+| `tail_obs_count` | `int` | Distinct tail observations used (H-2 stderr denominator) |
+| `stderr` | `float \| None` | `std(tail_values, ddof=1) / sqrt(tail_obs_count)`; `None` when sentinel |
+| `insufficient_reason` | `str \| None` | Human-readable explanation when `cvar_pct is None` |
 
 #### `class CVaRAssessment`
-Frozen dataclass (`frozen=True`). Typed result for the Phase-2 forward-path CVaR co-signal.
+Frozen dataclass for the kNN historical regime-match result. Phase-1 diagnostic only; the forward-path co-signal was **REJECTED** by decision-science council (see `docs/audit/vision-audit-2026-05-27/SYNTHESIS.md`). Phase-1 rule: zero production consumers permitted — tests only.
 
 **Fields:**
 | Field | Type | Description |
@@ -165,21 +188,55 @@ Frozen dataclass (`frozen=True`). Typed result for the Phase-2 forward-path CVaR
 | `cvar_pct` | `float \| None` | 5th-percentile CVaR as a percentage; `None` = insufficient |
 | `breach` | `bool` | True when CVaR exceeds operator breach threshold. MUST be False when `cvar_pct is None` |
 | `tail_obs_count` | `int` | Tail observations used; 0 when `cvar_pct is None` |
+| `stderr` | `float \| None` | Standard error of the CVaR estimate; `None` when `cvar_pct is None` |
 | `insufficient_reason` | `str \| None` | Human-readable explanation when `cvar_pct is None` |
 
-`__post_init__` enforces the fail-safe invariant: `cvar_pct is None → breach is False`.
+`__post_init__` enforces: `cvar_pct is None → breach is False`, `cvar_pct is None → tail_obs_count == 0`, and stderr pairing invariants.
 
-#### `compute_portfolio_cvar(...) → CVaRAssessment`
-<!-- TODO: Add documentation -->
+#### `compute_cvar_5pct_general_distribution(returns: list, alpha: float = CVAR_ALPHA_DEFAULT) → CVaREstimate`
+Rockafellar-Uryasev (2002) general-distribution CVaR on a discrete pool. Correct atom handling: `CVaR = (1/alpha) * (1/N) * (sum_below + fractional_weight * VaR)`. Returns `CVaREstimate` with `cvar_pct=None` when pool is empty or insufficient. Raises `ValueError` on non-finite inputs.
+
+#### `compute_cvar_stderr_distinct_tail(returns: list, alpha: float = CVAR_ALPHA_DEFAULT) → float | None`
+Computes CVaR stderr using the DISTINCT GENUINE tail observation count (H-2 binding). Denominator is never the resample count. Returns `None` when pool is empty or has fewer than `CVAR_MIN_TAIL_OBS` observations.
+
+#### `compute_portfolio_cvar(cycle_id, holdings, historical_data, spy_today_return, simulation_paths=5000, neighbor_k=150, *, mode=None) → CVaRAssessment`
+M2 Phase-1 CVaR diagnostic — 5th-percentile expected shortfall. Computes CVaR for the portfolio using the same kNN regime-matching pool as `run_monte_carlo`. Seed is exclusively `derive_cycle_mc_seed(cycle_id)`. When `mode` is `"live"` or `"replay"`, persists the row via `database.record_cvar_diagnostic`. Phase-1: `breach` is always `False`.
+
+---
+
+### CSCV PBO Gate
+
+#### `compute_pbo(configs_date_returns: list[dict[str, float]], eligible_dates: list[str], gamma: float, S: int | None = None) → float`
+Computes the Probability of Backtest Overfitting (PBO) via reduced-N CSCV (Bailey & López de Prado 2014). Partitions `eligible_dates` into `S=_CSCV_S=8` blocks, evaluates `C(8,4)=70` IS/OOS combinations using CRRA-EU mean utility, computes `lambda_c` for each. Returns the fraction of combinations where `lambda_c <= 0`. PBO > `PBO_REJECT_THRESHOLD` (0.5) signals definitive backtest overfitting.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `configs_date_returns` | `list[dict]` | K config dicts, each mapping date-string → decimal return |
+| `eligible_dates` | `list[str]` | Sorted date strings for the CPCV-eligible window |
+| `gamma` | `float` | CRRA risk-aversion coefficient |
+| `S` | `int \| None` | Block count override; default `_CSCV_S=8` |
+
+**Returns:** `float` in [0.0, 1.0] — fraction of IS/OOS combos where IS-best ranked at or below median on OOS.
 
 ---
 
 ### Historical Deviation
 
 #### `calculate_historical_deviation(current_date_str: str) → dict`
-Scans local `post_mortem_*.json` files from the last 45 calendar days. Computes average execution deviation (exit return minus attempted trigger level) grouped by exit reason. Used by the autotuner to apply realistic exit penalties.
+Scans local `post_mortem_*.json` files from the last 45 calendar days. Computes average execution deviation (exit return minus attempted trigger level) grouped by exit reason.
 
 **Returns:** `dict` — keys: `"Take-Profit"`, `"Trailing Stop"`, `"VWAP Breakdown"`, `"VWAP Bleed Cut"`.
+
+---
+
+### Private Helpers (documented for completeness)
+
+#### `_sorted_dates(historical_data: dict) → list[str]`
+LRU-cached helper that extracts and sorts unique date keys from `historical_data`. Used by `run_monte_carlo`, `compute_portfolio_cvar`, and `compute_regime_match_quality`.
+
+#### `_compute_rolling_spy_vol(spy_returns: np.ndarray) → np.ndarray`
+Computes rolling `MC_VOL_WINDOW_DAYS`-day standard deviation of SPY returns. Returns array of same length; early elements use expanding window.
 
 ## Types
 
@@ -198,17 +255,21 @@ Scans local `post_mortem_*.json` files from the last 45 calendar days. Computes 
 | `MC_DEFAULT_SIMULATION_PATHS` | 5000 | Default MC path count |
 | `MC_DEFAULT_NEIGHBOR_K` | 150 | Default kNN pool size |
 | `MC_SEED_MODULUS` | 2^64 | SHA-256 seed space |
+| `MC_REGIME_MATCH_CHI2_THRESHOLD` | 9.21034… | chi2(2)_{0.99} — conservative regime-match gate threshold |
 | `CVAR_TAIL_PCT` | 0.05 | CVaR tail percentile (5th) |
 | `CVAR_ALPHA_DEFAULT` | 0.05 | Default CVaR alpha |
 | `CVAR_MIN_TAIL_OBS` | 1 | Minimum distinct tail observations |
-| `MULT_OPEN` | 1.5 | Dynamic stop multiplier at open |
-| `MULT_CLOSE` | 0.5 | Dynamic stop multiplier at close |
+| `MULT_OPEN` | 1.5 | Dynamic stop multiplier at market open |
+| `MULT_CLOSE` | 0.5 | Dynamic stop multiplier at market close |
 | `EXIT_CONFIRM_TICKS` | 3 | Consecutive ticks to confirm trailing-stop exit |
 | `TP_CONFIRM_TICKS` | 2 | Consecutive ticks to confirm take-profit exit |
 | `MC_SANITY_THRESHOLD` | 60.0 | MC probability above which trailing stop is vetoed |
+| `PBO_REJECT_THRESHOLD` | 0.5 | PBO > this value signals backtest overfitting |
+| `_CSCV_TOP_K` | 20 | Top-K PRE-BHY configs fed into `compute_pbo` |
+| `_CSCV_S` | 8 | Number of contiguous chronological blocks for IS/OOS partition |
 
 ## Internal Dependencies
 
-- `autotuner.py` — imports `WEALTH_ARG_FLOOR`, `_SORTINO_SENTINEL`; calls `run_monte_carlo`, `compute_*` functions
-- `alpha_bot_execution.py` — calls all per-tick decision functions
+- `autotuner.py` — imports `WEALTH_ARG_FLOOR`, `_SORTINO_SENTINEL`; calls `run_monte_carlo`, `compute_pbo`, `compute_regime_match_quality`, `compute_crra_eu_objective`, `compute_*` functions
+- `alpha_bot_execution.py` — calls all per-tick decision functions; `apply_regime_exit_adjustment`
 - `synthetic_history.py` — uses `MC_MIN_HISTORY_DAYS`, `MC_VOL_WINDOW_DAYS`

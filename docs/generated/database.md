@@ -7,13 +7,13 @@
 
 ## Overview
 
-`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 25 numbered migrations (001–025), and every public accessor function. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
+`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 30 numbered migration SQL files (001–030), and every public accessor function. `_MIGRATION_FILES` wires 27 active entries (004–030); migrations 001–003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
 
 WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads while the engine holds a write lock.
 
 ## Schema Migrations
 
-Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **025** (`advisor_observations_symphony_id`).
+Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **030** (`030_per_symphony_live_mode.sql`).
 
 Notable ordering: 021 is listed before 020 — intentional. See `ARCH-002` inline comment; reordering would corrupt live DBs.
 
@@ -74,6 +74,33 @@ Returns `name.strip().lower()` — canonical form for all symphony name lookups.
 
 ---
 
+### Per-Symphony Live Mode (migration 030)
+
+#### `get_symphony_live_mode(symphony_name: str) → bool`
+Returns the per-symphony live-mode flag. `False` (dry-run) is the safe default when no row exists. Added in migration 030.
+
+#### `set_symphony_live_mode(symphony_name: str, live: bool) → None`
+Sets the per-symphony live-mode flag. Called by `POST /api/symphony-settings/<name>` (CSRF-protected). `live=True` means the symphony participates in live order execution; `False` is dry-run.
+
+---
+
+### Regime Cache (migration 026)
+
+#### `save_regime_label(symphony_name: str, label: str, date_str: str) → None`
+Persists the regime classifier label for a symphony on a given date. Added in migration 026.
+
+#### `get_cached_regime_label(symphony_name: str, date_str: str) → str | None`
+Returns the cached regime label for a symphony/date pair, or `None` if not yet computed.
+
+---
+
+### Phase-1.5 M3 Bundle Registry
+
+#### `get_or_create_phase15_m3_bundle_id() → int`
+Idempotent. Inserts the Phase-1.5 M3 spec bundle if absent and returns its integer `id`. Analogous to `get_or_create_phase1_theory_bundle_id` for the M3 regime-exit spec. Added in migration 027.
+
+---
+
 ### Autotune Run Persistence
 
 #### `save_autotune_run(...) → int`
@@ -92,6 +119,7 @@ Inserts one `autotune_runs` row and returns the new `cursor.lastrowid`. Sprint 3
 | `d_spec` | `int \| None` | COUNT DISTINCT BACKTEST_SELECTION bundle ids |
 | `gamma` | `float \| None` | Frozen CRRA risk-aversion coefficient |
 | `overfitting_verdict` | `str \| None` | Overfitting Conscience summary string |
+| `pbo` | `float \| None` | Probability of backtest overfitting from CSCV gate (Phase-3) |
 
 **Returns:** `int` — the new row id.
 

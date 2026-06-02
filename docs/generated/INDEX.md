@@ -13,15 +13,18 @@ All pages in this directory are auto-generated from source. Do not hand-edit gen
 | `ai_advisor` | [ai_advisor.md](ai_advisor.md) | Claude-backed config advisor: context assembly, structured-output Claude call, and safety gates (allowlist, risk-direction check, OOS re-validation) | 2026-05-27 |
 | `alpha_bot_execution` | [alpha_bot_execution.md](alpha_bot_execution.md) | Core per-cycle execution engine: fetches live Composer state, runs per-symphony exit decisions, calls autotuner post-market | 2026-05-27 |
 | `app` | [app.md](app.md) | Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints, daemon singleton lifecycle | 2026-05-27 |
-| `autotuner` | [autotuner.md](autotuner.md) | Optuna walk-forward optimizer with CRRA-EU objective, Harvey & Liu BHY haircut, and NN1 spec-freeze enforcement | 2026-05-27 |
-| `database` | [database.md](database.md) | SQLite state management: schema, 25 migrations, and all read/write accessors for the state DB | 2026-05-27 |
+| `autotuner` | [autotuner.md](autotuner.md) | Optuna walk-forward optimizer: 250-day window, CPCV folds, CRRA-EU objective, Harvey & Liu BHY haircut, CSCV PBO acceptance gate, and NN1 spec-freeze enforcement | 2026-06-02 |
+| `database` | [database.md](database.md) | SQLite state management: schema, 30 migrations (001–030), and all read/write accessors for the state DB | 2026-06-02 |
 | `engine/exit_authority` | [engine_exit_authority.md](engine_exit_authority.md) | Display helpers for the exit-authority badge and restart-notice context (decision-path functions removed in Sprint 3 SITE-C1) | 2026-05-27 |
 | `math_engine` | [math_engine.md](math_engine.md) | Pure risk-math primitives: trailing-stop mechanics, CRRA-EU utility, CVaR diagnostic type, Monte Carlo gating, VWAP signals, 6-layer exit resolver | 2026-05-27 |
 | `reporting` | [reporting.md](reporting.md) | Discord webhook notifications and QuickChart-embedded EOD post-mortem generation | 2026-05-27 |
-| `synthetic_history` | [synthetic_history.md](synthetic_history.md) | 125-day Alpaca historical fetcher with parallel download, file cache, and eligibility guards -- feeds the autotuner replay | 2026-05-27 |
+| `synthetic_history` | [synthetic_history.md](synthetic_history.md) | 250-day Alpaca historical fetcher with parallel download, file cache, and eligibility guards -- feeds the autotuner replay | 2026-06-02 |
 | `advisors/divergence_explainer` | [advisors_divergence_explainer.md](advisors_divergence_explainer.md) | Sprint 3 Stream B producer: surfaces two independent CVaR window values; permanently forbids signed divergence quantities | 2026-05-27 |
 | `advisors/overfitting_conscience` | [advisors_overfitting_conscience.md](advisors_overfitting_conscience.md) | Sprint 3 producer: characterises overfitting risk via S-counter vs N_effective; verdicts CLEAR / WATCH / BREACH | 2026-05-27 |
 | `advisors/spec_critic` | [advisors_spec_critic.md](advisors_spec_critic.md) | Sprint 3 producer: critiques Phase-1 spec bundle structural integrity (facet completeness, freeze-discipline validity, age, phase-scope leaks) | 2026-05-27 |
+| `market_calendar` | *(no generated page)* | Market session state helpers — `get_market_state`; imported by `app.py` | — |
+| `composer_backtest` | *(no generated page)* | Composer backtest client; imported by `advisors/asset_swap_engine.py` | — |
+| `regime_classifier` | *(no generated page)* | Regime classification helpers; used by `database.py` and `math_engine.py` | — |
 
 ---
 

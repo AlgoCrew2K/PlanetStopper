@@ -86,10 +86,10 @@ Planet Stopper is a **monolithic Flask daemon** built around a one-minute schedu
 | `app.py` | The Flask web app **and** the minute-by-minute scheduler. Renders the read-only dashboard, serves the JSON APIs and the `/ai-advisor` surfaces, enforces a single-daemon pidfile, and at every `:00` spawns the execution engine as a subprocess. |
 | `alpha_bot_execution.py` | The **core engine**. One pass per `:00` tick: snapshot Composer holdings, fetch Alpaca prices, walk the risk-math layers per symphony, resolve a single exit decision, and (in live mode) fire liquidations. Also drives the end-of-day post-mortem and kicks off the weekly autotune. |
 | `math_engine.py` | **Pure risk math**, no I/O: volatility scaling, intraday time-squeeze, parabolic ratchet, breakeven lock, VWAP signals, Monte-Carlo gate, regime-match guard, CRRA-EU utility, CVaR, and the exit-priority resolver. Every numeric constant is named and carries a provenance comment. |
-| `autotuner.py` | The **Optuna walk-forward optimizer**: 125 trading days, 500 trials per symphony, CRRA-EU objective, BHY overfitting haircut, and NN1 spec-freeze enforcement. Invokes the three observer advisors after each run. |
+| `autotuner.py` | The **Optuna walk-forward optimizer**: 250 trading days, 500 trials per symphony, CPCV folds (N=6, k=2, 15 splits, 5 paths), CRRA-EU objective, BHY overfitting haircut + PHASE-3 PBO gate, and NN1 spec-freeze enforcement. Invokes the three observer advisors after each run. |
 | `acceptance_gate.py` | The reusable **overfitting acceptance gate** — the one-directional brake that decides whether a candidate clears the multiple-testing bar. Used by the autotuner to certify parameters and by the AI Advisor to screen every proposal. |
 | `database.py` | The **state DB** schema, migrations, and accessors. Owns separate read/write and read-only connection helpers; the dashboard side only ever opens read-only. |
-| `synthetic_history.py` | Fetches 125 days of 1-minute Alpaca history in parallel (with a file cache) and feeds the autotuner's day-by-day replay. |
+| `synthetic_history.py` | Fetches the 250-day walk-forward window of 1-minute Alpaca history in parallel (with a file cache; `_REQUIRED_FETCH_TRADING_DAYS = 299`) and feeds the autotuner's day-by-day replay. |
 | `reporting.py` | Discord webhooks and QuickChart embeds — exit alerts and the daily EOD post-mortem snapshot. |
 | `analytics.py` | Performance analytics for the dashboard: returns, Sharpe/Sortino, drawdown, win-rate, and the live-vs-counterfactual comparison. |
 | `ai_advisor.py` | The Claude-backed **config advisor**: assembles a curated, credential-free context for a symphony and asks an LLM for advise-only config-tuning suggestions. See §[6](#6-the-ai-advisor). |
@@ -97,6 +97,9 @@ Planet Stopper is a **monolithic Flask daemon** built around a one-minute schedu
 | `advisors/` | The **AI Advisor** package: the proposal suite (de-correlation diagnostic, Composer backtest client + gate engine, asset-swap engine, logic-change engine, explain-only chat) plus three post-autotune observer producers. None of it ever trades. See §[6](#6-the-ai-advisor). |
 | `engine/` | Small helpers used by the engine — exit-authority display badge and per-mode parameter resolution. |
 | `dashboard/` | Row-building helpers for the dashboard tables. |
+| `market_calendar.py` | NYSE trading-day calendar helpers used throughout the scheduler and engine. |
+| `regime_classifier.py` | kNN regime classification — identifies the k nearest-neighbor historical days for MC gating and CVaR estimation. |
+| `composer_backtest.py` | Thin client for Composer's stateless backtest endpoint; used by the AI Advisor proposal suite. |
 
 ### The two-database pattern
 
@@ -147,12 +150,17 @@ This is the end-to-end walkthrough of what happens each minute during market hou
 
 ## 5. The dashboard
 
-The dashboard is a Flask web UI on `http://localhost:5000` (overridable via the `PORT` env var). **It is an observability surface, never an action surface for live trades.** It has no button that places, cancels, or modifies a normal trade, and it cannot spawn the engine — the scheduler is the only legal engine spawner.
+The dashboard is a Flask web UI on `http://localhost:5000` (overridable via the `PORT` env var). **It is an observability surface, not a live-trade-action surface.** It has no button that places, cancels, or modifies a trade, and it cannot spawn the engine — the scheduler is the only legal engine spawner.
 
-This read-only stance is enforced in depth:
+The dashboard has two guarded operator-config write paths:
 
-1. **Architecture rule.** The project's hard constraint: the dashboard is read-only for live trades.
-2. **Driver-level.** Every dashboard database accessor opens SQLite in read-only mode. A Flask request thread literally cannot run a write transaction against the state DB.
+1. **Settings panel** () — writes allowlisted algorithm parameters to . Credential keys and  are excluded from the allowlist. Webhook URLs are masked and cannot be written.
+2. **Per-symphony live/dry-run toggle** () — the gear-icon modal lets the operator toggle a symphony between dry-run and live mode. Requires an explicit CONFIRMED step; default is dry-run.
+
+Both write paths are CSRF-protected. All other dashboard paths are enforced read-only in depth:
+
+1. **Architecture rule.** The hard constraint: the dashboard is not a live-trade-action surface.
+2. **Driver-level.** Every non-write database accessor opens SQLite in read-only mode.
 3. **Code-level.** The manual `/api/trigger` endpoint is intentionally disabled and returns an explicit "manual trigger disabled — use the scheduler" message.
 
 The dashboard's tabs:
@@ -161,7 +169,8 @@ The dashboard's tabs:
 - **History (`/history`)** — past exit decisions and daily outcomes.
 - **Performance (`/performance`)** — returns, Sharpe/Sortino, drawdown, calmar, win-rate, and the live-vs-counterfactual ("Guard Alpha") comparison. The route surfaces an "insufficient history" banner below a minimum sample size so underpowered metrics are not shown as precise.
 - **AI Advisor (`/ai-advisor` and its sub-tabs)** — the config-advisor surface, the autotune/advisor-observation feed, and the proposal suite: correlations, asset swaps, logic changes, and explain-only chat (§[6](#6-the-ai-advisor)).
-- **Settings (`/settings`)** — the **one** normal write path in the dashboard: editing operator-config rows (algorithm parameters and webhook URLs). It never touches positions or trades, and secrets are masked.
+- **Settings (`/settings`)** — a guarded write path in the dashboard: editing allowlisted operator-config rows (algorithm parameters). Credential keys and `LIVE_EXECUTION` are excluded from the allowlist. Webhook URLs are masked and cannot be written via the dashboard. Secrets are masked throughout.
+- **Per-symphony settings** (gear icon on the home tab) — a second guarded write path: the per-symphony settings modal (`GET/POST /api/symphony-settings/<name>`) lets the operator toggle a symphony between dry-run and live mode. Requires an explicit CONFIRMED step; default is dry-run. Both write paths are CSRF-protected.
 
 The only operator-initiated *trade* surface is a deliberate **panic button** — a manual "sell account to cash" endpoint (`/api/sell_account`) the operator must explicitly click. The engine never fires it autonomously, and the AI Advisor has no path to it.
 
@@ -206,7 +215,7 @@ Key properties:
 - **Hypotheses, not validations.** The role framing tells the model it is an operator-assist analyst whose suggestions are *unvalidated hypotheses* for a human and the walk-forward validator to test. An empty suggestion list is an explicitly encouraged answer.
 - **Never raises.** A model-call failure is "no suggestion this click" with zero engine impact — it degrades to an error message, never an exception on a live path.
 
-The operator reviews each suggestion on the `/ai-advisor` tab and explicitly **accepts** or **rejects** it via the `/ai-advisor/accept` and `/ai-advisor/reject` endpoints. Accepting a suggestion records the operator's decision; it does not auto-apply to live trading.
+The operator reviews each suggestion on the `/ai-advisor` tab and explicitly **accepts** or **rejects** it via the `/ai-advisor/accept` and `/ai-advisor/reject` endpoints. Accepting a suggestion persists the new parameter value immediately via `database.save_symphony_strategy` — it takes effect on the engine's next cycle. The AI Advisor never deploys anything on its own, and every accepted change is operator-initiated.
 
 > **Note:** The config advisor and the chat backend require the Anthropic SDK and an API key to produce output. Neither is required to run the daemon; without a key, the relevant tab simply reports that no suggestion / no chat is available.
 
@@ -291,7 +300,7 @@ The autotuner re-fits each symphony's parameters from history and refuses to dep
 
 For each symphony, the autotuner:
 
-1. **Loads 125 trading days** of 1-minute history from the local Alpaca cache.
+1. **Loads 250 trading days** of 1-minute history from the local Alpaca cache.
 2. **Splits 60% train / 20% validation / 20% frozen-eval**, applying a *purge* and a one-day *embargo* at each fold boundary so the rolling-volatility window cannot leak across the split (the López de Prado anti-leakage discipline).
 3. **Validates NN1 compliance** (see below) at module load and at entry, with default-deny on any unrecognized freeze discipline.
 4. **Runs 500 Optuna trials** with the TPE sampler. The sampler concentrates the search on promising regions, which induces dependence between trials.
@@ -322,9 +331,17 @@ This makes "I picked this number because the backtest liked it" structurally unr
 | **Frozen by THEORY** | The risk-aversion γ, the utility family (CRRA), and the wealth argument. Never touched by Optuna. |
 | **Frozen by calibration / stylized fact** | The 20-day volatility window, the time-squeeze curve, and the walk-forward window/ratio. |
 
+### Phase 2: CPCV — Combinatorial Purged Cross-Validation
+
+After scoring trials on the single validation fold, the autotuner also scores each trial on **15 CPCV splits** (N=6 date groups, k=2 held out per split, C(6,2)=15 combinations), assembling **5 complete OOS backtest paths**. Each path is a non-overlapping walk across the full 250-day window. This provides a more robust view of the distribution of OOS performance across the combinatorial set of possible train/test splits.
+
+### Phase 3: PBO gate — sample-robustness veto
+
+On the top-20 pre-BHY candidate configs (by raw Optuna value), the autotuner computes the **Probability of Backtest Overfitting (PBO)** using the CSCV framework (Bailey & López de Prado 2014). A PBO above 0.5 means the IS-best config generalizes OOS less than half the time across the CPCV splits — it is vetoed as a STAGE-1 rejection before BHY even applies. PBO complements BHY: BHY is a multiplicity correction; PBO is a sample-robustness check.
+
 ### A note on the data window
 
-The 125-day window is short by published walk-forward standards, and after purge the validation and frozen-eval folds are only a handful of usable days each. The math is sound; the calibration window is statistically thin. The autotuner acknowledges this in code, and the frozen-eval t-statistic should be read with a wide error bar. When the math cannot honestly distinguish the day's winner from luck, **nothing deploys** — and that refusal is itself the operator-trust mechanism, visible on the dashboard with the haircut statistics.
+The 250-day window (expanded from an earlier 125-day window) yields approximately 29 usable validation days after the 60/20/20 split, purge (20 days), and embargo (1 day). The math is sound; the calibration window is a meaningful improvement over the prior window but remains a statistical power limitation — the BHY haircut addresses cross-trial multiplicity, not thin per-trial sample length. The frozen-eval t-statistic should be read with a wide error bar. When the math cannot honestly distinguish the day's winner from luck, **nothing deploys** — and that refusal is itself the operator-trust mechanism, visible on the dashboard with the haircut statistics.
 
 ---
 
@@ -468,7 +485,7 @@ The system's guarantees, gathered in one place:
 
 - **The AI surface is advise-only.** Neither the config advisor, the proposal suite, nor the observer advisors ever act on the operator's behalf. The proposal suite only reads from and backtests against Composer — it never places, mutates, or cancels a trade — and every survivor is applied by the operator, by hand, in Composer. Chat is explain-only with no write path.
 - **Live execution is explicit.** `is_live=True` / `LIVE_EXECUTION=True` is always an explicit setting, never a default. Paper mode is the default.
-- **The dashboard cannot trade.** It is read-only for live trades — enforced by architecture rule, by read-only SQLite connections, and by a disabled manual-trigger endpoint. The single deliberate trade surface is the explicit "sell account" panic button.
+- **The dashboard is not a live-trade-action surface.** It has two guarded write paths — the settings panel and the per-symphony live/dry-run toggle — but neither places, cancels, or modifies a trade. Both are CSRF-protected and enforced by an allowlist. The single deliberate trade surface is the explicit "sell account" panic button. Read-only SQLite connections remain on all non-write paths; the manual-trigger endpoint is intentionally disabled.
 - **No blocking I/O on the execution or request path.** The engine runs on a one-minute cadence and the dashboard reads from a cache; neither blocks on a live API call. The AI Advisor's backtest-and-gate pipeline runs strictly offline and is never imported on the live execution path.
 - **Fail safe, not fail open.** When the Monte-Carlo gate cannot produce a trustworthy estimate (insufficient history *or* an unprecedented regime), it returns a sentinel and the protective trailing stop still fires on its own. When CVaR is absent, it can never cause a breach. NaN/Inf inputs are rejected at the math boundary rather than silently swallowed.
 - **The two databases never cross-join.** A corrupt optimization study cannot poison live state.
