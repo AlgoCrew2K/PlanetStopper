@@ -1579,3 +1579,146 @@ def test_confirm_dialog_has_aria_labelledby():
     if "aria-labelledby" not in ctx and "aria-label" in ctx:
         # This is acceptable — not a hard failure
         pass
+
+
+# ---------------------------------------------------------------------------
+# PM-directed findings F7 + F8 (2c6c08d audit round)
+# ---------------------------------------------------------------------------
+
+
+# F7 — REQUIRED — AC-1 completion: gear icon missing from table rows
+# AC-1 explicitly requires "each symphony card AND table row".
+# index.html cards were addressed in the initial GREEN; table_partial.html
+# rows were never touched this cycle.
+
+
+def test_table_partial_rows_have_gear_button(
+    client, mock_db_one_symphony, monkeypatch
+):
+    """F7: The HTMX table-partial route must render a gear button on each symphony row.
+
+    AC-1 requires the gear icon on BOTH cards (index.html) AND table rows
+    (table_partial.html). The table partial is served via a dedicated route
+    (e.g. /api/state or /table-partial) and rendered as an HTMX partial.
+
+    Each row must include a button/element:
+    - wired to openSymphonySettings (onclick or data-action)
+    - carrying data-symphony-id or data-sym-id with the symphony id
+    - identifiable as a gear/settings trigger (⚙, SVG gear, aria-label,
+      data-testid="sym-settings-btn", or class sym-settings-btn)
+
+    PM finding: table_partial.html rows were never touched in the initial
+    GREEN — only index.html cards received the gear icon.
+    """
+    _mock_env(monkeypatch)
+
+    # Check table_partial.html template directly — it must contain gear button markup
+    table_partial = _TEMPLATES_DIR / "table_partial.html"
+    assert table_partial.exists(), (
+        "F7: templates/table_partial.html must exist — it renders symphony table rows"
+    )
+    source = table_partial.read_text(encoding="utf-8")
+
+    # The partial must include a settings trigger wired to openSymphonySettings
+    has_settings_trigger = (
+        "openSymphonySettings" in source
+        or "sym-settings-btn" in source
+        or "symphony-settings" in source.lower()
+        or ("gear" in source.lower() and "symphony" in source.lower())
+    )
+    assert has_settings_trigger, (
+        "F7: table_partial.html table rows must include a gear/settings button "
+        "wired to openSymphonySettings. AC-1 requires the gear icon on both "
+        "symphony cards AND table rows. The table partial was not updated in the "
+        "initial GREEN commit — only index.html cards have the gear button."
+    )
+
+
+def test_table_partial_gear_button_carries_symphony_id(
+    client, mock_db_one_symphony, monkeypatch
+):
+    """F7: The gear button in table_partial.html must carry the symphony id.
+
+    Without data-symphony-id (or equivalent), the JS modal cannot tell which
+    symphony was opened — a safety hazard for live-mode toggling.
+    """
+    table_partial = _TEMPLATES_DIR / "table_partial.html"
+    if not table_partial.exists():
+        pytest.skip("table_partial.html not found")
+    source = table_partial.read_text(encoding="utf-8")
+
+    if "openSymphonySettings" not in source and "sym-settings-btn" not in source:
+        pytest.skip("Gear button not yet in table_partial.html — covered by F7 blocker test")
+
+    # The gear button must carry a data attribute with the symphony id
+    has_id_attr = (
+        "data-symphony-id" in source
+        or "data-sym-id" in source
+        or "data-sym=" in source
+        or "data-symid" in source
+        or "{{ sym" in source  # Jinja template variable referencing symphony data
+    )
+    assert has_id_attr, (
+        "F7: The gear button in table_partial.html must carry a data-symphony-id "
+        "attribute (or Jinja template expression) so the modal JS knows which "
+        "symphony was opened."
+    )
+
+
+# F8 — HARDENING — live_mode integer out-of-range silent no-op
+# app.py:2286 isinstance guard accepts (bool, int) but live_mode=2 passes
+# isinstance, matches neither `is True/== 1` nor `is False/== 0`, and returns
+# {"status": "success"} as a silent no-op — the contract lies.
+
+
+def test_post_symphony_settings_rejects_out_of_range_int_live_mode(
+    client, mock_db_one_symphony, monkeypatch
+):
+    """F8: POST /api/symphony-settings with live_mode=2 (out-of-range int) must return 400.
+
+    The isinstance(live_mode_raw, (bool, int)) guard at app.py:2286 correctly
+    rejects strings, but live_mode=2 passes isinstance and falls through both
+    the `is True/== 1` and `is False/== 0` branches as a silent no-op — the
+    route returns {"status": "success"} without calling set_symphony_live_mode
+    or save_symphony_strategy.
+
+    A real-money toggle endpoint must not have an ambiguous success response.
+    The valid values are: True/False (bool) or 1/0 (int). Any other integer
+    must be rejected with 400.
+
+    PM finding: cheaply closable in the same cycle as F1-F6.
+    """
+    _disable_csrf(monkeypatch)
+    _mock_env(monkeypatch)
+    set_live_calls = []
+
+    def fake_set_live(name, live, operator):
+        set_live_calls.append({"name": name, "live": live})
+
+    with patch.object(app_module.database, "set_symphony_live_mode", side_effect=fake_set_live):
+        resp = client.post(
+            "/api/symphony-settings/alpha_momentum",
+            json={"live_mode": 2},  # out-of-range int — not 0 or 1
+            content_type="application/json",
+        )
+
+    # Must return 400 (invalid value) — not a silent 200 success with no DB calls
+    if resp.status_code == 200:
+        # If somehow 200, set_symphony_live_mode must not have been called
+        # AND the response must not claim success
+        body = resp.get_json() or {}
+        silent_success = (
+            body.get("status") == "success"
+            and len(set_live_calls) == 0
+        )
+        assert not silent_success, (
+            "F8: POST /api/symphony-settings with live_mode=2 returned 200 "
+            "{'status': 'success'} with no DB call — a silent no-op on a "
+            "real-money toggle endpoint. The valid values are True/False/0/1; "
+            "out-of-range integers must be rejected with 400."
+        )
+    else:
+        assert resp.status_code == 400, (
+            f"F8: POST with live_mode=2 must return 400; got {resp.status_code}. "
+            f"Body: {resp.get_json()!r}"
+        )
