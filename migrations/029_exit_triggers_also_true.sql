@@ -1,0 +1,26 @@
+-- Migration 029: promote also_true co-fire list to a dedicated queryable column
+-- on exit_triggers (exit-attribution telemetry — H1 / Option A dual-storage ruling
+-- 2026-06-01).
+--
+-- Context: math_engine.resolve_trigger_priority already computes `also_true`
+-- (the list of exit layers that co-fired when the primary trigger won) and the
+-- execution loop serialises it inside the gate_state_json TEXT blob.  This
+-- migration promotes it to a first-class column so exit-attribution analysis is
+-- clean SQL rather than blob-scanning.  The blob copy is retained (Option A —
+-- dual-storage); no existing GREEN tests are broken.
+--
+-- Additive-first: NULLable + DEFAULT NULL — existing rows receive NULL, no data
+-- loss.  Legacy pre-029 rows therefore have also_true_json IS NULL, which is
+-- semantically distinct from also_true=[] (no co-fires on a clean single-winner
+-- exit).
+--
+-- H1 DUAL-WRITE: also_true_json is also added inline in init_db()'s CREATE TABLE
+-- exit_triggers block.  The duplicate-column-name swallow in run_migrations()
+-- (database.py:1159-1168) reconciles fresh-DB and upgraded-DB paths identically
+-- to migrations 020, 023, and 028.  Reordering or removing this migration from
+-- _MIGRATION_FILES would corrupt live DBs — do not do so.
+--
+-- accelerates exit-attribution queries on the dedicated column
+-- (e.g. WHERE also_true_json IS NOT NULL for co-fire analysis)
+
+ALTER TABLE exit_triggers ADD COLUMN also_true_json TEXT NULL DEFAULT NULL;
