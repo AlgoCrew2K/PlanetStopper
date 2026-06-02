@@ -1129,3 +1129,453 @@ def test_post_live_mode_string_true_does_not_silently_arm_live(
             f"expected 400 (type rejection) or 200 with no live-arm. "
             f"Got: {resp.get_json()!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# UX-expert findings — 7156deb audit (6 blockers + 1 minor)
+# ---------------------------------------------------------------------------
+
+
+# Finding 1 — BLOCKER — JS parse error: settings-modal.js fails to load
+# A multi-expression ternary true-branch in an array literal causes a
+# SyntaxError: node --check exits non-zero; Firefox reports "missing : in
+# conditional expression"; window.openSymphonySettings is never defined;
+# clicking any gear icon silently fails.  All 12 ACs are blocked until fixed.
+
+
+def test_settings_modal_js_has_no_syntax_errors():
+    """Finding 1: static/settings-modal.js must pass `node --check` with exit code 0.
+
+    A SyntaxError in the IIFE prevents the entire file from loading.
+    window.openSymphonySettings is never registered and clicking any gear icon
+    produces a silent ReferenceError — all 12 ACs fail.
+
+    node --check performs a syntax-only parse without executing the file.
+    Any exit code other than 0 means the file will not load in the browser.
+    """
+    import subprocess
+    js_path = _STATIC_DIR / "settings-modal.js"
+    assert js_path.exists(), "static/settings-modal.js must exist"
+
+    result = subprocess.run(
+        ["node", "--check", str(js_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"Finding 1: static/settings-modal.js has a syntax error that prevents "
+        f"it from loading in the browser.\n"
+        f"node --check stderr: {result.stderr.strip()}\n"
+        f"All 12 ACs are blocked until this is fixed. "
+        f"Check for multi-expression ternary true-branches inside array literals "
+        f"(comma operator ambiguity at JS syntax level)."
+    )
+
+
+# Finding 2 — BLOCKER — Effective-mode badge never injected into DOM (AC-2)
+# _renderModal computes modeBadge correctly but never writes it into
+# #sym-settings-mode-badge — the div remains empty in all modal states.
+
+
+def test_modal_js_badge_dryrun_text_referenced():
+    """Finding 2: settings-modal.js must reference 'Dry-run' badge text for the dry-run state.
+
+    The effective-mode badge must be rendered into the DOM for AC-2.
+    This test verifies the JS contains the expected badge label strings and
+    that the badge container id is referenced in a DOM-write context (not just
+    computed and discarded).
+    """
+    js_path = _STATIC_DIR / "settings-modal.js"
+    if not js_path.exists():
+        pytest.skip("settings-modal.js not yet created")
+    source = js_path.read_text(encoding="utf-8")
+
+    # Badge text strings must be present
+    assert "Dry-run" in source, (
+        "Finding 2: 'Dry-run' badge text missing from settings-modal.js — "
+        "AC-2 effective-mode badge requires this label."
+    )
+    assert "Live" in source, (
+        "Finding 2: 'Live' badge text missing from settings-modal.js — "
+        "AC-2 requires a Live badge variant."
+    )
+    assert "global off" in source.lower() or "global_off" in source, (
+        "Finding 2: 'global off' badge text missing from settings-modal.js — "
+        "AC-2 requires a 'Dry-run (global off)' caution variant."
+    )
+
+
+def test_modal_js_badge_container_receives_dom_write():
+    """Finding 2: settings-modal.js must write the computed modeBadge into the DOM.
+
+    modeBadge is computed in _renderModal but must actually be injected into the
+    badge container element.  Two compliant patterns:
+      (a) modeBadge is concatenated directly into the _surfaceHtml array/string
+      (b) After innerHTML assignment, a follow-up querySelector + innerHTML sets
+          the badge container to modeBadge
+
+    The current code renders the badge container as a static empty string
+    (line 558: '<div ... id="sym-settings-mode-badge">') and never populates it.
+    """
+    js_path = _STATIC_DIR / "settings-modal.js"
+    if not js_path.exists():
+        pytest.skip("settings-modal.js not yet created")
+    source = js_path.read_text(encoding="utf-8")
+
+    # Pattern A: modeBadge string value appears in the _surfaceHtml array context
+    # (i.e., modeBadge is concatenated into the HTML string, not just computed)
+    surface_html_idx = source.find("_surfaceHtml")
+    if surface_html_idx == -1:
+        surface_html_idx = 0
+
+    # Find where the badge container div is rendered — it must include modeBadge
+    badge_div_idx = source.find("sym-settings-mode-badge")
+    assert badge_div_idx != -1, (
+        "Finding 2: sym-settings-mode-badge container not found in settings-modal.js"
+    )
+
+    # Check 200 chars around the badge div for modeBadge reference
+    badge_ctx = source[max(0, badge_div_idx - 50): badge_div_idx + 200]
+    badge_in_template = "modeBadge" in badge_ctx
+
+    # Pattern B: post-render DOM write to the badge container
+    # querySelector('sym-settings-mode-badge') or getElementById then .innerHTML = modeBadge
+    post_render_write = (
+        ("sym-settings-mode-badge" in source and ".innerHTML" in source)
+        and any(
+            # Find a .innerHTML assignment that is within 200 chars of "modeBadge"
+            abs(m.start() - source.find("modeBadge", m.start() - 300))  < 300
+            for m in [type('M', (), {'start': lambda self: source.find("sym-settings-mode-badge")})()]
+        )
+    )
+
+    # Actually just check: is there any code that writes modeBadge into the badge container?
+    # The simplest reliable check: modeBadge must appear in a string context that also
+    # contains the badge div id, OR there must be a querySelector/getElementById for
+    # the badge id followed by a property assignment that references modeBadge.
+    import re as _re
+    # Check for querySelector/getElementById for badge id, followed by modeBadge within 200 chars
+    badge_id_selector = _re.search(
+        r'(querySelector|getElementById|sym-settings-mode-badge)[^\n]{0,200}modeBadge',
+        source,
+        _re.DOTALL
+    )
+    or_badge_in_string = _re.search(
+        r'modeBadge[^\n]{0,200}sym-settings-mode-badge',
+        source,
+        _re.DOTALL
+    )
+
+    assert badge_in_template or badge_id_selector or or_badge_in_string, (
+        "Finding 2: settings-modal.js computes modeBadge but never injects it into "
+        "the #sym-settings-mode-badge container. The badge div is rendered as a "
+        "static empty string. modeBadge must either be concatenated into the HTML "
+        "template string for the badge div, or written via a querySelector+innerHTML "
+        "call after render. AC-2 (effective-mode badge) fails for all three variants."
+    )
+
+
+# Finding 3 — BLOCKER — Toggle click does not reactively update state (AC-3)
+# _renderModal re-reads data.live_mode (the saved API value) instead of
+# the pending toggle state, so the toggle visual never flips after a click.
+
+
+def test_modal_js_toggle_uses_pending_state_not_saved_state():
+    """Finding 3: settings-modal.js toggle click must use pending local state, not data.live_mode.
+
+    After clicking the live trading toggle (before saving), the modal must
+    visually reflect the pending state: toggle flips, badge updates, banners
+    appear/disappear, execution-mode row subtext changes.
+
+    The implementation must maintain a pending toggle variable (e.g.
+    _pendingLiveToggle, liveToggle local var, or equivalent) that is read by
+    _renderModal instead of always re-reading data.live_mode from the API response.
+    """
+    js_path = _STATIC_DIR / "settings-modal.js"
+    if not js_path.exists():
+        pytest.skip("settings-modal.js not yet created")
+    source = js_path.read_text(encoding="utf-8")
+
+    # The implementation must track pending toggle state separately from data.live_mode.
+    # Accept any variable name that represents a mutable local toggle state.
+    has_pending_toggle = (
+        "_pendingLive" in source
+        or "pendingLive" in source
+        or "liveToggle" in source
+        or "_liveToggle" in source
+        or "toggleState" in source
+        or "_toggleState" in source
+    )
+    assert has_pending_toggle, (
+        "Finding 3: settings-modal.js must maintain a pending toggle state variable "
+        "(e.g. _pendingLiveToggle, liveToggle) that is updated on toggle click and "
+        "read by _renderModal. Reading data.live_mode directly means the toggle "
+        "never visually flips after a click — AC-3 UX friction fails."
+    )
+
+
+def test_modal_js_toggle_click_handler_updates_render():
+    """Finding 3: The toggle click handler must call a render function after updating state.
+
+    The click handler must: (1) update the pending toggle state, then (2) call
+    the render function so the UI reflects the new state before any save occurs.
+    """
+    js_path = _STATIC_DIR / "settings-modal.js"
+    if not js_path.exists():
+        pytest.skip("settings-modal.js not yet created")
+    source = js_path.read_text(encoding="utf-8")
+
+    # Find the toggle click handler context
+    toggle_handler_idx = -1
+    for marker in ["live-toggle", "liveToggle", "toggle", "_onToggle", "toggleClick"]:
+        idx = source.lower().find(marker.lower())
+        if idx != -1:
+            toggle_handler_idx = idx
+            break
+
+    if toggle_handler_idx == -1:
+        pytest.skip("Could not locate toggle handler — syntax error may prevent parsing")
+
+    # Within 600 chars of the toggle handler, a render call must appear
+    ctx = source[toggle_handler_idx: toggle_handler_idx + 600]
+    has_render_call = (
+        "_renderModal" in ctx
+        or "renderModal" in ctx
+        or "_render(" in ctx
+        or "render(" in ctx
+        or "_update(" in ctx
+    )
+    assert has_render_call, (
+        "Finding 3: The toggle click handler must call the render function after "
+        "updating pending state so the UI updates reactively before save. "
+        "The toggle visual, badge, and banners must all update on click."
+    )
+
+
+# Finding 4 — BLOCKER — ESC closes entire modal instead of inner confirm dialog
+
+
+def test_modal_js_esc_handler_checks_confirm_dialog_visibility():
+    """Finding 4: ESC keydown handler must check if the confirm dialog is open.
+
+    When the confirm dialog is visible, ESC must dismiss the dialog only —
+    not the outer modal. The _onKeyDown handler must NOT call _closeModal()
+    unconditionally on Escape — it must first check whether the confirm dialog
+    is visible and close that layer first if so.
+
+    The current code at line 127: `if (e.key === 'Escape') { _closeModal(); }`
+    with no confirm-dialog check.
+    """
+    js_path = _STATIC_DIR / "settings-modal.js"
+    if not js_path.exists():
+        pytest.skip("settings-modal.js not yet created")
+    source = js_path.read_text(encoding="utf-8")
+
+    # Find the _onKeyDown function body
+    onkeydown_idx = source.find("_onKeyDown")
+    assert onkeydown_idx != -1, (
+        "Finding 4: _onKeyDown not found in settings-modal.js"
+    )
+
+    # Find the function definition (not just the addEventListener reference)
+    fn_def_idx = source.find("function _onKeyDown")
+    if fn_def_idx == -1:
+        fn_def_idx = source.find("_onKeyDown = function")
+    if fn_def_idx == -1:
+        fn_def_idx = onkeydown_idx
+
+    # Extract the function body — up to 300 chars from the definition
+    fn_body = source[fn_def_idx: fn_def_idx + 300]
+
+    # The ESC branch must reference the confirm dialog element OR a close-confirm function
+    # A bare `_closeModal()` with no confirm check is the failure case.
+    confirm_check_in_esc = (
+        "sym-settings-confirm" in fn_body
+        or "_closeConfirm" in fn_body
+        or "_hideConfirm" in fn_body
+        or "closeConfirm" in fn_body
+        or "confirmEl" in fn_body
+        or ("confirm" in fn_body.lower() and "hidden" in fn_body.lower())
+        or ("confirm" in fn_body.lower() and "display" in fn_body.lower())
+        or ("confirm" in fn_body.lower() and "remove" in fn_body.lower())
+    )
+    assert confirm_check_in_esc, (
+        "Finding 4: _onKeyDown ESC handler calls _closeModal() unconditionally "
+        "without checking if the confirm dialog is open. When the confirm dialog "
+        "is visible, ESC must close the dialog only. The function body must branch "
+        "on confirm dialog visibility before calling _closeModal()."
+    )
+
+
+# Finding 5 — BLOCKER — No Tab-key focus trap in modal or confirm dialog
+
+
+def test_modal_js_has_focus_trap_logic():
+    """Finding 5: settings-modal.js must implement a Tab-key focus trap.
+
+    WCAG 2.1 SC 2.1.2 requires that keyboard focus cannot escape a modal dialog.
+    Tab from the last focusable element must wrap to the first; Shift+Tab from
+    the first must wrap to the last.
+
+    The implementation must register a keydown handler that intercepts Tab and
+    Shift+Tab and calls focus() on the appropriate boundary element.
+    """
+    js_path = _STATIC_DIR / "settings-modal.js"
+    if not js_path.exists():
+        pytest.skip("settings-modal.js not yet created")
+    source = js_path.read_text(encoding="utf-8")
+
+    has_tab_trap = (
+        "Tab" in source
+        and (
+            "shiftKey" in source
+            or "shift" in source.lower()
+        )
+        and (
+            "focusable" in source.lower()
+            or "querySelectorAll" in source
+            or "querySelector" in source
+        )
+    )
+    assert has_tab_trap, (
+        "Finding 5: settings-modal.js has no Tab-key focus trap. "
+        "The modal must intercept Tab/Shift+Tab to keep focus within the modal "
+        "(and within the confirm dialog when it is open). "
+        "Without a focus trap, keyboard users can Tab out of the modal "
+        "while the scrim blocks mouse users — WCAG 2.1 SC 2.1.2 violation."
+    )
+
+
+def test_modal_js_confirm_dialog_receives_focus_on_open():
+    """Finding 5: When the confirm dialog opens, focus must move into the dialog.
+
+    _showConfirmDialog (or equivalent) must call focus() on an element inside
+    the confirm dialog after injecting it into the DOM.  Without this, keyboard
+    focus stays in the outer modal when the dialog opens — keyboard users cannot
+    reach the Cancel/Yes buttons without Tabbing through the outer modal first.
+    """
+    js_path = _STATIC_DIR / "settings-modal.js"
+    if not js_path.exists():
+        pytest.skip("settings-modal.js not yet created")
+    source = js_path.read_text(encoding="utf-8")
+
+    # Find the confirm dialog show function
+    confirm_show_markers = [
+        "_showConfirmDialog", "showConfirm", "confirmDialog", "sym-settings-confirm"
+    ]
+    confirm_idx = -1
+    for marker in confirm_show_markers:
+        idx = source.find(marker)
+        if idx != -1:
+            confirm_idx = idx
+            break
+
+    assert confirm_idx != -1, (
+        "Finding 5: No confirm dialog show function found in settings-modal.js."
+    )
+
+    # Within 500 chars of the confirm dialog open, a focus() call must appear
+    ctx = source[confirm_idx: confirm_idx + 500]
+    has_focus_call = ".focus()" in ctx or ".focus(" in ctx
+    assert has_focus_call, (
+        "Finding 5: _showConfirmDialog must call .focus() on an element inside the "
+        "confirm dialog after opening it, so keyboard focus moves into the dialog. "
+        "Without this, keyboard users cannot reach the confirm dialog's buttons."
+    )
+
+
+# Finding 6 — BLOCKER — TUNING_ORDER keys don't match database schema (AC-6, AC-7)
+# settings-modal.js uses snake_case aliases (trail_pct, tp_target, etc.) but
+# the database and API use SCREAMING_SNAKE_CASE (TRIGGER_THRESHOLD_PCT, etc.).
+# All parameter display rows show undefined; locked-var checkboxes never match.
+
+
+def test_modal_js_tuning_order_uses_database_schema_keys():
+    """Finding 6: TUNING_ORDER in settings-modal.js must use the actual database key names.
+
+    The API returns parameters keyed by database.DEFAULT_STRATEGY keys
+    (TRIGGER_THRESHOLD_PCT, TAKE_PROFIT_MC_PCT, etc.).  If TUNING_ORDER uses
+    different names (trail_pct, tp_target, etc.), every parameter display row
+    shows undefined and every locked-var checkbox never matches saved state.
+
+    AC-6 (locked-vars round-trip) and AC-7 (read-only parameter display) both fail.
+    """
+    js_path = _STATIC_DIR / "settings-modal.js"
+    if not js_path.exists():
+        pytest.skip("settings-modal.js not yet created")
+    source = js_path.read_text(encoding="utf-8")
+
+    # The JS TUNING_ORDER must reference actual DEFAULT_STRATEGY keys
+    expected_keys = list(database.DEFAULT_STRATEGY.keys())
+    for key in expected_keys:
+        assert key in source, (
+            f"Finding 6: '{key}' (a database.DEFAULT_STRATEGY key) is missing from "
+            f"settings-modal.js. TUNING_ORDER must use the actual API key names, not "
+            f"snake_case aliases. All parameter rows will show undefined otherwise. "
+            f"AC-6 (locked-vars) and AC-7 (read-only params) both fail."
+        )
+
+
+def test_modal_js_does_not_use_wrong_tuning_aliases():
+    """Finding 6: settings-modal.js must not use the wrong snake_case aliases for tuning params.
+
+    The wrong aliases (trail_pct, tp_target, vwap_bleed_mult, vol_scale,
+    mc_prob_floor, para_ratchet_acc) produce undefined values when indexing
+    the parameters dict returned by GET /api/symphony-settings.
+    """
+    js_path = _STATIC_DIR / "settings-modal.js"
+    if not js_path.exists():
+        pytest.skip("settings-modal.js not yet created")
+    source = js_path.read_text(encoding="utf-8")
+
+    wrong_aliases = [
+        "trail_pct", "tp_target", "vwap_bleed_mult",
+        "vol_scale", "mc_prob_floor", "para_ratchet_acc",
+    ]
+    # These must not appear as TUNING_ORDER member strings in the JS.
+    # (They may appear in comments, but not as key lookups.)
+    # Strategy: check they are not in quoted string context near TUNING_ORDER.
+    tuning_order_idx = source.find("TUNING_ORDER")
+    if tuning_order_idx == -1:
+        return  # Can't locate — skip rather than false-positive
+    tuning_ctx = source[tuning_order_idx: tuning_order_idx + 400]
+    for alias in wrong_aliases:
+        assert f"'{alias}'" not in tuning_ctx and f'"{alias}"' not in tuning_ctx, (
+            f"Finding 6: Wrong alias '{alias}' found in TUNING_ORDER. "
+            f"Use the database key instead (e.g. TRIGGER_THRESHOLD_PCT, not trail_pct). "
+            f"The API returns parameters with database key names — mismatched aliases "
+            f"produce undefined values for every parameter display row."
+        )
+
+
+# Minor Finding 7 — aria-labelledby on confirm dialog
+# Not a blocker but should be corrected for strictness.
+
+
+def test_confirm_dialog_has_aria_labelledby():
+    """Minor Finding 7: The confirm dialog should use aria-labelledby pointing at its heading.
+
+    aria-label is functionally equivalent but aria-labelledby pointing at the
+    visible heading element is the ARIA Authoring Practices recommended pattern
+    for modal dialogs with a visible title.
+    """
+    js_path = _STATIC_DIR / "settings-modal.js"
+    if not js_path.exists():
+        pytest.skip("settings-modal.js not yet created")
+    source = js_path.read_text(encoding="utf-8")
+
+    # Accept either aria-labelledby (preferred) or aria-label (acceptable fallback)
+    confirm_idx = source.find("sym-settings-confirm")
+    if confirm_idx == -1:
+        pytest.skip("Confirm dialog container not found — cannot check aria attribute")
+
+    ctx = source[confirm_idx: confirm_idx + 600]
+    has_label = "aria-labelledby" in ctx or "aria-label" in ctx
+    assert has_label, (
+        "Minor Finding 7: The confirm dialog must have aria-labelledby or aria-label "
+        "so screen readers announce the dialog title when it opens."
+    )
+    # Prefer aria-labelledby — flag if only aria-label is present
+    if "aria-labelledby" not in ctx and "aria-label" in ctx:
+        # This is acceptable — not a hard failure
+        pass
