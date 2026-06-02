@@ -3,7 +3,7 @@
 > SQLite state management for Planet Stopper: schema, migrations, and all read/write accessors for the state DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-05-27
+**Last updated:** 2026-06-02
 
 ## Overview
 
@@ -16,6 +16,13 @@ WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads
 Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **030** (`030_per_symphony_live_mode.sql`).
 
 Notable ordering: 021 is listed before 020 — intentional. See `ARCH-002` inline comment; reordering would corrupt live DBs.
+
+Migrations 026–030:
+- `026_mc_regime_match_telemetry.sql` — regime match columns on `exit_triggers`
+- `027_regime_label_cache.sql` — `regime_label_cache` table
+- `028_autotune_runs_pbo.sql` — `pbo` column on `autotune_runs`
+- `029_exit_triggers_also_true.sql` — `also_true_json` column on `exit_triggers`
+- `030_per_symphony_live_mode.sql` — `live_mode` on `symphony_strategies`, `config_audit_log` table
 
 ## Public API Reference
 
@@ -76,20 +83,20 @@ Returns `name.strip().lower()` — canonical form for all symphony name lookups.
 
 ### Per-Symphony Live Mode (migration 030)
 
-#### `get_symphony_live_mode(symphony_name: str) → bool`
-Returns the per-symphony live-mode flag. `False` (dry-run) is the safe default when no row exists. Added in migration 030.
+#### `get_symphony_live_mode(symphony_name: str) → int`
+Returns the per-symphony live_mode flag: `1` = live, `0` = dry-run (default when no row exists). Normalizes `symphony_name` the same way `save_symphony_strategy` does. Architecture rule 4: `is_live=True` is explicit, never by omission.
 
-#### `set_symphony_live_mode(symphony_name: str, live: bool) → None`
-Sets the per-symphony live-mode flag. Called by `POST /api/symphony-settings/<name>` (CSRF-protected). `live=True` means the symphony participates in live order execution; `False` is dry-run.
+#### `set_symphony_live_mode(symphony_name: str, live: int, operator: str) → None`
+Sets the per-symphony live_mode flag and writes an immutable `config_audit_log` entry. `live` must be `0` (dry-run) or `1` (live). `operator` is the caller-supplied identity string recorded in the audit log. If no `symphony_strategies` row exists, creates a minimal row with `DEFAULT_STRATEGY` params before setting live_mode. Called by `POST /api/symphony-settings/<name>` (CSRF-protected).
 
 ---
 
-### Regime Cache (migration 026)
+### Regime Cache (migration 027)
 
-#### `save_regime_label(symphony_name: str, label: str, date_str: str) → None`
-Persists the regime classifier label for a symphony on a given date. Added in migration 026.
+#### `save_regime_label(symphony_id: str, label: str, as_of_date: str) → None`
+Persists the regime classifier label for a symphony on a given date in the `regime_label_cache` table.
 
-#### `get_cached_regime_label(symphony_name: str, date_str: str) → str | None`
+#### `get_cached_regime_label(symphony_id: str, as_of_date: str) → str | None`
 Returns the cached regime label for a symphony/date pair, or `None` if not yet computed.
 
 ---
@@ -97,7 +104,7 @@ Returns the cached regime label for a symphony/date pair, or `None` if not yet c
 ### Phase-1.5 M3 Bundle Registry
 
 #### `get_or_create_phase15_m3_bundle_id() → int`
-Idempotent. Inserts the Phase-1.5 M3 spec bundle if absent and returns its integer `id`. Analogous to `get_or_create_phase1_theory_bundle_id` for the M3 regime-exit spec. Added in migration 027.
+Idempotent. Inserts the Phase-1.5 M3 spec bundle if absent and returns its integer `id`. Analogous to `get_or_create_phase1_theory_bundle_id` for the M3 regime-exit spec.
 
 ---
 
@@ -119,7 +126,7 @@ Inserts one `autotune_runs` row and returns the new `cursor.lastrowid`. Sprint 3
 | `d_spec` | `int \| None` | COUNT DISTINCT BACKTEST_SELECTION bundle ids |
 | `gamma` | `float \| None` | Frozen CRRA risk-aversion coefficient |
 | `overfitting_verdict` | `str \| None` | Overfitting Conscience summary string |
-| `pbo` | `float \| None` | Probability of backtest overfitting from CSCV gate (Phase-3) |
+| `pbo` | `float \| None` | Probability of backtest overfitting from CSCV gate (Phase-3; migration 028) |
 
 **Returns:** `int` — the new row id.
 
@@ -129,9 +136,6 @@ Returns the most-recent `autotune_runs` row for the symphony as a dict, or `None
 #### `get_all_autotune_runs(limit: int = 50) → list[dict]`
 Returns the `limit` most-recent rows across all symphonies (dashboard `/api/autotune-runs`).
 
-#### `record_autotune_run(...) → None`
-Deprecated port-mode variant. Writes `math_mode`, `account_id`, `sortino_sentinel_pct` columns. Use `save_autotune_run` for new Phase-1 code.
-
 ---
 
 ### Advisor Observations
@@ -139,7 +143,7 @@ Deprecated port-mode variant. Writes `math_mode`, `account_id`, `sortino_sentine
 Append-only audit trail. No UPDATE or DELETE accessor — rows are immutable.
 
 #### `insert_advisor_observation(*, advisor_role, subject_type, subject_id, verdict=None, raw_response=None, spec_bundle_id=None, symphony_id=None, **kwargs) → int`
-Inserts one `advisor_observations` row. Returns the new row id. `is_advisory_only` is always written as `1`. `symphony_id` is the denormalized symphony name added by migration 025 (S3-AUDIT-004) so the `/api/advisor-observations?symphony_id=` filter works without fan-out queries.
+Inserts one `advisor_observations` row. Returns the new row id. `is_advisory_only` is always written as `1`. `symphony_id` is the denormalized symphony name added by migration 025 so the `/api/advisor-observations?symphony_id=` filter works without fan-out queries.
 
 **Parameters:**
 | Name | Type | Description |
@@ -154,13 +158,13 @@ Inserts one `advisor_observations` row. Returns the new row id. `is_advisory_onl
 **Returns:** `int` — new row id.
 
 #### `get_advisor_observations_for_symphony(symphony_id: str) → list[dict]`
-Returns all `advisor_observations` rows whose `symphony_id` column matches, oldest-first. Uses `get_ro_connection()`. Added in Sprint 3 (S3-AUDIT-004 + S3-AUDIT-010).
+Returns all `advisor_observations` rows whose `symphony_id` column matches, oldest-first. Uses `get_ro_connection()`.
 
 #### `get_advisor_observations_for_subject(subject_type: str, subject_id: str) → list[dict]`
-Returns all rows for a given subject, oldest-first. Uses `get_ro_connection()`.
+Returns all rows for a given subject, oldest-first.
 
 #### `get_advisor_observations_for_role(advisor_role: str, limit: int = 50) → list[dict]`
-Returns rows for a given advisor role, newest-first. Uses `get_ro_connection()`.
+Returns rows for a given advisor role, newest-first.
 
 ---
 
@@ -179,13 +183,13 @@ Returns `researcher_dof_ledger` rows where `touched_frozen_eval = 1` AND `create
 ### Spec-Bundle Registry
 
 #### `get_or_create_phase1_theory_bundle_id() → int`
-Idempotent. Inserts the canonical Phase-1 all-THEORY spec bundle (gamma=2.0, utility_family=CRRA, wealth_argument=compounded_return) if absent, then returns its integer `id`. Process-local cache makes repeated calls sub-microsecond. Used by run-autotuner call sites to satisfy the NN1 Phase-1 spec_bundle_id requirement.
+Idempotent. Inserts the canonical Phase-1 all-THEORY spec bundle (gamma=2.0, utility_family=CRRA, wealth_argument=compounded_return) if absent, then returns its integer `id`. Process-local cache makes repeated calls sub-microsecond.
 
 #### `insert_spec_bundle(*, bundle_hash, facets_json, horizon_bars=None, cvar_alpha=None, generator_family=None) → None`
 Idempotent INSERT OR IGNORE. Backfills `id` from `rowid` for the just-inserted row.
 
 #### `insert_spec_bundle_facet(*, bundle_hash, facet_name, facet_value, freeze_discipline, justification=None, calibration_evidence=None) → int`
-Inserts one `spec_facets` row. Raises `ValueError` for unrecognized `freeze_discipline`. INSERT OR IGNORE on the `(bundle_hash, facet_name)` UNIQUE constraint (migration 024).
+Inserts one `spec_facets` row. Raises `ValueError` for unrecognized `freeze_discipline`.
 
 #### `get_spec_bundle(bundle_hash: str) → dict | None`
 Returns the `spec_bundles` row as a dict, or `None`.
@@ -212,56 +216,50 @@ Append-only degrees-of-freedom ledger for the NN1 multiple-testing haircut.
 Appends one `researcher_dof_ledger` row. Raises `ValueError` for invalid enum values. Returns new row id.
 
 #### `get_dof_ledger_for_bundle(spec_bundle_id: str) → list[dict]`
-Returns all ledger rows for the given spec bundle, ordered by `id`. Uses read-only connection.
+Returns all ledger rows for the given spec bundle, ordered by `id`.
 
 #### `count_dof_backtest_selections(spec_bundle_id: str | None = None) → int`
-Returns `S = SUM(n_configs_searched)` for `BACKTEST_SELECTION` rows. When `spec_bundle_id` is None, sums across all bundles.
+Returns `S = SUM(n_configs_searched)` for `BACKTEST_SELECTION` rows.
 
 #### `get_researcher_dof_ledger_for_run(run_timestamp, winning_spec_bundle_id=None) → list[dict]`
-Returns `BACKTEST_SELECTION` ledger rows, excluding frozen-eval-tainted rows and the winning bundle (plan D4).
+Returns `BACKTEST_SELECTION` ledger rows, excluding frozen-eval-tainted rows and the winning bundle.
 
 ---
 
 ### CVaR Diagnostics
 
 #### `record_cvar_diagnostic(cycle_id, symphony_id, cvar_5pct, cvar_5pct_stderr, cvar_n_tail, cvar_5pct_long, cvar_n_tail_long, *, mode) → None`
-Writes one `cvar_diagnostics` telemetry row. `mode` is required keyword-only (`"live"` or `"replay"`). `cvar_n_tail` is coerced from `None` to `0` (NOT NULL constraint). `cvar_n_tail_long` may be `NULL` (no long window in Phase 1).
-
-#### `read_cvar_diagnostic_for_cycle(cycle_id: str, symphony_id: str) → dict | None`
-Returns the most-recent `cvar_diagnostics` row for the (cycle_id, symphony_id) pair, or `None`.
+Writes one `cvar_diagnostics` telemetry row. `mode` is required keyword-only (`"live"` or `"replay"`).
 
 #### `read_cvar_diagnostic_for_symphony(symphony_id: str) → dict | None`
-Returns the most-recent `cvar_diagnostics` row for the symphony across all cycles, ordered by `ts_utc DESC`. Uses `get_ro_connection()`.
+Returns the most-recent `cvar_diagnostics` row for the symphony, or `None`.
 
 ---
 
 ### Composition Hash
 
 #### `compute_composition_hash(symphony_ids: list[str]) → str`
-Returns a 16-character hex SHA-256 digest of the sorted symphony-id list. Order-independent. Used to detect composition changes without deep object comparison.
+Returns a 16-character hex SHA-256 digest of the sorted symphony-id list. Order-independent.
 
 ---
 
 ### LLM Suggestions Audit Trail
 
 #### `record_llm_suggestion(*, session_id, created_at, symphony_name, operator_identity, prompt_inputs, model_id, generation_settings, raw_response, validation_results, param_name, operator_decision, decision_at=None, operator_note=None, before_value=None, after_value=None, oos_revalidation=None) → int`
-Inserts one immutable `llm_suggestions` audit row. Returns the new row id. Dict-typed params are JSON-serialized.
+Inserts one immutable `llm_suggestions` audit row. Returns the new row id.
 
 #### `get_suggestions_for_symphony(symphony_name: str) → list[dict]`
-Returns all `llm_suggestions` rows for the symphony, oldest-first. JSON blobs deserialized.
-
-#### `get_suggestions_for_session(session_id: str) → list[dict]`
-Returns all `llm_suggestions` rows for the session, oldest-first. JSON blobs deserialized.
+Returns all `llm_suggestions` rows for the symphony, oldest-first.
 
 ---
 
 ### Fleet Alert State
 
 #### `read_fleet_alert() → dict | None`
-Returns the `fleet_alert_state` singleton row (id=1) as a dict. `tripped_symphonies` is deserialized from JSON.
+Returns the `fleet_alert_state` singleton row (id=1) as a dict.
 
 #### `write_fleet_alert(payload: dict) → None`
-Upserts the singleton fleet-alert row. `tripped_symphonies` is a list stored as JSON.
+Upserts the singleton fleet-alert row.
 
 #### `clear_fleet_alert() → None`
 Deletes the singleton row. Idempotent.
@@ -270,8 +268,10 @@ Deletes the singleton row. Idempotent.
 
 ### Exit Trigger Telemetry
 
-#### `record_exit_trigger(*, symphony_id, account_id=None, triggered_reason, at_return=None, gate_state=None, gate_state_json=None, cycle_id=None, ts_utc=None, ts_et=None, math_mode=None, port_trigger_id=None) → None`
-Writes one `exit_triggers` telemetry row. Opens its own connection; swallows exceptions so a telemetry failure never fails the cycle.
+#### `record_exit_trigger(*, symphony_id, account_id=None, triggered_reason, at_return=None, gate_state=None, gate_state_json=None, cycle_id=None, ts_utc=None, ts_et=None, math_mode=None, also_true_json=None, regime_match_pct=None, regime_suppressed=None, regime_label=None, ...) → None`
+Writes one `exit_triggers` telemetry row. Opens its own connection; swallows exceptions so a telemetry failure never fails the cycle. Key migration additions:
+- `also_true_json` (migration 029) — co-fired exit reasons, promoted to a dedicated column for SQL queryability
+- `regime_match_pct`, `regime_suppressed`, `regime_label` (migration 026) — MC regime-match telemetry
 
 #### `get_recent_exit_triggers(limit: int = 50) → list[dict]`
 Returns the `limit` most-recent `exit_triggers` rows across all symphonies.
@@ -281,17 +281,17 @@ Returns the `limit` most-recent `exit_triggers` rows across all symphonies.
 ### Shadow History
 
 #### `record_shadow_observation(*, symphony_id, account_id, cycle_id, ts_utc, ts_et, trading_day, current_return, shadow_return, is_post_trigger, trigger_id, position_epoch=None) → None`
-Writes one `shadow_history` telemetry row. Swallows exceptions. Invalidates the in-memory `_shadow_cr_cache` for the affected symphony.
+Writes one `shadow_history` telemetry row. Swallows exceptions.
 
 ---
 
 ### Port State (SITE-D1 KEEP-DISPLAY)
 
 #### `read_port_state(account_id: str) → dict | None`
-Returns the `port_state` row for the account as a dict, or `None`. Display-only; no decision math routed through port-level state after Sprint 3.
+Returns the `port_state` row for the account as a dict, or `None`. Display-only; no decision math after Sprint 3.
 
 #### `write_port_state(account_id: str, state_dict: dict) → None`
-Upserts the `port_state` row for the account. Read-modify-write on existing row; stamps `updated_at`.
+Upserts the `port_state` row for the account.
 
 ## Types
 
@@ -302,9 +302,6 @@ Upserts the `port_state` row for the account. Read-modify-write on existing row;
 | `DB_FILE` | env `DB_PATH` or `"alphabot_state.db"` | Active state DB path |
 | `DEFAULT_STRATEGY` | dict | Default per-symphony strategy parameters |
 | `DEFAULT_LOCKED_VARS` | `["TRIGGER_THRESHOLD_PCT"]` | Default locked strategy variables |
-| `PHASE1_THEORY_GAMMA` | `"2.0"` | Canonical Phase-1 CRRA gamma (frozen) |
-| `PHASE1_THEORY_UTILITY_FAMILY` | `"CRRA"` | Canonical Phase-1 utility family (frozen) |
-| `PHASE1_THEORY_WEALTH_ARGUMENT_FORMULA` | `"compounded_return"` | Canonical Phase-1 wealth-argument (frozen) |
 
 ## Internal Dependencies
 
