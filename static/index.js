@@ -497,15 +497,14 @@
         var beVal = sym.breakeven_locked ? 'Active' : 'Off';
         var rawMc = sentinelToNull(typeof sym.mc_prob === 'number' ? sym.mc_prob : null);
         var mcVal = rawMc != null ? rawMc.toFixed(1) + '%' : '--';
-        var rawVol = sentinelToNull(typeof sym.volatility === 'number' ? sym.volatility
-                   : (typeof sym.vol === 'number' ? sym.vol : null));
+        var rawVol = sentinelToNull(typeof sym.symphony_vol === 'number' ? sym.symphony_vol : null);
         var volVal = rawVol != null ? rawVol.toFixed(3) : '--';
         var rawPara = sentinelToNull(typeof sym.para_velocity === 'number' ? sym.para_velocity : null);
         var paraVal = rawPara != null ? rawPara.toFixed(2) + '%' : '--';
-        var rawVwap = sentinelToNull(typeof sym.vwap_pct === 'number' ? sym.vwap_pct : null);
-        var vwapVal = rawVwap != null
-            ? ((rawVwap >= 0 ? 'Above' : 'Below') + ' (' + rawVwap.toFixed(2) + '%)')
-            : '--';
+        // vwap_pct does not exist on bot_state; the chart path fills this in via
+        // last.vwap_diff in renderRiskMathPanel. Eager render shows '--' until chart loads.
+        var rawVwap = null;
+        var vwapVal = '--';
         var fields = [
             { id: 'dp-rm-mc',   val: mcVal },
             { id: 'dp-rm-stop', val: stopDist },
@@ -527,13 +526,15 @@
             fetch('/api/logs/' + symId).then(function (r) { return r.json(); }).catch(function () { return []; }),
             fetch('/api/settings').then(function (r) { return r.json(); }).catch(function () { return {}; })
         ]).then(function (results) {
-            renderIntradayChart(results[0], sym);
+            // Pass settingsData (results[2]) to renderIntradayChart so the chart path
+            // can read VWAP_BLEED_MULTIPLIER for the hint text (FIX 3 / Option A).
+            renderIntradayChart(results[0], sym, results[2]);
             renderDetailLogs(results[1]);
             renderDetailVars(results[2], sym);
         });
     }
 
-    function renderIntradayChart(chartData, sym) {
+    function renderIntradayChart(chartData, sym, settingsData) {
         var canvas = document.getElementById('intraday-canvas');
         if (!canvas) return;
         var data = chartData.data || [];
@@ -594,7 +595,7 @@
         });
 
         wireOverlayToggles();
-        renderRiskMathPanel(chartData, sym);
+        renderRiskMathPanel(chartData, sym, settingsData);
     }
 
     function wireOverlayToggles() {
@@ -636,7 +637,7 @@
         });
     }
 
-    function renderRiskMathPanel(chartData, sym) {
+    function renderRiskMathPanel(chartData, sym, settingsData) {
         var data = chartData.data || [];
         var last = data.slice(-1)[0] || {};
         sym = sym || {};
@@ -688,10 +689,31 @@
         setEl('dp-rm-be', beText);
         setEl('dp-rm-be-hint', sym.breakeven_locked ? '5 confirm ticks @ lock threshold' : 'not yet activated');
 
-        // VWAP state with hint
+        // VWAP state with hint.
+        // bleed mult lives in /api/settings response (settingsData.symphonies[name].params.VWAP_BLEED_MULTIPLIER);
+        // sym.acc_VWAP_BLEED_MULTIPLIER does not exist on bot_state (FIX 3 / Option A).
         setEl('dp-rm-vwap', vwapVal);
         if (rawVwapDiff != null) {
-            var bleedMult = sym.acc_VWAP_BLEED_MULTIPLIER;
+            var bleedMult = null;
+            if (settingsData) {
+                var symName = sym.normalized_name || sym.name || '';
+                var symId   = sym.id || '';
+                var allSyms = Object.assign({}, settingsData.symphonies || {}, settingsData.symphony_overrides || {});
+                var symStrat = allSyms[symName] || allSyms[symId];
+                if (!symStrat) {
+                    var allKeys = Object.keys(allSyms);
+                    for (var ki = 0; ki < allKeys.length; ki++) {
+                        var k = allKeys[ki];
+                        if ((symName && (symName.indexOf(k) >= 0 || k.indexOf(symName) >= 0)) ||
+                            (symId && (symId.indexOf(k) >= 0 || k.indexOf(symId) >= 0))) {
+                            symStrat = allSyms[k];
+                            break;
+                        }
+                    }
+                }
+                var bmRaw = symStrat && symStrat.params ? symStrat.params.VWAP_BLEED_MULTIPLIER : null;
+                bleedMult = (bmRaw != null && typeof bmRaw === 'number') ? bmRaw : null;
+            }
             setEl('dp-rm-vwap-hint', bleedMult != null ? 'bleed mult ' + bleedMult.toFixed(1) + '× vol' : 'VWAP defense active');
         } else {
             setEl('dp-rm-vwap-hint', '—');

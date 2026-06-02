@@ -490,9 +490,12 @@ class TestPerSymphonyIfHeldFormat:
         must show BOTH values: dry_run followed by if_held in parens.
         """
         analytics_mock = _default_analytics_mock()
+        # analytics.get_symphony_max_drawdown returns PERCENT-scale floats
+        # (the function does its own * 100 internally at analytics.py:723).
+        # The template must render them directly — no additional * 100.
         analytics_mock.get_symphony_max_drawdown.return_value = {
-            "dry_run": 0.0555,  # renders as 5.55%
-            "if_held": 0.0888,  # renders as 8.88%
+            "dry_run": 5.55,   # percent-scale: renders as 5.55%
+            "if_held": 8.88,   # percent-scale: renders as 8.88%
         }
         html = self._get_rendered_html(
             client, mock_database, monkeypatch, analytics_mock=analytics_mock
