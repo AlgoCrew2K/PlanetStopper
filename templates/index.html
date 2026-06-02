@@ -363,6 +363,27 @@
     .status-pill.tp-armed { background: color-mix(in srgb, var(--studio-plum) 18%, transparent); color: var(--studio-plum); }
     .status-pill.para-armed { background: color-mix(in srgb, var(--studio-cyan) 18%, transparent); color: var(--studio-cyan); }
 
+    /* Per-symphony settings gear button */
+    .sym-settings-btn {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid var(--studio-rule);
+      border-radius: 6px;
+      color: var(--studio-ink-dim);
+      cursor: pointer;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .sym-settings-btn:hover {
+      border-color: var(--studio-rule-hi);
+      color: var(--studio-ink);
+    }
+
     /* Cash Now button */
     .cash-now-btn {
       padding: 4px 12px;
@@ -997,7 +1018,13 @@
                 <span data-testid="status-pill" class="status-pill armed">Armed</span>
               {% endif %}
             </div>
-            <button data-testid="cash-now-btn" class="cash-now-btn" type="button" onclick="cashNow(event,'{{ sym.id }}')" {% if sym.get('triggered') %}disabled{% endif %}>Cash Now</button>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button data-testid="sym-settings-btn" class="sym-settings-btn" type="button"
+                      aria-label="Symphony settings"
+                      data-symphony-id="{{ sym.get('id','') }}"
+                      onclick="openSymphonySettings(event,'{{ sym.get('id','') }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+              <button data-testid="cash-now-btn" class="cash-now-btn" type="button" onclick="cashNow(event,'{{ sym.id }}')" {% if sym.get('triggered') %}disabled{% endif %}>Cash Now</button>
+            </div>
           </div>
 
           <div data-testid="dual-value-headline" class="dual-value-headline">
@@ -1086,7 +1113,13 @@
               <div class="card-name">{{ sym.get("normalized_name") or sym.get("name", "Unknown") }}</div>
               <span data-testid="status-pill" class="status-pill standby">Standby</span>
             </div>
-            <button data-testid="cash-now-btn" class="cash-now-btn" type="button" onclick="cashNow(event,'{{ sym.id }}')" {% if sym.get('triggered') %}disabled{% endif %}>Cash Now</button>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button data-testid="sym-settings-btn" class="sym-settings-btn" type="button"
+                      aria-label="Symphony settings"
+                      data-symphony-id="{{ sym.get('id','') }}"
+                      onclick="openSymphonySettings(event,'{{ sym.get('id','') }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+              <button data-testid="cash-now-btn" class="cash-now-btn" type="button" onclick="cashNow(event,'{{ sym.id }}')" {% if sym.get('triggered') %}disabled{% endif %}>Cash Now</button>
+            </div>
           </div>
 
           <div data-testid="dual-value-headline" class="dual-value-headline">
@@ -1458,5 +1491,6 @@
     });
   </script>
   <script src="{{ url_for('static', filename='index.js') }}"></script>
+  <script src="{{ url_for('static', filename='settings-modal.js') }}"></script>
 </body>
 </html>
