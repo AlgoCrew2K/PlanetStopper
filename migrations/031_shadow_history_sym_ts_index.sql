@@ -1,4 +1,4 @@
--- Migration 016 — shadow_history (symphony_id, ts_utc) composite index.
+-- Migration 031 — shadow_history (symphony_id, ts_utc) composite index.
 --
 -- AC-10 / shadow-trajectory warm-cache perf watch (math-audit-2):
 --   The trajectory query performs ``ORDER BY ts_utc DESC LIMIT 1`` before
