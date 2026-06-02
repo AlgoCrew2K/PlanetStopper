@@ -2278,16 +2278,23 @@ def save_symphony_settings(symphony_name: str):
     payload = request.json or {}
 
     try:
-        # AC-3: live_mode must be a boolean or integer (0/1).  Reject strings and other
-        # non-bool types with 400 — a crafted POST sending "true" (string) would fall
-        # through the bool/int identity checks as a silent no-op, bypassing the confirm
-        # gate entirely (reviewer finding on 49de1af).
+        # AC-3: live_mode must be a boolean or integer 0/1 only.
+        # Reject strings (would silently bypass the confirm gate) and out-of-range
+        # integers like 2 (ambiguous — not a recognised live/dry value).
         live_mode_raw = payload.get("live_mode")
-        if live_mode_raw is not None and not isinstance(live_mode_raw, (bool, int)):
-            return jsonify({
-                "status": "error",
-                "message": "live_mode must be a boolean (true/false), not a string or other type.",
-            }), 400
+        if live_mode_raw is not None:
+            if not isinstance(live_mode_raw, (bool, int)):
+                return jsonify({
+                    "status": "error",
+                    "message": "live_mode must be a boolean (true/false), not a string or other type.",
+                }), 400
+            # isinstance(True, int) is True in Python so bool is already covered above;
+            # for bare ints, only 0 and 1 are valid — reject out-of-range values.
+            if not isinstance(live_mode_raw, bool) and live_mode_raw not in (0, 1):
+                return jsonify({
+                    "status": "error",
+                    "message": "live_mode integer must be 0 or 1.",
+                }), 400
 
         if live_mode_raw is True or live_mode_raw == 1:
             if not payload.get("confirm"):
