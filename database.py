@@ -104,11 +104,32 @@ def init_db():
     )
 
     # NEW: Symphony-Level Strategy Storage
+    # H1 DUAL-WRITE: live_mode is also added by migration 030 via ALTER TABLE.
+    # The duplicate-column-name swallow in run_migrations() reconciles fresh-DB
+    # and upgraded-DB paths (same pattern as migrations 020, 023, 028, 029).
+    # live_mode is a SEPARATE column — never inside the parameters JSON blob —
+    # so the autotuner cannot reach it.  DEFAULT 0 = dry-run (arch rule 4).
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS symphony_strategies (
             symphony_name TEXT PRIMARY KEY,
-            parameters TEXT,
-            locked_vars TEXT
+            parameters    TEXT,
+            locked_vars   TEXT,
+            live_mode     INTEGER DEFAULT 0
+        )
+    """)
+
+    # H1 DUAL-WRITE: config_audit_log is also created by migration 030.
+    # Append-only operator audit trail for live_mode changes; no update/delete
+    # accessor — immutable by design (same pattern as llm_suggestions).
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS config_audit_log (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            symphony     TEXT    NOT NULL,
+            field        TEXT    NOT NULL,
+            before_value TEXT,
+            after_value  TEXT    NOT NULL,
+            operator     TEXT    NOT NULL,
+            ts_utc       TEXT    NOT NULL
         )
     """)
 
@@ -439,12 +460,104 @@ def save_symphony_strategy(symphony_name, params, locked_vars):
     symphony_name = normalize_name(symphony_name)
     conn = get_connection()
     cursor = conn.cursor()
+    # ON CONFLICT DO UPDATE preserves live_mode: only parameters and locked_vars
+    # are touched.  INSERT OR REPLACE would DELETE + INSERT, resetting live_mode
+    # to its DEFAULT (0) and silently disabling live trading after every autotune
+    # run — a silent real-money safety regression (arch rule 4).
     cursor.execute(
-        "INSERT OR REPLACE INTO symphony_strategies (symphony_name, parameters, locked_vars) VALUES (?, ?, ?)",
+        """
+        INSERT INTO symphony_strategies (symphony_name, parameters, locked_vars)
+        VALUES (?, ?, ?)
+        ON CONFLICT(symphony_name) DO UPDATE SET
+            parameters  = excluded.parameters,
+            locked_vars = excluded.locked_vars
+        """,
         (symphony_name, json.dumps(params), json.dumps(locked_vars)),
     )
     conn.commit()
     conn.close()
+
+
+def get_symphony_live_mode(symphony_name: str) -> int:
+    """Return the live_mode flag (0 or 1) for a symphony.
+
+    Returns 0 (dry-run) when no symphony_strategies row exists — arch rule 4:
+    is_live=True is explicit, never by omission.  The exec path calls this once
+    per symphony per cycle at alpha_bot_execution.py:1152.
+
+    Normalizes symphony_name the same way save_symphony_strategy does so raw
+    API names resolve to the same DB row as normalized names.
+    """
+    symphony_name = normalize_name(symphony_name)
+    try:
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT live_mode FROM symphony_strategies WHERE symphony_name = ?",
+                (symphony_name,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+    if row is None:
+        return 0
+    # SQLite stores INTEGER; coerce to int in case of NULL (additive column with DEFAULT 0).
+    return int(row[0]) if row[0] is not None else 0
+
+
+def set_symphony_live_mode(symphony_name: str, live: int, operator: str) -> None:
+    """Set the per-symphony live_mode flag and write an immutable audit log entry.
+
+    live must be 0 (dry-run) or 1 (live).  This is the only write path for
+    live_mode — the autotuner never calls this function.
+
+    If no symphony_strategies row exists yet (operator enables live before the
+    first autotune run), this function creates a minimal row (DEFAULT_STRATEGY
+    params, DEFAULT_LOCKED_VARS) so the UPDATE can succeed, then sets live_mode.
+
+    Writes one config_audit_log row recording:
+      - symphony: normalized symphony_name
+      - field: 'live_mode'
+      - before_value: str(prior live_mode)
+      - after_value: str(live)
+      - operator: caller-supplied identity string
+      - ts_utc: UTC ISO timestamp of this change
+
+    The audit log is append-only — no update/delete accessor exists (same
+    immutability pattern as llm_suggestions and advisor_observations).
+    """
+    symphony_name = normalize_name(symphony_name)
+    conn = get_connection()
+    try:
+        # Ensure the row exists; INSERT OR IGNORE creates it with DEFAULT params
+        # if absent.  We never touch parameters/locked_vars here.
+        conn.execute(
+            "INSERT OR IGNORE INTO symphony_strategies (symphony_name, parameters, locked_vars) "
+            "VALUES (?, ?, ?)",
+            (symphony_name, json.dumps(DEFAULT_STRATEGY), json.dumps(DEFAULT_LOCKED_VARS)),
+        )
+        # Read the current live_mode for the audit before_value.
+        prior_row = conn.execute(
+            "SELECT live_mode FROM symphony_strategies WHERE symphony_name = ?",
+            (symphony_name,),
+        ).fetchone()
+        prior_live = int(prior_row[0]) if (prior_row and prior_row[0] is not None) else 0
+
+        conn.execute(
+            "UPDATE symphony_strategies SET live_mode = ? WHERE symphony_name = ?",
+            (live, symphony_name),
+        )
+
+        ts_utc = datetime.now(UTC).isoformat()
+        conn.execute(
+            "INSERT INTO config_audit_log (symphony, field, before_value, after_value, operator, ts_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (symphony_name, "live_mode", str(prior_live), str(live), operator, ts_utc),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # --- Symphony Logging (NEW) ---
@@ -1156,6 +1269,7 @@ _MIGRATION_FILES = [
     "027_regime_label_cache.sql",
     "028_autotune_runs_pbo.sql",
     "029_exit_triggers_also_true.sql",
+    "030_per_symphony_live_mode.sql",
 ]
 
 

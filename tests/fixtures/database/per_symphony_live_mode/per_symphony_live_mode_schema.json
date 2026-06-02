@@ -1,0 +1,109 @@
+{
+  "_provenance": "schema-derived from mission brief (2026-06-02); field names and table layout derived from database.py symphony_strategies CREATE TABLE (line 107-113) and project architecture constraints (arch-rule-4: is_live explicit, never default). No producer-computed numeric values — shapes and types only.",
+  "_mission": "Per-symphony live_mode feature — MASTER-SWITCH model (LIVE_EXECUTION AND symphony_live_mode). Migration 030 adds live_mode column to symphony_strategies and creates config_audit_log table.",
+
+  "migration_030": {
+    "file": "030_per_symphony_live_mode.sql",
+    "description": "Additive: live_mode INTEGER DEFAULT 0 on symphony_strategies + new config_audit_log table",
+    "predecessor": "029_exit_triggers_also_true.sql",
+    "affected_tables": ["symphony_strategies", "config_audit_log"],
+    "live_mode_column": {
+      "table": "symphony_strategies",
+      "name": "live_mode",
+      "type": "INTEGER",
+      "nullable": true,
+      "default": 0,
+      "rationale": "additive-first — NULLable with default 0 so existing rows default-dry; arch rule 4: explicit, never omitted"
+    },
+    "config_audit_log_table": {
+      "name": "config_audit_log",
+      "columns": {
+        "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
+        "symphony": "TEXT NOT NULL",
+        "field": "TEXT NOT NULL",
+        "before_value": "TEXT",
+        "after_value": "TEXT NOT NULL",
+        "operator": "TEXT NOT NULL",
+        "ts_utc": "TEXT NOT NULL"
+      },
+      "rationale": "operator-only audit trail for live_mode changes; no update/delete accessor"
+    }
+  },
+
+  "master_switch_truth_table": [
+    {
+      "id": "both_on",
+      "global_live_execution": true,
+      "symphony_live_mode": 1,
+      "expected_is_live": true,
+      "expect_sell_to_cash_called": true,
+      "description": "LIVE: both global and per-symphony are on — real trade must fire"
+    },
+    {
+      "id": "global_off_symph_on",
+      "global_live_execution": false,
+      "symphony_live_mode": 1,
+      "expected_is_live": false,
+      "expect_sell_to_cash_called": false,
+      "description": "DRY RUN: global is off even if per-symphony is on — master switch prevents real trade"
+    },
+    {
+      "id": "global_on_symph_off",
+      "global_live_execution": true,
+      "symphony_live_mode": 0,
+      "expected_is_live": false,
+      "expect_sell_to_cash_called": false,
+      "description": "DRY RUN: per-symphony is off even if global is on — default-dry safety holds"
+    },
+    {
+      "id": "both_off",
+      "global_live_execution": false,
+      "symphony_live_mode": 0,
+      "expected_is_live": false,
+      "expect_sell_to_cash_called": false,
+      "description": "DRY RUN: both global and per-symphony are off"
+    }
+  ],
+
+  "default_dry_run_cases": [
+    {
+      "id": "no_row",
+      "description": "symphony with no symphony_strategies row — live_mode defaults to 0 (dry run)",
+      "expected_live_mode": 0
+    },
+    {
+      "id": "live_mode_zero",
+      "description": "symphony_strategies row exists with live_mode=0 — dry run",
+      "expected_live_mode": 0
+    }
+  ],
+
+  "audit_log_cases": [
+    {
+      "id": "set_to_live",
+      "symphony": "Alpha Symphony",
+      "field": "live_mode",
+      "before_value": "0",
+      "after_value": "1",
+      "operator": "admin",
+      "description": "operator enables live_mode — audit row records before=0, after=1"
+    },
+    {
+      "id": "set_to_dry",
+      "symphony": "Alpha Symphony",
+      "field": "live_mode",
+      "before_value": "1",
+      "after_value": "0",
+      "operator": "admin",
+      "description": "operator disables live_mode — audit row records before=1, after=0"
+    }
+  ],
+
+  "autotuner_lock_cases": [
+    {
+      "id": "parameters_json_no_live_mode",
+      "description": "live_mode must NOT appear inside the parameters TEXT column (the JSON blob read by autotuner); it is a separate column only",
+      "parameters_key_must_be_absent": "live_mode"
+    }
+  ]
+}
