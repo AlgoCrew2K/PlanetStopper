@@ -169,7 +169,7 @@
                 '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">' +
 
                 '<div style="flex:1;min-width:0;">' +
-                '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">' +
+                '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">' +
                 confidenceRing +
                 '<span style="font-size:0.625rem;font-weight:700;text-transform:uppercase;' +
                 'letter-spacing:0.1em;color:' + cssVar('--studio-accent') + ';">' +
