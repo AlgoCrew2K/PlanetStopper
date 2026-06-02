@@ -1278,6 +1278,7 @@ _MIGRATION_FILES = [
     "028_autotune_runs_pbo.sql",
     "029_exit_triggers_also_true.sql",
     "030_per_symphony_live_mode.sql",
+    "031_shadow_history_sym_ts_index.sql",
 ]
 
 
