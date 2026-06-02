@@ -2224,6 +2224,91 @@ def save_settings():
         return jsonify({"status": "error", "message": "An internal error occurred"}), 500
 
 
+@app.route("/api/symphony-settings/<symphony_name>", methods=["GET"])
+def get_symphony_settings(symphony_name: str):
+    """Return per-symphony modal state: live_mode, global_live, parameters, locked_vars, advisor observations.
+
+    Consumes the read-only DB path for parameters/locked_vars/live_mode and
+    the env for the global master-switch flag.  Never writes; never reruns the engine.
+    """
+    symphony_name = database.normalize_name(symphony_name)
+    # Use module-level dotenv_values so test patches on app_module.dotenv_values take effect
+    # (same convention as save_settings and other dashboard routes).
+    env_vars = dotenv_values(ENV_FILE_PATH)
+    global_live = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
+
+    strategy = database.get_symphony_strategy(symphony_name)
+    # get_symphony_strategy defaults live_mode=False (arch rule 4: explicit, never by omission).
+    live_mode = bool(strategy.get("live_mode", False))
+
+    # Resolve symphony_id for the advisor observations query: walk the current bot state
+    # to match normalized_name -> id, falling back to symphony_name itself.
+    bot_state = database.load_state()
+    symphony_id = symphony_name  # default: normalized name is used as id
+    for sym_key, sym_data in bot_state.items():
+        if isinstance(sym_data, dict) and "name" in sym_data:
+            if database.normalize_name(sym_data["name"]) == symphony_name:
+                symphony_id = sym_key
+                break
+
+    advisor_observations = database.get_advisor_observations_for_symphony(symphony_id)
+
+    return jsonify({
+        "live_mode": live_mode,
+        "global_live": global_live,
+        "parameters": strategy.get("params", {}),
+        "locked_vars": strategy.get("locked_vars", []),
+        "advisor_observations": advisor_observations,
+    })
+
+
+@app.route("/api/symphony-settings/<symphony_name>", methods=["POST"])
+def save_symphony_settings(symphony_name: str):
+    """Persist per-symphony live_mode and locked_vars changes.
+
+    Rules enforced here (arch safety layer — CSRF is enforced by @before_request):
+      - live_mode=True requires confirm=True in the payload; without it the request
+        is rejected with 400 (bare toggle-click must never persist live, AC-3).
+      - live_mode changes go through set_symphony_live_mode (writes config_audit_log, AC-9).
+      - locked_vars changes go through save_symphony_strategy (preserves params, AC-6).
+      - LIVE_EXECUTION (global master-switch) is never touched here (arch rule 4 / AC-10).
+    """
+    _validate_csrf()
+    symphony_name = database.normalize_name(symphony_name)
+    payload = request.json or {}
+
+    try:
+        # AC-3: live_mode=True without confirm=True is rejected at the API layer.
+        live_mode_raw = payload.get("live_mode")
+        if live_mode_raw is True or live_mode_raw == 1:
+            if not payload.get("confirm"):
+                return jsonify({
+                    "status": "error",
+                    "message": (
+                        "confirm=true is required to enable live trading. "
+                        "A bare toggle click must never persist live mode."
+                    ),
+                }), 400
+            database.set_symphony_live_mode(symphony_name, 1, "dashboard")
+        elif live_mode_raw is False or live_mode_raw == 0:
+            # OFF toggle is immediate — no confirm required (AC-3).
+            database.set_symphony_live_mode(symphony_name, 0, "dashboard")
+
+        # AC-6: locked_vars changes persisted via save_symphony_strategy.
+        if "locked_vars" in payload:
+            strategy = database.get_symphony_strategy(symphony_name)
+            database.save_symphony_strategy(
+                symphony_name,
+                strategy.get("params", {}),
+                payload["locked_vars"],
+            )
+
+        return jsonify({"status": "success"})
+    except Exception as e:
+        _daemon_log.error("save_symphony_settings failed: %s", e, exc_info=True)
+        return jsonify({"status": "error", "message": "An internal error occurred"}), 500
+
+
 # The 11 real post_mortem dates produced by the live engine.
 # Everything else in post_mortems/ is synthetic backfill and must be flushed.
 # Verified 2026-05-21 against seed agent report + filesystem audit.
