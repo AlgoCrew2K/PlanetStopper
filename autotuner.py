@@ -2114,12 +2114,21 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
 
         def objective(trial):
             p = current_params.copy()
-            p["TAKE_PROFIT_MC_PCT"] = trial.suggest_float("TAKE_PROFIT_MC_PCT", _SS_TAKE_PROFIT_MC_MIN, _SS_TAKE_PROFIT_MC_MAX)
-            p["VWAP_CROSS_HWM_PCT"] = trial.suggest_float("VWAP_CROSS_HWM_PCT", _SS_VWAP_CROSS_HWM_MIN, _SS_VWAP_CROSS_HWM_MAX)
-            p["VWAP_BLEED_MULTIPLIER"] = trial.suggest_float("VWAP_BLEED_MULTIPLIER", _SS_VWAP_BLEED_MULT_MIN, _SS_VWAP_BLEED_MULT_MAX)
-            p["VWAP_BLEED_TICKS"] = trial.suggest_int("VWAP_BLEED_TICKS", _SS_VWAP_BLEED_TICKS_MIN, _SS_VWAP_BLEED_TICKS_MAX)
-            p["PARABOLIC_VELOCITY_THRESHOLD"] = trial.suggest_float("PARABOLIC_VELOCITY_THRESHOLD", _SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX)
-            p["MAX_PARABOLIC_SQUEEZE"] = trial.suggest_float("MAX_PARABOLIC_SQUEEZE", _SS_MAX_PARA_SQUEEZE_MIN, _SS_MAX_PARA_SQUEEZE_MAX)
+            # Only call suggest_* for vars NOT in locked_vars. A locked var
+            # already has its pinned value in p (from current_params.copy()
+            # above) and must not be offered to Optuna for exploration.
+            if "TAKE_PROFIT_MC_PCT" not in locked_vars:
+                p["TAKE_PROFIT_MC_PCT"] = trial.suggest_float("TAKE_PROFIT_MC_PCT", _SS_TAKE_PROFIT_MC_MIN, _SS_TAKE_PROFIT_MC_MAX)
+            if "VWAP_CROSS_HWM_PCT" not in locked_vars:
+                p["VWAP_CROSS_HWM_PCT"] = trial.suggest_float("VWAP_CROSS_HWM_PCT", _SS_VWAP_CROSS_HWM_MIN, _SS_VWAP_CROSS_HWM_MAX)
+            if "VWAP_BLEED_MULTIPLIER" not in locked_vars:
+                p["VWAP_BLEED_MULTIPLIER"] = trial.suggest_float("VWAP_BLEED_MULTIPLIER", _SS_VWAP_BLEED_MULT_MIN, _SS_VWAP_BLEED_MULT_MAX)
+            if "VWAP_BLEED_TICKS" not in locked_vars:
+                p["VWAP_BLEED_TICKS"] = trial.suggest_int("VWAP_BLEED_TICKS", _SS_VWAP_BLEED_TICKS_MIN, _SS_VWAP_BLEED_TICKS_MAX)
+            if "PARABOLIC_VELOCITY_THRESHOLD" not in locked_vars:
+                p["PARABOLIC_VELOCITY_THRESHOLD"] = trial.suggest_float("PARABOLIC_VELOCITY_THRESHOLD", _SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX)
+            if "MAX_PARABOLIC_SQUEEZE" not in locked_vars:
+                p["MAX_PARABOLIC_SQUEEZE"] = trial.suggest_float("MAX_PARABOLIC_SQUEEZE", _SS_MAX_PARA_SQUEEZE_MIN, _SS_MAX_PARA_SQUEEZE_MAX)
 
             acc_sym_ids = [k for k, v in bot_state.items() if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == normalized_name]
             if not acc_sym_ids: return 0.0
@@ -2333,6 +2342,18 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         # come from the AI and others from current/fallback). Force the cascade
         # to fall through to fallback (or default if fallback also fails) by
         # poisoning oos_alpha to -inf. Do NOT raise -- the daemon must keep ticking.
+        #
+        # Locked-vars injection: vars in both OPTUNA_SEARCH_SPACE_KEYS and
+        # locked_vars are excluded from suggest_* above, so they are absent
+        # from best_params (winner_trial.params). Inject them from current_params
+        # before the issubset check so (a) schema validation passes for locked
+        # keys and (b) OOS evaluation of the AI proposal uses the pinned value.
+        # This does NOT weaken the schema check — genuinely missing unlocked
+        # keys still trigger the invalid path.
+        _locked_search_space = OPTUNA_SEARCH_SPACE_KEYS & set(locked_vars)
+        for _lk in _locked_search_space:
+            if _lk not in best_params and _lk in current_params:
+                best_params[_lk] = current_params[_lk]
         ai_proposal_invalid = (
             haircut_rejected_proposal
             or not best_params
@@ -2478,17 +2499,20 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             else:
                 print(f"       OOS validation passed (Beat Baselines)! OOS Guard Alpha: {oos_alpha:.2f}% (Avg: {avg_oos_alpha:.2f}%) vs Fallback: {fallback_oos_alpha:.2f}% / Default: {default_oos_alpha:.2f}%")
             for name, val in best_params.items():
-                current_params[name] = round(val, 2)
+                if name not in locked_vars:
+                    current_params[name] = round(val, 2)
             baseline_decision = "Adopted AI"
         elif fallback_oos_alpha >= default_oos_alpha:
             print(f"       OOS validation failed (AI: {oos_alpha:.2f}%). Reverting to Fallback parameters (Fallback: {fallback_oos_alpha:.2f}% vs Default: {default_oos_alpha:.2f}%).")
             for k, v in fallback_params.items():
-                current_params[k] = v
+                if k not in locked_vars:
+                    current_params[k] = v
             baseline_decision = "Reverted to Fallback"
         else:
             print(f"       OOS validation & Fallback failed. Resetting to Global Default (Default: {default_oos_alpha:.2f}% vs AI: {oos_alpha:.2f}%, Fallback: {fallback_oos_alpha:.2f}%).")
             for k, v in default_params.items():
-                current_params[k] = v
+                if k not in locked_vars:
+                    current_params[k] = v
             baseline_decision = "Reset to Global Default"
 
         # AC-3 / N-1: the frozen-eval Sortino was computed against the AI's
