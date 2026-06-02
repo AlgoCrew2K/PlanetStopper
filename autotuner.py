@@ -114,8 +114,9 @@ def _replay_in_open_window_grace(
 # Extra keys outside this set are tolerated for forward-compat.
 # Note: optuna.logging.set_verbosity is now called inside run_autotuner
 # (not module-level) so import does not trigger logging side effects.
-# Vars in database.DEFAULT_LOCKED_VARS are excluded from the search space —
-# they retain their current values and are never overwritten by trial suggestions.
+# Vars in database.DEFAULT_LOCKED_VARS AND in a symphony's per-symphony
+# locked_vars list are excluded from the search space — they retain their
+# current values and are never overwritten by trial suggestions.
 OPTUNA_SEARCH_SPACE_KEYS = frozenset({
     "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
     "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS",
@@ -2350,6 +2351,13 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         # keys and (b) OOS evaluation of the AI proposal uses the pinned value.
         # This does NOT weaken the schema check — genuinely missing unlocked
         # keys still trigger the invalid path.
+        # Copy first: best_params IS winner_trial.params on the haircut path
+        # (autotuner.py:2285). Mutating it in-place could corrupt Optuna's
+        # internal trial state under RDB storage. A shallow copy is sufficient
+        # (values are scalars). n_effective/DOF: locking reduces search
+        # dimensionality but NOT n_optuna (trial count); BHY counts independent
+        # tests, not search-space dims — orthogonal, no change needed.
+        best_params = dict(best_params)
         _locked_search_space = OPTUNA_SEARCH_SPACE_KEYS & set(locked_vars)
         for _lk in _locked_search_space:
             if _lk not in best_params and _lk in current_params:
