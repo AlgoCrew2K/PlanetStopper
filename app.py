@@ -1525,6 +1525,9 @@ def get_state():
                 "para_armed": bool(_s.get("para_armed")),
                 "triggered": bool(_s.get("triggered")),
                 "triggered_reason": _s.get("triggered_reason"),
+                # guard_alpha for the outcome banner on triggered cards.
+                # Injected above from database.get_guard_alpha_by_symphony().
+                "guard_alpha": _s.get("guard_alpha"),
                 # Analytics-derived display values.
                 "tc_bot":  _tc_b,
                 "tc_held": _tc_h,
