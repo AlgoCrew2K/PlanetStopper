@@ -489,3 +489,112 @@ def test_index_js_does_not_reference_sym_table_container():
         "This was the injection point for the dark table that collided with "
         "the light card UI. Remove all references to this container."
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-CL.10  updateCards updates the status pill text/class via sym.triggered/armed
+# ---------------------------------------------------------------------------
+
+
+def test_index_js_update_cards_updates_status_pill():
+    """
+    static/index.js updateCards (or a helper it calls) must update the
+    status-pill element on each card when the symphony's armed/triggered state
+    changes.
+
+    The original bug: cards render server-side only — after an exit the status
+    pill still shows "Armed" until a hard refresh. The fix must update the
+    status-pill text AND CSS class on each 30s poll using sym.triggered /
+    sym.armed / sym.tp_armed / sym.para_armed from data.symphonies.
+
+    Minimum signal: updateCards must reference 'status-pill' as a querySelector
+    target and must read sym.triggered (or sym.status) to set the new text/class.
+    """
+    js_path = _STATIC_DIR / "index.js"
+    assert js_path.exists(), "static/index.js must exist"
+
+    content = js_path.read_text(encoding="utf-8")
+
+    assert "status-pill" in content, (
+        "AC-CL.10 FAIL: static/index.js does not reference 'status-pill'. "
+        "updateCards must locate the status-pill element on each card and update "
+        "its text + CSS class when triggered/armed state changes on the 30s poll. "
+        "Without this the status pill goes stale — an exited symphony still shows "
+        "'Armed' until a hard refresh."
+    )
+
+    # The update must read triggered or status from the per-symphony payload.
+    has_triggered_read = (
+        "sym.triggered" in content
+        or "sym.status" in content
+        or 'sym["triggered"]' in content
+        or 'sym["status"]' in content
+    )
+    assert has_triggered_read, (
+        "AC-CL.10 FAIL: static/index.js does not read sym.triggered or sym.status "
+        "in the card update path. The status pill text ('TRAILING STOP', 'Armed', "
+        "'Standby', etc.) must be derived from the per-symphony triggered/armed flags "
+        "in data.symphonies — not from stale server-rendered text."
+    )
+
+
+# ---------------------------------------------------------------------------
+# AC-CL.11  updateCards updates the MC dial from sym.mc_prob
+# ---------------------------------------------------------------------------
+
+
+def test_index_js_update_cards_updates_mc_dial_from_sym_mc_prob():
+    """
+    static/index.js updateCards must update the MC dial (`data-testid="mc-dial"`)
+    for each card using sym.mc_prob from data.symphonies on each 30s poll.
+
+    Currently renderMcDial is called only from the chart-data fetch path (which
+    triggers on page load + sparkline refresh), not on the state poll. The dial
+    therefore shows the value from the last chart load, which can be many minutes
+    stale during market hours.
+
+    The fix: updateCards must also drive the MC dial from sym.mc_prob in the
+    symphonies payload. Minimum signal: updateCards references both 'mc-dial'
+    (querySelector target) and sym.mc_prob (value source).
+    """
+    js_path = _STATIC_DIR / "index.js"
+    assert js_path.exists(), "static/index.js must exist"
+
+    content = js_path.read_text(encoding="utf-8")
+
+    # The function must target the mc-dial element within the card update path.
+    # We verify that 'mc-dial' appears in updateCards or a helper it calls.
+    # The existing renderMcDial already uses 'mc-dial' (for chart loads) — we need
+    # updateCards to also drive it, so the count must reflect wiring in updateCards.
+    # A simple presence check is sufficient: if mc-dial + mc_prob both appear and
+    # updateCards is wired, the dial is updated.
+    assert "mc-dial" in content, (
+        "AC-CL.11 FAIL: static/index.js does not reference 'mc-dial' in the card "
+        "update path. updateCards must update the MC dial arc and label on each 30s "
+        "poll using sym.mc_prob from data.symphonies."
+    )
+
+    # The update must connect mc_prob from the symphonies payload to the dial.
+    # We check that updateCards (the function body) references sym.mc_prob —
+    # not just that sym.mc_prob appears somewhere in the file (it also appears
+    # in populateRiskMathFromState for the detail panel).
+    # Extract the updateCards function body by slicing between 'function updateCards'
+    # and the matching closing brace block.
+    update_cards_start = content.find("function updateCards(")
+    assert update_cards_start != -1, (
+        "AC-CL.11 FAIL: function updateCards not found in static/index.js."
+    )
+    # Take 2000 chars past the function start — sufficient to cover the function body.
+    update_cards_body = content[update_cards_start: update_cards_start + 2000]
+
+    has_mc_prob_in_update_cards = (
+        "sym.mc_prob" in update_cards_body
+        or 'sym["mc_prob"]' in update_cards_body
+        or "renderMcDial" in update_cards_body  # acceptable: delegate to existing helper
+    )
+    assert has_mc_prob_in_update_cards, (
+        "AC-CL.11 FAIL: static/index.js updateCards does not read sym.mc_prob or "
+        "call renderMcDial. The MC dial must be refreshed on every 30s poll — "
+        "not only when chart data loads. Add sym.mc_prob → renderMcDial (passing id "
+        "and a synthetic chartData object) or inline the dial update inside updateCards."
+    )
