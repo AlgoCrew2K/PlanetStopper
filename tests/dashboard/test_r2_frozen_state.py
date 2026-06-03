@@ -362,12 +362,7 @@ class TestPreMarketServesFrozenStateObject:
     def test_pre_market_state_is_object_not_string(
         self, flask_client, monkeypatch
     ):
-        """AC-6: pre_market + snapshot → state is a dict, not a string.
-
-        Scenario: pre_market on a NON-new-trading-day (e.g. Sunday night with a
-        Friday snapshot).  is_trading_day=False so the AC-4a stale-skip does not
-        fire — the snapshot is legitimately current.
-        """
+        """AC-6: pre_market + snapshot → state is a dict, not a string."""
         client, app_module = flask_client
         fx = _load("frozen_state_pre_market")
 
@@ -381,12 +376,6 @@ class TestPreMarketServesFrozenStateObject:
             mock_db.read_fleet_alert.return_value = None
             monkeypatch.setattr(
                 app_module, "get_market_state", lambda dt: "pre_market", raising=False
-            )
-            # AC-4a guard: simulate a non-new-trading-day so the stale-snapshot skip
-            # does not fire.  This scenario represents pre_market on a day that is NOT
-            # a new trading session (e.g. Sunday night) — snapshot is still valid.
-            monkeypatch.setattr(
-                app_module.market_calendar, "is_trading_day", lambda d: False, raising=False
             )
 
             resp = client.get("/api/state")
@@ -406,11 +395,7 @@ class TestPreMarketServesFrozenStateObject:
     def test_pre_market_state_contains_expected_symphony_ids(
         self, flask_client, monkeypatch
     ):
-        """AC-7: pre_market + snapshot → state keys are the snapshot's symphony IDs.
-
-        Scenario: pre_market on a NON-new-trading-day (snapshot is still valid).
-        is_trading_day=False prevents the AC-4a stale-skip from firing.
-        """
+        """AC-7: pre_market + snapshot → state keys are the snapshot's symphony IDs."""
         client, app_module = flask_client
         fx = _load("frozen_state_pre_market")
 
@@ -425,10 +410,6 @@ class TestPreMarketServesFrozenStateObject:
             mock_db.read_fleet_alert.return_value = None
             monkeypatch.setattr(
                 app_module, "get_market_state", lambda dt: "pre_market", raising=False
-            )
-            # AC-4a guard: simulate non-new-trading-day so snapshot is valid.
-            monkeypatch.setattr(
-                app_module.market_calendar, "is_trading_day", lambda d: False, raising=False
             )
 
             resp = client.get("/api/state")

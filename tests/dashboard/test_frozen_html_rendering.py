@@ -399,11 +399,6 @@ class TestPreMarketIncludesHtmlKey:
             monkeypatch.setattr(
                 app_module, "get_market_state", lambda dt: "pre_market", raising=False
             )
-            # AC-4a guard: simulate non-new-trading-day so the stale-skip does not
-            # fire and the snapshot is legitimately served.
-            monkeypatch.setattr(
-                app_module.market_calendar, "is_trading_day", lambda d: False, raising=False
-            )
             resp = client.get("/api/state")
 
         assert resp.status_code == 200

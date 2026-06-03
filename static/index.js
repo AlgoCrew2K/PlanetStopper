@@ -900,15 +900,6 @@
         _botState = botState;
         _symIds = Object.keys(botState);
 
-        // AC-3: inject server-rendered table_partial HTML into the container on each
-        // poll so the symphony table reflects current state without a hard refresh.
-        if (data.html) {
-            var tableContainer = document.getElementById('sym-table-container');
-            if (tableContainer) {
-                tableContainer.innerHTML = data.html;
-            }
-        }
-
         // C-10: per-renderer try/catch so one failure doesn't kill subsequent renderers
         [
             function () { renderHeroChart(meta); },
