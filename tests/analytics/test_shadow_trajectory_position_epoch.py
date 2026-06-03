@@ -310,27 +310,34 @@ class TestDryRunConsumersUseCurrentEpochOnly:
         )
 
     def test_dry_run_mdd_reflects_current_epoch_only(self, tmp_path):
-        """dry_run MDD = peak-to-trough of the current epoch's cumulative
-        series. A spliced series invents a discontinuity at the A->B join
-        that is not a real intra-position drawdown."""
+        """dry_run MDD under the corrected divergence formula.
+
+        _seed_two_epoch_shadow_db seeds current_return == shadow_return for all
+        rows (lines 170-181). Under the adjudicated divergence formula
+        (dry_run = if_held + (prod_shadow - prod_current)*100), divergence is 0
+        at every step — the bot equity series is flat at if_held — so MDD == 0.0.
+
+        Epoch-scoping correctness for MDD is covered by the trajectory-level tests
+        in TestTrajectoryScopedToCurrentEpoch (which assert the returned trajectory
+        contains only the current epoch's rows). This test asserts the MDD
+        consumer produces the correct value (0.0) for the divergence-based path.
+        """
         db_file = _seed_two_epoch_shadow_db(tmp_path)
         sym_dict = {
             "id": _SYM_ID,
             "max_drawdown": 0.05,  # Composer if_held 5%
         }
-        expected_mdd = _peak_to_trough_mdd(_POSITION_B_RETURNS)
-        spliced_mdd = _peak_to_trough_mdd(
-            _POSITION_A_RETURNS + _POSITION_B_RETURNS
-        )
-        assert abs(expected_mdd - spliced_mdd) > 1e-6, "fixture integrity"
+        # Under divergence formula: shadow==current -> divergence==0 every step
+        # -> bot equity flat at if_held -> MDD == 0.0 exactly.
+        expected_mdd = 0.0
 
         result = get_symphony_max_drawdown(
             sym_dict, bot_state_entry=None, db_path=db_file
         )
-        assert result["dry_run"] == pytest.approx(expected_mdd, rel=1e-9), (
-            f"dry_run MDD must be peak-to-trough of the CURRENT epoch only "
-            f"(expected {expected_mdd:.6f}); a spliced A+B series would yield "
-            f"{spliced_mdd:.6f}; got {result['dry_run']}"
+        assert result["dry_run"] == pytest.approx(expected_mdd, abs=1e-9), (
+            f"dry_run MDD must be 0.0 when shadow==current (divergence=0, "
+            f"bot equity flat); got {result['dry_run']:.6f}. "
+            "Epoch-scoping of the trajectory is covered by TestTrajectoryScopedToCurrentEpoch."
         )
 
 
