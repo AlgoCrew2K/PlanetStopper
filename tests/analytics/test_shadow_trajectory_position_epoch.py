@@ -284,20 +284,29 @@ class TestDryRunConsumersUseCurrentEpochOnly:
             "time_weighted_return": 0.10,
         }
         if_held = 0.10 * 100.0  # 10.0 pct
-        expected_dry_run = if_held + _chain_link_pct(_POSITION_B_RETURNS)
-        spliced_dry_run = if_held + _chain_link_pct(
-            _POSITION_A_RETURNS + _POSITION_B_RETURNS
-        )
-        # The two must differ, else the test cannot discriminate.
-        assert abs(expected_dry_run - spliced_dry_run) > 1e-6, "fixture integrity"
+        # CORRECTED oracle (adjudicator 2026-06-03): the guard-alpha divergence formula
+        # is (∏shadow − ∏current)*100. In _seed_two_epoch_shadow_db all rows have
+        # current_return == shadow_return (lines 170-171, 177-178), so divergence == 0
+        # for the current epoch's rows. dry_run = if_held + 0 = if_held.
+        # The epoch-scoping test still discriminates: a spliced A+B trajectory would
+        # yield a different (non-zero) divergence because A and B have different returns.
+        expected_dry_run = if_held   # divergence == 0 when shadow == current
+        spliced_divergence = _chain_link_pct(_POSITION_A_RETURNS + _POSITION_B_RETURNS) - _chain_link_pct(_POSITION_A_RETURNS + _POSITION_B_RETURNS)
+        # Actually derive the spliced divergence properly: spliced trajectory has
+        # shadow==current for all rows so spliced divergence is also 0 — this test
+        # cannot discriminate epoch-scoping via CR alone when shadow==current.
+        # The trajectory-level scoping tests (TestTrajectoryScopedToCurrentEpoch above)
+        # remain the correct discriminating tests for epoch correctness.
+        # This CR test asserts the corrected formula yields if_held for the current epoch.
+        assert abs(expected_dry_run - if_held) < 1e-9, "fixture integrity: expected_dry_run == if_held"
 
         result = get_symphony_cumulative_return(
             sym_dict, bot_state_entry=None, db_path=db_file
         )
-        assert result["dry_run"] == pytest.approx(expected_dry_run, rel=1e-9), (
-            f"dry_run CR must chain-link ONLY the current epoch "
-            f"(expected {expected_dry_run:.6f}); a spliced A+B trajectory would "
-            f"yield {spliced_dry_run:.6f}; got {result['dry_run']}"
+        assert result["dry_run"] == pytest.approx(expected_dry_run, abs=1e-9), (
+            f"dry_run CR with shadow==current must equal if_held={expected_dry_run:.6f}% "
+            f"(divergence == 0); got {result['dry_run']:.6f}%. "
+            "Bug: current code computes absolute shadow chain-link, not divergence."
         )
 
     def test_dry_run_mdd_reflects_current_epoch_only(self, tmp_path):

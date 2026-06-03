@@ -548,25 +548,25 @@ def _build_shadow_db_with_rows(
 
 class TestChainLinkGoldenPerDayReturns:
     """
-    F-CHAIN-LINK: GOLDEN regression tests pinning the chain-link CR and MDD math
-    as correct, intentional design per AC-M1F.3.2 / PA-M1F-16
-    (feature-plans/m1f-real-shadow-equity-series.merged.md:55-56).
+    F-CHAIN-LINK: GOLDEN tests for the CORRECTED guard-alpha divergence formula.
 
-    VERDICT (NOT A BUG — verified by risk-engine-specialist against cited lines):
-      shadow_return = current_return = last_percent_change * 100
-                                       (alpha_bot_execution.py:768, :916)
-      last_percent_change is Composer's per-day TODAY'S CHANGE — the same field
-      get_symphony_today_change uses for the TC row (analytics.py:491, :501).
-      It is NOT the cumulative return since position open; that is simple_return.
-      Chain-linking per-day returns via ∏(1 + r_i/100) - 1 is therefore correct.
+    FINAL ORACLE (independent adjudicator 2026-06-03):
+      shadow_return is PER-DAY (daily reset confirmed: database.py:342-343).
+      The bug is NOT about removing if_held. The correct divergence formula is:
+          divergence = (prod_shadow - prod_current) * 100
+          dry_run = if_held + divergence
 
-    The original audit claim ("flat at -3% for 3 days → CR should be -3%") rested
-    on a semantic error: it assumed last_percent_change is cumulative-since-open.
-    The codebase consistently treats last_percent_change as per-day.
+      _build_shadow_db_with_rows sets current_return == shadow_return on all rows
+      (untriggered scenario). With shadow == current, divergence == 0 exactly,
+      so dry_run == if_held for any untriggered position.
 
-    Expected values are derived in-test from the documented formula, never from
-    producer output. Tolerance rel=1e-9 — these are exact floating-point arithmetic
-    on small fixtured values; tolerance guards only IEEE-754 rounding.
+      These tests are RED against the current analytics.py (which yields
+      if_held + chain_link instead of if_held when shadow==current) and will go
+      GREEN after the divergence fix in _get_shadow_cumulative_trajectory +
+      get_symphony_cumulative_return.
+
+    Fixture: tests/fixtures/math/shadow_cr_chain_link_golden.json (rows only).
+    Expected values: divergence==0 → dry_run==if_held. Tolerance abs=1e-9.
     """
 
     def test_flat_per_day_returns_compound_correctly(self, tmp_path):
@@ -615,32 +615,24 @@ class TestChainLinkGoldenPerDayReturns:
             f"F-CHAIN-LINK-1 FAIL: MDD returned {mdd_result!r}."
         )
 
-        # Chain-link CR component: (0.97 * 0.97 * 0.97 - 1) * 100
-        # -3% PER DAY x3 = (0.97^3-1)*100 = -8.7327% is CORRECT compounding.
-        # shadow_return is per-day not cumulative (producer alpha_bot_execution.py:768,916).
-        cr_chain_component = (0.97 ** 3 - 1.0) * 100.0   # -8.732700000000005
-        expected_dry_run = if_held + cr_chain_component
+        # CORRECTED oracle: _build_shadow_db_with_rows sets current_return == shadow_return.
+        # divergence = (prod_shadow - prod_current)*100 = 0 when shadow == current.
+        # dry_run = if_held + 0 = if_held exactly.
+        # Buggy code: dry_run = if_held + (prod_shadow - 1)*100 = if_held + chain_link.
+        expected_dry_run = if_held   # divergence == 0
 
-        assert cr_result["dry_run"] == pytest.approx(expected_dry_run, rel=1e-9), (
+        assert cr_result["dry_run"] == pytest.approx(expected_dry_run, abs=1e-9), (
             f"F-CHAIN-LINK-1 CR FAIL: dry_run={cr_result['dry_run']:.6f}%, "
-            f"expected {expected_dry_run:.6f}% (= if_held {if_held}% + chain-link "
-            f"{cr_chain_component:.6f}%). "
-            "analytics.get_symphony_cumulative_return chain-link formula has deviated "
-            "from AC-M1F.3.2 / PA-M1F-16."
+            f"expected if_held={expected_dry_run:.6f}% (divergence=0 when shadow==current). "
+            "Correct formula: dry_run = if_held + (prod_shadow - prod_current)*100."
         )
 
-        # MDD of cumulative series [-3.0, -5.91, -8.7327]:
-        # analytics.py:739 initialises peak = cum_series[0] = -3.0 (NOT 0.0).
-        # trough = -8.7327 -> dd = -3.0 - (-8.7327) = 5.7327
-        cum0 = (0.97 - 1.0) * 100.0          # -3.0
-        cum1 = (0.97 ** 2 - 1.0) * 100.0     # -5.91
-        cum2 = (0.97 ** 3 - 1.0) * 100.0     # -8.7327
-        peak = cum0
-        expected_mdd = peak - cum2            # 5.7327...
-        assert mdd_result["dry_run"] == pytest.approx(expected_mdd, rel=1e-9), (
+        # MDD: bot equity flat at if_held (shadow==current → divergence==0 each step).
+        # MDD of a flat series == 0. Buggy code builds absolute shadow cum_series → non-zero.
+        expected_mdd = 0.0
+        assert mdd_result["dry_run"] == pytest.approx(expected_mdd, abs=1e-9), (
             f"F-CHAIN-LINK-1 MDD FAIL: dry_run={mdd_result['dry_run']:.6f}%, "
-            f"expected {expected_mdd:.6f}% (peak={peak:.4f} - trough={cum2:.4f}). "
-            "analytics.get_symphony_max_drawdown MDD formula has deviated."
+            f"expected 0.0% (bot equity flat when shadow==current, no drawdown)."
         )
 
     def test_mixed_per_day_returns_cr_and_mdd_match_formula(self, tmp_path):
@@ -682,40 +674,20 @@ class TestChainLinkGoldenPerDayReturns:
             sym_dict, bot_state_entry=None, db_path=db_file
         )
 
-        # CR chain-link formula (AC-M1F.3.2 / PA-M1F-16):
-        product = 0.995 * 1.008 * 0.988 * 1.020
-        cr_chain_component = (product - 1.0) * 100.0   # ~1.074297%
-        expected_dry_run = if_held + cr_chain_component
+        # CORRECTED oracle: _build_shadow_db_with_rows sets current_return == shadow_return.
+        # divergence = (prod_shadow - prod_current)*100 = 0 → dry_run = if_held.
+        expected_dry_run = if_held   # divergence == 0
 
-        assert cr_result["dry_run"] == pytest.approx(expected_dry_run, rel=1e-9), (
+        assert cr_result["dry_run"] == pytest.approx(expected_dry_run, abs=1e-9), (
             f"F-CHAIN-LINK-2 CR FAIL: dry_run={cr_result['dry_run']:.6f}%, "
-            f"expected {expected_dry_run:.6f}%."
+            f"expected if_held={expected_dry_run:.6f}% (divergence=0 when shadow==current)."
         )
 
-        # MDD of cumulative series (analytics.py:733-747 algorithm):
-        #   cum_series: build by product accumulation from per-day returns
-        p = 1.0
-        cum_series = []
-        for r in [-0.5, 0.8, -1.2, 2.0]:
-            p *= 1.0 + r / 100.0
-            cum_series.append((p - 1.0) * 100.0)
-        # cum_series ≈ [-0.5, 0.296, -0.907552, 1.074297]
-        # analytics.py:739: peak = cum_series[0]; then iterate.
-        peak = cum_series[0]
-        max_dd = 0.0
-        for val in cum_series:
-            if val > peak:
-                peak = val
-            dd = peak - val
-            if dd > max_dd:
-                max_dd = dd
-        # peak occurs at cum_series[1]=0.296; trough at cum_series[2]=-0.9076
-        # MDD = 0.296 - (-0.9076) = 1.2036%
-        expected_mdd = max_dd
-
-        assert mdd_result["dry_run"] == pytest.approx(expected_mdd, rel=1e-9), (
+        # MDD: bot equity flat at if_held when shadow==current → MDD == 0.
+        expected_mdd = 0.0
+        assert mdd_result["dry_run"] == pytest.approx(expected_mdd, abs=1e-9), (
             f"F-CHAIN-LINK-2 MDD FAIL: dry_run={mdd_result['dry_run']:.6f}%, "
-            f"expected {expected_mdd:.6f}%."
+            f"expected 0.0% (bot equity flat when shadow==current)."
         )
 
     def test_portfolio_aggregate_dry_run_equals_value_weighted_per_symphony(self, tmp_path):
