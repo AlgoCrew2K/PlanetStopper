@@ -310,34 +310,55 @@ class TestDryRunConsumersUseCurrentEpochOnly:
         )
 
     def test_dry_run_mdd_reflects_current_epoch_only(self, tmp_path):
-        """dry_run MDD under the corrected divergence formula.
+        """dry_run MDD = 0.0 for the two-epoch fixture — derivation below.
 
-        _seed_two_epoch_shadow_db seeds current_return == shadow_return for all
-        rows (lines 170-181). Under the adjudicated divergence formula
-        (dry_run = if_held + (prod_shadow - prod_current)*100), divergence is 0
-        at every step — the bot equity series is flat at if_held — so MDD == 0.0.
+        DERIVATION (MDD anchor invariant: never-triggered → bot-MDD == 0 over
+        the shadow window):
+          _seed_two_epoch_shadow_db (lines 165-183) seeds every row with
+              current_return = shadow_return = ret  (same value, no trigger)
+          The corrected MDD formula (analytics.py:807-851) builds:
+              bot_equity[t] = if_held + (prod_shadow[0..t] - prod_current[0..t]) * 100
+          Since current_return == shadow_return on every day:
+              prod_shadow[0..t] == prod_current[0..t] for ALL t  (identical products)
+          Therefore:
+              bot_equity[t] = if_held + 0 = if_held  for all t  (flat series)
+          Peak-to-trough of a flat constant series is exactly 0:
+              MDD = max(peak - val) over flat series = 0.0
+          This is the NEVER-TRIGGERED MDD ANCHOR — the bot-path drawdown is 0
+          when the guard never diverged from the held path.
 
-        Epoch-scoping correctness for MDD is covered by the trajectory-level tests
-        in TestTrajectoryScopedToCurrentEpoch (which assert the returned trajectory
-        contains only the current epoch's rows). This test asserts the MDD
-        consumer produces the correct value (0.0) for the divergence-based path.
+          NOTE: the dry_run MDD is the drawdown of the bot's divergence-based
+          equity path over the SHADOW WINDOW, not the Composer lifetime MDD
+          (if_held). These measure different things. The anchor invariant only
+          applies to the shadow-window bot path.
+
+        Epoch-scoping for the trajectory is already covered by
+        TestTrajectoryScopedToCurrentEpoch (the trajectory-level tests assert that
+        only the current epoch's rows are returned). This test asserts the MDD
+        consumer uses the divergence-based equity path and produces 0.0 for
+        untriggered (shadow==current) rows.
         """
         db_file = _seed_two_epoch_shadow_db(tmp_path)
         sym_dict = {
             "id": _SYM_ID,
-            "max_drawdown": 0.05,  # Composer if_held 5%
+            "max_drawdown": 0.05,  # Composer if_held 5% (lifetime held MDD, not tested here)
         }
-        # Under divergence formula: shadow==current -> divergence==0 every step
-        # -> bot equity flat at if_held -> MDD == 0.0 exactly.
+        # DERIVED (not captured from output):
+        #   current_return == shadow_return in _seed_two_epoch_shadow_db
+        #   → prod_shadow[0..t] == prod_current[0..t] at every step t
+        #   → bot_equity[t] = if_held + (0) = if_held  (constant)
+        #   → peak-to-trough of a flat series = 0.0
         expected_mdd = 0.0
 
         result = get_symphony_max_drawdown(
             sym_dict, bot_state_entry=None, db_path=db_file
         )
         assert result["dry_run"] == pytest.approx(expected_mdd, abs=1e-9), (
-            f"dry_run MDD must be 0.0 when shadow==current (divergence=0, "
-            f"bot equity flat); got {result['dry_run']:.6f}. "
-            "Epoch-scoping of the trajectory is covered by TestTrajectoryScopedToCurrentEpoch."
+            f"dry_run MDD must be 0.0 (derived: shadow==current at every step "
+            f"→ prod_shadow==prod_current → bot equity flat → zero drawdown); "
+            f"got {result['dry_run']:.6f}. "
+            "A non-zero result means the MDD consumer is using the absolute "
+            "shadow series (old bug) instead of the divergence-based equity path."
         )
 
 

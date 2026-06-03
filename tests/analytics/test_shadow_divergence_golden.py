@@ -338,15 +338,28 @@ class TestMddOnBotEquityPath:
 
     def test_never_triggered_mdd_is_zero(self, tmp_path):
         """
-        Untriggered symphony: bot equity is flat at if_held (shadow == current
-        every day → divergence == 0 at every step). MDD of a flat series == 0.
-        Current code FAILS: (∏shadow - 1) builds a non-flat cum_series even when
-        shadow == current, yielding non-zero MDD.
+        MDD ANCHOR INVARIANT: never-triggered symphony → bot shadow-window MDD == 0.
+
+        DERIVATION:
+          shadow_return == current_return on every day (guard never acted).
+          Bot equity series: bot_equity[t] = if_held + (∏shadow[0..t] - ∏current[0..t])*100
+          Since shadow == current: ∏shadow[0..t] == ∏current[0..t] for all t.
+          Therefore bot_equity[t] = if_held + 0 = if_held  (constant, no movement).
+          Peak-to-trough of a constant series = 0.0 exactly.
+
+          This is the MDD counterpart to the CR 0-alpha invariant:
+            CR anchor:  Guard Alpha = dry_run_CR - if_held = 0 when guard never acted.
+            MDD anchor: dry_run_MDD = 0 (bot shadow-window drawdown) when guard never acted.
+          Both invariants must hold simultaneously for the fix to be correct.
+
+        NOTE: dry_run_MDD is the drawdown of the bot's divergence-based equity path
+        over the SHADOW WINDOW — it is not the Composer lifetime MDD (if_held).
+        The invariant is specifically about the shadow-window bot path.
         """
         rows = [
-            {"trading_day": "2026-01-05", "shadow_return": 1.0, "current_return": 1.0, "ts_utc": "2026-01-05T21:00:00Z"},
+            {"trading_day": "2026-01-05", "shadow_return":  1.0, "current_return":  1.0, "ts_utc": "2026-01-05T21:00:00Z"},
             {"trading_day": "2026-01-06", "shadow_return": -2.0, "current_return": -2.0, "ts_utc": "2026-01-06T21:00:00Z"},
-            {"trading_day": "2026-01-07", "shadow_return": 0.5, "current_return": 0.5, "ts_utc": "2026-01-07T21:00:00Z"},
+            {"trading_day": "2026-01-07", "shadow_return":  0.5, "current_return":  0.5, "ts_utc": "2026-01-07T21:00:00Z"},
         ]
         sym_id = "sym_mdd_untriggered"
         db_file = _make_db(tmp_path, sym_id, rows)
@@ -355,13 +368,62 @@ class TestMddOnBotEquityPath:
         result = get_symphony_max_drawdown(sym, bot_state_entry=None, db_path=db_file)
 
         assert result["dry_run"] is not None, "dry_run must not be None with 3 shadow rows"
+        # DERIVED: shadow==current → bot equity flat → MDD = 0 (not captured from output)
         assert result["dry_run"] == pytest.approx(0.0, abs=1e-9), (
-            f"MDD ANCHOR FAIL: never-triggered symphony has bot MDD "
-            f"= {result['dry_run']:.6f}% (should be exactly 0%). "
-            "When shadow == current, the bot equity is flat at if_held — no drawdown. "
-            "Bug: analytics.py:733-737 builds cum_series from ∏shadow, which is not flat "
-            "even when shadow == current, producing phantom MDD."
+            f"MDD ANCHOR FAIL: never-triggered symphony has bot shadow-window MDD "
+            f"= {result['dry_run']:.6f}% (derived: must be exactly 0%). "
+            "When shadow == current, bot equity is flat at if_held — no drawdown possible. "
+            "A non-zero value means the MDD consumer uses the absolute shadow series "
+            "(old bug) rather than the divergence-based equity path."
         )
+
+    def test_never_triggered_mdd_anchor_multiple_market_scenarios(self, tmp_path):
+        """
+        MDD ANCHOR PROPERTY: the zero-MDD invariant holds for ANY market scenario
+        where the guard never acted (shadow == current), including volatile paths
+        with large intraday swings that would produce non-zero MDD on the absolute
+        shadow series.
+
+        Tests 3 scenarios with distinct market profiles (rising, volatile, falling)
+        to confirm the invariant is not coincidentally true for one case.
+        Tolerance: abs=1e-9 — derived value is exactly 0.0.
+        """
+        scenarios = [
+            # Rising market — absolute shadow MDD would be near 0 (benign baseline)
+            [
+                {"trading_day": "2026-01-05", "shadow_return":  2.0, "current_return":  2.0, "ts_utc": "2026-01-05T21:00:00Z"},
+                {"trading_day": "2026-01-06", "shadow_return":  1.5, "current_return":  1.5, "ts_utc": "2026-01-06T21:00:00Z"},
+                {"trading_day": "2026-01-07", "shadow_return":  0.8, "current_return":  0.8, "ts_utc": "2026-01-07T21:00:00Z"},
+            ],
+            # Volatile market — absolute shadow MDD would be non-trivially non-zero
+            [
+                {"trading_day": "2026-01-05", "shadow_return":  3.0, "current_return":  3.0, "ts_utc": "2026-01-05T21:00:00Z"},
+                {"trading_day": "2026-01-06", "shadow_return": -4.5, "current_return": -4.5, "ts_utc": "2026-01-06T21:00:00Z"},
+                {"trading_day": "2026-01-07", "shadow_return":  2.1, "current_return":  2.1, "ts_utc": "2026-01-07T21:00:00Z"},
+                {"trading_day": "2026-01-08", "shadow_return": -1.8, "current_return": -1.8, "ts_utc": "2026-01-08T21:00:00Z"},
+            ],
+            # Falling market — absolute shadow MDD would be its largest
+            [
+                {"trading_day": "2026-01-05", "shadow_return": -1.0, "current_return": -1.0, "ts_utc": "2026-01-05T21:00:00Z"},
+                {"trading_day": "2026-01-06", "shadow_return": -2.0, "current_return": -2.0, "ts_utc": "2026-01-06T21:00:00Z"},
+                {"trading_day": "2026-01-07", "shadow_return": -0.5, "current_return": -0.5, "ts_utc": "2026-01-07T21:00:00Z"},
+            ],
+        ]
+
+        for i, rows in enumerate(scenarios):
+            sym_id = f"sym_mdd_anchor_{i}"
+            db_file = _make_db(tmp_path / f"s{i}", sym_id, rows)
+            sym = _sym(sym_id, if_held_pct=7.0, max_dd_pct=4.0)
+
+            result = get_symphony_max_drawdown(sym, bot_state_entry=None, db_path=db_file)
+            assert result["dry_run"] is not None, f"scenario {i}: dry_run is None"
+            # DERIVED: shadow==current in all rows → divergence==0 every step → MDD==0
+            assert result["dry_run"] == pytest.approx(0.0, abs=1e-9), (
+                f"MDD ANCHOR FAIL (scenario {i}): bot shadow-window MDD "
+                f"= {result['dry_run']:.6f}% (derived: must be 0.0 when shadow==current). "
+                "The absolute shadow series produces non-zero MDD in this scenario; "
+                "the divergence-based path does not."
+            )
 
     def test_triggered_mdd_equals_peak_to_trough_on_divergence_series(self, tmp_path):
         """
