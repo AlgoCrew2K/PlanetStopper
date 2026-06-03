@@ -600,13 +600,30 @@ def _build_meta(
     # (Bailey/de-Prado 2014 threshold). Emit an explicit flag so the UI can show
     # "N/A — insufficient history" rather than fabricated or misleading values.
     _insufficient_history = len(_hist_dates) < 30
+    # AC-4b: cr_if_held and mdd_if_held are lifetime metrics (Guard Alpha baseline).
+    # When portfolio_strip has no explicit if_held values (e.g. pre-session or waiting
+    # path), fall back to the Composer-sourced cache so Guard Alpha is never zeroed
+    # before session open.  tc_if_held intentionally stays 0.0 pre-session (Composer
+    # has not yet computed today's intraday change).
+    _cr_if_held_strip = cr_data.get("if_held")
+    _cr_if_held = (
+        _cr_if_held_strip
+        if _cr_if_held_strip is not None
+        else (_account_totals_cache.get("portfolio_cr") or 0.0)
+    )
+    _mdd_if_held_strip = mdd_data.get("if_held")
+    _mdd_if_held = (
+        _mdd_if_held_strip
+        if _mdd_if_held_strip is not None
+        else abs(_account_totals_cache.get("portfolio_mdd") or 0.0)
+    )
     portfolio_meta = {
         "tc": tc_data.get("dry_run", 0.0),
         "tc_if_held": tc_data.get("if_held", 0.0),
         "cr": cr_data.get("dry_run", 0.0),
-        "cr_if_held": cr_data.get("if_held", 0.0),
+        "cr_if_held": _cr_if_held,
         "mdd": mdd_data.get("dry_run", 0.0),
-        "mdd_if_held": mdd_data.get("if_held", 0.0),
+        "mdd_if_held": _mdd_if_held,
         "hist_dates": _hist_dates,
         "hist_bot": ps.get("hist_bot", []),
         "hist_held": ps.get("hist_held", []),
@@ -942,6 +959,27 @@ def get_state():
         # AC-DM.3.3: closed + snapshot → serve frozen snapshot.
         if market_state in ("closed_frozen", "pre_market"):
             snapshot = (state_data or {}).get("last_market_close_snapshot")
+            # AC-4a: detect when the snapshot is from a prior trading day and today is a
+            # new trading day (pre_market only).  In this case the snapshot data is stale.
+            # We still serve the snapshot for continuity but add a reset notice so the
+            # client can signal the operator that a new session is about to begin.
+            _snap_stale_notice = ""
+            if snapshot and market_state == "pre_market":
+                _snap_day = snapshot.get("trading_day", "")
+                _today_date = datetime.now(_ET).strftime("%Y-%m-%d")
+                if _snap_day and _snap_day != _today_date:
+                    # Only flag when today is itself a trading day (i.e. new session opens).
+                    try:
+                        _is_new_day = market_calendar.is_trading_day(
+                            datetime.now(_ET).date()
+                        )
+                    except Exception:
+                        _is_new_day = False
+                    if _is_new_day:
+                        _snap_stale_notice = (
+                            "New trading day — snapshot is from a prior session. "
+                            "Live data will appear at market open."
+                        )
             if snapshot:
                 # R2: remap shadow_divergence "portfolio" -> "portfolio_today" to match
                 # the live path's key name (from database.get_shadow_divergence()).
@@ -1198,28 +1236,29 @@ def get_state():
 
                 _frozen_env = _dotenv_module.dotenv_values(ENV_FILE_PATH)
                 _frozen_live_mode = _frozen_env.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
-                return jsonify(
-                    {
-                        "status": "active",
-                        "market_state": market_state,
-                        "frozen_at": snapshot.get("captured_at_et"),
-                        "data_as_of": snapshot.get("data_as_of"),
-                        "state": _state,
-                        "bot_state": _state,
-                        "live_mode": _frozen_live_mode,
-                        "portfolio_strip": _portfolio_strip,
-                        "shadow_divergence": sd,
-                        "accounts_map": snapshot.get("accounts_map"),
-                        "fleet_correlation_alert": _alert,
-                        "html": _frozen_html,
-                        "meta": _build_meta(
-                            _state,
-                            market_state=market_state,
-                            portfolio_strip=_injected_portfolio_strip or _portfolio_strip,
-                        ),
-                        **_additive,
-                    }
-                )
+                _frozen_resp: dict = {
+                    "status": "active",
+                    "market_state": market_state,
+                    "frozen_at": snapshot.get("captured_at_et"),
+                    "data_as_of": snapshot.get("data_as_of"),
+                    "state": _state,
+                    "bot_state": _state,
+                    "live_mode": _frozen_live_mode,
+                    "portfolio_strip": _portfolio_strip,
+                    "shadow_divergence": sd,
+                    "accounts_map": snapshot.get("accounts_map"),
+                    "fleet_correlation_alert": _alert,
+                    "html": _frozen_html,
+                    "meta": _build_meta(
+                        _state,
+                        market_state=market_state,
+                        portfolio_strip=_injected_portfolio_strip or _portfolio_strip,
+                    ),
+                    **_additive,
+                }
+                if _snap_stale_notice:
+                    _frozen_resp["notice"] = _snap_stale_notice
+                return jsonify(_frozen_resp)
 
         # No live state — return waiting with market_state context and notice on fresh deploy.
         # AC-DM.3.4: closed + no snapshot + empty state → notice fields included in waiting.
@@ -1440,6 +1479,35 @@ def get_state():
         portfolio_strip = _compute_portfolio_strip(state_data, trading_day=_today_et)
 
         data_as_of = datetime.now().strftime("%H:%M ET")
+
+        # Normalise sym dicts to safe defaults before template rendering.
+        # table_partial.html accesses numeric fields like mc_prob, stop_trigger and
+        # shadow_hwm directly (without | default).  Without this guard a sym dict
+        # from a minimal bot_state (e.g. a freshly-triggered symphony with only
+        # name/triggered/current_return fields) would raise a Jinja UndefinedError
+        # and fall through to the empty-table fallback — making the symphony
+        # invisible in the next poll.  The same _FROZEN_SYM_DEFAULTS dict is used
+        # for the frozen path; reuse the pattern here.
+        _LIVE_SYM_DEFAULTS: dict = {
+            "mc_prob": None,
+            "shadow_hwm": 0.0,
+            "stop_trigger": None,
+            "current_return": 0.0,
+            "current_value": 0.0,
+            "breakeven_locked": False,
+            "armed": False,
+            "tp_armed": False,
+            "para_armed": False,
+            "triggered": False,
+            "above_tp_count": 0,
+            "below_stop_count": 0,
+            "last_trigger": None,
+        }
+        for _acc_syms_live in accounts_map.values():
+            for _sym_live in _acc_syms_live or []:
+                if isinstance(_sym_live, dict):
+                    for _field_l, _default_l in _LIVE_SYM_DEFAULTS.items():
+                        _sym_live.setdefault(_field_l, _default_l)
 
         try:
             rendered_html = render_template(
