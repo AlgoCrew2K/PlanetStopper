@@ -414,12 +414,30 @@ class TestGetMarketStateHolidayAndHalfDay:
 
         Catches an impl that marks all half-days as "closed_frozen" for the
         whole day.
+
+        DISCRIMINATING COMPANION: v1 (weekday-only, fixed 16:00 close) returns
+        "open" at 11:00 on any weekday — same as v2 here. To ensure this test is
+        adversarially meaningful for the half-day feature, a second assertion is
+        added at 13:01 on the SAME date. v1 returns "open" at 13:01 (market not
+        closed until 16:00 in v1); v2 must return "closed_frozen" (market already
+        closed at 13:00 on a half-day). The 13:01 assertion is the discriminating
+        case that fails v1 and passes v2.
         """
         black_friday_morning = _et_datetime(2024, 11, 29, 11, 0)
-        result = market_calendar.get_market_state(black_friday_morning)
-        assert result == "open", (
+        result_morning = market_calendar.get_market_state(black_friday_morning)
+        assert result_morning == "open", (
             f"get_market_state on Black Friday 2024 at 11:00 ET should be 'open' "
-            f"(session is 09:30-13:00 on half-days); got {result!r}"
+            f"(session is 09:30-13:00 on half-days); got {result_morning!r}"
+        )
+
+        # Discriminating companion: v1 returns "open" at 13:01; v2 must return "closed_frozen"
+        black_friday_post_close = _et_datetime(2024, 11, 29, 13, 1)
+        result_post_close = market_calendar.get_market_state(black_friday_post_close)
+        assert result_post_close == "closed_frozen", (
+            f"get_market_state on Black Friday 2024 at 13:01 ET should be 'closed_frozen' "
+            f"(market already closed at 13:00 on half-days). Got {result_post_close!r}. "
+            f"The v1 weekday-only impl returns 'open' here — this assertion is the "
+            f"discriminating case that distinguishes v2 from v1 for this test."
         )
 
     def test_get_market_state_returns_closed_frozen_at_exact_half_day_close(self) -> None:
@@ -435,10 +453,41 @@ class TestGetMarketStateHolidayAndHalfDay:
             f"(market closed); got {result!r}"
         )
 
+    def test_get_market_state_returns_open_one_minute_before_half_day_close(self) -> None:
+        """
+        At 12:59 ET on Black Friday 2024 (one minute before the 13:00 close),
+        get_market_state must return "open".
+
+        This guards the boundary condition: the session is open during
+        [09:30, 13:00) and closed at [13:00, ...). At 12:59, `current_time <
+        close_time` is True so the market is open.
+
+        Wrong implementation that this catches: an off-by-one that uses
+        `current_time <= close_time` for the open condition would return
+        "closed_frozen" at 12:59 because 12:59 <= 13:00 is True.
+
+        Note: the rebalance-blackout window (12:53–13:00) in the engine uses the
+        engine's internal state; get_market_state is a PURE calendar function that
+        does not know about the engine's blackout. It must return "open" at 12:59.
+        """
+        black_friday_one_minute_before_close = _et_datetime(2024, 11, 29, 12, 59)
+        result = market_calendar.get_market_state(black_friday_one_minute_before_close)
+        assert result == "open", (
+            f"get_market_state on Black Friday 2024 at 12:59 ET should be 'open' "
+            f"(session runs 09:30 to <13:00 on half-days; 12:59 < 13:00). "
+            f"Got {result!r}. An off-by-one (`<=` instead of `<`) would return "
+            f"'closed_frozen' here."
+        )
+
     def test_get_market_state_returns_pre_market_before_open_on_half_day(self) -> None:
         """
+        REGRESSION GUARD (not an adversarial RED for the half-day feature):
         On a half-day at 08:00 ET (before 09:30 open), get_market_state must
         return "pre_market". Half-day status does not change the open time.
+
+        v1 (weekday-only, fixed 16:00 close) also returns "pre_market" at 08:00
+        on any weekday. This test guards that the calendar-aware v2 implementation
+        does not accidentally change the pre-market state for half-days.
         """
         black_friday_early = _et_datetime(2024, 11, 29, 8, 0)
         result = market_calendar.get_market_state(black_friday_early)
