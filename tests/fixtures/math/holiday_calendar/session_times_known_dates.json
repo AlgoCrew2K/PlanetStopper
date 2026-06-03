@@ -1,0 +1,56 @@
+{
+  "description": "Golden fixture: session_open and session_close times for known fixed US market dates. Half-day close = 13:00 ET, regular close = 16:00 ET, regular open = 09:30 ET. All values derived from NYSE official schedule — NOT captured from any implementation.",
+  "function": "market_calendar.session_close / market_calendar.session_open",
+  "derivation": "NYSE early-close schedule. Half-days have official 13:00 ET close per NYSE rules. Sources: NYSE Holiday Schedule 2024/2025, pandas-market-calendars XNYS calendar. Regular days close at 16:00 ET, open at 09:30 ET regardless of EXECUTION_START_TIME.",
+  "cases": [
+    {
+      "date": "2024-11-29",
+      "expected_session_open": "09:30",
+      "expected_session_close": "13:00",
+      "is_half_day": true,
+      "reason": "Black Friday 2024 — NYSE early close at 13:00 ET (day after Thanksgiving)"
+    },
+    {
+      "date": "2024-12-24",
+      "expected_session_open": "09:30",
+      "expected_session_close": "13:00",
+      "is_half_day": true,
+      "reason": "Christmas Eve 2024 — NYSE early close at 13:00 ET"
+    },
+    {
+      "date": "2025-07-03",
+      "expected_session_open": "09:30",
+      "expected_session_close": "13:00",
+      "is_half_day": true,
+      "reason": "July 3, 2025 — NYSE early close at 13:00 ET (day before Independence Day)"
+    },
+    {
+      "date": "2025-11-28",
+      "expected_session_open": "09:30",
+      "expected_session_close": "13:00",
+      "is_half_day": true,
+      "reason": "Black Friday 2025 — NYSE early close at 13:00 ET (day after Thanksgiving)"
+    },
+    {
+      "date": "2025-05-14",
+      "expected_session_open": "09:30",
+      "expected_session_close": "16:00",
+      "is_half_day": false,
+      "reason": "Regular Wednesday — full trading day, close 16:00 ET"
+    },
+    {
+      "date": "2025-03-03",
+      "expected_session_open": "09:30",
+      "expected_session_close": "16:00",
+      "is_half_day": false,
+      "reason": "Regular Monday — full trading day, close 16:00 ET"
+    },
+    {
+      "date": "2024-12-23",
+      "expected_session_open": "09:30",
+      "expected_session_close": "16:00",
+      "is_half_day": false,
+      "reason": "Regular Monday before Christmas Eve — full trading day"
+    }
+  ]
+}
