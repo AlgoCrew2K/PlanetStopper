@@ -1483,6 +1483,57 @@ def get_state():
         except Exception:
             pass
 
+        # Build per-symphony list for card live-refresh (cards-live).
+        # Reuses _tc/_cr/_mdd already attached above — no re-computation.
+        # Status priority: triggered > para_armed > tp_armed > armed > standby.
+        def _sym_status(s: dict) -> str:
+            if s.get("triggered"):
+                return "triggered"
+            if s.get("para_armed"):
+                return "para_armed"
+            if s.get("tp_armed"):
+                return "tp_armed"
+            if s.get("armed"):
+                return "armed"
+            return "standby"
+
+        def _tc_cr_mdd_floats(s: dict) -> tuple:
+            tc = s.get("_tc") or {}
+            cr = s.get("_cr") or {}
+            mdd = s.get("_mdd") or {}
+            tc_bot  = (tc.get("dry_run")  if isinstance(tc,  dict) else tc)  or None
+            tc_held = (tc.get("if_held")  if isinstance(tc,  dict) else None) or None
+            cr_bot  = (cr.get("dry_run")  if isinstance(cr,  dict) else cr)  or None
+            cr_held = (cr.get("if_held")  if isinstance(cr,  dict) else None) or None
+            mdd_bot  = (mdd.get("dry_run") if isinstance(mdd, dict) else mdd) or None
+            mdd_held = (mdd.get("if_held") if isinstance(mdd, dict) else None) or None
+            return tc_bot, tc_held, cr_bot, cr_held, mdd_bot, mdd_held
+
+        _symphonies_for_cards: list[dict] = []
+        for _k in symphony_keys:
+            _s = state_data[_k]
+            _tc_b, _tc_h, _cr_b, _cr_h, _mdd_b, _mdd_h = _tc_cr_mdd_floats(_s)
+            _symphonies_for_cards.append({
+                "id": _k,
+                "status": _sym_status(_s),
+                # Raw bot_state fields needed for card status pill + MC dial refresh.
+                "current_return": _s.get("current_return"),
+                "stop_trigger": _s.get("stop_trigger"),
+                "mc_prob": _s.get("mc_prob"),
+                "armed": bool(_s.get("armed")),
+                "tp_armed": bool(_s.get("tp_armed")),
+                "para_armed": bool(_s.get("para_armed")),
+                "triggered": bool(_s.get("triggered")),
+                "triggered_reason": _s.get("triggered_reason"),
+                # Analytics-derived display values.
+                "tc_bot":  _tc_b,
+                "tc_held": _tc_h,
+                "cr_bot":  _cr_b,
+                "cr_held": _cr_h,
+                "mdd_bot":  _mdd_b,
+                "mdd_held": _mdd_h,
+            })
+
         return jsonify(
             {
                 "status": "active",
@@ -1499,6 +1550,7 @@ def get_state():
                 "last_successful_cycle_at": state_data.get("last_successful_cycle_at"),
                 "shadow_divergence": shadow_divergence,
                 "fleet_correlation_alert": _alert,
+                "symphonies": _symphonies_for_cards,
                 "meta": _build_meta(
                     state_data,
                     next_run_seconds=next_run_seconds,

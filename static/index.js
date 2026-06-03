@@ -890,6 +890,64 @@
     }
 
     // ---------------------------------------------------------------------------
+    // updateCards — refresh per-symphony card values from /api/state 'symphonies'
+    //
+    // Updates only the targeted data-field spans inside each [data-sym-id] card.
+    // Does NOT touch card structure, layout, classes, or the sparkline <canvas>.
+    // Cards go stale without this because the 30s poll (POLL_INTERVAL_MS) updates
+    // hero widgets but the cards are server-rendered only on hard-refresh.
+    // ---------------------------------------------------------------------------
+
+    function _fmtSignedPct(val, decimals) {
+        if (val == null || isNaN(val)) return '--';
+        decimals = decimals != null ? decimals : 1;
+        return (val >= 0 ? '+' : '') + val.toFixed(decimals) + '%';
+    }
+
+    function _fmtAbsPct(val, decimals) {
+        if (val == null || isNaN(val)) return '--';
+        decimals = decimals != null ? decimals : 1;
+        return Math.abs(val).toFixed(decimals) + '%';
+    }
+
+    function _setPosNegClass(el, val) {
+        if (el == null) return;
+        if (val == null || isNaN(val)) return;
+        el.classList.remove('pos', 'neg');
+        el.classList.add(val >= 0 ? 'pos' : 'neg');
+    }
+
+    function updateCards(data) {
+        var syms = data.symphonies;
+        if (!Array.isArray(syms)) return;
+
+        syms.forEach(function (sym) {
+            var id = sym.id;
+            if (!id) return;
+            // Find the card element by data-sym-id attribute; there may be one in
+            // active section and one in standby section — update whichever exists.
+            var cards = document.querySelectorAll('[data-sym-id="' + id + '"].sym-card');
+            cards.forEach(function (card) {
+                // Update dual-value-headline (tc-bot / tc-held)
+                var tcBot  = card.querySelector('[data-field="tc-bot"]');
+                var tcHeld = card.querySelector('[data-field="tc-held"]');
+                if (tcBot  != null) { tcBot.textContent  = _fmtSignedPct(sym.tc_bot);  _setPosNegClass(tcBot,  sym.tc_bot);  }
+                if (tcHeld != null) { tcHeld.textContent = _fmtSignedPct(sym.tc_held); _setPosNegClass(tcHeld, sym.tc_held); }
+
+                // Update footer grid (cr-bot / cr-held / mdd-bot / mdd-held)
+                var crBot   = card.querySelector('[data-field="cr-bot"]');
+                var crHeld  = card.querySelector('[data-field="cr-held"]');
+                var mddBot  = card.querySelector('[data-field="mdd-bot"]');
+                var mddHeld = card.querySelector('[data-field="mdd-held"]');
+                if (crBot  != null) { crBot.textContent  = _fmtSignedPct(sym.cr_bot);    _setPosNegClass(crBot,  sym.cr_bot);  }
+                if (crHeld != null) { crHeld.textContent = _fmtSignedPct(sym.cr_held);   _setPosNegClass(crHeld, sym.cr_held); }
+                if (mddBot  != null) { mddBot.textContent  = _fmtAbsPct(sym.mdd_bot); }
+                if (mddHeld != null) { mddHeld.textContent = _fmtAbsPct(sym.mdd_held); }
+            });
+        });
+    }
+
+    // ---------------------------------------------------------------------------
     // Main updateDashboard — called on each fetch('/api/state') response
     // ---------------------------------------------------------------------------
 
@@ -915,6 +973,9 @@
             },
             function () { updateMarketDot(data); },
             function () { if (typeof window.updateChromeTicker === 'function') window.updateChromeTicker(data); },
+            // cards-live: refresh per-symphony card value spans from data.symphonies.
+            // Reuses POLL_INTERVAL_MS — no new timer. Cards stay live between hard-refreshes.
+            function () { updateCards(data); },
         ].forEach(function (fn) {
             try { fn(); } catch (e) { console.error('updateDashboard renderer error:', e); }
         });
