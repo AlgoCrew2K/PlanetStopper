@@ -340,6 +340,46 @@ class TestJsWiringDataHtmlInjection:
             "and the table never updates on poll."
         )
 
+    def test_sym_table_container_is_not_hidden_with_display_none(self):
+        """
+        BLOCK-1 (flask-dashboard-specialist review): the sym-table-container element
+        must NOT have `style="display:none"` (or any inline display:none variant).
+
+        If the container is hidden, the JS injects the table HTML correctly but the
+        operator never sees it — identical trap to the JS parse-error lesson
+        (feedback_visual_gate_catches_js_break_unit_tests_miss): the mechanism works
+        at the server level while the operator sees nothing.
+
+        The JS renderer does NOT unconditionally remove display:none after injection
+        (verified in index.js), so the HTML must not apply the hide in the first place.
+        """
+        html_text = _INDEX_HTML.read_text(encoding="utf-8")
+
+        # Find the sym-table-container element line(s) and check for display:none
+        # We look for the container tag itself to scope the assertion correctly.
+        container_re = re.compile(
+            r'id=["\']sym-table-container["\'][^>]*>|'
+            r'<[^>]+id=["\']sym-table-container["\'][^>]*>'
+        )
+        match = container_re.search(html_text)
+        assert match, (
+            'sym-table-container element not found in index.html — '
+            'cannot check visibility. Ensure the element exists first.'
+        )
+
+        tag_html = match.group(0)
+        # Check for display:none in any of its common forms
+        hidden_pattern = re.compile(r'display\s*:\s*none', re.IGNORECASE)
+        assert not hidden_pattern.search(tag_html), (
+            'sym-table-container has `display:none` inline style. '
+            'The JS injects data.html into this container on every poll, '
+            'but the operator never sees it because the container is hidden. '
+            f'Tag HTML: {tag_html!r}. '
+            'Remove the display:none from the element in index.html, OR '
+            'add `tableContainer.style.display = "";` after the innerHTML assignment '
+            'in index.js to reveal it on first injection.'
+        )
+
 
 # ===========================================================================
 # AC-4a: Snapshot reset — new trading day must not serve yesterday's snapshot
@@ -384,12 +424,18 @@ class TestSnapshotResetOnNewTradingDay:
     ):
         """
         AC-4a: pre_market on a NEW trading day (is_trading_day=True for today,
-        snapshot.trading_day = yesterday) must NOT include yesterday's frozen
-        table as if it were current.
+        snapshot.trading_day = yesterday) must return status=waiting — a clean
+        reset, NOT yesterday's frozen table.
 
-        A wrong implementation serves yesterday's snapshot unchanged; this test
-        asserts the response signals a reset (status=waiting OR html is absent
-        OR html is an empty table sentinel) rather than stale data.
+        The A/C says: "pre-market of a new day shows a clean reset (not
+        yesterday's frozen close)."  Serving stale snapshot data with only a
+        notice field does NOT satisfy this requirement — the operator sees
+        yesterday's table regardless of whether a notice field is present in
+        the JSON.
+
+        BLOCK-2 (flask-dashboard-specialist): a prior test iteration accepted
+        notice-only as sufficient.  This tighter assertion requires status=waiting
+        so the operator-visible table is clean.
         """
         client, app_module = flask_client
 
@@ -422,28 +468,17 @@ class TestSnapshotResetOnNewTradingDay:
         assert resp.status_code == 200
         body = resp.get_json()
 
-        # The response MUST NOT pass through the stale snapshot as-is.
-        # Accept either: status=waiting (clean reset) OR html is absent/empty.
-        stale_sym_id = "sym_stale"
-        html_val = body.get("html", "")
-
-        # If html is present and non-empty, it must NOT contain yesterday's symphony
-        # as if it were fresh live state.  A correct implementation resets to empty
-        # or returns waiting status on a new-day pre-market hit.
-        if html_val:
-            # The html may still contain sym_stale IFF the response also carries a
-            # notice/frozen_at that clearly marks it as a prior-day snapshot reset,
-            # but a status=active with stale data and no reset signal is wrong.
-            status = body.get("status", "")
-            notice = body.get("notice", "")
-            assert status == "waiting" or notice or body.get("frozen_at") is None, (
-                "On pre_market of a NEW trading day (snapshot is from yesterday), "
-                "the response must either (a) be status=waiting (clean reset), "
-                "(b) carry a notice about the reset, or (c) not surface stale html "
-                f"as live data.  Got status={status!r}, notice={notice!r}, "
-                f"frozen_at={body.get('frozen_at')!r}.  "
-                f"html snippet: {html_val[:300]!r}"
-            )
+        status = body.get("status", "")
+        assert status == "waiting", (
+            "On pre_market of a NEW trading day (snapshot.trading_day='2026-06-02', "
+            "today='2026-06-03'), the response must be status='waiting' — a clean "
+            "reset. The operator must see a clean slate, not yesterday's frozen table. "
+            f"Got status={status!r}. "
+            "A notice field in the JSON is insufficient — it is not surfaced in the "
+            "operator UI; the operator still sees yesterday's symphony table rows. "
+            "The implementation must skip the stale snapshot entirely and fall through "
+            "to the waiting path when pre_market + new trading day is detected."
+        )
 
     def test_pre_market_same_trading_day_may_serve_snapshot(
         self, flask_client, monkeypatch
