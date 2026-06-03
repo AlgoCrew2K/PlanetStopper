@@ -1,0 +1,82 @@
+{
+  "description": "Golden fixture: is_trading_day() for known fixed US market dates. All expected values derived from NYSE/US equity market schedule — NOT captured from any implementation.",
+  "function": "market_calendar.is_trading_day",
+  "derivation": "NYSE holiday schedule (US equity markets). Sources: NYSE Holiday Schedule 2024/2025, pandas-market-calendars XNYS calendar. Regular weekdays (Mon-Fri) with no holiday are True; weekends always False; listed NYSE holidays are False. Each date is annotated with the calendar authority reason.",
+  "cases": [
+    {
+      "date": "2024-12-25",
+      "expected_is_trading_day": false,
+      "reason": "Christmas Day — NYSE holiday (Federal + exchange holiday)"
+    },
+    {
+      "date": "2024-11-28",
+      "expected_is_trading_day": false,
+      "reason": "Thanksgiving Day 2024 — NYSE holiday (4th Thursday of November)"
+    },
+    {
+      "date": "2025-01-01",
+      "expected_is_trading_day": false,
+      "reason": "New Year's Day 2025 — NYSE holiday"
+    },
+    {
+      "date": "2025-01-20",
+      "expected_is_trading_day": false,
+      "reason": "Martin Luther King Jr. Day 2025 — NYSE holiday (3rd Monday of January)"
+    },
+    {
+      "date": "2025-02-17",
+      "expected_is_trading_day": false,
+      "reason": "Presidents Day 2025 — NYSE holiday (3rd Monday of February)"
+    },
+    {
+      "date": "2025-04-18",
+      "expected_is_trading_day": false,
+      "reason": "Good Friday 2025 — NYSE holiday (Friday before Easter)"
+    },
+    {
+      "date": "2025-05-26",
+      "expected_is_trading_day": false,
+      "reason": "Memorial Day 2025 — NYSE holiday (last Monday of May)"
+    },
+    {
+      "date": "2025-07-04",
+      "expected_is_trading_day": false,
+      "reason": "Independence Day 2025 — NYSE holiday (Friday, not observed-on-Monday)"
+    },
+    {
+      "date": "2024-09-02",
+      "expected_is_trading_day": false,
+      "reason": "Labor Day 2024 — NYSE holiday (1st Monday of September)"
+    },
+    {
+      "date": "2024-11-11",
+      "expected_is_trading_day": true,
+      "reason": "Veterans Day — NOT a NYSE holiday; US equity markets trade normally"
+    },
+    {
+      "date": "2024-12-26",
+      "expected_is_trading_day": true,
+      "reason": "Day after Christmas (Thursday) — regular trading day"
+    },
+    {
+      "date": "2025-05-14",
+      "expected_is_trading_day": true,
+      "reason": "Regular Wednesday — no holiday, normal trading"
+    },
+    {
+      "date": "2025-03-03",
+      "expected_is_trading_day": true,
+      "reason": "Regular Monday — no holiday, normal trading"
+    },
+    {
+      "date": "2025-05-10",
+      "expected_is_trading_day": false,
+      "reason": "Saturday — weekend, never a trading day"
+    },
+    {
+      "date": "2025-05-11",
+      "expected_is_trading_day": false,
+      "reason": "Sunday — weekend, never a trading day"
+    }
+  ]
+}

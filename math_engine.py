@@ -310,8 +310,8 @@ def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
     curve.
 
     - time_ratio MUST be in the closed interval [0.0, 1.0] (fraction of trading
-      session elapsed: 0.0 = market open, 1.0 = close). A value outside that
-      range raises ValueError — reject-don't-coerce policy (M-1).
+      session elapsed: 0.0 = action-window open / EXECUTION_START_TIME, 1.0 = close).
+      A value outside that range raises ValueError — reject-don't-coerce policy (M-1).
     - decay_curve = 1 - sqrt(1 - time_ratio), the i.i.d.-returns remaining-
       session uncertainty curve (Danielsson & Zigrand 2003). Ranges from 0.0
       at open to 1.0 at close. Concave, monotone, front-loaded (open-loaded).

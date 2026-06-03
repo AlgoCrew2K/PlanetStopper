@@ -24,6 +24,7 @@ import autotuner
 
 # Import our SQLite DB Manager
 import database
+import market_calendar
 import math_engine
 import reporting
 
@@ -602,7 +603,7 @@ def main():
         force_run = "--force" in sys.argv
         current_et = get_current_et()
 
-        is_weekday = current_et.weekday() < 5
+        is_trading = market_calendar.is_trading_day(current_et.date())
         current_time = current_et.time()
 
         try:
@@ -612,26 +613,41 @@ def main():
 
         # action gate: EXECUTION_START_TIME from .env (e.g. 10:30 to avoid open-volatility noise)
         market_open = dt_time(start_h, start_m)
-        market_close = dt_time(16, 0)
-        rebalance_blackout = dt_time(15, 53)
-        post_mortem_cutoff = dt_time(16, 5)
+        # session_close returns 13:00 on NYSE half-days, 16:00 on regular days
+        _today_close = market_calendar.session_close(current_et.date())
+        market_close = _today_close
+        # Derive blackout / cutoff relative to session close via datetime arithmetic
+        _close_dt = current_et.replace(
+            hour=_today_close.hour, minute=_today_close.minute, second=0, microsecond=0
+        )
+        rebalance_blackout = (_close_dt - timedelta(minutes=7)).time()
+        post_mortem_cutoff = (_close_dt + timedelta(minutes=5)).time()
         # data gate: US equity open is always 09:30 ET regardless of EXECUTION_START_TIME
         REAL_MARKET_OPEN = dt_time(9, 30)
 
-        # Fully closed: weekend, after post-mortem window, or weekday before 09:30 —
+        # Fully closed: holiday/weekend, after post-mortem window, or before 09:30 —
         # persist Composer inception fields and sleep. The pre-09:30 case preserves
         # bc65d57 behavior: dashboard gets fresh CR/MDD even before market open.
-        if not is_weekday or current_time > post_mortem_cutoff or current_time < REAL_MARKET_OPEN:
+        # NYSE holiday on a weekday: skip Composer fetch — no live market activity.
+        # Weekend and intra-day closed windows: fetch and persist Composer fields
+        # so the dashboard shows fresh CR/MDD data on restart.
+        _is_weekday_holiday = not is_trading and current_et.weekday() < 5
+        if not is_trading or current_time > post_mortem_cutoff or current_time < REAL_MARKET_OPEN:
             if not force_run:
                 print(
                     f"  -> Market closed or in Grace Period (ET: {current_et.strftime('%a %H:%M')}). Sleeping..."
                 )
                 _closed_bot_state = database.load_state()
-                for _account in ACCOUNT_UUIDS:
-                    for _sym in fetch_symphony_stats(_account):
-                        _s_id = _sym["id"]
-                        if _s_id in _closed_bot_state:
-                            _persist_composer_fields_to_bot_state(_closed_bot_state, _s_id, _sym)
+                if not _is_weekday_holiday:
+                    # Persist Composer inception fields on weekends and intra-day closed
+                    # windows. Skip on NYSE weekday-holidays where no live data is available.
+                    for _account in ACCOUNT_UUIDS:
+                        for _sym in fetch_symphony_stats(_account):
+                            _s_id = _sym["id"]
+                            if _s_id in _closed_bot_state:
+                                _persist_composer_fields_to_bot_state(
+                                    _closed_bot_state, _s_id, _sym
+                                )
                 database.save_state(_closed_bot_state)
                 return
             print("  -> Market closed, but --force flag detected! Bypassing gatekeeper...")
@@ -709,7 +725,9 @@ def main():
             database.save_chart_history(chart_history)
 
         m_open_dt = current_et.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
-        m_close_dt = current_et.replace(hour=16, minute=0, second=0, microsecond=0)
+        m_close_dt = current_et.replace(
+            hour=_today_close.hour, minute=_today_close.minute, second=0, microsecond=0
+        )
 
         all_tickers = set()
         symphony_data_cache = {}
@@ -1360,7 +1378,9 @@ def main():
                 m_open_dt = current_et.replace(
                     hour=start_h, minute=start_m, second=0, microsecond=0
                 )
-                m_close_dt = current_et.replace(hour=16, minute=0, second=0, microsecond=0)
+                m_close_dt = current_et.replace(
+                    hour=_today_close.hour, minute=_today_close.minute, second=0, microsecond=0
+                )
                 time_ratio = max(
                     0.0,
                     min(

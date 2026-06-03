@@ -4,6 +4,7 @@ joblib~=1.5.3
 numpy~=2.3.5
 optuna~=4.7.0
 pandas~=2.3.2
+pandas-market-calendars~=5.4.0
 psutil~=7.2.2
 pydantic~=2.12.5
 python-dotenv~=1.0.0

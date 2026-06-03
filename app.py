@@ -25,6 +25,7 @@ from flask import Flask, abort, jsonify, render_template, request, session
 import ai_advisor
 import analytics
 import database
+import market_calendar
 from market_calendar import get_market_state
 
 _ET = ZoneInfo("America/New_York")
@@ -507,6 +508,9 @@ def dashboard():
     except Exception:
         pass  # non-blocking: dashboard renders without CVaR if the read fails
 
+    _today_close = market_calendar.session_close(datetime.now(_ET).date())
+    session_close_display = _today_close.strftime("%H:%M ET")
+
     return render_template(
         "index.html",
         vars_locked_count=vars_locked_count,
@@ -518,6 +522,7 @@ def dashboard():
         standby_syms=standby_syms,
         accounts_map=accounts_map,
         cvar_diagnostic=cvar_diagnostic,
+        session_close_display=session_close_display,
     )
 
 
