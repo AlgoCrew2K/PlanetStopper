@@ -310,6 +310,57 @@ class TestSessionTimesGoldenFixtures:
             f"session_close must return datetime.time; got {type(result).__name__}"
         )
 
+    @_requires_calendar
+    def test_session_close_first_trading_day_after_dst_spring_forward_2025(self) -> None:
+        """
+        DST boundary guard: March 10, 2025 (Monday) is the first full trading day
+        after the 2025 DST spring-forward (clocks advance March 9, 2025 at 02:00).
+
+        session_close must return dt_time(16, 0) — not dt_time(15, 0) or dt_time(17, 0).
+
+        Wrong implementation that this catches: a session_close that extracts the
+        close time from a UTC-based representation without correctly accounting for
+        the EDT/EST offset change. After spring-forward ET is UTC-4 (EDT) rather than
+        UTC-5 (EST). An impl that accidentally computes UTC time and applies the wrong
+        offset could return 21:00 (UTC) misread as 16:00 in EST = off by one hour.
+
+        Derivation: NYSE regular close is 16:00 ET wall-clock on all regular trading
+        days, year-round, regardless of DST. The calendar authority must reflect
+        ET wall-clock time.
+        """
+        from datetime import date as dt_date
+        result = market_calendar.session_close(dt_date(2025, 3, 10))
+        assert result == dt_time(16, 0), (
+            f"session_close(2025-03-10) should be 16:00 ET (first trading day after "
+            f"DST spring-forward 2025 — clocks advanced March 9 at 02:00). "
+            f"Got {result}. A DST extraction bug could return 15:00 or 17:00 here "
+            f"instead of the correct 16:00 ET wall-clock time."
+        )
+
+    @_requires_calendar
+    def test_session_close_first_trading_day_after_dst_fall_back_2024(self) -> None:
+        """
+        DST boundary guard: November 4, 2024 (Monday) is the first full trading day
+        after the 2024 DST fall-back (clocks fall back November 3, 2024 at 02:00).
+
+        session_close must return dt_time(16, 0) on this regular trading day.
+
+        After fall-back ET is UTC-5 (EST). An impl that uses a fixed UTC-4 offset
+        (EDT) after fall-back would compute 16:00 EDT as 20:00 UTC and then extract
+        the wrong wall-clock time.
+
+        Note: November 29 2024 (Black Friday) is already in the fixture as a half-day.
+        This test specifically targets a REGULAR day immediately after the fall-back
+        boundary to guard the offset-direction independently.
+        """
+        from datetime import date as dt_date
+        result = market_calendar.session_close(dt_date(2024, 11, 4))
+        assert result == dt_time(16, 0), (
+            f"session_close(2024-11-04) should be 16:00 ET (first trading day after "
+            f"2024 DST fall-back — clocks fell back November 3 at 02:00). "
+            f"Got {result}."
+        )
+
 
 # ===========================================================================
 # SECTION 3: Dashboard — get_market_state uses calendar authority
@@ -863,6 +914,20 @@ class TestHalfDayTimeShifts:
             f"rebalance-blackout window (12:53–13:00 ET). run_monte_carlo must not be "
             f"called. Got {mc_calls} call(s). "
             f"The current engine has rebalance_blackout=15:53 and misses the half-day window."
+        )
+
+        # The blackout path is NOT a no-op early return — it must call
+        # reporting.generate_eod_snapshot before returning. A wrong implementation
+        # that simply does `return` at 12:54 would also pass run_monte_carlo==0 but
+        # would miss the snapshot obligation. This assertion distinguishes the
+        # correct blackout path from a silent early-return.
+        eod_snapshot_calls = extras["mock_reporting"].generate_eod_snapshot.call_count
+        assert eod_snapshot_calls >= 1, (
+            f"At 12:54 ET on Black Friday 2024 (half-day rebalance-blackout window), "
+            f"reporting.generate_eod_snapshot must be called. "
+            f"Got {eod_snapshot_calls} call(s). "
+            f"The blackout path fires generate_eod_snapshot then returns — "
+            f"a no-op early-return also passes run_monte_carlo==0 but misses this obligation."
         )
 
     def test_half_day_post_mortem_fires_at_1300_not_1600(self) -> None:
