@@ -917,6 +917,28 @@
         el.classList.add(val >= 0 ? 'pos' : 'neg');
     }
 
+    // Derive status-pill label + CSS class from per-symphony flags.
+    // Mirrors the Jinja logic in index.html so both stay in sync.
+    function _symStatusPill(sym) {
+        if (sym.triggered) {
+            var tr = sym.triggered_reason || '';
+            if (tr.indexOf('Take-Profit') !== -1 || tr.indexOf('take_profit') !== -1) {
+                return { text: 'TAKE-PROFIT', cls: 'tp' };
+            }
+            if (tr.indexOf('VWAP Bleed') !== -1 || tr.indexOf('vwap_bleed') !== -1) {
+                return { text: 'VWAP BLEED', cls: 'bleed' };
+            }
+            if (tr.indexOf('VWAP') !== -1 || tr.indexOf('vwap') !== -1) {
+                return { text: 'VWAP', cls: 'vwap' };
+            }
+            return { text: 'TRAILING STOP', cls: 'stop' };
+        }
+        if (sym.para_armed) { return { text: 'Para-Armed', cls: 'para-armed' }; }
+        if (sym.tp_armed)   { return { text: 'TP-Armed',   cls: 'tp-armed'   }; }
+        if (sym.armed)      { return { text: 'Armed',      cls: 'armed'      }; }
+        return { text: 'Standby', cls: 'standby' };
+    }
+
     function updateCards(data) {
         var syms = data.symphonies;
         if (!Array.isArray(syms)) return;
@@ -924,10 +946,31 @@
         syms.forEach(function (sym) {
             var id = sym.id;
             if (!id) return;
+
+            // Update MC dial from sym.mc_prob on every poll. renderMcDial accepts a
+            // chartData object; pass a minimal stub so the arc updates without a
+            // full chart fetch. The mc-dial querySelector is inside renderMcDial.
+            if (sym.mc_prob != null) {
+                renderMcDial(id, { mc_prob: sym.mc_prob, data: [] });
+            }
+
             // Find the card element by data-sym-id attribute; there may be one in
-            // active section and one in standby section — update whichever exists.
+            // active section and one in standby — update whichever exists.
             var cards = document.querySelectorAll('[data-sym-id="' + id + '"].sym-card');
             cards.forEach(function (card) {
+                // Update status-pill text + class from sym.triggered/armed/tp_armed/para_armed.
+                // Without this the pill stays at its server-rendered value (e.g. "Armed")
+                // even after an exit fires on the next engine cycle.
+                var pill = card.querySelector('[data-testid="status-pill"]');
+                if (pill != null) {
+                    var pillState = _symStatusPill(sym);
+                    pill.className = pill.className.replace(
+                        /\b(tp|bleed|vwap|stop|para-armed|tp-armed|armed|standby)\b/g, ''
+                    ).replace(/\s+/g, ' ').trim();
+                    pill.classList.add('status-pill', pillState.cls);
+                    pill.textContent = pillState.text;
+                }
+
                 // Update dual-value-headline (tc-bot / tc-held)
                 var tcBot  = card.querySelector('[data-field="tc-bot"]');
                 var tcHeld = card.querySelector('[data-field="tc-held"]');
