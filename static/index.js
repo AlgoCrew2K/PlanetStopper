@@ -887,6 +887,51 @@
                 setPosNeg(heldText, row.higherIsBetter ? held : -held);
             }
         });
+
+        // Ann Vol row — data lives in meta.portfolio.vol_bot / vol_held (fraction scale).
+        // vol is inverted: lower is better for this capital-preservation system.
+        var portfolio = ((data && data.meta) || {}).portfolio || {};
+        var rawVolBot  = portfolio.vol_bot  != null ? portfolio.vol_bot  : null;
+        var rawVolHeld = portfolio.vol_held != null ? portfolio.vol_held : null;
+        var hasVol = rawVolBot != null && rawVolHeld != null;
+
+        var volBotText  = document.querySelector('[data-testid="comp-vol-bot-text"]');
+        var volHeldText = document.querySelector('[data-testid="comp-vol-held-text"]');
+        var volDelta    = document.querySelector('[data-testid="comp-vol-delta"]');
+        var volBotBars  = document.querySelectorAll('[data-testid="comp-bar-vol-bot"]');
+        var volHeldBars = document.querySelectorAll('[data-testid="comp-bar-vol-held"]');
+
+        if (hasVol) {
+            var volBotPct  = rawVolBot  * 100;
+            var volHeldPct = rawVolHeld * 100;
+            var volAlphaPp = (rawVolHeld - rawVolBot) * 100;
+            var volBotWins = rawVolBot <= rawVolHeld;
+            var volMax     = Math.max(rawVolBot, rawVolHeld, 0.0001);
+            var botW  = volBotWins  ? 100 : Math.min(rawVolHeld / rawVolBot  * 100, 100);
+            var heldW = !volBotWins ? 100 : Math.min(rawVolBot  / rawVolHeld * 100, 100);
+
+            if (volBotText) {
+                volBotText.textContent = 'Bot ' + volBotPct.toFixed(1) + '%';
+                volBotText.className = volBotText.className.replace(/\bpos\b|\bneg\b/g, '').trim();
+            }
+            if (volHeldText) {
+                volHeldText.textContent = 'Held ' + volHeldPct.toFixed(1) + '%';
+                volHeldText.className = volHeldText.className.replace(/\bpos\b|\bneg\b/g, '').trim();
+            }
+            if (volDelta) {
+                volDelta.textContent = 'α ' + (volAlphaPp >= 0 ? '+' : '') + volAlphaPp.toFixed(1) + 'pp';
+                volDelta.className = volDelta.className.replace(/\bpos\b|\bneg\b/g, '').trim();
+                volDelta.classList.add(volAlphaPp >= 0 ? 'pos' : 'neg');
+            }
+            volBotBars.forEach(function (el) { el.style.width = botW.toFixed(1) + '%'; });
+            volHeldBars.forEach(function (el) { el.style.width = heldW.toFixed(1) + '%'; });
+        } else {
+            if (volBotText)  volBotText.textContent  = 'Bot —';
+            if (volHeldText) volHeldText.textContent = 'Held —';
+            if (volDelta)    volDelta.textContent    = 'α —';
+            volBotBars.forEach(function (el)  { el.style.width = '0%'; });
+            volHeldBars.forEach(function (el) { el.style.width = '0%'; });
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -971,23 +1016,103 @@
                     pill.textContent = pillState.text;
                 }
 
-                // Update dual-value-headline (tc-bot / tc-held)
-                var tcBot  = card.querySelector('[data-field="tc-bot"]');
-                var tcHeld = card.querySelector('[data-field="tc-held"]');
-                if (tcBot  != null) { tcBot.textContent  = _fmtSignedPct(sym.tc_bot);  _setPosNegClass(tcBot,  sym.tc_bot);  }
-                if (tcHeld != null) { tcHeld.textContent = _fmtSignedPct(sym.tc_held); _setPosNegClass(tcHeld, sym.tc_held); }
+                // Dual-value-headline + footer — querySelectorAll so BOTH tc-bot spans update
+                // (headline dv-value and footer cfg-val share the same data-field attribute).
+                card.querySelectorAll('[data-field="tc-bot"]').forEach(function (el) { el.textContent = _fmtSignedPct(sym.tc_bot); _setPosNegClass(el, sym.tc_bot); });
+                card.querySelectorAll('[data-field="tc-held"]').forEach(function (el) { el.textContent = _fmtSignedPct(sym.tc_held); _setPosNegClass(el, sym.tc_held); });
 
-                // Update footer grid (cr-bot / cr-held / mdd-bot / mdd-held)
-                var crBot   = card.querySelector('[data-field="cr-bot"]');
-                var crHeld  = card.querySelector('[data-field="cr-held"]');
-                var mddBot  = card.querySelector('[data-field="mdd-bot"]');
-                var mddHeld = card.querySelector('[data-field="mdd-held"]');
-                if (crBot  != null) { crBot.textContent  = _fmtSignedPct(sym.cr_bot);    _setPosNegClass(crBot,  sym.cr_bot);  }
-                if (crHeld != null) { crHeld.textContent = _fmtSignedPct(sym.cr_held);   _setPosNegClass(crHeld, sym.cr_held); }
-                if (mddBot  != null) { mddBot.textContent  = _fmtAbsPct(sym.mdd_bot); }
-                if (mddHeld != null) { mddHeld.textContent = _fmtAbsPct(sym.mdd_held); }
+                // Footer grid — querySelectorAll so every matching span updates.
+                card.querySelectorAll('[data-field="cr-bot"]').forEach(function (el) { el.textContent = _fmtSignedPct(sym.cr_bot); _setPosNegClass(el, sym.cr_bot); });
+                card.querySelectorAll('[data-field="cr-held"]').forEach(function (el) { el.textContent = _fmtSignedPct(sym.cr_held); _setPosNegClass(el, sym.cr_held); });
+                card.querySelectorAll('[data-field="mdd-bot"]').forEach(function (el) { el.textContent = _fmtAbsPct(sym.mdd_bot); });
+                card.querySelectorAll('[data-field="mdd-held"]').forEach(function (el) { el.textContent = _fmtAbsPct(sym.mdd_held); });
+
+                // Show/hide + update the triggered-verdict outcome banner.
+                // The template always renders this element; display:none hides it until exit.
+                // On each poll: show when sym.triggered, hide otherwise; set text from
+                // sym.guard_alpha (carried in symphonies payload from this cycle).
+                var verdict = card.querySelector('[data-testid="triggered-verdict"]');
+                if (verdict != null) {
+                    if (sym.triggered) {
+                        verdict.style.display = '';
+                        if (sym.guard_alpha != null) {
+                            var ga = sym.guard_alpha;
+                            verdict.textContent = ga > 0
+                                ? 'Good call · saved +' + ga.toFixed(1) + '%α'
+                                : 'Early exit · gave up ' + Math.abs(ga).toFixed(1) + '%α';
+                        }
+                    } else {
+                        verdict.style.display = 'none';
+                    }
+                }
+
+                // Update "Bot · frozen" / "Bot" dv-label when triggered state changes.
+                // data-field="dv-label-bot" targets the label span in .dual-value-headline.
+                var dvLabelBot = card.querySelector('[data-field="dv-label-bot"]');
+                if (dvLabelBot != null) {
+                    dvLabelBot.textContent = sym.triggered ? 'Bot · frozen' : 'Bot';
+                }
+
+                // Update footer alpha-badge labels (α delta on Today/Cum/Max DD headings).
+                // data-field="tc-alpha-badge" / "cr-alpha-badge" / "mdd-alpha-badge"
+                var tcAlpha  = (sym.tc_bot  != null && sym.tc_held  != null) ? sym.tc_bot  - sym.tc_held  : null;
+                var crAlpha  = (sym.cr_bot  != null && sym.cr_held  != null) ? sym.cr_bot  - sym.cr_held  : null;
+                // mdd alpha: held_abs - bot_abs (positive = bot had smaller drawdown = better)
+                var mddAlpha = (sym.mdd_bot != null && sym.mdd_held != null)
+                    ? Math.abs(sym.mdd_held) - Math.abs(sym.mdd_bot)
+                    : null;
+
+                var tcBadge  = card.querySelector('[data-field="tc-alpha-badge"]');
+                var crBadge  = card.querySelector('[data-field="cr-alpha-badge"]');
+                var mddBadge = card.querySelector('[data-field="mdd-alpha-badge"]');
+
+                if (tcBadge != null) {
+                    tcBadge.textContent = tcAlpha != null
+                        ? 'α ' + (tcAlpha >= 0 ? '+' : '') + tcAlpha.toFixed(1)
+                        : 'α --';
+                    tcBadge.className = tcBadge.className.replace(/\bpos\b|\bneg\b/g, '').trim();
+                    if (tcAlpha != null) tcBadge.classList.add(tcAlpha >= 0 ? 'pos' : 'neg');
+                }
+                if (crBadge != null) {
+                    crBadge.textContent = crAlpha != null
+                        ? 'α ' + (crAlpha >= 0 ? '+' : '') + crAlpha.toFixed(1)
+                        : 'α --';
+                    crBadge.className = crBadge.className.replace(/\bpos\b|\bneg\b/g, '').trim();
+                    if (crAlpha != null) crBadge.classList.add(crAlpha >= 0 ? 'pos' : 'neg');
+                }
+                if (mddBadge != null) {
+                    mddBadge.textContent = mddAlpha != null
+                        ? 'α ' + (mddAlpha >= 0 ? '+' : '') + mddAlpha.toFixed(1)
+                        : 'α --';
+                    mddBadge.className = mddBadge.className.replace(/\bpos\b|\bneg\b/g, '').trim();
+                    if (mddAlpha != null) mddBadge.classList.add(mddAlpha >= 0 ? 'pos' : 'neg');
+                }
             });
         });
+    }
+
+    // Update section count badges and "data as of" time from poll response.
+    // Section counts derive from data.symphonies list (active = armed/triggered/tp_armed/para_armed).
+    // The "data as of" legend span refreshes from meta.portfolio.data_as_of each tick.
+    function updateSectionMeta(data) {
+        var syms = Array.isArray(data.symphonies) ? data.symphonies : [];
+        var activeCount  = syms.filter(function (s) {
+            return s.armed || s.tp_armed || s.para_armed || s.triggered;
+        }).length;
+        var standbyCount = syms.filter(function (s) {
+            return !s.armed && !s.tp_armed && !s.para_armed && !s.triggered;
+        }).length;
+
+        var activeBadge  = document.querySelector('[data-testid="active-section-count"]');
+        var standbyBadge = document.querySelector('[data-testid="standby-section-count"]');
+        if (activeBadge)  activeBadge.textContent  = activeCount;
+        if (standbyBadge) standbyBadge.textContent = standbyCount;
+
+        // Update "data as of <time>" in hero chart legend — id="hero-data-as-of".
+        var portfolio = ((data.meta) || {}).portfolio || {};
+        var dataAsOf = portfolio.data_as_of || data.data_as_of || null;
+        var asOfEl = document.getElementById('hero-data-as-of');
+        if (asOfEl && dataAsOf) asOfEl.textContent = 'data as of ' + dataAsOf;
     }
 
     // ---------------------------------------------------------------------------
@@ -1019,6 +1144,8 @@
             // cards-live: refresh per-symphony card value spans from data.symphonies.
             // Reuses POLL_INTERVAL_MS — no new timer. Cards stay live between hard-refreshes.
             function () { updateCards(data); },
+            // Update section count badges and hero "data as of" time.
+            function () { updateSectionMeta(data); },
         ].forEach(function (fn) {
             try { fn(); } catch (e) { console.error('updateDashboard renderer error:', e); }
         });
