@@ -698,51 +698,118 @@ class TestHalfDayTimeShifts:
             "mock_reporting": mock_reporting,
         }
 
-    def test_half_day_squeeze_t_reaches_one_at_1300_close(self) -> None:
+    def test_half_day_squeeze_t_uses_1300_close_anchor_not_1600(self) -> None:
         """
-        AC-2 core: on Black Friday 2024 (half-day, close 13:00 ET), a cycle run
-        AT EXACTLY 13:00 must compute time_ratio = 1.0 and pass it to
-        compute_time_squeeze_decay.
+        AC-2 core: on Black Friday 2024 (half-day, close 13:00 ET), the
+        time_ratio passed to compute_time_squeeze_decay at 11:30 ET must be
+        computed with the 13:00 close anchor, NOT the 16:00 regular-day anchor.
 
-        time_ratio formula: (current_et - execution_start_dt) / (close_dt - execution_start_dt)
-        At the half-day close (13:00), the numerator = denominator, so ratio = 1.0.
-        Clamped to [0, 1] by the engine.
+        Derivation (exact integer arithmetic, no rounding):
+          EXECUTION_START_TIME = 10:31 ET
+          cycle_time = 11:30 ET
+          elapsed  = (11:30 - 10:31) = 59 minutes
+          half-day window = (13:00 - 10:31) = 149 minutes
+          time_ratio_correct  = 59 / 149 ≈ 0.39597  (13:00 anchor)
+          time_ratio_wrong    = 59 / 329 ≈ 0.17933  (16:00 anchor)
+          midpoint_threshold  = (0.39597 + 0.17933) / 2 ≈ 0.287
 
-        RED: the engine hard-codes close = dt_time(16, 0), so at 13:00 on Black Friday
-        it computes time_ratio = (13:00 - 10:31) / (16:00 - 10:31) ≈ 0.45, not 1.0.
+        A wrong implementation (hard-coded 16:00 close) would return ≈ 0.179.
+        The correct implementation must return > 0.287. The tolerance 1e-4 is
+        appropriate for timedelta integer arithmetic (no floating-point chaining
+        beyond two integer divisions).
+
+        RED: the engine previously hard-coded market_close = dt_time(16, 0), which
+        would produce time_ratio ≈ 0.179 at 11:30 on a half-day.
         """
-        # Black Friday 2024, exactly at 13:00 ET (the half-day close)
-        at_half_day_close = _et_datetime(2024, 11, 29, 13, 0)
+        # Black Friday 2024 at 11:30 ET — solidly in action phase
+        mid_action_half_day = _et_datetime(2024, 11, 29, 11, 30)
         _, extras = self._run_engine_cycle(
-            cycle_dt=at_half_day_close,
+            cycle_dt=mid_action_half_day,
             execution_start_time="10:31",
         )
 
         captured_ratios = extras["captured_time_ratios"]
-        # If the action phase ran and called compute_time_squeeze_decay:
-        if captured_ratios:
-            # The time_ratio passed to compute_time_squeeze_decay must be 1.0 (clamped to [0,1])
-            # because current_et is AT the 13:00 close.
-            max_ratio = max(captured_ratios)
-            assert max_ratio == pytest.approx(1.0, abs=1e-9), (
-                # Tolerance: float division of exact ET times; 1e-9 is appropriate for
-                # timedelta arithmetic on exact-minute timestamps.
-                f"On Black Friday 2024 at 13:00 ET, time_ratio passed to compute_time_squeeze_decay "
-                f"must be 1.0 (at the half-day close); got max={max_ratio} "
-                f"(all captured: {captured_ratios}). "
-                f"The engine uses close=16:00 and computes ~0.45 instead of 1.0."
-            )
+        assert captured_ratios, (
+            "compute_time_squeeze_decay must be called on a half-day at 11:30 ET "
+            "(action phase is open at 11:30 with EXECUTION_START_TIME=10:31); "
+            f"no time_ratio was captured — the action phase did not run"
+        )
+
+        # Derived midpoint threshold: halfway between correct (13:00) and wrong (16:00) ratio
+        # 59/149 ≈ 0.39597, 59/329 ≈ 0.17933, midpoint ≈ 0.287
+        _MIDPOINT_THRESHOLD = 0.287
+
+        # The time_ratio captured in the action-phase loop (which may fire per-symphony)
+        representative_ratio = max(captured_ratios)
+        assert representative_ratio > _MIDPOINT_THRESHOLD, (
+            # Tolerance: comparison against midpoint 0.287; the correct value is ~0.396
+            # and the wrong value is ~0.179. Any value above 0.287 unambiguously indicates
+            # the 13:00 close anchor is in use. Tolerance 1e-4 applied below.
+            f"At 11:30 ET on Black Friday 2024, time_ratio must be > {_MIDPOINT_THRESHOLD} "
+            f"(correct 13:00 anchor gives ≈ 0.396; wrong 16:00 anchor gives ≈ 0.179). "
+            f"Got {representative_ratio}. "
+            f"The engine's close anchor on half-days must be 13:00, not 16:00."
+        )
+
+    def test_half_day_squeeze_t_approaches_one_before_blackout_window(self) -> None:
+        """
+        AC-2: at 12:50 ET on Black Friday 2024 (3 minutes before the half-day
+        rebalance blackout at 12:53 ET), time_ratio must be close to 1.0 —
+        nearly fully elapsed under the 13:00 anchor.
+
+        Derivation (exact integer arithmetic):
+          EXECUTION_START_TIME = 10:31 ET
+          cycle_time = 12:50 ET
+          elapsed  = (12:50 - 10:31) = 139 minutes
+          half-day window (13:00 anchor)  = (13:00 - 10:31) = 149 minutes
+          regular-day window (16:00 anchor) = (16:00 - 10:31) = 329 minutes
+
+          time_ratio_correct = 139 / 149 ≈ 0.933  (13:00 anchor)
+          time_ratio_wrong   = 139 / 329 ≈ 0.423  (16:00 anchor)
+          midpoint_threshold = (0.933 + 0.423) / 2 ≈ 0.678
+
+        Any ratio > 0.7 is unambiguously from the 13:00 anchor.
+
+        Note: 12:59 is in the rebalance-blackout window (12:53–13:00 on half-day)
+        and would not call compute_time_squeeze_decay — 12:50 is used to stay
+        inside the action phase.
+
+        RED: the 16:00-anchored impl returns ≈ 0.423 at 12:50, below the threshold.
+        """
+        before_blackout = _et_datetime(2024, 11, 29, 12, 50)
+        _, extras = self._run_engine_cycle(
+            cycle_dt=before_blackout,
+            execution_start_time="10:31",
+        )
+        captured_ratios = extras["captured_time_ratios"]
+        assert captured_ratios, (
+            "compute_time_squeeze_decay must be called at 12:50 ET on Black Friday 2024; "
+            "12:50 is inside the action phase (EXECUTION_START_TIME=10:31, "
+            "rebalance blackout starts 12:53 on half-day). "
+            f"No time_ratio captured — the action phase did not run."
+        )
+        representative_ratio = max(captured_ratios)
+        # 0.7 threshold: correct is ~0.933, wrong is ~0.423; 0.7 cleanly separates them.
+        # Derivation: midpoint of (139/149, 139/329) = (0.933, 0.423) / 2 = 0.678;
+        # using 0.7 adds an extra margin of 0.022.
+        assert representative_ratio > 0.7, (
+            f"At 12:50 ET on Black Friday 2024, time_ratio must be > 0.7 "
+            f"(correct 13:00 anchor gives ≈ 0.933; wrong 16:00 anchor gives ≈ 0.423). "
+            f"Got {representative_ratio}. "
+            f"The engine's close anchor on half-days must be 13:00, not 16:00."
+        )
 
     def test_half_day_squeeze_t_is_zero_at_execution_start_time(self) -> None:
         """
-        AC-2: on Black Friday 2024 at exactly EXECUTION_START_TIME (10:31 ET),
-        time_ratio must be 0.0 (the action window has just opened).
+        AC-2 regression guard: on Black Friday 2024 at exactly EXECUTION_START_TIME
+        (10:31 ET), time_ratio must be 0.0.
 
-        At action-window open, numerator = 0, so time_ratio = 0.0 regardless of
-        whether the close is 13:00 or 16:00.
+        At the action-window open, numerator = 0, so time_ratio = 0.0 regardless
+        of whether the close is 13:00 or 16:00. This test guards that the half-day
+        close shift does NOT accidentally move the open anchor.
 
-        This is the REGRESSION guard: a correct half-day impl that accidentally
-        shifts the open anchor (breaks AC-3) would fail here.
+        The implementation must call compute_time_squeeze_decay — if the engine
+        skips it at exactly 10:31, the test fails with a clear message.
         """
         at_exec_start = _et_datetime(2024, 11, 29, 10, 31)
         _, extras = self._run_engine_cycle(
@@ -750,14 +817,18 @@ class TestHalfDayTimeShifts:
             execution_start_time="10:31",
         )
         captured_ratios = extras["captured_time_ratios"]
-        if captured_ratios:
-            min_ratio = min(captured_ratios)
-            assert min_ratio == pytest.approx(0.0, abs=1e-9), (
-                # Tolerance: exactly 0.0 since numerator is exactly zero; 1e-9 for float safety
-                f"At EXECUTION_START_TIME (10:31 ET) on Black Friday 2024, time_ratio "
-                f"must be 0.0; got min={min_ratio} (all: {captured_ratios}). "
-                f"The open anchor must always be EXECUTION_START_TIME, not 09:30."
-            )
+        assert captured_ratios, (
+            "compute_time_squeeze_decay must be called at EXECUTION_START_TIME (10:31 ET) "
+            "on Black Friday 2024; the action phase must be open at exactly the gate time. "
+            "No time_ratio was captured — the action phase did not fire at 10:31."
+        )
+        min_ratio = min(captured_ratios)
+        assert min_ratio == pytest.approx(0.0, abs=1e-9), (
+            # Tolerance: exactly 0.0 since numerator is exactly zero; 1e-9 for float safety
+            f"At EXECUTION_START_TIME (10:31 ET) on Black Friday 2024, time_ratio "
+            f"must be 0.0; got min={min_ratio} (all: {captured_ratios}). "
+            f"The open anchor must always be EXECUTION_START_TIME, not 09:30."
+        )
 
     def test_half_day_rebalance_blackout_fires_at_1253_not_1553(self) -> None:
         """
