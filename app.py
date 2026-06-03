@@ -955,15 +955,14 @@ def get_state():
                 )
 
         state_data = database.load_state()
+        _snap_stale_notice = ""  # AC-4a: set when pre_market snapshot belongs to a prior trading day
 
         # AC-DM.3.3: closed + snapshot → serve frozen snapshot.
         if market_state in ("closed_frozen", "pre_market"):
             snapshot = (state_data or {}).get("last_market_close_snapshot")
             # AC-4a: detect when the snapshot is from a prior trading day and today is a
-            # new trading day (pre_market only).  In this case the snapshot data is stale.
-            # We still serve the snapshot for continuity but add a reset notice so the
-            # client can signal the operator that a new session is about to begin.
-            _snap_stale_notice = ""
+            # new trading day (pre_market only).  Skip the frozen block and fall through to
+            # the waiting response so the operator sees a clean reset.
             if snapshot and market_state == "pre_market":
                 _snap_day = snapshot.get("trading_day", "")
                 _today_date = datetime.now(_ET).strftime("%Y-%m-%d")
@@ -980,7 +979,7 @@ def get_state():
                             "New trading day — snapshot is from a prior session. "
                             "Live data will appear at market open."
                         )
-            if snapshot:
+            if snapshot and not _snap_stale_notice:
                 # R2: remap shadow_divergence "portfolio" -> "portfolio_today" to match
                 # the live path's key name (from database.get_shadow_divergence()).
                 sd = dict(snapshot.get("shadow_divergence") or {})
@@ -1256,9 +1255,23 @@ def get_state():
                     ),
                     **_additive,
                 }
-                if _snap_stale_notice:
-                    _frozen_resp["notice"] = _snap_stale_notice
                 return jsonify(_frozen_resp)
+
+        # AC-4a: stale snapshot on a new trading day — return clean waiting response.
+        # _snap_stale_notice is only set when market_state=="pre_market", snapshot exists,
+        # trading_day != today, and today is a trading day.  The frozen block was skipped
+        # above; return waiting here so the operator sees a clean reset rather than stale data.
+        if _snap_stale_notice:
+            _stale_waiting_resp = {
+                "status": "waiting",
+                "message": "New trading day — waiting for session open.",
+                "notice": _snap_stale_notice,
+                "market_state": market_state,
+                "frozen_at": None,
+                "state": {},
+                "bot_state": {},
+            }
+            return jsonify({**_stale_waiting_resp, **_additive})
 
         # No live state — return waiting with market_state context and notice on fresh deploy.
         # AC-DM.3.4: closed + no snapshot + empty state → notice fields included in waiting.
