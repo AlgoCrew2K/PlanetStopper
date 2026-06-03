@@ -1,0 +1,17 @@
+{
+  "_provenance": "schema-derived from alpha_bot_execution.py:768,916 + analytics.py:657-698",
+  "_note": "shadow_return is stored as current_return = last_percent_change*100, which is the Composer CUMULATIVE return since position open, NOT a per-day periodic return. Chain-linking cumulative snapshots as if they were periodic compoundsincorrectly. A position flat at -3% for 3 days has shadow_return=-3.0 on each day; the correct CR adjustment is -3.0%, not (0.97^3-1)*100 = -8.73%.",
+  "scenario": "flat_position_three_days",
+  "description": "Position opens and stays at -3.0% cumulative for 3 consecutive days. Each daily snapshot records shadow_return = -3.0 (= current_return = last_percent_change * 100). The correct position-epoch cumulative return adjustment is -3.0% (the final snapshot), not the chain-linked compound of three -3% periodic returns.",
+  "shadow_history_rows": [
+    {"trading_day": "2026-01-05", "shadow_return": -3.0, "ts_utc": "2026-01-05T21:00:00Z"},
+    {"trading_day": "2026-01-06", "shadow_return": -3.0, "ts_utc": "2026-01-06T21:00:00Z"},
+    {"trading_day": "2026-01-07", "shadow_return": -3.0, "ts_utc": "2026-01-07T21:00:00Z"}
+  ],
+  "if_held_pct": 5.0,
+  "expected_dry_run_pct": 1.97,
+  "_expected_derivation": "if_held=5.0; last snapshot shadow_return=-3.0 => dry_run = 5.0 + (-3.0) = 2.0 ... but product path = 0.97^3-1=-0.0873 => 5.0+(-8.73)=-3.73. The correct answer depends on whether shadow_return is daily or cumulative. This fixture pins the CORRECT answer once that's resolved. See _note above.",
+  "_chain_link_wrong_value": -3.73,
+  "_correct_value_if_cumulative_snapshot": 2.0,
+  "_tolerance_comment": "exact arithmetic on small integer-like values; rel=1e-9 appropriate"
+}
