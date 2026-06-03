@@ -1,0 +1,26 @@
+{
+  "_provenance": "hand-authored; schema derived from alpha_bot_execution.py bot_state structure and app.py:440-475 (_cr/_tc/_mdd enrichment). Represents a live /api/state response carrying a `symphonies` field suitable for card in-place updates.",
+  "sym_alpha": {
+    "id": "sym_alpha",
+    "name": "Alpha Momentum",
+    "account": "ACC1",
+    "current_return": 3.5,
+    "current_value": 10500.0,
+    "armed": true,
+    "triggered": false,
+    "stop_trigger": 2.1,
+    "mc_prob": 0.68
+  },
+  "sym_beta": {
+    "id": "sym_beta",
+    "name": "Beta Trend",
+    "account": "ACC1",
+    "current_return": -1.2,
+    "current_value": 9880.0,
+    "armed": false,
+    "triggered": true,
+    "triggered_reason": "Trailing Stop",
+    "triggered_at_return": -1.2,
+    "mc_prob": 0.45
+  }
+}
