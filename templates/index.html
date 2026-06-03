@@ -982,6 +982,11 @@
       </div><!-- /.hero-grid -->
     </section>
 
+    <!-- Symphony table container: populated by JS on each /api/state poll.
+         index.js injects data.html from the API response so the table always
+         reflects the current bot_state without a hard refresh. -->
+    <div id="sym-table-container"></div>
+
     <!-- ======================== ACTIVE SECTION ======================== -->
     <section data-testid="active-section">
       <div class="section-header" style="display:flex;align-items:center;gap:8px;">
