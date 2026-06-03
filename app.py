@@ -543,8 +543,14 @@ def _build_meta(
     # Count only symphony dicts (those with a 'name' key).
     symphony_entries = [v for v in state_data.values() if isinstance(v, dict) and "name" in v]
     tracked = len(symphony_entries)
+    # Armed = any armed variant (trailing/TP/para) that has NOT yet triggered.
+    # A triggered symphony retains armed=True in the state dict; excluding triggered
+    # here prevents double-counting in the hero quick-view "X Armed" badge.
     armed = sum(
-        1 for s in symphony_entries if s.get("armed") or s.get("tp_armed") or s.get("para_armed")
+        1
+        for s in symphony_entries
+        if (s.get("armed") or s.get("tp_armed") or s.get("para_armed"))
+        and not s.get("triggered")
     )
     triggered = sum(1 for s in symphony_entries if s.get("triggered"))
 
