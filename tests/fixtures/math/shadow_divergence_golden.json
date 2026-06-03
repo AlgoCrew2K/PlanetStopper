@@ -1,0 +1,37 @@
+{
+  "_provenance": "schema-derived from analytics.py:560-698 + alpha_bot_execution.py:768,907-916 + adjudicator verdict 2026-06-03",
+  "_note": "The correct guard-alpha divergence formula is: (prod_shadow - prod_current) * 100, NOT (prod_shadow - 1) * 100. For untriggered symphonies shadow_return == current_return every day so prod_shadow == prod_current and divergence == 0 exactly. For triggered symphonies shadow_return is frozen at exit while current_return keeps moving, capturing exactly what the guard saved or cost.",
+  "_derivation": "prod = ∏(1 + r/100); divergence = (prod_shadow - prod_current) * 100; dry_run = if_held + divergence",
+  "scenarios": {
+    "untriggered_never_touched": {
+      "description": "Symphony the guard never triggered. shadow_return == current_return every day. Guard alpha MUST be exactly 0.0.",
+      "shadow_history_rows": [
+        {"trading_day": "2026-01-05", "shadow_return": -0.5, "current_return": -0.5, "ts_utc": "2026-01-05T21:00:00Z", "is_post_trigger": 0},
+        {"trading_day": "2026-01-06", "shadow_return":  0.8, "current_return":  0.8, "ts_utc": "2026-01-06T21:00:00Z", "is_post_trigger": 0},
+        {"trading_day": "2026-01-07", "shadow_return": -1.2, "current_return": -1.2, "ts_utc": "2026-01-07T21:00:00Z", "is_post_trigger": 0},
+        {"trading_day": "2026-01-08", "shadow_return":  2.0, "current_return":  2.0, "ts_utc": "2026-01-08T21:00:00Z", "is_post_trigger": 0}
+      ],
+      "if_held_pct": 10.0,
+      "expected_dry_run_pct": 10.0,
+      "expected_divergence_pct": 0.0,
+      "expected_guard_alpha_pct": 0.0,
+      "_tolerance": "abs=1e-9 — divergence must be exactly zero, not approximately"
+    },
+    "triggered_guard_acted": {
+      "description": "3-day position. Days 1-2 pre-trigger (shadow==current). Day 3: trigger fires. shadow_return frozen at -2.0 (exit level); current_return = +0.3 (market moved up after exit). Guard alpha = divergence = (prod_shadow - prod_current)*100.",
+      "shadow_history_rows": [
+        {"trading_day": "2026-01-05", "shadow_return": 1.0, "current_return": 1.0, "ts_utc": "2026-01-05T21:00:00Z", "is_post_trigger": 0},
+        {"trading_day": "2026-01-06", "shadow_return": 0.5, "current_return": 0.5, "ts_utc": "2026-01-06T21:00:00Z", "is_post_trigger": 0},
+        {"trading_day": "2026-01-07", "shadow_return": -2.0, "current_return": 0.3, "ts_utc": "2026-01-07T21:00:00Z", "is_post_trigger": 1}
+      ],
+      "if_held_pct": 5.0,
+      "expected_divergence_pct": -2.3346150000,
+      "expected_dry_run_pct": 2.6653850000,
+      "expected_guard_alpha_pct": -2.3346150000,
+      "expected_bot_equity_series_pct": [5.0, 5.0, 2.6653850000],
+      "expected_mdd_pct": 2.3346150000,
+      "_derivation": "prod_shadow=0.99*1.005*0.98=0.994749; prod_current=1.01*1.005*1.003=1.018095; div=(0.994749-1.018095)*100=-2.3346; dry_run=5.0+(-2.3346)=2.6654; MDD=5.0-2.6654=2.3346",
+      "_tolerance": "abs=1e-6 for float arithmetic on small values"
+    }
+  }
+}

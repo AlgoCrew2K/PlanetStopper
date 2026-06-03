@@ -1,0 +1,17 @@
+{
+  "_provenance": "schema-derived from alpha_bot_execution.py:768,916 + analytics.py:657-698 + feature-plans/m1f-real-shadow-equity-series.merged.md AC-M1F.3.2/PA-M1F-16",
+  "_note": "shadow_return = current_return = last_percent_change*100 (alpha_bot_execution.py:768,916). last_percent_change is Composer's per-day TODAY'S CHANGE (same field get_symphony_today_change uses), NOT a cumulative-since-open return. Chain-linking per-day returns via prod(1+r_i/100)-1 is CORRECT and intentional design per AC-M1F.3.2/PA-M1F-16. A position at -3% on each of 3 days has genuinely had -3% per-day and (0.97^3-1)*100 = -8.7327% cumulative is the correct answer. VERDICT: NOT A BUG.",
+  "scenario": "flat_per_day_returns_three_days",
+  "description": "Three consecutive trading days each recording shadow_return=-3.0%. Each -3% is today's daily return (last_percent_change*100). Chain-link CR = (0.97^3 - 1)*100 = -8.7327%. MDD of cumulative series [-3.0, -5.91, -8.7327] with peak=cum[0]=-3.0 is 5.7327%.",
+  "shadow_history_rows": [
+    {"trading_day": "2026-01-05", "shadow_return": -3.0, "ts_utc": "2026-01-05T21:00:00Z"},
+    {"trading_day": "2026-01-06", "shadow_return": -3.0, "ts_utc": "2026-01-06T21:00:00Z"},
+    {"trading_day": "2026-01-07", "shadow_return": -3.0, "ts_utc": "2026-01-07T21:00:00Z"}
+  ],
+  "if_held_pct": 5.0,
+  "_expected_cr_chain_component": -8.732700000000005,
+  "_expected_cr_dry_run": -3.7327000000000046,
+  "_expected_mdd_dry_run": 5.732700000000002,
+  "_derivation": "CR chain = (0.97^3 - 1)*100 = -8.7327%; dry_run = 5.0 + (-8.7327) = -3.7327%. MDD: cum_series=[-3.0, -5.91, -8.7327]; peak=cum[0]=-3.0 (analytics.py:739); trough=-8.7327; MDD=5.7327%.",
+  "_tolerance_comment": "rel=1e-9 appropriate — these are exact floating-point arithmetic on small fixtured values; tolerance guards only IEEE-754 rounding"
+}

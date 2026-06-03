@@ -284,44 +284,81 @@ class TestDryRunConsumersUseCurrentEpochOnly:
             "time_weighted_return": 0.10,
         }
         if_held = 0.10 * 100.0  # 10.0 pct
-        expected_dry_run = if_held + _chain_link_pct(_POSITION_B_RETURNS)
-        spliced_dry_run = if_held + _chain_link_pct(
-            _POSITION_A_RETURNS + _POSITION_B_RETURNS
-        )
-        # The two must differ, else the test cannot discriminate.
-        assert abs(expected_dry_run - spliced_dry_run) > 1e-6, "fixture integrity"
+        # CORRECTED oracle (adjudicator 2026-06-03): the guard-alpha divergence formula
+        # is (∏shadow − ∏current)*100. In _seed_two_epoch_shadow_db all rows have
+        # current_return == shadow_return (lines 170-171, 177-178), so divergence == 0
+        # for the current epoch's rows. dry_run = if_held + 0 = if_held.
+        # The epoch-scoping test still discriminates: a spliced A+B trajectory would
+        # yield a different (non-zero) divergence because A and B have different returns.
+        expected_dry_run = if_held   # divergence == 0 when shadow == current
+        spliced_divergence = _chain_link_pct(_POSITION_A_RETURNS + _POSITION_B_RETURNS) - _chain_link_pct(_POSITION_A_RETURNS + _POSITION_B_RETURNS)
+        # Actually derive the spliced divergence properly: spliced trajectory has
+        # shadow==current for all rows so spliced divergence is also 0 — this test
+        # cannot discriminate epoch-scoping via CR alone when shadow==current.
+        # The trajectory-level scoping tests (TestTrajectoryScopedToCurrentEpoch above)
+        # remain the correct discriminating tests for epoch correctness.
+        # This CR test asserts the corrected formula yields if_held for the current epoch.
+        assert abs(expected_dry_run - if_held) < 1e-9, "fixture integrity: expected_dry_run == if_held"
 
         result = get_symphony_cumulative_return(
             sym_dict, bot_state_entry=None, db_path=db_file
         )
-        assert result["dry_run"] == pytest.approx(expected_dry_run, rel=1e-9), (
-            f"dry_run CR must chain-link ONLY the current epoch "
-            f"(expected {expected_dry_run:.6f}); a spliced A+B trajectory would "
-            f"yield {spliced_dry_run:.6f}; got {result['dry_run']}"
+        assert result["dry_run"] == pytest.approx(expected_dry_run, abs=1e-9), (
+            f"dry_run CR with shadow==current must equal if_held={expected_dry_run:.6f}% "
+            f"(divergence == 0); got {result['dry_run']:.6f}%. "
+            "Bug: current code computes absolute shadow chain-link, not divergence."
         )
 
     def test_dry_run_mdd_reflects_current_epoch_only(self, tmp_path):
-        """dry_run MDD = peak-to-trough of the current epoch's cumulative
-        series. A spliced series invents a discontinuity at the A->B join
-        that is not a real intra-position drawdown."""
+        """dry_run MDD = 0.0 for the two-epoch fixture — derivation below.
+
+        DERIVATION (MDD anchor invariant: never-triggered → bot-MDD == 0 over
+        the shadow window):
+          _seed_two_epoch_shadow_db (lines 165-183) seeds every row with
+              current_return = shadow_return = ret  (same value, no trigger)
+          The corrected MDD formula (analytics.py:807-851) builds:
+              bot_equity[t] = if_held + (prod_shadow[0..t] - prod_current[0..t]) * 100
+          Since current_return == shadow_return on every day:
+              prod_shadow[0..t] == prod_current[0..t] for ALL t  (identical products)
+          Therefore:
+              bot_equity[t] = if_held + 0 = if_held  for all t  (flat series)
+          Peak-to-trough of a flat constant series is exactly 0:
+              MDD = max(peak - val) over flat series = 0.0
+          This is the NEVER-TRIGGERED MDD ANCHOR — the bot-path drawdown is 0
+          when the guard never diverged from the held path.
+
+          NOTE: the dry_run MDD is the drawdown of the bot's divergence-based
+          equity path over the SHADOW WINDOW, not the Composer lifetime MDD
+          (if_held). These measure different things. The anchor invariant only
+          applies to the shadow-window bot path.
+
+        Epoch-scoping for the trajectory is already covered by
+        TestTrajectoryScopedToCurrentEpoch (the trajectory-level tests assert that
+        only the current epoch's rows are returned). This test asserts the MDD
+        consumer uses the divergence-based equity path and produces 0.0 for
+        untriggered (shadow==current) rows.
+        """
         db_file = _seed_two_epoch_shadow_db(tmp_path)
         sym_dict = {
             "id": _SYM_ID,
-            "max_drawdown": 0.05,  # Composer if_held 5%
+            "max_drawdown": 0.05,  # Composer if_held 5% (lifetime held MDD, not tested here)
         }
-        expected_mdd = _peak_to_trough_mdd(_POSITION_B_RETURNS)
-        spliced_mdd = _peak_to_trough_mdd(
-            _POSITION_A_RETURNS + _POSITION_B_RETURNS
-        )
-        assert abs(expected_mdd - spliced_mdd) > 1e-6, "fixture integrity"
+        # DERIVED (not captured from output):
+        #   current_return == shadow_return in _seed_two_epoch_shadow_db
+        #   → prod_shadow[0..t] == prod_current[0..t] at every step t
+        #   → bot_equity[t] = if_held + (0) = if_held  (constant)
+        #   → peak-to-trough of a flat series = 0.0
+        expected_mdd = 0.0
 
         result = get_symphony_max_drawdown(
             sym_dict, bot_state_entry=None, db_path=db_file
         )
-        assert result["dry_run"] == pytest.approx(expected_mdd, rel=1e-9), (
-            f"dry_run MDD must be peak-to-trough of the CURRENT epoch only "
-            f"(expected {expected_mdd:.6f}); a spliced A+B series would yield "
-            f"{spliced_mdd:.6f}; got {result['dry_run']}"
+        assert result["dry_run"] == pytest.approx(expected_mdd, abs=1e-9), (
+            f"dry_run MDD must be 0.0 (derived: shadow==current at every step "
+            f"→ prod_shadow==prod_current → bot equity flat → zero drawdown); "
+            f"got {result['dry_run']:.6f}. "
+            "A non-zero result means the MDD consumer is using the absolute "
+            "shadow series (old bug) instead of the divergence-based equity path."
         )
 
 

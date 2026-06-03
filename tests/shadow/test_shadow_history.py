@@ -747,15 +747,26 @@ def test_get_symphony_today_change_returns_none_when_shadow_history_empty(tmp_pa
 
 def test_get_symphony_cumulative_return_uses_anchored_chain_link_of_last_row_per_day(tmp_path):
     """
-    dry_run CR must be the chain-link product of EOD shadow_return per trading_day,
-    ANCHORED so the bot series starts at the same baseline as if_held.
+    dry_run CR must use the guard-alpha DIVERGENCE formula (adjudicator verdict 2026-06-03):
+        dry_run = if_held + (prod_shadow - prod_current) * 100
+    where prod_shadow = ∏(1 + shadow_return_day/100) and
+          prod_current = ∏(1 + current_return_day/100)
+    over the EOD (last by ts_utc per trading_day) rows for the current epoch.
 
-    Anchored formula: dry_run = if_held + raw_chain_link_percent
-    where raw_chain_link_percent = (∏(1 + r_i/100) - 1) * 100.
+    This anchors the bot series at the same Day-0 baseline as if_held. For an
+    untriggered symphony shadow==current so divergence==0 and dry_run==if_held.
+    For triggered symphonies (shadow frozen at exit, current keeps moving), the
+    divergence captures exactly what the guard saved or cost.
 
-    This makes both series start at the same Day-0 value; divergence equals the
-    guard effect. Day-row selection: last row per day by ts_utc DESC LIMIT 1.
-    PA-M1F-16 / AC-M1F.3.2.
+    DERIVATION from fixture (analytics_shadow_history.json, SYM_ALPHA):
+      Day 1 EOD (last by ts_utc): shadow_return=3.5, current_return=1.8 (post-trigger)
+      Day 2 EOD (last by ts_utc): shadow_return=1.2, current_return=1.2 (untriggered)
+      prod_shadow = (1+3.5/100) * (1+1.2/100)
+      prod_current = (1+1.8/100) * (1+1.2/100)
+      divergence = (prod_shadow - prod_current) * 100
+      dry_run = if_held + divergence    (if_held = simple_return*100 = 5.0%)
+
+    Day-row selection: last row per day by ts_utc DESC LIMIT 1. PA-M1F-16 / AC-M1F.3.2.
     """
     import analytics
 
@@ -769,9 +780,18 @@ def test_get_symphony_cumulative_return_uses_anchored_chain_link_of_last_row_per
     conn.close()
 
     expected = fixture["expected"]["SYM_ALPHA"]
-    r1 = expected["chain_link_cr_day1_r"]
-    r2 = expected["chain_link_cr_day2_r"]
-    raw_chain_link = ((1 + r1 / 100.0) * (1 + r2 / 100.0) - 1) * 100.0
+    # EOD shadow returns per day — derived from fixture keys (PA-18: no bare literals).
+    shadow_r1 = expected["chain_link_cr_day1_r"]     # day-1 EOD shadow_return = 3.5
+    shadow_r2 = expected["chain_link_cr_day2_r"]     # day-2 EOD shadow_return = 1.2
+    # EOD current returns per day — from fixture expected block.
+    current_r1 = expected["eod_day1_current_return"] # day-1 EOD current_return = 1.8
+    # Day-2 is untriggered: current_return == shadow_return (same value in fixture rows).
+    current_r2 = shadow_r2                           # 1.2 == 1.2
+
+    # CORRECTED divergence formula: (prod_shadow - prod_current) * 100
+    prod_shadow = (1 + shadow_r1 / 100.0) * (1 + shadow_r2 / 100.0)
+    prod_current = (1 + current_r1 / 100.0) * (1 + current_r2 / 100.0)
+    divergence = (prod_shadow - prod_current) * 100.0
 
     sym_dict = {
         "id": "SYM_ALPHA",
@@ -785,7 +805,7 @@ def test_get_symphony_cumulative_return_uses_anchored_chain_link_of_last_row_per
     }
     # if_held = simple_return * 100 = 0.05 * 100 = 5.0
     if_held = sym_dict["simple_return"] * 100.0
-    expected_anchored = if_held + raw_chain_link
+    expected_dry_run = if_held + divergence
 
     import database as _database_mod
 
@@ -795,13 +815,14 @@ def test_get_symphony_cumulative_return_uses_anchored_chain_link_of_last_row_per
             bot_state_entry=None,
         )
 
-    # Tolerance 1e-6: floating-point chain-link arithmetic; fixture explains derivation.
-    # Anchored: dry_run = if_held + raw_chain_link so both series share the same Day-0 baseline.
-    assert result["dry_run"] == pytest.approx(expected_anchored, abs=1e-6), (
-        f"dry_run CR must be anchored chain-link (if_held + raw_chain_link). "
-        f"if_held={if_held:.6f}, raw_chain_link={raw_chain_link:.6f}, "
-        f"expected_anchored={expected_anchored:.6f}, got {result['dry_run']}. "
-        f"PA-M1F-16 anchored-shadow model."
+    # Tolerance 1e-6: floating-point arithmetic on small values.
+    # Derivation: divergence = (prod_shadow - prod_current)*100 = 1.7204%
+    # expected_dry_run = 5.0 + 1.7204 = 6.7204%
+    assert result["dry_run"] == pytest.approx(expected_dry_run, abs=1e-6), (
+        f"dry_run CR must use divergence formula (prod_shadow - prod_current)*100. "
+        f"if_held={if_held:.6f}, divergence={divergence:.6f}, "
+        f"expected_dry_run={expected_dry_run:.6f}, got {result['dry_run']}. "
+        f"PA-M1F-16 / adjudicator-corrected divergence formula."
     )
 
 

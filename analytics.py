@@ -654,6 +654,83 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
     return result
 
 
+def _get_shadow_divergence_trajectory(
+    symphony_id: str, db_file: str
+) -> list[tuple[float, float]] | None:
+    """Return ordered per-day EOD ``(shadow_return, current_return)`` pairs for the
+    current position epoch — the inputs to the guard-alpha DIVERGENCE formula.
+
+    Identical day-row selection and epoch-scoping to
+    ``_get_shadow_cumulative_trajectory`` (last row per trading_day by ts_utc,
+    filtered to the latest position_epoch with ``IS`` so legacy NULL-epoch rows
+    form one segment). Kept as a SEPARATE function so the shadow-only trajectory
+    (and its established list[float] contract + epoch-scoping tests) is unchanged.
+
+    The CR/MDD consumers need BOTH series because the guard's effect is the
+    divergence between the bot's series (shadow_return — frozen at exit when the
+    guard fires) and the held series (current_return — the position continuing to
+    hold). For an untriggered symphony shadow_return == current_return every day,
+    so the divergence is exactly zero (no phantom alpha).
+
+    Returns None when fewer than 2 distinct trading days exist (no recorded
+    divergence yet — both series coincide).
+    """
+    import sqlite3
+    from datetime import datetime as _dt
+
+    today = _dt.now(UTC).strftime("%Y-%m-%d")
+
+    try:
+        conn = sqlite3.connect(db_file, timeout=10.0)
+        try:
+            epoch_row = conn.execute(
+                "SELECT position_epoch FROM shadow_history "
+                "WHERE symphony_id = ? ORDER BY ts_utc DESC LIMIT 1",
+                (symphony_id,),
+            ).fetchone()
+            has_epoch_column = True
+            _current_epoch = epoch_row[0] if epoch_row is not None else None
+        except sqlite3.OperationalError:
+            has_epoch_column = False
+            _current_epoch = None
+
+        if has_epoch_column:
+            # `IS` (not `=`) so a NULL current epoch matches NULL legacy rows.
+            rows = conn.execute(
+                "SELECT trading_day, shadow_return, current_return "
+                "FROM shadow_history "
+                "WHERE symphony_id = ? "
+                "  AND position_epoch IS ( "
+                "        SELECT position_epoch FROM shadow_history s3 "
+                "        WHERE s3.symphony_id = ? "
+                "        ORDER BY s3.ts_utc DESC LIMIT 1) "
+                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                "                  AND s2.trading_day = shadow_history.trading_day) "
+                "ORDER BY trading_day ASC",
+                (symphony_id, symphony_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT trading_day, shadow_return, current_return "
+                "FROM shadow_history "
+                "WHERE symphony_id = ? "
+                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                "                  AND s2.trading_day = shadow_history.trading_day) "
+                "ORDER BY trading_day ASC",
+                (symphony_id,),
+            ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    if len(rows) < 2:
+        return None
+
+    return [(float(r[1]), float(r[2])) for r in rows]
+
+
 def get_symphony_cumulative_return(
     sym_dict: dict,
     bot_state_entry: dict | None,
@@ -666,12 +743,20 @@ def get_symphony_cumulative_return(
     if_held: simple_return UNLESS (simple_return == 0.0 AND net_deposits == 0.0),
              in which case falls back to time_weighted_return (anomalous withdrawn/re-funded
              symphony where simple_return would be misleadingly zero).
-    dry_run: anchored shadow series. When >= 2 distinct shadow trading days exist,
-             dry_run = if_held + chain_link_pct where chain_link_pct is the from-zero
-             product of per-day EOD shadow_return values. This anchors the bot series so
-             its window-start equals if_held; divergence (dry_run - if_held) equals the
-             guard effect directly. When fewer than 2 shadow days exist (or no shadow rows),
-             dry_run = if_held (no recorded divergence yet — both series coincide).
+    dry_run: held series anchored + the guard-alpha DIVERGENCE over the shadow window.
+             When >= 2 distinct shadow trading days exist,
+                 dry_run = if_held + (prod_shadow - prod_current) * 100
+             where prod_shadow = ∏(1 + shadow_return_day/100) and
+             prod_current = ∏(1 + current_return_day/100) over the current epoch's
+             per-day EOD rows. shadow_return is the bot's series (frozen at the exit
+             level once the guard triggers); current_return is the held series (the
+             position continuing to hold). Their compounded DIFFERENCE is the guard's
+             cumulative effect — exactly what `Guard Alpha = dry_run - if_held` renders.
+             This is NOT the absolute shadow cumulative (prod_shadow - 1): for an
+             untriggered symphony shadow_return == current_return every day, so
+             prod_shadow == prod_current and the divergence is exactly 0 — dry_run ==
+             if_held, no phantom alpha. When fewer than 2 shadow days exist (or no
+             shadow rows), dry_run = if_held (no recorded divergence yet).
 
     Returns {"if_held": None, "dry_run": None} when simple_return is None (missing data).
     """
@@ -690,12 +775,18 @@ def get_symphony_cumulative_return(
     dry_run: float = if_held
     if symphony_id:
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
-        trajectory = _get_shadow_cumulative_trajectory(symphony_id, _db_file)
+        trajectory = _get_shadow_divergence_trajectory(symphony_id, _db_file)
         if trajectory is not None:
-            product = 1.0
-            for r in trajectory:
-                product *= 1.0 + r / 100.0
-            dry_run = if_held + (product - 1.0) * 100.0
+            # Guard alpha = compounded bot series minus compounded held series.
+            # Untriggered days (shadow == current) contribute nothing to the
+            # divergence; only the post-trigger gap (shadow frozen vs current
+            # moving) accrues.
+            product_shadow = 1.0
+            product_current = 1.0
+            for shadow_r, current_r in trajectory:
+                product_shadow *= 1.0 + shadow_r / 100.0
+                product_current *= 1.0 + current_r / 100.0
+            dry_run = if_held + (product_shadow - product_current) * 100.0
 
     return {"if_held": if_held, "dry_run": dry_run}
 
@@ -710,7 +801,16 @@ def get_symphony_max_drawdown(
     Per-symphony Max Drawdown.
 
     if_held: max_drawdown from Composer (positive float, magnitude convention).
-    dry_run: peak-to-trough drawdown of cumulative shadow trajectory (AC-M1F.3.3).
+    dry_run: peak-to-trough drawdown of the BOT's equity path (AC-M1F.3.3). The bot
+             equity at each EOD step t is the held baseline plus the cumulative
+             guard-alpha divergence up to that step:
+                 bot_equity[t] = if_held + (prod_shadow[0..t] - prod_current[0..t]) * 100
+             This is the divergence-based equity series, NOT the absolute shadow
+             cumulative — so for an untriggered symphony (shadow == current every day)
+             the bot equity is flat at if_held and MDD is exactly 0 (no phantom
+             drawdown). Once the guard triggers, the shadow series freezes while the
+             held (current) series keeps moving, and the divergence opens a real
+             drawdown that this peak-to-trough captures.
              Falls back to if_held when no shadow trajectory exists and trading_day was
              not explicitly provided — preserves pre-M1F semantics for old callers.
              None when shadow_history is explicitly queried (trading_day present) but empty
@@ -727,18 +827,22 @@ def get_symphony_max_drawdown(
     dry_run: float | None = None
     if symphony_id:
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
-        trajectory = _get_shadow_cumulative_trajectory(symphony_id, _db_file)
+        trajectory = _get_shadow_divergence_trajectory(symphony_id, _db_file)
         if trajectory is not None:
-            # Build cumulative series then compute peak-to-trough
-            cum_series: list[float] = []
-            product = 1.0
-            for r in trajectory:
-                product *= 1.0 + r / 100.0
-                cum_series.append((product - 1.0) * 100.0)
-            if len(cum_series) >= 2:
-                peak = cum_series[0]
+            # Build the bot's divergence-based equity series, then peak-to-trough.
+            bot_equity: list[float] = []
+            product_shadow = 1.0
+            product_current = 1.0
+            for shadow_r, current_r in trajectory:
+                product_shadow *= 1.0 + shadow_r / 100.0
+                product_current *= 1.0 + current_r / 100.0
+                bot_equity.append(
+                    if_held + (product_shadow - product_current) * 100.0
+                )
+            if len(bot_equity) >= 2:
+                peak = bot_equity[0]
                 max_dd = 0.0
-                for val in cum_series:
+                for val in bot_equity:
                     if val > peak:
                         peak = val
                     dd = peak - val

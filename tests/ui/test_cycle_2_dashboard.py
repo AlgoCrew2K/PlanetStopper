@@ -380,7 +380,9 @@ def test_index_html_no_bare_hex():
     # Strip Jinja comments and var() references
     stripped = re.sub(r"\{#.*?#\}", "", content)
     stripped = re.sub(r"var\([^)]*\)", "", stripped)
-    bare_hex = re.findall(r"#[0-9a-fA-F]{3,8}\b", stripped)
+    # Negative lookbehind excludes HTML decimal entities (e.g. &#9432; &#x24D8;)
+    # whose # is preceded by & — these are not hex colour literals.
+    bare_hex = re.findall(r"(?<!&)#[0-9a-fA-F]{3,8}\b", stripped)
     assert bare_hex == [], (
         f"index.html contains bare hex literals: {bare_hex}. "
         "All colours must use var(--studio-*) tokens. "

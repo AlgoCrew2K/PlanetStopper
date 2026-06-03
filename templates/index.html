@@ -37,6 +37,14 @@
       gap: 32px;
     }
 
+    /* F-4: stack hero columns on narrow viewports. Floor is 700px — the card
+       grid is already responsive via auto-fill minmax; only the hero needs this. */
+    @media (max-width: 700px) {
+      .hero-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .hero-grid > * {
       min-width: 0;
     }
@@ -833,6 +841,11 @@
           {% set tc_held = (meta.portfolio.tc_if_held if meta is defined and meta.portfolio is defined else 0) or 0 %}
           {% set mdd_bot = (meta.portfolio.mdd if meta is defined and meta.portfolio is defined else 0) or 0 %}
           {% set mdd_held = (meta.portfolio.mdd_if_held if meta is defined and meta.portfolio is defined else 0) or 0 %}
+          {# F-2: suppress MDD winner encoding when shadow history is < 30 trading days.
+             The bot MDD is computed from the shadow trajectory (which may be only a few
+             days), while the held MDD is from Composer's full lifetime. A winner bar
+             on a 8-day bot vs lifetime held comparison would be misleading. #}
+          {% set mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
 
           {# --- Winner-encoded bar rows ---
              Bot wins Today/Cum if tc_bot > tc_held (higher return = better).
@@ -857,7 +870,11 @@
           <div id="portfolio-strip" class="vs-rows">
             <div data-testid="vs-row" class="vs-row">
               <div class="vs-row-top">
-                <span class="vs-row-label">Today</span>
+                {# F-3: "Today" row label carries a footnote marker; the note below
+                   the row explains that the If Held value is account-level (Composer
+                   todays_percent_change) and includes uninvested cash, unlike the
+                   per-card held figure which is symphony-scoped. #}
+                <span class="vs-row-label">Today <span data-testid="today-held-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="If Held is account-level (includes uninvested cash). Per-card Held excludes cash.">&#9432;</span></span>
                 <span data-testid="comp-today-bot-text" class="vs-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if tc_bot >= 0 %}+{% endif %}{{ "%.2f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-today-held-text" class="vs-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Held {% if tc_held >= 0 %}+{% endif %}{{ "%.2f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span>
                 <span class="vs-delta {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if tc_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(tc_alpha) }}%{% else %}&mdash;{% endif %}</span>
@@ -903,22 +920,27 @@
 
             <div data-testid="vs-row" class="vs-row">
               <div class="vs-row-top">
-                <span class="vs-row-label">Max DD</span>
+                {# F-2: when insufficient_history, label row with annotation instead of alpha delta #}
+                <span class="vs-row-label">Max DD{% if mdd_insufficient %} <span data-testid="mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;">insufficient history (&lt;30d)</span>{% endif %}</span>
                 <span data-testid="comp-mdd-bot-text" class="vs-val neg">{% if has_live_data %}Bot {{ "%.2f"|format(mdd_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-mdd-held-text" class="vs-val neg">{% if has_live_data %}Held {{ "%.2f"|format(mdd_held) }}%{% else %}&mdash;{% endif %}</span>
+                {# F-2: suppress alpha delta when insufficient history — comparison is misleading #}
+                {% if not mdd_insufficient %}
                 <span class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if mdd_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(mdd_alpha) }}%{% else %}&mdash;{% endif %}</span>
+                {% endif %}
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
-                  <span class="vs-bar-label {% if mdd_bot_wins %}winner{% endif %}">Bot</span>
+                  {# F-2: no winner class when insufficient history #}
+                  <span class="vs-bar-label {% if mdd_bot_wins and not mdd_insufficient %}winner{% endif %}">Bot</span>
                   <div data-testid="vs-bar" class="vs-bar-track">
-                    <div data-testid="comp-bar-bot" data-row="mdd" class="vs-bar-fill {% if mdd_bot_wins %}winner{% else %}loser{% endif %}" style="width:{{ [(mdd_bot|abs / mdd_max * 100), 100]|min|round }}%"></div>
+                    <div data-testid="comp-bar-bot" data-row="mdd" class="vs-bar-fill {% if not mdd_insufficient %}{% if mdd_bot_wins %}winner{% else %}loser{% endif %}{% endif %}" style="width:{{ [(mdd_bot|abs / mdd_max * 100), 100]|min|round }}%"></div>
                   </div>
                 </div>
                 <div class="vs-bar-row">
-                  <span class="vs-bar-label {% if not mdd_bot_wins %}winner{% endif %}">Held</span>
+                  <span class="vs-bar-label {% if not mdd_bot_wins and not mdd_insufficient %}winner{% endif %}">Held</span>
                   <div data-testid="vs-bar" class="vs-bar-track">
-                    <div data-testid="comp-bar-held" data-row="mdd" class="vs-bar-fill {% if not mdd_bot_wins %}winner{% else %}loser{% endif %}" style="width:{{ [(mdd_held|abs / mdd_max * 100), 100]|min|round }}%"></div>
+                    <div data-testid="comp-bar-held" data-row="mdd" class="vs-bar-fill {% if not mdd_insufficient %}{% if not mdd_bot_wins %}winner{% else %}loser{% endif %}{% endif %}" style="width:{{ [(mdd_held|abs / mdd_max * 100), 100]|min|round }}%"></div>
                   </div>
                 </div>
               </div>
@@ -1035,14 +1057,17 @@
           </div>
 
           {# triggered-verdict always rendered; hidden when not triggered so JS can show/hide on poll #}
+          {# F-5: guard_alpha is the exit-time snapshot (CR at the moment of exit vs
+             the shadow baseline), not the current CR gap. Label it "at exit" to avoid
+             confusion with any ongoing CR divergence. #}
           <div data-testid="triggered-verdict" class="triggered-verdict"
                style="{% if not sym.get('triggered') %}display:none;{% endif %}">
             {% if sym.get('guard_alpha') is not none and 'guard_alpha' in sym %}
               {% set ga = sym.get('guard_alpha') %}
               {% if ga > 0 %}
-                Good call &middot; saved +{{ "%.1f"|format(ga) }}%&alpha;
+                Good call &middot; saved +{{ "%.1f"|format(ga) }}%&alpha; <span data-testid="guard-alpha-at-exit" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;">at exit</span>
               {% else %}
-                Early exit &middot; gave up {{ "%.1f"|format(ga|abs) }}%&alpha;
+                Early exit &middot; gave up {{ "%.1f"|format(ga|abs) }}%&alpha; <span data-testid="guard-alpha-at-exit" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;">at exit</span>
               {% endif %}
             {% else %}
               <span>&mdash;</span>
@@ -1080,8 +1105,10 @@
                 <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="cr-bot" class="cfg-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{{ "%+.1f"|format(cr_bot) }}%</span></div>
                 <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="cr-held" class="cfg-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{{ "%+.1f"|format(cr_held) }}%</span></div>
               </div>
+              {# F-2: suppress MDD alpha badge when portfolio history is insufficient (<30d) #}
+              {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
               <div class="cfg-cell">
-                <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(mdd_alpha) }}</span></span>
+                <span class="cfg-label">Max DD {% if not _card_mdd_insufficient %}<span data-field="mdd-alpha-badge" class="cfg-alpha-badge {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(mdd_alpha) }}</span>{% else %}<span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;">insufficient history (&lt;30d)</span>{% endif %}</span>
                 <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{{ "%.1f"|format(mdd_bot|abs) }}%</span></div>
                 <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg" style="opacity:0.7;">{{ "%.1f"|format(mdd_held|abs) }}%</span></div>
               </div>
@@ -1152,8 +1179,10 @@
               <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="cr-bot" class="cfg-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{{ "%+.1f"|format(cr_bot) }}%</span></div>
               <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="cr-held" class="cfg-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{{ "%+.1f"|format(cr_held) }}%</span></div>
             </div>
+            {# F-2: suppress MDD alpha badge when portfolio history is insufficient (<30d) #}
+            {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
             <div class="cfg-cell">
-              <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(mdd_alpha) }}</span></span>
+              <span class="cfg-label">Max DD {% if not _card_mdd_insufficient %}<span data-field="mdd-alpha-badge" class="cfg-alpha-badge {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(mdd_alpha) }}</span>{% else %}<span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;">insufficient history (&lt;30d)</span>{% endif %}</span>
               <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{{ "%.1f"|format(mdd_bot|abs) }}%</span></div>
               <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg" style="opacity:0.7;">{{ "%.1f"|format(mdd_held|abs) }}%</span></div>
             </div>
