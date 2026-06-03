@@ -284,8 +284,9 @@ class TestDryRunConsumersUseCurrentEpochOnly:
             "time_weighted_return": 0.10,
         }
         if_held = 0.10 * 100.0  # 10.0 pct
-        expected_dry_run = if_held + _chain_link_pct(_POSITION_B_RETURNS)
-        spliced_dry_run = if_held + _chain_link_pct(
+        # CORRECTED: bot_CR = chain_link only (no if_held double-count).
+        expected_dry_run = _chain_link_pct(_POSITION_B_RETURNS)
+        spliced_dry_run = _chain_link_pct(
             _POSITION_A_RETURNS + _POSITION_B_RETURNS
         )
         # The two must differ, else the test cannot discriminate.

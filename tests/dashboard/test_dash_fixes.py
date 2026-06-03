@@ -548,25 +548,27 @@ def _build_shadow_db_with_rows(
 
 class TestChainLinkGoldenPerDayReturns:
     """
-    F-CHAIN-LINK: GOLDEN regression tests pinning the chain-link CR and MDD math
-    as correct, intentional design per AC-M1F.3.2 / PA-M1F-16
-    (feature-plans/m1f-real-shadow-equity-series.merged.md:55-56).
+    F-CHAIN-LINK: GOLDEN regression tests for the CORRECTED chain-link CR/MDD.
 
-    VERDICT (NOT A BUG — verified by risk-engine-specialist against cited lines):
-      shadow_return = current_return = last_percent_change * 100
-                                       (alpha_bot_execution.py:768, :916)
-      last_percent_change is Composer's per-day TODAY'S CHANGE — the same field
-      get_symphony_today_change uses for the TC row (analytics.py:491, :501).
-      It is NOT the cumulative return since position open; that is simple_return.
-      Chain-linking per-day returns via ∏(1 + r_i/100) - 1 is therefore correct.
+    DEFINITIVE ORACLE (independent falsifier 2026-06-03):
+      shadow_return is PER-DAY (today's change, daily reset confirmed by
+      wipe_transient_state at database.py:342 + alpha_bot_execution.py:708-713).
+      Chain-linking per-day returns is correct in principle.
 
-    The original audit claim ("flat at -3% for 3 days → CR should be -3%") rested
-    on a semantic error: it assumed last_percent_change is cumulative-since-open.
-    The codebase consistently treats last_percent_change as per-day.
+      TWO REAL BUGS in analytics.py (see tests/analytics/test_cr_chain_link_bugs.py):
+        (a) Double-count: dry_run = if_held + (∏-1)*100 adds the held baseline
+            twice. Correct: dry_run = (∏-1)*100 alone.
+        (b) Post-trigger freeze: triggered rows repeat triggered_at_return;
+            each cash day after exit must contribute 0%, not the frozen value.
 
-    Expected values are derived in-test from the documented formula, never from
-    producer output. Tolerance rel=1e-9 — these are exact floating-point arithmetic
-    on small fixtured values; tolerance guards only IEEE-754 rounding.
+    These tests lock in the CORRECTED formulas. They are RED against the current
+    (buggy) analytics.py and will go GREEN when risk-engine-specialist applies
+    the fix from tests/analytics/test_cr_chain_link_bugs.py.
+
+    Fixture provenance: shadow_history rows from
+    tests/fixtures/math/shadow_cr_chain_link_golden.json; expected values
+    derived in-test from the corrected formula, never from producer output.
+    Tolerance rel=1e-9 throughout.
     """
 
     def test_flat_per_day_returns_compound_correctly(self, tmp_path):
@@ -615,32 +617,30 @@ class TestChainLinkGoldenPerDayReturns:
             f"F-CHAIN-LINK-1 FAIL: MDD returned {mdd_result!r}."
         )
 
-        # Chain-link CR component: (0.97 * 0.97 * 0.97 - 1) * 100
-        # -3% PER DAY x3 = (0.97^3-1)*100 = -8.7327% is CORRECT compounding.
-        # shadow_return is per-day not cumulative (producer alpha_bot_execution.py:768,916).
+        # CORRECTED CR formula (bug-a fix): bot_CR = chain_link only, no if_held.
+        # -3% PER DAY x3: chain_link = (0.97^3 - 1)*100 = -8.7327%.
+        # The buggy code computes if_held + chain_link = 5.0 + (-8.7327) = -3.7327%.
+        # The correct code computes chain_link alone = -8.7327%.
         cr_chain_component = (0.97 ** 3 - 1.0) * 100.0   # -8.732700000000005
-        expected_dry_run = if_held + cr_chain_component
+        expected_dry_run = cr_chain_component              # NO if_held addition
 
         assert cr_result["dry_run"] == pytest.approx(expected_dry_run, rel=1e-9), (
             f"F-CHAIN-LINK-1 CR FAIL: dry_run={cr_result['dry_run']:.6f}%, "
-            f"expected {expected_dry_run:.6f}% (= if_held {if_held}% + chain-link "
-            f"{cr_chain_component:.6f}%). "
-            "analytics.get_symphony_cumulative_return chain-link formula has deviated "
-            "from AC-M1F.3.2 / PA-M1F-16."
+            f"expected {expected_dry_run:.6f}% (chain-link only, no if_held offset). "
+            "Bug (a): analytics.py:698 must drop the if_held addition — "
+            "(∏-1)*100 already is the bot cumulative; adding if_held double-counts."
         )
 
-        # MDD of cumulative series [-3.0, -5.91, -8.7327]:
-        # analytics.py:739 initialises peak = cum_series[0] = -3.0 (NOT 0.0).
-        # trough = -8.7327 -> dd = -3.0 - (-8.7327) = 5.7327
-        cum0 = (0.97 - 1.0) * 100.0          # -3.0
-        cum1 = (0.97 ** 2 - 1.0) * 100.0     # -5.91
-        cum2 = (0.97 ** 3 - 1.0) * 100.0     # -8.7327
-        peak = cum0
-        expected_mdd = peak - cum2            # 5.7327...
+        # MDD of cumulative series [-3.0, -5.91, -8.7327] (unchanged by bug-a fix;
+        # MDD uses the same chain-link cum_series, peak-to-trough is correct):
+        # analytics.py:739 initialises peak = cum_series[0] = -3.0.
+        # trough = -8.7327 -> MDD = -3.0 - (-8.7327) = 5.7327%
+        cum0 = (0.97 - 1.0) * 100.0
+        cum2 = (0.97 ** 3 - 1.0) * 100.0
+        expected_mdd = cum0 - cum2   # 5.7327...
         assert mdd_result["dry_run"] == pytest.approx(expected_mdd, rel=1e-9), (
             f"F-CHAIN-LINK-1 MDD FAIL: dry_run={mdd_result['dry_run']:.6f}%, "
-            f"expected {expected_mdd:.6f}% (peak={peak:.4f} - trough={cum2:.4f}). "
-            "analytics.get_symphony_max_drawdown MDD formula has deviated."
+            f"expected {expected_mdd:.6f}% (peak={cum0:.4f} - trough={cum2:.4f})."
         )
 
     def test_mixed_per_day_returns_cr_and_mdd_match_formula(self, tmp_path):
@@ -682,14 +682,14 @@ class TestChainLinkGoldenPerDayReturns:
             sym_dict, bot_state_entry=None, db_path=db_file
         )
 
-        # CR chain-link formula (AC-M1F.3.2 / PA-M1F-16):
+        # CORRECTED CR: chain_link only (no if_held double-count).
         product = 0.995 * 1.008 * 0.988 * 1.020
         cr_chain_component = (product - 1.0) * 100.0   # ~1.074297%
-        expected_dry_run = if_held + cr_chain_component
+        expected_dry_run = cr_chain_component            # NO if_held addition
 
         assert cr_result["dry_run"] == pytest.approx(expected_dry_run, rel=1e-9), (
             f"F-CHAIN-LINK-2 CR FAIL: dry_run={cr_result['dry_run']:.6f}%, "
-            f"expected {expected_dry_run:.6f}%."
+            f"expected {expected_dry_run:.6f}% (chain-link only, no if_held)."
         )
 
         # MDD of cumulative series (analytics.py:733-747 algorithm):
