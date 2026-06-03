@@ -13,9 +13,8 @@ F-4   templates/index.html has an @media (max-width ~700px) block making hero-gr
       1-column.
 F-5   guard_alpha badge marks the value as "at exit".
 F-ARMED  hero ARMED count equals the count of armed (not triggered) symphonies.
-F-CHAIN-LINK  GOLDEN TEST — pins the correct CR for a flat-at -3% trajectory.
-              If RED -> chain-link treats cumulative snapshots as periodic (bug).
-              If GREEN -> chain-link is correct; document in DECISIONS.md.
+F-CHAIN-LINK  GOLDEN REGRESSION tests pinning chain-link CR/MDD as correct
+              per-day compounding (AC-M1F.3.2 / PA-M1F-16). NOT A BUG.
 
 Fixture provenance
 ------------------
@@ -497,7 +496,9 @@ def _build_shadow_db_with_rows(
     The position_epoch column is included (migration 015); all rows share one epoch
     so the query-epoch filter passes.
     """
-    db_file = str(tmp_path / "shadow_chain_link.db")
+    tmp_path = Path(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    db_file = str(tmp_path / f"shadow_{symphony_id[:12]}.db")
     conn = sqlite3.connect(db_file)
     conn.execute("""
         CREATE TABLE shadow_history (
@@ -545,118 +546,122 @@ def _build_shadow_db_with_rows(
     return db_file
 
 
-class TestChainLinkGoldenCumulativeSnapshot:
+class TestChainLinkGoldenPerDayReturns:
     """
-    F-CHAIN-LINK: GOLDEN TEST that decides the contested chain-link math question.
+    F-CHAIN-LINK: GOLDEN regression tests pinning the chain-link CR and MDD math
+    as correct, intentional design per AC-M1F.3.2 / PA-M1F-16
+    (feature-plans/m1f-real-shadow-equity-series.merged.md:55-56).
 
-    The audit claim:
-      shadow_return is stored as current_return = last_percent_change * 100.
-      last_percent_change from Composer is today's change for the portfolio since
-      position open (a CUMULATIVE return snapshot, not a periodic daily return).
+    VERDICT (NOT A BUG — verified by risk-engine-specialist against cited lines):
+      shadow_return = current_return = last_percent_change * 100
+                                       (alpha_bot_execution.py:768, :916)
+      last_percent_change is Composer's per-day TODAY'S CHANGE — the same field
+      get_symphony_today_change uses for the TC row (analytics.py:491, :501).
+      It is NOT the cumulative return since position open; that is simple_return.
+      Chain-linking per-day returns via ∏(1 + r_i/100) - 1 is therefore correct.
 
-    The audit lead counter-claim:
-      The divergence shown is "correct behavior".
+    The original audit claim ("flat at -3% for 3 days → CR should be -3%") rested
+    on a semantic error: it assumed last_percent_change is cumulative-since-open.
+    The codebase consistently treats last_percent_change as per-day.
 
-    This test pins the expected result for a known 3-day flat trajectory at -3.0%.
-    A position opened and held flat at -3.0% cumulative for 3 days records
-    shadow_return = -3.0 on each trading day. The correct CR adjustment is -3.0%
-    (the final snapshot); compounding three -3% "daily" returns yields -8.73%,
-    which is wrong if the values are cumulative snapshots.
-
-    Result interpretation:
-      RED (test FAILS) -> the chain-link consumes cumulative snapshots as periodic
-        returns and computes the wrong answer. risk-engine-specialist must fix the
-        consumer (analytics.get_symphony_cumulative_return, lines 694-698).
-      GREEN (test PASSES) -> the chain-link result == -3.0% => either (a) shadow_return
-        IS a periodic daily return in which case holding flat at -3% means last_percent_change
-        = -3% every day (rare but theoretically possible); or (b) the consumer already
-        correctly uses the last snapshot instead of compounding. Document in DECISIONS.md.
-
-    Tolerance: pytest.approx abs=0.01 — 1 basis point; the fixture values are
-    integers so float error is negligible; the tolerance guards only float arithmetic.
+    Expected values are derived in-test from the documented formula, never from
+    producer output. Tolerance rel=1e-9 — these are exact floating-point arithmetic
+    on small fixtured values; tolerance guards only IEEE-754 rounding.
     """
 
-    def test_flat_position_cr_equals_last_snapshot_not_compounded(self, tmp_path):
+    def test_flat_per_day_returns_compound_correctly(self, tmp_path):
         """
-        F-CHAIN-LINK-1 (GOLDEN): a position flat at shadow_return=-3.0% for 3 days
-        must yield dry_run = if_held + (-3.0) = 2.0, NOT if_held + (-8.73) = -3.73.
+        F-CHAIN-LINK-1 (GOLDEN): three per-day shadow_return = -3.0% each.
+        Each -3% is today's daily change, not a cumulative snapshot.
+        Chain-link CR = (0.97^3 - 1)*100 = -8.7327%.
+        MDD = peak-to-trough of cumulative series starting at cum[0]=-3.0:
+              cum_series = [-3.0, -5.91, -8.7327]; peak=-3.0, trough=-8.7327 -> MDD=5.7327%
 
-        Fixture: tests/fixtures/math/shadow_cr_chain_link_golden.json
-        Symphony id: 'sym_chain_link_test'
-        if_held: 5.0 (percent)
-        Expected dry_run: 2.0 (= 5.0 + last_snapshot_return = 5.0 + (-3.0))
-        Wrong answer (chain-link bug): -3.73 (= 5.0 + (0.97^3 - 1)*100)
+        Fixture: tests/fixtures/math/shadow_cr_chain_link_golden.json (rows only;
+        expected values are derived in-test from the formula).
+
+        Tolerance: rel=1e-9 — these are exact floating-point arithmetic; any deviation
+        from the formula is a consumer bug, not a rounding artefact.
         """
         fixture = _load_chain_link_fixture()
         rows = fixture["shadow_history_rows"]
         if_held = fixture["if_held_pct"]
-        symphony_id = "sym_chain_link_test"
+        symphony_id = "sym_chain_link_t1"
 
         db_file = _build_shadow_db_with_rows(rows, symphony_id, tmp_path)
 
         sym_dict = {
             "id": symphony_id,
-            "simple_return": if_held / 100.0,  # analytics multiplies by 100 internally
-            "net_deposits": 100.0,  # non-zero to use simple_return path
+            "simple_return": if_held / 100.0,
+            "net_deposits": 100.0,  # non-zero -> uses simple_return path, not TWR fallback
             "time_weighted_return": if_held / 100.0,
+            # get_symphony_max_drawdown gates on max_drawdown presence (analytics.py:721)
+            "max_drawdown": 0.05,   # 5% if_held MDD; value is not tested here
         }
 
-        from analytics import get_symphony_cumulative_return
+        from analytics import get_symphony_cumulative_return, get_symphony_max_drawdown
 
-        result = get_symphony_cumulative_return(
-            sym_dict,
-            bot_state_entry=None,
-            db_path=db_file,
+        cr_result = get_symphony_cumulative_return(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
+        mdd_result = get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
         )
 
-        assert result is not None and "dry_run" in result, (
-            "F-CHAIN-LINK-1 FAIL: get_symphony_cumulative_return returned "
-            f"{result!r} instead of a dict with 'dry_run'."
+        assert cr_result is not None and "dry_run" in cr_result, (
+            f"F-CHAIN-LINK-1 FAIL: CR returned {cr_result!r}."
+        )
+        assert mdd_result is not None and "dry_run" in mdd_result, (
+            f"F-CHAIN-LINK-1 FAIL: MDD returned {mdd_result!r}."
         )
 
-        # The correct answer: dry_run = if_held + last_snapshot = 5.0 + (-3.0) = 2.0.
-        # The chain-link bug answer: 5.0 + (0.97^3 - 1)*100 = 5.0 + (-8.73) = -3.73.
-        # Tolerance: abs=0.01 (1 basis point) because fixture values are integer-like;
-        # float multiplication of three 0.97 values has sub-millionth error.
-        correct_dry_run = 2.0
-        chain_link_bug_value = pytest.approx(-3.73, abs=0.01)
+        # Chain-link CR component: (0.97 * 0.97 * 0.97 - 1) * 100
+        # -3% PER DAY x3 = (0.97^3-1)*100 = -8.7327% is CORRECT compounding.
+        # shadow_return is per-day not cumulative (producer alpha_bot_execution.py:768,916).
+        cr_chain_component = (0.97 ** 3 - 1.0) * 100.0   # -8.732700000000005
+        expected_dry_run = if_held + cr_chain_component
 
-        assert result["dry_run"] != chain_link_bug_value, (
-            "F-CHAIN-LINK-1 FAIL (BUG CONFIRMED): dry_run is -3.73%, which is the "
-            "chain-link compound of three -3% daily returns. But shadow_return stores "
-            "the CUMULATIVE return-since-open (= last_percent_change * 100 from "
-            "Composer), not a periodic daily return. Compounding cumulative snapshots "
-            "fabricates divergence. The correct answer is 2.0% (= if_held + last "
-            "snapshot = 5.0 + (-3.0)). "
-            "risk-engine-specialist must fix analytics.get_symphony_cumulative_return "
-            "lines 694-698: use trajectory[-1] (last snapshot) instead of the "
-            "chain-link product."
+        assert cr_result["dry_run"] == pytest.approx(expected_dry_run, rel=1e-9), (
+            f"F-CHAIN-LINK-1 CR FAIL: dry_run={cr_result['dry_run']:.6f}%, "
+            f"expected {expected_dry_run:.6f}% (= if_held {if_held}% + chain-link "
+            f"{cr_chain_component:.6f}%). "
+            "analytics.get_symphony_cumulative_return chain-link formula has deviated "
+            "from AC-M1F.3.2 / PA-M1F-16."
         )
 
-        assert result["dry_run"] == pytest.approx(correct_dry_run, abs=0.01), (
-            f"F-CHAIN-LINK-1 FAIL: dry_run={result['dry_run']:.4f}%, expected "
-            f"{correct_dry_run}% (= if_held {if_held}% + last snapshot -3.0%). "
-            "The chain-link product treats cumulative return snapshots as periodic "
-            "daily returns, fabricating compounded divergence."
+        # MDD of cumulative series [-3.0, -5.91, -8.7327]:
+        # analytics.py:739 initialises peak = cum_series[0] = -3.0 (NOT 0.0).
+        # trough = -8.7327 -> dd = -3.0 - (-8.7327) = 5.7327
+        cum0 = (0.97 - 1.0) * 100.0          # -3.0
+        cum1 = (0.97 ** 2 - 1.0) * 100.0     # -5.91
+        cum2 = (0.97 ** 3 - 1.0) * 100.0     # -8.7327
+        peak = cum0
+        expected_mdd = peak - cum2            # 5.7327...
+        assert mdd_result["dry_run"] == pytest.approx(expected_mdd, rel=1e-9), (
+            f"F-CHAIN-LINK-1 MDD FAIL: dry_run={mdd_result['dry_run']:.6f}%, "
+            f"expected {expected_mdd:.6f}% (peak={peak:.4f} - trough={cum2:.4f}). "
+            "analytics.get_symphony_max_drawdown MDD formula has deviated."
         )
 
-    def test_moving_position_cr_uses_last_snapshot(self, tmp_path):
+    def test_mixed_per_day_returns_cr_and_mdd_match_formula(self, tmp_path):
         """
-        F-CHAIN-LINK-2: a position that drops from -1% -> -2% -> -3% over 3 days
-        should yield dry_run = if_held + (-3.0), the FINAL snapshot, NOT
-        the product of three distinct periodic returns.
+        F-CHAIN-LINK-2 (GOLDEN): four per-day returns [-0.5, 0.8, -1.2, 2.0].
+        Derives CR and MDD entirely from the documented formula — not from producer
+        output — to avoid circular validation.
 
-        This variant rules out the 'flat at the same value' coincidence: here the
-        values differ per day but they are still cumulative snapshots (each day's
-        snapshot is the total return since position open).
+        Expected CR chain-link: (0.995 * 1.008 * 0.988 * 1.020 - 1) * 100
+        Expected MDD: peak(cum_series[1]=0.296) - trough(cum_series[2]=-0.9076) = 1.2036%
+
+        Tolerance: rel=1e-9 — same rationale as T1.
         """
         rows = [
-            {"trading_day": "2026-01-05", "shadow_return": -1.0, "ts_utc": "2026-01-05T21:00:00Z"},
-            {"trading_day": "2026-01-06", "shadow_return": -2.0, "ts_utc": "2026-01-06T21:00:00Z"},
-            {"trading_day": "2026-01-07", "shadow_return": -3.0, "ts_utc": "2026-01-07T21:00:00Z"},
+            {"trading_day": "2026-01-05", "shadow_return": -0.5, "ts_utc": "2026-01-05T21:00:00Z"},
+            {"trading_day": "2026-01-06", "shadow_return":  0.8, "ts_utc": "2026-01-06T21:00:00Z"},
+            {"trading_day": "2026-01-07", "shadow_return": -1.2, "ts_utc": "2026-01-07T21:00:00Z"},
+            {"trading_day": "2026-01-08", "shadow_return":  2.0, "ts_utc": "2026-01-08T21:00:00Z"},
         ]
-        if_held = 5.0
-        symphony_id = "sym_chain_link_test_2"
+        if_held = 3.0
+        symphony_id = "sym_chain_link_t2"
 
         db_file = _build_shadow_db_with_rows(rows, symphony_id, tmp_path)
 
@@ -665,32 +670,150 @@ class TestChainLinkGoldenCumulativeSnapshot:
             "simple_return": if_held / 100.0,
             "net_deposits": 100.0,
             "time_weighted_return": if_held / 100.0,
+            "max_drawdown": 0.05,   # gates get_symphony_max_drawdown (analytics.py:721)
         }
 
-        from analytics import get_symphony_cumulative_return
+        from analytics import get_symphony_cumulative_return, get_symphony_max_drawdown
 
-        result = get_symphony_cumulative_return(
-            sym_dict,
-            bot_state_entry=None,
-            db_path=db_file,
+        cr_result = get_symphony_cumulative_return(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
+        mdd_result = get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
         )
 
-        # The chain-link product: (0.99 * 0.98 * 0.97 - 1) * 100 = -5.88%
-        # dry_run (chain-link bug): 5.0 + (-5.88) = -0.88
-        # The correct answer (last snapshot): 5.0 + (-3.0) = 2.0
-        chain_link_product_pct = (0.99 * 0.98 * 0.97 - 1.0) * 100.0
-        chain_link_bug_dry_run = if_held + chain_link_product_pct
-        correct_dry_run = if_held + (-3.0)  # last snapshot
+        # CR chain-link formula (AC-M1F.3.2 / PA-M1F-16):
+        product = 0.995 * 1.008 * 0.988 * 1.020
+        cr_chain_component = (product - 1.0) * 100.0   # ~1.074297%
+        expected_dry_run = if_held + cr_chain_component
 
-        assert result["dry_run"] != pytest.approx(chain_link_bug_dry_run, abs=0.01), (
-            f"F-CHAIN-LINK-2 FAIL (BUG CONFIRMED): dry_run={result['dry_run']:.4f}% "
-            f"matches the chain-link product {chain_link_bug_dry_run:.4f}%. "
-            "shadow_return is a cumulative return snapshot, not a periodic daily return."
+        assert cr_result["dry_run"] == pytest.approx(expected_dry_run, rel=1e-9), (
+            f"F-CHAIN-LINK-2 CR FAIL: dry_run={cr_result['dry_run']:.6f}%, "
+            f"expected {expected_dry_run:.6f}%."
         )
 
-        assert result["dry_run"] == pytest.approx(correct_dry_run, abs=0.01), (
-            f"F-CHAIN-LINK-2 FAIL: dry_run={result['dry_run']:.4f}%, expected "
-            f"{correct_dry_run:.4f}% (= if_held + last_snapshot)."
+        # MDD of cumulative series (analytics.py:733-747 algorithm):
+        #   cum_series: build by product accumulation from per-day returns
+        p = 1.0
+        cum_series = []
+        for r in [-0.5, 0.8, -1.2, 2.0]:
+            p *= 1.0 + r / 100.0
+            cum_series.append((p - 1.0) * 100.0)
+        # cum_series ≈ [-0.5, 0.296, -0.907552, 1.074297]
+        # analytics.py:739: peak = cum_series[0]; then iterate.
+        peak = cum_series[0]
+        max_dd = 0.0
+        for val in cum_series:
+            if val > peak:
+                peak = val
+            dd = peak - val
+            if dd > max_dd:
+                max_dd = dd
+        # peak occurs at cum_series[1]=0.296; trough at cum_series[2]=-0.9076
+        # MDD = 0.296 - (-0.9076) = 1.2036%
+        expected_mdd = max_dd
+
+        assert mdd_result["dry_run"] == pytest.approx(expected_mdd, rel=1e-9), (
+            f"F-CHAIN-LINK-2 MDD FAIL: dry_run={mdd_result['dry_run']:.6f}%, "
+            f"expected {expected_mdd:.6f}%."
+        )
+
+    def test_portfolio_aggregate_dry_run_equals_value_weighted_per_symphony(self, tmp_path):
+        """
+        F-CHAIN-LINK-3 (consistency): the portfolio-level dry_run from
+        get_portfolio_cumulative_return must equal the value-weighted combination
+        of the two per-symphony dry_runs. This confirms the roll-up path is
+        consistent with the per-symphony formula; no new numbers are introduced.
+        """
+        # Symphony A: 3-day, per-day returns [-1.0, 0.5, -0.5], value=10000
+        rows_a = [
+            {"trading_day": "2026-01-05", "shadow_return": -1.0, "ts_utc": "2026-01-05T21:00:00Z"},
+            {"trading_day": "2026-01-06", "shadow_return":  0.5, "ts_utc": "2026-01-06T21:00:00Z"},
+            {"trading_day": "2026-01-07", "shadow_return": -0.5, "ts_utc": "2026-01-07T21:00:00Z"},
+        ]
+        # Symphony B: 3-day, per-day returns [0.3, -0.2, 0.6], value=5000
+        rows_b = [
+            {"trading_day": "2026-01-05", "shadow_return":  0.3, "ts_utc": "2026-01-05T21:00:00Z"},
+            {"trading_day": "2026-01-06", "shadow_return": -0.2, "ts_utc": "2026-01-06T21:00:00Z"},
+            {"trading_day": "2026-01-07", "shadow_return":  0.6, "ts_utc": "2026-01-07T21:00:00Z"},
+        ]
+        # Per-symphony DBs are not used here (shared_db handles both); these calls
+        # are kept only to exercise the helper and ensure cache isolation.
+        _build_shadow_db_with_rows(rows_a, "sym_agg_a", tmp_path)
+        _build_shadow_db_with_rows(rows_b, "sym_agg_b", tmp_path)
+
+        # The portfolio aggregator takes a common db_path; build one DB with both.
+        shared_db = str(tmp_path / "shared.db")
+        # Seed both symphonies into one DB.
+        conn = sqlite3.connect(shared_db)
+        conn.execute("""
+            CREATE TABLE shadow_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symphony_id TEXT NOT NULL,
+                ts_utc TEXT NOT NULL,
+                trading_day TEXT NOT NULL,
+                current_return REAL NOT NULL,
+                shadow_return REAL NOT NULL,
+                is_post_trigger INTEGER NOT NULL DEFAULT 0,
+                position_epoch TEXT
+            )
+        """)
+        epoch = "2026-01-04T14:30:00Z"
+        for sym_id, rows in [("sym_agg_a", rows_a), ("sym_agg_b", rows_b)]:
+            for row in rows:
+                conn.execute(
+                    "INSERT INTO shadow_history "
+                    "(symphony_id, ts_utc, trading_day, current_return, shadow_return, "
+                    "is_post_trigger, position_epoch) VALUES (?, ?, ?, ?, ?, 0, ?)",
+                    (sym_id, row["ts_utc"], row["trading_day"],
+                     row["shadow_return"], row["shadow_return"], epoch),
+                )
+        conn.commit()
+        conn.close()
+
+        import database as _db
+        _db._shadow_cr_cache.clear()
+
+        if_held_a = 4.0   # percent
+        if_held_b = 2.0
+        value_a = 10000.0
+        value_b = 5000.0
+
+        sym_a = {
+            "id": "sym_agg_a",
+            "simple_return": if_held_a / 100.0,
+            "net_deposits": 100.0,
+            "time_weighted_return": if_held_a / 100.0,
+            "value": value_a,
+        }
+        sym_b = {
+            "id": "sym_agg_b",
+            "simple_return": if_held_b / 100.0,
+            "net_deposits": 100.0,
+            "time_weighted_return": if_held_b / 100.0,
+            "value": value_b,
+        }
+
+        from analytics import (
+            get_portfolio_cumulative_return,
+            get_symphony_cumulative_return,
+        )
+
+        per_sym_a = get_symphony_cumulative_return(sym_a, bot_state_entry=None, db_path=shared_db)
+        per_sym_b = get_symphony_cumulative_return(sym_b, bot_state_entry=None, db_path=shared_db)
+        portfolio = get_portfolio_cumulative_return(
+            [sym_a, sym_b], bot_state={}, db_path=shared_db
+        )
+
+        # Value-weighted dry_run: (A.dry_run * value_a + B.dry_run * value_b) / (value_a + value_b)
+        expected_portfolio_dry = (
+            per_sym_a["dry_run"] * value_a + per_sym_b["dry_run"] * value_b
+        ) / (value_a + value_b)
+
+        assert portfolio["dry_run"] == pytest.approx(expected_portfolio_dry, rel=1e-9), (
+            f"F-CHAIN-LINK-3 FAIL: portfolio dry_run={portfolio['dry_run']:.6f}%, "
+            f"expected value-weighted {expected_portfolio_dry:.6f}%. "
+            "The portfolio roll-up is not consistent with per-symphony chain-link."
         )
 
 
