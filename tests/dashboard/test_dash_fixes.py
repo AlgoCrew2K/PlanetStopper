@@ -562,7 +562,7 @@ class TestChainLinkGoldenPerDayReturns:
 
       These tests are RED against the current analytics.py (which yields
       if_held + chain_link instead of if_held when shadow==current) and will go
-      GREEN after the divergence fix in _get_shadow_cumulative_trajectory +
+      GREEN after the divergence fix in _get_shadow_divergence_trajectory +
       get_symphony_cumulative_return.
 
     Fixture: tests/fixtures/math/shadow_cr_chain_link_golden.json (rows only).
