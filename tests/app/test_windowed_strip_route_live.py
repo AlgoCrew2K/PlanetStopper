@@ -135,3 +135,35 @@ class TestWindowedStripRouteLive:
         assert resp.status_code == 404, (
             f"an unknown window token must be 404 (not 500); got {resp.status_code}."
         )
+
+
+# ===========================================================================
+# The sibling route — /api/hero-chart must also exercise the REAL held-series fn
+# (defense-in-depth: the AC-4b held line depends on get_portfolio_bot_and_held_daily_returns,
+# the same unwired-function class of bug; verify it is defined + the route 200s live).
+# ===========================================================================
+
+class TestHeroChartRouteLive:
+    def test_held_series_function_is_defined(self):
+        assert hasattr(analytics, "get_portfolio_bot_and_held_daily_returns") and callable(
+            analytics.get_portfolio_bot_and_held_daily_returns
+        ), (
+            "analytics.get_portfolio_bot_and_held_daily_returns must be defined — the AC-4b "
+            "real held chart line (app.py:1700) calls it; a missing fn would 500 the chart."
+        )
+
+    @pytest.mark.parametrize("window", _WINDOW_TOKENS)
+    def test_hero_chart_route_200_with_real_analytics(self, client, window):
+        """/api/hero-chart/<window> must 200 with the REAL analytics module (no mock). The
+        route reads shadow_history via get_portfolio_bot_and_held_daily_returns; with no live
+        DB it returns an empty-but-valid payload, never a 500."""
+        resp = client.get(f"/api/hero-chart/{window}")
+        assert resp.status_code == 200, (
+            f"LIVE FAIL: /api/hero-chart/{window} returned {resp.status_code} with REAL "
+            f"analytics. Body: {resp.get_data(as_text=True)[:200]}"
+        )
+        body = resp.get_json()
+        for key in ("hist_dates", "hist_bot", "hist_held"):
+            assert key in body, (
+                f"/api/hero-chart/{window} payload missing '{key}'; got {list(body.keys())}"
+            )
