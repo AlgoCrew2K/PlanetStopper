@@ -153,3 +153,78 @@ def test_run_backtest_413_returns_error_result_not_raise():
         f"The 413 must be reflected in the error string; got {err!r}. The operator "
         "needs to know the backtest was rejected as too large."
     )
+
+
+# ===========================================================================
+# AC-9c — the evaluate route translates a 413 backtest_error into a clean,
+# human-readable "symphony too large" operator message (not raw nginx HTML).
+#
+# composer's diagnosis (live-measured): the 413 is a HARD limit — symphony trees
+# > ~1 MB exceed nginx's body-size limit (Hunted Cascades = 1.1 MB / 7730 nodes),
+# no client-side reduction works (gzip 400; no by-reference; encoded_value still
+# needs raw_value).  So the fix is an HONEST operator message, not a bypass.
+# ===========================================================================
+
+
+_RAW_413 = (
+    "HTTP 413: <html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n"
+    "<body>\r\n<center><h1>413 Request Entity Too Large</h1></center>\r\n"
+    "<hr><center>nginx/1.28.1</center>\r\n</body>\r\n</html>"
+)
+
+
+def _flask_client():
+    with patch("database.init_db"):
+        import app as flask_app
+    flask_app.app.config["TESTING"] = True
+    return flask_app.app.test_client()
+
+
+def test_logic_changes_evaluate_413_renders_clean_operator_message():
+    """When the backtest fails with a 413 (oversized symphony), the route response
+    must carry a CLEAN, human-readable "too large to backtest" message — NOT the
+    raw nginx 413 HTML, and NOT a bare "HTTP 413".
+
+    The proposal's backtest_error arrives as the raw 413 string from
+    composer_backtest_client; the route must translate it so the operator sees why
+    (symphony too large / exceeds Composer's inline-backtest limit), not nginx HTML.
+    """
+    import sys
+    if "." not in sys.path:
+        sys.path.insert(0, ".")
+    # Build a run_result whose single proposal carries the raw 413 backtest_error.
+    sys.path.insert(0, str(_REPO_ROOT))
+    from tests.ui.test_logic_change_routes import _make_logic_change_run_result
+
+    run_result = _make_logic_change_run_result(backtest_error=_RAW_413)
+
+    client = _flask_client()
+    with (
+        patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+        patch("symphony_logic.fetch_symphony_score",
+              return_value={"id": "x", "name": "X", "children": []}),
+        patch("database.load_state", return_value={}),
+        patch("advisors.logic_change_engine.propose_operator_logic_change",
+              return_value=run_result),
+    ):
+        resp = client.post(
+            "/ai-advisor/logic-changes/evaluate",
+            json={"symphony_id": "X", "change_description": "change window 20 to 16"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body is not None
+    # The full serialized response must NOT leak the raw nginx HTML to the operator.
+    blob = str(body).lower()
+    assert "<html>" not in blob and "nginx" not in blob, (
+        "The raw nginx 413 HTML leaked into the evaluate response — the operator "
+        f"would see a wall of HTML. Body: {body!r}. AC-9c: translate the 413 to a "
+        "clean message."
+    )
+    # The translated message must explain WHY (too large / size limit), in plain words.
+    assert re.search(r"too large|size limit|exceeds .* limit|too big", blob), (
+        "The 413 was not translated to a human-readable 'symphony too large to "
+        f"backtest' message. Body: {body!r}. AC-9c: the operator must understand "
+        "the symphony exceeds Composer's inline-backtest size limit."
+    )
