@@ -72,7 +72,9 @@ class TestHeroChartHeldSeriesIsDistinct:
     series must differ at the diverging step and at the terminal value.
     """
 
-    @pytest.mark.parametrize("window", ["30d", "90d", "1y"])
+    # Includes "all" — the All-Time window is the user's primary view (lifetime guard
+    # alpha) and must also carry a real distinct held line, not a copy of bot.
+    @pytest.mark.parametrize("window", ["30d", "90d", "1y", "all"])
     def test_hero_chart_held_not_identical_to_bot(self, client, mock_database, window):
         dates, bot_pct, held_pct = _divergent_daily_series()
 
