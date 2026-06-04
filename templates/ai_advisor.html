@@ -527,11 +527,22 @@
 
     <section data-testid="advisor-observations-section" class="obs-section">
         <div class="obs-section-header">Advisor Observations</div>
+        {# AC-7: honest framing — OC and Spec Critic are portfolio-wide GUARDRAILS that
+           read the shared, frozen Phase-1 THEORY spec.  A uniform CLEAR verdict is the
+           healthy expected result (S=0, nothing symphony-specific to flag).  The genuine
+           per-symphony advice comes from the Run Advisor (gear icon on each symphony card). #}
+        <p data-testid="guardrail-uniform-note" class="obs-framing-note">
+            Overfitting Conscience and Spec Critic are guardrails that check the shared,
+            frozen THEORY spec — a uniform CLEAR verdict is the healthy expected result,
+            not a stub. Per-symphony recommendations come from the
+            <strong>Run Advisor</strong> (gear icon on each symphony card).
+        </p>
         {% if observations %}
         <table class="obs-table">
             <thead>
                 <tr>
                     <th>Time</th>
+                    <th>Symphony</th>
                     <th>Advisor</th>
                     <th>Subject</th>
                     <th>Verdict</th>
@@ -546,6 +557,7 @@
                 {% set verdict_class = _VERDICT_CLASS.get(verdict, "verdict-unknown") %}
                 <tr data-obs-id="{{ obs.id }}">
                     <td>{{ obs.created_at | e }}</td>
+                    <td class="obs-symphony" data-testid="obs-symphony">{{ obs.symphony_id | e if obs.symphony_id else "—" }}</td>
                     <td>{{ role_label | e }}</td>
                     <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | e }}</span></td>
                     <td class="{{ verdict_class }}">{{ verdict | e }}</td>

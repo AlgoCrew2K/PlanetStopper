@@ -1951,7 +1951,17 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
     try:
         _sc.run_spec_critic(stored_hash, _sc_facets_rows, symphony_id=None)
     except Exception as e:
-        logging.warning("Spec Critic observation failed (advisory only): %s", e)
+        # Surface loudly (ERROR + exc_info), do NOT abort the cycle: a producer
+        # PERSISTENCE failure is an advisor OUTAGE, not advisory noise.  A bare
+        # WARNING here once hid a total OC outage for 1678 runs.  Per-producer
+        # isolation is preserved (no re-raise) so one producer cannot take down
+        # the autotune cycle or its sibling producers.
+        logging.error(
+            "Spec Critic observation PERSISTENCE FAILED — advisor outage "
+            "(cycle continues): %s",
+            e,
+            exc_info=True,
+        )
 
     # Suppress Optuna's per-trial log noise; set here (not at module level) to
     # avoid clobbering pytest's output-capture on import.
@@ -2619,14 +2629,33 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         try:
             _oc.run_overfitting_conscience(_oc_run, _oc_ledger_rows, prior_runs=_oc_prior_dicts)
         except Exception as e:
-            logging.warning("Overfitting Conscience observation failed (advisory only): %s", e)
+            # Surface loudly (ERROR + exc_info), do NOT abort the cycle: a producer
+            # PERSISTENCE failure is an advisor OUTAGE, not advisory noise.  This
+            # exact swallow (WARNING) hid a TypeError on every live row, so OC
+            # persisted ZERO observations across 1678 runs and nobody noticed.
+            # Per-producer isolation preserved (no re-raise, S3-AUDIT-006).
+            logging.error(
+                "Overfitting Conscience observation PERSISTENCE FAILED — advisor "
+                "outage (cycle continues): %s",
+                e,
+                exc_info=True,
+            )
         # S3-AUDIT-002: Divergence Explainer call site, post-OC mirror.
         # Consistent placement with OC; avoids the 1-minute alpha_bot_execution path
         # (architecture constraint #1 — no blocking I/O on the execution path).
         try:
             _de.run_divergence_explainer(_oc_run, cvar_row=None)
         except Exception as e:
-            logging.warning("Divergence Explainer observation failed (advisory only): %s", e)
+            # Surface loudly (ERROR + exc_info), do NOT abort the cycle: a producer
+            # PERSISTENCE failure is an advisor OUTAGE, not advisory noise.  Mirrors
+            # the OC/SC sites so no producer outage can rot silently again.
+            # Per-producer isolation preserved (no re-raise, S3-AUDIT-006).
+            logging.error(
+                "Divergence Explainer observation PERSISTENCE FAILED — advisor "
+                "outage (cycle continues): %s",
+                e,
+                exc_info=True,
+            )
 
     print("  -> Autotuner finished all symphonies.")
     return optimization_results

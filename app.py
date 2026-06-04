@@ -2307,17 +2307,23 @@ def get_symphony_settings(symphony_name: str):
     # get_symphony_strategy defaults live_mode=False (arch rule 4: explicit, never by omission).
     live_mode = bool(strategy.get("live_mode", False))
 
-    # Resolve symphony_id for the advisor observations query: walk the current bot state
-    # to match normalized_name -> id, falling back to symphony_name itself.
+    # advisor_observations.symphony_id is keyed by normalize_name(sym["name"])
+    # (written by autotuner.py:save_autotune_run(symphony_id=normalized_name)).
+    # The URL param (symphony_name) arrives as a Composer hash like 'iaSOOUsmnCJHiZvbrWfs'
+    # normalized to its lowercase form — never the human name.  Resolve hash → name
+    # via bot_state before querying, falling back to symphony_name if no match found.
     bot_state = database.load_state()
-    symphony_id = symphony_name  # default: normalized name is used as id
+    obs_symphony_id = symphony_name  # fallback: pass as-is (may yield 0 rows on hash)
     for sym_key, sym_data in bot_state.items():
-        if isinstance(sym_data, dict) and "name" in sym_data:
-            if database.normalize_name(sym_data["name"]) == symphony_name:
-                symphony_id = sym_key
-                break
-
-    advisor_observations = database.get_advisor_observations_for_symphony(symphony_id)
+        if not isinstance(sym_data, dict) or "name" not in sym_data:
+            continue
+        normalized_sym_name = database.normalize_name(sym_data["name"])
+        # Match on normalized Composer hash (the URL param) OR on the normalized name
+        # (handles the rare case where the name is passed directly instead of the hash).
+        if database.normalize_name(sym_key) == symphony_name or normalized_sym_name == symphony_name:
+            obs_symphony_id = normalized_sym_name
+            break
+    advisor_observations = database.get_advisor_observations_for_symphony(obs_symphony_id)
 
     return jsonify({
         "live_mode": live_mode,
@@ -2541,6 +2547,19 @@ def ai_advisor_tab():
         if obs["id"] not in seen:
             seen.add(obs["id"])
             deduped_obs.append(obs)
+    # Suppress pure feature-off stubs: NOT_APPLICABLE rows whose raw_response
+    # carries {"feature_flag": "off"} are audit-trail bookkeeping, not advice.
+    # Showing them in the recommendations table misleads the operator.
+    # The Divergence Explainer writes these when §B is disabled (the current
+    # default — CVaR divergence detection is deferred per council verdict).
+    deduped_obs = [
+        obs for obs in deduped_obs
+        if not (
+            obs.get("verdict") == "NOT_APPLICABLE"
+            and isinstance(obs.get("raw_response"), dict)
+            and obs["raw_response"].get("feature_flag") == "off"
+        )
+    ]
     observations = deduped_obs[: _ADVISOR_OBSERVATIONS_PAGE_LIMIT]
 
     return render_template(
@@ -2672,7 +2691,20 @@ def ai_advisor_asset_swaps_evaluate():
     if not symphony_id or not from_ticker or not to_ticker:
         return jsonify({"error": "symphony_id, from_ticker, and to_ticker are required"}), 200
 
-    raw_value = fetch_symphony_score(symphony_id)
+    # AC-8: the payload carries the display NAME (from the analytics dropdown); the
+    # Composer API needs the HASH.  Resolve NAME -> Composer hash via bot_state
+    # (inverse of the AC-4 modal, which resolved hash -> name).
+    # bot_state keys are Composer hashes; sym_data["name"] is the display name.
+    composer_hash = symphony_id  # fallback: pass as-is if not found in bot_state
+    _bot_state = database.load_state()
+    for _sym_key, _sym_data in _bot_state.items():
+        if not isinstance(_sym_data, dict) or "name" not in _sym_data:
+            continue
+        if database.normalize_name(_sym_data["name"]) == database.normalize_name(symphony_id):
+            composer_hash = _sym_key
+            break
+
+    raw_value = fetch_symphony_score(composer_hash)
     if not raw_value:
         return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
 
@@ -2685,7 +2717,9 @@ def ai_advisor_asset_swaps_evaluate():
 
     try:
         run_result = propose_operator_swap(
-            symphony_id=symphony_id,
+            # Pass the Composer hash — engine uses it as the UUID for dvm_capital
+            # unpacking in run_backtest (composer_backtest_client.py:269).
+            symphony_id=composer_hash,
             score_tree=raw_value,
             incumbent_asset=from_ticker,
             candidate_asset=to_ticker,
@@ -2808,7 +2842,18 @@ def ai_advisor_logic_changes_evaluate():
     if not symphony_id or not change_description:
         return jsonify({"error": "symphony_id and change_description are required"}), 200
 
-    raw_value = fetch_symphony_score(symphony_id)
+    # AC-8: same NAME->Composer-hash resolution as asset-swaps/evaluate (identical bug).
+    # The payload carries the display NAME; the Composer API needs the HASH.
+    composer_hash = symphony_id  # fallback: pass as-is if not found in bot_state
+    _bot_state = database.load_state()
+    for _sym_key, _sym_data in _bot_state.items():
+        if not isinstance(_sym_data, dict) or "name" not in _sym_data:
+            continue
+        if database.normalize_name(_sym_data["name"]) == database.normalize_name(symphony_id):
+            composer_hash = _sym_key
+            break
+
+    raw_value = fetch_symphony_score(composer_hash)
     if not raw_value:
         return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
 
@@ -2825,7 +2870,9 @@ def ai_advisor_logic_changes_evaluate():
     # early-return needed here (AC-X5 isolation applies at the engine level).
     try:
         run_result = propose_operator_logic_change(
-            symphony_id=symphony_id,
+            # Pass the Composer hash — engine uses it as the UUID for dvm_capital
+            # unpacking in run_backtest (composer_backtest_client.py:269).
+            symphony_id=composer_hash,
             score_tree=raw_value,
             tweak=None,
             objective=objective,
@@ -3093,12 +3140,61 @@ def ai_advisor_accept():
     patched_params = dict(flat_params)
     patched_params[suggestion_obj.config_key] = suggestion_obj.suggested_value
     database.save_symphony_strategy(symphony_id, patched_params, locked_vars)
+
+    # AC-5: persist the operator decision to the immutable llm_suggestions audit
+    # trail so the table is no longer empty after an accepted suggestion.
+    # before_value: the param's value before the config write; after_value: what
+    # the operator accepted.  symphony_name is the canonical normalized form.
+    _now = datetime.now(ZoneInfo("UTC")).isoformat()
+    database.record_llm_suggestion(
+        session_id=os.urandom(8).hex(),
+        created_at=_now,
+        symphony_name=database.normalize_name(symphony_id),
+        operator_identity="",
+        prompt_inputs={},
+        model_id=ai_advisor._CLAUDE_MODEL,
+        generation_settings={},
+        raw_response={},
+        validation_results={},
+        param_name=suggestion_obj.config_key,
+        operator_decision="accepted",
+        decision_at=_now,
+        before_value=flat_params.get(suggestion_obj.config_key),
+        after_value=suggestion_obj.suggested_value,
+        oos_revalidation=oos_result,
+    )
     return jsonify({"status": "accepted"})
 
 
 @app.route("/ai-advisor/reject", methods=["POST"])
 def ai_advisor_reject():
-    """Record operator rejection — no config write."""
+    """Record operator rejection — no config write.
+
+    AC-5: reads the payload so the rejection is persisted to the immutable
+    llm_suggestions audit trail.  Never calls save_symphony_strategy.
+    """
+    payload = request.json or {}
+    symphony_id = payload.get("symphony_id", "")
+    suggestion_data = payload.get("suggestion", {})
+    config_key = suggestion_data.get("config_key", "")
+
+    _now = datetime.now(ZoneInfo("UTC")).isoformat()
+    database.record_llm_suggestion(
+        session_id=os.urandom(8).hex(),
+        created_at=_now,
+        symphony_name=database.normalize_name(symphony_id),
+        operator_identity="",
+        prompt_inputs={},
+        model_id=ai_advisor._CLAUDE_MODEL,
+        generation_settings={},
+        raw_response={},
+        validation_results={},
+        param_name=config_key,
+        operator_decision="rejected",
+        decision_at=_now,
+        before_value=suggestion_data.get("current_value"),
+        after_value=suggestion_data.get("suggested_value"),
+    )
     return jsonify({"status": "rejected"})
 
 

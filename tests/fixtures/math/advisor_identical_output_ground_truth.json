@@ -1,0 +1,37 @@
+{
+  "_provenance": "Captured READ-ONLY from live alphabot_state.db on 2026-06-04 (advisor-fix cycle). Hash<->name pairs come from bot_state (the AC-4 modal ID-mismatch ground truth: route passes the Composer hash, rows are keyed by the lowercased name). autotune_runs_with_null_s_count rows show s_count=None on pre-migration rows — the exact OC TypeError('>' not supported between NoneType and int) trigger at overfitting_conscience.py:105 (s = max(s, s_count)) that produced ZERO OVERFITTING_CONSCIENCE rows across 1678 autotune_runs. This fixture carries ONLY identity/key data + the null-s_count shape; it deliberately holds NO producer-computed verdicts/ratios/dollars (per feedback_no_hardcoded_test_values).",
+  "canonical_symphony_id_rule": "database.normalize_name(name) == name.strip().lower(). Producers persist this; advisor_observations.symphony_id stores this; the modal route MUST query by this, NOT the Composer hash.",
+  "hash_name_pairs": [
+    {
+      "composer_hash": "n2ooAZTvBRN6ZzpMmWmU",
+      "name": "(INVEST:CRYPTO) We do a Little Trolling Planet's Mix v1.4 | 10.19.2022",
+      "normalized_name": "(invest:crypto) we do a little trolling planet's mix v1.4 | 10.19.2022"
+    },
+    {
+      "composer_hash": "INfCn3eKsu6i4oTTqdUp",
+      "name": "(INVEST) Planet of Projected Inflation: Corporate Chaos 2060",
+      "normalized_name": "(invest) planet of projected inflation: corporate chaos 2060"
+    },
+    {
+      "composer_hash": "hvPiGP1O7AHfutHE3Fjy",
+      "name": "(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations",
+      "normalized_name": "(invest) planet of hunted cascades - land of intelligent allocations"
+    }
+  ],
+  "autotune_runs_with_null_s_count": [
+    {
+      "id": 2156,
+      "symphony_id": "planet lqd: run of the feaver'd waltanansi usds 2/3 mixup",
+      "spec_bundle_id": "781647710161dd5a15eecc6387a405c7bfb42b5b714088b7e8f9ea7e87065912",
+      "n_effective": 500,
+      "s_count": null
+    },
+    {
+      "id": 2155,
+      "symphony_id": "planet of the paragons: eyeg of the lqd",
+      "spec_bundle_id": "781647710161dd5a15eecc6387a405c7bfb42b5b714088b7e8f9ea7e87065912",
+      "n_effective": 500,
+      "s_count": null
+    }
+  ]
+}
