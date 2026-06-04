@@ -43,7 +43,7 @@ import json
 import math
 import os
 import re
-from datetime import UTC
+from datetime import UTC, date
 
 # ---------------------------------------------------------------------------
 # Producer -> internal field-name mapping (single source of truth)
@@ -1295,6 +1295,237 @@ def get_portfolio_bot_and_held_daily_returns(
 # Threshold: N >= 30 per Bailey/de-Prado 2014 interpretability floor.
 _V1_BOOTSTRAP_MIN_DAYS = 30
 
+# AC-3 windowed-metric tokens. Numeric tokens are a trailing-day count; ytd = since
+# Jan 1 of the current year; 1y = trailing 365 calendar days; all = no window (lifetime).
+_WINDOW_TRAILING_DAYS = {"30d": 30, "60d": 60, "90d": 90, "125d": 125, "1y": 365}
+# Reuse the Bailey/de-Prado interpretability floor as the windowed vol sufficiency
+# gate (F7): vol is meaningless on a handful of days, so it is suppressed below this.
+_WINDOWED_VOL_MIN_DAYS = _V1_BOOTSTRAP_MIN_DAYS
+
+
+def _window_cutoff_date(window: object) -> date | None:
+    """Resolve a window token to a trading-day CUTOFF (inclusive lower bound), or None
+    for the lifetime ("all") window. Date-based (not positional) so a window excludes
+    rows older than its span regardless of how many rows exist (W1 slice-then-regroup).
+
+    Accepts the lowercase route tokens 30d/60d/90d/125d/ytd/1y/all (case-insensitive)
+    and a bare int day-count (trailing days). Unknown tokens resolve to None (lifetime)
+    — the route validates tokens against its allowlist before calling, so this is a
+    permissive fallback, not the gate.
+    """
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+
+    today = _dt.now(UTC).date()
+    if isinstance(window, int):
+        return today - _td(days=window)
+    token = str(window).lower()
+    if token == "all":
+        return None
+    if token == "ytd":
+        return date(today.year, 1, 1)
+    n = _WINDOW_TRAILING_DAYS.get(token)
+    if n is None:
+        return None  # unknown token -> lifetime (route already allowlisted)
+    return today - _td(days=n)
+
+
+def _get_windowed_divergence_trajectory(
+    symphony_id: str, db_file: str, window: object
+) -> list[list[tuple[float, float]]] | None:
+    """Like ``_get_shadow_divergence_trajectory`` (lifetime, epoch-grouped) but filtered
+    to the rows whose trading_day falls within ``window`` (W1 slice-then-regroup).
+
+    Selects the last EOD row per (symphony_id, trading_day) across ALL epochs, keeps
+    only trading_days >= the window cutoff, then re-groups the SLICED rows into
+    contiguous position-epoch runs. window="all" applies no cutoff so the result is
+    identical to the lifetime trajectory (the consistency anchor with AC-1).
+
+    Returns None when fewer than 2 in-window trading days exist.
+    """
+    import sqlite3
+
+    cutoff = _window_cutoff_date(window)
+    try:
+        conn = sqlite3.connect(db_file, timeout=10.0)
+        rows = conn.execute(
+            "SELECT trading_day, shadow_return, current_return, position_epoch "
+            "FROM shadow_history sh "
+            "WHERE symphony_id = ? "
+            "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+            "                WHERE s2.symphony_id = sh.symphony_id "
+            "                  AND s2.trading_day = sh.trading_day) "
+            "ORDER BY trading_day ASC",
+            (symphony_id,),
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    cutoff_iso = cutoff.isoformat() if cutoff is not None else None
+    # String compare is valid: trading_day is ISO "YYYY-MM-DD" (lexicographic == chronological).
+    in_window = [
+        r for r in rows if cutoff_iso is None or str(r[0]) >= cutoff_iso
+    ]
+    if len(in_window) < 2:
+        return None
+
+    groups: list[list[tuple[float, float]]] = []
+    _sentinel = object()
+    current_label: object = _sentinel
+    for _trading_day, shadow_r, current_r, epoch_label in in_window:
+        if epoch_label != current_label:
+            groups.append([])
+            current_label = epoch_label
+        groups[-1].append((float(shadow_r), float(current_r)))
+    return groups
+
+
+def _epoch_additive_divergence(groups: list[list[tuple[float, float]]]) -> float:
+    """Epoch-additive guard-alpha divergence (semantic B): SUM over epoch groups of
+    each group's own ``(∏(1+shadow/100) − ∏(1+current/100)) * 100``. Identical to the
+    AC-1 lifetime computation; shared so windowed and lifetime agree by construction."""
+    total = 0.0
+    for epoch_pairs in groups:
+        product_shadow = 1.0
+        product_current = 1.0
+        for shadow_r, current_r in epoch_pairs:
+            product_shadow *= 1.0 + shadow_r / 100.0
+            product_current *= 1.0 + current_r / 100.0
+        total += (product_shadow - product_current) * 100.0
+    return total
+
+
+def compute_windowed_symphony_guard_alpha(
+    sym_dict: dict,
+    bot_state_entry: dict | None,
+    *,
+    window: object,
+    db_path: str | None = None,
+) -> float | None:
+    """Per-symphony guard alpha (dry_run − if_held) over a SELECTABLE window (AC-3).
+
+    The guard alpha IS the epoch-additive divergence (dry_run − if_held cancels the
+    if_held baseline), so this is the window-sliced, epoch-regrouped, epoch-additive
+    sum. window="all" reproduces the AC-1 lifetime guard alpha EXACTLY. Untriggered
+    symphonies (shadow == current) yield 0.0 on every window. Returns None when the
+    symphony has no id (cannot read shadow history); 0.0 when the window has < 2 days
+    of recorded divergence (no recorded guard effect in the window).
+    """
+    symphony_id = sym_dict.get("id")
+    if not symphony_id:
+        return None
+    _db_file = db_path if db_path is not None else _get_shadow_db_file()
+    trajectory = _get_windowed_divergence_trajectory(symphony_id, _db_file, window)
+    if trajectory is None:
+        return 0.0
+    return _epoch_additive_divergence(trajectory)
+
+
+def compute_windowed_portfolio_strip(
+    symphonies: list[dict],
+    bot_state: dict,
+    *,
+    window: object,
+    db_path: str | None = None,
+) -> dict:
+    """Recompute the hero comparison strip FOR a selectable window (AC-3).
+
+    Returns a dict the dashboard renders per the picker, echoing the resolved window
+    so the label always matches the value (kills the F1 "30d"-label-on-all-time-value
+    dishonesty):
+
+        {
+          "today_change":      {"dry_run", "if_held"},   # window-independent (today only)
+          "cumulative_return": {"dry_run", "if_held"},   # dry_run = if_held + windowed alpha
+          "max_drawdown":      {"dry_run", "if_held"},
+          "vol_bot", "vol_held":   annualized vol of the windowed portfolio series, or None,
+          "guard_alpha":           windowed portfolio guard alpha (VW of per-symphony),
+          "insufficient_history":  True when the window has < _WINDOWED_VOL_MIN_DAYS days,
+          "window":                the echoed resolved window token,
+        }
+
+    Bot and Held are BOTH on the VW (cash-excluded) basis within a window — there is no
+    daily account-level held series from Composer, so windowed views are internally
+    commensurable; the account-basis rescale applies only to the all-time hero scalar.
+
+    F7 vol gate: vol_bot/vol_held are None and insufficient_history is True when the
+    window's trading-day count is below _WINDOWED_VOL_MIN_DAYS (Bailey/de-Prado floor).
+    """
+    _db_file = db_path if db_path is not None else _get_shadow_db_file()
+
+    # CR / MDD / TC reuse the existing per-symphony helpers via VW aggregation. The
+    # windowed guard alpha is added to the (window-independent) if_held baseline so the
+    # picker re-windows only the guard EFFECT, never the Composer lifetime anchor.
+    cr = get_portfolio_cumulative_return(symphonies, bot_state, db_path=_db_file)
+    mdd = get_portfolio_max_drawdown(symphonies, bot_state, db_path=_db_file)
+    # today_change is window-independent (today only). It needs last_percent_change,
+    # which the live route supplies but a minimal caller may omit; degrade to a null
+    # strip entry rather than failing the whole windowed strip.
+    try:
+        tc = get_portfolio_today_change(symphonies, bot_state, db_path=_db_file)
+    except (KeyError, TypeError, ValueError):
+        tc = {"dry_run": None, "if_held": None}
+
+    # Windowed portfolio guard alpha = value-weighted per-symphony windowed alpha,
+    # skipping symphonies with non-positive/missing value (same rule as the VW helper).
+    weight_sum = 0.0
+    alpha_wsum = 0.0
+    for sym in symphonies:
+        w = sym.get("value")
+        try:
+            w = float(w)
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(w) and w > 0.0):
+            continue
+        entry = bot_state.get(sym.get("id"))
+        sym_alpha = compute_windowed_symphony_guard_alpha(
+            sym, entry, window=window, db_path=_db_file
+        )
+        if sym_alpha is None:
+            continue
+        alpha_wsum += sym_alpha * w
+        weight_sum += w
+    windowed_alpha: float | None = (
+        alpha_wsum / weight_sum if weight_sum > 0.0 else None
+    )
+
+    # Anchor the windowed CR dry_run on the windowed guard alpha so the headline value
+    # re-windows (cumulative_return.dry_run − if_held == windowed guard alpha).
+    cr_if_held = cr.get("if_held")
+    cr_out = dict(cr)
+    if cr_if_held is not None and windowed_alpha is not None:
+        cr_out = {"if_held": cr_if_held, "dry_run": cr_if_held + windowed_alpha}
+
+    # Windowed portfolio daily series -> annualized vol, gated by the day-count floor.
+    series = get_portfolio_bot_and_held_daily_returns(_db_file, days=None)
+    vol_bot: float | None = None
+    vol_held: float | None = None
+    window_day_count = 0
+    if series is not None:
+        all_dates, bot_pct, held_pct = series
+        cutoff = _window_cutoff_date(window)
+        cutoff_iso = cutoff.isoformat() if cutoff is not None else None
+        idx = [i for i, d in enumerate(all_dates) if cutoff_iso is None or str(d) >= cutoff_iso]
+        window_day_count = len(idx)
+        if window_day_count >= _WINDOWED_VOL_MIN_DAYS:
+            vol_bot = compute_portfolio_annualized_vol([bot_pct[i] for i in idx])
+            vol_held = compute_portfolio_annualized_vol([held_pct[i] for i in idx])
+
+    insufficient_history = window_day_count < _WINDOWED_VOL_MIN_DAYS
+
+    return {
+        "today_change": tc,
+        "cumulative_return": cr_out,
+        "max_drawdown": mdd,
+        "vol_bot": vol_bot,
+        "vol_held": vol_held,
+        "guard_alpha": windowed_alpha,
+        "insufficient_history": insufficient_history,
+        "window": str(window).lower(),
+    }
+
 
 def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
     """Aggregate guard-alpha history for the History tab.
@@ -1303,9 +1534,11 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
     from post_mortem_*.json files in base_dir. Exists so the route can delegate
     here and tests can mock this single function.
     """
-    import json as _json
     import glob as _glob
-    from datetime import datetime as _dt, timedelta as _td, date as _date
+    import json as _json
+    from datetime import date as _date
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
 
     end_date = _dt.now()
     start_date = end_date - _td(days=days)
