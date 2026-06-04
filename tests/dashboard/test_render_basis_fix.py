@@ -799,3 +799,218 @@ class TestFrozenPortfolioStripGuardAlpha:
             "OR add a fetchWindowedStrip('30d') call that fires when guard_alpha is "
             "absent from the first poll response."
         )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 11 — fetchWindowedStrip must be at IIFE scope, not inside DOMContentLoaded
+#
+# quant-code-reviewer BLOCK (cycle-2, 5d3d5cd):
+#   fetchWindowedStrip is defined at static/index.js:1260 INSIDE the DOMContentLoaded
+#   callback. renderGuardAlpha is at line 131 in IIFE scope. When renderGuardAlpha
+#   calls fetchWindowedStrip('30d'), it executes in IIFE scope where fetchWindowedStrip
+#   is NOT defined — ReferenceError in strict mode, silently swallowed by updateDashboard
+#   try/catch. The fallback never fires; headline stays '--' on closed_frozen.
+#
+#   Required fix: hoist fetchWindowedStrip to IIFE scope (above DOMContentLoaded).
+# ---------------------------------------------------------------------------
+
+
+class TestFetchWindowedStripAtIifeScope:
+    """fetchWindowedStrip must be defined at IIFE scope so renderGuardAlpha can call
+    it. A definition inside DOMContentLoaded is not visible from IIFE-scope functions.
+    """
+
+    def test_fetch_windowed_strip_defined_before_dom_content_loaded(self):
+        """fetchWindowedStrip must be defined BEFORE the main DOMContentLoaded callback.
+        If it is defined only inside DOMContentLoaded, renderGuardAlpha (IIFE scope)
+        will throw ReferenceError when it calls it.
+
+        Note: this file has two DOMContentLoaded listeners — a tiny CSRF-token fetch
+        at line 15 and the main picker/chart setup at line 1234. fetchWindowedStrip
+        must be defined before the MAIN (last/largest) DOMContentLoaded callback.
+
+        Source contract: the `function fetchWindowedStrip` declaration must appear
+        before the last `document.addEventListener('DOMContentLoaded'` in the file.
+        """
+        js = _js()
+
+        decl_pos = js.find("function fetchWindowedStrip")
+        assert decl_pos != -1, "fetchWindowedStrip function declaration must exist"
+
+        # Find the LAST (main) DOMContentLoaded listener — this is the one that
+        # currently contains fetchWindowedStrip and is the source of the scoping bug.
+        pattern = "document.addEventListener('DOMContentLoaded'"
+        pattern2 = 'document.addEventListener("DOMContentLoaded"'
+        all_dom = [m.start() for m in re.finditer(re.escape(pattern), js)]
+        all_dom += [m.start() for m in re.finditer(re.escape(pattern2), js)]
+        assert all_dom, "DOMContentLoaded listener not found — cannot verify scoping"
+        main_dom_pos = max(all_dom)
+
+        assert decl_pos < main_dom_pos, (
+            "SCOPING FAIL: fetchWindowedStrip is defined INSIDE the main DOMContentLoaded "
+            f"callback (declaration at char {decl_pos}, main DOMContentLoaded starts at "
+            f"char {main_dom_pos}). "
+            "renderGuardAlpha lives at IIFE scope (char ~4692) and calls "
+            "fetchWindowedStrip('30d') on the frozen-path fallback. With the function "
+            "nested inside DOMContentLoaded it is invisible from IIFE scope — a "
+            "ReferenceError is silently swallowed by updateDashboard's try/catch and the "
+            "fallback never fires. "
+            "Fix: move `function fetchWindowedStrip(token) {...}` to IIFE scope, BEFORE "
+            "the main DOMContentLoaded listener so renderGuardAlpha can reach it."
+        )
+
+    def test_render_guard_alpha_and_fetch_windowed_strip_share_scope(self):
+        """Both renderGuardAlpha and fetchWindowedStrip must be reachable from the
+        same scope. renderGuardAlpha is at IIFE scope (between the two DOMContentLoaded
+        callbacks). fetchWindowedStrip must also be at IIFE scope — not inside the
+        main DOMContentLoaded (the second/last one, which contains the picker + chart
+        setup). The CSRF DOMContentLoaded at line 15 is a tiny 4-line callback; the
+        main DOMContentLoaded is the last one in the file and contains fetchWindowedStrip.
+
+        Source contract: fetchWindowedStrip must appear BEFORE the LAST/MAIN
+        DOMContentLoaded callback starts. `renderGuardAlpha` is already at IIFE scope.
+        """
+        js = _js()
+
+        render_pos = js.find("function renderGuardAlpha")
+        fetch_pos = js.find("function fetchWindowedStrip")
+
+        assert render_pos != -1, "renderGuardAlpha must exist"
+        assert fetch_pos != -1, "fetchWindowedStrip must exist"
+
+        # Find the LAST DOMContentLoaded listener — this is the main callback that
+        # contains fetchWindowedStrip in the broken implementation. After the fix,
+        # fetchWindowedStrip must be BEFORE it.
+        pattern = "document.addEventListener('DOMContentLoaded'"
+        pattern2 = 'document.addEventListener("DOMContentLoaded"'
+        all_dom = [m.start() for m in re.finditer(re.escape(pattern), js)]
+        all_dom += [m.start() for m in re.finditer(re.escape(pattern2), js)]
+        assert all_dom, "At least one DOMContentLoaded listener must exist"
+        main_dom_pos = max(all_dom)  # The last (main) DOMContentLoaded
+
+        assert fetch_pos < main_dom_pos, (
+            "SCOPING FAIL: fetchWindowedStrip is defined INSIDE the main DOMContentLoaded "
+            f"callback (declaration at char {fetch_pos}, main DOMContentLoaded at char "
+            f"{main_dom_pos}). renderGuardAlpha is at IIFE scope (char {render_pos}) and "
+            "cannot reach into the DOMContentLoaded closure. "
+            "Fix: hoist `function fetchWindowedStrip(token) {...}` to IIFE scope, "
+            "above the main DOMContentLoaded listener."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 12 — renderGuardAlpha must not infinitely recurse via fetchWindowedStrip
+#
+# quant-code-reviewer BLOCK (cycle-2, 5d3d5cd):
+#   compute_windowed_portfolio_strip returns guard_alpha: null when weight_sum == 0
+#   (no symphonies or all zero-weight). In that case the strip fetch response also
+#   has guard_alpha: null. renderGuardAlpha(wrapped) is called from fetchWindowedStrip
+#   with a null guard_alpha → triggers fetchWindowedStrip('30d') again → infinite loop.
+#
+#   Required fix: guard the fallback call so it cannot fire when already called from
+#   a strip fetch. Simplest pattern: `_fromStrip` parameter.
+# ---------------------------------------------------------------------------
+
+
+class TestRenderGuardAlphaNoInfiniteLoop:
+    """renderGuardAlpha must not infinitely recurse via fetchWindowedStrip when the
+    strip response itself returns guard_alpha: null (zero-weight portfolio edge case).
+    """
+
+    def test_render_guard_alpha_fallback_is_guarded_against_recursion(self):
+        """renderGuardAlpha must accept a parameter or use a flag that prevents the
+        fetchWindowedStrip fallback from firing when renderGuardAlpha was itself
+        called FROM fetchWindowedStrip (i.e. the strip response had null guard_alpha).
+
+        Source contract: renderGuardAlpha's function signature must accept a second
+        argument (e.g. `_fromStrip`) AND the fetchWindowedStrip fallback must be
+        guarded by that argument, e.g.:
+
+            if (guard_alpha === null) {
+                if (!_fromStrip) fetchWindowedStrip('30d');
+                return;
+            }
+
+        AND the call inside fetchWindowedStrip must pass the truthy flag:
+
+            renderGuardAlpha(wrapped, true);
+
+        Either the `_fromStrip` name or any structurally equivalent guard is acceptable.
+        The test checks for the structural presence of a recursion guard.
+        """
+        js = _js()
+
+        # Check 1: renderGuardAlpha function signature takes >=2 params OR uses a closure
+        # variable as a recursion guard.
+        start = js.find("function renderGuardAlpha")
+        assert start != -1, "renderGuardAlpha must exist"
+        sig_end = js.find(")", start)
+        sig = js[start:sig_end + 1]
+
+        # The signature must have a second parameter (anything after the first comma).
+        has_second_param = sig.count(",") >= 1
+
+        # Check 2: the fetchWindowedStrip call inside renderGuardAlpha is conditional,
+        # not unconditional. Must not be bare `fetchWindowedStrip('30d');` without a guard.
+        end_marker = js.find("\n    function ", start + 1)
+        body = js[start:end_marker] if end_marker != -1 else js[start:start + 800]
+
+        # The fetchWindowedStrip call must be inside an `if` that checks something —
+        # a bare call with no condition is the infinite-loop pattern.
+        fws_pos = body.find("fetchWindowedStrip")
+        has_guarded_call = False
+        if fws_pos != -1:
+            # Look back up to 80 chars for an `if` keyword guarding this call.
+            pre = body[max(0, fws_pos - 80):fws_pos]
+            has_guarded_call = "if (" in pre or "if(" in pre
+
+        assert has_second_param or has_guarded_call, (
+            "INFINITE-LOOP FAIL: renderGuardAlpha calls fetchWindowedStrip without a "
+            "recursion guard. When the strip response returns guard_alpha: null "
+            "(zero-weight portfolio), renderGuardAlpha will call fetchWindowedStrip again, "
+            "which calls renderGuardAlpha again — infinite loop. "
+            "Fix: add a `_fromStrip` parameter (or equivalent flag) and guard the call: "
+            "  `if (guard_alpha === null) { if (!_fromStrip) fetchWindowedStrip('30d'); return; }` "
+            "AND pass `true` as the second arg from inside fetchWindowedStrip: "
+            "  `renderGuardAlpha(wrapped, true);` "
+            f"Current signature: `{sig}`. "
+            f"fetchWindowedStrip call context: `{body[max(0,fws_pos-80):fws_pos+30]}`"
+        )
+
+    def test_fetch_windowed_strip_passes_from_strip_flag_to_render_guard_alpha(self):
+        """Inside fetchWindowedStrip, the call to renderGuardAlpha must pass a truthy
+        second argument (the `_fromStrip` flag) so the recursion guard inside
+        renderGuardAlpha can detect it came from a strip fetch.
+
+        Source contract: within the fetchWindowedStrip function body, the call to
+        renderGuardAlpha must have at least 2 arguments.
+        """
+        js = _js()
+
+        start = js.find("function fetchWindowedStrip")
+        assert start != -1, "fetchWindowedStrip must exist"
+        # fetchWindowedStrip can be anywhere now (IIFE scope after hoisting fix)
+        end_marker = js.find("\nfunction ", start + 1)
+        if end_marker == -1:
+            end_marker = js.find("\n    function ", start + 1)
+        body = js[start:end_marker] if end_marker != -1 else js[start:start + 600]
+
+        # Find `renderGuardAlpha(` inside the body and check it has a second argument.
+        rga_pos = body.find("renderGuardAlpha(")
+        assert rga_pos != -1, (
+            "fetchWindowedStrip must call renderGuardAlpha — function body does not "
+            "contain `renderGuardAlpha(`."
+        )
+
+        # Extract the call up to the closing paren.
+        call_snippet = body[rga_pos:rga_pos + 60]
+        has_second_arg = "," in call_snippet.split(")")[0]
+
+        assert has_second_arg, (
+            "INFINITE-LOOP FAIL: fetchWindowedStrip calls renderGuardAlpha without a "
+            "second argument. The recursion guard (`_fromStrip` or equivalent) in "
+            "renderGuardAlpha will never be truthy, so a null guard_alpha in the strip "
+            "response will trigger fetchWindowedStrip again, looping infinitely. "
+            "Fix: pass `true` as the second argument: `renderGuardAlpha(wrapped, true);` "
+            f"Found call: `{call_snippet}`"
+        )
