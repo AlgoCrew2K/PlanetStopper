@@ -10,10 +10,12 @@ Three contracts pinned here:
   A) GET /ai-advisor renders without any DB write call.
   B) POST /ai-advisor/suggest: calls ai_advisor.assemble_advisor_context and
      ai_advisor.request_suggestions but never calls any database mutator.
-  C) POST /ai-advisor/accept: legitimate write path (saves accepted config),
-     BUT must only call database.save_symphony_strategy — never save_state,
-     write_fleet_alert, record_*, write_telemetry_row, or any other mutator.
-  D) POST /ai-advisor/reject: read-only — no DB write of any kind.
+  C) POST /ai-advisor/accept: two permitted writes — save_symphony_strategy
+     (config change) + record_llm_suggestion (AC-5 audit trail).  No other
+     mutators: never save_state, write_fleet_alert, write_telemetry_row, etc.
+  D) POST /ai-advisor/reject: one permitted write — record_llm_suggestion
+     (AC-5 audit trail).  Never calls save_symphony_strategy (a rejected
+     suggestion must NOT reach the config store).
 
 The Advisor's read-only contract from rubric I-3 is: the Advisor cannot
 trigger live action; the dashboard cannot gain action surface.  Phase 1
@@ -201,14 +203,17 @@ class TestAdvisorSuggestIsReadOnly:
 
 
 class TestAdvisorAcceptWriteIsNarrow:
-    """POST /ai-advisor/accept may only write via save_symphony_strategy.
+    """POST /ai-advisor/accept may only write via save_symphony_strategy and
+    record_llm_suggestion (AC-5 audit trail).
 
     All other database mutators must be untouched.  This pins the boundary:
-    the accept route is a config-write path, not a state-mutation path.
+    the accept route is a config-write + audit-trail path, not a state-mutation
+    path.
     """
 
     def test_accept_only_writes_via_save_symphony_strategy(self, flask_client):
-        """After all gates pass, accept calls save_symphony_strategy — nothing else."""
+        """After all gates pass, accept calls save_symphony_strategy and
+        record_llm_suggestion — no other database mutators."""
         mock_db = _make_db_mock()
         mock_advisor = _make_advisor_mock()
 
@@ -233,13 +238,14 @@ class TestAdvisorAcceptWriteIsNarrow:
         data = resp.get_json()
         assert data is not None
 
-        # save_symphony_strategy is the ONLY allowed write
+        # Only permitted writes: save_symphony_strategy + record_llm_suggestion (AC-5).
         mock_db.save_state.assert_not_called()
         mock_db.write_fleet_alert.assert_not_called()
         mock_db.record_exit_trigger.assert_not_called()
         mock_db.record_shadow_observation.assert_not_called()
         mock_db.record_autotune_run.assert_not_called()
-        mock_db.record_llm_suggestion.assert_not_called()
+        # AC-5: record_llm_suggestion IS now called on /accept — audit trail write.
+        mock_db.record_llm_suggestion.assert_called_once()
 
     def test_accept_with_rejected_key_writes_nothing(self, flask_client):
         """POST /ai-advisor/accept when allowlist rejects must write nothing at all."""
@@ -278,17 +284,24 @@ class TestAdvisorAcceptWriteIsNarrow:
 # ---------------------------------------------------------------------------
 
 
-class TestAdvisorRejectIsReadOnly:
-    """POST /ai-advisor/reject must write nothing — it is a pure acknowledgement."""
+class TestAdvisorRejectIsNarrow:
+    """POST /ai-advisor/reject writes only to record_llm_suggestion (AC-5 audit
+    trail) — never to save_symphony_strategy or any engine-state mutator.
+
+    Contract change (AC-5): /reject now reads the payload and records the
+    operator decision in the immutable llm_suggestions audit trail.  It must
+    NOT mutate config (save_symphony_strategy) or engine state.
+    """
 
     def test_reject_writes_nothing_to_database(self, flask_client):
-        """POST /ai-advisor/reject must not call any database write helper."""
+        """POST /ai-advisor/reject must not call any database write helper other
+        than record_llm_suggestion (the AC-5 audit trail write)."""
         mock_db = _make_db_mock()
 
         with patch.object(app_module, "database", mock_db):
             resp = flask_client.post(
                 "/ai-advisor/reject",
-                json={"symphony_id": "sym-001", "config_key": "TRIGGER_THRESHOLD_PCT"},
+                json={"symphony_id": "sym-001", "suggestion": {"config_key": "TRIGGER_THRESHOLD_PCT"}},
             )
 
         assert resp.status_code == 200
@@ -299,7 +312,8 @@ class TestAdvisorRejectIsReadOnly:
         mock_db.save_state.assert_not_called()
         mock_db.write_fleet_alert.assert_not_called()
         mock_db.save_symphony_strategy.assert_not_called()
-        mock_db.record_llm_suggestion.assert_not_called()
+        # AC-5: record_llm_suggestion IS now called on /reject — audit trail write.
+        mock_db.record_llm_suggestion.assert_called_once()
         mock_db.record_exit_trigger.assert_not_called()
 
     def test_reject_does_not_call_advisor_write_paths(self, flask_client):

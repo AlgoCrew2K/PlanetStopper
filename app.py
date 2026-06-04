@@ -3112,12 +3112,61 @@ def ai_advisor_accept():
     patched_params = dict(flat_params)
     patched_params[suggestion_obj.config_key] = suggestion_obj.suggested_value
     database.save_symphony_strategy(symphony_id, patched_params, locked_vars)
+
+    # AC-5: persist the operator decision to the immutable llm_suggestions audit
+    # trail so the table is no longer empty after an accepted suggestion.
+    # before_value: the param's value before the config write; after_value: what
+    # the operator accepted.  symphony_name is the canonical normalized form.
+    _now = datetime.now(ZoneInfo("UTC")).isoformat()
+    database.record_llm_suggestion(
+        session_id=os.urandom(8).hex(),
+        created_at=_now,
+        symphony_name=database.normalize_name(symphony_id),
+        operator_identity="",
+        prompt_inputs={},
+        model_id=ai_advisor._CLAUDE_MODEL,
+        generation_settings={},
+        raw_response={},
+        validation_results={},
+        param_name=suggestion_obj.config_key,
+        operator_decision="accepted",
+        decision_at=_now,
+        before_value=flat_params.get(suggestion_obj.config_key),
+        after_value=suggestion_obj.suggested_value,
+        oos_revalidation=oos_result,
+    )
     return jsonify({"status": "accepted"})
 
 
 @app.route("/ai-advisor/reject", methods=["POST"])
 def ai_advisor_reject():
-    """Record operator rejection — no config write."""
+    """Record operator rejection — no config write.
+
+    AC-5: reads the payload so the rejection is persisted to the immutable
+    llm_suggestions audit trail.  Never calls save_symphony_strategy.
+    """
+    payload = request.json or {}
+    symphony_id = payload.get("symphony_id", "")
+    suggestion_data = payload.get("suggestion", {})
+    config_key = suggestion_data.get("config_key", "")
+
+    _now = datetime.now(ZoneInfo("UTC")).isoformat()
+    database.record_llm_suggestion(
+        session_id=os.urandom(8).hex(),
+        created_at=_now,
+        symphony_name=database.normalize_name(symphony_id),
+        operator_identity="",
+        prompt_inputs={},
+        model_id=ai_advisor._CLAUDE_MODEL,
+        generation_settings={},
+        raw_response={},
+        validation_results={},
+        param_name=config_key,
+        operator_decision="rejected",
+        decision_at=_now,
+        before_value=suggestion_data.get("current_value"),
+        after_value=suggestion_data.get("suggested_value"),
+    )
     return jsonify({"status": "rejected"})
 
 

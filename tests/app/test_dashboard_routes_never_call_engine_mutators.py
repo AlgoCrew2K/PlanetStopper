@@ -92,6 +92,11 @@ _ALLOWED_ROUTE_WRITE_PAIRS: frozenset[tuple[str, str]] = frozenset({
     # Operator-approval config write — four safety gates, not a trade action.
     # Pinned as the only permitted write in test_dashboard_advisor_render_is_read_only.py.
     ("ai_advisor_accept", "save_symphony_strategy"),
+    # AC-5: /accept and /reject persist the operator decision to the immutable
+    # llm_suggestions audit trail — this is an operator-decision write, not an
+    # engine-state write.  Both routes are action paths (not render paths).
+    ("ai_advisor_accept", "record_llm_suggestion"),
+    ("ai_advisor_reject", "record_llm_suggestion"),
     # Operator settings write — same rationale; config write, not engine state.
     ("save_settings", "save_symphony_strategy"),
     # Chart history writes — persisted display data, not live engine state.
@@ -232,12 +237,23 @@ class TestRouteBodiesNoMutatorSymbols:
         )
 
     def test_no_route_calls_record_mutators(self):
-        """No route body may call record_* functions (engine-side telemetry)."""
+        """No route body may call record_* functions (engine-side telemetry),
+        except for (route, symbol) pairs explicitly listed in _ALLOWED_ROUTE_WRITE_PAIRS.
+
+        AC-5 permits ai_advisor_accept and ai_advisor_reject to call
+        record_llm_suggestion as the immutable operator-decision audit trail.
+        All other routes remain prohibited from calling any record_* mutator.
+        """
         record_names = {n for n in _all_db_mutators() if n.startswith("record_")}
         violators = []
         for route_path, func_name in _get_route_functions():
             names = _parse_route_body_names(func_name, self._source)
             matched = names & record_names
+            # Filter out (route, symbol) pairs explicitly permitted by the allowlist.
+            matched = {
+                sym for sym in matched
+                if (func_name, sym) not in _ALLOWED_ROUTE_WRITE_PAIRS
+            }
             if matched:
                 violators.append(f"{func_name} ({route_path}): {matched}")
         assert not violators, (
