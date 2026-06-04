@@ -138,10 +138,21 @@
         // which produces a fabricated -36.18% instead of the correct ~+0.90%.
         var guard_alpha = typeof ps.guard_alpha === 'number' ? ps.guard_alpha : null;
 
+        // Frozen-path fallback: the closed_frozen /api/state portfolio_strip is built
+        // inline (app.py ~line 1262) and does not call _compute_portfolio_strip, so
+        // guard_alpha and windowed_cumulative_return are absent.  /api/strip/<window>
+        // works in all market states.  Fetching it here populates both the headline
+        // (via the recursive renderGuardAlpha call inside fetchWindowedStrip) and the
+        // cumulative row (via updateComparisonRows) with correct windowed VW values.
+        if (guard_alpha === null) {
+            fetchWindowedStrip('30d');
+            return;
+        }
+
         var el = document.getElementById('guard-alpha-headline');
         if (el) {
             el.textContent = fmtPct(guard_alpha);
-            el.style.color = (guard_alpha != null && guard_alpha >= 0) ? cs('--studio-pos') : cs('--studio-neg');
+            el.style.color = guard_alpha >= 0 ? cs('--studio-pos') : cs('--studio-neg');
         }
     }
 
