@@ -126,7 +126,14 @@ def compute_overfitting_conscience_observation(
         if r.get("symphony_id") == symphony_id
     ]
     valid_prior_s = [r["s_count"] for r in same_symphony_prior if r["s_count"] is not None]
-    if len(valid_prior_s) >= 2:
+    # Drift is EVALUABLE only with >= 2 prior runs carrying a non-None s_count.
+    # On the live data every autotune_runs.s_count is NULL, so this is structurally
+    # FALSE — the I-3 check can never fire.  We surface this availability honestly
+    # (drift_signal_available below) so a "no drift" output is never mistaken for
+    # "drift evaluated and clean" when the check was in fact DEAD.  This is
+    # transparency only: it does not change the verdict or invent an S.
+    drift_signal_available = len(valid_prior_s) >= 2
+    if drift_signal_available:
         s_series = valid_prior_s + [s]
         drift_detected = all(
             s_series[i] < s_series[i + 1] for i in range(len(s_series) - 1)
@@ -152,6 +159,9 @@ def compute_overfitting_conscience_observation(
             "backtest_selection_count": 0,
             "n_effective": n_effective,
             "n_optuna": n_optuna,
+            # Honest I-3 availability: False means drift could NOT be evaluated
+            # (< 2 prior runs with a non-None s_count), NOT "evaluated and clean".
+            "drift_signal_available": drift_signal_available,
             "note": "no BACKTEST_SELECTION facets; N_effective equals N_optuna",
         }
     else:
@@ -166,6 +176,9 @@ def compute_overfitting_conscience_observation(
             "s_n_optuna_ratio": ratio,
             "threshold": S_RATIO_BREACH_THRESHOLD,
             "breach_threshold": S_RATIO_BREACH_THRESHOLD,
+            # Honest I-3 availability (see CLEAR branch): orthogonal to the S>0
+            # verdict, so it is reported here too.
+            "drift_signal_available": drift_signal_available,
         }
         if drift_detected:
             # Use valid_prior_s (None-filtered) so monotonic_trend contains no None values.
