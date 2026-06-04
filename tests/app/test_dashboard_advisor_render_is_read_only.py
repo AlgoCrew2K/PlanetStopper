@@ -117,6 +117,9 @@ class TestAdvisorTabRenderIsReadOnly:
         mock_db.record_exit_trigger.assert_not_called()
         mock_db.record_shadow_observation.assert_not_called()
         mock_db.write_telemetry_row.assert_not_called() if hasattr(mock_db, "write_telemetry_row") else None
+        # AC-5: record_llm_suggestion is a new operator-decision write path; it must
+        # stay off the render path (only /accept and /reject may call it).
+        mock_db.record_llm_suggestion.assert_not_called()
         assert resp.status_code == 200, (
             f"GET /ai-advisor returned {resp.status_code}; expected 200."
         )
