@@ -657,70 +657,57 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
 def _get_shadow_divergence_trajectory(
     symphony_id: str, db_file: str
 ) -> list[tuple[float, float]] | None:
-    """Return ordered per-day EOD ``(shadow_return, current_return)`` pairs for the
-    current position epoch — the inputs to the guard-alpha DIVERGENCE formula.
+    """Return ordered per-day EOD ``(shadow_return, current_return)`` pairs spanning
+    the symphony's ENTIRE LIFETIME (all position epochs) — the inputs to the
+    guard-alpha DIVERGENCE formula.
 
-    Identical day-row selection and epoch-scoping to
-    ``_get_shadow_cumulative_trajectory`` (last row per trading_day by ts_utc,
-    filtered to the latest position_epoch with ``IS`` so legacy NULL-epoch rows
-    form one segment). Kept as a SEPARATE function so the shadow-only trajectory
-    (and its established list[float] contract + epoch-scoping tests) is unchanged.
+    LIFETIME (cross-epoch) scope — DATA-CORRECTNESS-AUDIT C-1 fix (AC-1).
+    ``database.wipe_transient_state`` resets a triggered symphony's
+    ``position_epoch`` at the next market open, so a guard-trigger day's divergence
+    is stranded in an OLD epoch while the latest epoch is a fresh 1-day (or flat
+    multi-day) window with zero divergence. Scoping the divergence trajectory to the
+    latest epoch (the prior behaviour) therefore reported a structural 0.00% Guard
+    Alpha for EVERY symphony that ever protected the operator. This function now
+    selects the last row per trading_day by ts_utc across ALL epochs, ordered by
+    trading_day, so the divergence chain captures the lifetime guard effect.
 
-    The CR/MDD consumers need BOTH series because the guard's effect is the
-    divergence between the bot's series (shadow_return — frozen at exit when the
-    guard fires) and the held series (current_return — the position continuing to
-    hold). For an untriggered symphony shadow_return == current_return every day,
-    so the divergence is exactly zero (no phantom alpha).
+    WHY LIFETIME IS SAFE (the user's directive — chain the GUARD's divergence, NOT a
+    prior position's MARKET returns): the consumers add this divergence on top of a
+    SEPARATE ``if_held`` baseline (the current Composer simple_return), so the market
+    level is never re-derived from old-epoch returns. The divergence itself
+    ``(prod_shadow - prod_current)`` is the bot-vs-held GAP: on an untriggered day
+    shadow_return == current_return, so that day contributes an identical factor to
+    both products and nets to zero effect — an untriggered epoch (or symphony)
+    accumulates exactly 0 divergence no matter how many epochs are chained.
+
+    Distinct from ``_get_shadow_cumulative_trajectory`` (the shadow-ONLY absolute
+    series), which MUST stay scoped to the latest epoch: splicing the absolute
+    shadow level across epochs WOULD chain a prior position's market returns. That
+    function and its epoch-segmentation tests are intentionally left unchanged; only
+    the divergence-pair trajectory goes lifetime.
 
     Returns None when fewer than 2 distinct trading days exist (no recorded
     divergence yet — both series coincide).
     """
     import sqlite3
-    from datetime import datetime as _dt
-
-    today = _dt.now(UTC).strftime("%Y-%m-%d")
 
     try:
         conn = sqlite3.connect(db_file, timeout=10.0)
-        try:
-            epoch_row = conn.execute(
-                "SELECT position_epoch FROM shadow_history "
-                "WHERE symphony_id = ? ORDER BY ts_utc DESC LIMIT 1",
-                (symphony_id,),
-            ).fetchone()
-            has_epoch_column = True
-            _current_epoch = epoch_row[0] if epoch_row is not None else None
-        except sqlite3.OperationalError:
-            has_epoch_column = False
-            _current_epoch = None
-
-        if has_epoch_column:
-            # `IS` (not `=`) so a NULL current epoch matches NULL legacy rows.
-            rows = conn.execute(
-                "SELECT trading_day, shadow_return, current_return "
-                "FROM shadow_history "
-                "WHERE symphony_id = ? "
-                "  AND position_epoch IS ( "
-                "        SELECT position_epoch FROM shadow_history s3 "
-                "        WHERE s3.symphony_id = ? "
-                "        ORDER BY s3.ts_utc DESC LIMIT 1) "
-                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
-                "                WHERE s2.symphony_id = shadow_history.symphony_id "
-                "                  AND s2.trading_day = shadow_history.trading_day) "
-                "ORDER BY trading_day ASC",
-                (symphony_id, symphony_id),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT trading_day, shadow_return, current_return "
-                "FROM shadow_history "
-                "WHERE symphony_id = ? "
-                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
-                "                WHERE s2.symphony_id = shadow_history.symphony_id "
-                "                  AND s2.trading_day = shadow_history.trading_day) "
-                "ORDER BY trading_day ASC",
-                (symphony_id,),
-            ).fetchall()
+        # Lifetime scope: NO position_epoch filter. The MAX(ts_utc) per
+        # (symphony_id, trading_day) still collapses each day to its EOD row, and a
+        # trading_day belongs to exactly one epoch, so the cross-epoch series is the
+        # ordered concatenation of every epoch's EOD rows. The query is identical
+        # whether or not a position_epoch column exists, so no column probe is needed.
+        rows = conn.execute(
+            "SELECT trading_day, shadow_return, current_return "
+            "FROM shadow_history "
+            "WHERE symphony_id = ? "
+            "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+            "                WHERE s2.symphony_id = shadow_history.symphony_id "
+            "                  AND s2.trading_day = shadow_history.trading_day) "
+            "ORDER BY trading_day ASC",
+            (symphony_id,),
+        ).fetchall()
         conn.close()
     except Exception:
         return None
@@ -964,6 +951,70 @@ def get_portfolio_max_drawdown(
         trading_day=trading_day,
         db_path=db_path,
     )
+
+
+# ---------------------------------------------------------------------------
+# account-basis portfolio CR  (B-1 fix)
+# ---------------------------------------------------------------------------
+
+
+def get_portfolio_cumulative_return_account_basis(
+    vw_cr: dict,
+    account_if_held: float,
+    account_value: float,
+    symphony_value_sum: float,
+) -> dict:
+    """Re-express portfolio Cumulative Return on an account (cash-inclusive) basis.
+
+    The VW portfolio CR is computed over invested capital only (cash excluded).
+    The Composer "Held" figure (simple_return) uses account value as the denominator
+    (cash-inclusive).  Subtracting the two is a scope artefact, not guard alpha.
+
+    This function translates the bot's guard-alpha DIVERGENCE from VW symphony-basis
+    to account-basis so that Bot and Held share a common denominator:
+
+        guard_delta_vw = vw_cr["dry_run"] - vw_cr["if_held"]   # pure guard effect, VW basis
+        invested_frac  = symphony_value_sum / account_value     # fraction of account deployed
+        dry_run_account = account_if_held + guard_delta_vw * invested_frac
+
+    The guard effect is measured against the VW if_held (same denominator as dry_run),
+    then scaled by invested_frac so it is expressed as a fraction of account value,
+    then applied to the account-level Held return.
+
+    Args:
+        vw_cr:               {"if_held": float, "dry_run": float | None} — VW portfolio CR
+                             Both fields use symphony value-sum as denominator.
+        account_if_held:     Composer simple_return * 100 (account-level Held, cash-inclusive)
+        account_value:       total account value including cash (from _account_totals_cache)
+        symphony_value_sum:  sum of invested symphony values (cash excluded)
+
+    Returns:
+        {"if_held": account_if_held, "dry_run": account-basis dry_run | None}
+
+    Guard invariants:
+        - Untriggered symphonies have dry_run == if_held on VW basis → guard_delta_vw == 0 →
+          dry_run_account == account_if_held (no phantom alpha regardless of cash).
+        - if account_value <= 0 or symphony_value_sum <= 0: returns vw_cr unchanged
+          (division guard; caller should treat as a missing-data case).
+        - if vw_cr["dry_run"] is None or vw_cr["if_held"] is None: returns
+          {"if_held": account_if_held, "dry_run": None}.
+    """
+    if not (math.isfinite(account_value) and account_value > 0.0):
+        return vw_cr
+    if not (math.isfinite(symphony_value_sum) and symphony_value_sum > 0.0):
+        return vw_cr
+    if vw_cr.get("if_held") is None:
+        return {"if_held": account_if_held, "dry_run": None}
+    if vw_cr.get("dry_run") is None:
+        return {"if_held": account_if_held, "dry_run": None}
+
+    invested_frac = symphony_value_sum / account_value
+    # Guard delta measured on VW basis (dry_run and if_held share the same
+    # symphony-value denominator, so this is a clean pure-guard-effect measure).
+    guard_delta_vw = float(vw_cr["dry_run"]) - float(vw_cr["if_held"])
+    # Scale to account basis and apply to the account-level Held return.
+    dry_run_account = account_if_held + guard_delta_vw * invested_frac
+    return {"if_held": account_if_held, "dry_run": dry_run_account}
 
 
 # ---------------------------------------------------------------------------

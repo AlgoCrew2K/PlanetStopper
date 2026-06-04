@@ -687,12 +687,22 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
 
     try:
         if "portfolio_cr" in _account_totals_cache:
-            cumulative_return: dict | None = {
-                "if_held": _account_totals_cache["portfolio_cr"],
-                "dry_run": analytics.get_portfolio_cumulative_return(
-                    symphonies_list, bot_state, trading_day=trading_day
-                ).get("dry_run"),
-            }
+            # B-1 fix: put Bot (dry_run) on the same account basis as Held (if_held).
+            # Held = Composer simple_return (cash-inclusive denominator).
+            # Bot = VW per-symphony guard divergence scaled to account basis so that
+            # guard_alpha = dry_run - if_held is a scope-clean apples-to-apples delta.
+            # guard_delta is measured on the VW basis first (dry_run and if_held share
+            # the same symphony-value denominator), then scaled by invested_frac.
+            _vw_cr = analytics.get_portfolio_cumulative_return(
+                symphonies_list, bot_state, trading_day=trading_day
+            )
+            _symphony_value_sum = sum(s.get("value") or 0.0 for s in symphonies_list)
+            cumulative_return: dict | None = analytics.get_portfolio_cumulative_return_account_basis(
+                _vw_cr,
+                _account_totals_cache["portfolio_cr"],
+                account_value,
+                _symphony_value_sum,
+            )
         else:
             cumulative_return = analytics.get_portfolio_cumulative_return(
                 symphonies_list, bot_state, trading_day=trading_day
