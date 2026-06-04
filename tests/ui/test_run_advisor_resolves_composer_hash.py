@@ -98,19 +98,27 @@ def test_logic_changes_evaluate_fetches_tree_by_composer_hash(flask_client, bot_
         return _score_tree_only_for_hash(identifier)
 
     # propose_operator_logic_change is patched so the route returns cleanly once the
-    # tree fetch succeeds — we only care about the identifier passed to the fetch.
+    # tree fetch succeeds.  We capture the symphony_id KWARG the route passes to the
+    # engine — the DOWNSTREAM identifier that flows into run_backtest -> dvm_capital
+    # unpacking (composer_backtest_client.py:269).  It too must be the HASH, not the
+    # name (a second instance of the same bug; using the name -> empty capital stats).
     # Use MagicMock constructor kwargs (not __dict__ replacement) so the mock's
     # __getattr__ machinery stays intact for route attributes like proposals/gate_batch.
     fake_result = MagicMock(
         proposals=[], gate_batch=None, survivors=[], message="ok", no_api_key=False
     )
+    engine_captured = {"symphony_id": "__unset__"}
+
+    def _engine_spy(*args, **kwargs):
+        engine_captured["symphony_id"] = kwargs.get("symphony_id", "__missing__")
+        return fake_result
 
     with (
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
         patch("symphony_logic.fetch_symphony_score", side_effect=_spy),
         patch("database.load_state", return_value=bot_state_with_mapping),
         patch("advisors.logic_change_engine.propose_operator_logic_change",
-              return_value=fake_result),
+              side_effect=_engine_spy),
     ):
         resp = flask_client.post(
             "/ai-advisor/logic-changes/evaluate",
@@ -129,6 +137,16 @@ def test_logic_changes_evaluate_fetches_tree_by_composer_hash(flask_client, bot_
         f"fetch_symphony_score was called with {captured['identifier']!r}; it MUST "
         f"be the Composer HASH {_SYM_HASH!r}. AC-8: the route must resolve the "
         f"submitted NAME {_SYM_NAME!r} to its Composer hash before fetching the tree."
+    )
+    # Downstream regression guard: the engine call (-> run_backtest -> dvm_capital)
+    # must ALSO receive the hash, not the name.  Without this, a regression could
+    # fix the fetch but revert the engine call to the name and produce empty capital
+    # stats silently.
+    assert engine_captured["symphony_id"] == _SYM_HASH, (
+        f"propose_operator_logic_change got symphony_id={engine_captured['symphony_id']!r}; "
+        f"it MUST be the Composer HASH {_SYM_HASH!r} so the downstream run_backtest "
+        f"dvm_capital unpack (composer_backtest_client.py:269) resolves — passing the "
+        f"NAME yields empty capital stats."
     )
 
 
