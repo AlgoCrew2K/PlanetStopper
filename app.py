@@ -2307,10 +2307,23 @@ def get_symphony_settings(symphony_name: str):
     # get_symphony_strategy defaults live_mode=False (arch rule 4: explicit, never by omission).
     live_mode = bool(strategy.get("live_mode", False))
 
-    # advisor_observations.symphony_id stores the normalized name written by
-    # autotuner.py:save_autotune_run(symphony_id=normalized_name).  Use the
-    # already-normalized symphony_name directly — no hash lookup needed.
-    advisor_observations = database.get_advisor_observations_for_symphony(symphony_name)
+    # advisor_observations.symphony_id is keyed by normalize_name(sym["name"])
+    # (written by autotuner.py:save_autotune_run(symphony_id=normalized_name)).
+    # The URL param (symphony_name) arrives as a Composer hash like 'iaSOOUsmnCJHiZvbrWfs'
+    # normalized to its lowercase form — never the human name.  Resolve hash → name
+    # via bot_state before querying, falling back to symphony_name if no match found.
+    bot_state = database.load_state()
+    obs_symphony_id = symphony_name  # fallback: pass as-is (may yield 0 rows on hash)
+    for sym_key, sym_data in bot_state.items():
+        if not isinstance(sym_data, dict) or "name" not in sym_data:
+            continue
+        normalized_sym_name = database.normalize_name(sym_data["name"])
+        # Match on normalized Composer hash (the URL param) OR on the normalized name
+        # (handles the rare case where the name is passed directly instead of the hash).
+        if database.normalize_name(sym_key) == symphony_name or normalized_sym_name == symphony_name:
+            obs_symphony_id = normalized_sym_name
+            break
+    advisor_observations = database.get_advisor_observations_for_symphony(obs_symphony_id)
 
     return jsonify({
         "live_mode": live_mode,
