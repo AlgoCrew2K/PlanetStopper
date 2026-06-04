@@ -273,3 +273,84 @@ def test_asset_swaps_evaluate_413_renders_clean_operator_message():
         "The asset-swaps route did not translate the 413 to a clean message. "
         f"Body: {body!r}. AC-9c: both evaluate routes translate the 413."
     )
+
+
+# ===========================================================================
+# AC-9d — COMPLETION: a backtest-able symphony's evaluate returns a REAL result
+# (populated backtest stats), NOT a graceful-fail / "too large" / empty.
+#
+# team-lead's load-bearing check (verified live by composer): 10/11 of the user's
+# symphonies are < 1 MB and backtest-able; LQD+EYEG + Corporate Chaos 5 complete
+# end-to-end with REAL populated baseline/variant stats and an honest gate verdict
+# (a gated rejection WITH numbers IS a real result).  This regression-guards that
+# the COMPLETION path renders the real stats — so a future change that turns
+# completion into a silent graceful-fail (the crash-guard masking a real failure)
+# fails loudly.  "Crash fixed" != "Run Advisor completes."
+# ===========================================================================
+
+
+def test_logic_changes_evaluate_completion_surfaces_real_backtest_stats():
+    """A backtest-able symphony that completes must surface its REAL baseline/variant
+    backtest stats in the response — backtest_error must be falsy and the stats must
+    be populated (not the too-large message, not all-None).
+
+    Guards against the crash-fix MASKING a non-completion: a graceful-fail or a
+    silently-empty result would fail this, distinguishing "completed with numbers"
+    from "failed gracefully".
+    """
+    import sys
+    if "." not in sys.path:
+        sys.path.insert(0, ".")
+    sys.path.insert(0, str(_REPO_ROOT))
+    from tests.ui.test_logic_change_routes import _make_logic_change_run_result
+
+    # A real completion: no backtest_error, and populated baseline/variant stats
+    # (shape per composer's live evidence — sharpe/max_drawdown present).
+    run_result = _make_logic_change_run_result(backtest_error=None)
+    proposal = run_result.proposals[0]
+    proposal.baseline_stats = {"sharpe_ratio": 2.227, "max_drawdown": 0.243}
+    proposal.variant_stats = {"sharpe_ratio": 2.180, "max_drawdown": 0.251}
+
+    client = _flask_client()
+    with (
+        patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+        patch("symphony_logic.fetch_symphony_score",
+              return_value={"id": "x", "name": "X", "children": []}),
+        patch("database.load_state", return_value={}),
+        patch("advisors.logic_change_engine.propose_operator_logic_change",
+              return_value=run_result),
+    ):
+        resp = client.post(
+            "/ai-advisor/logic-changes/evaluate",
+            json={"symphony_id": "X", "change_description": "change window 20 to 16"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body is not None
+    blob = str(body).lower()
+    # A completed result must NOT show the too-large/backtest-unavailable message.
+    assert "too large" not in blob and "backtest unavailable" not in blob, (
+        f"A backtest-able symphony's completion rendered a failure message. Body: {body!r}."
+    )
+    # backtest_error must be falsy on a real completion.
+    assert not body.get("backtest_error"), (
+        f"backtest_error should be falsy on a real completion; got {body.get('backtest_error')!r}."
+    )
+    # The real stats must round-trip into the response — proving a populated result
+    # rendered (not a silently-empty graceful-fail).
+    detail = (body.get("survivors_detail") or []) + (body.get("rejected_detail") or [])
+    assert detail, (
+        "A completed evaluate must surface a proposal in survivors_detail or "
+        f"rejected_detail; got neither. Body keys: {sorted(body.keys())}."
+    )
+    first = detail[0]
+    assert first.get("baseline_stats") and first.get("variant_stats"), (
+        "The completed proposal's baseline_stats / variant_stats are missing from "
+        f"the response — the completion path did not surface the real backtest "
+        f"numbers. proposal: {first!r}."
+    )
+    assert first["baseline_stats"].get("sharpe_ratio") is not None, (
+        "baseline_stats.sharpe_ratio is None — the response carried an empty/"
+        "graceful-fail result rather than a real completion with numbers."
+    )
