@@ -532,6 +532,7 @@
             <thead>
                 <tr>
                     <th>Time</th>
+                    <th>Symphony</th>
                     <th>Advisor</th>
                     <th>Subject</th>
                     <th>Verdict</th>
@@ -546,6 +547,7 @@
                 {% set verdict_class = _VERDICT_CLASS.get(verdict, "verdict-unknown") %}
                 <tr data-obs-id="{{ obs.id }}">
                     <td>{{ obs.created_at | e }}</td>
+                    <td class="obs-symphony">{{ obs.symphony_id | e if obs.symphony_id else "—" }}</td>
                     <td>{{ role_label | e }}</td>
                     <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | e }}</span></td>
                     <td class="{{ verdict_class }}">{{ verdict | e }}</td>

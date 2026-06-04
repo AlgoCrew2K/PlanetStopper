@@ -2307,17 +2307,10 @@ def get_symphony_settings(symphony_name: str):
     # get_symphony_strategy defaults live_mode=False (arch rule 4: explicit, never by omission).
     live_mode = bool(strategy.get("live_mode", False))
 
-    # Resolve symphony_id for the advisor observations query: walk the current bot state
-    # to match normalized_name -> id, falling back to symphony_name itself.
-    bot_state = database.load_state()
-    symphony_id = symphony_name  # default: normalized name is used as id
-    for sym_key, sym_data in bot_state.items():
-        if isinstance(sym_data, dict) and "name" in sym_data:
-            if database.normalize_name(sym_data["name"]) == symphony_name:
-                symphony_id = sym_key
-                break
-
-    advisor_observations = database.get_advisor_observations_for_symphony(symphony_id)
+    # advisor_observations.symphony_id stores the normalized name written by
+    # autotuner.py:save_autotune_run(symphony_id=normalized_name).  Use the
+    # already-normalized symphony_name directly — no hash lookup needed.
+    advisor_observations = database.get_advisor_observations_for_symphony(symphony_name)
 
     return jsonify({
         "live_mode": live_mode,
@@ -2541,6 +2534,19 @@ def ai_advisor_tab():
         if obs["id"] not in seen:
             seen.add(obs["id"])
             deduped_obs.append(obs)
+    # Suppress pure feature-off stubs: NOT_APPLICABLE rows whose raw_response
+    # carries {"feature_flag": "off"} are audit-trail bookkeeping, not advice.
+    # Showing them in the recommendations table misleads the operator.
+    # The Divergence Explainer writes these when §B is disabled (the current
+    # default — CVaR divergence detection is deferred per council verdict).
+    deduped_obs = [
+        obs for obs in deduped_obs
+        if not (
+            obs.get("verdict") == "NOT_APPLICABLE"
+            and isinstance(obs.get("raw_response"), dict)
+            and obs["raw_response"].get("feature_flag") == "off"
+        )
+    ]
     observations = deduped_obs[: _ADVISOR_OBSERVATIONS_PAGE_LIMIT]
 
     return render_template(
