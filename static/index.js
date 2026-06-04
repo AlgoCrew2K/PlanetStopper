@@ -1217,28 +1217,56 @@
         loadState();
         setInterval(loadState, POLL_INTERVAL_MS);
 
-        var windowMap = {
-            'window-30d':  30,
-            'window-60d':  60,
-            'window-90d':  90,
-            'window-125d': 125,
+        // AC-3: each picker button maps to a lowercase URL window token. The SAME
+        // token drives BOTH /api/strip/<token> (re-windows the hero VALUE + vs-rows
+        // + label) and /api/hero-chart/<token> (re-windows the two chart lines).
+        // "window-all" is the NEW All-Time option (token "all" = lifetime cross-epoch).
+        var windowTokenMap = {
+            'window-30d':  '30d',
+            'window-60d':  '60d',
+            'window-90d':  '90d',
+            'window-125d': '125d',
             'window-ytd':  'ytd',
-            'window-1y':   252
+            'window-1y':   '1y',
+            'window-all':  'all'
         };
-        var winLabelMap = { 'window-30d': '30d', 'window-60d': '60d', 'window-90d': '90d', 'window-125d': '125d', 'window-ytd': 'YTD', 'window-1y': '1Y' };
-        Object.keys(windowMap).forEach(function (testid) {
+        var winLabelMap = {
+            'window-30d': '30d', 'window-60d': '60d', 'window-90d': '90d',
+            'window-125d': '125d', 'window-ytd': 'YTD', 'window-1y': '1Y',
+            'window-all': 'All Time'
+        };
+
+        // Re-window the hero headline VALUE + the three vs-rows for a window token.
+        // The windowed strip dict shares portfolio_strip's shape, so we reuse
+        // renderGuardAlpha + updateComparisonRows by wrapping it as a poll-style payload.
+        function fetchWindowedStrip(token) {
+            fetch('/api/strip/' + token)
+                .then(function (r) { return r.json(); })
+                .then(function (strip) {
+                    if (!strip || strip.error) return;
+                    var wrapped = {
+                        portfolio_strip: strip,
+                        meta: { portfolio: { vol_bot: strip.vol_bot, vol_held: strip.vol_held } }
+                    };
+                    renderGuardAlpha(wrapped);
+                    updateComparisonRows(wrapped);
+                })
+                .catch(function (err) { console.error('windowed strip load failed', err); });
+        }
+
+        Object.keys(windowTokenMap).forEach(function (testid) {
             var btn = document.querySelector('[data-testid="' + testid + '"]');
             if (!btn) return;
             btn.addEventListener('click', function () {
                 document.querySelectorAll('[data-testid="window-selector"] button').forEach(function (b) { b.classList.remove('active'); });
                 btn.classList.add('active');
+                var token = windowTokenMap[testid];
+                _heroWindow = token;
                 var winLabel = document.getElementById('guard-alpha-window-label');
                 if (winLabel) winLabel.textContent = winLabelMap[testid] || btn.textContent;
-                var winKey = windowMap[testid];
-                _heroWindow = winKey;
-                // Fetch window-specific data so each range renders a distinct curve.
-                var winParam = (winKey === 252) ? '1y' : (winKey === 'ytd' ? 'ytd' : winKey + 'd');
-                fetch('/api/hero-chart/' + winParam)
+                // The picker drives EVERY metric: re-window the chart lines (fetch +
+                // _cumChart update) AND the headline VALUE + vs-rows (windowed strip).
+                fetch('/api/hero-chart/' + token)
                     .then(function (r) { return r.json(); })
                     .then(function (d) {
                         var naEl = document.getElementById('hero-chart-na');
@@ -1255,6 +1283,9 @@
                     .catch(function () {
                         applyHeroWindow(_heroWindow);
                     });
+                // Re-window the headline guard-alpha VALUE + the three vs-rows so the
+                // label always matches the actual window (kills the F1 mislabel).
+                fetchWindowedStrip(token);
             });
         });
     });
