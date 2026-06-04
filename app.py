@@ -625,6 +625,12 @@ def _build_meta(
         # hero Ann. Vol vs-row. None-safe: stays None when no shadow history.
         "vol_bot": ps.get("vol_bot"),
         "vol_held": ps.get("vol_held"),
+        # Option A: the WINDOWED guard alpha (default window) + its window echo feed the
+        # SSR hero headline so first paint matches the picker; account_all_time_cr is the
+        # SEPARATE, non-windowed "Account · all-time" reference.
+        "guard_alpha": ps.get("guard_alpha"),
+        "window": ps.get("window"),
+        "account_all_time_cr": ps.get("account_all_time_cr"),
     }
 
     return {
@@ -646,12 +652,25 @@ def _build_meta(
     }
 
 
+# Option A (PM live gate): the hero loads pre-windowed at this default window so the
+# headline GUARD ALPHA on first paint equals /api/strip/<default> — no 67-vs-29 jump on
+# the first picker click. Must match the picker's active button + label
+# (templates/index.html: window-30d active, label "30d").
+_DEFAULT_HERO_WINDOW = "30d"
+
+
 def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) -> dict:
     """Compute portfolio_strip from bot_state using analytics helpers.
 
     Shared by get_api_state_dict() (Jinja render path) and get_state() (JSON
     poll path) so both paths emit identical portfolio_strip shape.  This closes
     the systemic 0.00% everywhere defect (FP-T1-01).
+
+    Option A: the windowed hero metrics (guard_alpha + window echo) are computed via
+    analytics.compute_windowed_portfolio_strip at _DEFAULT_HERO_WINDOW — the SAME path
+    /api/strip/<window> uses — so the default hero matches the picker's first click. The
+    account-lifetime CR (~Composer simple_return) is surfaced SEPARATELY as
+    account_all_time_cr: it carries no window label and never windows.
     """
     if trading_day is None:
         trading_day = datetime.now(_ET).strftime("%Y-%m-%d")
@@ -794,7 +813,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         except Exception:
             _daemon_log.error("_compute_portfolio_strip bot/held series failed", exc_info=True)
 
-        return {
+        _strip = {
             "today_change": today_change,
             "cumulative_return": cumulative_return,
             "max_drawdown": max_drawdown,
@@ -806,6 +825,34 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             "hist_held": hist_held,
             "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
         }
+
+        # Option A: surface the Composer account-lifetime CR as its OWN non-windowed stat
+        # ("Account · all-time"). It is the cash-inclusive simple_return scalar — there is
+        # no daily account series to window it on — so it stays fixed across picker windows
+        # and never carries the window label. Numeric-guarded at the serialization boundary.
+        _acct_cr = _account_totals_cache.get("portfolio_cr")
+        if isinstance(_acct_cr, (int, float)):
+            _strip["account_all_time_cr"] = _acct_cr
+
+        # Option A: load the hero pre-windowed at the default window so the headline GUARD
+        # ALPHA equals /api/strip/<default> (same compute_windowed_portfolio_strip path,
+        # same symphonies_list) — no value jump on the first picker click. guard_alpha +
+        # window are the windowed hero metric + its honest label.
+        try:
+            _default = analytics.compute_windowed_portfolio_strip(
+                symphonies_list, bot_state, window=_DEFAULT_HERO_WINDOW
+            )
+            if isinstance(_default, dict):
+                _ga = _default.get("guard_alpha")
+                _strip["guard_alpha"] = _ga if isinstance(_ga, (int, float)) else None
+                _win = _default.get("window", _DEFAULT_HERO_WINDOW)
+                _strip["window"] = _win if isinstance(_win, str) else _DEFAULT_HERO_WINDOW
+        except Exception:
+            _daemon_log.error(
+                "_compute_portfolio_strip default-window strip failed", exc_info=True
+            )
+
+        return _strip
     except Exception as _exc:
         _daemon_log.error(
             "_compute_portfolio_strip failed — portfolio strip will be null: %s", _exc, exc_info=True
