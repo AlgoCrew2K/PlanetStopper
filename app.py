@@ -1612,12 +1612,16 @@ def api_symphony_logs(symphony_id):
 def get_hero_chart(window):
     """Return hist_dates/hist_bot/hist_held for the requested time window.
 
-    window values: 30d, 60d, 90d, 125d, ytd, 1y
+    window values: 30d, 60d, 90d, 125d, ytd, 1y, all
     Fetches from shadow_history with an appropriate days parameter so each
-    window returns a distinct, correctly-sized slice.
+    window returns a distinct, correctly-sized slice. "all" fetches the full
+    history (days=None) — the lifetime/All-Time view.
     """
     now = datetime.now(_ET)
-    if window == "ytd":
+    if window == "all":
+        # All Time: fetch the full history. analytics treats days=None as "all".
+        fetch_days = None
+    elif window == "ytd":
         jan1 = datetime(now.year, 1, 1).date()
         days_since_jan1 = max((now.date() - jan1).days, 1)
         fetch_days = min(days_since_jan1 + 30, 365)
@@ -1632,8 +1636,9 @@ def get_hero_chart(window):
     else:
         fetch_days = 30
 
-    # Minimum trading days needed for the window to be meaningful
-    _min_days = {"30d": 20, "60d": 40, "90d": 60, "125d": 80, "ytd": 10, "1y": 100}
+    # Minimum trading days needed for the window to be meaningful. "all" has no
+    # floor (whatever history exists is the lifetime view).
+    _min_days = {"30d": 20, "60d": 40, "90d": 60, "125d": 80, "ytd": 10, "1y": 100, "all": 2}
     required = _min_days.get(window, 10)
 
     def _compound(daily: list[float]) -> list[float]:
