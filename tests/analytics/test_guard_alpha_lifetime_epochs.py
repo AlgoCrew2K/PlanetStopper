@@ -15,20 +15,25 @@ THE BUG (DATA-CORRECTNESS-AUDIT C-1, proven against live alphabot_state.db):
   for symphonies that genuinely saved money. The audit reproduced this directly:
   ``div_in_latest_epoch = 0`` for 100% of the 11 live symphonies.
 
-THE CONTRACT THESE TESTS PIN (the fix):
-  Guard Alpha must be computed over the LIFETIME divergence chain spanning ALL position
-  epochs — not just the latest one:
+THE CONTRACT THESE TESTS PIN (the fix) — EPOCH-ADDITIVE (semantic B):
+  Guard Alpha must be the SUM of each position-epoch's OWN divergence across ALL epochs,
+  NOT a single global product:
 
-      prod_shadow  = PROD over ALL epochs' EOD rows of (1 + shadow_return/100)
-      prod_current = PROD over the same rows of (1 + current_return/100)
-      lifetime_divergence_pct = (prod_shadow - prod_current) * 100
+      lifetime_divergence_pct = SUM over epochs E of
+          (PROD_E(1 + shadow_return/100) - PROD_E(1 + current_return/100)) * 100
       dry_run = if_held + lifetime_divergence_pct
 
   CRITICAL SUBTLETY (the user's directive): chain the GUARD's DIVERGENCE across epochs,
-  but do NOT chain a prior position's market RETURNS. ``if_held`` stays the current
-  Composer lifetime simple_return; only the divergence product spans epochs. A naive
-  fix that re-derives if_held from old-epoch market returns is WRONG and these tests
-  catch it (test_lifetime_if_held_baseline_is_unchanged_by_cross_epoch_divergence).
+  but do NOT chain a prior position's market RETURNS. A single global product across
+  epochs (semantic A) multiplies a prior epoch's prod_shadow into a later epoch's factors
+  — that CHAINS the prior position's market returns across the reset (forbidden). The
+  epoch-additive sum measures each position's guard effect in its OWN frame, so an epoch
+  with zero guard effect contributes exactly 0 regardless of how volatile its market was.
+  ``if_held`` stays the current Composer lifetime simple_return; only the per-epoch
+  divergence sum spans epochs. A fix that re-derives if_held from old-epoch market returns,
+  or that uses the global product, is WRONG and these tests catch it
+  (test_lifetime_if_held_baseline_is_unchanged_by_cross_epoch_divergence +
+  the epoch-additive expected values).
 
 INVARIANTS:
   - never-triggered (shadow == current every day, every epoch) -> lifetime Guard Alpha
@@ -138,17 +143,54 @@ def _sym(sym_id: str, if_held_pct: float, max_dd_pct: float = 8.0) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Derivation helpers — the lifetime divergence formula, applied to ALL rows
+# Derivation helpers — EPOCH-ADDITIVE lifetime divergence (semantic B).
+#
+# The lifetime Guard Alpha is the SUM of each position-epoch's OWN divergence,
+# NOT a single global product across all epochs. Within an epoch the bot and held
+# series share one entry anchor; at the epoch reset BOTH re-anchor, so the guard's
+# effect must be measured inside each epoch's frame and summed:
+#
+#     lifetime_alpha = SUM over epochs E of  (PROD_E(1+shadow/100) - PROD_E(1+current/100)) * 100
+#
+# A single global product (semantic A) multiplies a prior epoch's prod_shadow into a
+# later epoch's factors — which CHAINS the prior position's MARKET returns across the
+# reset (the exact thing AC-1 forbids). Discriminator: an epoch with zero guard effect
+# (shadow == current) but a volatile market would, under semantic A, rescale a later
+# epoch's real divergence; under semantic B it contributes exactly 0. The never-triggered
+# anchor holds under both, but only B is faithful to "chain the divergence, not the
+# market returns" — verified by the implementer (risk-engine) and adopted on the record.
 # ---------------------------------------------------------------------------
 
-def _lifetime_divergence_pct(rows: list[dict]) -> float:
-    """(PROD(1+shadow/100) - PROD(1+current/100)) * 100 over ALL rows (all epochs)."""
+def _epoch_groups(rows: list[dict]) -> list[list[dict]]:
+    """Group rows into contiguous position-epoch segments, preserving order.
+
+    Rows arrive trading_day-ascending; an epoch label change starts a new segment.
+    Uses contiguous runs (not a set) so a repeated label would form a new segment —
+    matching how the engine re-stamps a fresh epoch per position.
+    """
+    groups: list[list[dict]] = []
+    current_label = object()  # sentinel — never equal to a real epoch label
+    for r in rows:
+        if r["position_epoch"] != current_label:
+            groups.append([])
+            current_label = r["position_epoch"]
+        groups[-1].append(r)
+    return groups
+
+
+def _epoch_divergence_pct(epoch_rows: list[dict]) -> float:
+    """One epoch's divergence: (PROD(1+shadow/100) - PROD(1+current/100)) * 100."""
     prod_shadow = 1.0
     prod_current = 1.0
-    for r in rows:
+    for r in epoch_rows:
         prod_shadow *= 1.0 + r["shadow_return"] / 100.0
         prod_current *= 1.0 + r["current_return"] / 100.0
     return (prod_shadow - prod_current) * 100.0
+
+
+def _lifetime_divergence_pct(rows: list[dict]) -> float:
+    """Epoch-additive (semantic B): SUM of each position-epoch's own divergence."""
+    return sum(_epoch_divergence_pct(g) for g in _epoch_groups(rows))
 
 
 def _latest_epoch_rows(rows: list[dict], latest_label: str) -> list[dict]:
@@ -157,14 +199,24 @@ def _latest_epoch_rows(rows: list[dict], latest_label: str) -> list[dict]:
 
 
 def _lifetime_bot_equity_mdd(rows: list[dict], if_held_pct: float) -> float:
-    """Peak-to-trough of bot_equity[t] = if_held + cum_divergence[0..t]*100 over ALL rows."""
-    prod_shadow = 1.0
-    prod_current = 1.0
+    """Peak-to-trough of the bot's equity path over the EPOCH-ADDITIVE divergence chain.
+
+    bot_equity[t] = if_held + (cumulative epoch-additive divergence through step t) * 1.
+    Divergence accrues within each epoch from its own anchor; the running total carries
+    across epoch boundaries (the prior epoch's realized guard effect is locked in), but
+    each epoch's contribution is computed in its OWN frame (no market-return chaining).
+    """
     equity: list[float] = []
-    for r in rows:
-        prod_shadow *= 1.0 + r["shadow_return"] / 100.0
-        prod_current *= 1.0 + r["current_return"] / 100.0
-        equity.append(if_held_pct + (prod_shadow - prod_current) * 100.0)
+    running_alpha = 0.0
+    for group in _epoch_groups(rows):
+        prod_shadow = 1.0
+        prod_current = 1.0
+        epoch_start_alpha = running_alpha
+        for r in group:
+            prod_shadow *= 1.0 + r["shadow_return"] / 100.0
+            prod_current *= 1.0 + r["current_return"] / 100.0
+            equity.append(if_held_pct + epoch_start_alpha + (prod_shadow - prod_current) * 100.0)
+        running_alpha = epoch_start_alpha + (prod_shadow - prod_current) * 100.0
     peak = equity[0]
     max_dd = 0.0
     for v in equity:
