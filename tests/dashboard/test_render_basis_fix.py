@@ -612,3 +612,190 @@ class TestUpdateComparisonRowsPrefersWindowedCumulativeReturn:
             "read it for the cumulative comparison row on initial load. "
             "Without this, the initial-load Held will always be account-basis (~63.95%)."
         )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 9 — closed_frozen fallback: JS fetches /api/strip when guard_alpha absent
+#
+# UX-expert live gate finding (2026-06-04):
+#   When market is closed_frozen, /api/state portfolio_strip has NO guard_alpha field.
+#   The fix's renderGuardAlpha reads `ps.guard_alpha` which is undefined → null → '--'.
+#   The headline shows '--' instead of the correct windowed value (+0.90%).
+#
+#   Root cause: the frozen path in app.py (_compute_portfolio_strip is not called for
+#   the frozen /api/state response; the _portfolio_strip dict built at line 1262 never
+#   invokes compute_windowed_portfolio_strip so guard_alpha is absent).
+#
+#   Required fix: when renderGuardAlpha receives a null guard_alpha on the first poll,
+#   the JS must immediately fetch /api/strip/<default-window> and re-render the headline
+#   with the strip's guard_alpha. /api/strip/<window> DOES return guard_alpha correctly
+#   in all market states (confirmed by ux-expert).
+#
+#   Additionally: the frozen portfolio_strip.cumulative_return carries account-basis
+#   if_held (~63.95%); windowed_cumulative_return is absent. The cumulative row therefore
+#   falls back to account-basis. The same strip fetch must trigger updateComparisonRows
+#   with the windowed strip so the cumulative row also corrects.
+# ---------------------------------------------------------------------------
+
+
+class TestClosedFrozenFallbackFetchesStrip:
+    """When portfolio_strip.guard_alpha is absent (closed_frozen market state),
+    renderGuardAlpha must trigger a fallback fetch of /api/strip/<default-window>
+    to populate the headline. Without this, the headline shows '--' on market close.
+
+    These are source-text assertions against index.js. The PM live gate on :8090
+    (or :8095 with worktree code) is the definitive verification surface.
+    """
+
+    def test_render_guard_alpha_triggers_strip_fallback_when_guard_alpha_null(self):
+        """When portfolio_strip.guard_alpha is absent (null), renderGuardAlpha or its
+        caller must trigger fetchWindowedStrip so the headline does not stay '--'.
+
+        Source contract: renderGuardAlpha must call fetchWindowedStrip when guard_alpha
+        is null, OR updateDashboard/loadState must call fetchWindowedStrip after a null
+        guard_alpha is detected. Either way: fetchWindowedStrip must be called from the
+        renderGuardAlpha body OR from updateDashboard (which calls renderGuardAlpha).
+
+        Current code: renderGuardAlpha body has `guard_alpha != null` only for the color
+        guard — it does NOT call fetchWindowedStrip when guard_alpha is null. That is the
+        bug: null guard_alpha → renders '--', never triggers fallback.
+        """
+        js = _js()
+
+        start = js.find("function renderGuardAlpha")
+        assert start != -1, "renderGuardAlpha must exist"
+        end_marker = js.find("\n    function ", start + 1)
+        body = js[start:end_marker] if end_marker != -1 else js[start:start + 800]
+
+        # renderGuardAlpha must call fetchWindowedStrip when guard_alpha is null.
+        # The fallback can be inline: `if (guard_alpha == null) { fetchWindowedStrip('30d'); return; }`
+        assert "fetchWindowedStrip" in body, (
+            "FROZEN-PATH FAIL: renderGuardAlpha does not call fetchWindowedStrip. "
+            "When portfolio_strip.guard_alpha is null (closed_frozen market state), "
+            "the function renders '--' and the headline never corrects. "
+            "The fix: inside renderGuardAlpha, when guard_alpha is null, call "
+            "fetchWindowedStrip('30d') to populate the headline from the strip API."
+        )
+
+    def test_update_dashboard_calls_strip_fallback_when_guard_alpha_absent(self):
+        """fetchWindowedStrip must be called on the INITIAL LOAD path, not only on
+        picker click. The picker click is already wired (1 call site). A second call
+        site is needed for the closed_frozen fallback.
+
+        Source contract: fetchWindowedStrip must appear as a CALL (not just a definition)
+        at least twice in index.js — once in the picker click handler (existing) and once
+        on a path reachable without user interaction (new — for initial load fallback).
+
+        Note: the function DEFINITION (`function fetchWindowedStrip(token) {`) is NOT a
+        call site. We count only `fetchWindowedStrip(` occurrences that are NOT the
+        function declaration line.
+        """
+        js = _js()
+
+        # Count call sites (exclude the function declaration itself).
+        # The declaration is: `function fetchWindowedStrip(token) {`
+        # A call site is: `fetchWindowedStrip(` NOT preceded by `function `.
+        # Strategy: find all matches of fetchWindowedStrip( and exclude the declaration.
+        all_matches = [(m.start(), m.end()) for m in re.finditer(r"fetchWindowedStrip\s*\(", js)]
+        call_sites = [
+            pos for pos, end in all_matches
+            if not js[max(0, pos - 10):pos].rstrip().endswith("function")
+        ]
+
+        assert len(call_sites) >= 2, (
+            f"FROZEN-PATH FAIL: fetchWindowedStrip is called only {len(call_sites)} time(s) "
+            "(excluding the function declaration). For the closed_frozen path, it must be "
+            "called at least twice: once in the picker-click handler (existing) and once on "
+            "the initial-load fallback path (new — fires when guard_alpha is absent). "
+            f"Call site positions found: {call_sites}"
+        )
+
+    def test_strip_fallback_uses_default_window_token(self):
+        """The fallback strip fetch must use the default window token ('30d') to match
+        the active picker button and window label on page load. Using a hardcoded '30d'
+        token or the _DEFAULT_HERO_WINDOW constant is acceptable — using 'all' or any
+        non-default token would mismatch the label and produce a confusing headline value.
+        """
+        js = _js()
+
+        # Locate fetchWindowedStrip call sites and check that at least one is called
+        # with '30d' as the token (the default window that matches the active picker button).
+        # This pins the default-window invariant: the fallback headline must match
+        # what the picker shows as active on load.
+        has_default_token_call = (
+            "fetchWindowedStrip('30d')" in js
+            or 'fetchWindowedStrip("30d")' in js
+            or re.search(r"fetchWindowedStrip\s*\(\s*_DEFAULT_HERO_WINDOW\s*\)", js) is not None
+            or re.search(r"fetchWindowedStrip\s*\(\s*['\"]30d['\"]", js) is not None
+        )
+        assert has_default_token_call, (
+            "FROZEN-PATH FAIL: no fetchWindowedStrip('30d') call found in index.js. "
+            "The closed_frozen fallback must use the default window token ('30d') so the "
+            "headline value matches the active picker button label on initial load. "
+            "Acceptable forms: fetchWindowedStrip('30d') or fetchWindowedStrip(_DEFAULT_HERO_WINDOW)."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 10 — frozen portfolio_strip must expose guard_alpha (server-side fix)
+#   OR the JS fallback must fire — both paths are acceptable; these tests pin
+#   whichever the implementer chooses. If the server is fixed, Invariant 9 is
+#   redundant (tests still pass — the fallback just never fires). If only the
+#   JS is fixed, the frozen _portfolio_strip dict stays as-is and the JS fallback
+#   handles it.
+# ---------------------------------------------------------------------------
+
+
+class TestFrozenPortfolioStripGuardAlpha:
+    """The frozen /api/state portfolio_strip either carries guard_alpha directly
+    (server-side fix) OR the JS fetches /api/strip/<window> as a fallback (JS fix).
+    These tests pin the server-side contract; if the implementer adds guard_alpha to
+    the frozen strip instead of fixing the JS, these tests confirm it.
+
+    These tests are complementary to Invariant 9 — at least one of the two paths
+    must be correct for the headline to work on closed_frozen.
+    """
+
+    def test_frozen_portfolio_strip_dict_in_app_py_exposes_guard_alpha_or_js_fallback_exists(self):
+        """Either (a) the frozen _portfolio_strip in app.py includes guard_alpha
+        from compute_windowed_portfolio_strip, OR (b) fetchWindowedStrip is called
+        on the initial-load path in index.js (Invariant 9).
+
+        This test passes if EITHER path is wired. It fails only if NEITHER is present,
+        which would leave the headline showing '--' on closed_frozen permanently.
+        """
+        app_py = (
+            pathlib.Path(__file__).parent.parent.parent / "app.py"
+        ).read_text(encoding="utf-8")
+        js = _js()
+
+        # Path A: server adds guard_alpha to the frozen strip.
+        # The frozen _portfolio_strip is built at ~line 1262; check if guard_alpha
+        # is set anywhere in the frozen path block (between the frozen snapshot path
+        # and the return jsonify at ~line 1304).
+        frozen_block_start = app_py.find("# On-the-fly portfolio_strip recompute")
+        frozen_block_end = app_py.find("return jsonify", frozen_block_start) if frozen_block_start != -1 else -1
+        server_has_frozen_guard_alpha = (
+            frozen_block_start != -1
+            and frozen_block_end != -1
+            and "guard_alpha" in app_py[frozen_block_start:frozen_block_end]
+        )
+
+        # Path B: JS fetches strip on initial load when guard_alpha is absent.
+        # Count CALL sites only (exclude function declaration).
+        all_fws = [(m.start(), m.end()) for m in re.finditer(r"fetchWindowedStrip\s*\(", js)]
+        fws_calls = [
+            pos for pos, end in all_fws
+            if not js[max(0, pos - 10):pos].rstrip().endswith("function")
+        ]
+        js_has_initial_strip_fallback = len(fws_calls) >= 2
+
+        assert server_has_frozen_guard_alpha or js_has_initial_strip_fallback, (
+            "FROZEN-PATH FAIL: neither fix path is wired. "
+            "The frozen /api/state portfolio_strip has no guard_alpha, AND "
+            "fetchWindowedStrip is not called on the initial-load path. "
+            "The headline will show '--' on closed_frozen permanently. "
+            "Fix: either add guard_alpha to the frozen _portfolio_strip in app.py "
+            "OR add a fetchWindowedStrip('30d') call that fires when guard_alpha is "
+            "absent from the first poll response."
+        )
