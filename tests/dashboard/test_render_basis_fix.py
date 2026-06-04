@@ -525,3 +525,90 @@ class TestCumulativeDeltaSelfConsistency:
             "windowed values so it equals displayed Bot − Held by construction. "
             "AC-4a compliance requires this arithmetic inside the rows.forEach loop."
         )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 8 — updateComparisonRows uses windowed_cumulative_return when present
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateComparisonRowsPrefersWindowedCumulativeReturn:
+    """On initial page load, portfolio_strip.cumulative_return carries account-basis
+    if_held (~63.95%). The windowed strip (post-picker-click) carries VW if_held (~26.65%).
+
+    The implementer's fix plan: _compute_portfolio_strip stores the windowed cumulative
+    row as `windowed_cumulative_return` in the strip. updateComparisonRows must prefer
+    `ps.windowed_cumulative_return` over `ps.cumulative_return` for the cumulative row
+    so the initial-load Held value is windowed VW, not account-basis.
+
+    These tests are RED until index.js is updated to prefer windowed_cumulative_return.
+
+    Note: the window-picker path (fetchWindowedStrip) already wraps the full windowed
+    strip as portfolio_strip — so for the picker case the values in cumulative_return ARE
+    windowed VW. The problem is the initial poll where the strip's cumulative_return
+    carries the account-basis values. The windowed_cumulative_return field decouples
+    the two paths.
+    """
+
+    def test_update_comparison_rows_references_windowed_cumulative_return(self):
+        """updateComparisonRows must reference `windowed_cumulative_return` in its
+        cumulative row definition so it can prefer the windowed VW values over the
+        account-basis cumulative_return on initial load.
+        """
+        js = _js()
+
+        start = js.find("function updateComparisonRows")
+        assert start != -1, "updateComparisonRows must exist"
+        end_marker = js.find("\n    function ", start + 1)
+        body = js[start:end_marker] if end_marker != -1 else js[start:start + 3000]
+
+        assert "windowed_cumulative_return" in body, (
+            "RENDER-BASIS FAIL: updateComparisonRows does not reference "
+            "`windowed_cumulative_return`. The cumulative row must prefer the windowed VW "
+            "values (dry_run ~27.56%, if_held ~26.65%) over the account-basis values "
+            "(if_held ~63.95%) on initial page load. "
+            "The implementer must: (1) add windowed_cumulative_return to portfolio_strip "
+            "in app.py, (2) have updateComparisonRows prefer it for the cumulative row."
+        )
+
+    def test_cumulative_row_values_object_falls_back_to_cumulative_return(self):
+        """When windowed_cumulative_return is absent (cold path), updateComparisonRows
+        must fall back to cumulative_return so the row still renders rather than breaking.
+        The fallback pattern `ps.windowed_cumulative_return || ps.cumulative_return || {}`
+        or equivalent must be present.
+        """
+        js = _js()
+
+        start = js.find("function updateComparisonRows")
+        assert start != -1, "updateComparisonRows must exist"
+        end_marker = js.find("\n    function ", start + 1)
+        body = js[start:end_marker] if end_marker != -1 else js[start:start + 3000]
+
+        # Both field names must co-exist in the rows definition — the windowed field
+        # as the preferred source and cumulative_return as the fallback.
+        has_windowed = "windowed_cumulative_return" in body
+        has_fallback = "cumulative_return" in body
+        assert has_windowed and has_fallback, (
+            "RENDER-BASIS FAIL: updateComparisonRows must reference both "
+            "`windowed_cumulative_return` (preferred) and `cumulative_return` (fallback). "
+            f"has_windowed={has_windowed}, has_fallback={has_fallback}. "
+            "A cold cache must degrade gracefully — the row must not break when "
+            "windowed_cumulative_return is absent from the strip."
+        )
+
+    def test_app_portfolio_strip_exposes_windowed_cumulative_return(self):
+        """_compute_portfolio_strip (app.py) must expose windowed_cumulative_return in
+        the strip dict. Without the server-side field the JS can never read it.
+        Source-level: the field name must appear in app.py near the windowed strip logic.
+        """
+        app_py = (
+            pathlib.Path(__file__).parent.parent.parent / "app.py"
+        ).read_text(encoding="utf-8")
+
+        assert "windowed_cumulative_return" in app_py, (
+            "RENDER-BASIS FAIL: app.py does not contain `windowed_cumulative_return`. "
+            "_compute_portfolio_strip must store the windowed VW cumulative_return "
+            "(from compute_windowed_portfolio_strip) as this field so index.js can "
+            "read it for the cumulative comparison row on initial load. "
+            "Without this, the initial-load Held will always be account-basis (~63.95%)."
+        )
