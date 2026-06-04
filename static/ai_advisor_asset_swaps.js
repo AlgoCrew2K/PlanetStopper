@@ -362,7 +362,16 @@
                 to_ticker: toTicker,
             }),
         })
-            .then(function (resp) { return resp.json(); })
+            .then(function (resp) {
+                // AC-9a: guard before JSON parse — a non-JSON error (e.g. 413 HTML
+                // from nginx) must surface a clean message, not throw SyntaxError.
+                if (!resp.ok) {
+                    return resp.text().then(function (body) {
+                        throw new Error("backtest unavailable (HTTP " + resp.status + ")");
+                    });
+                }
+                return resp.json();
+            })
             .then(function (body) {
                 if (body.error) {
                     renderError(body.error);

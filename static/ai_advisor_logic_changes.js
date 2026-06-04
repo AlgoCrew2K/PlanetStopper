@@ -367,7 +367,16 @@
                 change_description: changeDescription,
             }),
         })
-            .then(function (resp) { return resp.json(); })
+            .then(function (resp) {
+                // AC-9a: guard before JSON parse — a non-JSON error (e.g. 413 HTML
+                // from nginx) must surface a clean message, not throw SyntaxError.
+                if (!resp.ok) {
+                    return resp.text().then(function (body) {
+                        throw new Error("backtest unavailable (HTTP " + resp.status + ")");
+                    });
+                }
+                return resp.json();
+            })
             .then(function (data) {
                 resultsArea.innerHTML = _renderResults(data);
             })
