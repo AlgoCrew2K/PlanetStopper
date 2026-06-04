@@ -126,13 +126,18 @@ def test_oc_compute_does_not_throw_on_null_s_count(oc, ground_truth):
     assert obs["is_advisory_only"] == 1
 
 
-def test_oc_compute_treats_null_s_count_same_as_zero(oc, ground_truth):
-    """A None s_count must behave identically to s_count=0 (no selection counted).
+def test_oc_compute_null_s_count_yields_same_S_and_verdict_as_zero(oc, ground_truth):
+    """A None s_count must yield the SAME S value and verdict as s_count=0.
 
-    Pins the SEMANTICS of the fix (coerce None -> 0), not just no-throw: the
-    observation produced from a None-s_count row must equal the observation
-    produced from the same row with s_count=0 (same id/symphony, no ledger rows).
-    Prevents a fix that silently invents a non-zero S from None.
+    Pins the SEMANTICS of the fix (coerce None -> 0 for the S quantity): no
+    BACKTEST_SELECTION counted means S is honestly 0, whether the column was NULL
+    or an explicit 0.  Prevents a fix that silently invents a NON-zero S from None.
+
+    NOTE (team-lead condition #2): this asserts the S VALUE / verdict are equal,
+    NOT that the whole raw_response is byte-identical — OC is permitted (and is
+    separately REQUIRED by test_oc_drift_unavailable_is_honestly_marked) to mark
+    that the I-3 drift signal was unavailable when s_count came in as NULL.  So we
+    do not forbid an honesty marker here; we only forbid a fabricated S.
     """
     row = ground_truth["autotune_runs_with_null_s_count"][0]
 
@@ -144,12 +149,71 @@ def test_oc_compute_treats_null_s_count_same_as_zero(oc, ground_truth):
     obs_zero = oc.compute_overfitting_conscience_observation(run_zero, [])
 
     assert obs_none["verdict"] == obs_zero["verdict"], (
-        "None s_count must be treated as 0 (no BACKTEST_SELECTION). "
+        "None s_count must be treated as 0 (no BACKTEST_SELECTION) for the verdict. "
         f"Got None->{obs_none['verdict']!r} vs 0->{obs_zero['verdict']!r}."
     )
-    assert obs_none["raw_response"] == obs_zero["raw_response"], (
-        "None s_count and explicit 0 must yield byte-identical raw_response — "
-        "the fix must coerce, not fabricate a different S."
+    # The S quantity itself must match (honest 0), regardless of any availability
+    # marker the implementation may add elsewhere in raw_response.
+    assert obs_none["raw_response"].get("s_count") == obs_zero["raw_response"].get("s_count"), (
+        "None s_count and explicit 0 must yield the SAME S value (0) — the fix "
+        "must coerce, not fabricate a different S."
+    )
+
+
+# ===========================================================================
+# AC-3 transparency (team-lead condition #2) — the DEAD I-3 drift check must be
+# honestly marked as unavailable, never silently presented as "drift clean".
+# ===========================================================================
+
+
+def test_oc_drift_unavailable_is_honestly_marked(oc, ground_truth):
+    """When the I-3 drift check cannot be evaluated (< 2 prior runs carrying a
+    non-None s_count — the live reality, since every autotune_runs.s_count is
+    NULL), OC's raw_response MUST mark the drift signal as UNAVAILABLE.
+
+    This is the same de-silencing principle as AC-3's loud-failure work, applied
+    to a structurally-dead check: a "no drift" output must never be mistaken for
+    "drift evaluated and clean".  Transparency only — it does not change the
+    verdict or invent an S.
+    """
+    row = ground_truth["autotune_runs_with_null_s_count"][0]
+    run = _run_from_fixture(row)
+
+    # No prior runs supplied -> drift is NOT evaluable.
+    obs = oc.compute_overfitting_conscience_observation(run, [], prior_runs=None)
+    raw = obs["raw_response"]
+    assert "drift_signal_available" in raw, (
+        "raw_response must carry an explicit 'drift_signal_available' marker so a "
+        "dead I-3 drift check is not silently presented as 'drift clean'."
+    )
+    assert raw["drift_signal_available"] is False, (
+        "With no evaluable prior s_count, drift_signal_available must be False "
+        f"(could-not-evaluate), not a truthy 'clean'. Got {raw['drift_signal_available']!r}."
+    )
+
+
+def test_oc_drift_available_when_two_valid_prior_s_counts(oc, ground_truth):
+    """Complement: when >= 2 prior same-symphony runs carry non-None s_count, the
+    drift check IS evaluable, so drift_signal_available must be True.
+
+    Proves the marker reflects genuine availability (not a constant False) — a
+    constant-False marker would be its own silent lie.
+    """
+    row = ground_truth["autotune_runs_with_null_s_count"][0]
+    run = _run_from_fixture(row)
+    sym = row["symphony_id"]
+    # Two prior runs for the SAME symphony with valid (non-None) s_count values.
+    prior = [
+        {"id": 1, "symphony_id": sym, "s_count": 1},
+        {"id": 2, "symphony_id": sym, "s_count": 2},
+    ]
+
+    obs = oc.compute_overfitting_conscience_observation(run, [], prior_runs=prior)
+    raw = obs["raw_response"]
+    assert raw.get("drift_signal_available") is True, (
+        "With >= 2 valid prior s_counts the drift check is evaluable; "
+        f"drift_signal_available must be True. Got {raw.get('drift_signal_available')!r}. "
+        "A constant-False marker would itself be a silent lie."
     )
 
 
@@ -196,21 +260,34 @@ def test_run_overfitting_conscience_persists_a_row_on_null_s_count(oc, ground_tr
 
 
 # ===========================================================================
-# AC-2 — KILLER INVARIANT: two different symphonies => DIFFERENT advisor output.
+# AC-2 — KILLER INVARIANT: two different symphonies => DISTINCT OC rows.
+#
+# IMPORTANT correctness constraint (risk-engine-specialist, Prime Directive):
+#   The distinctness is by IDENTITY (subject_id pointing at that symphony's OWN
+#   run, + the canonical symphony_id key), NOT by fabricated verdict/raw_response
+#   divergence.  Against the live data all 11 symphonies share the same canonical
+#   THEORY spec_bundle, n_effective=500, and S=0 (no BACKTEST_SELECTION rows), so
+#   OC HONESTLY returns the same verdict/raw_response for each — forcing those to
+#   differ would fabricate an overfitting signal that does not exist.  This test
+#   therefore asserts the honest invariant: each symphony gets its OWN row keyed
+#   to ITS OWN run, and the rows are not the SAME row duplicated.  verdict and
+#   raw_response MAY coincide when the underlying signal is genuinely identical.
 # ===========================================================================
 
 
 def test_two_symphonies_yield_distinct_oc_observations(oc, ground_truth):
-    """Two DIFFERENT symphonies must produce DISTINCT OC observations.
+    """Two DIFFERENT symphonies must produce DISTINCT OC observation rows, where
+    distinctness is by IDENTITY (subject_id + symphony_id), not by fabricated
+    content divergence.
 
-    This is the invariant the shipped bug violated: every symphony showed
-    identical output.  We feed two different live symphony rows (different id +
-    different symphony_id) and assert the persisted/returned observation DIFFERS
-    in its symphony-identifying content.
+    The shipped symptom (every symphony shows identical advisor cards) is the
+    KEY-MISMATCH bug (modal queried hash; rows keyed by name), not OC emitting
+    identical content.  The honest per-symphony invariant OC must satisfy is:
+    row for symphony A references A's OWN run id and A's canonical key; it must
+    never be B's row duplicated.
 
-    We assert DISTINCTNESS, not specific values — a correct implementation makes
-    these differ via subject_id/symphony_id at minimum; we additionally require
-    the two observations not be byte-identical as whole dicts.
+    verdict/raw_response are allowed to coincide here — asserting they MUST
+    differ would force OC to fabricate a signal absent from the data.
     """
     rows = ground_truth["autotune_runs_with_null_s_count"]
     assert len(rows) >= 2, "Need >=2 live symphony rows for the distinctness invariant."
@@ -218,19 +295,34 @@ def test_two_symphonies_yield_distinct_oc_observations(oc, ground_truth):
     assert row_a["symphony_id"] != row_b["symphony_id"], (
         "Fixture drift: the two AC-2 rows must be different symphonies."
     )
+    assert row_a["id"] != row_b["id"], (
+        "Fixture drift: the two AC-2 rows must have distinct run ids."
+    )
 
     obs_a = oc.compute_overfitting_conscience_observation(_run_from_fixture(row_a), [])
     obs_b = oc.compute_overfitting_conscience_observation(_run_from_fixture(row_b), [])
 
-    # subject_id is derived from the (distinct) run ids -> must differ.
-    assert obs_a["subject_id"] != obs_b["subject_id"], (
-        "Two different autotune_runs rows produced the SAME subject_id — the "
-        "observations are not symphony-distinct. This is the identical-output bug."
+    # subject_id is derived from each symphony's OWN run id -> must differ, and
+    # must point at the correct run (A's subject_id == A's run id, never B's).
+    assert obs_a["subject_id"] == str(row_a["id"]), (
+        f"Row A's subject_id={obs_a['subject_id']!r} must reference A's OWN run id "
+        f"{row_a['id']!r}, not a shared/sentinel/other-symphony id."
     )
-    # The full observation dicts must not be byte-identical.
+    assert obs_b["subject_id"] == str(row_b["id"]), (
+        f"Row B's subject_id={obs_b['subject_id']!r} must reference B's OWN run id "
+        f"{row_b['id']!r}, not a shared/sentinel/other-symphony id."
+    )
+    assert obs_a["subject_id"] != obs_b["subject_id"], (
+        "Two different symphonies produced the SAME subject_id — the observations "
+        "are not symphony-distinct (one symphony's row duplicated for both)."
+    )
+    # The full observation dicts must not be byte-identical: at minimum subject_id
+    # differs.  This is the honest distinctness floor — NOT a content-divergence
+    # demand (verdict/raw_response may legitimately match given identical signal).
     assert obs_a != obs_b, (
-        "Two different symphonies produced byte-identical OC observations. "
-        "AC-2 (the killer invariant) requires per-symphony distinctness."
+        "Two different symphonies produced byte-identical OC observations "
+        "INCLUDING subject_id — the row is being duplicated rather than computed "
+        "per symphony. (Identical verdict/raw_response alone would be fine.)"
     )
 
 
