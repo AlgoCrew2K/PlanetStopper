@@ -804,6 +804,7 @@
               <button data-testid="window-125d" data-window="125d">125d</button>
               <button data-testid="window-ytd" data-window="ytd">YTD</button>
               <button data-testid="window-1y" data-window="1y">1Y</button>
+              <button data-testid="window-all" data-window="all">All Time</button>
             </div>
           </div>
 
@@ -877,7 +878,7 @@
                 <span class="vs-row-label">Today <span data-testid="today-held-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="If Held is account-level (includes uninvested cash). Per-card Held excludes cash.">&#9432;</span></span>
                 <span data-testid="comp-today-bot-text" class="vs-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if tc_bot >= 0 %}+{% endif %}{{ "%.2f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-today-held-text" class="vs-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Held {% if tc_held >= 0 %}+{% endif %}{{ "%.2f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span>
-                <span class="vs-delta {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if tc_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(tc_alpha) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-today-delta" class="vs-delta {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if tc_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(tc_alpha) }}%{% else %}&mdash;{% endif %}</span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -900,7 +901,7 @@
                 <span class="vs-row-label">Cumulative</span>
                 <span data-testid="comp-cumulative-bot-text" class="vs-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if cr_bot >= 0 %}+{% endif %}{{ "%.2f"|format(cr_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-held-text" class="vs-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Held {% if cr_held >= 0 %}+{% endif %}{{ "%.2f"|format(cr_held) }}%{% else %}&mdash;{% endif %}</span>
-                <span class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if cr_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(cr_alpha) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if cr_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(cr_alpha) }}%{% else %}&mdash;{% endif %}</span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -926,7 +927,7 @@
                 <span data-testid="comp-mdd-held-text" class="vs-val neg">{% if has_live_data %}Held {{ "%.2f"|format(mdd_held) }}%{% else %}&mdash;{% endif %}</span>
                 {# F-2: suppress alpha delta when insufficient history — comparison is misleading #}
                 {% if not mdd_insufficient %}
-                <span class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if mdd_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(mdd_alpha) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-mdd-delta" class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if mdd_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(mdd_alpha) }}%{% else %}&mdash;{% endif %}</span>
                 {% endif %}
               </div>
               <div class="vs-bars">

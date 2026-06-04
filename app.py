@@ -687,12 +687,22 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
 
     try:
         if "portfolio_cr" in _account_totals_cache:
-            cumulative_return: dict | None = {
-                "if_held": _account_totals_cache["portfolio_cr"],
-                "dry_run": analytics.get_portfolio_cumulative_return(
-                    symphonies_list, bot_state, trading_day=trading_day
-                ).get("dry_run"),
-            }
+            # B-1 fix: put Bot (dry_run) on the same account basis as Held (if_held).
+            # Held = Composer simple_return (cash-inclusive denominator).
+            # Bot = VW per-symphony guard divergence scaled to account basis so that
+            # guard_alpha = dry_run - if_held is a scope-clean apples-to-apples delta.
+            # guard_delta is measured on the VW basis first (dry_run and if_held share
+            # the same symphony-value denominator), then scaled by invested_frac.
+            _vw_cr = analytics.get_portfolio_cumulative_return(
+                symphonies_list, bot_state, trading_day=trading_day
+            )
+            _symphony_value_sum = sum(s.get("value") or 0.0 for s in symphonies_list)
+            cumulative_return: dict | None = analytics.get_portfolio_cumulative_return_account_basis(
+                _vw_cr,
+                _account_totals_cache["portfolio_cr"],
+                account_value,
+                _symphony_value_sum,
+            )
         else:
             cumulative_return = analytics.get_portfolio_cumulative_return(
                 symphonies_list, bot_state, trading_day=trading_day
@@ -750,10 +760,39 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # shadow_history.current_return is deferred to a future cycle.
         vol_bot: float | None = None
         vol_held: float | None = None
+        # AC-4c: capture the shadow DATES (not just the returns) so the strip carries
+        # hist_dates. _build_meta derives insufficient_history = len(hist_dates) < 30
+        # from this; without it the SSR render path always saw hist_dates=[] and
+        # flagged EVERY portfolio as <30d — making the MAX-DD Bot +0.00% read as a
+        # guard win (the empty-series artifact) even with ample history.
+        hist_dates: list[str] = []
+        hist_bot: list[float] = []
+        hist_held: list[float] = []
         _shadow_result = analytics.get_portfolio_daily_returns_from_shadow()
         if _shadow_result is not None:
-            _, _port_daily_returns = _shadow_result
+            _shadow_dates, _port_daily_returns = _shadow_result
             vol_bot = analytics.compute_portfolio_annualized_vol(_port_daily_returns)
+            hist_dates = list(_shadow_dates)
+
+        # Prefer the REAL (bot, held) series for the initial hero chart so the dashed
+        # "If held" line is genuine on first paint (not a verbatim Bot copy — F3). Falls
+        # back silently to an empty series; the windowed /api/hero-chart route refreshes
+        # it on any picker click regardless.
+        try:
+            _bh = analytics.get_portfolio_bot_and_held_daily_returns()
+            if _bh is not None:
+                _bh_dates, _bh_bot, _bh_held = _bh
+                if not hist_dates:
+                    hist_dates = list(_bh_dates)
+                _rb = 1.0
+                _rh = 1.0
+                for _b, _h in zip(_bh_bot, _bh_held):
+                    _rb *= 1.0 + _b / 100.0
+                    _rh *= 1.0 + _h / 100.0
+                    hist_bot.append(round((_rb - 1.0) * 100.0, 4))
+                    hist_held.append(round((_rh - 1.0) * 100.0, 4))
+        except Exception:
+            _daemon_log.error("_compute_portfolio_strip bot/held series failed", exc_info=True)
 
         return {
             "today_change": today_change,
@@ -762,6 +801,9 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             "account_value": account_value,
             "vol_bot": vol_bot,
             "vol_held": vol_held,
+            "hist_dates": hist_dates,
+            "hist_bot": hist_bot,
+            "hist_held": hist_held,
             "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
         }
     except Exception as _exc:
@@ -1291,7 +1333,13 @@ def get_state():
         next_run_seconds = max(0, int(60 - _secs_into))
 
         # Render HTML for UI
-        symphony_keys = [k for k in state_data.keys() if isinstance(state_data[k], dict)]
+        # AC-4d: name-guard so phantom non-symphony top-level dicts (e.g.
+        # last_market_close_snapshot) cannot leak into the cards/standby list.
+        # Matches the SSR/meta paths (app.py:433/544) which already require "name".
+        symphony_keys = [
+            k for k in state_data.keys()
+            if isinstance(state_data[k], dict) and "name" in state_data[k]
+        ]
         accounts_map = {}
         for k in symphony_keys:
             sym = state_data[k]
@@ -1596,12 +1644,16 @@ def api_symphony_logs(symphony_id):
 def get_hero_chart(window):
     """Return hist_dates/hist_bot/hist_held for the requested time window.
 
-    window values: 30d, 60d, 90d, 125d, ytd, 1y
+    window values: 30d, 60d, 90d, 125d, ytd, 1y, all
     Fetches from shadow_history with an appropriate days parameter so each
-    window returns a distinct, correctly-sized slice.
+    window returns a distinct, correctly-sized slice. "all" fetches the full
+    history (days=None) — the lifetime/All-Time view.
     """
     now = datetime.now(_ET)
-    if window == "ytd":
+    if window == "all":
+        # All Time: fetch the full history. analytics treats days=None as "all".
+        fetch_days = None
+    elif window == "ytd":
         jan1 = datetime(now.year, 1, 1).date()
         days_since_jan1 = max((now.date() - jan1).days, 1)
         fetch_days = min(days_since_jan1 + 30, 365)
@@ -1616,38 +1668,53 @@ def get_hero_chart(window):
     else:
         fetch_days = 30
 
-    # Minimum trading days needed for the window to be meaningful
-    _min_days = {"30d": 20, "60d": 40, "90d": 60, "125d": 80, "ytd": 10, "1y": 100}
+    # Minimum trading days needed for the window to be meaningful. "all" has no
+    # floor (whatever history exists is the lifetime view).
+    _min_days = {"30d": 20, "60d": 40, "90d": 60, "125d": 80, "ytd": 10, "1y": 100, "all": 2}
     required = _min_days.get(window, 10)
 
+    def _compound(daily: list[float]) -> list[float]:
+        """Compound a per-day pct return series into a running cumulative-return curve."""
+        running = 1.0
+        out = []
+        for d in daily:
+            running *= 1.0 + d / 100.0
+            out.append(round((running - 1.0) * 100.0, 4))
+        return out
+
+    def _trim_ytd(dates, *series):
+        """For the YTD window, drop rows before Jan 1 across dates + every parallel series."""
+        if window != "ytd":
+            return (dates, *series)
+        jan1_str = str(datetime(now.year, 1, 1).date())
+        idx = 0
+        while idx < len(dates) and dates[idx] < jan1_str:
+            idx += 1
+        return (dates[idx:], *[s[idx:] for s in series])
+
     try:
-        shadow_result = analytics.get_portfolio_daily_returns_from_shadow(days=fetch_days)
-        if shadow_result is not None:
-            dates, daily = shadow_result
-            running = 1.0
-            bot_series = []
-            for d in daily:
-                running *= 1.0 + d / 100.0
-                bot_series.append(round((running - 1.0) * 100.0, 4))
-            if window == "ytd":
-                jan1_str = str(datetime(now.year, 1, 1).date())
-                idx = 0
-                while idx < len(dates) and dates[idx] < jan1_str:
-                    idx += 1
-                dates = dates[idx:]
-                bot_series = bot_series[idx:]
+        # AC-4b: use the REAL (bot, held) daily-return source so the dashed "If held"
+        # line is a genuine second series, not a verbatim copy of Bot. bot = guarded
+        # shadow path; held = un-guarded if-held path (diverges only after a trigger).
+        # Each series is compounded INDEPENDENTLY into its own cumulative curve.
+        bh = analytics.get_portfolio_bot_and_held_daily_returns(days=fetch_days)
+        if bh is not None:
+            dates, bot_daily, held_daily = bh
+            bot_series = _compound(bot_daily)
+            held_series = _compound(held_daily)
+            dates, bot_series, held_series = _trim_ytd(dates, bot_series, held_series)
             insufficient = len(dates) < required
             return jsonify({
                 "hist_dates": dates,
                 "hist_bot": bot_series,
-                "hist_held": bot_series,
+                "hist_held": held_series,
                 "window": window,
                 "source": "shadow_history",
                 "insufficient_history": insufficient,
                 "available_days": len(dates),
             })
     except Exception:
-        pass
+        _daemon_log.error("get_hero_chart bot/held series failed", exc_info=True)
 
     return jsonify({
         "hist_dates": [], "hist_bot": [], "hist_held": [],
@@ -1655,6 +1722,59 @@ def get_hero_chart(window):
         "insufficient_history": True,
         "available_days": 0,
     })
+
+
+# Window tokens accepted by the picker + the windowed-strip route. Lowercase URL
+# tokens are the canonical UI form; analytics.compute_windowed_portfolio_strip
+# normalizes them internally (30d->30 days, all->lifetime cross-epoch, etc.).
+_STRIP_WINDOW_TOKENS = {"30d", "60d", "90d", "125d", "ytd", "1y", "all"}
+
+
+@app.route("/api/strip/<window>")
+def get_windowed_strip(window):
+    """Return the comparison strip (guard-alpha/CR/MDD/vol) recomputed FOR a window.
+
+    AC-3: the time picker must re-window EVERY hero metric, not just the chart.
+    This route threads the selected window token through to
+    analytics.compute_windowed_portfolio_strip so the headline guard-alpha VALUE
+    (and CR/MDD/vol) reflects the chosen window — 30d/60d/90d/125d/ytd/1y and the
+    NEW "all" (All Time, lifetime cross-epoch) token. The returned dict echoes the
+    resolved window so the UI label always matches the value (kills the "30d" label
+    on an all-time number — F1).
+
+    Read-only: builds the symphony list from the state DB; never reruns the engine.
+    """
+    token = (window or "").lower()
+    if token not in _STRIP_WINDOW_TOKENS:
+        return jsonify({"error": "unknown window token"}), 404
+
+    trading_day = datetime.now(_ET).strftime("%Y-%m-%d")
+    bot_state = database.load_state() or {}
+    symphony_keys = [k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v]
+    symphonies_list = []
+    for k in symphony_keys:
+        s = bot_state[k]
+        symphonies_list.append(
+            {
+                "id": k,
+                "value": s.get("current_value") or 0.0,
+                "last_percent_change": (s.get("current_return") or 0.0) / 100.0,
+                "simple_return": s.get("simple_return"),
+                "net_deposits": s.get("net_deposits"),
+                "time_weighted_return": s.get("time_weighted_return"),
+                "max_drawdown": s.get("max_drawdown"),
+                "trading_day": trading_day,
+            }
+        )
+
+    try:
+        strip = analytics.compute_windowed_portfolio_strip(
+            symphonies_list, bot_state, window=token
+        )
+        return jsonify(strip)
+    except Exception:
+        _daemon_log.error("get_windowed_strip failed for window=%s", token, exc_info=True)
+        return jsonify({"error": "An internal error occurred"}), 500
 
 
 @app.route("/api/chart/<symphony_id>")

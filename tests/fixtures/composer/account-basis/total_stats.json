@@ -1,0 +1,20 @@
+{
+  "_provenance": "Derived from tests/fixtures/composer/v3-audit/total_stats.json (captured-from-producer 2026-06-04). Fields: portfolio_value, simple_return, todays_percent_change, metrics.max_drawdown preserved verbatim.",
+  "pending_deploys_cash": 0,
+  "total_cash": 286.02,
+  "time_weighted_return": 0.7445357089316487,
+  "total_unallocated_cash": 20.97,
+  "portfolio_value": 12893.7,
+  "net_deposits": 7617.12,
+  "pending_net_deposits": 0.0,
+  "todays_percent_change": -0.02020585293505977,
+  "simple_return": 0.6927264759777976,
+  "todays_dollar_change": -265.900976043,
+  "metrics": {
+    "annualized_rate_of_return": 0.3511,
+    "max_drawdown": 0.2447,
+    "sharpe_ratio": 1.0768,
+    "standard_deviation": 0.3285
+  },
+  "pending_withdrawals": 0.0
+}

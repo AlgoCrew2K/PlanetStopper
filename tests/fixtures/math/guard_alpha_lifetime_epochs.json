@@ -1,0 +1,66 @@
+{
+  "_provenance": "Captured from live alphabot_state.db (read-only) 2026-06-04 — last shadow_history row per (symphony_id, trading_day) across ALL position epochs. Symphony ids truncated to the 12-char prefix the DATA-CORRECTNESS-AUDIT uses. These are REAL recorded (shadow_return, current_return) pairs, NOT synthetic. Epoch labels preserve the real multi-epoch structure: each symphony's trigger-day divergence lives in an OLD epoch; the latest epoch is a fresh post-reset 1-day window with zero divergence (database.py wipe_transient_state at the 06-04 open).",
+  "_purpose": "AC-1 cross-epoch (LIFETIME) Guard Alpha, EPOCH-ADDITIVE. The current _get_shadow_divergence_trajectory (analytics.py:657-731) scopes the trajectory to the LATEST position_epoch only. For every symphony here the latest epoch is a 1-day window (len < 2 -> trajectory None -> dry_run == if_held -> Guard Alpha 0.00%) OR a multi-day flat window with zero divergence. The guard's REAL recorded effect is stranded in prior epochs. A correct lifetime computation must SUM each epoch's own divergence across ALL epochs (NOT a single global product, which would chain prior-position market returns).",
+  "_invariants": {
+    "never_triggered_zero": "n2ooAZTvBR has shadow_return == current_return on EVERY day in EVERY epoch -> lifetime divergence == 0.0 EXACTLY (abs=1e-9). The anchor.",
+    "triggered_nonzero": "iaSOOUsmnC and lW4ZzWuqR8 each have at least one day where shadow_return != current_return in a PRIOR epoch (the guard acted) -> lifetime divergence is genuinely non-zero. The current latest-epoch-only scope reports 0.00% for both -> RED.",
+    "if_held_unchanged": "Chaining divergence across epochs must NOT chain prior-position MARKET returns into if_held. if_held remains the current Composer lifetime simple_return; only the divergence product spans epochs."
+  },
+  "_derivation": "EPOCH-ADDITIVE (semantic B). For each symphony: lifetime_divergence_pct = SUM over position-epochs E of (PROD_E(1 + shadow_return/100) - PROD_E(1 + current_return/100)) * 100; dry_run = if_held + lifetime_divergence_pct; Guard Alpha = dry_run - if_held = lifetime_divergence_pct. A single GLOBAL product across epochs (semantic A) is WRONG: it multiplies a prior epoch's prod_shadow into later epochs' factors, chaining the prior position's market returns across the reset. The epoch-additive sum measures each position's guard effect in its own frame (an epoch with shadow==current contributes exactly 0). MDD dry_run = peak-to-trough of the bot equity path where divergence accrues within each epoch from its own anchor and the running total carries across boundaries. ALL expected values are DERIVED IN-TEST from these rows by the test helper — none are hardcoded here.",
+  "_tolerance": {
+    "never_triggered": "abs=1e-9 — divergence must be identically zero, not approximately",
+    "triggered": "abs=1e-6 — float arithmetic compounding over 9 days"
+  },
+  "_latest_epoch_label": "EPOCH_C",
+  "_epoch_order": ["EPOCH_A", "EPOCH_B", "EPOCH_C"],
+  "scenarios": {
+    "triggered_iaSOO_saved_in_prior_epochs": {
+      "symphony_id": "iaSOOUsmnC",
+      "description": "Genuinely protected symphony. Divergence accrued in EPOCH_A (day 2026-05-21: shadow +2.26 vs current 0.00 -> guard held while market dropped) and EPOCH_B (day 2026-06-03: shadow +0.25 vs current -0.16). EPOCH_C is a 1-day post-reset window with zero divergence -> current code reports 0.00% Guard Alpha. Lifetime divergence is genuinely positive.",
+      "if_held_pct": 26.9,
+      "shadow_history_rows": [
+        {"trading_day": "2026-05-18", "shadow_return":  1.68, "current_return":  1.80, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-18T20:00:00Z"},
+        {"trading_day": "2026-05-19", "shadow_return":  2.17, "current_return":  1.60, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-19T20:00:00Z"},
+        {"trading_day": "2026-05-20", "shadow_return": -5.50, "current_return": -4.25, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-20T20:00:00Z"},
+        {"trading_day": "2026-05-21", "shadow_return":  2.26, "current_return":  0.00, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-21T20:00:00Z"},
+        {"trading_day": "2026-05-22", "shadow_return":  1.00, "current_return":  1.00, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-22T20:00:00Z"},
+        {"trading_day": "2026-05-29", "shadow_return":  0.51, "current_return":  0.51, "position_epoch": "EPOCH_B", "ts_utc": "2026-05-29T20:00:00Z"},
+        {"trading_day": "2026-06-02", "shadow_return": -2.75, "current_return": -2.75, "position_epoch": "EPOCH_B", "ts_utc": "2026-06-02T20:00:00Z"},
+        {"trading_day": "2026-06-03", "shadow_return":  0.25, "current_return": -0.16, "position_epoch": "EPOCH_B", "ts_utc": "2026-06-03T20:00:00Z"},
+        {"trading_day": "2026-06-04", "shadow_return": -3.44, "current_return": -3.44, "position_epoch": "EPOCH_C", "ts_utc": "2026-06-04T20:00:00Z"}
+      ]
+    },
+    "triggered_lW4Zz_saved_in_prior_epochs": {
+      "symphony_id": "lW4ZzWuqR8",
+      "description": "Second genuinely protected symphony. Large prior-epoch divergence (EPOCH_A day 2026-05-21: shadow +2.66 vs current -0.03; day 2026-05-19: shadow +2.83 vs current +1.29) and EPOCH_B day 2026-06-03 (shadow +0.24 vs current 0.00). EPOCH_C is a 1-day flat post-reset window. Current code reports 0.00%.",
+      "if_held_pct": 18.0,
+      "shadow_history_rows": [
+        {"trading_day": "2026-05-18", "shadow_return":  2.47, "current_return":  1.95, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-18T20:00:00Z"},
+        {"trading_day": "2026-05-19", "shadow_return":  2.83, "current_return":  1.29, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-19T20:00:00Z"},
+        {"trading_day": "2026-05-20", "shadow_return": -4.15, "current_return": -4.15, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-20T20:00:00Z"},
+        {"trading_day": "2026-05-21", "shadow_return":  2.66, "current_return": -0.03, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-21T20:00:00Z"},
+        {"trading_day": "2026-05-22", "shadow_return":  1.01, "current_return":  1.01, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-22T20:00:00Z"},
+        {"trading_day": "2026-05-29", "shadow_return": -3.40, "current_return": -3.40, "position_epoch": "EPOCH_B", "ts_utc": "2026-05-29T20:00:00Z"},
+        {"trading_day": "2026-06-02", "shadow_return": -3.10, "current_return": -3.10, "position_epoch": "EPOCH_B", "ts_utc": "2026-06-02T20:00:00Z"},
+        {"trading_day": "2026-06-03", "shadow_return":  0.24, "current_return":  0.00, "position_epoch": "EPOCH_B", "ts_utc": "2026-06-03T20:00:00Z"},
+        {"trading_day": "2026-06-04", "shadow_return": -4.48, "current_return": -4.48, "position_epoch": "EPOCH_C", "ts_utc": "2026-06-04T20:00:00Z"}
+      ]
+    },
+    "never_triggered_n2ooA": {
+      "symphony_id": "n2ooAZTvBR",
+      "description": "The guard NEVER triggered. shadow_return == current_return on every day in every epoch. Lifetime divergence MUST be exactly 0.0 -> Guard Alpha 0.0000% and MDD dry_run 0.0 -> the anchor invariant that any cross-epoch fix must preserve.",
+      "if_held_pct": 4.0,
+      "shadow_history_rows": [
+        {"trading_day": "2026-05-18", "shadow_return": -0.52, "current_return": -0.52, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-18T20:00:00Z"},
+        {"trading_day": "2026-05-19", "shadow_return": -0.93, "current_return": -0.93, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-19T20:00:00Z"},
+        {"trading_day": "2026-05-20", "shadow_return":  0.60, "current_return":  0.60, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-20T20:00:00Z"},
+        {"trading_day": "2026-05-21", "shadow_return":  0.46, "current_return":  0.46, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-21T20:00:00Z"},
+        {"trading_day": "2026-05-22", "shadow_return": -0.43, "current_return": -0.43, "position_epoch": "EPOCH_A", "ts_utc": "2026-05-22T20:00:00Z"},
+        {"trading_day": "2026-05-29", "shadow_return":  1.43, "current_return":  1.43, "position_epoch": "EPOCH_B", "ts_utc": "2026-05-29T20:00:00Z"},
+        {"trading_day": "2026-06-02", "shadow_return": -1.80, "current_return": -1.80, "position_epoch": "EPOCH_B", "ts_utc": "2026-06-02T20:00:00Z"},
+        {"trading_day": "2026-06-03", "shadow_return": -0.31, "current_return": -0.31, "position_epoch": "EPOCH_B", "ts_utc": "2026-06-03T20:00:00Z"},
+        {"trading_day": "2026-06-04", "shadow_return": -0.36, "current_return": -0.36, "position_epoch": "EPOCH_C", "ts_utc": "2026-06-04T20:00:00Z"}
+      ]
+    }
+  }
+}
