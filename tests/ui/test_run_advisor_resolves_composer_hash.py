@@ -99,8 +99,11 @@ def test_logic_changes_evaluate_fetches_tree_by_composer_hash(flask_client, bot_
 
     # propose_operator_logic_change is patched so the route returns cleanly once the
     # tree fetch succeeds — we only care about the identifier passed to the fetch.
-    fake_result = MagicMock()
-    fake_result.__dict__ = {"survivors": [], "message": "ok", "no_api_key": False}
+    # Use MagicMock constructor kwargs (not __dict__ replacement) so the mock's
+    # __getattr__ machinery stays intact for route attributes like proposals/gate_batch.
+    fake_result = MagicMock(
+        proposals=[], gate_batch=None, survivors=[], message="ok", no_api_key=False
+    )
 
     with (
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
@@ -136,8 +139,9 @@ def test_logic_changes_evaluate_known_symphony_no_tree_fetch_error(flask_client,
     This is the end-to-end repair: the exact live failure the user hit must be gone
     for a symphony that has data.
     """
-    fake_result = MagicMock()
-    fake_result.__dict__ = {"survivors": [], "message": "ok", "no_api_key": False}
+    fake_result = MagicMock(
+        proposals=[], gate_batch=None, survivors=[], message="ok", no_api_key=False
+    )
 
     with (
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
@@ -178,11 +182,15 @@ def test_asset_swaps_evaluate_fetches_tree_by_composer_hash(flask_client, bot_st
         captured["identifier"] = identifier
         return _score_tree_only_for_hash(identifier)
 
-    fake_swap = MagicMock()
-    fake_swap.__dict__ = {"survivors": [], "message": "ok", "no_api_key": False}
+    # Use MagicMock constructor kwargs — __dict__ replacement breaks mock machinery.
+    # proposals=[] -> route skips proposal-building; survivors/message/no_api_key
+    # are the run-level fields accessed at app.py:2725-2727.
+    fake_swap = MagicMock(proposals=[], survivors=[], message="ok", no_api_key=False)
 
     with (
-        patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+        # asset-swaps/evaluate imports _has_composer_key from asset_swap_engine,
+        # not logic_change_engine — patch the correct module.
+        patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
         patch("symphony_logic.fetch_symphony_score", side_effect=_spy),
         patch("database.load_state", return_value=bot_state_with_mapping),
         patch("advisors.asset_swap_engine.propose_operator_swap", return_value=fake_swap),
