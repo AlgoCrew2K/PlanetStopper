@@ -228,3 +228,48 @@ def test_logic_changes_evaluate_413_renders_clean_operator_message():
         f"backtest' message. Body: {body!r}. AC-9c: the operator must understand "
         "the symphony exceeds Composer's inline-backtest size limit."
     )
+
+
+def test_asset_swaps_evaluate_413_renders_clean_operator_message():
+    """The SAME 413 translation must apply to the asset-swaps evaluate route — it
+    surfaces backtest_error from the same _translate_backtest_error path (app.py).
+
+    Locks the asset-swaps route as a regression guard so a future change can't
+    translate only logic-changes and leak the raw 413 HTML on the swap route.
+    """
+    import sys
+    if "." not in sys.path:
+        sys.path.insert(0, ".")
+    sys.path.insert(0, str(_REPO_ROOT))
+    from tests.ui.test_asset_swap_routes import _make_swap_run_result
+
+    run_result = _make_swap_run_result()
+    # Set the raw 413 on the proposal the route serialises.
+    run_result.proposals[0].backtest_error = _RAW_413
+
+    client = _flask_client()
+    with (
+        patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
+        patch("symphony_logic.fetch_symphony_score",
+              return_value={"id": "x", "name": "X", "children": []}),
+        patch("database.load_state", return_value={}),
+        patch("advisors.asset_swap_engine.propose_operator_swap",
+              return_value=run_result),
+    ):
+        resp = client.post(
+            "/ai-advisor/asset-swaps/evaluate",
+            json={"symphony_id": "X", "from_ticker": "SPY", "to_ticker": "QQQ"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body is not None
+    blob = str(body).lower()
+    assert "<html>" not in blob and "nginx" not in blob, (
+        "The asset-swaps route leaked the raw nginx 413 HTML — the translation was "
+        f"applied only to logic-changes. Body: {body!r}. AC-9c covers BOTH routes."
+    )
+    assert re.search(r"too large|size limit|exceeds .* limit|too big", blob), (
+        "The asset-swaps route did not translate the 413 to a clean message. "
+        f"Body: {body!r}. AC-9c: both evaluate routes translate the 413."
+    )
