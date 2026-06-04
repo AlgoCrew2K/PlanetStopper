@@ -65,6 +65,12 @@ def mock_database():
         db_mock.read_fleet_alert.return_value = None
         db_mock.get_triggers.return_value = []
         db_mock.get_guard_alpha_by_symphony.return_value = {}
+        # get_api_state_dict (app.py:897-911) calls database.read_port_state(acc_id) for each
+        # account in bot_state. Unstubbed it returns a truthy MagicMock -> port_state carries a
+        # non-JSON-serializable value -> /api/state 500s -> no "symphonies" key. None is the real
+        # prod behavior (pre-migration-010) and keeps port_state empty + serializable. Without this
+        # the test is order-dependent (passes only when an earlier test leaves read_port_state stubbed).
+        db_mock.read_port_state.return_value = None
         yield db_mock
 
 
@@ -231,6 +237,11 @@ class TestStandbyCountExcludesPhantomKey:
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
         monkeypatch.setattr(app_module, "render_template", lambda *_a, **_k: "")
         monkeypatch.setattr(app_module, "analytics", _default_analytics_mock())
+        # Force the ACTIVE path: when the market is "closed_frozen"/"pre_market" AND a
+        # last_market_close_snapshot exists, get_state serves the FROZEN branch (app.py:1038)
+        # which returns no "symphonies" key. Our phantom key IS last_market_close_snapshot, so
+        # we must drive the open path to reach the name-guard at app.py:1386.
+        monkeypatch.setattr(app_module, "get_market_state", lambda *_a, **_k: "open")
 
         resp = client.get("/api/state")
         assert resp.status_code == 200
@@ -252,6 +263,9 @@ class TestStandbyCountExcludesPhantomKey:
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
         monkeypatch.setattr(app_module, "render_template", lambda *_a, **_k: "")
         monkeypatch.setattr(app_module, "analytics", _default_analytics_mock())
+        # Force the ACTIVE path (see sibling test) — the phantom key doubles as the frozen
+        # snapshot key, so an "open" market state is required to reach the name-guard.
+        monkeypatch.setattr(app_module, "get_market_state", lambda *_a, **_k: "open")
 
         resp = client.get("/api/state")
         symphonies = resp.get_json()["symphonies"]
