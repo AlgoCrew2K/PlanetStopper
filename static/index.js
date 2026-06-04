@@ -128,7 +128,7 @@
     // Guard alpha headline
     // ---------------------------------------------------------------------------
 
-    function renderGuardAlpha(data) {
+    function renderGuardAlpha(data, _fromStrip) {
         var ps = (data || {}).portfolio_strip || {};
         // Read the server-computed windowed VW guard alpha directly.  The server
         // sets portfolio_strip.guard_alpha in _compute_portfolio_strip (app.py:846-847)
@@ -142,10 +142,12 @@
         // inline (app.py ~line 1262) and does not call _compute_portfolio_strip, so
         // guard_alpha and windowed_cumulative_return are absent.  /api/strip/<window>
         // works in all market states.  Fetching it here populates both the headline
-        // (via the recursive renderGuardAlpha call inside fetchWindowedStrip) and the
-        // cumulative row (via updateComparisonRows) with correct windowed VW values.
+        // (via the renderGuardAlpha call inside fetchWindowedStrip) and the cumulative
+        // row (via updateComparisonRows) with correct windowed VW values.
+        // _fromStrip guard: compute_windowed_portfolio_strip can return guard_alpha:null
+        // when weight_sum==0 (no symphonies). Without the guard that would loop forever.
         if (guard_alpha === null) {
-            fetchWindowedStrip('30d');
+            if (!_fromStrip) fetchWindowedStrip('30d');
             return;
         }
 
@@ -1231,7 +1233,29 @@
             .catch(function (err) { console.error('state load failed', err); });
     }
 
+    // Re-window the hero headline VALUE + the three vs-rows for a window token.
+    // The windowed strip dict shares portfolio_strip's shape, so we reuse
+    // renderGuardAlpha + updateComparisonRows by wrapping it as a poll-style payload.
+    // Defined at IIFE scope (not inside DOMContentLoaded) so renderGuardAlpha can call
+    // it as a frozen-path fallback — renderGuardAlpha is also at IIFE scope and the
+    // DOMContentLoaded callback would be invisible from there.
+    function fetchWindowedStrip(token) {
+        fetch('/api/strip/' + token)
+            .then(function (r) { return r.json(); })
+            .then(function (strip) {
+                if (!strip || strip.error) return;
+                var wrapped = {
+                    portfolio_strip: strip,
+                    meta: { portfolio: { vol_bot: strip.vol_bot, vol_held: strip.vol_held } }
+                };
+                renderGuardAlpha(wrapped, true); // _fromStrip=true — prevents re-entry when strip guard_alpha is null
+                updateComparisonRows(wrapped);
+            })
+            .catch(function (err) { console.error('windowed strip load failed', err); });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
+        // Poll floor is 15 s — matches the engine's minute cadence (see POLL_INTERVAL_MS).
         loadState();
         setInterval(loadState, POLL_INTERVAL_MS);
 
@@ -1253,24 +1277,6 @@
             'window-125d': '125d', 'window-ytd': 'YTD', 'window-1y': '1Y',
             'window-all': 'All Time'
         };
-
-        // Re-window the hero headline VALUE + the three vs-rows for a window token.
-        // The windowed strip dict shares portfolio_strip's shape, so we reuse
-        // renderGuardAlpha + updateComparisonRows by wrapping it as a poll-style payload.
-        function fetchWindowedStrip(token) {
-            fetch('/api/strip/' + token)
-                .then(function (r) { return r.json(); })
-                .then(function (strip) {
-                    if (!strip || strip.error) return;
-                    var wrapped = {
-                        portfolio_strip: strip,
-                        meta: { portfolio: { vol_bot: strip.vol_bot, vol_held: strip.vol_held } }
-                    };
-                    renderGuardAlpha(wrapped);
-                    updateComparisonRows(wrapped);
-                })
-                .catch(function (err) { console.error('windowed strip load failed', err); });
-        }
 
         Object.keys(windowTokenMap).forEach(function (testid) {
             var btn = document.querySelector('[data-testid="' + testid + '"]');
