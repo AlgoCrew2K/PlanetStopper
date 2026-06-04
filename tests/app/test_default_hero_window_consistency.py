@@ -1,46 +1,45 @@
 """
-RED — the DEFAULT hero render must equal the windowed DEFAULT-window strip (PM live-gate bug).
+RED — Option A: default hero = windowed default GUARD ALPHA; account-lifetime CR is a SEPARATE
+non-windowed stat (PM live-gate bug + user decision).
 
-THE BUG (PM live gate, 2026-06-04): on page load the hero shows the OLD un-windowed value with
-a STATIC "30d" label, inconsistent with the picker:
-  - default SSR/poll hero: CUMULATIVE Bot ~+67% (account-lifetime), label hard-coded "30d"
-    (templates/index.html:791, button window-30d hard-coded class="active" :801).
-  - /api/strip/30d (compute_windowed_portfolio_strip): Bot ~+29% (VW/shadow basis, ~18-day span).
-  -> "30D" (default) shows Bot 67% while "All Time" shows Bot 29% — BACKWARDS (a 30-day window
-     cannot exceed all-time). The default is the un-windowed number mislabeled "30d"; the first
-     picker click jumps the hero.
+THE BUG (PM live gate, 2026-06-04): on page load the hero showed the un-windowed ACCOUNT-basis CR
+(~67%) under a static "30d" label, while /api/strip/30d returned the VW windowed value (~29%) — so
+the first picker click jumped the hero and "30D" > "All Time" (backwards). Root: the default
+_compute_portfolio_strip (app.py:689-705) uses get_portfolio_cumulative_return_account_basis
+(account if_held ~66%) while compute_windowed_portfolio_strip (analytics.py:1496-1499) uses the VW
+if_held (~28%). A windowed ACCOUNT-basis CR is not even computable (Composer total-stats gives only
+an all-time scalar, no daily account series).
 
-ROOT (file:line):
-  - DEFAULT _compute_portfolio_strip (app.py:688-705) puts CR on the ACCOUNT basis via
-    get_portfolio_cumulative_return_account_basis (if_held = Composer lifetime simple_return ~66%).
-  - WINDOWED compute_windowed_portfolio_strip (analytics.py:1496-1499) puts CR on the VW basis
-    (if_held = get_portfolio_cumulative_return ~28%, cash-excluded, bounded to the shadow span) +
-    the windowed guard alpha. Docstring analytics.py:1448-1450 states Bot/Held are BOTH VW within a
-    window and the account rescale applies ONLY to the all-time hero scalar.
-  So the two paths use DIFFERENT if_held BASES -> different headline numbers on the same control.
+USER DECISION — OPTION A:
+ 1. The DEFAULT hero loads the WINDOWED default-window GUARD ALPHA, consistent with the picker's
+    first click. The window label applies to the GUARD ALPHA (the windowable bot-vs-held metric).
+    No un-windowed value under a window label.
+ 2. The ~67% account-lifetime CR becomes a SEPARATE, clearly-labeled "Account · all-time" stat that
+    does NOT window and does NOT carry the window label — a fixed all-time reference.
+ 3. The PICKER windows GUARD ALPHA + ANN VOL + MAX-DD. The account-lifetime CR does NOT window.
 
-THE CONTRACT (whatever basis is finally chosen): the DEFAULT hero strip the page renders on load
-(SSR + the regular /api/state poll) MUST equal the windowed strip for the DEFAULT window — same
-Bot, Held, guard alpha, and the label must name that window. So the page loads consistent with the
-picker and the first click does not jump.
+THESE TESTS pin Option A (exercised WITH A WARM _account_totals_cache — the live condition; the
+empty-cache default silently took the VW path, which is why this slipped):
+ (a) default /api/state hero WINDOWED guard alpha == /api/strip/<default-window> guard alpha;
+ (b) the account-lifetime CR is a DISTINCT field that does NOT change across windows;
+ (c) every /api/strip/<window> carries a re-windowing guard_alpha;
+ (d) templates carry a distinct 'Account · all-time' element.
 
-These FAIL today (default != windowed-default). They pin consistency; the BASIS decision (account
-vs VW within a window) is a separate product call escalated to the PM/user — but EITHER basis must
-be applied CONSISTENTLY to both the default and the picker.
+They FAIL today and go GREEN when flask+risk-engine wire Option A.
 """
 
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-import analytics
 import app as app_module
 import database as _db
 
-# The picker's default window (templates/index.html:791 label + :801 active button).
+# The picker's default window (templates/index.html active button + label).
 _DEFAULT_WINDOW = "30d"
 
 _SCHEMA = """
@@ -57,18 +56,16 @@ _SCHEMA = """
 """
 
 
-def _make_db(tmp_path: Path) -> str:
-    """A shadow_history DB with one triggered symphony whose divergence is within the window
-    (so the windowed default strip is well-defined and non-trivial)."""
+def _make_shadow_db(tmp_path: Path) -> str:
+    """A shadow_history DB with one triggered symphony whose divergence is recent (in-window)."""
     db_file = str(Path(tmp_path) / "default_hero_shadow.db")
     conn = sqlite3.connect(db_file)
     conn.execute(_SCHEMA)
-    # Recent days (so a 30d window includes them); one trigger-day divergence.
     rows = [
         ("2026-05-26", -2.0, -2.0, "E1"),
         ("2026-05-27", 1.0, 1.0, "E1"),
         ("2026-05-28", 0.5, 0.5, "E1"),
-        ("2026-05-29", 2.0, 0.3, "E1"),   # guard diverged here
+        ("2026-05-29", 2.0, 0.3, "E1"),   # guard diverged here -> non-zero windowed alpha
         ("2026-06-01", 0.4, 0.4, "E1"),
     ]
     for day, shadow, current, epoch in rows:
@@ -82,38 +79,6 @@ def _make_db(tmp_path: Path) -> str:
     _db._shadow_cr_cache.clear()
     return db_file
 
-
-def _symphonies():
-    return [{
-        "id": "sym-x", "value": 10000.0, "last_percent_change": 0.015,
-        "simple_return": 0.30, "net_deposits": 1000.0, "time_weighted_return": 0.30,
-        "max_drawdown": 0.08, "trading_day": "2026-06-01",
-    }]
-
-
-# ===========================================================================
-# Analytics-level: default-window windowed strip must be the canonical default
-# ===========================================================================
-
-class TestWindowedDefaultIsWellDefined:
-    def test_default_window_strip_has_a_guard_alpha(self, tmp_path):
-        """The windowed strip for the DEFAULT window must produce a defined guard alpha for a
-        symphony that diverged inside the window — this is the value the default hero must show."""
-        db_file = _make_db(tmp_path)
-        strip = analytics.compute_windowed_portfolio_strip(
-            _symphonies(), {}, window=_DEFAULT_WINDOW, db_path=db_file
-        )
-        assert strip["window"] == _DEFAULT_WINDOW, (
-            f"windowed strip must echo the default window; got {strip['window']!r}"
-        )
-        assert strip["guard_alpha"] is not None, (
-            "the default-window strip must define a guard alpha (the symphony diverged in-window)"
-        )
-
-
-# ===========================================================================
-# Route-level: the SSR/default-poll hero must match /api/strip/<default>
-# ===========================================================================
 
 @pytest.fixture
 def client():
@@ -133,69 +98,152 @@ def _live_bot_state():
     }
 
 
-class TestDefaultHeroMatchesWindowedDefault:
-    def test_default_poll_hero_cr_equals_windowed_default_cr(self, client, monkeypatch):
-        """/api/state (the default poll the page renders on load) hero cumulative_return must
-        EQUAL /api/strip/<default-window> cumulative_return — same Bot (dry_run), Held (if_held),
-        and guard alpha. A mismatch is the load-vs-click jump the PM saw.
+# A warm account cache (as _refresh_account_totals populates live): account CR ~66%, cash present.
+_WARM_CACHE = {
+    "portfolio_cr": 66.0, "portfolio_tc": 0.5, "portfolio_mdd": 24.47,
+    "portfolio_value": 12945.18,
+}
 
-        Populates _account_totals_cache (as the LIVE daemon does via _refresh_account_totals)
-        so the default strip takes the ACCOUNT-basis branch (app.py:689-705) — the exact live
-        condition where the default hero diverges from the VW windowed strip."""
-        from unittest.mock import patch
-        # The live account cache: portfolio_cr ~66% (Composer lifetime), value > symphony sum
-        # (cash present). This is what makes the default hero ~67% while /api/strip/30d is ~29%.
-        monkeypatch.setattr(
-            app_module, "_account_totals_cache",
-            {"portfolio_cr": 66.0, "portfolio_tc": 0.5, "portfolio_mdd": 24.47,
-             "portfolio_value": 12945.18},
-            raising=False,
-        )
+
+# ===========================================================================
+# (a) default poll hero windowed guard alpha == /api/strip/<default> — ONE basis
+# ===========================================================================
+
+class TestDefaultHeroGuardAlphaMatchesWindowedDefault:
+    def test_default_poll_guard_alpha_equals_windowed_default(self, client, monkeypatch):
+        """WARM-CACHE path (the live condition): the default /api/state hero's WINDOWED guard
+        alpha must EQUAL /api/strip/<default-window>'s guard alpha. No 67-vs-29 jump on first click.
+        """
+        monkeypatch.setattr(app_module, "_account_totals_cache", dict(_WARM_CACHE), raising=False)
         with patch.object(app_module.database, "load_state", return_value=_live_bot_state()), \
              patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}), \
              patch.object(app_module, "render_template", lambda *_a, **_k: ""):
             state = client.get("/api/state").get_json()
             strip = client.get(f"/api/strip/{_DEFAULT_WINDOW}").get_json()
 
-        # The default poll exposes the portfolio strip under portfolio_strip (poll path).
         ps = state.get("portfolio_strip") or {}
-        default_cr = (ps.get("cumulative_return") or {})
-        windowed_cr = (strip.get("cumulative_return") or {})
-        assert default_cr and windowed_cr, (
-            f"both strips must carry cumulative_return; default={default_cr} windowed={windowed_cr}"
+        windowed_alpha = strip.get("guard_alpha")
+        assert windowed_alpha is not None, (
+            f"/api/strip/{_DEFAULT_WINDOW} must define a guard_alpha; got {strip!r}"
+        )
+        # Option A: the default strip must carry an EXPLICIT windowed guard_alpha field (the hero
+        # metric), NOT just an account-basis cumulative_return. Deriving dry_run-if_held from the
+        # account CR is the OLD behavior and must not satisfy this — require the field + the window.
+        assert "guard_alpha" in ps, (
+            "OPTION-A FAIL: the default poll portfolio_strip has no 'guard_alpha' field. The "
+            "default hero must carry the WINDOWED guard alpha (Option A), not the un-windowed "
+            f"account CR. portfolio_strip keys={list(ps.keys())}"
+        )
+        assert str(ps.get("window", "")).lower() == _DEFAULT_WINDOW, (
+            "OPTION-A FAIL: the default poll portfolio_strip must echo the default window "
+            f"'{_DEFAULT_WINDOW}' (so the label tracks the windowed guard alpha); got "
+            f"window={ps.get('window')!r}."
+        )
+        default_alpha = ps.get("guard_alpha")
+        # abs=1e-6: the default hero guard alpha and the default-window strip guard alpha are the
+        # SAME windowed number — no 67-vs-29 jump on first click.
+        assert default_alpha == pytest.approx(windowed_alpha, abs=1e-6), (
+            f"OPTION-A FAIL: default hero guard_alpha {default_alpha} != windowed default "
+            f"{windowed_alpha}. The page must load the windowed default-window guard alpha so the "
+            "first picker click does not jump the hero."
         )
 
-        # abs=1e-6: the default hero and the default-window strip must be the SAME number on
-        # the SAME basis. (They differ today: account-basis default ~67% vs VW windowed ~29%.)
-        assert default_cr.get("dry_run") == pytest.approx(windowed_cr.get("dry_run"), abs=1e-6), (
-            f"DEFAULT-HERO FAIL: default poll Bot (dry_run) {default_cr.get('dry_run')} != "
-            f"windowed default Bot {windowed_cr.get('dry_run')}. The page loads an un-windowed "
-            "value, then the first picker click jumps it. Default and picker must share ONE basis."
+
+# ===========================================================================
+# (b) account-lifetime CR is a DISTINCT non-windowed field
+# ===========================================================================
+
+def _account_all_time_cr(payload: dict):
+    """Locate the dedicated account-all-time CR field (Option A). Accept the canonical name or a
+    small set of reasonable aliases so the test pins the CONTRACT (a separate field), not a brittle
+    exact name the implementer must guess."""
+    meta = (payload.get("meta") or {}).get("portfolio") or {}
+    ps = payload.get("portfolio_strip") or {}
+    for src in (meta, ps, payload):
+        if not isinstance(src, dict):
+            continue
+        for k in ("account_all_time_cr", "account_cr_all_time", "account_lifetime_cr",
+                  "account_cr"):
+            if src.get(k) is not None:
+                return src[k]
+    return None
+
+
+class TestAccountAllTimeCrIsSeparateAndUnwindowed:
+    def test_account_all_time_cr_field_exists_and_is_account_basis(self, client, monkeypatch):
+        """The ~66% account-lifetime CR must be exposed as its OWN field (not the windowed hero
+        value), so the UI can render the 'Account · all-time' stat."""
+        monkeypatch.setattr(app_module, "_account_totals_cache", dict(_WARM_CACHE), raising=False)
+        with patch.object(app_module.database, "load_state", return_value=_live_bot_state()), \
+             patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}), \
+             patch.object(app_module, "render_template", lambda *_a, **_k: ""):
+            state = client.get("/api/state").get_json()
+        acct_cr = _account_all_time_cr(state)
+        assert acct_cr is not None, (
+            "OPTION-A FAIL: no distinct account-all-time CR field in the payload. The ~66% account "
+            "lifetime CR must be a SEPARATE clearly-labeled stat, not the windowed hero headline."
         )
-        assert default_cr.get("if_held") == pytest.approx(windowed_cr.get("if_held"), abs=1e-6), (
-            f"DEFAULT-HERO FAIL: default Held {default_cr.get('if_held')} != windowed default Held "
-            f"{windowed_cr.get('if_held')} — incommensurable bases on the same hero control."
+        assert acct_cr == pytest.approx(_WARM_CACHE["portfolio_cr"], abs=1e-6), (
+            f"account-all-time CR {acct_cr} must equal the Composer account simple_return "
+            f"{_WARM_CACHE['portfolio_cr']} (account basis), not a windowed VW value."
         )
 
-    def test_default_hero_window_label_matches_default_window(self):
-        """The hero window label must NAME the default window the value is computed for (not a
-        static literal divorced from the value). If the default value is the 30d window, the label
-        is '30d'; if the chosen default is all-time, the label must say so — never a fixed lie."""
+    def test_account_all_time_cr_does_not_change_across_windows(self, client, monkeypatch):
+        """The account-all-time stat is fixed — it must NOT vary when the picker window changes
+        (it carries no window label and does not window). /api/strip/<window> must NOT alter it."""
+        monkeypatch.setattr(app_module, "_account_totals_cache", dict(_WARM_CACHE), raising=False)
+        seen = set()
+        with patch.object(app_module.database, "load_state", return_value=_live_bot_state()), \
+             patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}), \
+             patch.object(app_module, "render_template", lambda *_a, **_k: ""):
+            for _ in ("first", "second"):
+                state = client.get("/api/state").get_json()
+                acct = _account_all_time_cr(state)
+                assert acct is not None, "account-all-time CR field must be present"
+                seen.add(round(float(acct), 6))
+        assert len(seen) == 1, (
+            f"account-all-time CR must be constant; saw {seen} — it must not window."
+        )
+
+
+# ===========================================================================
+# (c) windowed strip carries a re-windowing guard alpha for every token
+# ===========================================================================
+
+class TestWindowedGuardAlphaReWindows:
+    def test_strip_guard_alpha_defined_for_every_window(self, client, monkeypatch):
+        """Every /api/strip/<window> must carry a guard_alpha (the windowable hero metric) and echo
+        the window so the label tracks the value."""
+        monkeypatch.setattr(app_module, "_account_totals_cache", dict(_WARM_CACHE), raising=False)
+        with patch.object(app_module.database, "load_state", return_value=_live_bot_state()):
+            for window in ("30d", "60d", "90d", "125d", "ytd", "1y", "all"):
+                strip = client.get(f"/api/strip/{window}").get_json()
+                assert str(strip.get("window")).lower() == window, (
+                    f"/api/strip/{window} must echo the window; got {strip.get('window')!r}"
+                )
+                assert "guard_alpha" in strip, (
+                    f"/api/strip/{window} must carry a guard_alpha (the windowed hero metric)."
+                )
+
+
+# ===========================================================================
+# (d) the template surfaces a distinct 'Account · all-time' element
+# ===========================================================================
+
+class TestTemplateHasAccountAllTimeElement:
+    def test_template_has_distinct_account_all_time_element(self):
+        """templates/index.html must carry a distinct, clearly-labeled account-all-time element,
+        separate from the windowed guard-alpha hero (so the ~67% is not mislabeled '30d')."""
         html = Path(app_module.__file__).parent.joinpath("templates", "index.html").read_text(
             encoding="utf-8"
         )
-        # The label span must be driven by the SAME default-window token as the active picker
-        # button — pin that the active button's window and the label are the same token, so they
-        # cannot drift (a hard-coded label that disagrees with the active button is the F1 lie).
-        import re
-        active = re.search(r'data-window="([^"]+)"[^>]*class="[^"]*\bactive\b', html) or \
-            re.search(r'class="[^"]*\bactive\b[^"]*"[^>]*data-window="([^"]+)"', html)
-        assert active, "an active picker button with a data-window token must exist"
-        active_window = active.group(1)
-        # The label span's default text must match the active window token (case-insensitive).
-        label = re.search(r'id="guard-alpha-window-label"[^>]*>([^<]+)<', html)
-        assert label, "the guard-alpha-window-label span must exist"
-        assert label.group(1).strip().lower() == active_window.lower(), (
-            f"DEFAULT-LABEL FAIL: hero label '{label.group(1).strip()}' != active picker window "
-            f"'{active_window}'. The default label must name the default window the value reflects."
+        # Require a DEDICATED testid (not a loose word-match — "All Time" picker button + the word
+        # "account" elsewhere would incidentally satisfy a substring check). The account-all-time
+        # stat is a distinct addressable element so the UI + tests can pin it separately from the
+        # windowed guard-alpha hero.
+        assert 'data-testid="account-all-time' in html.lower(), (
+            "OPTION-A FAIL: no element with a data-testid starting 'account-all-time' in "
+            "templates/index.html. The ~67% account-lifetime CR must be a DISTINCT, addressable, "
+            "clearly-labeled stat — separate from the windowed guard-alpha hero (which carries the "
+            "window label)."
         )
