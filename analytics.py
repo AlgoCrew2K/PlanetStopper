@@ -781,13 +781,21 @@ def get_symphony_cumulative_return(
              shadow rows), dry_run = if_held (no recorded divergence yet).
 
     Returns {"if_held": None, "dry_run": None} when simple_return is None (missing data).
+
+    "_twr_fallback": True is set when the TWR path is taken (simple_return == 0.0
+    AND net_deposits == 0.0). This flag is consumed by _value_weighted_portfolio to
+    exclude the symphony from the portfolio VW aggregate (F4 / CA-3 fix): the TWR
+    fallback is defensible per-card but a 318% outlier pollutes the portfolio figure.
+    Per-symphony if_held is still the correct TWR*100 value for the card display.
     """
     if sym_dict.get("simple_return") is None:
         return {"if_held": None, "dry_run": None}
     simple_return = float(sym_dict["simple_return"])
     net_deposits = float(sym_dict["net_deposits"])
+    _twr_fallback = False
     if simple_return == 0.0 and net_deposits == 0.0:
         if_held = float(sym_dict["time_weighted_return"]) * 100.0
+        _twr_fallback = True
     else:
         if_held = simple_return * 100.0
 
@@ -815,7 +823,7 @@ def get_symphony_cumulative_return(
                 lifetime_divergence += (product_shadow - product_current) * 100.0
             dry_run = if_held + lifetime_divergence
 
-    return {"if_held": if_held, "dry_run": dry_run}
+    return {"if_held": if_held, "dry_run": dry_run, "_twr_fallback": _twr_fallback}
 
 
 def get_symphony_max_drawdown(
@@ -930,6 +938,13 @@ def _value_weighted_portfolio(
         entry = bot_state.get(sym.get("id"))
         per = per_sym_fn(sym, entry, **kwargs)
         if per["if_held"] is None:
+            continue
+        # F4 fix: exclude TWR-fallback symphonies (zero-deposit, simple_return==0)
+        # from the portfolio VW aggregate. Their 300%+ TWR figures are defensible
+        # per-card but constitute outlier noise at the portfolio level. The flag
+        # "_twr_fallback" is set by get_symphony_cumulative_return; other per_sym_fn
+        # implementations don't set it, so this check is specific to the CR path.
+        if per.get("_twr_fallback"):
             continue
         if_held_wsum += per["if_held"] * w
         total_weight += w
