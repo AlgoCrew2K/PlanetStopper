@@ -81,7 +81,14 @@ def compute_overfitting_conscience_observation(
     symphony_id: str = autotune_run["symphony_id"]
     spec_bundle_id: str = autotune_run["spec_bundle_id"]
     n_effective: int = autotune_run["n_effective"]
-    s_count: int = autotune_run["s_count"]
+    # s_count is the S accumulator (SUM of n_configs_searched over BACKTEST_SELECTION
+    # rows; migration 023).  Pre-023 / NN1-honest rows persist NULL, which surfaces
+    # here as None.  Coerce None -> 0: a missing S means "no BACKTEST_SELECTION
+    # counted", which is the S=0 (CLEAR) case — NOT an unknown.  Without this,
+    # `max(s, s_count)` below raised TypeError on every live row and the throw was
+    # silently swallowed at the autotuner call site, so OC persisted zero rows.
+    # Coercing (not fabricating a non-zero S) keeps the verdict honest.
+    s_count: int = autotune_run["s_count"] if autotune_run["s_count"] is not None else 0
 
     # Normalise ledger rows: sqlite3.Row supports key access but not .get();
     # convert to plain dicts so both dict and sqlite3.Row inputs work uniformly.
