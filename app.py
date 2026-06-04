@@ -760,10 +760,39 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         # shadow_history.current_return is deferred to a future cycle.
         vol_bot: float | None = None
         vol_held: float | None = None
+        # AC-4c: capture the shadow DATES (not just the returns) so the strip carries
+        # hist_dates. _build_meta derives insufficient_history = len(hist_dates) < 30
+        # from this; without it the SSR render path always saw hist_dates=[] and
+        # flagged EVERY portfolio as <30d — making the MAX-DD Bot +0.00% read as a
+        # guard win (the empty-series artifact) even with ample history.
+        hist_dates: list[str] = []
+        hist_bot: list[float] = []
+        hist_held: list[float] = []
         _shadow_result = analytics.get_portfolio_daily_returns_from_shadow()
         if _shadow_result is not None:
-            _, _port_daily_returns = _shadow_result
+            _shadow_dates, _port_daily_returns = _shadow_result
             vol_bot = analytics.compute_portfolio_annualized_vol(_port_daily_returns)
+            hist_dates = list(_shadow_dates)
+
+        # Prefer the REAL (bot, held) series for the initial hero chart so the dashed
+        # "If held" line is genuine on first paint (not a verbatim Bot copy — F3). Falls
+        # back silently to an empty series; the windowed /api/hero-chart route refreshes
+        # it on any picker click regardless.
+        try:
+            _bh = analytics.get_portfolio_bot_and_held_daily_returns()
+            if _bh is not None:
+                _bh_dates, _bh_bot, _bh_held = _bh
+                if not hist_dates:
+                    hist_dates = list(_bh_dates)
+                _rb = 1.0
+                _rh = 1.0
+                for _b, _h in zip(_bh_bot, _bh_held):
+                    _rb *= 1.0 + _b / 100.0
+                    _rh *= 1.0 + _h / 100.0
+                    hist_bot.append(round((_rb - 1.0) * 100.0, 4))
+                    hist_held.append(round((_rh - 1.0) * 100.0, 4))
+        except Exception:
+            _daemon_log.error("_compute_portfolio_strip bot/held series failed", exc_info=True)
 
         return {
             "today_change": today_change,
@@ -772,6 +801,9 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
             "account_value": account_value,
             "vol_bot": vol_bot,
             "vol_held": vol_held,
+            "hist_dates": hist_dates,
+            "hist_bot": hist_bot,
+            "hist_held": hist_held,
             "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
         }
     except Exception as _exc:
