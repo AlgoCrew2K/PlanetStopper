@@ -61,19 +61,24 @@ def hash_name_pair() -> dict:
 
 
 def test_modal_queries_observations_by_normalized_name_not_hash(flask_client, hash_name_pair):
-    """get_symphony_settings MUST call get_advisor_observations_for_symphony with
-    the canonical normalized NAME, never the Composer hash.
+    """get_symphony_settings MUST resolve the Composer HASH (the live URL param)
+    to the canonical normalized NAME before querying observations.
 
-    We inject a bot_state whose top-level key is the Composer hash and whose
-    'name' is the display name (the live shape).  The route resolves the modal
-    for the normalized name; the observations accessor must be invoked with that
-    normalized name — NOT the hash that the buggy code pulls from sym_key.
+    PRODUCTION SHAPE: the gear icon calls openSymphonySettings(event, sym.id)
+    where sym.id is the Composer HASH (templates/index.html:1040), so the URL is
+    /api/symphony-settings/<HASH>.  advisor_observations is keyed by the lowercased
+    NAME.  The route must walk bot_state hash->name and query by the NAME — NOT by
+    the (normalized) hash, which matches nothing.
+
+    This test passes the HASH as the URL param (the real scenario), not the
+    display name, so it exercises the actual hash->name resolution branch.
     """
     import database as db_module
 
     composer_hash = hash_name_pair["composer_hash"]
     display_name = hash_name_pair["name"]
     normalized = hash_name_pair["normalized_name"]
+    normalized_hash = db_module.normalize_name(composer_hash)
 
     # Live-shaped bot_state: hash key -> {name: DisplayName}.
     bot_state = {composer_hash: {"name": display_name, "account_uuid": "acc-1"}}
@@ -98,18 +103,22 @@ def test_modal_queries_observations_by_normalized_name_not_hash(flask_client, ha
                       return_value={"params": {}, "locked_vars": [], "live_mode": False}), \
          patch.object(db_module, "get_advisor_observations_for_symphony",
                       side_effect=_capture_accessor):
-        resp = flask_client.get(f"/api/symphony-settings/{display_name}")
+        # The URL param is the COMPOSER HASH — exactly what the gear icon sends.
+        resp = flask_client.get(f"/api/symphony-settings/{composer_hash}")
 
     assert resp.status_code == 200, f"got {resp.status_code}: {resp.data!r}"
     assert captured["calls"] >= 1, "observations accessor was never called."
     assert captured["key"] == normalized, (
         f"Modal queried observations with {captured['key']!r}; the canonical key "
-        f"is the normalized NAME {normalized!r}. AC-4: the route must NOT pass the "
-        f"Composer hash {composer_hash!r}."
+        f"is the normalized NAME {normalized!r}. AC-4: the route must resolve the "
+        f"hash {composer_hash!r} to the name, NOT query by the hash."
     )
-    assert captured["key"] != composer_hash, (
-        "Modal queried observations with the Composer HASH — the exact AC-4 bug "
-        "that yields 0 rows because advisor_observations is keyed by the name."
+    # The two failure modes the bug produced: querying by the raw hash, or by the
+    # normalized (lowercased) hash. Neither matches the name-keyed rows.
+    assert captured["key"] not in (composer_hash, normalized_hash), (
+        f"Modal queried observations with the Composer hash form {captured['key']!r} "
+        "— the exact AC-4 bug that yields 0 rows because advisor_observations is "
+        "keyed by the name, not the hash."
     )
 
 
@@ -140,7 +149,8 @@ def test_modal_returns_real_observation_rows_for_a_symphony(flask_client, hash_n
                       return_value={"params": {}, "locked_vars": [], "live_mode": False}), \
          patch.object(db_module, "get_advisor_observations_for_symphony",
                       side_effect=_accessor):
-        resp = flask_client.get(f"/api/symphony-settings/{display_name}")
+        # URL param is the Composer HASH (production scenario via the gear icon).
+        resp = flask_client.get(f"/api/symphony-settings/{composer_hash}")
 
     assert resp.status_code == 200
     body = resp.get_json()
