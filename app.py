@@ -2691,7 +2691,20 @@ def ai_advisor_asset_swaps_evaluate():
     if not symphony_id or not from_ticker or not to_ticker:
         return jsonify({"error": "symphony_id, from_ticker, and to_ticker are required"}), 200
 
-    raw_value = fetch_symphony_score(symphony_id)
+    # AC-8: the payload carries the display NAME (from the analytics dropdown); the
+    # Composer API needs the HASH.  Resolve NAME -> Composer hash via bot_state
+    # (inverse of the AC-4 modal, which resolved hash -> name).
+    # bot_state keys are Composer hashes; sym_data["name"] is the display name.
+    composer_hash = symphony_id  # fallback: pass as-is if not found in bot_state
+    _bot_state = database.load_state()
+    for _sym_key, _sym_data in _bot_state.items():
+        if not isinstance(_sym_data, dict) or "name" not in _sym_data:
+            continue
+        if database.normalize_name(_sym_data["name"]) == database.normalize_name(symphony_id):
+            composer_hash = _sym_key
+            break
+
+    raw_value = fetch_symphony_score(composer_hash)
     if not raw_value:
         return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
 
@@ -2704,7 +2717,9 @@ def ai_advisor_asset_swaps_evaluate():
 
     try:
         run_result = propose_operator_swap(
-            symphony_id=symphony_id,
+            # Pass the Composer hash — engine uses it as the UUID for dvm_capital
+            # unpacking in run_backtest (composer_backtest_client.py:269).
+            symphony_id=composer_hash,
             score_tree=raw_value,
             incumbent_asset=from_ticker,
             candidate_asset=to_ticker,
@@ -2827,7 +2842,18 @@ def ai_advisor_logic_changes_evaluate():
     if not symphony_id or not change_description:
         return jsonify({"error": "symphony_id and change_description are required"}), 200
 
-    raw_value = fetch_symphony_score(symphony_id)
+    # AC-8: same NAME->Composer-hash resolution as asset-swaps/evaluate (identical bug).
+    # The payload carries the display NAME; the Composer API needs the HASH.
+    composer_hash = symphony_id  # fallback: pass as-is if not found in bot_state
+    _bot_state = database.load_state()
+    for _sym_key, _sym_data in _bot_state.items():
+        if not isinstance(_sym_data, dict) or "name" not in _sym_data:
+            continue
+        if database.normalize_name(_sym_data["name"]) == database.normalize_name(symphony_id):
+            composer_hash = _sym_key
+            break
+
+    raw_value = fetch_symphony_score(composer_hash)
     if not raw_value:
         return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
 
@@ -2844,7 +2870,9 @@ def ai_advisor_logic_changes_evaluate():
     # early-return needed here (AC-X5 isolation applies at the engine level).
     try:
         run_result = propose_operator_logic_change(
-            symphony_id=symphony_id,
+            # Pass the Composer hash — engine uses it as the UUID for dvm_capital
+            # unpacking in run_backtest (composer_backtest_client.py:269).
+            symphony_id=composer_hash,
             score_tree=raw_value,
             tweak=None,
             objective=objective,
