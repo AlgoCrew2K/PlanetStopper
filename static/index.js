@@ -856,10 +856,13 @@
 
     function updateComparisonRows(data) {
         var ps = (data && data.portfolio_strip) || {};
+        // AC-4a: each row names its alpha (.vs-delta) testid explicitly so the poll
+        // can address + refresh the displayed alpha (comp-today-delta /
+        // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
         var rows = [
-            { id: 'today',      values: ps.today_change      || {}, higherIsBetter: true },
-            { id: 'cumulative', values: ps.cumulative_return || {}, higherIsBetter: true },
-            { id: 'mdd',        values: ps.max_drawdown      || {}, higherIsBetter: false }
+            { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
+            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
+            { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
         ];
         rows.forEach(function (row) {
             var bot  = sentinelToNull(typeof row.values.dry_run === 'number' ? row.values.dry_run : (Number(row.values.dry_run) || null)) || 0;
@@ -885,6 +888,21 @@
             if (heldText) {
                 heldText.textContent = 'Held ' + fmtPct(held);
                 setPosNeg(heldText, row.higherIsBetter ? held : -held);
+            }
+
+            // AC-4a: recompute + write the alpha (.vs-delta) span every poll so the
+            // displayed alpha == displayed (Bot - Held) by construction. Without this
+            // the delta stays frozen at its server-side-render value while Bot/Held
+            // tick live (the 2.17-vs-1.72 staleness symptom). For Max DD, alpha is the
+            // drawdown the guard SAVED: abs(held) - abs(bot) (less DD = better),
+            // matching the template's mdd_alpha and the per-card convention.
+            var deltaEl = document.querySelector('[data-testid="' + row.deltaTestid + '"]');
+            if (deltaEl) {
+                var deltaAlpha = row.higherIsBetter
+                    ? (bot - held)
+                    : (Math.abs(held) - Math.abs(bot));
+                deltaEl.textContent = 'α ' + fmtPct(deltaAlpha);
+                setPosNeg(deltaEl, deltaAlpha);
             }
         });
 

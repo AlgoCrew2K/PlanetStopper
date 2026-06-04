@@ -1301,7 +1301,13 @@ def get_state():
         next_run_seconds = max(0, int(60 - _secs_into))
 
         # Render HTML for UI
-        symphony_keys = [k for k in state_data.keys() if isinstance(state_data[k], dict)]
+        # AC-4d: name-guard so phantom non-symphony top-level dicts (e.g.
+        # last_market_close_snapshot) cannot leak into the cards/standby list.
+        # Matches the SSR/meta paths (app.py:433/544) which already require "name".
+        symphony_keys = [
+            k for k in state_data.keys()
+            if isinstance(state_data[k], dict) and "name" in state_data[k]
+        ]
         accounts_map = {}
         for k in symphony_keys:
             sym = state_data[k]
