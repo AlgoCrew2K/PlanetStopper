@@ -128,12 +128,28 @@
     // Guard alpha headline
     // ---------------------------------------------------------------------------
 
-    function renderGuardAlpha(data) {
+    function renderGuardAlpha(data, _fromStrip) {
         var ps = (data || {}).portfolio_strip || {};
-        var cr_obj = ps.cumulative_return || {};
-        var cr = typeof cr_obj.dry_run === 'number' ? cr_obj.dry_run : 0;
-        var crHeld = typeof cr_obj.if_held === 'number' ? cr_obj.if_held : 0;
-        var guard_alpha = cr - crHeld;
+        // Read the server-computed windowed VW guard alpha directly.  The server
+        // sets portfolio_strip.guard_alpha in _compute_portfolio_strip (app.py:846-847)
+        // and /api/strip/<window> returns it from compute_windowed_portfolio_strip.
+        // Do NOT derive guard_alpha from cumulative_return.dry_run - cumulative_return.if_held:
+        // those fields may be on different bases (windowed VW bot vs account-basis held),
+        // which produces a fabricated -36.18% instead of the correct ~+0.90%.
+        var guard_alpha = typeof ps.guard_alpha === 'number' ? ps.guard_alpha : null;
+
+        // Frozen-path fallback: the closed_frozen /api/state portfolio_strip is built
+        // inline (app.py ~line 1262) and does not call _compute_portfolio_strip, so
+        // guard_alpha and windowed_cumulative_return are absent.  /api/strip/<window>
+        // works in all market states.  Fetching it here populates both the headline
+        // (via the renderGuardAlpha call inside fetchWindowedStrip) and the cumulative
+        // row (via updateComparisonRows) with correct windowed VW values.
+        // _fromStrip guard: compute_windowed_portfolio_strip can return guard_alpha:null
+        // when weight_sum==0 (no symphonies). Without the guard that would loop forever.
+        if (guard_alpha === null) {
+            if (!_fromStrip) fetchWindowedStrip('30d');
+            return;
+        }
 
         var el = document.getElementById('guard-alpha-headline');
         if (el) {
@@ -861,7 +877,11 @@
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
         var rows = [
             { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
-            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
+            // Prefer windowed_cumulative_return (VW-basis, same window as guard_alpha)
+            // over cumulative_return (which may carry account-basis if_held ~63.95%).
+            // Falls back to cumulative_return when windowed_cumulative_return is absent
+            // (e.g. cold cache) so the row still renders rather than breaking.
+            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.windowed_cumulative_return || ps.cumulative_return || {}, higherIsBetter: true },
             { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
         ];
         rows.forEach(function (row) {
@@ -1213,7 +1233,29 @@
             .catch(function (err) { console.error('state load failed', err); });
     }
 
+    // Re-window the hero headline VALUE + the three vs-rows for a window token.
+    // The windowed strip dict shares portfolio_strip's shape, so we reuse
+    // renderGuardAlpha + updateComparisonRows by wrapping it as a poll-style payload.
+    // Defined at IIFE scope (not inside DOMContentLoaded) so renderGuardAlpha can call
+    // it as a frozen-path fallback — renderGuardAlpha is also at IIFE scope and the
+    // DOMContentLoaded callback would be invisible from there.
+    function fetchWindowedStrip(token) {
+        fetch('/api/strip/' + token)
+            .then(function (r) { return r.json(); })
+            .then(function (strip) {
+                if (!strip || strip.error) return;
+                var wrapped = {
+                    portfolio_strip: strip,
+                    meta: { portfolio: { vol_bot: strip.vol_bot, vol_held: strip.vol_held } }
+                };
+                renderGuardAlpha(wrapped, true); // _fromStrip=true — prevents re-entry when strip guard_alpha is null
+                updateComparisonRows(wrapped);
+            })
+            .catch(function (err) { console.error('windowed strip load failed', err); });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
+        // Poll floor is 15 s — matches the engine's minute cadence (see POLL_INTERVAL_MS).
         loadState();
         setInterval(loadState, POLL_INTERVAL_MS);
 
@@ -1235,24 +1277,6 @@
             'window-125d': '125d', 'window-ytd': 'YTD', 'window-1y': '1Y',
             'window-all': 'All Time'
         };
-
-        // Re-window the hero headline VALUE + the three vs-rows for a window token.
-        // The windowed strip dict shares portfolio_strip's shape, so we reuse
-        // renderGuardAlpha + updateComparisonRows by wrapping it as a poll-style payload.
-        function fetchWindowedStrip(token) {
-            fetch('/api/strip/' + token)
-                .then(function (r) { return r.json(); })
-                .then(function (strip) {
-                    if (!strip || strip.error) return;
-                    var wrapped = {
-                        portfolio_strip: strip,
-                        meta: { portfolio: { vol_bot: strip.vol_bot, vol_held: strip.vol_held } }
-                    };
-                    renderGuardAlpha(wrapped);
-                    updateComparisonRows(wrapped);
-                })
-                .catch(function (err) { console.error('windowed strip load failed', err); });
-        }
 
         Object.keys(windowTokenMap).forEach(function (testid) {
             var btn = document.querySelector('[data-testid="' + testid + '"]');
