@@ -847,6 +847,14 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
                 _strip["guard_alpha"] = _ga if isinstance(_ga, (int, float)) else None
                 _win = _default.get("window", _DEFAULT_HERO_WINDOW)
                 _strip["window"] = _win if isinstance(_win, str) else _DEFAULT_HERO_WINDOW
+                # Expose the windowed VW cumulative_return so the JS poll path uses
+                # VW-basis Bot/Held for the cumulative comparison row on initial load.
+                # Without this field, updateComparisonRows falls back to the
+                # account-basis cumulative_return (if_held ~63.95%), which mismatches
+                # the windowed VW dry_run (~27.56%) and fabricates a large negative delta.
+                _wcr = _default.get("cumulative_return")
+                if isinstance(_wcr, dict):
+                    _strip["windowed_cumulative_return"] = _wcr
         except Exception:
             _daemon_log.error(
                 "_compute_portfolio_strip default-window strip failed", exc_info=True

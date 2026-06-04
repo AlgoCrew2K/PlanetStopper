@@ -130,15 +130,18 @@
 
     function renderGuardAlpha(data) {
         var ps = (data || {}).portfolio_strip || {};
-        var cr_obj = ps.cumulative_return || {};
-        var cr = typeof cr_obj.dry_run === 'number' ? cr_obj.dry_run : 0;
-        var crHeld = typeof cr_obj.if_held === 'number' ? cr_obj.if_held : 0;
-        var guard_alpha = cr - crHeld;
+        // Read the server-computed windowed VW guard alpha directly.  The server
+        // sets portfolio_strip.guard_alpha in _compute_portfolio_strip (app.py:846-847)
+        // and /api/strip/<window> returns it from compute_windowed_portfolio_strip.
+        // Do NOT derive guard_alpha from cumulative_return.dry_run - cumulative_return.if_held:
+        // those fields may be on different bases (windowed VW bot vs account-basis held),
+        // which produces a fabricated -36.18% instead of the correct ~+0.90%.
+        var guard_alpha = typeof ps.guard_alpha === 'number' ? ps.guard_alpha : null;
 
         var el = document.getElementById('guard-alpha-headline');
         if (el) {
             el.textContent = fmtPct(guard_alpha);
-            el.style.color = guard_alpha >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+            el.style.color = (guard_alpha != null && guard_alpha >= 0) ? cs('--studio-pos') : cs('--studio-neg');
         }
     }
 
@@ -861,7 +864,11 @@
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
         var rows = [
             { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
-            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
+            // Prefer windowed_cumulative_return (VW-basis, same window as guard_alpha)
+            // over cumulative_return (which may carry account-basis if_held ~63.95%).
+            // Falls back to cumulative_return when windowed_cumulative_return is absent
+            // (e.g. cold cache) so the row still renders rather than breaking.
+            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.windowed_cumulative_return || ps.cumulative_return || {}, higherIsBetter: true },
             { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
         ];
         rows.forEach(function (row) {
