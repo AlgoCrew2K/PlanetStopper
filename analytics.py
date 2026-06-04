@@ -656,10 +656,14 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
 
 def _get_shadow_divergence_trajectory(
     symphony_id: str, db_file: str
-) -> list[tuple[float, float]] | None:
-    """Return ordered per-day EOD ``(shadow_return, current_return)`` pairs spanning
-    the symphony's ENTIRE LIFETIME (all position epochs) — the inputs to the
-    guard-alpha DIVERGENCE formula.
+) -> list[list[tuple[float, float]]] | None:
+    """Return the symphony's LIFETIME per-day EOD ``(shadow_return, current_return)``
+    pairs GROUPED BY position epoch — the inputs to the EPOCH-ADDITIVE guard-alpha
+    DIVERGENCE formula (semantic B).
+
+    Return shape: a list of epoch GROUPS in chronological order; each group is that
+    epoch's ordered list of ``(shadow_return, current_return)`` per-day pairs. The
+    grouping is load-bearing for semantic B — see WHY EPOCH-ADDITIVE below.
 
     LIFETIME (cross-epoch) scope — DATA-CORRECTNESS-AUDIT C-1 fix (AC-1).
     ``database.wipe_transient_state`` resets a triggered symphony's
@@ -667,18 +671,20 @@ def _get_shadow_divergence_trajectory(
     is stranded in an OLD epoch while the latest epoch is a fresh 1-day (or flat
     multi-day) window with zero divergence. Scoping the divergence trajectory to the
     latest epoch (the prior behaviour) therefore reported a structural 0.00% Guard
-    Alpha for EVERY symphony that ever protected the operator. This function now
-    selects the last row per trading_day by ts_utc across ALL epochs, ordered by
-    trading_day, so the divergence chain captures the lifetime guard effect.
+    Alpha for EVERY symphony that ever protected the operator. This function selects
+    the last row per trading_day by ts_utc across ALL epochs, ordered by trading_day,
+    grouped into contiguous epoch runs.
 
-    WHY LIFETIME IS SAFE (the user's directive — chain the GUARD's divergence, NOT a
-    prior position's MARKET returns): the consumers add this divergence on top of a
-    SEPARATE ``if_held`` baseline (the current Composer simple_return), so the market
-    level is never re-derived from old-epoch returns. The divergence itself
-    ``(prod_shadow - prod_current)`` is the bot-vs-held GAP: on an untriggered day
-    shadow_return == current_return, so that day contributes an identical factor to
-    both products and nets to zero effect — an untriggered epoch (or symphony)
-    accumulates exactly 0 divergence no matter how many epochs are chained.
+    WHY EPOCH-ADDITIVE (semantic B — chain the GUARD's divergence, NOT a prior
+    position's MARKET returns): the lifetime Guard Alpha is the SUM of each epoch's
+    OWN divergence ``(prod_shadow_E - prod_current_E)``, computed inside that epoch's
+    frame, NOT a single global product across all epochs. A single global product
+    would multiply a prior epoch's ``prod_shadow`` into a later epoch's factors,
+    letting a later epoch's market move (even one where the guard did nothing)
+    rescale a prior position's already-realized guard saving — re-chaining market
+    returns across the reset, the exact thing AC-1 forbids. Under B an untriggered
+    epoch (shadow == current every day) contributes exactly 0 to the sum, so a
+    never-triggered symphony has lifetime Guard Alpha == 0 by construction.
 
     Distinct from ``_get_shadow_cumulative_trajectory`` (the shadow-ONLY absolute
     series), which MUST stay scoped to the latest epoch: splicing the absolute
@@ -686,7 +692,7 @@ def _get_shadow_divergence_trajectory(
     function and its epoch-segmentation tests are intentionally left unchanged; only
     the divergence-pair trajectory goes lifetime.
 
-    Returns None when fewer than 2 distinct trading days exist (no recorded
+    Returns None when fewer than 2 distinct trading days exist in total (no recorded
     divergence yet — both series coincide).
     """
     import sqlite3
@@ -694,20 +700,38 @@ def _get_shadow_divergence_trajectory(
     try:
         conn = sqlite3.connect(db_file, timeout=10.0)
         # Lifetime scope: NO position_epoch filter. The MAX(ts_utc) per
-        # (symphony_id, trading_day) still collapses each day to its EOD row, and a
-        # trading_day belongs to exactly one epoch, so the cross-epoch series is the
-        # ordered concatenation of every epoch's EOD rows. The query is identical
-        # whether or not a position_epoch column exists, so no column probe is needed.
-        rows = conn.execute(
-            "SELECT trading_day, shadow_return, current_return "
-            "FROM shadow_history "
-            "WHERE symphony_id = ? "
-            "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
-            "                WHERE s2.symphony_id = shadow_history.symphony_id "
-            "                  AND s2.trading_day = shadow_history.trading_day) "
-            "ORDER BY trading_day ASC",
-            (symphony_id,),
-        ).fetchall()
+        # (symphony_id, trading_day) collapses each day to its EOD row; a trading_day
+        # belongs to exactly one epoch, so the cross-epoch series is the ordered
+        # concatenation of every epoch's EOD rows. We also SELECT position_epoch so
+        # the rows can be grouped into epoch frames for the additive formula. A
+        # missing position_epoch column (pre-migration DB) raises OperationalError;
+        # the fallback query treats the whole history as one legacy epoch.
+        try:
+            rows = conn.execute(
+                "SELECT trading_day, shadow_return, current_return, position_epoch "
+                "FROM shadow_history "
+                "WHERE symphony_id = ? "
+                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                "                  AND s2.trading_day = shadow_history.trading_day) "
+                "ORDER BY trading_day ASC",
+                (symphony_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # Legacy schema with no position_epoch column — one implicit epoch.
+            rows = [
+                (r[0], r[1], r[2], None)
+                for r in conn.execute(
+                    "SELECT trading_day, shadow_return, current_return "
+                    "FROM shadow_history "
+                    "WHERE symphony_id = ? "
+                    "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                    "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                    "                  AND s2.trading_day = shadow_history.trading_day) "
+                    "ORDER BY trading_day ASC",
+                    (symphony_id,),
+                ).fetchall()
+            ]
         conn.close()
     except Exception:
         return None
@@ -715,7 +739,18 @@ def _get_shadow_divergence_trajectory(
     if len(rows) < 2:
         return None
 
-    return [(float(r[1]), float(r[2])) for r in rows]
+    # Group the day-ordered rows into contiguous epoch runs (a label change — including
+    # to/from NULL — starts a new group). Matches how the engine re-stamps a fresh
+    # epoch per position; a repeated label after a gap would (correctly) form a new run.
+    groups: list[list[tuple[float, float]]] = []
+    _sentinel = object()  # never equal to a real epoch label or None
+    current_label: object = _sentinel
+    for _trading_day, shadow_r, current_r, epoch_label in rows:
+        if epoch_label != current_label:
+            groups.append([])
+            current_label = epoch_label
+        groups[-1].append((float(shadow_r), float(current_r)))
+    return groups
 
 
 def get_symphony_cumulative_return(
@@ -764,16 +799,21 @@ def get_symphony_cumulative_return(
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
         trajectory = _get_shadow_divergence_trajectory(symphony_id, _db_file)
         if trajectory is not None:
-            # Guard alpha = compounded bot series minus compounded held series.
-            # Untriggered days (shadow == current) contribute nothing to the
-            # divergence; only the post-trigger gap (shadow frozen vs current
-            # moving) accrues.
-            product_shadow = 1.0
-            product_current = 1.0
-            for shadow_r, current_r in trajectory:
-                product_shadow *= 1.0 + shadow_r / 100.0
-                product_current *= 1.0 + current_r / 100.0
-            dry_run = if_held + (product_shadow - product_current) * 100.0
+            # Lifetime guard alpha = EPOCH-ADDITIVE sum of each epoch's own divergence
+            # (semantic B). Each epoch's divergence is computed in its OWN frame
+            # (products reset per epoch) so a later position's market move never
+            # rescales a prior epoch's realized guard saving. Untriggered days
+            # (shadow == current) contribute nothing; an untriggered epoch contributes
+            # exactly 0, so a never-triggered symphony nets 0 across all epochs.
+            lifetime_divergence = 0.0
+            for epoch_pairs in trajectory:
+                product_shadow = 1.0
+                product_current = 1.0
+                for shadow_r, current_r in epoch_pairs:
+                    product_shadow *= 1.0 + shadow_r / 100.0
+                    product_current *= 1.0 + current_r / 100.0
+                lifetime_divergence += (product_shadow - product_current) * 100.0
+            dry_run = if_held + lifetime_divergence
 
     return {"if_held": if_held, "dry_run": dry_run}
 
@@ -816,16 +856,26 @@ def get_symphony_max_drawdown(
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
         trajectory = _get_shadow_divergence_trajectory(symphony_id, _db_file)
         if trajectory is not None:
-            # Build the bot's divergence-based equity series, then peak-to-trough.
+            # Build the bot's EPOCH-ADDITIVE divergence equity series, then
+            # peak-to-trough (semantic B). Divergence accrues within each epoch from
+            # its OWN anchor (products reset per epoch); the running realized alpha
+            # carries across epoch boundaries as the next epoch's starting level, so a
+            # prior epoch's locked-in guard effect is preserved WITHOUT chaining its
+            # market returns into the later epoch's products. Untriggered epochs add a
+            # flat segment at the running level (zero intra-epoch divergence).
             bot_equity: list[float] = []
-            product_shadow = 1.0
-            product_current = 1.0
-            for shadow_r, current_r in trajectory:
-                product_shadow *= 1.0 + shadow_r / 100.0
-                product_current *= 1.0 + current_r / 100.0
-                bot_equity.append(
-                    if_held + (product_shadow - product_current) * 100.0
-                )
+            running_alpha = 0.0
+            for epoch_pairs in trajectory:
+                product_shadow = 1.0
+                product_current = 1.0
+                epoch_start_alpha = running_alpha
+                for shadow_r, current_r in epoch_pairs:
+                    product_shadow *= 1.0 + shadow_r / 100.0
+                    product_current *= 1.0 + current_r / 100.0
+                    bot_equity.append(
+                        if_held + epoch_start_alpha + (product_shadow - product_current) * 100.0
+                    )
+                running_alpha = epoch_start_alpha + (product_shadow - product_current) * 100.0
             if len(bot_equity) >= 2:
                 peak = bot_equity[0]
                 max_dd = 0.0
