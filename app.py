@@ -3069,6 +3069,25 @@ def ai_advisor_logic_changes_evaluate():
     proposal = run_result.proposals[0] if run_result.proposals else None
     gate_result = proposal.gate_result if proposal else None
 
+    def _clean_backtest_error(err: "str | None") -> "str | None":
+        """Translate raw backtest error strings into operator-readable messages.
+
+        Composer's inline-backtest endpoint returns an nginx 413 HTML page when
+        the serialised symphony tree exceeds the request body limit.  Passing
+        that raw HTML into the JSON response would expose a wall of markup to
+        the operator and leak internal server details.  AC-9c: translate 413
+        errors to a plain explanation; leave all other error strings unchanged.
+        """
+        if err is None:
+            return None
+        if "413" in err or "<html>" in err.lower():
+            return (
+                "Symphony too large to backtest inline — exceeds Composer's "
+                "request size limit. The change is advisory only; no backtest "
+                "result is available for this symphony."
+            )
+        return err
+
     # Adjusted p-value threshold = fdr_q / c(n), where c(n) is the Yekutieli
     # harmonic-sum correction factor.  Derive from gate_batch fields; fall back to
     # gate_batch.fdr_q when c(n) is not directly available.
@@ -3109,7 +3128,7 @@ def ai_advisor_logic_changes_evaluate():
             "caveats": p.caveats,
             # Apply guidance — plain text, no button (AC-X1 / AC-3.4)
             "apply_guidance": p.apply_guidance,
-            "backtest_error": p.backtest_error,
+            "backtest_error": _clean_backtest_error(p.backtest_error),
             "data_warnings": p.data_warnings,
         }
 
@@ -3136,7 +3155,7 @@ def ai_advisor_logic_changes_evaluate():
         # Caveats + guidance from the primary proposal (operator-initiated = single candidate)
         "caveats": proposal.caveats if proposal else [],
         "apply_guidance": proposal.apply_guidance if proposal else "",
-        "backtest_error": proposal.backtest_error if proposal else None,
+        "backtest_error": _clean_backtest_error(proposal.backtest_error) if proposal else None,
         "objective_rationale": proposal.objective_rationale if proposal else "",
     }), 200
 
