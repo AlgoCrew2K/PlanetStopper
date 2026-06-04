@@ -1192,6 +1192,105 @@ def get_portfolio_daily_returns_from_shadow(
     return out_dates, out_returns
 
 
+def get_portfolio_bot_and_held_daily_returns(
+    db_file: str | None = None,
+    days: int | None = 125,
+) -> tuple[list[str], list[float], list[float]] | None:
+    """Build BOTH the portfolio Bot and Held continuous daily-return series from
+    shadow_history — the source for the hero chart's two distinct lines (AC-4b/F2-F3).
+
+    Sibling of ``get_portfolio_daily_returns_from_shadow`` (which emits the Bot series
+    only). The audit (F2/F3) found ``/api/hero-chart`` returned ``hist_held =
+    bot_series`` (the same object), so the dashed "If held" line traced Bot exactly —
+    zero visual guard alpha by construction. This function returns a GENUINE held
+    series distinct from bot wherever the guard diverged.
+
+    Per day, using the last row per (symphony_id, trading_day):
+      - Bot  = value-weighted ``shadow_return``  (the guard's series — frozen at exit)
+      - Held = value-weighted ``current_return`` (the if-held baseline — kept holding)
+    BOTH series use the SAME per-symphony weight that day (``abs(current_return)``
+    proxy, equal-weight fallback) so Bot and Held are commensurable and their
+    difference is a real guard effect, not a re-weighting artefact. For an
+    untriggered symphony shadow_return == current_return, so its Bot and Held
+    contributions coincide; an all-untriggered day yields bot == held EXACTLY (no
+    fabricated divergence).
+
+    NOT epoch-scoped: this is the CONTINUOUS portfolio series (every cycle, every
+    tracked symphony), the correct hist source — distinct from the per-symphony
+    epoch-additive guard-alpha trajectory (which IS epoch-grouped). The hero chart
+    compounds each returned series independently for its two lines.
+
+    Args:
+        db_file: shadow DB path override (tests); defaults to the live shadow DB.
+        days:    cap on the most recent trading days to include. ``None`` = all
+                 history (the "All Time" window).
+
+    Returns:
+        (dates_ascending, bot_daily_returns_pct, held_daily_returns_pct), or None
+        when fewer than 2 distinct trading days exist (caller falls back).
+    """
+    import sqlite3
+
+    _db_file = db_file if db_file is not None else _get_shadow_db_file()
+    try:
+        conn = sqlite3.connect(_db_file, timeout=10.0)
+        rows = conn.execute(
+            "SELECT trading_day, symphony_id, shadow_return, current_return "
+            "FROM shadow_history "
+            "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+            "                WHERE s2.symphony_id = shadow_history.symphony_id "
+            "                  AND s2.trading_day = shadow_history.trading_day) "
+            "ORDER BY trading_day ASC, symphony_id ASC",
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    # Group by trading_day → {symphony_id: (shadow_return, current_return)}
+    from collections import defaultdict
+
+    day_map: dict = defaultdict(dict)
+    for trading_day, symphony_id, shadow_return, current_return in rows:
+        day_map[trading_day][symphony_id] = (
+            float(shadow_return) if shadow_return is not None else 0.0,
+            float(current_return) if current_return is not None else 0.0,
+        )
+
+    # Keep the most recent `days` trading days (all history when days is None).
+    all_days = sorted(day_map.keys())
+    sorted_days = all_days if days is None else all_days[-days:]
+    if len(sorted_days) < 2:
+        return None
+
+    out_dates: list[str] = []
+    bot_returns: list[float] = []
+    held_returns: list[float] = []
+    for day in sorted_days:
+        entries = day_map[day]
+        weight_sum = 0.0
+        bot_wsum = 0.0
+        held_wsum = 0.0
+        for sym_ret, sym_cr in entries.values():
+            # ONE weight per symphony/day (abs current_return proxy, equal-weight
+            # fallback), applied to BOTH series so Bot and Held stay commensurable.
+            w = abs(sym_cr) if sym_cr != 0.0 else 1.0
+            weight_sum += w
+            bot_wsum += sym_ret * w
+            held_wsum += sym_cr * w
+        if weight_sum > 0.0:
+            out_dates.append(day)
+            bot_returns.append(bot_wsum / weight_sum)
+            held_returns.append(held_wsum / weight_sum)
+
+    if len(out_dates) < 2:
+        return None
+
+    return out_dates, bot_returns, held_returns
+
+
 # V1 bootstrap gate — three-state fold-sufficiency check (PA-M1F-11, AC-M1F.6.4)
 # Threshold: N >= 30 per Bailey/de-Prado 2014 interpretability floor.
 _V1_BOOTSTRAP_MIN_DAYS = 30
