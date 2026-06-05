@@ -1278,6 +1278,13 @@ def get_state():
                         ),
                         "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
                     }
+                    # Mirror _compute_portfolio_strip (line 833-835): surface the
+                    # Composer account-lifetime CR as the "Account · all-time" stat.
+                    # Without this, _build_meta sets account_all_time_cr=None and the
+                    # template's {% if _acct_cr is not none %} guard omits the element.
+                    _acct_cr = _account_totals_cache.get("portfolio_cr")
+                    if isinstance(_acct_cr, (int, float)):
+                        _portfolio_strip["account_all_time_cr"] = _acct_cr
                 except Exception:
                     _portfolio_strip = {
                         "today_change": None,

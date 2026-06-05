@@ -37,10 +37,12 @@ These tests catch the client wiring contract; the ux-expert visual gate catches 
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import shutil
 import subprocess
+from unittest.mock import patch
 
 import pytest
 
@@ -1013,4 +1015,241 @@ class TestRenderGuardAlphaNoInfiniteLoop:
             "response will trigger fetchWindowedStrip again, looping infinitely. "
             "Fix: pass `true` as the second argument: `renderGuardAlpha(wrapped, true);` "
             f"Found call: `{call_snippet}`"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 13 — frozen /api/state portfolio_strip must include account_all_time_cr
+#
+# PM live gate finding (cycle-4, 2026-06-04 @ main 18ac4d9):
+#   On the frozen path, `account-all-time-cr` is absent from the rendered DOM even
+#   though the value (63.95%) exists in _account_totals_cache.
+#
+#   Root cause: the frozen _portfolio_strip built at app.py ~line 1262 is a plain
+#   5-key dict {today_change, cumulative_return, max_drawdown, account_value,
+#   data_as_of} — it never adds account_all_time_cr. _build_meta is then called
+#   with this incomplete strip, so meta.portfolio.account_all_time_cr is None, and
+#   the template's `{% if _acct_cr is not none %}` guard silently omits the element.
+#
+#   The live path in _compute_portfolio_strip adds account_all_time_cr at line 833-835:
+#       _acct_cr = _account_totals_cache.get("portfolio_cr")
+#       if isinstance(_acct_cr, (int, float)):
+#           _strip["account_all_time_cr"] = _acct_cr
+#   The frozen path must mirror this.
+#
+#   Required fix (server-side, app.py): after building the frozen _portfolio_strip
+#   dict at ~line 1262, add:
+#       _acct_cr = _account_totals_cache.get("portfolio_cr")
+#       if isinstance(_acct_cr, (int, float)):
+#           _portfolio_strip["account_all_time_cr"] = _acct_cr
+# ---------------------------------------------------------------------------
+
+# Minimal frozen snapshot for route-level tests — schema-derived from the
+# last_market_close_snapshot structure in alpha_bot_execution.py.
+# Provenance: PA-CYC4: schema-derived from app.py frozen path (lines 1046-1330)
+# and _account_totals_cache population (module-level dict). The snapshot shape
+# mirrors frozen_portfolio_strip_populated.json; the _account_totals_cache value
+# (portfolio_cr = 63.95) is the specific value the PM observed live on :8090.
+_FROZEN_SNAPSHOT_FOR_ACCT_CR = {
+    "trading_day": "2026-06-04",
+    "captured_at_et": "16:00:01 ET",
+    "data_as_of": "16:00 ET",
+    "portfolio_strip": {
+        "today_change": {"if_held": 0.2, "dry_run": 0.1},
+        "cumulative_return": {"if_held": 63.95, "dry_run": 27.56},
+        "max_drawdown": {"if_held": -8.1, "dry_run": -5.3},
+    },
+    "shadow_divergence": {"by_symphony": {}, "portfolio": 0.0},
+    "accounts_map": {},
+}
+
+_ACCT_CR_LIVE = 63.95  # the value observed in _account_totals_cache on :8090
+
+
+class TestFrozenPathAccountAllTimeCr:
+    """The frozen /api/state portfolio_strip must include account_all_time_cr.
+
+    Without this field, meta.portfolio.account_all_time_cr is None, the template's
+    `{% if _acct_cr is not none %}` guard omits the entire element, and the operator
+    sees a blank where the all-time stat should be.
+    """
+
+    @pytest.fixture()
+    def frozen_client(self, monkeypatch):
+        """Flask test client wired for the closed_frozen path with a valid snapshot
+        and a populated _account_totals_cache carrying portfolio_cr = 63.95."""
+        import app as app_module
+
+        app_module.app.config["TESTING"] = True
+
+        bot_state = {
+            "date": "2026-06-04",
+            "last_market_close_snapshot": _FROZEN_SNAPSHOT_FOR_ACCT_CR,
+        }
+
+        monkeypatch.setattr(
+            app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
+        )
+        # Inject portfolio_cr into the module-level _account_totals_cache.
+        # This mirrors the live path where Alpaca polling populates the cache.
+        monkeypatch.setitem(app_module._account_totals_cache, "portfolio_cr", _ACCT_CR_LIVE)
+
+        with (
+            patch.object(app_module, "analytics") as mock_analytics,
+            patch.object(app_module, "database") as mock_db,
+            patch.object(app_module, "schedule"),
+        ):
+            mock_db.load_state.return_value = bot_state
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {}, "portfolio_today": None
+            }
+            mock_db.get_triggers.return_value = []
+            mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
+            mock_db.read_fleet_alert.return_value = None
+
+            mock_analytics.get_portfolio_today_change.return_value = {
+                "if_held": 0.2, "dry_run": 0.1
+            }
+            mock_analytics.get_portfolio_cumulative_return.return_value = {
+                "if_held": 63.95, "dry_run": 27.56
+            }
+            mock_analytics.get_portfolio_max_drawdown.return_value = {
+                "if_held": -8.1, "dry_run": -5.3
+            }
+            mock_analytics.compute_windowed_portfolio_strip.return_value = {
+                "guard_alpha": 0.904,
+                "window": "30d",
+                "cumulative_return": {"if_held": 26.65, "dry_run": 27.56},
+                "today_change": {"if_held": 0.2, "dry_run": 0.1},
+                "max_drawdown": {"if_held": -8.1, "dry_run": -5.3},
+                "vol_bot": None,
+                "vol_held": None,
+            }
+            mock_analytics.get_portfolio_bot_and_held_daily_returns.return_value = None
+
+            with app_module.app.test_client() as client:
+                yield client
+
+    def test_frozen_api_state_portfolio_strip_has_account_all_time_cr(
+        self, frozen_client
+    ):
+        """GET /api/state on the closed_frozen path must include account_all_time_cr
+        in portfolio_strip. Without it, _build_meta sets meta.portfolio.account_all_time_cr
+        to None and the template omits the element entirely.
+
+        Current failure: the frozen _portfolio_strip dict (app.py ~line 1262) is built
+        as a plain 5-key dict — it never reads _account_totals_cache["portfolio_cr"].
+        """
+        resp = frozen_client.get("/api/state")
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+
+        body = resp.get_json()
+        ps = body.get("portfolio_strip")
+
+        assert ps is not None, (
+            "FROZEN-ACCT-CR FAIL: portfolio_strip is None on closed_frozen path. "
+            "The frozen path must build a portfolio_strip dict."
+        )
+        assert "account_all_time_cr" in ps, (
+            "FROZEN-ACCT-CR FAIL: portfolio_strip.account_all_time_cr is absent on "
+            "the closed_frozen path. _build_meta reads this field to set "
+            "meta.portfolio.account_all_time_cr; when absent, the template's "
+            "`{% if _acct_cr is not none %}` guard omits the account-all-time-cr element "
+            "from the DOM entirely. "
+            "Fix: in app.py after building the frozen _portfolio_strip (~line 1280), add:\n"
+            "    _acct_cr = _account_totals_cache.get('portfolio_cr')\n"
+            "    if isinstance(_acct_cr, (int, float)):\n"
+            "        _portfolio_strip['account_all_time_cr'] = _acct_cr\n"
+            f"Got portfolio_strip keys: {sorted(ps.keys()) if isinstance(ps, dict) else ps!r}"
+        )
+
+    def test_frozen_api_state_portfolio_strip_account_all_time_cr_value(
+        self, frozen_client
+    ):
+        """The account_all_time_cr in portfolio_strip must equal the value from
+        _account_totals_cache['portfolio_cr'] — the Composer account-lifetime CR.
+        It must be a float, not None or a string.
+        """
+        resp = frozen_client.get("/api/state")
+        assert resp.status_code == 200
+
+        body = resp.get_json()
+        ps = body.get("portfolio_strip") or {}
+        val = ps.get("account_all_time_cr")
+
+        assert isinstance(val, (int, float)), (
+            f"FROZEN-ACCT-CR FAIL: portfolio_strip.account_all_time_cr must be a "
+            f"numeric value (float/int). Got {val!r} (type {type(val).__name__}). "
+            "The value must come from _account_totals_cache['portfolio_cr'] — "
+            "the Composer account-lifetime simple_return scalar."
+        )
+        assert abs(val - _ACCT_CR_LIVE) < 0.01, (
+            f"FROZEN-ACCT-CR FAIL: portfolio_strip.account_all_time_cr = {val!r} "
+            f"does not match _account_totals_cache['portfolio_cr'] = {_ACCT_CR_LIVE}. "
+            "The frozen path must read the value from the cache, not fabricate it."
+        )
+
+    def test_frozen_api_state_meta_portfolio_has_account_all_time_cr(
+        self, frozen_client
+    ):
+        """meta.portfolio.account_all_time_cr must be present and numeric on the
+        closed_frozen path. This is what the SSR template reads to render the
+        `account-all-time-cr` element. When absent, the element is silently omitted.
+
+        _build_meta propagates portfolio_strip.account_all_time_cr into
+        meta.portfolio.account_all_time_cr via `ps.get('account_all_time_cr')` —
+        so fixing portfolio_strip also fixes meta.portfolio, which fixes the SSR render.
+        """
+        resp = frozen_client.get("/api/state")
+        assert resp.status_code == 200
+
+        body = resp.get_json()
+        meta = body.get("meta") or {}
+        portfolio = meta.get("portfolio") or {}
+        val = portfolio.get("account_all_time_cr")
+
+        assert val is not None, (
+            "FROZEN-ACCT-CR FAIL: meta.portfolio.account_all_time_cr is None/absent "
+            "on the closed_frozen path. The SSR template reads this field at "
+            "templates/index.html:808 (`{% set _acct_cr = _portfolio.get('account_all_time_cr') %}`). "
+            "When None, the `{% if _acct_cr is not none %}` guard omits the entire "
+            "account-all-time-cr DOM element — the operator sees a blank. "
+            "Fix the frozen _portfolio_strip to include account_all_time_cr; "
+            "_build_meta will then propagate it into meta.portfolio automatically."
+        )
+        assert isinstance(val, (int, float)), (
+            f"FROZEN-ACCT-CR FAIL: meta.portfolio.account_all_time_cr = {val!r} is not numeric. "
+            "Expected a float matching _account_totals_cache['portfolio_cr']."
+        )
+
+    def test_frozen_path_account_all_time_cr_does_not_regress_open_path(
+        self, monkeypatch
+    ):
+        """The fix to the frozen path must not regress the live (open) path.
+        On market open, _compute_portfolio_strip already sets account_all_time_cr —
+        that path must continue to work.
+
+        Source contract: app.py must contain `account_all_time_cr` in the context
+        of both the live portfolio strip AND the frozen path enrichment.
+        """
+        app_py = (
+            pathlib.Path(__file__).parent.parent.parent / "app.py"
+        ).read_text(encoding="utf-8")
+
+        # The live path already sets this (line 835):
+        #   _strip["account_all_time_cr"] = _acct_cr
+        # After the fix, there must be a SECOND assignment on the frozen path.
+        # Count assignments to account_all_time_cr (excluding comments and docstrings).
+        import re as _re
+        assignments = _re.findall(
+            r'["\'_]account_all_time_cr["\']\s*\]\s*=',
+            app_py,
+        )
+        assert len(assignments) >= 2, (
+            "FROZEN-ACCT-CR FAIL: app.py contains fewer than 2 assignments to "
+            f"`account_all_time_cr` (found {len(assignments)}). "
+            "The live path already assigns it once (_compute_portfolio_strip ~line 835). "
+            "The frozen path needs a second assignment (after the _portfolio_strip dict "
+            "is built at ~line 1262). "
+            "Fix: add `_portfolio_strip['account_all_time_cr'] = _acct_cr` on the frozen path."
         )
