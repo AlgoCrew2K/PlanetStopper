@@ -539,7 +539,7 @@ def _load_latest_shadow_row_for_analytics(
     import sqlite3
 
     try:
-        conn = sqlite3.connect(db_file, timeout=10.0)
+        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT * FROM shadow_history "
@@ -590,7 +590,7 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
     today = _dt.now(UTC).strftime("%Y-%m-%d")
 
     try:
-        conn = sqlite3.connect(db_file, timeout=10.0)
+        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
         # Resolve the current epoch: the position_epoch of the latest row by
         # ts_utc. A legacy table has no position_epoch column -> OperationalError;
         # treat that as the single legacy segment.
@@ -700,7 +700,7 @@ def _get_shadow_divergence_trajectory(
     import sqlite3
 
     try:
-        conn = sqlite3.connect(db_file, timeout=10.0)
+        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
         # Lifetime scope: NO position_epoch filter. The MAX(ts_utc) per
         # (symphony_id, trading_day) collapses each day to its EOD row; a trading_day
         # belongs to exactly one epoch, so the cross-epoch series is the ordered
@@ -1143,7 +1143,7 @@ def get_portfolio_daily_returns_from_shadow(
 
     _db_file = db_file if db_file is not None else _get_shadow_db_file()
     try:
-        conn = sqlite3.connect(_db_file, timeout=10.0)
+        conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
         rows = conn.execute(
             "SELECT trading_day, symphony_id, shadow_return, current_return "
             "FROM shadow_history "
@@ -1235,7 +1235,7 @@ def get_portfolio_bot_and_held_daily_returns(
 
     _db_file = db_file if db_file is not None else _get_shadow_db_file()
     try:
-        conn = sqlite3.connect(_db_file, timeout=10.0)
+        conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
         rows = conn.execute(
             "SELECT trading_day, symphony_id, shadow_return, current_return "
             "FROM shadow_history "
@@ -1349,7 +1349,7 @@ def _get_windowed_divergence_trajectory(
 
     cutoff = _window_cutoff_date(window)
     try:
-        conn = sqlite3.connect(db_file, timeout=10.0)
+        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
         rows = conn.execute(
             "SELECT trading_day, shadow_return, current_return, position_epoch "
             "FROM shadow_history sh "
