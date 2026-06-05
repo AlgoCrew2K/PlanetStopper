@@ -30,7 +30,6 @@ They FAIL today and go GREEN when flask+risk-engine wire Option A.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,43 +40,6 @@ import database as _db
 
 # The picker's default window (templates/index.html active button + label).
 _DEFAULT_WINDOW = "30d"
-
-_SCHEMA = """
-    CREATE TABLE shadow_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        symphony_id TEXT NOT NULL,
-        ts_utc TEXT NOT NULL,
-        trading_day TEXT NOT NULL,
-        current_return REAL NOT NULL,
-        shadow_return REAL NOT NULL,
-        is_post_trigger INTEGER NOT NULL DEFAULT 0,
-        position_epoch TEXT
-    )
-"""
-
-
-def _make_shadow_db(tmp_path: Path) -> str:
-    """A shadow_history DB with one triggered symphony whose divergence is recent (in-window)."""
-    db_file = str(Path(tmp_path) / "default_hero_shadow.db")
-    conn = sqlite3.connect(db_file)
-    conn.execute(_SCHEMA)
-    rows = [
-        ("2026-05-26", -2.0, -2.0, "E1"),
-        ("2026-05-27", 1.0, 1.0, "E1"),
-        ("2026-05-28", 0.5, 0.5, "E1"),
-        ("2026-05-29", 2.0, 0.3, "E1"),   # guard diverged here -> non-zero windowed alpha
-        ("2026-06-01", 0.4, 0.4, "E1"),
-    ]
-    for day, shadow, current, epoch in rows:
-        conn.execute(
-            "INSERT INTO shadow_history (symphony_id, ts_utc, trading_day, current_return, "
-            "shadow_return, is_post_trigger, position_epoch) VALUES (?,?,?,?,?,?,?)",
-            ("sym-x", day + "T20:00:00Z", day, current, shadow, 0, epoch),
-        )
-    conn.commit()
-    conn.close()
-    _db._shadow_cr_cache.clear()
-    return db_file
 
 
 @pytest.fixture

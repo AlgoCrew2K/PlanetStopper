@@ -357,26 +357,48 @@ class TestAccountAllTimeCrNotWrittenByJs:
             "semantic."
         )
 
-    def test_account_all_time_cr_only_in_template_not_in_js_textcontent(self):
-        """account-all-time-cr must be rendered in the template SSR; index.js must not
-        contain a textContent assignment that targets it. A querySelector for it in JS
-        is acceptable for read-only purposes but a write would clobber the SSR value
-        with a (potentially window-dependent) re-render.
+    def test_account_all_time_cr_written_only_by_dedicated_renderer_not_windowed_renderers(self):
+        """account-all-time-cr must NOT be written by renderGuardAlpha or
+        updateComparisonRows (the windowed renderers).  A dedicated non-windowed
+        renderer (e.g. updateAccountAllTime) IS permitted to write textContent —
+        that is the cold-start fix (dash-polish cycle, 2026-06-05).
+
+        The invariant that changed: previously the stat was SSR-only.  Now it may be
+        created/updated by a dedicated renderer so a cold-start (cache warm after SSR)
+        populates the element without a manual reload.  The constraint is that ONLY
+        the dedicated renderer may write it; the windowed renderers must not.
+
+        Tests for the dedicated renderer are in test_cold_start_account_stat.py.
+        Tests for renderGuardAlpha isolation are in
+            TestDedicatedAccountRendererExists.test_dedicated_function_is_not_render_guard_alpha
+        Tests for updateComparisonRows isolation are in
+            TestDedicatedAccountRendererExists.test_dedicated_function_is_not_update_comparison_rows
+        This test is now a cross-check: if the testid appears in the windowed renderers
+        with a textContent assignment, that is still wrong.
         """
         js = _js()
 
-        # Safe: presence of the testid string alone (e.g. for reading it in a test helper).
-        # Unsafe: the testid AND a .textContent = pattern within 200 chars.
-        idx = js.find("account-all-time-cr")
-        if idx == -1:
-            return  # Not referenced at all — ideal.
-        nearby = js[max(0, idx - 50): idx + 200]
-        assert ".textContent" not in nearby and "textContent =" not in nearby, (
-            "RENDER-BASIS FAIL: index.js has a textContent assignment near "
-            "'account-all-time-cr'. The account-all-time stat must be SSR-only; "
-            "a JS write would clobber the template's rendered value with an "
-            "incorrect or window-dependent number."
-        )
+        # Check renderGuardAlpha body.
+        rga_start = js.find("function renderGuardAlpha")
+        if rga_start != -1:
+            rga_end = js.find("\n    function ", rga_start + 1)
+            rga_body = js[rga_start:rga_end] if rga_end != -1 else js[rga_start:rga_start + 800]
+            assert "account-all-time-cr" not in rga_body, (
+                "RENDER-BASIS FAIL: renderGuardAlpha references 'account-all-time-cr'. "
+                "The windowed guard-alpha renderer must not touch the account stat."
+            )
+
+        # Check updateComparisonRows body.
+        ucr_start = js.find("function updateComparisonRows")
+        if ucr_start != -1:
+            ucr_end = js.find("\n    function ", ucr_start + 1)
+            ucr_body = js[ucr_start:ucr_end] if ucr_end != -1 else js[ucr_start:ucr_start + 3000]
+            has_testid = "account-all-time-cr" in ucr_body
+            has_write = "textContent" in ucr_body
+            assert not (has_testid and has_write), (
+                "RENDER-BASIS FAIL: updateComparisonRows writes to 'account-all-time-cr'. "
+                "The windowed comparison-row renderer must not write the account stat."
+            )
 
 
 # ---------------------------------------------------------------------------
