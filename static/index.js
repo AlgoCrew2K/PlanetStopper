@@ -1125,6 +1125,23 @@
                     mddBadge.className = mddBadge.className.replace(/\bpos\b|\bneg\b/g, '').trim();
                     if (mddAlpha != null) mddBadge.classList.add(mddAlpha >= 0 ? 'pos' : 'neg');
                 }
+
+                // Section auto-partition: move the card to the correct section when status
+                // changes.  Grouping rule matches app.py:474 exactly — a card is active if
+                // ANY of the four flags is true; standby otherwise.  appendChild on a live
+                // DOM node moves it (no recreation, sparkline canvas preserved).
+                var isActive = sym.armed || sym.tp_armed || sym.para_armed || sym.triggered;
+                var activeSection  = document.querySelector('[data-testid="active-section"]');
+                var standbySection = document.querySelector('[data-testid="standby-section"]');
+                if (activeSection && standbySection) {
+                    var targetSection = isActive ? activeSection : standbySection;
+                    // Prefer the .cards-grid child if present (matches template structure);
+                    // fall back to the section container itself.
+                    var targetGrid = targetSection.querySelector('.cards-grid') || targetSection;
+                    if (card.parentNode !== targetGrid) {
+                        targetGrid.appendChild(card);
+                    }
+                }
             });
         });
     }
