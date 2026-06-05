@@ -2707,6 +2707,31 @@ def flush_resync():
 
 
 # --- 5. AI Advisor Routes ---
+
+
+def _translate_backtest_error(err: "str | None") -> "str | None":
+    """Translate raw backtest error strings into operator-readable messages.
+
+    Composer's inline-backtest endpoint returns an nginx 413 HTML page when
+    the serialised symphony tree exceeds the request body limit.  Passing
+    that raw HTML into the JSON response exposes markup to the operator and
+    leaks internal server details.  AC-9c: translate 413 errors to a plain
+    explanation; leave all other error strings unchanged.
+
+    Shared by both evaluate routes (logic-changes + asset-swaps) so the
+    translation is a single code path, not duplicated per-route.
+    """
+    if err is None:
+        return None
+    if "413" in err or "<html>" in err.lower():
+        return (
+            "Symphony too large to backtest inline — exceeds Composer's "
+            "request size limit. The change is advisory only; no backtest "
+            "result is available for this symphony."
+        )
+    return err
+
+
 @app.route("/ai-advisor", methods=["GET"])
 def ai_advisor_tab():
     """Render the Claude AI Config Advisor tab.
@@ -2941,7 +2966,8 @@ def ai_advisor_asset_swaps_evaluate():
         "caveats": proposal.caveats if proposal else [],
         # Apply guidance — plain text, no button (AC-X1)
         "apply_guidance": proposal.apply_guidance if proposal else "",
-        "backtest_error": proposal.backtest_error if proposal else None,
+        # AC-9c: translate raw nginx 413 HTML to a clean operator message.
+        "backtest_error": _translate_backtest_error(proposal.backtest_error) if proposal else None,
         "data_warnings": proposal.data_warnings if proposal else [],
     }), 200
 
@@ -3109,7 +3135,7 @@ def ai_advisor_logic_changes_evaluate():
             "caveats": p.caveats,
             # Apply guidance — plain text, no button (AC-X1 / AC-3.4)
             "apply_guidance": p.apply_guidance,
-            "backtest_error": p.backtest_error,
+            "backtest_error": _translate_backtest_error(p.backtest_error),
             "data_warnings": p.data_warnings,
         }
 
@@ -3136,7 +3162,7 @@ def ai_advisor_logic_changes_evaluate():
         # Caveats + guidance from the primary proposal (operator-initiated = single candidate)
         "caveats": proposal.caveats if proposal else [],
         "apply_guidance": proposal.apply_guidance if proposal else "",
-        "backtest_error": proposal.backtest_error if proposal else None,
+        "backtest_error": _translate_backtest_error(proposal.backtest_error) if proposal else None,
         "objective_rationale": proposal.objective_rationale if proposal else "",
     }), 200
 
