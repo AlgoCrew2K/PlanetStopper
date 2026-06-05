@@ -1154,6 +1154,49 @@
     }
 
     // ---------------------------------------------------------------------------
+    // Account · all-time CR — fixed stat, never windowed
+    // ---------------------------------------------------------------------------
+    // Reads meta.portfolio.account_all_time_cr (authoritative, from /api/state _build_meta)
+    // with portfolio_strip.account_all_time_cr as fallback.  The SSR renders the element
+    // only when the account cache is warm; if the cache was cold at page-load the element
+    // is absent.  This renderer creates it when missing so cold-start shows the stat without
+    // requiring a manual page reload.  NOT wired to fetchWindowedStrip — this stat carries
+    // no window label and must not change when the window picker is clicked.
+    function updateAccountAllTime(data) {
+        var portfolio = ((data.meta) || {}).portfolio || {};
+        var ps = (data.portfolio_strip) || {};
+        var value = portfolio.account_all_time_cr != null
+            ? portfolio.account_all_time_cr
+            : (ps.account_all_time_cr != null ? ps.account_all_time_cr : null);
+        if (value === null) return;
+
+        var el = document.querySelector('[data-testid="account-all-time-cr"]');
+        if (!el) {
+            // Cold-start: SSR omitted the block because the account cache was cold.
+            // Create the container + span and insert it after the guard-alpha section
+            // (matching templates/index.html:810-813 markup).
+            var container = document.querySelector('.account-all-time-stat');
+            if (!container) {
+                var guardSection = document.getElementById('guard-alpha-headline');
+                var parent = guardSection ? guardSection.parentNode : null;
+                if (!parent) return;
+                container = document.createElement('div');
+                container.className = 'account-all-time-stat';
+                container.style.cssText = 'margin-top:6px;font-size:11px;color:var(--studio-ink-dim);';
+                container.innerHTML =
+                    '<span class="account-all-time-label">Account &middot; all-time</span>'
+                    + ' <span data-testid="account-all-time-cr" class="account-all-time-value"></span>';
+                parent.insertAdjacentHTML('beforeend', container.outerHTML);
+            }
+            el = document.querySelector('[data-testid="account-all-time-cr"]');
+            if (!el) return;
+        }
+
+        el.textContent = fmtPct(value);
+        el.className = 'account-all-time-value ' + (value >= 0 ? 'pos' : 'neg');
+    }
+
+    // ---------------------------------------------------------------------------
     // Main updateDashboard — called on each fetch('/api/state') response
     // ---------------------------------------------------------------------------
 
@@ -1184,6 +1227,9 @@
             function () { updateCards(data); },
             // Update section count badges and hero "data as of" time.
             function () { updateSectionMeta(data); },
+            // Account · all-time CR: fixed stat, not windowed — must fire on every poll
+            // so cold-start (SSR omitted the element) resolves without a manual reload.
+            function () { updateAccountAllTime(data); },
         ].forEach(function (fn) {
             try { fn(); } catch (e) { console.error('updateDashboard renderer error:', e); }
         });
