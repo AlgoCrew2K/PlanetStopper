@@ -45,6 +45,8 @@ import os
 import re
 from datetime import UTC, date
 
+import database
+
 # ---------------------------------------------------------------------------
 # Producer -> internal field-name mapping (single source of truth)
 # ---------------------------------------------------------------------------
