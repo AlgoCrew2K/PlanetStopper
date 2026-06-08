@@ -1415,19 +1415,45 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
 _PARTIAL_SENTINEL_MEAN_THRESHOLD = math_engine._SORTINO_SENTINEL / _CPCV_N_PATHS
 
 
+def _trial_has_sentinel_path(t) -> bool:
+    """True if the trial's persisted per-path CPCV scores include a Sortino sentinel.
+
+    Path-score-level detection is the GAP-FREE check: a trial whose value is the
+    mean across _CPCV_N_PATHS paths can hide a sentinel path (1e6) when the OTHER
+    paths are net-negative enough to drag the mean below the aggregate threshold
+    (e.g. a path at the CRRA wealth floor ~-999, or large-negative Sortino). The
+    objective persists path_scores (set_user_attr) so the filter can see the
+    sentinel directly rather than inferring it from the aggregate value.
+    """
+    if not hasattr(t, "user_attrs"):
+        return False
+    path_scores = t.user_attrs.get("path_scores")
+    if not path_scores:
+        return False
+    return any(s == math_engine._SORTINO_SENTINEL for s in path_scores)
+
+
 def filter_sortino_sentinels(trials):
     """Exclude zero-downside degenerate trials from a haircut candidate set.
 
-    Drops BOTH pure-sentinel trials (value == math_engine._SORTINO_SENTINEL) AND
-    partial-sentinel CPCV means (value >= _SORTINO_SENTINEL / _CPCV_N_PATHS, i.e.
-    at least one path in the CPCV aggregate returned the sentinel). A sentinel's
-    magnitude would dominate the cross-trial BHY/haircut distribution and let a
-    degenerate trial masquerade as a genuine signal. Trials with value None are
-    dropped (no usable objective). Returns a new list preserving input order.
+    Drops a trial if ANY of:
+      - value is None (no usable objective);
+      - a persisted per-path score equals math_engine._SORTINO_SENTINEL — the
+        gap-free PATH-SCORE-level check (see _trial_has_sentinel_path); catches a
+        one-sentinel-path mean even when net-negative other paths drag the mean
+        below the aggregate threshold;
+      - value >= _SORTINO_SENTINEL / _CPCV_N_PATHS — the aggregate fallback for
+        trials WITHOUT persisted path_scores (a pure sentinel, or a partial mean
+        whose non-sentinel paths are non-negative).
+    A sentinel's magnitude would dominate the cross-trial BHY/haircut distribution
+    and let a degenerate trial masquerade as a genuine signal. Returns a new list
+    preserving input order.
     """
     return [
         t for t in trials
-        if t.value is not None and t.value < _PARTIAL_SENTINEL_MEAN_THRESHOLD
+        if t.value is not None
+        and not _trial_has_sentinel_path(t)
+        and t.value < _PARTIAL_SENTINEL_MEAN_THRESHOLD
     ]
 
 
@@ -2230,6 +2256,13 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             # applied at the store site above — C1 fix). This matches compute_pbo's
             # decimal contract; it does NOT share daily_returns's raw-percent contract.
             trial.set_user_attr("cscv_date_returns", cscv_date_returns)
+            # Persist the per-path CPCV scores so filter_sortino_sentinels can detect a
+            # sentinel path at the PATH-SCORE level. The trial value is the MEAN across
+            # paths; a single sentinel path (1e6) can be masked in the mean when the
+            # other paths are net-negative, so the aggregate value alone is insufficient
+            # to flag a degenerate zero-downside path (Sortino branch only — CRRA-EU
+            # never emits the sentinel).
+            trial.set_user_attr("path_scores", path_scores)
 
             # Trial score: mean across the _CPCV_N_PATHS path scores.
             # An empty path contributes 0.0 (same fallback as the pre-CPCV single-fold path).
