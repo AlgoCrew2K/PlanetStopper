@@ -184,3 +184,72 @@ class TestFilterSortinoSentinelsExcludesPartialMean:
             f"kept {kept_values!r}. Both the pure sentinel and the partial-sentinel "
             "mean must be excluded."
         )
+
+
+# ===========================================================================
+# Adversarial REVISE — a mean-threshold filter leaves a gap when the OTHER paths
+# are net-negative: the one-sentinel mean dips BELOW _SORTINO_SENTINEL/_CPCV_N_PATHS
+# and survives. Correct detection is at the PATH-SCORE level (any path == sentinel),
+# which requires the objective to persist per-path scores. This is the Sortino-branch
+# reachable case (CRRA-EU never emits the sentinel). See team-lead escalation re:
+# whether to persist path_scores (correct) or accept the mean-threshold caveat (LOW).
+# ===========================================================================
+
+
+class TestPartialSentinelNetNegativePathsGap:
+    """A one-sentinel-path mean with net-negative other paths must STILL be excluded."""
+
+    def _persist_path_scores(self, trial, path_scores):
+        """Attach per-path scores to a fake trial's user_attrs (the contract a
+        path-level fix would rely on)."""
+        trial.user_attrs["path_scores"] = list(path_scores)
+        return trial
+
+    def test_net_negative_partial_sentinel_mean_is_excluded(self, sentinel_mean_fixture):
+        """A CPCV mean with ONE sentinel path and net-NEGATIVE other paths
+        (mean < _SORTINO_SENTINEL/_CPCV_N_PATHS) must STILL be excluded.
+
+        A pure aggregate-value threshold filter `value < _SORTINO_SENTINEL/_CPCV_N_PATHS`
+        WRONGLY KEEPS this (the negative paths drag the mean below the threshold). The
+        correct fix detects the sentinel at the PATH-SCORE level. The trial here carries
+        its per-path scores under user_attrs['path_scores'] so a path-level filter can
+        see the sentinel; an aggregate-only filter cannot.
+        """
+        import autotuner
+        import math_engine
+
+        if not hasattr(autotuner, "filter_sortino_sentinels"):
+            pytest.fail("autotuner.filter_sortino_sentinels missing — RED.")
+
+        sc = sentinel_mean_fixture["scenarios"][
+            "partial_sentinel_cpcv_mean_net_negative_paths"
+        ]
+        n = autotuner._CPCV_N_PATHS
+        # One sentinel path + (n-1) net-negative paths.
+        path_scores = [math_engine._SORTINO_SENTINEL] + list(sc["other_path_scores"])
+        path_scores = (path_scores + [0.0] * n)[:n]
+        mean_value = sum(path_scores) / len(path_scores)
+
+        # Sanity: this mean is BELOW the naive threshold (the gap a mean-filter leaves).
+        threshold = math_engine._SORTINO_SENTINEL / autotuner._CPCV_N_PATHS
+        assert mean_value < threshold, (
+            f"Fixture precondition: the net-negative partial-sentinel mean "
+            f"({mean_value!r}) must be BELOW the naive threshold ({threshold!r}) so the "
+            "mean-only filter's gap is exercised. If it is not below, re-tune the "
+            "other_path_scores more negative."
+        )
+
+        trial = self._persist_path_scores(_make_trial(mean_value), path_scores)
+        kept = autotuner.filter_sortino_sentinels([trial])
+
+        assert kept == [], (
+            f"A partial-sentinel CPCV mean with net-negative other paths "
+            f"(value={mean_value!r} < threshold {threshold!r}) survived the filter — it "
+            "still contains a zero-downside SENTINEL path and is degenerate.\n"
+            "  GAP: a `value < _SORTINO_SENTINEL/_CPCV_N_PATHS` mean-threshold filter "
+            "cannot catch this (negative paths drag the mean below the threshold; a path "
+            "can reach ~-999 at the CRRA wealth floor, or large-negative Sortino). The "
+            "correct fix detects the sentinel at the PATH-SCORE level: persist per-path "
+            "scores (user_attrs['path_scores']) and exclude any trial where "
+            "any(score == _SORTINO_SENTINEL)."
+        )

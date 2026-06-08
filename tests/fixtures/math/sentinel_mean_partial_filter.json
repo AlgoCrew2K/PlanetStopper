@@ -8,6 +8,11 @@
       "small_path_scores": [0.5, 0.3, -0.2, 0.4],
       "genuine_trial_value": 0.5,
       "_assertion_kind": "membership — partial-sentinel mean and pure sentinel excluded; genuine kept. The partial mean and the detection threshold are derived from live _SORTINO_SENTINEL and _CPCV_N_PATHS, not hardcoded."
+    },
+    "partial_sentinel_cpcv_mean_net_negative_paths": {
+      "description": "ADVERSARIAL (Revise): a partial-sentinel CPCV mean where the OTHER paths are net-NEGATIVE (realistic post-C1 CRRA mean(U) scores in a mild-drawdown regime, e.g. -0.02 each). The mean = (_SORTINO_SENTINEL + 4*(-0.02))/5 dips JUST BELOW _SORTINO_SENTINEL/_CPCV_N_PATHS, so a threshold filter `value < _SORTINO_SENTINEL/_CPCV_N_PATHS` WRONGLY KEEPS it. A correct fix detects the sentinel at the PATH-SCORE level (before averaging) rather than via an aggregate-mean threshold. This trial still contains a zero-downside sentinel path and MUST be excluded.",
+      "other_path_scores": [-0.02, -0.02, -0.02, -0.02],
+      "_assertion_kind": "membership — the net-negative partial-sentinel mean (< the naive threshold) must STILL be excluded. The mean and the per-path provenance are derived from live constants; no literal pinned. This is the gap a mean-threshold fix leaves open."
     }
   }
 }
