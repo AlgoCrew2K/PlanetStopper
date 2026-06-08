@@ -1,0 +1,13 @@
+{
+  "description": "A4 sentinel-mean golden fixture — the haircut pre-filter must exclude CPCV-mean trials in which ONE path is a SORTINO sentinel. The current filter `t.value != math_engine._SORTINO_SENTINEL` (autotuner.py:2269, 2800) is an EXACT-float compare against 1e6. A CPCV trial whose value is the mean across _CPCV_N_PATHS path scores where ONE path returned the sentinel has value ~= (1e6 + small)/_CPCV_N_PATHS ~= 200000.2, which is != 1e6 and so SURVIVES the filter — a degenerate trial (one zero-downside path) then dominates the BHY haircut / selection. The fix must detect partial-sentinel means (e.g. exclude any value at or above _SORTINO_SENTINEL / _CPCV_N_PATHS).",
+  "citation": "validation/overfitting.md sentinel-mean; GATE2-PLAN A4.",
+  "provenance": "The partial-sentinel mean is DERIVED at runtime as (_SORTINO_SENTINEL + sum(small_path_scores)) / _CPCV_N_PATHS using the live constants; no value is pinned as a literal. The detection threshold (_SORTINO_SENTINEL / _CPCV_N_PATHS) is likewise derived from live constants.",
+  "scenarios": {
+    "partial_sentinel_cpcv_mean": {
+      "description": "A trial value formed as the mean of 5 path scores where one is the sentinel and four are small (0.5, 0.3, -0.2, 0.4). Must be EXCLUDED by the post-fix filter. A genuine trial (value 0.5) must be KEPT. A pure-sentinel trial (value == _SORTINO_SENTINEL) must be EXCLUDED.",
+      "small_path_scores": [0.5, 0.3, -0.2, 0.4],
+      "genuine_trial_value": 0.5,
+      "_assertion_kind": "membership — partial-sentinel mean and pure sentinel excluded; genuine kept. The partial mean and the detection threshold are derived from live _SORTINO_SENTINEL and _CPCV_N_PATHS, not hardcoded."
+    }
+  }
+}
