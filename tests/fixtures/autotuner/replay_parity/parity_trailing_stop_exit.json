@@ -1,5 +1,5 @@
 {
-  "_description": "AC-6 parity fixture: a trailing-stop exit. Tick 0 arms the position (mc in [TAKE_PROFIT_MC_PCT, TRIGGER_THRESHOLD_PCT) = [5,15)). Ticks 1+ drop the return deep below the HWM-anchored stop with mc held well below MC_SANITY_THRESHOLD (60) so the MC veto does not block — the trailing stop confirms after EXIT_CONFIRM_TICKS qualifying ticks. Input tick sequence only; the parity test asserts the production harness and the replay produce the SAME exit decision on the SAME tick. No producer-computed value is encoded here.",
+  "_description": "[H1] AC-6 parity fixture: a trailing-stop exit. Tick 0 arms the position (mc in [TAKE_PROFIT_MC_PCT, TRIGGER_THRESHOLD_PCT) = [5,15); arm band is rename-only, operator preserved). Ticks 1+ drop the return deep below the HWM-anchored stop with mc held AT/ABOVE MC_BREAKDOWN_THRESHOLD (60) so the breakdown gate CONFIRMS (prob_underperforming >= 60 = badly underperforming) and the trailing stop fires after EXIT_CONFIRM_TICKS qualifying ticks. Input tick sequence only; the parity test asserts the production harness and the replay produce the SAME exit decision on the SAME tick. No producer-computed value is encoded here.",
   "_provenance": "Hand-derived input sequence. Schema = synthetic_history tick dict: {time, return, mc_prob, vol, vwap_diff, base_atr_pct, valid_vwap_weight}. grace_minutes is the open-window grace; 0 here so the (absent) VWAP signal is never the variable under test.",
   "grace_minutes": 0,
   "params": {
@@ -13,10 +13,10 @@
   },
   "ticks": [
     {"time": "09:30", "return": 6.0, "mc_prob": 10.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-    {"time": "09:31", "return": -20.0, "mc_prob": 12.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-    {"time": "09:32", "return": -20.0, "mc_prob": 12.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-    {"time": "09:33", "return": -20.0, "mc_prob": 12.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-    {"time": "09:34", "return": -20.0, "mc_prob": 12.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-    {"time": "09:35", "return": -20.0, "mc_prob": 12.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0}
+    {"time": "09:31", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:32", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:33", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:34", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:35", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0}
   ]
 }

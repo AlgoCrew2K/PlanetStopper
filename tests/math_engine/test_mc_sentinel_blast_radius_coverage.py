@@ -618,55 +618,63 @@ def test_exit_confirmation_fires_when_mc_sentinel_and_below_stop() -> None:
         below_stop_count = new_count
 
 
-def test_exit_confirmation_mc_sentinel_does_not_suppress_stop_when_mc_would_have_blocked() -> None:
+def test_exit_confirmation_mc_sentinel_does_not_suppress_stop_when_low_value_would_suppress() -> None:
     """
-    R-4b hostile variant: prob_beating=None with a value that, if it WERE a real
-    float, would exceed MC_SANITY_THRESHOLD and block the stop.
+    [H1] R-4b hostile variant: prob_underperforming=None with a value that, if it
+    WERE a real float, would FALL BELOW MC_BREAKDOWN_THRESHOLD and suppress the
+    stop.
 
-    Concretely: if prob_beating were 99.0 (well above MC_SANITY_THRESHOLD=60.0),
-    mc_sanity_ok would be False and the stop would be suppressed. But because
-    prob_beating is None (sentinel), mc_sanity_ok must be True (fail-safe) and
-    the stop must still fire.
+    [DIRECTION FLIP vs pre-H1] Under the corrected gate, a real LOW
+    prob_underperforming (< 60, "analogs say today is normal") makes
+    mc_breakdown_ok False and SUPPRESSES the stop. But because
+    prob_underperforming is None (sentinel = MC unavailable), the gate must FAIL
+    OPEN (mc_breakdown_ok True) and the stop must still fire on magnitude alone.
 
-    This is the sharpest regression test: it proves that None is treated as
-    "MC unavailable → do not block" and not as "extreme bullishness → always block."
+    This is the sharpest regression test: it proves None is treated as "MC
+    unavailable → fail open → do not suppress", NOT as a low value that would
+    suppress. (Pre-H1 the hostile value was a HIGH 99 that the inverted gate
+    suppressed on; under the corrected gate a LOW value is the suppressing one.)
 
-    RED trigger: any expression that maps prob_beating=None to mc_sanity_ok=False,
-    such as ``mc_sanity_ok = prob_beating is not None and prob_beating < MC_SANITY_THRESHOLD``.
+    RED trigger: any expression that maps prob_underperforming=None to
+    mc_breakdown_ok=False, e.g.
+    ``mc_breakdown_ok = prob_underperforming is not None and prob_underperforming >= MC_BREAKDOWN_THRESHOLD``.
     """
     stop_trigger_level = -2.0
     current_return = stop_trigger_level - (math_engine.MAGNITUDE_FLOOR_PCT + 1.0)
 
-    # Confirm that a real high prob_beating DOES block the stop (sanity check that
-    # the test is testing the right thing).
-    _count, blocked = math_engine.compute_exit_confirmation(
+    # Confirm that a real LOW prob_underperforming SUPPRESSES the stop (sanity
+    # check that the test is testing the right thing): below the breakdown
+    # threshold the analogs say today is normal -> no capitulation.
+    _count, suppressed_hit = math_engine.compute_exit_confirmation(
         armed=True,
         is_triggered=False,
         current_return=current_return,
         stop_trigger_level=stop_trigger_level,
-        prob_beating=math_engine.MC_SANITY_THRESHOLD + 10.0,  # well above threshold
+        prob_underperforming=math_engine.MC_BREAKDOWN_THRESHOLD - 10.0,  # below threshold
         current_below_stop_count=math_engine.EXIT_CONFIRM_TICKS - 1,
     )
-    assert blocked is False, (
-        f"Sanity check failed: a high prob_beating ({math_engine.MC_SANITY_THRESHOLD + 10.0}) "
-        f"did not block the stop. The MC sanity gate must veto when prob_beating >= "
-        f"MC_SANITY_THRESHOLD ({math_engine.MC_SANITY_THRESHOLD})."
+    assert suppressed_hit is False, (
+        f"Sanity check failed: a low prob_underperforming "
+        f"({math_engine.MC_BREAKDOWN_THRESHOLD - 10.0}) did not suppress the stop. "
+        f"The breakdown gate must suppress when prob_underperforming < "
+        f"MC_BREAKDOWN_THRESHOLD ({math_engine.MC_BREAKDOWN_THRESHOLD}) — analogs "
+        f"say today is normal."
     )
 
-    # Now confirm that None (sentinel) does NOT block — even though the equivalent
-    # high float would.
+    # Now confirm that None (sentinel) does NOT suppress — even though a low real
+    # float would. None = MC unavailable -> fail open -> fire on magnitude.
     _count, sentinel_fires = math_engine.compute_exit_confirmation(
         armed=True,
         is_triggered=False,
         current_return=current_return,
         stop_trigger_level=stop_trigger_level,
-        prob_beating=None,  # sentinel — "MC unavailable"
+        prob_underperforming=None,  # sentinel — "MC unavailable"
         current_below_stop_count=math_engine.EXIT_CONFIRM_TICKS - 1,  # one tick from firing
     )
     assert sentinel_fires is True, (
-        f"compute_exit_confirmation(prob_beating=None) at EXIT_CONFIRM_TICKS-1 "
-        f"returned is_trailing_stop_hit=False. The MC sentinel must not block the "
-        f"protective stop. The fail-safe is: None → mc_sanity_ok=True → stop fires "
-        f"on magnitude alone. A real high prob_beating would have blocked; None "
-        f"must not recapitulate that suppression."
+        f"compute_exit_confirmation(prob_underperforming=None) at "
+        f"EXIT_CONFIRM_TICKS-1 returned is_trailing_stop_hit=False. The MC "
+        f"sentinel must FAIL OPEN, not suppress: None → mc_breakdown_ok=True → "
+        f"stop fires on magnitude alone. A real low prob_underperforming would "
+        f"have suppressed; None must not recapitulate that suppression."
     )
