@@ -1407,6 +1407,30 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
     return dated_returns
 
 
+# Partial-sentinel detection threshold: a CPCV trial's value is the MEAN across
+# _CPCV_N_PATHS path scores. If ONE path is a Sortino sentinel (1e6, a zero-downside
+# path) and the rest are small, the mean is ~= _SORTINO_SENTINEL / _CPCV_N_PATHS — far
+# above any genuine Sortino/CRRA-EU score, yet != 1e6 so an exact-float compare misses
+# it. Any value at or above this threshold contains a sentinel path and is degenerate.
+_PARTIAL_SENTINEL_MEAN_THRESHOLD = math_engine._SORTINO_SENTINEL / _CPCV_N_PATHS
+
+
+def filter_sortino_sentinels(trials):
+    """Exclude zero-downside degenerate trials from a haircut candidate set.
+
+    Drops BOTH pure-sentinel trials (value == math_engine._SORTINO_SENTINEL) AND
+    partial-sentinel CPCV means (value >= _SORTINO_SENTINEL / _CPCV_N_PATHS, i.e.
+    at least one path in the CPCV aggregate returned the sentinel). A sentinel's
+    magnitude would dominate the cross-trial BHY/haircut distribution and let a
+    degenerate trial masquerade as a genuine signal. Trials with value None are
+    dropped (no usable objective). Returns a new list preserving input order.
+    """
+    return [
+        t for t in trials
+        if t.value is not None and t.value < _PARTIAL_SENTINEL_MEAN_THRESHOLD
+    ]
+
+
 def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn=compute_sortino_tstat, gamma: "float | None" = None):
     """Apply the Harvey & Liu selection-bias haircut to a set of completed trials.
 
@@ -1454,10 +1478,9 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn
 
     # Sentinel filter: exclude zero-downside degenerate trials regardless of objective.
     # A sentinel's magnitude would dominate the cross-trial distribution in the Sortino
-    # path; the filter is a no-op for CRRA-EU but must remain for both paths.
-    filtered_trials = [
-        t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
-    ]
+    # path; the filter is a no-op for CRRA-EU but must remain for both paths. Uses the
+    # named helper so partial-sentinel CPCV means (one sentinel path) are caught too.
+    filtered_trials = filter_sortino_sentinels(completed_trials)
     if not filtered_trials:
         return None, None, None
 
@@ -1469,7 +1492,14 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn
     _crra_gamma = gamma if gamma is not None else float(database.PHASE1_THEORY_GAMMA)
 
     tstats = []
-    for trial_idx, t in enumerate(completed_trials):
+    # H3 fix: iterate filtered_trials (sentinel-removed), NOT completed_trials, so the
+    # t-stat / p-value index space matches the returned-trial index space at the
+    # `filtered_trials[winner_idx]` return below. Looping completed_trials let a
+    # sentinel's strong series win the argmin while the return indexed into the
+    # shorter filtered list — returning the WRONG trial with the SENTINEL's t-stat
+    # (or IndexError with a trailing sentinel). Both live callers pre-filter, so this
+    # is byte-identical in production (filtered_trials == completed_trials there).
+    for trial_idx, t in enumerate(filtered_trials):
         series = t.user_attrs.get("daily_returns", []) if hasattr(t, "user_attrs") else []
         # H-1 fix: call the passed tstat_fn (the loop previously hardcoded the
         # Sortino t-stat, defeating the tstat_fn parameter). The two objective
@@ -2277,11 +2307,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             completed_trials = []
 
         # filter_sortino_sentinels excludes math_engine._SORTINO_SENTINEL (1e6)
-        # zero-downside trials — a sentinel's t-statistic would dominate the
-        # haircut and let a degenerate trial masquerade as a genuine signal.
-        haircut_trials = [
-            t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
-        ]
+        # zero-downside trials AND partial-sentinel CPCV means (one sentinel path,
+        # value ~= _SORTINO_SENTINEL/_CPCV_N_PATHS) — a sentinel's t-statistic would
+        # dominate the haircut and let a degenerate trial masquerade as a genuine signal.
+        haircut_trials = filter_sortino_sentinels(completed_trials)
 
         if haircut_trials:
             # Route tstat_fn based on objective_kind (sourced from spec_facets above).
@@ -2808,11 +2837,9 @@ def run_calibration_sweep(
         completed_trials = [t for t in study.trials if t.value is not None]
 
         # filter_sortino_sentinels excludes math_engine._SORTINO_SENTINEL (1e6)
-        # zero-downside trials before the haircut — a sentinel's t-statistic would
-        # dominate the BHY adjustment.
-        haircut_trials = [
-            t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
-        ]
+        # zero-downside trials AND partial-sentinel CPCV means before the haircut —
+        # a sentinel's t-statistic would dominate the BHY adjustment.
+        haircut_trials = filter_sortino_sentinels(completed_trials)
 
         # haircut_outcome makes the FDR-gate verdict explicit on every report
         # row — without it a noise-grade naive winner (no trial cleared the

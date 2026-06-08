@@ -1957,7 +1957,18 @@ def compute_pbo(
 
         is_best_oos = oos_scores[is_best_idx]
         # 1-based ascending rank: rank_c=1 → worst OOS (lowest score), rank_c=K → best OOS.
-        rank_c = sum(1 for s in oos_scores if s <= is_best_oos)
+        # PESSIMISTIC tie-breaking: the IS-best takes the LOWEST rank within its OOS-tie
+        # group — `rank_c = (# configs strictly below) + 1`. This is the only change
+        # from the prior optimistic `sum(s <= is_best_oos)`; it matters exactly on ties:
+        #   - All-tie OOS (every config ties the IS-best): rank_c = 0 + 1 = 1 →
+        #     omega_bar ≈ 0.5/K → lambda < 0 → counted as OVERFIT (PBO→1). A strategy
+        #     that distinguishes nothing OOS is overfit, not robust. (Optimistic `<=`
+        #     gave rank_c=K → PBO→0, the bug.)
+        #   - Genuinely dominant config (all others strictly below): rank_c = (K-1)+1 = K
+        #     → omega_bar ≈ (K-0.5)/K → lambda > 0 → NOT overfit (PBO→0), unchanged from
+        #     `<=`. The +1 restores the IS-best's own position; a bare strict `<` (no +1)
+        #     would drop the dominant config to rank K-1 and wrongly flip it to overfit.
+        rank_c = sum(1 for s in oos_scores if s < is_best_oos) + 1
 
         # --- Step 2d-e: omega_bar and lambda.
         omega_bar = (rank_c - 0.5) / K
