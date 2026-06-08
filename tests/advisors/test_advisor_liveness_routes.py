@@ -85,6 +85,25 @@ def _flat_returns_backtest(per_day_pct: float = 0.05, n: int = 200) -> MagicMock
     return fake
 
 
+def _varied_returns_backtest(seed: int = 11, n: int = 700, mean_pct: float = 0.5) -> MagicMock:
+    """A deterministic VARIED (non-constant) BacktestResult-like mock.
+
+    A flat constant series has zero variance -> the Sortino t-stat / BHY veto fails,
+    so the gate never adopts. A gaussian series with positive mean gives the gate a
+    real signal to act on (matches the existing engine tests' _make_synthetic_daily_returns).
+    daily_returns are FRACTIONS (engine multiplies by 100 to get percent).
+    """
+    import random  # noqa: PLC0415
+    rng = random.Random(seed)
+    fake = MagicMock()
+    fake.error = None
+    fake.daily_returns = {
+        str(19000 + i): (rng.gauss(mean_pct, 0.8) / 100.0) for i in range(n)
+    }
+    fake.stats = {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None}
+    return fake
+
+
 # ===========================================================================
 # RC-4 — KEEP_INCUMBENT must STILL persist an advisor_observations row.
 # ===========================================================================
@@ -305,21 +324,22 @@ class TestRC5NoSilentMasking:
             "operator and logs can diagnose it — not degrade to a generic 'evaluation error'."
         )
 
-    def test_adopt_survivor_persistence_failure_is_surfaced_not_swallowed(self, swap_engine):
-        """A persistence failure on an ADOPT_CANDIDATE survivor must be SURFACED,
-        not silently logged-and-dropped (asset_swap_engine.py:708-715).
+    def test_persistence_failure_is_surfaced_not_swallowed(self, swap_engine):
+        """A persistence failure during propose_operator_swap must be SURFACED,
+        not silently logged-and-dropped.
 
-        Today the `_persist_survivor` call is wrapped in `try/except Exception:
-        logger.warning(...)` — the survivor is presented as adopted while its
-        advisor_observations row never lands. The operator sees a recommendation
-        that was never persisted (the exact RC-5 masking RC-1's fix would unmask).
+        Originally the `_persist_survivor` call was wrapped in `try/except Exception:
+        logger.warning(...)` — a recommendation was presented while its
+        advisor_observations row never landed. RC-5: when insert_advisor_observation
+        raises, the SwapRunResult must carry a persistence-error signal (a non-empty
+        persistence_error / error field, or a per-proposal not-persisted flag).
 
-        RED: when insert_advisor_observation raises on an ADOPT survivor, the
-        SwapRunResult must carry a persistence-error signal (a non-empty
-        persistence_error / error field, or the survivor flagged not-persisted).
+        Note: post-RC-4 the engine persists REGARDLESS of verdict, so the
+        persist-failure path is exercised on ANY decision — we use a varied series
+        (not a flat constant, which fails the BHY veto with zero variance) and assert
+        the failure is surfaced no matter what the gate decided.
         """
-        # Strong candidate signal + weak incumbent -> ADOPT, so _persist_survivor runs.
-        fake_bt = _flat_returns_backtest(per_day_pct=0.6, n=700)
+        fake_bt = _varied_returns_backtest(seed=11, n=700, mean_pct=0.5)
 
         score_tree = {"id": "sym-rc5p", "type": "root", "children": [
             {"type": "asset", "ticker": "SPY", "weight": 1.0}
@@ -339,15 +359,15 @@ class TestRC5NoSilentMasking:
                 incumbent_asset="SPY",
                 candidate_asset="IALT",
                 objective=objective,
-                incumbent_oos_alpha=-50.0,   # very weak incumbent to force ADOPT
+                incumbent_oos_alpha=-50.0,   # very weak incumbent to encourage ADOPT
                 default_oos_alpha=-50.0,
             )
 
+        # The engine persists regardless of verdict (RC-4); the persist call fired
+        # and raised, so the failure MUST be surfaced. The verdict itself is not the
+        # point — the swallowed-vs-surfaced behavior is.
         decisions = [r.verdict.decision for r in result.gate_batch.results]
-        assert "ADOPT_CANDIDATE" in decisions, (
-            "Test setup invalid: expected an ADOPT survivor to exercise _persist_survivor; "
-            f"got {decisions!r}. Adjust the signal so the gate adopts."
-        )
+        assert decisions, "Test setup invalid: the gate produced no results."
 
         # The persistence failure must be visible somewhere on the result — a
         # persistence_error field, an error field, or a per-survivor not-persisted flag.
