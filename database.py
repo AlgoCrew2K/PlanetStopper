@@ -2240,6 +2240,12 @@ def clear_fleet_alert() -> None:
 
 # --- AC-P2.5: Port-state helpers ---
 
+# H1 rename note: no migration 032 — the MC value is unchanged (rename-only) and the
+# persisted names (mc_prob, mc_history_json) are neutral; no *_beating column exists
+# anywhere in migrations/ or here. The in-memory transient key "prob_beating" is renamed
+# in code (alpha_bot_execution.py) and maps to the neutral "mc_prob" on serialization.
+# port_state.mc_prob is vestigial (write_port_state is not called on the live execution
+# path post-port-deprecation) — no dual-write migration warranted.
 _PORT_STATE_COLUMNS = (
     "account_id",
     "composition_hash",
