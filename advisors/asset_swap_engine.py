@@ -45,6 +45,7 @@ from advisors.backtest_gate_engine import (
     GatedBatch,
     CandidateGateResult,
     evaluate_candidate_batch,
+    _fold_transform_single,
     SURVIVOR_OVERFITTING_CAVEAT,
 )
 from advisors.composer_backtest_client import run_backtest
@@ -615,7 +616,7 @@ def propose_operator_swap(
     candidate_asset: str,
     objective: SwapObjective,
     *,
-    incumbent_oos_alpha: float = 0.0,
+    incumbent_oos_alpha: float | None = None,
     default_oos_alpha: float = 0.0,
 ) -> SwapRunResult:
     """Evaluate one operator-specified asset swap (AC-2.1).
@@ -672,8 +673,17 @@ def propose_operator_swap(
         )
 
     # Compute baseline OOS alpha from the baseline return series.
+    # H6/RC-1: the baseline must be the SAME validation-fold alpha the candidate
+    # is scored on (_fold_transform_single), not the full-history sum — otherwise a
+    # ~25-day candidate fold is compared against a ~125-day full-history baseline and
+    # the gate is biased to systematic KEEP_INCUMBENT.
+    # H5: a caller-supplied incumbent_oos_alpha is used only when explicitly provided
+    # (is not None); an explicit 0.0 (real break-even) must NOT trigger the fallback.
     baseline_returns_pct = [r * 100.0 for r in _backtest_returns_from_tree(score_tree, symphony_id)]
-    effective_incumbent_oos_alpha = incumbent_oos_alpha or sum(baseline_returns_pct)
+    fold_baseline_oos_alpha = _fold_transform_single(baseline_returns_pct).oos_alpha
+    effective_incumbent_oos_alpha = (
+        incumbent_oos_alpha if incumbent_oos_alpha is not None else fold_baseline_oos_alpha
+    )
 
     # Gate the single candidate.
     gate_batch = evaluate_candidate_batch(
@@ -737,7 +747,7 @@ def suggest_swaps(
     correlation_data: dict,
     available_assets: list,
     *,
-    incumbent_oos_alpha: float = 0.0,
+    incumbent_oos_alpha: float | None = None,
     default_oos_alpha: float = 0.0,
 ) -> SwapRunResult:
     """Evaluate advisor-suggested objective-directed swap candidates (AC-2.2).
@@ -844,9 +854,13 @@ def suggest_swaps(
             bt_candidates.append(bt_cand)
 
     # Gate all successfully-backtested candidates together (honest n_effective = N).
+    # H6/RC-1: fold-matched baseline (see propose_operator_swap). H5: explicit-0.0 safe.
     baseline_returns = _backtest_returns_from_tree(score_tree, symphony_id)
     baseline_returns_pct = [r * 100.0 for r in baseline_returns]
-    effective_incumbent_oos_alpha = incumbent_oos_alpha or sum(baseline_returns_pct)
+    fold_baseline_oos_alpha = _fold_transform_single(baseline_returns_pct).oos_alpha
+    effective_incumbent_oos_alpha = (
+        incumbent_oos_alpha if incumbent_oos_alpha is not None else fold_baseline_oos_alpha
+    )
 
     if bt_candidates:
         gate_batch = evaluate_candidate_batch(

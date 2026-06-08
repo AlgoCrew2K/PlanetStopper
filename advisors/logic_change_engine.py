@@ -60,6 +60,7 @@ from advisors.backtest_gate_engine import (
     GatedBatch,
     CandidateGateResult,
     evaluate_candidate_batch,
+    _fold_transform_single,
     SURVIVOR_OVERFITTING_CAVEAT,
     HARVEY_LIU_FDR_Q,
 )
@@ -416,16 +417,18 @@ def extract_numeric_params(raw_value: dict) -> list:
                 child_path = path + [key]
                 if isinstance(val, bool):
                     # Booleans are flags, not continuous parameters — skip.
+                    # (This guard MUST precede the numeric branch: bool is an int
+                    # subclass, so True/False would otherwise be caught as numerics.)
                     pass
                 elif isinstance(val, (int, float)):
-                    # Filter out 0-or-1 flag values — those are effectively boolean
-                    # flags, not continuous parameters.
-                    if val not in (0, 1):
-                        results.append({
-                            "node_path": path,
-                            "param_key": key,
-                            "value": val,
-                        })
+                    # L1: a CURRENT numeric value of 0 or 1 does NOT make a param a
+                    # flag — it is still a tweakable continuous parameter. Only genuine
+                    # booleans (excluded above) are flags. Surface all finite numerics.
+                    results.append({
+                        "node_path": path,
+                        "param_key": key,
+                        "value": val,
+                    })
                 elif isinstance(val, (dict, list)):
                     _walk(val, child_path)
         elif isinstance(node, list):
@@ -1110,7 +1113,7 @@ def propose_operator_logic_change(
     objective: Optional[LogicChangeObjective] = None,
     *,
     change_description: Optional[str] = None,
-    incumbent_oos_alpha: float = 0.0,
+    incumbent_oos_alpha: float | None = None,
     default_oos_alpha: float = 0.0,
 ) -> LogicChangeRunResult:
     """Evaluate one operator-specified logic change (AC-3.1 — operator-initiated mode).
@@ -1230,9 +1233,16 @@ def propose_operator_logic_change(
         )
 
     # Derive incumbent OOS alpha from baseline if not supplied.
+    # H6/RC-1: fold-matched baseline (_fold_transform_single) so the gate compares
+    # the candidate's validation-fold alpha against the incumbent's SAME fold, not
+    # against a full-history sum (which biases the gate to systematic KEEP_INCUMBENT).
+    # H5: an explicit incumbent_oos_alpha (incl. 0.0) is honoured; only None falls back.
     baseline_returns = _backtest_returns_from_tree(score_tree, symphony_id)
     baseline_returns_pct = [r * 100.0 for r in baseline_returns]
-    effective_incumbent_oos_alpha = incumbent_oos_alpha or sum(baseline_returns_pct)
+    fold_baseline_oos_alpha = _fold_transform_single(baseline_returns_pct).oos_alpha
+    effective_incumbent_oos_alpha = (
+        incumbent_oos_alpha if incumbent_oos_alpha is not None else fold_baseline_oos_alpha
+    )
 
     # Gate as a single-element batch (AC-3.2: ALL N candidates in one batch call).
     gate_batch = evaluate_candidate_batch(
@@ -1284,7 +1294,7 @@ def suggest_logic_changes(
     score_tree: dict,
     objective: LogicChangeObjective,
     *,
-    incumbent_oos_alpha: float = 0.0,
+    incumbent_oos_alpha: float | None = None,
     default_oos_alpha: float = 0.0,
     baseline_stats: Optional[dict] = None,
 ) -> LogicChangeRunResult:
@@ -1366,9 +1376,13 @@ def suggest_logic_changes(
             bt_candidates.append(bt_cand)
 
     # Derive incumbent OOS alpha from baseline (once for the batch).
+    # H6/RC-1: fold-matched baseline (see propose_operator_logic_change). H5: explicit-0.0 safe.
     baseline_returns = _backtest_returns_from_tree(score_tree, symphony_id)
     baseline_returns_pct = [r * 100.0 for r in baseline_returns]
-    effective_incumbent_oos_alpha = incumbent_oos_alpha or sum(baseline_returns_pct)
+    fold_baseline_oos_alpha = _fold_transform_single(baseline_returns_pct).oos_alpha
+    effective_incumbent_oos_alpha = (
+        incumbent_oos_alpha if incumbent_oos_alpha is not None else fold_baseline_oos_alpha
+    )
 
     # AC-3.2 CRITICAL: gate ALL successfully-backtested candidates as ONE batch.
     # This is the multiple-testing correction.  Never gate individually.
