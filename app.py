@@ -3310,9 +3310,11 @@ def ai_advisor_suggest():
         return jsonify({"suggestions": suggestions})
     except Exception as _exc:
         _daemon_log.error("ai_advisor_suggest failed: %s", _exc, exc_info=True)
-        # RC-5: surface the error class so the operator/log can diagnose the failure;
-        # never degrade to an opaque "An internal error occurred" that masks the cause.
-        return jsonify({"error": f"{type(_exc).__name__}: {_exc}"}), 200
+        # D-1 security contract: do NOT echo str(exc) — exception messages may contain
+        # API keys, internal paths, or secrets.  exc_info=True above puts full detail
+        # server-side.  Surface only the error class name so the operator can identify
+        # the failure type without leaking sensitive content to the browser.
+        return jsonify({"error": type(_exc).__name__}), 200
 
 
 @app.route("/ai-advisor/accept", methods=["POST"])
