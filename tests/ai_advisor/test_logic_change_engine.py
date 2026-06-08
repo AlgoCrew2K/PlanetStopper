@@ -1098,13 +1098,17 @@ class TestSurvivorCaveatsPresent:
 class TestAdvisoryOnlyContract:
     """The engine never auto-applies; survivors write an advisory_observation only (AC-3.4)."""
 
-    def test_survivors_persist_with_is_advisory_only_1(
+    def test_persisted_observations_are_advisory_only_1(
         self, score_tree, logic_objective
     ):
-        """Every survivor must be persisted via insert_advisor_observation(is_advisory_only=1).
+        """Every persisted observation must carry is_advisory_only=1 (AC-X3 / AC-3.4).
 
-        AC-X3 + AC-3.4: is_advisory_only=1 is structural, not optional.
+        is_advisory_only=1 is structural, not optional — the advisor never moves money.
         observation_type must identify 'logic_change_proposal'.
+
+        RC-4 (DIAGNOSIS F4): persistence is verdict-agnostic (one row per GATED
+        proposal regardless of decision), so this asserts the structural advisory
+        flag on EVERY persisted row, not a per-survivor count.
         """
         engine = _import_engine()
         strong_returns = _make_synthetic_returns_pct(600, seed=6, mean_pct=0.20)
@@ -1133,10 +1137,12 @@ class TestAdvisoryOnlyContract:
                 objective=logic_objective,
             )
 
-        n_survivors = len(result.survivors)
-        assert len(insert_calls) == n_survivors, (
-            f"insert_advisor_observation must be called exactly once per survivor. "
-            f"Survivors: {n_survivors}, calls: {len(insert_calls)}."
+        # RC-4: one observation per gated proposal (verdict-agnostic), so at least
+        # one row is written whenever the gate produced a result.
+        n_gated = len(result.gate_batch.results)
+        assert len(insert_calls) == n_gated, (
+            f"insert_advisor_observation must be called once per GATED proposal "
+            f"(RC-4 verdict-agnostic). Gated: {n_gated}, calls: {len(insert_calls)}."
         )
         for call_kwargs in insert_calls:
             assert call_kwargs.get("is_advisory_only") == 1, (
@@ -1186,12 +1192,19 @@ class TestAdvisoryOnlyContract:
                     f"Found '{forbidden}' in: {guidance!r}."
                 )
 
-    def test_rejected_candidates_are_not_persisted(
+    def test_rejected_candidates_are_persisted_with_their_real_verdict(
         self, score_tree, logic_objective
     ):
-        """Only ADOPT_CANDIDATE survivors are persisted; rejected candidates write nothing."""
+        """RC-4 (DIAGNOSIS F4): a rejected/kept candidate IS persisted — with its REAL
+        gate verdict — so the operator sees the engine ran and kept the incumbent.
+
+        This supersedes the old "persist only on ADOPT" contract: an ADOPT-only write
+        left advisor_observations empty on the common KEEP/REJECT path, making the
+        advisor look dead.  The persisted row must carry the actual decision (NOT a
+        hardcoded ADOPT_CANDIDATE) and is_advisory_only=1.
+        """
         engine = _import_engine()
-        # Short noisy series — will fail the gate.
+        # Short noisy series — will fail the gate (non-ADOPT verdict).
         bad_returns = _make_noisy_returns_pct(80, seed=555)
         mock_backtest = _make_mock_backtest_result(daily_returns_pct=bad_returns)
 
@@ -1215,11 +1228,28 @@ class TestAdvisoryOnlyContract:
                 objective=logic_objective,
             )
 
-        n_survivors = len(result.survivors)
-        assert len(insert_calls) == n_survivors, (
-            f"insert_advisor_observation called {len(insert_calls)} times but only "
-            f"{n_survivors} survivors. Rejected candidates must not be persisted."
+        # Confirm this run is a non-ADOPT case (exercises the regardless-of-verdict path).
+        decisions = [r.verdict.decision for r in result.gate_batch.results]
+        assert decisions and "ADOPT_CANDIDATE" not in decisions, (
+            f"Test setup invalid: expected a non-ADOPT verdict; got {decisions!r}."
         )
+
+        # RC-4: the rejected/kept proposal is STILL persisted (one row per gated proposal).
+        n_gated = len(result.gate_batch.results)
+        assert len(insert_calls) == n_gated, (
+            f"insert_advisor_observation called {len(insert_calls)} times for {n_gated} "
+            f"gated proposal(s). RC-4: persistence is verdict-agnostic — a non-ADOPT "
+            "verdict must STILL write a row so the operator sees the engine ran."
+        )
+        for kw in insert_calls:
+            assert kw.get("is_advisory_only") == 1, (
+                f"Persisted observation must be is_advisory_only=1; got "
+                f"{kw.get('is_advisory_only')!r}."
+            )
+            assert kw.get("verdict") in ("KEEP_INCUMBENT", "REJECT_VETO_FAILED"), (
+                f"The persisted verdict must reflect the REAL gate decision, not a "
+                f"hardcoded ADOPT_CANDIDATE. Got: {kw.get('verdict')!r}."
+            )
 
 
 # ===========================================================================

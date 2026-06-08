@@ -1,0 +1,19 @@
+{
+  "_description": "H6 / RC-1 golden fixture: the adopt/keep gate must compare the candidate validation-FOLD alpha against the incumbent baseline's SAME validation FOLD, not against the baseline's full-history sum. The bug compares a ~25-day candidate-fold sum against a ~125-day full-history baseline sum, producing systematic KEEP_INCUMBENT.",
+  "_provenance": "Synthetic, deterministic. Daily return series are constructed by the test so that (a) the candidate is genuinely BETTER than the incumbent on every day of the validation fold, while (b) the candidate's fold-sum is SMALLER than the incumbent's FULL-HISTORY sum. Expected decisions are DERIVED from the fold math in the test, never hardcoded as gate outputs.",
+  "_fold_split": "backtest_gate_engine._fold_transform_single: val_start_idx = int(n * TRAIN_RATIO=0.60); frozen_start_idx = int(n * 0.80). The validation fold is series[val_start_idx:frozen_start_idx]; oos_alpha = sum(that slice).",
+  "series_length": 250,
+  "candidate": {
+    "_comment": "Strictly greater than incumbent on EVERY day. Per-day +0.20 percent.",
+    "per_day_pct": 0.20
+  },
+  "incumbent": {
+    "_comment": "Strictly worse than candidate on EVERY day. Per-day +0.08 percent. Over the FULL 250-day history its sum (~20.0) exceeds the candidate's ~25-day fold sum (~10.0), so the window-mismatched compare yields KEEP_INCUMBENT. On the SAME validation fold its sum (~4.0) is below the candidate fold sum (~10.0), so the window-matched compare yields ADOPT_CANDIDATE.",
+    "per_day_pct": 0.08
+  },
+  "default_oos_alpha_pct": -100.0,
+  "expected_behavior": {
+    "window_mismatched_full_history_baseline": "KEEP_INCUMBENT (the bug)",
+    "window_matched_fold_baseline": "ADOPT_CANDIDATE (the fix)"
+  }
+}

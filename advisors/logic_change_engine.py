@@ -60,6 +60,7 @@ from advisors.backtest_gate_engine import (
     GatedBatch,
     CandidateGateResult,
     evaluate_candidate_batch,
+    _fold_transform_single,
     SURVIVOR_OVERFITTING_CAVEAT,
     HARVEY_LIU_FDR_Q,
 )
@@ -306,6 +307,10 @@ class LogicChangeRunResult:
         The ``LogicChangeObjective`` that drove this run.
     no_api_key:
         ``True`` when the Composer API key is absent; proposals are empty (AC-X4).
+    persistence_error:
+        Non-None when the advisor_observation write failed (RC-5).  The result is
+        still returned, but the operator/log must see that the audit-trail row never
+        landed — a persistence failure must be surfaced, never swallowed to a warning.
     """
 
     gate_batch: GatedBatch
@@ -315,6 +320,7 @@ class LogicChangeRunResult:
     message: str = ""
     objective: Optional[LogicChangeObjective] = None
     no_api_key: bool = False
+    persistence_error: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -416,16 +422,18 @@ def extract_numeric_params(raw_value: dict) -> list:
                 child_path = path + [key]
                 if isinstance(val, bool):
                     # Booleans are flags, not continuous parameters — skip.
+                    # (This guard MUST precede the numeric branch: bool is an int
+                    # subclass, so True/False would otherwise be caught as numerics.)
                     pass
                 elif isinstance(val, (int, float)):
-                    # Filter out 0-or-1 flag values — those are effectively boolean
-                    # flags, not continuous parameters.
-                    if val not in (0, 1):
-                        results.append({
-                            "node_path": path,
-                            "param_key": key,
-                            "value": val,
-                        })
+                    # L1: a CURRENT numeric value of 0 or 1 does NOT make a param a
+                    # flag — it is still a tweakable continuous parameter. Only genuine
+                    # booleans (excluded above) are flags. Surface all finite numerics.
+                    results.append({
+                        "node_path": path,
+                        "param_key": key,
+                        "value": val,
+                    })
                 elif isinstance(val, (dict, list)):
                     _walk(val, child_path)
         elif isinstance(node, list):
@@ -803,22 +811,27 @@ def _make_candidate_id(symphony_id: str, tweak: LogicTweak) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _persist_survivor(
+def _persist_observation(
     symphony_id: str,
     proposal: LogicChangeProposalResult,
     gate_result: CandidateGateResult,
 ) -> None:
-    """Persist an ADOPT_CANDIDATE survivor as an advisor_observation.
+    """Persist a logic-change proposal as an advisor_observation, REGARDLESS of verdict (RC-4).
 
-    Writes with ``is_advisory_only=1`` and ``observation_type="logic_change_proposal"``
-    (AC-X3 structural requirements).  Never writes for non-survivors.
+    Writes the ACTUAL gate verdict (ADOPT_CANDIDATE / KEEP_INCUMBENT /
+    REJECT_VETO_FAILED) with ``is_advisory_only=1`` and
+    ``observation_type="logic_change_proposal"`` (AC-X3 structural requirements).
+
+    RC-4: persistence is verdict-agnostic so the operator sees the engine ran and
+    kept the incumbent — an ADOPT-only write left advisor_observations empty on the
+    common KEEP path, making the advisor look dead.
     """
     database.insert_advisor_observation(
         advisor_role="LOGIC_CHANGE",
         symphony_id=symphony_id,
         subject_type="logic_change_proposal",
         subject_id=proposal.candidate_id,
-        verdict="ADOPT_CANDIDATE",
+        verdict=gate_result.verdict.decision,
         is_advisory_only=1,
         observation_type=_OBSERVATION_TYPE,
         raw_response={
@@ -1110,7 +1123,7 @@ def propose_operator_logic_change(
     objective: Optional[LogicChangeObjective] = None,
     *,
     change_description: Optional[str] = None,
-    incumbent_oos_alpha: float = 0.0,
+    incumbent_oos_alpha: float | None = None,
     default_oos_alpha: float = 0.0,
 ) -> LogicChangeRunResult:
     """Evaluate one operator-specified logic change (AC-3.1 — operator-initiated mode).
@@ -1230,9 +1243,16 @@ def propose_operator_logic_change(
         )
 
     # Derive incumbent OOS alpha from baseline if not supplied.
+    # H6/RC-1: fold-matched baseline (_fold_transform_single) so the gate compares
+    # the candidate's validation-fold alpha against the incumbent's SAME fold, not
+    # against a full-history sum (which biases the gate to systematic KEEP_INCUMBENT).
+    # H5: an explicit incumbent_oos_alpha (incl. 0.0) is honoured; only None falls back.
     baseline_returns = _backtest_returns_from_tree(score_tree, symphony_id)
     baseline_returns_pct = [r * 100.0 for r in baseline_returns]
-    effective_incumbent_oos_alpha = incumbent_oos_alpha or sum(baseline_returns_pct)
+    fold_baseline_oos_alpha = _fold_transform_single(baseline_returns_pct).oos_alpha
+    effective_incumbent_oos_alpha = (
+        incumbent_oos_alpha if incumbent_oos_alpha is not None else fold_baseline_oos_alpha
+    )
 
     # Gate as a single-element batch (AC-3.2: ALL N candidates in one batch call).
     gate_batch = evaluate_candidate_batch(
@@ -1252,16 +1272,21 @@ def propose_operator_logic_change(
 
     if gate_result.verdict.decision == "ADOPT_CANDIDATE":
         survivors.append(proposal_shell)
-        try:
-            _persist_survivor(symphony_id, proposal_shell, gate_result)
-        except Exception:
-            logger.warning(
-                "propose_operator_logic_change: failed to persist survivor for %s",
-                proposal_shell.candidate_id,
-                exc_info=True,
-            )
     else:
         rejected.append(proposal_shell)
+
+    # RC-4: persist regardless of verdict. RC-5: surface a persistence failure.
+    persistence_error = None
+    try:
+        _persist_observation(symphony_id, proposal_shell, gate_result)
+    except Exception as exc:
+        persistence_error = f"{type(exc).__name__}: {exc}"
+        logger.error(
+            "propose_operator_logic_change: failed to persist observation for %s (%s)",
+            proposal_shell.candidate_id,
+            persistence_error,
+            exc_info=True,
+        )
 
     message = (
         f"1 logic change survived the gate for {symphony_name}"
@@ -1271,6 +1296,7 @@ def propose_operator_logic_change(
 
     return LogicChangeRunResult(
         gate_batch=gate_batch,
+        persistence_error=persistence_error,
         proposals=proposals,
         survivors=survivors,
         rejected_candidates=rejected,
@@ -1284,7 +1310,7 @@ def suggest_logic_changes(
     score_tree: dict,
     objective: LogicChangeObjective,
     *,
-    incumbent_oos_alpha: float = 0.0,
+    incumbent_oos_alpha: float | None = None,
     default_oos_alpha: float = 0.0,
     baseline_stats: Optional[dict] = None,
 ) -> LogicChangeRunResult:
@@ -1366,9 +1392,13 @@ def suggest_logic_changes(
             bt_candidates.append(bt_cand)
 
     # Derive incumbent OOS alpha from baseline (once for the batch).
+    # H6/RC-1: fold-matched baseline (see propose_operator_logic_change). H5: explicit-0.0 safe.
     baseline_returns = _backtest_returns_from_tree(score_tree, symphony_id)
     baseline_returns_pct = [r * 100.0 for r in baseline_returns]
-    effective_incumbent_oos_alpha = incumbent_oos_alpha or sum(baseline_returns_pct)
+    fold_baseline_oos_alpha = _fold_transform_single(baseline_returns_pct).oos_alpha
+    effective_incumbent_oos_alpha = (
+        incumbent_oos_alpha if incumbent_oos_alpha is not None else fold_baseline_oos_alpha
+    )
 
     # AC-3.2 CRITICAL: gate ALL successfully-backtested candidates as ONE batch.
     # This is the multiple-testing correction.  Never gate individually.
@@ -1384,8 +1414,11 @@ def suggest_logic_changes(
         gate_result_by_id = {}
 
     # Annotate proposal shells with gate results and build survivors/rejected lists.
+    # RC-4: persist every gated proposal regardless of verdict. RC-5: surface the
+    # first persistence failure (persistence_error), never swallow it to a warning.
     survivors = []
     rejected = []
+    persistence_error = None
 
     for shell in proposal_shells:
         gate_result = gate_result_by_id.get(shell.candidate_id)
@@ -1395,16 +1428,20 @@ def suggest_logic_changes(
             shell.caveats = list(gate_result.caveats)
             if gate_result.verdict.decision == "ADOPT_CANDIDATE":
                 survivors.append(shell)
-                try:
-                    _persist_survivor(symphony_id, shell, gate_result)
-                except Exception:
-                    logger.warning(
-                        "suggest_logic_changes: failed to persist survivor for %s",
-                        shell.candidate_id,
-                        exc_info=True,
-                    )
             else:
                 rejected.append(shell)
+            try:
+                _persist_observation(symphony_id, shell, gate_result)
+            except Exception as exc:
+                if persistence_error is None:
+                    persistence_error = f"{type(exc).__name__}: {exc}"
+                logger.error(
+                    "suggest_logic_changes: failed to persist observation for %s (%s: %s)",
+                    shell.candidate_id,
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
+                )
         else:
             # Backtest failed for this candidate — goes into rejected.
             rejected.append(shell)
@@ -1417,6 +1454,7 @@ def suggest_logic_changes(
 
     return LogicChangeRunResult(
         gate_batch=gate_batch,
+        persistence_error=persistence_error,
         proposals=proposal_shells,
         survivors=survivors,
         rejected_candidates=rejected,

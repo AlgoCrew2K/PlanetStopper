@@ -203,7 +203,7 @@ def test_logic_changes_evaluate_413_renders_clean_operator_message():
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
         patch("symphony_logic.fetch_symphony_score",
               return_value={"id": "x", "name": "X", "children": []}),
-        patch("database.load_state", return_value={}),
+        patch("database.load_state", return_value={"x": {"name": "X", "account_uuid": "acc-1"}}),
         patch("advisors.logic_change_engine.propose_operator_logic_change",
               return_value=run_result),
     ):
@@ -252,7 +252,7 @@ def test_asset_swaps_evaluate_413_renders_clean_operator_message():
         patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
         patch("symphony_logic.fetch_symphony_score",
               return_value={"id": "x", "name": "X", "children": []}),
-        patch("database.load_state", return_value={}),
+        patch("database.load_state", return_value={"x": {"name": "X", "account_uuid": "acc-1"}}),
         patch("advisors.asset_swap_engine.propose_operator_swap",
               return_value=run_result),
     ):
@@ -316,7 +316,7 @@ def test_logic_changes_evaluate_completion_surfaces_real_backtest_stats():
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
         patch("symphony_logic.fetch_symphony_score",
               return_value={"id": "x", "name": "X", "children": []}),
-        patch("database.load_state", return_value={}),
+        patch("database.load_state", return_value={"x": {"name": "X", "account_uuid": "acc-1"}}),
         patch("advisors.logic_change_engine.propose_operator_logic_change",
               return_value=run_result),
     ):
