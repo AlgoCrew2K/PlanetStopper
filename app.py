@@ -2902,7 +2902,10 @@ def ai_advisor_asset_swaps_evaluate():
     # Composer API needs the HASH.  Resolve NAME -> Composer hash via bot_state
     # (inverse of the AC-4 modal, which resolved hash -> name).
     # bot_state keys are Composer hashes; sym_data["name"] is the display name.
-    composer_hash = symphony_id  # fallback: pass as-is if not found in bot_state
+    # RC-6: fail loudly if the name can't resolve — the silent pass-through
+    # (`composer_hash = symphony_id`) would backtest a display name against Composer
+    # (which returns empty/404), masking the real problem as a silent no-result.
+    composer_hash = None
     _bot_state = database.load_state()
     for _sym_key, _sym_data in _bot_state.items():
         if not isinstance(_sym_data, dict) or "name" not in _sym_data:
@@ -2910,6 +2913,13 @@ def ai_advisor_asset_swaps_evaluate():
         if database.normalize_name(_sym_data["name"]) == database.normalize_name(symphony_id):
             composer_hash = _sym_key
             break
+
+    if composer_hash is None:
+        return jsonify({"error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies"}), 200
+
+    # Canonical advisory key is the normalized display name (project memory:
+    # advisor observations keyed by normalize_name, not the Composer hash).
+    canonical_symphony_id = database.normalize_name(symphony_id)
 
     raw_value = fetch_symphony_score(composer_hash)
     if not raw_value:
@@ -2924,9 +2934,10 @@ def ai_advisor_asset_swaps_evaluate():
 
     try:
         run_result = propose_operator_swap(
-            # Pass the Composer hash — engine uses it as the UUID for dvm_capital
-            # unpacking in run_backtest (composer_backtest_client.py:269).
-            symphony_id=composer_hash,
+            # RC-4: pass the canonical normalized name as symphony_id so the engine
+            # keys the advisor_observations row by name (not hash).  The Composer
+            # backtest uses the hash via score_tree/run_backtest internally.
+            symphony_id=canonical_symphony_id,
             score_tree=raw_value,
             incumbent_asset=from_ticker,
             candidate_asset=to_ticker,
@@ -2934,7 +2945,8 @@ def ai_advisor_asset_swaps_evaluate():
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_asset_swaps_evaluate failed: %s", exc, exc_info=True)
-        return jsonify({"error": f"evaluation error: {exc}"}), 200
+        # RC-5: surface the error class so the operator/log can diagnose the failure.
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 200
 
     # Build response from the first proposal (single-candidate operator-initiated mode)
     # plus the run-level message and gate batch metadata (AC-2.3 / AC-2.5).
@@ -3050,9 +3062,9 @@ def ai_advisor_logic_changes_evaluate():
     if not symphony_id or not change_description:
         return jsonify({"error": "symphony_id and change_description are required"}), 200
 
-    # AC-8: same NAME->Composer-hash resolution as asset-swaps/evaluate (identical bug).
-    # The payload carries the display NAME; the Composer API needs the HASH.
-    composer_hash = symphony_id  # fallback: pass as-is if not found in bot_state
+    # AC-8: same NAME->Composer-hash resolution as asset-swaps/evaluate.
+    # RC-6: fail loudly if the name can't resolve — no silent pass-through.
+    composer_hash = None
     _bot_state = database.load_state()
     for _sym_key, _sym_data in _bot_state.items():
         if not isinstance(_sym_data, dict) or "name" not in _sym_data:
@@ -3060,6 +3072,13 @@ def ai_advisor_logic_changes_evaluate():
         if database.normalize_name(_sym_data["name"]) == database.normalize_name(symphony_id):
             composer_hash = _sym_key
             break
+
+    if composer_hash is None:
+        return jsonify({"error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies"}), 200
+
+    # Canonical advisory key is the normalized display name (project memory:
+    # advisor observations keyed by normalize_name, not the Composer hash).
+    canonical_symphony_id = database.normalize_name(symphony_id)
 
     raw_value = fetch_symphony_score(composer_hash)
     if not raw_value:
@@ -3078,9 +3097,9 @@ def ai_advisor_logic_changes_evaluate():
     # early-return needed here (AC-X5 isolation applies at the engine level).
     try:
         run_result = propose_operator_logic_change(
-            # Pass the Composer hash — engine uses it as the UUID for dvm_capital
-            # unpacking in run_backtest (composer_backtest_client.py:269).
-            symphony_id=composer_hash,
+            # RC-4: pass canonical normalized name as symphony_id so the engine
+            # keys the advisor_observations row by name (not hash).
+            symphony_id=canonical_symphony_id,
             score_tree=raw_value,
             tweak=None,
             objective=objective,
@@ -3295,7 +3314,9 @@ def ai_advisor_suggest():
         return jsonify({"suggestions": suggestions})
     except Exception as _exc:
         _daemon_log.error("ai_advisor_suggest failed: %s", _exc, exc_info=True)
-        return jsonify({"error": "An internal error occurred"}), 200
+        # RC-5: surface the error class so the operator/log can diagnose the failure;
+        # never degrade to an opaque "An internal error occurred" that masks the cause.
+        return jsonify({"error": f"{type(_exc).__name__}: {_exc}"}), 200
 
 
 @app.route("/ai-advisor/accept", methods=["POST"])
@@ -3535,10 +3556,13 @@ def ai_advisor_chat_send():
 
 
 # Known advisor roles — used to aggregate observations for the AI Advisor page.
+# DIVERGENCE_EXPLAINER is intentionally excluded: its CVaR-divergence core is
+# permanently rejected (project memory: project_cvar_divergence_validation_wall);
+# with the feature flag off it contributes only NOT_APPLICABLE rows that read as
+# a dead producer.  DE-retire decision: Cycle C, 2026-06-08.
 _ADVISOR_ROLES = [
     "OVERFITTING_CONSCIENCE",
     "SPEC_CRITIC",
-    "DIVERGENCE_EXPLAINER",
     "NARRATOR",  # DEFERRED per Sprint 3 scope — producer not yet shipped
 ]
 

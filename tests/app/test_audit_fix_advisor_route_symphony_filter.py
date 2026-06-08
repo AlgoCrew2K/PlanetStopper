@@ -265,19 +265,29 @@ def test_advisor_roles_list_retains_narrator_with_deferred_comment():
     )
 
 
-def test_advisor_roles_list_retains_three_active_producer_roles():
-    """The three active producers must still be enumerated.
+def test_advisor_roles_list_retains_active_producer_roles():
+    """The active producers must still be enumerated.
 
-    Regression guard against accidentally removing OC/SC/DE while annotating
+    Regression guard against accidentally removing OC/SC while annotating
     NARRATOR.
+
+    DIVERGENCE_EXPLAINER was retired in Cycle C (2026-06-08, PM decision):
+    its CVaR-divergence core is permanently rejected; with the feature flag
+    off it contributes only NOT_APPLICABLE rows that read as a dead producer.
+    It must NOT appear in _ADVISOR_ROLES — the new pin is in
+    TestDivergenceExplainerRetiredFromSurface (tests/advisors/test_advisor_liveness_routes.py).
     """
     assert _APP_PY_PATH.is_file()
     src = _APP_PY_PATH.read_text(encoding="utf-8")
     m = re.search(r"_ADVISOR_ROLES\s*=\s*\[(.*?)\]", src, re.DOTALL)
     assert m, "Could not locate _ADVISOR_ROLES"
     block = m.group(1)
-    for role in ("OVERFITTING_CONSCIENCE", "SPEC_CRITIC", "DIVERGENCE_EXPLAINER"):
+    for role in ("OVERFITTING_CONSCIENCE", "SPEC_CRITIC"):
         assert role in block, (
             f"Active producer role {role!r} missing from _ADVISOR_ROLES.  "
             "S3-AUDIT-008 is a comment-only change; do not drop active roles."
         )
+    assert "DIVERGENCE_EXPLAINER" not in block, (
+        "DIVERGENCE_EXPLAINER must NOT be in _ADVISOR_ROLES after Cycle C DE-retire "
+        "(2026-06-08 PM decision). See TestDivergenceExplainerRetiredFromSurface."
+    )
