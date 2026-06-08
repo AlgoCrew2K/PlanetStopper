@@ -2,75 +2,70 @@
 Golden-fixture + property tests for the exit-confirmation layer of
 math_engine.py.
 
-Scope (Gate-1 approved): NEW pure function math_engine.compute_exit_confirmation,
-extracted from alpha_bot_execution.py:604-618 (cycle 7 of 7 -- FINAL math-layer
-extraction cycle). This is a refactor-extraction cycle, not a new feature; the
-inline producer (those 15 source lines on current main, post cycle-6 merge) is
-the spec the GREEN phase must preserve.
+[H1 UPDATE] The MC second-opinion metric is ``prob_underperforming`` (the
+fraction of regime-matched analog days that beat us — HIGH when badly
+underperforming). The legacy name ``prob_beating`` was the INVERSE of the value;
+H1 renames it AND flips the gate operator. This file pins the CORRECTED gate:
+the protective trailing stop FIRES on a confirmed breakdown
+(``prob_underperforming >= MC_BREAKDOWN_THRESHOLD``) and is suppressed when the
+analogs say today is normal. (See validation/VERDICT.md finding H1; the prior
+``prob_beating < MC_SANITY_THRESHOLD`` gate SUPPRESSED the stop in exactly the
+idiosyncratic-crash scenario it exists to defend.)
 
-Inline producer pinned verbatim (alpha_bot_execution.py:604-618 on main after
-cycle 6 merge):
-
-    is_trailing_stop_hit = False
-    if bot_state[symphony_id]["armed"] and not bot_state[symphony_id]["triggered"]:
-        # Magnitude Floor (Return <= Stop - 0.10) AND MC Sanity Gate (Prob < 60.0)
-        if current_return <= (stop_trigger_level - 0.10) and prob_beating < 60.0:
-            bot_state[symphony_id]["below_stop_count"] += 1
-            # Hardcoded exit threshold: 3 consecutive ticks
-            if bot_state[symphony_id]["below_stop_count"] == 1:
-                print(f"  ... dipped below stop. Awaiting 3-tick confirmation...")
-            elif bot_state[symphony_id]["below_stop_count"] >= 3:
-                is_trailing_stop_hit = True
-        else:
-            if bot_state[symphony_id]["below_stop_count"] > 0:
-                print(f"  ... recovered or sanity check passed. Confirmation reset.")
-            bot_state[symphony_id]["below_stop_count"] = 0
-
-PROPOSED PURE INTERFACE (confirmed):
+CORRECTED PURE INTERFACE:
 
     def compute_exit_confirmation(
         armed: bool,
         is_triggered: bool,
         current_return: float,
         stop_trigger_level: float,
-        prob_beating: float,
+        prob_underperforming: float | None,
         current_below_stop_count: int,
+        exit_confirm_ticks: int = EXIT_CONFIRM_TICKS,
     ) -> tuple[int, bool]:
         '''
         Returns (new_below_stop_count, is_trailing_stop_hit).
 
         if not armed or is_triggered:
             return current_below_stop_count, False
+        # Fail-open on None (MC unavailable / regime override): the magnitude
+        # condition alone may fire the protective stop.
+        mc_breakdown_ok = (prob_underperforming is None
+                           or prob_underperforming >= MC_BREAKDOWN_THRESHOLD)
         below_stop_condition = (
             current_return <= stop_trigger_level - MAGNITUDE_FLOOR_PCT
-            and prob_beating < MC_SANITY_THRESHOLD
+            and mc_breakdown_ok
         )
         if below_stop_condition:
             new_count = current_below_stop_count + 1
-            hit = new_count >= EXIT_CONFIRM_TICKS
+            hit = new_count >= exit_confirm_ticks
             return new_count, hit
         return 0, False
         '''
 
 GUARD INVARIANT (load-bearing): when (not armed) or is_triggered, the function
-returns the INPUT below_stop_count UNCHANGED and False for hit. This preserves
-the inline producer's semantics where the entire stop-check block is skipped
-under those conditions -- the counter is NEITHER incremented NOR reset.
+returns the INPUT below_stop_count UNCHANGED and False for hit. The entire
+stop-check block is skipped under those conditions -- the counter is NEITHER
+incremented NOR reset.
 
 CONTRACT - caller-normalized inputs (math layer trusts the caller):
   - armed, is_triggered: strict Python bool.
-  - current_return, stop_trigger_level, prob_beating: real-valued floats
-    (caller normalizes NaN/inf before passing).
+  - current_return, stop_trigger_level: real-valued floats (caller normalizes
+    NaN/inf before passing).
+  - prob_underperforming: real-valued float OR None (the MC-unavailable / regime
+    override sentinel; the gate fails open on None).
   - current_below_stop_count: non-negative int (caller's contract; no
     behavior pinned for negative or non-int values).
 
-GREEN-phase named constants (project rule: no magic numbers in math_engine.py):
+Named constants (project rule: no magic numbers in math_engine.py):
   - MAGNITUDE_FLOOR_PCT = 0.10
     (return must drop at least this far BELOW stop_trigger_level to count
     toward exit confirmation -- a buffer against MC-noise / single-tick spikes)
-  - MC_SANITY_THRESHOLD = 60.0
-    (MC probability above which we do NOT exit -- 'if we still think we're
-    likely to beat the benchmark, don't capitulate')
+  - MC_BREAKDOWN_THRESHOLD = 60.0
+    ([H1] underperformance probability AT OR ABOVE which the breakdown is
+    'confirmed' and the protective stop may fire -- 'capitulate only once the
+    analog distribution confirms we are badly underperforming'. Renamed from
+    MC_SANITY_THRESHOLD; same value, corrected direction.)
   - EXIT_CONFIRM_TICKS = 3
     (consecutive qualifying ticks needed to flip is_trailing_stop_hit)
 
@@ -157,7 +152,7 @@ def test_exit_confirmation_matches_derived_expected(
         is_triggered=inputs["is_triggered"],
         current_return=inputs["current_return"],
         stop_trigger_level=inputs["stop_trigger_level"],
-        prob_beating=inputs["prob_beating"],
+        prob_underperforming=inputs["prob_underperforming"],
         current_below_stop_count=inputs["current_below_stop_count"],
     )
 
@@ -189,7 +184,7 @@ def test_exit_confirmation_matches_derived_expected(
 
 
 @pytest.mark.parametrize(
-    "current_return,stop_trigger_level,prob_beating,current_below_stop_count,is_triggered",
+    "current_return,stop_trigger_level,prob_underperforming,current_below_stop_count,is_triggered",
     [
         (-100.0, -1.0, 1.0, 0, False),     # would qualify if armed
         (-100.0, -1.0, 1.0, 2, False),     # mid-count
@@ -203,7 +198,7 @@ def test_exit_confirmation_matches_derived_expected(
 def test_guard_not_armed_preserves_count_and_no_hit(
     current_return: float,
     stop_trigger_level: float,
-    prob_beating: float,
+    prob_underperforming: float,
     current_below_stop_count: int,
     is_triggered: bool,
 ) -> None:
@@ -221,19 +216,19 @@ def test_guard_not_armed_preserves_count_and_no_hit(
         is_triggered=is_triggered,
         current_return=current_return,
         stop_trigger_level=stop_trigger_level,
-        prob_beating=prob_beating,
+        prob_underperforming=prob_underperforming,
         current_below_stop_count=current_below_stop_count,
     )
     assert new_count == current_below_stop_count, (
         f"GUARD BROKEN (not armed): count must be preserved at "
         f"{current_below_stop_count}, got {new_count}. Inputs: "
         f"current_return={current_return}, stop={stop_trigger_level}, "
-        f"prob={prob_beating}, is_triggered={is_triggered}."
+        f"prob={prob_underperforming}, is_triggered={is_triggered}."
     )
     assert hit is False, (
         f"GUARD BROKEN (not armed): hit must be False, got {hit}. Inputs: "
         f"current_return={current_return}, stop={stop_trigger_level}, "
-        f"prob={prob_beating}, count={current_below_stop_count}, "
+        f"prob={prob_underperforming}, count={current_below_stop_count}, "
         f"is_triggered={is_triggered}."
     )
 
@@ -242,7 +237,7 @@ def test_guard_not_armed_preserves_count_and_no_hit(
 
 
 @pytest.mark.parametrize(
-    "armed,current_return,stop_trigger_level,prob_beating,current_below_stop_count",
+    "armed,current_return,stop_trigger_level,prob_underperforming,current_below_stop_count",
     [
         (True, -100.0, -1.0, 1.0, 0),     # condition would qualify if not triggered
         (True, -100.0, -1.0, 1.0, 2),     # mid-count
@@ -257,7 +252,7 @@ def test_guard_is_triggered_preserves_count_and_no_hit(
     armed: bool,
     current_return: float,
     stop_trigger_level: float,
-    prob_beating: float,
+    prob_underperforming: float,
     current_below_stop_count: int,
 ) -> None:
     """
@@ -274,20 +269,20 @@ def test_guard_is_triggered_preserves_count_and_no_hit(
         is_triggered=True,
         current_return=current_return,
         stop_trigger_level=stop_trigger_level,
-        prob_beating=prob_beating,
+        prob_underperforming=prob_underperforming,
         current_below_stop_count=current_below_stop_count,
     )
     assert new_count == current_below_stop_count, (
         f"GUARD BROKEN (is_triggered): count must be preserved at "
         f"{current_below_stop_count}, got {new_count}. Inputs: armed={armed}, "
         f"current_return={current_return}, stop={stop_trigger_level}, "
-        f"prob={prob_beating}."
+        f"prob={prob_underperforming}."
     )
     assert hit is False, (
         f"GUARD BROKEN (is_triggered): hit must be False (already-triggered "
         f"position should NEVER re-fire), got {hit}. Inputs: armed={armed}, "
         f"current_return={current_return}, stop={stop_trigger_level}, "
-        f"prob={prob_beating}, count={current_below_stop_count}."
+        f"prob={prob_underperforming}, count={current_below_stop_count}."
     )
 
 
@@ -302,26 +297,27 @@ def test_count_increments_by_exactly_one_when_condition_met(
     starting_count: int,
 ) -> None:
     """
-    Invariant: when armed AND not triggered AND magnitude met AND MC sanity
-    met, the new_below_stop_count is EXACTLY current_below_stop_count + 1
+    Invariant: when armed AND not triggered AND magnitude met AND breakdown
+    confirmed, the new_below_stop_count is EXACTLY current_below_stop_count + 1
     (no scaling, no clamping, no acceleration).
 
-    Uses inputs that are well inside both gates so float-boundary effects
-    cannot interfere: current_return=-5.0, stop_trigger_level=-1.0 (so
-    threshold is -1.10, deeply under), prob_beating=10.0 (well under 60.0).
+    Uses inputs well inside both gates so float-boundary effects cannot
+    interfere: current_return=-5.0, stop_trigger_level=-1.0 (so threshold is
+    -1.10, deeply under), prob_underperforming=90.0 ([H1] well ABOVE
+    MC_BREAKDOWN_THRESHOLD 60.0 -> confirmed breakdown).
 
     Catches an impl that:
       - increments by 2 (typo)
       - clamps the count at EXIT_CONFIRM_TICKS (would stop incrementing past 3)
       - resets to 1 once threshold is crossed (would lose the "stays above"
-        semantics of the inline producer's `elif >= 3`)
+        semantics of the producer's `>= 3`)
     """
     new_count, _ = math_engine.compute_exit_confirmation(
         armed=True,
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
-        prob_beating=10.0,
+        prob_underperforming=90.0,
         current_below_stop_count=starting_count,
     )
     assert new_count == starting_count + 1, (
@@ -342,13 +338,14 @@ def test_count_resets_fully_to_zero_when_condition_fails(
 ) -> None:
     """
     Invariant: when armed AND not triggered AND condition fails (either
-    magnitude OR MC gate), new_below_stop_count MUST be 0 (full reset, not
-    decrement). This matches the inline producer's unconditional `= 0` in
-    the else-branch.
+    magnitude OR breakdown gate), new_below_stop_count MUST be 0 (full reset,
+    not decrement). This matches the producer's unconditional `= 0` in the
+    else-branch.
 
     Uses inputs that fail BOTH gates so the result is unambiguous:
     current_return=5.0 (well above stop_trigger_level=-1.0, so magnitude
-    fails), prob_beating=90.0 (well above 60.0, so MC fails).
+    fails), prob_underperforming=10.0 ([H1] well BELOW MC_BREAKDOWN_THRESHOLD
+    60.0, so the breakdown gate fails -- analogs say today is normal).
 
     Catches an impl that decremented (e.g., max(0, count-1)), held the
     previous value, or only reset under one gate.
@@ -358,7 +355,7 @@ def test_count_resets_fully_to_zero_when_condition_fails(
         is_triggered=False,
         current_return=5.0,
         stop_trigger_level=-1.0,
-        prob_beating=90.0,
+        prob_underperforming=10.0,
         current_below_stop_count=starting_count,
     )
     assert new_count == 0, (
@@ -406,20 +403,22 @@ def test_hit_exactly_when_threshold_reached_and_guards_pass(
         (current_below_stop_count + 1 >= EXIT_CONFIRM_TICKS)
 
     `condition_met` is set up via input values:
-      - True: current_return=-5.0, stop=-1.0 (-> threshold -1.10), prob=10.0
-              (both gates pass clearly)
-      - False: current_return=5.0, stop=-1.0, prob=90.0 (both gates fail)
+      - True: current_return=-5.0, stop=-1.0 (-> threshold -1.10), prob=90.0
+              ([H1] both gates pass: magnitude met AND confirmed breakdown
+              prob_underperforming 90 >= MC_BREAKDOWN_THRESHOLD 60)
+      - False: current_return=5.0, stop=-1.0, prob=10.0 ([H1] both gates fail:
+              price up AND low underperformance 10 < 60)
     """
     if condition_met:
-        current_return, stop, prob = -5.0, -1.0, 10.0
+        current_return, stop, prob = -5.0, -1.0, 90.0
     else:
-        current_return, stop, prob = 5.0, -1.0, 90.0
+        current_return, stop, prob = 5.0, -1.0, 10.0
     _, hit = math_engine.compute_exit_confirmation(
         armed=armed,
         is_triggered=is_triggered,
         current_return=current_return,
         stop_trigger_level=stop,
-        prob_beating=prob,
+        prob_underperforming=prob,
         current_below_stop_count=starting_count,
     )
     assert hit is expected_hit, (
@@ -450,7 +449,7 @@ def test_return_type_contract_int_bool() -> None:
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
-        prob_beating=10.0,
+        prob_underperforming=90.0,
         current_below_stop_count=2,
     )
     assert isinstance(result, tuple) and len(result) == 2, (
@@ -486,7 +485,7 @@ def test_function_is_pure_repeat_call_returns_identical_result() -> None:
         "is_triggered": False,
         "current_return": -1.5,
         "stop_trigger_level": -1.0,
-        "prob_beating": 30.0,
+        "prob_underperforming": 30.0,
         "current_below_stop_count": 2,
     }
     a = math_engine.compute_exit_confirmation(**args)
@@ -514,18 +513,26 @@ def test_magnitude_floor_pct_is_module_level_named_constant() -> None:
     )
 
 
-def test_mc_sanity_threshold_is_module_level_named_constant() -> None:
+def test_mc_breakdown_threshold_is_module_level_named_constant() -> None:
     """
-    Project rule: every constant named. The 60.0 MC veto threshold must be
-    a module-level constant named MC_SANITY_THRESHOLD.
+    Project rule: every constant named. [H1] The 60.0 breakdown threshold must
+    be a module-level constant named MC_BREAKDOWN_THRESHOLD (renamed from
+    MC_SANITY_THRESHOLD; same value, corrected direction). The OLD name must be
+    GONE — a surviving MC_SANITY_THRESHOLD would mean an incomplete rename.
     """
-    assert hasattr(math_engine, "MC_SANITY_THRESHOLD"), (
-        "math_engine.MC_SANITY_THRESHOLD not found -- the MC probability "
-        "veto threshold must be a named module-level constant."
+    assert hasattr(math_engine, "MC_BREAKDOWN_THRESHOLD"), (
+        "math_engine.MC_BREAKDOWN_THRESHOLD not found -- the breakdown "
+        "probability threshold must be a named module-level constant (H1 "
+        "rename of MC_SANITY_THRESHOLD)."
     )
-    assert math_engine.MC_SANITY_THRESHOLD == 60.0, (
-        f"MC_SANITY_THRESHOLD should be 60.0, got "
-        f"{math_engine.MC_SANITY_THRESHOLD}"
+    assert math_engine.MC_BREAKDOWN_THRESHOLD == 60.0, (
+        f"MC_BREAKDOWN_THRESHOLD should be 60.0 (value preserved), got "
+        f"{math_engine.MC_BREAKDOWN_THRESHOLD}"
+    )
+    assert not hasattr(math_engine, "MC_SANITY_THRESHOLD"), (
+        "math_engine.MC_SANITY_THRESHOLD still exists -- the H1 rename to "
+        "MC_BREAKDOWN_THRESHOLD must REMOVE the old constant name (a lingering "
+        "old name is an incomplete rename and a value-vs-name hazard)."
     )
 
 
@@ -560,7 +567,7 @@ def test_no_unnamed_magic_numbers_in_exit_confirmation_path() -> None:
           source comment on the same line.
 
     The three extracted domain constants (MAGNITUDE_FLOOR_PCT,
-    MC_SANITY_THRESHOLD, EXIT_CONFIRM_TICKS) MUST be referenced by Name
+    MC_BREAKDOWN_THRESHOLD, EXIT_CONFIRM_TICKS) MUST be referenced by Name
     from the function body, NOT inlined as bare 0.10, 60.0, 3 literals.
 
     The function does not exist yet (RED); a naive GREEN impl that copy-
@@ -631,7 +638,7 @@ def test_no_unnamed_magic_numbers_in_exit_confirmation_path() -> None:
         "Unnamed magic numbers in compute_exit_confirmation (project rule: "
         "every constant in math_engine.py must be named + source-commented). "
         f"Offenders (line, value): {offenders}. Fix in the GREEN phase by "
-        "referencing MAGNITUDE_FLOOR_PCT, MC_SANITY_THRESHOLD, and "
+        "referencing MAGNITUDE_FLOOR_PCT, MC_BREAKDOWN_THRESHOLD, and "
         "EXIT_CONFIRM_TICKS by name."
     )
 
@@ -683,7 +690,7 @@ def test_domain_constants_are_named_not_bare_literals_in_function_body() -> None
     assert not offenders, (
         "Bare domain-constant literal(s) found inside compute_exit_"
         f"confirmation at (line, value): {offenders}. The three extracted "
-        "constants (MAGNITUDE_FLOOR_PCT=0.10, MC_SANITY_THRESHOLD=60.0, "
+        "constants (MAGNITUDE_FLOOR_PCT=0.10, MC_BREAKDOWN_THRESHOLD=60.0, "
         "EXIT_CONFIRM_TICKS=3) MUST be referenced by name from the function "
         "body. Fix in GREEN by using the named constants."
     )

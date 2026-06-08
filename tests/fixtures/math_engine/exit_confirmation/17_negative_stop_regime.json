@@ -7,12 +7,12 @@
     "is_triggered": false,
     "current_return": -3.0,
     "stop_trigger_level": -2.5,
-    "prob_beating": 45.0,
+    "prob_underperforming": 85.0,
     "current_below_stop_count": 1
   },
   "expected": {
     "new_below_stop_count": 2,
     "is_trailing_stop_hit": false
   },
-  "derivation": "Guard passes. Magnitude: current_return -3.0 <= stop_trigger_level -2.5 - MAGNITUDE_FLOOR_PCT(0.10) = -2.60. -3.0 <= -2.60 is TRUE. MC: 45.0 < 60.0 is TRUE. Condition met; new_count = 1 + 1 = 2; hit = (2 >= 3) is False. Catches an impl that flipped sign on the magnitude offset (e.g., stop_trigger_level + 0.10 instead of - 0.10) -- would compute threshold = -2.40 and -3.0 <= -2.40 still TRUE, so this fixture alone wouldn't catch the sign flip, but combined with fixture 14 (boundary, inclusive) the sign-flip impl would fail the boundary case."
+  "derivation": "Guard passes. Magnitude: current_return -3.0 <= stop_trigger_level -2.5 - MAGNITUDE_FLOOR_PCT(0.10) = -2.60. -3.0 <= -2.60 is TRUE. [H1 GATE] prob_underperforming 85.0 >= MC_BREAKDOWN_THRESHOLD(60.0) is TRUE -> confirmed breakdown. Condition met; new_count = 1 + 1 = 2; hit = (2 >= 3) is False. Catches an impl that flipped sign on the magnitude offset (e.g., stop_trigger_level + 0.10 instead of - 0.10) -- would compute threshold = -2.40 and -3.0 <= -2.40 still TRUE, so this fixture alone wouldn't catch the sign flip, but combined with fixture 14 (boundary, inclusive) the sign-flip impl would fail the boundary case."
 }
