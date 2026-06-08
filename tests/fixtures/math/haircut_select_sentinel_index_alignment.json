@@ -1,0 +1,25 @@
+{
+  "description": "A4/H3 golden fixture — _haircut_select must select from the SAME trial list it scores. The t-stat loop iterates the UNFILTERED completed_trials (autotuner.py:1472) and builds p_adj over that index space, but returns filtered_trials[winner_idx] (autotuner.py:1519) where filtered_trials has the SORTINO_SENTINEL trials removed. When a sentinel trial precedes a real trial AND the sentinel's series wins the argmin, winner_idx points at the sentinel's position in completed-space, so filtered_trials[winner_idx] returns the WRONG trial — and the returned winner_tstat (the sentinel's) does not match the returned trial's own series. The fix iterates filtered_trials so the index space is consistent.",
+  "citation": "Harvey & Liu 2015; validation/overfitting.md H3; GATE2-PLAN A4.",
+  "provenance": "Hand-authored raw-percent series. The consistency oracle (returned winner_tstat == compute_crra_eu_tstat over the returned winner's own U-transformed series) is DERIVED at runtime; no t-stat literal is pinned. The 'strong' series is all-positive (high t-stat, clears the gate); the 'weak' series is borderline (low t-stat, would lose the argmin if scored against the strong one).",
+  "constants": {
+    "_note": "_SORTINO_SENTINEL is read live from math_engine; the gamma=2.0 U-transform mirrors _haircut_select's CRRA branch."
+  },
+  "scenarios": {
+    "sentinel_before_real_trial_index_mismatch": {
+      "description": "completed_trials = [sentinel(strong series), real(weak series)]. The internal sentinel filter removes the sentinel -> filtered_trials = [real]. Pre-fix the loop scores BOTH, the sentinel's strong series wins the argmin (winner_idx=0 in completed-space), and filtered_trials[0] returns the WEAK real trial with the SENTINEL's t-stat (mismatch). Post-fix the loop ignores the sentinel; only the real trial is scored, so the returned t-stat matches the returned trial's own series.",
+      "sentinel_trial_series_pct": [5.0, 3.0, 7.0, 4.0, 6.0, 5.0, 3.0, 7.0, 4.0, 6.0, 5.0, 3.0],
+      "real_trial_series_pct": [0.05, -0.03, 0.04, -0.02, 0.03, 0.01],
+      "real_trial_value": 0.5,
+      "gamma": 2.0,
+      "_assertion_kind": "consistency — IF a winner is returned, returned winner_tstat == compute_crra_eu_tstat over the winner's OWN U-transformed series. Pre-fix this is violated (11.94 vs 0.999). No literal pinned."
+    },
+    "sentinel_only_returns_none": {
+      "description": "Regression: a single sentinel-only trial must return (None, None, None) — the sentinel filter must remain.",
+      "sentinel_trial_series_pct": [5.0, 3.0, 7.0, 4.0, 6.0],
+      "gamma": 2.0,
+      "expected_winner_is_none": true,
+      "_assertion_kind": "regression — sentinel-only -> (None, None, None)."
+    }
+  }
+}
