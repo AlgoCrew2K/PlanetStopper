@@ -76,18 +76,23 @@ LOAD-BEARING INVARIANTS (state-machine):
   - TRIGGERED ABSOLUTENESS: when is_triggered=True, return
     (current_vwap_ticks, current_vwap_bleed_ticks, False, False) for ANY
     other inputs. Counters neither incremented nor reset.
-  - GATE ABSOLUTENESS: when is_triggered=False AND
+  - SYSTEM-A GATE [H2 DECOUPLED]: when is_triggered=False AND
     NOT (valid_vwap_weight > VWAP_WEIGHT_THRESHOLD AND
-         weighted_vwap_diff < 0), return (0, 0, False, False) for ANY
-    inner-condition inputs. Both ticks unconditionally wiped.
-  - SYSTEM A SEMANTICS (when outer guard + gate pass):
+         weighted_vwap_diff < 0), the SYSTEM-A counter resets to 0 and
+    is_vwap_broken is False. This gate NO LONGER wipes System B. System B
+    is independent of the VWAP weight/sign gate and follows its OWN arm
+    condition (below) on every non-triggered tick. (Pre-H2 the code wrongly
+    wiped BOTH counters here — the bug that reset a live bleed ladder on an
+    unrelated VWAP bounce / coverage drop. See validation/VERDICT.md H2.)
+  - SYSTEM A SEMANTICS (when outer guard passes AND the System-A gate passes):
         condition := (safe_hwm >= vwap_cross_hwm_pct AND
                       current_return < safe_hwm)
         if condition: new_vwap_ticks = current_vwap_ticks + 1
         else:         new_vwap_ticks = 0
         is_vwap_broken := (condition AND
                            new_vwap_ticks >= VWAP_BREAK_CONFIRM_TICKS)
-  - SYSTEM B SEMANTICS (when outer guard + gate pass; INDEPENDENT of A):
+  - SYSTEM B SEMANTICS [H2 DECOUPLED] (when outer guard passes; INDEPENDENT of
+    the System-A weight/sign gate — evaluated on EVERY non-triggered tick):
         condition := (current_return <= vwap_bleed_arm_pct)
         if condition: new_vwap_bleed_ticks = current_vwap_bleed_ticks + 1
         else:         new_vwap_bleed_ticks = 0
@@ -370,25 +375,29 @@ def test_triggered_absoluteness_preserves_counts_no_signals(
         (100, 100),  # large stale counts
     ],
 )
-def test_gate_fail_resets_both_ticks_regardless_of_inner_inputs(
+def test_system_a_gate_fail_resets_system_a_only_system_b_follows_own_arm(
     valid_vwap_weight: float,
     weighted_vwap_diff: float,
     current_vwap_ticks: int,
     current_vwap_bleed_ticks: int,
 ) -> None:
     """
-    GATE INVARIANT (load-bearing): when is_triggered=False AND
-    NOT (weight > VWAP_WEIGHT_THRESHOLD AND diff < 0), the function
-    returns (0, 0, False, False) regardless of every other inner input.
+    SYSTEM-A GATE INVARIANT (post H2 decoupling): when is_triggered=False AND
+    NOT (weight > VWAP_WEIGHT_THRESHOLD AND diff < 0), the System-A counter
+    resets to 0 and is_vwap_broken is False — BUT System B is INDEPENDENT and
+    follows its OWN arm condition (current_return <= vwap_bleed_arm_pct), which
+    does NOT reference the VWAP weight/sign gate.
+
+    [H2 CHANGE] This test previously asserted BOTH counters reset to 0 on a
+    System-A gate miss — that encoded the H2 bug (System B wiped by an unrelated
+    gate). The synthesis verdict (H2) and the reviewer-ruled contract decouple
+    System B: here current_return=-50.0 <= bleed_arm=-1.0 so System B ARMS and
+    its counter increments by 1 from its prior value (and breaks once it crosses
+    the threshold), regardless of the System-A gate.
 
     Sweeps the gate-fail surface (weight too low, weight on the strict
-    boundary, diff zero, diff positive, both failing) AND multiple prev
-    tick states (zero, mid, high).
-
-    Inner-condition inputs are set to values that WOULD trigger BOTH
-    System A break AND System B break if the gate passed:
-      safe_hwm=10.0, current_return=-50.0, vwap_cross=1.0, bleed_arm=-1.0.
-    The fact that they cannot fire because the gate vetoes is the point.
+    boundary, diff zero, diff positive, both failing) AND multiple prev tick
+    states (zero, mid, high).
     """
     (
         new_a,
@@ -400,7 +409,7 @@ def test_gate_fail_resets_both_ticks_regardless_of_inner_inputs(
         valid_vwap_weight=valid_vwap_weight,
         weighted_vwap_diff=weighted_vwap_diff,
         safe_hwm=10.0,
-        current_return=-50.0,
+        current_return=-50.0,            # System B arm MET (-50 <= -1.0)
         vwap_cross_hwm_pct=1.0,
         vwap_bleed_arm_pct=-1.0,
         vwap_bleed_ticks_threshold=3,
@@ -408,22 +417,25 @@ def test_gate_fail_resets_both_ticks_regardless_of_inner_inputs(
         current_vwap_bleed_ticks=current_vwap_bleed_ticks,
     )
     assert new_a == 0, (
-        f"GATE BROKEN: vwap_ticks must reset to 0 when gate fails "
-        f"(weight={valid_vwap_weight}, diff={weighted_vwap_diff}); got "
-        f"{new_a}. Prev count was {current_vwap_ticks}."
-    )
-    assert new_b == 0, (
-        f"GATE BROKEN: vwap_bleed_ticks must reset to 0 when gate fails "
-        f"(weight={valid_vwap_weight}, diff={weighted_vwap_diff}); got "
-        f"{new_b}. Prev count was {current_vwap_bleed_ticks}."
+        f"SYSTEM-A GATE BROKEN: vwap_ticks must reset to 0 when the System-A "
+        f"gate fails (weight={valid_vwap_weight}, diff={weighted_vwap_diff}); "
+        f"got {new_a}. Prev count was {current_vwap_ticks}."
     )
     assert is_broken is False, (
-        f"GATE BROKEN: is_vwap_broken must be False when gate fails; got "
-        f"{is_broken}."
+        f"SYSTEM-A GATE BROKEN: is_vwap_broken must be False when the System-A "
+        f"gate fails; got {is_broken}."
     )
-    assert is_bleed_broken is False, (
-        f"GATE BROKEN: is_vwap_bleed_broken must be False when gate fails; "
-        f"got {is_bleed_broken}."
+    # System B is decoupled: it arms on its own condition (-50 <= -1.0) and
+    # increments by exactly 1 from its prior value, regardless of System A's gate.
+    expected_b = current_vwap_bleed_ticks + 1
+    assert new_b == expected_b, (
+        f"SYSTEM B WRONGLY COUPLED to the System-A gate: with current_return "
+        f"-50.0 <= bleed_arm -1.0 (System B arm met), the bleed counter must "
+        f"increment {current_vwap_bleed_ticks} -> {expected_b} regardless of "
+        f"the System-A weight/diff gate; got {new_b}."
+    )
+    assert is_bleed_broken is (expected_b >= 3), (
+        f"is_vwap_bleed_broken must be ({expected_b} >= 3); got {is_bleed_broken}."
     )
 
 
