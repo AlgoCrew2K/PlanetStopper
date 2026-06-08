@@ -234,7 +234,8 @@ class TestRC4PersistRegardlessOfVerdict:
         with (
             patch("app.ai_advisor.enforce_suggestion_allowlist", return_value=(["k"], [])),
             patch("app.ai_advisor.check_risk_direction_agreement", return_value=None),
-            patch("app.database.get_symphony_strategy", return_value={"params": {}, "locked_vars": []}),
+            patch("app.database.get_symphony_strategy",
+                  return_value={"params": {}, "locked_vars": []}),
             patch(
                 "app.ai_advisor.revalidate_suggestion_oos",
                 return_value={"passed": False, "detail": rejection_detail},
