@@ -1279,7 +1279,6 @@ _MIGRATION_FILES = [
     "029_exit_triggers_also_true.sql",
     "030_per_symphony_live_mode.sql",
     "031_shadow_history_sym_ts_index.sql",
-    "032_mc_prob_underperforming.sql",
 ]
 
 
@@ -2251,9 +2250,6 @@ _PORT_STATE_COLUMNS = (
     "vwap_bleed_ticks_json",
     "mc_history_json",
     "mc_prob",
-    # H1 rename: mc_prob_underperforming is the correctly-named alias for mc_prob
-    # during the transition window (dual-write — both columns hold the same value).
-    "mc_prob_underperforming",
     "armed",
     "para_armed",
     "port_breakeven_active",
