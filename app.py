@@ -3107,7 +3107,8 @@ def ai_advisor_logic_changes_evaluate():
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_logic_changes_evaluate failed: %s", exc, exc_info=True)
-        return jsonify({"error": f"evaluation error: {exc}"}), 200
+        # RC-5: surface the error class so the operator/log can diagnose the failure.
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 200
 
     # Build FDR metadata for the operator audit trail (AC-3.2).
     gate_batch = run_result.gate_batch
