@@ -17,7 +17,7 @@ Safety requirements covered:
   REQ-FS-2:  resolve_trigger_priority order preserved under all regime labels
   REQ-FS-3:  adjusted N-confirms >= 1 under all regime labels (ladder cannot be disabled)
   REQ-FS-4:  breakeven_locked latch preserved under all regime labels
-  REQ-FS-5:  MC_SANITY_THRESHOLD direction: mean-reverting must NOT lower the MC bar
+  REQ-FS-5:  MC_BREAKDOWN_THRESHOLD must NOT be modified by a regime adjustment
   REQ-DIR-3: None/unknown regime -> safe default (identical to no-adjustment baseline)
   REQ-DEGRADE-1: degenerate/garbage regime labels -> same as None safe default
   REQ-DEGRADE-3: exit_confirm_ticks=0 is rejected (would disable the confirmation ladder)
@@ -407,14 +407,14 @@ def test_apply_regime_exit_adjustment_does_not_modify_module_constants() -> None
 
     This test verifies that calling apply_regime_exit_adjustment does not
     mutate ANY module-level constant.  The function is pure — it must not
-    reassign EXIT_CONFIRM_TICKS, MC_SANITY_THRESHOLD, MAGNITUDE_FLOOR_PCT,
+    reassign EXIT_CONFIRM_TICKS, MC_BREAKDOWN_THRESHOLD, MAGNITUDE_FLOOR_PCT,
     MULT_OPEN, MULT_CLOSE, or any other module attribute.
 
     A mutation would violate the one-knob budget AND the purity requirement.
     """
     constants_before = {
         "EXIT_CONFIRM_TICKS": math_engine.EXIT_CONFIRM_TICKS,
-        "MC_SANITY_THRESHOLD": math_engine.MC_SANITY_THRESHOLD,
+        "MC_BREAKDOWN_THRESHOLD": math_engine.MC_BREAKDOWN_THRESHOLD,
         "MAGNITUDE_FLOOR_PCT": math_engine.MAGNITUDE_FLOOR_PCT,
         "MULT_OPEN": math_engine.MULT_OPEN,
         "MULT_CLOSE": math_engine.MULT_CLOSE,
