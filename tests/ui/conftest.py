@@ -27,11 +27,34 @@ _API_STATE_STUB = {
 }
 
 
+# Minimal bot_state stub for the advisor route's name->hash resolution (RC-6).
+# Routes now call database.load_state() to resolve a display NAME to a Composer
+# hash before calling fetch_symphony_score; without a mapping, RC-6 fails loudly.
+# Pre-RC-6 tests that use symphony_id="sym-test" need this mapping so they bypass
+# the RC-6 guard and reach their mocked fetch_symphony_score/propose_* calls.
+# Tests that explicitly mock database.load_state themselves override this stub.
+_ADVISOR_ROUTE_BOT_STATE_STUB = {
+    "sym-test": {"name": "sym-test", "account_uuid": "acc-test"},
+}
+
+
 @pytest.fixture(autouse=True)
 def _stub_get_api_state_dict():
     import app as app_module
 
     with patch.object(app_module, "get_api_state_dict", return_value=_API_STATE_STUB):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _stub_database_load_state_for_advisor_routes():
+    """Stub database.load_state to include 'sym-test' so advisor route tests that
+    predate RC-6 (which added name->hash resolution) can still reach their mocked
+    fetch_symphony_score / propose_* call sites.
+
+    Tests that supply their own database.load_state mock override this autouse stub.
+    """
+    with patch("database.load_state", return_value=_ADVISOR_ROUTE_BOT_STATE_STUB):
         yield
 
 

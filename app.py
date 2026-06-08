@@ -2917,10 +2917,6 @@ def ai_advisor_asset_swaps_evaluate():
     if composer_hash is None:
         return jsonify({"error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies"}), 200
 
-    # Canonical advisory key is the normalized display name (project memory:
-    # advisor observations keyed by normalize_name, not the Composer hash).
-    canonical_symphony_id = database.normalize_name(symphony_id)
-
     raw_value = fetch_symphony_score(composer_hash)
     if not raw_value:
         return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
@@ -2934,10 +2930,11 @@ def ai_advisor_asset_swaps_evaluate():
 
     try:
         run_result = propose_operator_swap(
-            # RC-4: pass the canonical normalized name as symphony_id so the engine
-            # keys the advisor_observations row by name (not hash).  The Composer
-            # backtest uses the hash via score_tree/run_backtest internally.
-            symphony_id=canonical_symphony_id,
+            # Pass the Composer hash — engine uses it as the UUID for dvm_capital
+            # unpacking in run_backtest (composer_backtest_client.py:269).
+            # The engine's _persist_observation normalizes to a canonical name for
+            # the advisor_observations DB key (RC-4 keying handled engine-side).
+            symphony_id=composer_hash,
             score_tree=raw_value,
             incumbent_asset=from_ticker,
             candidate_asset=to_ticker,
@@ -3076,10 +3073,6 @@ def ai_advisor_logic_changes_evaluate():
     if composer_hash is None:
         return jsonify({"error": f"could not resolve name to a Composer hash: {symphony_id!r} not found in active symphonies"}), 200
 
-    # Canonical advisory key is the normalized display name (project memory:
-    # advisor observations keyed by normalize_name, not the Composer hash).
-    canonical_symphony_id = database.normalize_name(symphony_id)
-
     raw_value = fetch_symphony_score(composer_hash)
     if not raw_value:
         return jsonify({"error": f"could not fetch symphony tree for {symphony_id}"}), 200
@@ -3097,9 +3090,11 @@ def ai_advisor_logic_changes_evaluate():
     # early-return needed here (AC-X5 isolation applies at the engine level).
     try:
         run_result = propose_operator_logic_change(
-            # RC-4: pass canonical normalized name as symphony_id so the engine
-            # keys the advisor_observations row by name (not hash).
-            symphony_id=canonical_symphony_id,
+            # Pass the Composer hash — engine uses it as the UUID for dvm_capital
+            # unpacking in run_backtest (composer_backtest_client.py:269).
+            # The engine's _persist_observation normalizes to a canonical name for
+            # the advisor_observations DB key (RC-4 keying handled engine-side).
+            symphony_id=composer_hash,
             score_tree=raw_value,
             tweak=None,
             objective=objective,
