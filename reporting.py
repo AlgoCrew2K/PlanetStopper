@@ -467,7 +467,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
         logging.error("send_eod_discord_post: failed to send EOD webhook: %s", e)
 
 def send_discord_alert(
-    symphony_name, current_return, prob_beating, stop_trigger_level, high_water_mark, is_live, discord_webhook_url, exit_reason="Trailing Stop", vwap_bleed_arm_pct=None, vwap_bleed_ticks=None, vwap_diff=None, vwap_breakdown_ticks=None, tp_threshold=None, vwap_bleed_multiplier=None, symphony_vol=None
+    symphony_name, current_return, prob_underperforming, stop_trigger_level, high_water_mark, is_live, discord_webhook_url, exit_reason="Trailing Stop", vwap_bleed_arm_pct=None, vwap_bleed_ticks=None, vwap_diff=None, vwap_breakdown_ticks=None, tp_threshold=None, vwap_bleed_multiplier=None, symphony_vol=None
 ):
     if not discord_webhook_url:
         return
@@ -495,9 +495,10 @@ def send_discord_alert(
     color = live_color if is_live else 16766720
     action_text = "Executed 'Sell to Cash' via API. Trade queued for Composer execution window." if is_live else "Bypassed (Dry Run Mode)"
 
-    # prob_beating is None when MC history was insufficient (the out-of-band
-    # insufficient sentinel). Render it safely rather than crashing the alert.
-    mc_prob_text = f"{prob_beating:.1f}%" if prob_beating is not None else "N/A"
+    # prob_underperforming is None when MC history was insufficient (the
+    # out-of-band insufficient sentinel). Render it safely rather than crashing
+    # the alert.
+    mc_prob_text = f"{prob_underperforming:.1f}%" if prob_underperforming is not None else "N/A"
 
     fields = [
         {"name": "Symphony", "value": symphony_name, "inline": True},

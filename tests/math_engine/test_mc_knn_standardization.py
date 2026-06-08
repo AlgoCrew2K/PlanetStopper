@@ -16,7 +16,7 @@ empirical std ~0.0023. Mixed into one unscaled distance the return term
 dominates the vol term ~33:1 (audit measurement). The regime match is
 effectively 1-D on SPY return — a calm day and a crash day with the same SPY
 return are treated as the same regime, and the Monte Carlo bootstrap is drawn
-from the wrong volatility regime. ``prob_beating`` then feeds every live
+from the wrong volatility regime. ``prob_underperforming`` then feeds every live
 trailing-stop / arm / take-profit gate.
 
 THE FIX (AC-1)
@@ -33,7 +33,7 @@ WHAT THESE TESTS ASSERT
    one whose volatility matches today — not the return-only calm match.
 2. Property: the volatility feature is load-bearing. Two histories that differ
    ONLY in the second block's volatility must produce a different regime
-   selection (hence a different ``prob_beating``). An unscaled feature vector
+   selection (hence a different ``prob_underperforming``). An unscaled feature vector
    ignores the vol difference.
 3. Edge case: a zero-variance feature must not make standardization divide by
    zero — the output stays finite and bounded.
@@ -152,9 +152,9 @@ def test_high_vol_query_selects_crash_regime_neighbor() -> None:
     Observable: the holding gains in the calm regime and loses in the crash
     regime, so the bootstrap distribution is one-sided. Selecting the crash
     regime drives current_symphony_return (0.0) above an all-negative bootstrap
-    -> prob_beating collapses to the STRUCTURAL value 0.0. Selecting the calm
+    -> prob_underperforming collapses to the STRUCTURAL value 0.0. Selecting the calm
     regime (the pre-fix bug) drives it below an all-positive bootstrap ->
-    prob_beating is the STRUCTURAL value 100.0.
+    prob_underperforming is the STRUCTURAL value 100.0.
 
     This test is RED against unscaled (pre-fix) code (which returns 100.0) and
     GREEN once the kNN feature vector is standardized.
@@ -186,10 +186,10 @@ def test_high_vol_query_selects_crash_regime_neighbor() -> None:
     calm_prob = fx["regime_selection"]["calm"]["structural_prob"]
 
     assert math.isfinite(result), f"run_monte_carlo returned non-finite {result!r}."
-    assert 0.0 <= result <= 100.0, f"prob_beating {result!r} escaped [0, 100]."
+    assert 0.0 <= result <= 100.0, f"prob_underperforming {result!r} escaped [0, 100]."
     assert result == crash_prob, (
         f"run_monte_carlo selected the wrong volatility regime. "
-        f"Expected the CRASH-regime structural prob_beating={crash_prob!r} "
+        f"Expected the CRASH-regime structural prob_underperforming={crash_prob!r} "
         f"(today's volatility matches the crash block), got {result!r}. "
         f"A value of {calm_prob!r} means the kNN selected the calm regime on the "
         f"SPY-return feature alone — the unstandardized-feature bug (audit C-1). "
@@ -224,7 +224,7 @@ def test_high_vol_query_does_not_select_calm_regime_neighbor() -> None:
     )
     calm_prob = fx["regime_selection"]["calm"]["structural_prob"]
     assert result != calm_prob, (
-        f"run_monte_carlo returned the calm-regime structural prob_beating "
+        f"run_monte_carlo returned the calm-regime structural prob_underperforming "
         f"({calm_prob!r}): the kNN matched on SPY return only and ignored the "
         f"volatility regime. The standardized feature vector (AC-1) must let "
         f"today's high volatility steer the match to the crash regime."
@@ -248,13 +248,13 @@ def test_vol_feature_is_load_bearing_changes_regime_selection() -> None:
     AC-1 property: 'neither feature dominates the distance.' Operationalized as
     'the volatility feature is not silently dominated' — two histories identical
     in every SPY return but differing only in the second block's volatility must
-    select different regimes (hence different prob_beating).
+    select different regimes (hence different prob_underperforming).
 
     Pre-fix the unscaled distance ignores the vol difference and both histories
-    return the same prob_beating. Post-fix the standardized vol feature is
+    return the same prob_underperforming. Post-fix the standardized vol feature is
     load-bearing: the high-tail history's high today_vol selects the loss-making
     crash regime while the low-tail history stays in the gain-making calm regime,
-    so the two prob_beating values MUST differ.
+    so the two prob_underperforming values MUST differ.
 
     PA-18: no expected literal — the assertion is the inequality between the
     two histories' outputs.
@@ -288,15 +288,15 @@ def test_vol_feature_is_load_bearing_changes_regime_selection() -> None:
 
     for label, prob in [("low-tail", prob_low_tail), ("high-tail", prob_high_tail)]:
         assert math.isfinite(prob), f"{label}: run_monte_carlo returned non-finite {prob!r}."
-        assert 0.0 <= prob <= 100.0, f"{label}: prob_beating {prob!r} escaped [0, 100]."
+        assert 0.0 <= prob <= 100.0, f"{label}: prob_underperforming {prob!r} escaped [0, 100]."
 
     assert prob_low_tail != prob_high_tail, (
-        f"prob_beating is identical ({prob_low_tail!r}) for two histories that "
+        f"prob_underperforming is identical ({prob_low_tail!r}) for two histories that "
         f"differ ONLY in the second block's volatility. The kNN volatility "
         f"feature is being dominated by the return feature — the unstandardized "
         f"feature-vector bug (audit C-1). After standardization, today's "
         f"volatility (set by the history tail) must steer the regime match and "
-        f"the two histories must produce different prob_beating."
+        f"the two histories must produce different prob_underperforming."
     )
 
 

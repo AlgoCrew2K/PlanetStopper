@@ -6,24 +6,24 @@ SCOPE (team-lead Ruling 1 — Option A)
 -------------------------------------
 ``run_monte_carlo`` now returns the out-of-band sentinel
 ``MC_INSUFFICIENT_HISTORY_SENTINEL`` (None) when MC history is insufficient.
-``alpha_bot_execution.main()`` consumes ``prob_beating`` at six decision sites
+``alpha_bot_execution.main()`` consumes ``prob_underperforming`` at six decision sites
 that do unguarded numeric comparisons / format-spec formatting:
 
-  * :1132 arm gate        — ``acc_TAKE_PROFIT_MC_PCT <= prob_beating < ...``
-  * :1148 disarm gate     — ``prob_beating > (acc_TRIGGER_THRESHOLD_PCT * 2)``
-  * :1249 TP-arm gate     — ``prob_beating < acc_TAKE_PROFIT_MC_PCT``
-  * :1265 TP-confirm gate — ``prob_beating >= acc_TAKE_PROFIT_MC_PCT``
-  * :1360 mc_sanity gate  — ``prob_beating >= acc_TRIGGER_THRESHOLD_PCT``
-  * :1134/:1257/:1261/:1319 — ``f"...{prob_beating:.1f}%"`` format specs
+  * :1132 arm gate        — ``acc_TAKE_PROFIT_MC_PCT <= prob_underperforming < ...``
+  * :1148 disarm gate     — ``prob_underperforming > (acc_TRIGGER_THRESHOLD_PCT * 2)``
+  * :1249 TP-arm gate     — ``prob_underperforming < acc_TAKE_PROFIT_MC_PCT``
+  * :1265 TP-confirm gate — ``prob_underperforming >= acc_TAKE_PROFIT_MC_PCT``
+  * :1360 mc_sanity gate  — ``prob_underperforming >= acc_TRIGGER_THRESHOLD_PCT``
+  * :1134/:1257/:1261/:1319 — ``f"...{prob_underperforming:.1f}%"`` format specs
 
-Each raises ``TypeError`` on a ``None`` ``prob_beating``. A ``TypeError``
+Each raises ``TypeError`` on a ``None`` ``prob_underperforming``. A ``TypeError``
 thrown mid-cycle aborts the execution cycle — on a below-stop position the
 protective exit never runs. That is the exact fail-DANGEROUS path AC-2 exists
 to eliminate.
 
 THE FIX (team-lead Ruling 1)
 ----------------------------
-Every consumer branches on ``prob_beating is None`` first. Insufficient MC =
+Every consumer branches on ``prob_underperforming is None`` first. Insufficient MC =
 the MC second opinion is absent: no arm, no disarm, no TP-arm, no TP-confirm,
 no MC veto of the trailing stop. The trailing stop fires on its ticks-below-
 stop condition alone. Format strings render None safely. ``mc_history`` is not
@@ -246,7 +246,7 @@ def test_main_does_not_raise_typeerror_when_mc_history_insufficient(
     AC-2 / Ruling 1. With MC history insufficient (run_monte_carlo -> None),
     main() must complete the cycle without an unhandled TypeError. Pre-fix the
     arm gate at alpha_bot_execution.py:1132 does ``acc_TAKE_PROFIT_MC_PCT <=
-    prob_beating`` with prob_beating None and raises TypeError, aborting the
+    prob_underperforming`` with prob_underperforming None and raises TypeError, aborting the
     cycle.
 
     RED against the un-fixed consumers (7ff61a4).
@@ -264,7 +264,7 @@ def test_main_does_not_raise_typeerror_when_mc_history_insufficient(
         pytest.fail(
             f"main() propagated a TypeError when MC history was insufficient: "
             f"{exc}. The insufficient-MC sentinel (None) must be handled at "
-            f"every prob_beating consumer — an unhandled TypeError aborts the "
+            f"every prob_underperforming consumer — an unhandled TypeError aborts the "
             f"live cycle and, on a below-stop position, the protective exit "
             f"never runs (the fail-dangerous path AC-2 must eliminate)."
         )
@@ -286,7 +286,7 @@ def test_insufficient_mc_arms_symphony_failopen(
 ) -> None:
     """
     Audit H-3 / FAIL-OPEN contract. When MC history is insufficient
-    (prob_beating=None, mc_available=False), the protective trailing stop
+    (prob_underperforming=None, mc_available=False), the protective trailing stop
     MUST arm so its ticks-below-stop confirmation ladder can fire.
 
     Pre-fix (broken): the arming gate required mc_available=True, so a
@@ -329,7 +329,7 @@ def test_insufficient_mc_does_not_spuriously_disarm_symphony(
 ) -> None:
     """
     AC-2 / Ruling 1. The disarm gate (alpha_bot_execution.py:1148) fires when a
-    real prob_beating is very high. With MC unavailable it must NOT disarm an
+    real prob_underperforming is very high. With MC unavailable it must NOT disarm an
     already-armed symphony — the absent opinion cannot manufacture a recovery
     signal. The symphony stays armed so its protective stop remains live.
 
@@ -338,7 +338,7 @@ def test_insufficient_mc_does_not_spuriously_disarm_symphony(
     """
     env = patched_environment
     # A positive return so the disarm gate's ``current_return > 0`` half is
-    # satisfied — only the prob_beating half should keep the disarm from firing.
+    # satisfied — only the prob_underperforming half should keep the disarm from firing.
     env["fetch_symphony_stats"].return_value = [
         _make_symphony_payload(last_percent_change=0.05)
     ]
@@ -364,7 +364,7 @@ def test_insufficient_mc_does_not_spuriously_tp_arm_symphony(
 ) -> None:
     """
     AC-2 / Ruling 1. The take-profit arm gate (alpha_bot_execution.py:1249)
-    fires when a real prob_beating is very low. With MC unavailable it must NOT
+    fires when a real prob_underperforming is very low. With MC unavailable it must NOT
     TP-arm — an absent opinion is not an "exceptional gain" signal.
 
     RED against un-fixed consumers; GREEN once the TP-arm gate branches on
@@ -405,7 +405,7 @@ def test_armed_below_stop_symphony_still_triggers_when_mc_insufficient(
     single qualifying tick this cycle reaches the confirmation threshold. A
     deeply negative return puts it unambiguously below any plausible stop
     level. compute_exit_confirmation is NOT mocked — the real fail-safe path
-    (None prob_beating -> MC gate treated as passing) must carry the exit.
+    (None prob_underperforming -> MC gate treated as passing) must carry the exit.
 
     Pre-fix, main() raises TypeError at the arm gate before exit-confirmation
     is even reached — RED. Post-fix the cycle completes and the symphony is

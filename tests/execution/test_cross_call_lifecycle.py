@@ -57,7 +57,7 @@ Per project memory ``feedback_no_hardcoded_test_values``, every
 expected-value assertion in this module derives from the fixture inputs
 (returns, prices, HWM levels) — never from literal expectations of math
 the engine produced. Magnitudes that flow through the live math layers
-(stop_trigger_level, prob_beating, symphony_vol) are asserted on SHAPE
+(stop_trigger_level, prob_underperforming, symphony_vol) are asserted on SHAPE
 (float, finite, not the -999.0 sentinel) — not on value.
 """
 

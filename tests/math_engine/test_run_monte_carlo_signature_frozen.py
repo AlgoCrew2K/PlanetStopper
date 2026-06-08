@@ -218,7 +218,7 @@ def test_run_monte_carlo_seed_default_is_none() -> None:
 def test_run_monte_carlo_return_annotation_does_not_exclude_none() -> None:
     """
     If a future PR annotates the return type as ``float`` (excluding None),
-    type checkers will flag every ``if prob_beating is None`` guard as dead code
+    type checkers will flag every ``if prob_underperforming is None`` guard as dead code
     and may be silently removed by automated refactors. The insufficient sentinel
     is None by contract (MC_INSUFFICIENT_HISTORY_SENTINEL = None).
 
@@ -243,6 +243,6 @@ def test_run_monte_carlo_return_annotation_does_not_exclude_none() -> None:
         f"run_monte_carlo is annotated -> {ret!r}. This annotation excludes None, "
         f"which misrepresents the out-of-band insufficient-history sentinel "
         f"(MC_INSUFFICIENT_HISTORY_SENTINEL = None). Type checkers will treat every "
-        f"'if prob_beating is None' guard as dead code. The annotation must admit "
+        f"'if prob_underperforming is None' guard as dead code. The annotation must admit "
         f"None or be removed."
     )

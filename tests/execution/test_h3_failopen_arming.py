@@ -5,11 +5,11 @@ Audit finding H-3 root cause
 ==============================
 The only armed=True path requires mc_available=True:
 
-    alpha_bot_execution.py:1292  mc_available = prob_beating is not None
-    alpha_bot_execution.py:1294  if mc_available and acc_TAKE_PROFIT_MC_PCT <= prob_beating < acc_TRIGGER_THRESHOLD_PCT:
+    alpha_bot_execution.py:1292  mc_available = prob_underperforming is not None
+    alpha_bot_execution.py:1294  if mc_available and acc_TAKE_PROFIT_MC_PCT <= prob_underperforming < acc_TRIGGER_THRESHOLD_PCT:
     alpha_bot_execution.py:1295      should_arm = True
 
-When MC history is permanently insufficient (prob_beating is None every cycle),
+When MC history is permanently insufficient (prob_underperforming is None every cycle),
 mc_available is always False, should_arm stays False, bot_state["armed"] stays
 False, and compute_exit_confirmation is called with armed=False — its early-return
 guard fires and the protective stop NEVER arms.
@@ -20,7 +20,7 @@ documented contract that the pre-fix code violates.
 
 Required behavior after the fix (FAIL-OPEN)
 ============================================
-- When MC is absent (prob_beating is None), the trailing stop MUST arm.
+- When MC is absent (prob_underperforming is None), the trailing stop MUST arm.
 - When MC IS present, arming/disarming/TP behavior must be byte-identical to today.
 - An already-armed position is not re-armed (idempotent).
 - A triggered position is not armed (guard must hold).
@@ -44,7 +44,7 @@ tests it via:
 1. AST-structural inspection of the arming block: asserts the fail-open branch
    exists and has the correct guard predicates.
 2. Integration-style: exercises compute_exit_confirmation directly with armed=True
-   and prob_beating=None (verifying the math layer is already correct and fires).
+   and prob_underperforming=None (verifying the math layer is already correct and fires).
 3. Golden-fixture parametrised tests: sequence assertions for the ticks-below-stop
    confirmation ladder with MC absent.
 4. Regression parametrised tests: MC-present behaviour unchanged.
@@ -53,7 +53,7 @@ tests it via:
 Scope guard
 ===========
 This file covers the ARMING GATE (alpha_bot_execution.py:1292-1316) and the
-exit-confirmation layer (math_engine.compute_exit_confirmation) with prob_beating=None.
+exit-confirmation layer (math_engine.compute_exit_confirmation) with prob_underperforming=None.
 It does NOT cover: TP arming, parabolic arming, breakeven logic, disarm-with-MC,
 or any other trigger type.
 """
@@ -273,7 +273,7 @@ def test_arming_gate_triggered_guard_present() -> None:
 def test_mc_present_arming_path_still_present() -> None:
     """
     STRUCTURAL REGRESSION: The original `if mc_available and TAKE_PROFIT_MC_PCT
-    <= prob_beating < TRIGGER_THRESHOLD_PCT: should_arm = True` path MUST
+    <= prob_underperforming < TRIGGER_THRESHOLD_PCT: should_arm = True` path MUST
     still exist after the fix. Removing the MC-present arming path is a scope
     violation.
 
@@ -315,7 +315,7 @@ def test_mc_present_arming_path_still_present() -> None:
 def test_mc_present_disarm_branch_still_requires_mc_available() -> None:
     """
     STRUCTURAL REGRESSION: The disarm branch must still require mc_available=True.
-    Specifically, `if mc_available and prob_beating > TRIGGER_THRESHOLD_PCT * 2
+    Specifically, `if mc_available and prob_underperforming > TRIGGER_THRESHOLD_PCT * 2
     and current_return > 0.0: armed = False` must survive the fix.
 
     A fix that drops mc_available from the disarm condition would disarm on every
@@ -357,7 +357,7 @@ def test_mc_present_disarm_branch_still_requires_mc_available() -> None:
 
 
 # ===========================================================================
-# SECTION 2: compute_exit_confirmation with armed=True, prob_beating=None
+# SECTION 2: compute_exit_confirmation with armed=True, prob_underperforming=None
 # (verifies the math layer already supports fail-open correctly)
 # ===========================================================================
 
@@ -372,7 +372,7 @@ def test_exit_confirmation_mc_absent_fires_after_confirmation_ticks(
     fixture_name: str,
 ) -> None:
     """
-    Golden-fixture: with armed=True and prob_beating=None, the 3-tick
+    Golden-fixture: with armed=True and prob_underperforming=None, the 3-tick
     ticks-below-stop ladder produces is_trailing_stop_hit=True on tick 3.
 
     Catches a fix that arms the stop but passes armed=False to
@@ -387,7 +387,7 @@ def test_exit_confirmation_mc_absent_fires_after_confirmation_ticks(
             is_triggered=inputs["is_triggered"],
             current_return=inputs["current_return"],
             stop_trigger_level=inputs["stop_trigger_level"],
-            prob_beating=inputs["prob_beating"],  # None
+            prob_underperforming=inputs["prob_underperforming"],  # None
             current_below_stop_count=inputs["current_below_stop_count"],
         )
         assert isinstance(result, tuple) and len(result) == 2, (
@@ -408,7 +408,7 @@ def test_exit_confirmation_mc_absent_fires_after_confirmation_ticks(
 
 def test_exit_confirmation_mc_absent_return_above_stop_does_not_fire() -> None:
     """
-    Golden-fixture: armed=True, prob_beating=None, return ABOVE stop level.
+    Golden-fixture: armed=True, prob_underperforming=None, return ABOVE stop level.
     Count must reset to 0 and stop must NOT fire.
 
     Adversarial: catches a fix that ignores the magnitude condition when
@@ -423,7 +423,7 @@ def test_exit_confirmation_mc_absent_return_above_stop_does_not_fire() -> None:
         is_triggered=inputs["is_triggered"],
         current_return=inputs["current_return"],
         stop_trigger_level=inputs["stop_trigger_level"],
-        prob_beating=inputs["prob_beating"],  # None
+        prob_underperforming=inputs["prob_underperforming"],  # None
         current_below_stop_count=inputs["current_below_stop_count"],
     )
     assert new_count == expected["new_below_stop_count"], (
@@ -467,7 +467,7 @@ def test_exit_confirmation_mc_absent_magnitude_floor_boundary(
         is_triggered=inputs["is_triggered"],
         current_return=inputs["current_return"],
         stop_trigger_level=inputs["stop_trigger_level"],
-        prob_beating=inputs["prob_beating"],  # None
+        prob_underperforming=inputs["prob_underperforming"],  # None
         current_below_stop_count=inputs["current_below_stop_count"],
     )
     assert new_count == expected["new_below_stop_count"], (
@@ -507,7 +507,7 @@ def test_transient_mc_gap_single_tick_does_not_fire() -> None:
             is_triggered=inputs["is_triggered"],
             current_return=inputs["current_return"],
             stop_trigger_level=inputs["stop_trigger_level"],
-            prob_beating=inputs["prob_beating"],
+            prob_underperforming=inputs["prob_underperforming"],
             current_below_stop_count=inputs["current_below_stop_count"],
         )
         assert new_count == expected["new_below_stop_count"], (
@@ -526,55 +526,63 @@ def test_transient_mc_gap_single_tick_does_not_fire() -> None:
 
 
 @pytest.mark.parametrize(
-    "prob_beating,current_below_stop_count,expected_count,expected_hit",
+    "prob_underperforming,current_below_stop_count,expected_count,expected_hit",
     [
-        # MC present (real float), return below stop, MC sanity passes (prob < 60)
-        # -> count increments, hits at 3
-        (10.0, 0, 1, False),
-        (10.0, 1, 2, False),
-        (10.0, 2, 3, True),
-        (59.9, 2, 3, True),  # just under MC_SANITY_THRESHOLD
-        # MC present, MC sanity VETOES exit (prob >= 60.0) -> count resets
-        (60.0, 2, 0, False),
-        (75.0, 2, 0, False),
-        (99.9, 2, 0, False),
+        # H1 corrected gate: prob_underperforming is the fraction of analog days
+        # that beat us (HIGH = badly underperforming). The breakdown gate fires the
+        # stop when prob_underperforming >= MC_BREAKDOWN_THRESHOLD (60) and vetoes
+        # below it. LOW underperformance (< 60) -> "normal noise, don't capitulate"
+        # -> count resets, no hit.
+        (10.0, 0, 0, False),
+        (10.0, 1, 0, False),
+        (10.0, 2, 0, False),
+        (59.9, 2, 0, False),  # just under MC_BREAKDOWN_THRESHOLD -> veto -> reset
+        # HIGH underperformance (>= 60.0) -> confirmed breakdown -> stop fires.
+        (60.0, 2, 3, True),   # at threshold (>= is inclusive) -> count increments, hits at 3
+        (75.0, 2, 3, True),
+        (99.9, 2, 3, True),
     ],
 )
-def test_exit_confirmation_mc_present_behavior_unchanged(
-    prob_beating: float,
+def test_exit_confirmation_mc_present_corrected_gate_direction(
+    prob_underperforming: float,
     current_below_stop_count: int,
     expected_count: int,
     expected_hit: bool,
 ) -> None:
     """
-    Regression: when prob_beating is a real float (MC present), the behavior
-    of compute_exit_confirmation is IDENTICAL to its pre-H3-fix behavior.
+    Corrected-gate regression: when prob_underperforming is a real float (MC
+    present), compute_exit_confirmation fires the protective stop iff
+    prob_underperforming >= MC_BREAKDOWN_THRESHOLD (confirmed breakdown) and
+    vetoes below it. This is the H1-corrected direction — the pre-H1 gate read
+    the metric inverted (suppressed the stop exactly when underperformance was
+    worst).
 
     Uses inputs where magnitude definitely passes: current_return=-2.0,
-    stop_trigger_level=-1.0 -> threshold=-1.10 (well satisfied by -2.0).
-
-    Catches: a fix that changes the MC-present path as a side-effect.
+    stop_trigger_level=-1.0 -> threshold=-1.10 (well satisfied by -2.0), so the
+    only variable is the MC breakdown gate.
     """
     new_count, hit = math_engine.compute_exit_confirmation(
         armed=True,
         is_triggered=False,
         current_return=-2.0,
         stop_trigger_level=-1.0,
-        prob_beating=prob_beating,
+        prob_underperforming=prob_underperforming,
         current_below_stop_count=current_below_stop_count,
     )
     assert new_count == expected_count, (
-        f"MC-present regression: prob={prob_beating}, starting_count="
-        f"{current_below_stop_count}. Expected count={expected_count}, got {new_count}."
+        f"MC-present corrected-gate: prob_underperforming={prob_underperforming}, "
+        f"starting_count={current_below_stop_count}. Expected count={expected_count}, "
+        f"got {new_count}."
     )
     assert hit is expected_hit, (
-        f"MC-present regression: prob={prob_beating}, starting_count="
-        f"{current_below_stop_count}. Expected hit={expected_hit}, got {hit}."
+        f"MC-present corrected-gate: prob_underperforming={prob_underperforming}, "
+        f"starting_count={current_below_stop_count}. Expected hit={expected_hit}, "
+        f"got {hit}."
     )
 
 
 # ===========================================================================
-# SECTION 5: Property — armed=False guard still holds with prob_beating=None
+# SECTION 5: Property — armed=False guard still holds with prob_underperforming=None
 # (regression guard: fix must not alter not-armed path in math layer)
 # ===========================================================================
 
@@ -587,7 +595,7 @@ def test_not_armed_guard_intact_with_mc_absent(
     current_below_stop_count: int,
 ) -> None:
     """
-    Property: even with prob_beating=None (MC absent), the not-armed guard
+    Property: even with prob_underperforming=None (MC absent), the not-armed guard
     in compute_exit_confirmation must still return (current_below_stop_count, False).
 
     This tests the MATH LAYER guard in isolation. The fix is in alpha_bot_execution.py
@@ -602,7 +610,7 @@ def test_not_armed_guard_intact_with_mc_absent(
         is_triggered=False,
         current_return=-5.0,  # would qualify if armed
         stop_trigger_level=-1.0,
-        prob_beating=None,  # MC absent
+        prob_underperforming=None,  # MC absent
         current_below_stop_count=current_below_stop_count,
     )
     assert new_count == current_below_stop_count, (
@@ -634,7 +642,7 @@ def test_exit_confirmation_mc_absent_no_magnitude_no_increment(
     stop_trigger_level: float,
 ) -> None:
     """
-    Property: when armed=True, MC absent (prob_beating=None), but return is
+    Property: when armed=True, MC absent (prob_underperforming=None), but return is
     NOT below (stop_trigger_level - MAGNITUDE_FLOOR_PCT), the count must reset
     to 0 and hit must be False.
 
@@ -647,7 +655,7 @@ def test_exit_confirmation_mc_absent_no_magnitude_no_increment(
         is_triggered=False,
         current_return=current_return,
         stop_trigger_level=stop_trigger_level,
-        prob_beating=None,
+        prob_underperforming=None,
         current_below_stop_count=2,  # non-zero starting count
     )
     assert new_count == 0, (
@@ -661,7 +669,7 @@ def test_exit_confirmation_mc_absent_no_magnitude_no_increment(
 
 
 # ===========================================================================
-# SECTION 7: Scope guard — fix must NOT touch exit confirm beyond prob_beating=None
+# SECTION 7: Scope guard — fix must NOT touch exit confirm beyond prob_underperforming=None
 # ===========================================================================
 
 
@@ -672,7 +680,7 @@ def test_arming_gate_is_in_alpha_bot_execution_not_math_engine() -> None:
     math_engine.compute_exit_confirmation.
 
     math_engine.compute_exit_confirmation is already correct: it accepts
-    prob_beating=None and treats None as MC-sanity-gate-pass (fail-safe,
+    prob_underperforming=None and treats None as MC-sanity-gate-pass (fail-safe,
     implemented in the H-1 cycle). The H-3 fix is purely in the arming gate
     in alpha_bot_execution.py.
 

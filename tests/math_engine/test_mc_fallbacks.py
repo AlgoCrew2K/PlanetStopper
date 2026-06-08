@@ -31,7 +31,7 @@ Cluster 2 update (mc-knn-exit-gate, AC-1/AC-2):
     Test 1's contract changed. run_monte_carlo no longer returns the in-band
     100.0 for insufficient history — it returns the distinct out-of-band
     sentinel MC_INSUFFICIENT_HISTORY_SENTINEL (None). The prior 100.0 was
-    fail-dangerous: 100 >= MC_SANITY_THRESHOLD permanently vetoed the protective
+    fail-dangerous: 100 >= MC_BREAKDOWN_THRESHOLD permanently vetoed the protective
     trailing stop. Tests 2 and 3's pinned values were re-captured from the fixed
     producer (AC-1 standardizes the kNN feature vector, AC-4 excludes the
     early-window days — both intentionally shift neighbour selection).
@@ -198,7 +198,7 @@ def test_short_history_spy_vol_fallback_returns_sentinel_and_is_finite() -> None
     without raising.
 
     Updated for Cluster 2 AC-2: the prior contract returned the in-band 100.0,
-    which was fail-dangerous (100 >= MC_SANITY_THRESHOLD permanently vetoed the
+    which was fail-dangerous (100 >= MC_BREAKDOWN_THRESHOLD permanently vetoed the
     protective trailing stop). The function now signals "MC could not run"
     out-of-band so the caller can distinguish it from a genuine probability.
     """

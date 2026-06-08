@@ -463,7 +463,15 @@ def compute_breakeven_update(
 
 # Exit-confirmation constants (gates trailing-stop trigger)
 MAGNITUDE_FLOOR_PCT = 0.10  # return must drop at least this far BELOW stop_trigger_level to count toward exit confirmation
-MC_SANITY_THRESHOLD = 60.0  # MC probability >= this value blocks exit ("if we still think we beat the benchmark, don't capitulate")
+# MC underperformance fraction (run_monte_carlo output) AT OR ABOVE this value
+# confirms a regime breakdown -> the protective stop is ALLOWED to fire; BELOW it
+# the MC second opinion vetoes a capitulation ("the analog distribution says today
+# is normal noise, don't sell at a local low"). run_monte_carlo returns the fraction
+# of regime-matched analog days that beat us (HIGH ~100 when badly underperforming,
+# LOW ~0 when outperforming). Value 60.0 is preserved verbatim from the pre-H1
+# MC_SANITY_THRESHOLD; H1 is a naming + gate-operator fix (the old name/operator
+# read the value inverted), NOT a retune. Source: fork-base hand-set risk-policy dial.
+MC_BREAKDOWN_THRESHOLD = 60.0
 EXIT_CONFIRM_TICKS = 3  # consecutive qualifying ticks needed to flip is_trailing_stop_hit
 
 
@@ -472,7 +480,7 @@ def compute_exit_confirmation(
     is_triggered: bool,
     current_return: float,
     stop_trigger_level: float,
-    prob_beating: float | None,
+    prob_underperforming: float | None,
     current_below_stop_count: int,
     exit_confirm_ticks: int = EXIT_CONFIRM_TICKS,
 ) -> tuple[int, bool]:
@@ -485,7 +493,7 @@ def compute_exit_confirmation(
       if not armed or is_triggered:
           return current_below_stop_count, False     # whole block skipped; state unchanged
       below_stop_condition = (current_return <= stop_trigger_level - MAGNITUDE_FLOOR_PCT)
-                             and mc_sanity_ok
+                             and mc_breakdown_ok
       if below_stop_condition:
           new_count = current_below_stop_count + 1
           hit = (new_count >= exit_confirm_ticks)
@@ -501,12 +509,18 @@ def compute_exit_confirmation(
     constant — keeping the per-call threshold an explicit, auditable argument
     rather than global state.
 
-    MC SANITY GATE (fail-safe): a real prob_beating >= MC_SANITY_THRESHOLD
-    vetoes the exit (the count resets) — "if we still think we beat the
-    benchmark, don't capitulate." When prob_beating is None the MC second
-    opinion is UNAVAILABLE (insufficient MC history); the gate is treated as
-    passing so the protective stop still fires on the magnitude condition
-    alone. Insufficient MC data must never disable the protective stop.
+    MC BREAKDOWN GATE (fail-safe): prob_underperforming is the fraction of
+    regime-matched analog days that beat us (run_monte_carlo output) — HIGH
+    (~100) when we are badly underperforming, LOW (~0) when outperforming. A
+    real prob_underperforming AT OR ABOVE MC_BREAKDOWN_THRESHOLD confirms a
+    regime breakdown and ALLOWS the exit (the magnitude-qualifying tick counts).
+    BELOW the threshold the MC second opinion vetoes the exit (the count resets)
+    — "the analog distribution says today is normal noise, don't capitulate at a
+    local low." When prob_underperforming is None the MC second opinion is
+    UNAVAILABLE (insufficient MC history, or the regime-match-quality guard
+    overrode it); the gate FAILS OPEN so the protective stop still fires on the
+    magnitude condition alone. Insufficient MC data must never disable the
+    protective stop.
 
     GUARD INVARIANT: when (not armed) or is_triggered, the function returns
     the INPUT below_stop_count unchanged AND False. This preserves the inline
@@ -530,17 +544,20 @@ def compute_exit_confirmation(
         current_return=current_return,
         stop_trigger_level=stop_trigger_level,
     )
-    if prob_beating is not None:
-        _reject_non_finite(prob_beating=prob_beating)
+    if prob_underperforming is not None:
+        _reject_non_finite(prob_underperforming=prob_underperforming)
     if (not armed) or is_triggered:
         return int(current_below_stop_count), False
 
-    # MC sanity gate: unavailable (None) -> pass (fail-safe); otherwise a real
-    # high-confidence MC opinion (>= MC_SANITY_THRESHOLD) vetoes the exit.
-    mc_sanity_ok = prob_beating is None or prob_beating < MC_SANITY_THRESHOLD
+    # MC breakdown gate: unavailable (None) -> pass (fail-safe); otherwise a real
+    # confirmed-high underperformance (>= MC_BREAKDOWN_THRESHOLD) ALLOWS the exit,
+    # while a low reading vetoes it (the MC second opinion says this dip is normal).
+    mc_breakdown_ok = (
+        prob_underperforming is None or prob_underperforming >= MC_BREAKDOWN_THRESHOLD
+    )
     below_stop_condition = (
         current_return <= (stop_trigger_level - MAGNITUDE_FLOOR_PCT)
-    ) and mc_sanity_ok
+    ) and mc_breakdown_ok
 
     if below_stop_condition:
         new_count = int(current_below_stop_count) + 1
@@ -604,7 +621,7 @@ def apply_regime_exit_adjustment(regime_label: str | None, base_ticks: int) -> i
 
     ONE-KNOB BUDGET: the regime adjustment moves exactly ONE response knob —
     the exit_confirm_ticks threshold passed to compute_exit_confirmation. No
-    other lever (stop distance, MC_SANITY_THRESHOLD, multipliers) is touched.
+    other lever (stop distance, MC_BREAKDOWN_THRESHOLD, multipliers) is touched.
     This honours the ≈1-knob budget (00-ADAPTIVE-RECOMMENDATION.md §1A): the
     per-regime tick values are FIXED theory-anchored constants, NOT tuned by
     Optuna, so the adaptive layer adds essentially one bounded degree of freedom.
@@ -641,7 +658,7 @@ TP_CONFIRM_TICKS = 2  # consecutive above-threshold ticks (with return > 0) need
 
 def compute_tp_confirmation(
     mc_available: bool,
-    prob_beating: float | None,
+    prob_underperforming: float | None,
     take_profit_mc_pct: float,
     current_return: float,
     is_triggered: bool,
@@ -654,18 +671,26 @@ def compute_tp_confirmation(
     Returns (new_tp_armed, new_above_tp_count, is_tp_hit).
 
     Logic (extracted verbatim from alpha_bot_execution.py Check 2):
-      if mc_available and prob_beating < take_profit_mc_pct:
+      if mc_available and prob_underperforming < take_profit_mc_pct:
           if not tp_armed and not is_triggered:
               -> arm: tp_armed = True, above_tp_count = 0
           else: state unchanged
       elif tp_armed and not is_triggered:
-          if mc_available and prob_beating >= take_profit_mc_pct:
+          if mc_available and prob_underperforming >= take_profit_mc_pct:
               above_tp_count += 1
               if above_tp_count >= TP_CONFIRM_TICKS:
                   if current_return > 0:  -> is_tp_hit = True
                   else:                   -> disarm: tp_armed = False, above_tp_count = 0
           else:
               -> above_tp_count = 0   (MC dipped back below, or MC unavailable)
+
+    TP ARM SEMANTIC (rename-only — operator + threshold UNCHANGED): the TP
+    "Exceptional Gain" arm fires on prob_underperforming < take_profit_mc_pct.
+    Since prob_underperforming is LOW (~0) when the portfolio is OUTPERFORMING
+    the analog pool, "underperformance below the TP threshold" correctly reads
+    as "we are exceptionally ahead of regime peers — arm the take-profit." H1
+    only renamed the metric (value unchanged); this condition's behavior is
+    identical to the pre-rename gate (legacy metric name `< take_profit_mc_pct`).
 
     MC-AVAILABILITY GATE (fail-safe): an absent MC opinion (mc_available
     False) is not an "exceptional gain" signal and cannot arm or confirm a
@@ -678,17 +703,17 @@ def compute_tp_confirmation(
     Pure. No I/O. No state. Caller handles print/log transitions by comparing
     input (tp_armed, above_tp_count) to the returned values.
     """
-    if prob_beating is not None:
-        _reject_non_finite(prob_beating=prob_beating)
+    if prob_underperforming is not None:
+        _reject_non_finite(prob_underperforming=prob_underperforming)
     _reject_non_finite(current_return=current_return)
 
     is_tp_hit = False
-    if mc_available and prob_beating < take_profit_mc_pct:
+    if mc_available and prob_underperforming < take_profit_mc_pct:
         if not tp_armed and not is_triggered:
             return True, 0, False
         return tp_armed, int(above_tp_count), False
     elif tp_armed and not is_triggered:
-        if mc_available and prob_beating >= take_profit_mc_pct:
+        if mc_available and prob_underperforming >= take_profit_mc_pct:
             new_count = int(above_tp_count) + 1
             if new_count >= TP_CONFIRM_TICKS:
                 if current_return > 0:
@@ -816,27 +841,34 @@ def compute_vwap_breakdown_update(
     Returns (new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken,
     is_vwap_bleed_broken).
 
-    BRANCH 1 — is_triggered guard:
-        State preserved unchanged. No signals.
+    BRANCH 1 — is_triggered guard (the ONLY shared short-circuit):
+        State preserved unchanged. No signals. This is the only condition that
+        gates System B; once past it, the two systems are fully independent.
         Returns (current_vwap_ticks, current_vwap_bleed_ticks, False, False)
 
-    BRANCH 2 — gate fails (NOT armed for VWAP eval):
-        Gate: valid_vwap_weight > VWAP_WEIGHT_THRESHOLD
-              AND weighted_vwap_diff < 0
-        Both counters RESET to 0. No signals.
-
-    BRANCH 3 — gate passes:
-        System A (profit-protection break, INDEPENDENT of B):
-            Condition: safe_hwm >= vwap_cross_hwm_pct
-                       AND current_return < safe_hwm
-            Met:  new_vwap_ticks = current_vwap_ticks + 1
-                  is_vwap_broken = (new_vwap_ticks >= VWAP_BREAK_CONFIRM_TICKS)
-            Miss: new_vwap_ticks = 0
-        System B (bleed, INDEPENDENT of A):
+    SYSTEM B (bleed) — evaluated FIRST and UNCONDITIONALLY (H2 decouple):
+        System B keys ONLY on the symphony return; it references NEITHER the
+        VWAP sign NOR coverage, so it is NOT behind the System-A gate.
             Condition: current_return <= vwap_bleed_arm_pct
             Met:  new_vwap_bleed_ticks = current_vwap_bleed_ticks + 1
                   is_vwap_bleed_broken = (new_vwap_bleed_ticks >= vwap_bleed_ticks_threshold)
-            Miss: new_vwap_bleed_ticks = 0
+            Miss: new_vwap_bleed_ticks = 0  (System B's OWN reset — a bounce
+                  ABOVE the bleed-arm stops the ladder; it is not a one-way ratchet)
+        H2 FIX: pre-fix the System-A gate below wiped this counter on a VWAP
+        bounce (weighted_vwap_diff >= 0) or low coverage (weight <= threshold),
+        resetting a real bleed ladder for reasons unrelated to System B's arm.
+        System B now survives those — it resets ONLY when its own arm misses.
+
+    SYSTEM A (profit-protection break) — keeps its OWN gate (System-A-only):
+        Gate (System-A-only now): valid_vwap_weight > VWAP_WEIGHT_THRESHOLD
+              AND weighted_vwap_diff < 0
+            Gate miss: new_vwap_ticks = 0, is_vwap_broken = False (System A
+                       resets on its OWN gate miss — UNCHANGED from pre-fix).
+            Gate pass: Condition: safe_hwm >= vwap_cross_hwm_pct
+                       AND current_return < safe_hwm
+                Met:  new_vwap_ticks = current_vwap_ticks + 1
+                      is_vwap_broken = (new_vwap_ticks >= VWAP_BREAK_CONFIRM_TICKS)
+                Miss: new_vwap_ticks = 0
 
     Boundary semantics (each pinned by a fixture):
       - Gate weight uses strict `>` (0.5 exact does NOT pass)
@@ -861,10 +893,27 @@ def compute_vwap_breakdown_update(
     if is_triggered:
         return int(current_vwap_ticks), int(current_vwap_bleed_ticks), False, False
 
-    if not (valid_vwap_weight > VWAP_WEIGHT_THRESHOLD and weighted_vwap_diff < 0):
-        return 0, 0, False, False
+    # System B — bleed (H2: decoupled from the System-A gate). Evaluated FIRST
+    # and unconditionally (only the is_triggered short-circuit above gates it).
+    # Keys ONLY on the symphony return falling to/below the dynamic bleed-arm
+    # threshold — references NEITHER VWAP sign NOR coverage. Pre-fix this counter
+    # sat behind the System-A coverage+sign gate and was wiped on a VWAP bounce
+    # or low coverage, resetting a real bleed ladder for unrelated reasons.
+    if current_return <= vwap_bleed_arm_pct:
+        new_vwap_bleed_ticks = int(current_vwap_bleed_ticks) + 1
+        is_vwap_bleed_broken = bool(new_vwap_bleed_ticks >= vwap_bleed_ticks_threshold)
+    else:
+        # System B's OWN reset: the bleed stopped (return rose back above the
+        # bleed-arm). Not a one-way ratchet — resets independently of System A.
+        new_vwap_bleed_ticks = 0
+        is_vwap_bleed_broken = False
 
-    # System A — profit-protection break.
+    # System A — profit-protection break. Keeps its OWN coverage+sign gate; a
+    # gate miss resets ONLY the System-A counter (System B already handled above).
+    if not (valid_vwap_weight > VWAP_WEIGHT_THRESHOLD and weighted_vwap_diff < 0):
+        return 0, new_vwap_bleed_ticks, False, is_vwap_bleed_broken
+
+    # System A — profit-protection break (gate passed).
     # PROVENANCE: the gate `safe_hwm >= vwap_cross_hwm_pct` is the regime
     # boundary of a two-regime trailing-stop system. Regime 1 (below gate):
     # primary trailing-stop only (compute_active_trailing_stop with
@@ -895,14 +944,8 @@ def compute_vwap_breakdown_update(
         new_vwap_ticks = 0
         is_vwap_broken = False
 
-    # System B
-    if current_return <= vwap_bleed_arm_pct:
-        new_vwap_bleed_ticks = int(current_vwap_bleed_ticks) + 1
-        is_vwap_bleed_broken = bool(new_vwap_bleed_ticks >= vwap_bleed_ticks_threshold)
-    else:
-        new_vwap_bleed_ticks = 0
-        is_vwap_bleed_broken = False
-
+    # System B (new_vwap_bleed_ticks / is_vwap_bleed_broken) was computed above,
+    # decoupled from the System-A gate.
     return new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken
 
 
@@ -1069,6 +1112,10 @@ def _compute_rolling_spy_vol(spy_returns: np.ndarray) -> np.ndarray:
     # Full-window phase: indices [w-1 .. n-1].
     # as_strided produces contiguous windows; np.std(axis=1, ddof=0) is
     # bit-exact with np.std(spy_returns[i-w+1:i+1]) for each i.
+    # ddof=0 (population std) is INTENTIONAL: consistent across all vol estimators
+    # + matches the walk-forward-tuned stop calibration + the PERF-001 ddof=0
+    # contract; ddof=1 is deferred to a dedicated re-tune effort (audit M1, policy
+    # not bug).
     full_start = w - 1
     if n > full_start:
         full_n = n - full_start
@@ -1162,6 +1209,10 @@ def run_monte_carlo(
     # feature dominates the Euclidean distance by a unit artifact. A zero-std
     # feature (no spread to standardize) collapses to 0.0 — guarded against the
     # 0/0 divide so the output stays finite.
+    # ddof=0 (population std) is INTENTIONAL: consistent across all vol estimators
+    # + matches the walk-forward-tuned stop calibration + the PERF-001 ddof=0
+    # contract; ddof=1 is deferred to a dedicated re-tune effort (audit M1, policy
+    # not bug).
     ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
     vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
 
@@ -1250,6 +1301,10 @@ def calculate_20d_vol(holdings, historical_data):
     if len(daily_returns) == 0:
         return 0.0
 
+    # ddof=0 (population std) is INTENTIONAL: consistent across all vol estimators
+    # + matches the walk-forward-tuned stop calibration + the PERF-001 ddof=0
+    # contract; ddof=1 is deferred to a dedicated re-tune effort (audit M1, policy
+    # not bug).
     return float(np.std(daily_returns))
 
 
@@ -1591,6 +1646,10 @@ def compute_portfolio_cvar(
     cand_vols = spy_vols[candidate_idx]
 
     # Standardized kNN features
+    # ddof=0 (population std) is INTENTIONAL: consistent across all vol estimators
+    # + matches the walk-forward-tuned stop calibration + the PERF-001 ddof=0
+    # contract; ddof=1 is deferred to a dedicated re-tune effort (audit M1, policy
+    # not bug).
     ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
     vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
 
@@ -1739,8 +1798,8 @@ def compute_regime_match_quality(
     conservative threshold against the MEAN-of-K statistic; effective false-positive
     rate well below 1%), today's joint state is far from every recent neighbour and
     the MC bootstrap is unrepresentative; the caller should suppress the MC veto by
-    passing prob_beating=None to compute_exit_confirmation, exercising the existing
-    MC-unavailable fail-safe path. The gate fires only on extreme regime breaks.
+    passing prob_underperforming=None to compute_exit_confirmation, exercising the
+    existing MC-unavailable fail-safe path. The gate fires only on extreme regime breaks.
 
     Pure function. O(eligible pool size). No I/O, no blocking work (architecture
     constraint #1).
@@ -1805,6 +1864,10 @@ def compute_regime_match_quality(
     # Z-score both features using candidate-pool statistics — same params as run_monte_carlo
     # so squared Euclidean distances approximate Mahalanobis distances (zero-std guard
     # collapses to 0.0 to keep output finite).
+    # ddof=0 (population std) is INTENTIONAL: consistent across all vol estimators
+    # + matches the walk-forward-tuned stop calibration + the PERF-001 ddof=0
+    # contract; ddof=1 is deferred to a dedicated re-tune effort (audit M1, policy
+    # not bug).
     ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
     vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
 

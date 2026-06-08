@@ -1,12 +1,12 @@
 {
   "name": "04_mc_absent_no_disarm",
-  "description": "When MC is absent and the stop is armed (fail-open), the disarm branch must NOT fire. The disarm condition requires mc_available=True AND prob_beating > TRIGGER_THRESHOLD_PCT * 2 AND current_return > 0. With mc_available=False (MC absent), disarm must be skipped.",
+  "description": "When MC is absent and the stop is armed (fail-open), the disarm branch must NOT fire. The disarm condition requires mc_available=True AND prob_underperforming > TRIGGER_THRESHOLD_PCT * 2 AND current_return > 0. With mc_available=False (MC absent), disarm must be skipped.",
   "layer": "arming_gate",
   "scenario": "armed_mc_absent_cannot_disarm",
   "inputs": {
     "currently_armed": true,
     "is_triggered": false,
-    "prob_beating": null,
+    "prob_underperforming": null,
     "mc_available": false,
     "current_return_is_positive": true
   },

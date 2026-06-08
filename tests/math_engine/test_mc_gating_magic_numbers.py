@@ -47,7 +47,7 @@ as the AST scan + behavioral pins still pass):
   MC_INSUFFICIENT_HISTORY_SENTINEL = None (Cluster 2 AC-2) — the out-of-band
     signal returned when len(valid_dates) is below the MC-history threshold.
     It REPLACED the prior MC_INSUFFICIENT_HISTORY_PROB = 100.0, which was
-    fail-dangerous: 100 >= MC_SANITY_THRESHOLD permanently vetoed the
+    fail-dangerous: 100 >= MC_BREAKDOWN_THRESHOLD permanently vetoed the
     protective trailing stop. The risk-engine contract is now "if we have no
     data the MC second opinion is UNAVAILABLE — signal that distinctly so the
     protective stop still fires on its own condition". A language literal, not
@@ -417,7 +417,7 @@ def test_mc_insufficient_history_sentinel_is_named() -> None:
 
     Updated for Cluster 2 AC-2: the prior contract used an in-band probability
     sentinel (MC_INSUFFICIENT_HISTORY_PROB = 100.0). That was fail-dangerous —
-    100 >= MC_SANITY_THRESHOLD permanently vetoed the protective trailing stop.
+    100 >= MC_BREAKDOWN_THRESHOLD permanently vetoed the protective trailing stop.
     The fixed contract returns a DISTINCT out-of-band sentinel
     (MC_INSUFFICIENT_HISTORY_SENTINEL = None). It is a language literal, not a
     magic NUMBER, but it must still be named so the short-circuit's intent is

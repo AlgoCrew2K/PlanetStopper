@@ -1,6 +1,6 @@
 {
   "name": "07_transient_gap_single_tick_does_not_fire",
-  "description": "Adversarial: a fix that fires too eagerly (single missing MC tick triggers liquidation). A single cycle of MC absence (prob_beating goes None for ONE tick then returns) must NOT fire the stop unless EXIT_CONFIRM_TICKS consecutive qualifying ticks are seen. The ticks-below-stop counter and the 3-tick confirmation requirement is the guard.",
+  "description": "Adversarial: a fix that fires too eagerly (single missing MC tick triggers liquidation). A single cycle of MC absence (prob_underperforming goes None for ONE tick then returns) must NOT fire the stop unless EXIT_CONFIRM_TICKS consecutive qualifying ticks are seen. The ticks-below-stop counter and the 3-tick confirmation requirement is the guard.",
   "layer": "exit_confirmation_mc_absent",
   "function": "compute_exit_confirmation",
   "adversarial_scenario": "single_absent_tick_below_stop_does_not_fire",
@@ -13,7 +13,7 @@
         "is_triggered": false,
         "current_return": -2.0,
         "stop_trigger_level": -1.0,
-        "prob_beating": null,
+        "prob_underperforming": null,
         "current_below_stop_count": 0
       },
       "expected": {
@@ -24,13 +24,13 @@
     },
     {
       "tick": 2,
-      "description": "MC returns (prob_beating=30.0), return recovers above stop. Count must reset.",
+      "description": "MC returns (prob_underperforming=30.0), return recovers above stop. Count must reset.",
       "inputs": {
         "armed": true,
         "is_triggered": false,
         "current_return": 0.5,
         "stop_trigger_level": -1.0,
-        "prob_beating": 30.0,
+        "prob_underperforming": 30.0,
         "current_below_stop_count": 1
       },
       "expected": {

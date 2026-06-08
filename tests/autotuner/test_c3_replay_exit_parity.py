@@ -107,7 +107,7 @@ _FIXTURE_DIR = (
 )
 
 # Production-side names re-exported so the harness reads them, not literals.
-_MC_SANITY_THRESHOLD = math_engine.MC_SANITY_THRESHOLD          # 60.0
+_MC_SANITY_THRESHOLD = math_engine.MC_BREAKDOWN_THRESHOLD          # 60.0
 _EXIT_CONFIRM_TICKS = math_engine.EXIT_CONFIRM_TICKS            # 3
 _MAGNITUDE_FLOOR_PCT = math_engine.MAGNITUDE_FLOOR_PCT          # 0.10
 _VWAP_BREAK_CONFIRM_TICKS = math_engine.VWAP_BREAK_CONFIRM_TICKS  # 3
@@ -222,7 +222,7 @@ def _production_exit_sequence(
             is_triggered=False,
             current_return=ret,
             stop_trigger_level=stop_level,
-            prob_beating=mc,
+            prob_underperforming=mc,
             current_below_stop_count=below_stop_count,
         )
 
@@ -235,7 +235,7 @@ def _production_exit_sequence(
         # production code path, never a hand-written copy of it.
         tp_armed, above_tp_count, is_tp_hit = math_engine.compute_tp_confirmation(
             mc_available=mc_available,
-            prob_beating=mc,
+            prob_underperforming=mc,
             take_profit_mc_pct=take_profit_mc,
             current_return=ret,
             is_triggered=False,

@@ -68,7 +68,7 @@ class TestDiscordAlertRendersDecreasingStop:
             reporting.send_discord_alert(
                 symphony_name="TestSym",
                 current_return=2.0,
-                prob_beating=10.0,
+                prob_underperforming=10.0,
                 stop_trigger_level=3.50,
                 high_water_mark=4.0,
                 is_live=False,
@@ -78,7 +78,7 @@ class TestDiscordAlertRendersDecreasingStop:
             reporting.send_discord_alert(
                 symphony_name="TestSym",
                 current_return=1.5,
-                prob_beating=10.0,
+                prob_underperforming=10.0,
                 stop_trigger_level=2.10,        # LOWER than prior
                 high_water_mark=4.0,
                 is_live=False,
@@ -127,7 +127,7 @@ class TestDiscordAlertRendersDecreasingStop:
             reporting.send_discord_alert(
                 symphony_name="TestSym",
                 current_return=-0.5,
-                prob_beating=10.0,
+                prob_underperforming=10.0,
                 stop_trigger_level=-1.25,        # NEGATIVE stop
                 high_water_mark=0.5,
                 is_live=False,

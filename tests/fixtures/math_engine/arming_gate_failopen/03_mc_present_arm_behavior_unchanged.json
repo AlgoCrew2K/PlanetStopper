@@ -1,13 +1,13 @@
 {
   "name": "03_mc_present_arm_behavior_unchanged",
-  "description": "Regression guard: when MC IS present (prob_beating is a real float in the arming range), the arming behavior must be byte-identical to pre-fix. The arming condition `TAKE_PROFIT_MC_PCT <= prob_beating < TRIGGER_THRESHOLD_PCT` still controls arming; the fail-open path must not fire.",
+  "description": "Regression guard: when MC IS present (prob_underperforming is a real float in the arming range), the arming behavior must be byte-identical to pre-fix. The arming condition `TAKE_PROFIT_MC_PCT <= prob_underperforming < TRIGGER_THRESHOLD_PCT` still controls arming; the fail-open path must not fire.",
   "layer": "arming_gate",
   "scenarios": [
     {
       "name": "mc_present_in_arming_range_arms",
-      "note": "prob_beating in [TAKE_PROFIT_MC_PCT, TRIGGER_THRESHOLD_PCT) -> should_arm=True, same as before fix",
+      "note": "prob_underperforming in [TAKE_PROFIT_MC_PCT, TRIGGER_THRESHOLD_PCT) -> should_arm=True, same as before fix",
       "inputs": {
-        "prob_beating_is_real_float": true,
+        "prob_underperforming_is_real_float": true,
         "mc_available": true,
         "currently_armed": false,
         "is_triggered": false
@@ -20,9 +20,9 @@
     },
     {
       "name": "mc_present_above_arming_range_does_not_arm",
-      "note": "prob_beating >= TRIGGER_THRESHOLD_PCT -> outside arming window -> not armed. Fix must not change this.",
+      "note": "prob_underperforming >= TRIGGER_THRESHOLD_PCT -> outside arming window -> not armed. Fix must not change this.",
       "inputs": {
-        "prob_beating_is_real_float": true,
+        "prob_underperforming_is_real_float": true,
         "mc_available": true,
         "currently_armed": false,
         "is_triggered": false,
@@ -30,14 +30,14 @@
       },
       "expected": {
         "armed_after": false,
-        "derivation": "MC present but above trigger threshold -> original gate: `if mc_available and TAKE_PROFIT_MC_PCT <= prob_beating < TRIGGER_THRESHOLD_PCT` fails. Not in arming range. Fix must not arm here either."
+        "derivation": "MC present but above trigger threshold -> original gate: `if mc_available and TAKE_PROFIT_MC_PCT <= prob_underperforming < TRIGGER_THRESHOLD_PCT` fails. Not in arming range. Fix must not arm here either."
       }
     },
     {
       "name": "mc_present_below_take_profit_does_not_arm",
-      "note": "prob_beating < TAKE_PROFIT_MC_PCT -> below arming window -> not armed",
+      "note": "prob_underperforming < TAKE_PROFIT_MC_PCT -> below arming window -> not armed",
       "inputs": {
-        "prob_beating_is_real_float": true,
+        "prob_underperforming_is_real_float": true,
         "mc_available": true,
         "currently_armed": false,
         "is_triggered": false,

@@ -1268,7 +1268,7 @@ def main():
                 high_water_mark = bot_state[symphony_id]["high_water_mark"]
                 safe_hwm = high_water_mark if high_water_mark != -999.0 else current_return
 
-                prob_beating = math_engine.run_monte_carlo(
+                prob_underperforming = math_engine.run_monte_carlo(
                     holdings,
                     historical_data,
                     spy_today,
@@ -1282,7 +1282,7 @@ def main():
                 # candidate pool. When is_unprecedented=True the K nearest historical days
                 # are all far outliers — the MC bootstrap is unrepresentative and must not
                 # veto the trailing stop. Suppression reuses the existing MC-unavailable
-                # fail-safe: override prob_beating=None so compute_exit_confirmation treats
+                # fail-safe: override prob_underperforming=None so compute_exit_confirmation treats
                 # MC as absent and the protective stop fires on its own ticks-below-stop
                 # condition alone. mc_available is also set False so the arm/disarm/TP
                 # branches are skipped (same as the insufficient-history path).
@@ -1291,7 +1291,7 @@ def main():
                     spy_today,
                 )
                 if _regime_assessment.is_unprecedented:
-                    prob_beating = None
+                    prob_underperforming = None
 
                 symphony_vol = bot_state[symphony_id]["symphony_vol"]
 
@@ -1312,13 +1312,13 @@ def main():
                 # absent second opinion must never silently disable the protective
                 # stop. The EXIT_CONFIRM_TICKS ladder still gates the actual
                 # liquidation, so a transient one-tick gap cannot trigger a sale.
-                # The regime-match-quality guard above may also override prob_beating
+                # The regime-match-quality guard above may also override prob_underperforming
                 # to None (unprecedented regime); both paths converge here.
-                mc_available = prob_beating is not None
+                mc_available = prob_underperforming is not None
 
-                if mc_available and acc_TAKE_PROFIT_MC_PCT <= prob_beating < acc_TRIGGER_THRESHOLD_PCT:
+                if mc_available and acc_TAKE_PROFIT_MC_PCT <= prob_underperforming < acc_TRIGGER_THRESHOLD_PCT:
                     should_arm = True
-                    arm_reason = f"MC Prob {prob_beating:.1f}%"
+                    arm_reason = f"MC Prob {prob_underperforming:.1f}%"
                 elif not mc_available:
                     should_arm = True
                     arm_reason = "MC Absent (fail-open)"
@@ -1337,7 +1337,7 @@ def main():
                 elif bot_state[symphony_id]["armed"] and not bot_state[symphony_id]["triggered"]:
                     if (
                         mc_available
-                        and prob_beating > (acc_TRIGGER_THRESHOLD_PCT * 2)
+                        and prob_underperforming > (acc_TRIGGER_THRESHOLD_PCT * 2)
                         and current_return > 0.0
                     ):
                         bot_state[symphony_id]["armed"] = False
@@ -1347,7 +1347,7 @@ def main():
                 # Do not pollute the rolling MC history with the None sentinel —
                 # a None entry would break any later averaging/comparison.
                 if mc_available:
-                    bot_state[symphony_id]["mc_history"].append(prob_beating)
+                    bot_state[symphony_id]["mc_history"].append(prob_underperforming)
                     if len(bot_state[symphony_id]["mc_history"]) > 5:
                         bot_state[symphony_id]["mc_history"].pop(0)
 
@@ -1437,7 +1437,7 @@ def main():
                     is_triggered=bot_state[symphony_id]["triggered"],
                     current_return=current_return,
                     stop_trigger_level=stop_trigger_level,
-                    prob_beating=prob_beating,
+                    prob_underperforming=prob_underperforming,
                     current_below_stop_count=_prev_below_stop_count,
                     exit_confirm_ticks=_regime_exit_ticks,
                 )
@@ -1468,7 +1468,7 @@ def main():
                 new_tp_armed, new_above_tp_count, tp_triggered_now = (
                     math_engine.compute_tp_confirmation(
                         mc_available=mc_available,
-                        prob_beating=prob_beating,
+                        prob_underperforming=prob_underperforming,
                         take_profit_mc_pct=acc_TAKE_PROFIT_MC_PCT,
                         current_return=current_return,
                         is_triggered=bot_state[symphony_id]["triggered"],
@@ -1482,11 +1482,11 @@ def main():
                 # Transition prints/logs — driven by the pre/post state delta.
                 if new_tp_armed and not prev_tp_armed:
                     print(
-                        f"  *** {symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_beating:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%) ***"
+                        f"  *** {symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_underperforming:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%) ***"
                     )
                     database.log_symphony_event(
                         symphony_id,
-                        f"{symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_beating:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%)",
+                        f"{symphony_name} TP-ARMED (Exceptional Gain: MC Prob {prob_underperforming:.1f}% < {acc_TAKE_PROFIT_MC_PCT}%)",
                         "tp-armed",
                     )
                 elif prev_tp_armed and new_tp_armed:
@@ -1534,7 +1534,7 @@ def main():
                     print(f"  🩸 {symphony_name[:35]} VWAP Bleed Limit Reached. Forcing exit.")
 
                 safe_name = symphony_name[:35].encode("ascii", "ignore").decode("ascii")
-                arm_prob_str = f"{prob_beating:.1f}%" if mc_available else "N/A"
+                arm_prob_str = f"{prob_underperforming:.1f}%" if mc_available else "N/A"
                 print(
                     f"  -> {safe_name}: Ret: {current_return:.2f}% | HWM: {high_water_mark:.2f}% | Stop Dist: {active_trailing_stop:.2f}% | ArmProb: {arm_prob_str}"
                 )
@@ -1542,7 +1542,7 @@ def main():
                 bot_state[symphony_id]["name"] = symphony_name
                 bot_state[symphony_id]["account"] = account
                 bot_state[symphony_id]["current_return"] = current_return
-                bot_state[symphony_id]["mc_prob"] = prob_beating
+                bot_state[symphony_id]["mc_prob"] = prob_underperforming
                 bot_state[symphony_id]["stop_trigger"] = stop_trigger_level
                 bot_state[symphony_id]["active_stop_distance"] = active_trailing_stop
                 bot_state[symphony_id]["symphony_vol"] = symphony_vol
@@ -1591,7 +1591,7 @@ def main():
                         "return": current_return,
                         "stop": tracked_stop,
                         "event": chart_event,
-                        "mc_prob": prob_beating,
+                        "mc_prob": prob_underperforming,
                         "vol": symphony_vol,
                         "vwap_diff": weighted_vwap_diff,
                         "base_atr_pct": 0.0,
@@ -1692,7 +1692,7 @@ def main():
                             "current_return": current_return,
                             "safe_hwm": safe_hwm,
                             "stop_trigger_level": stop_trigger_level,
-                            "prob_beating": prob_beating,
+                            "prob_underperforming": prob_underperforming,
                             "weighted_vwap_diff": weighted_vwap_diff,
                             "acc_VWAP_BLEED_ARM_PCT": acc_VWAP_BLEED_ARM_PCT,
                             "acc_VWAP_BLEED_MULTIPLIER": acc_VWAP_BLEED_MULTIPLIER,
@@ -1819,7 +1819,7 @@ def main():
                                 "high_water_mark": item["safe_hwm"],
                                 "vwap_ticks": item.get("vwap_ticks", 0),
                                 "vwap_bleed_ticks": bot_state[sym_id].get("vwap_bleed_ticks", 0),
-                                "mc_prob": item["prob_beating"],
+                                "mc_prob": item["prob_underperforming"],
                                 "symphony_vol": item["symphony_vol"],
                                 "also_true": item["also_true"],
                             },
@@ -1852,7 +1852,7 @@ def main():
                         reporting.send_discord_alert(
                             item["symphony_name"],
                             item["current_return"],
-                            item["prob_beating"],
+                            item["prob_underperforming"],
                             item["stop_trigger_level"],
                             item["safe_hwm"],
                             LIVE_EXECUTION and item["live_mode"],  # per-symphony effective mode

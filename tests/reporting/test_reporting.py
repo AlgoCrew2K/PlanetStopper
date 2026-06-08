@@ -334,7 +334,7 @@ def test_send_discord_alert_title_and_color_match_exit_reason(
         reporting.send_discord_alert(
             symphony_name="Test Symphony",
             current_return=current_return,
-            prob_beating=55.0,
+            prob_underperforming=55.0,
             stop_trigger_level=-5.0,
             high_water_mark=3.0,
             is_live=True,
@@ -400,7 +400,7 @@ def test_send_discord_alert_title_and_color_match_exit_reason(
             "Take-Profit",
             {
                 "tp_threshold": 70.0,
-                "prob_beating": 75.0,
+                "prob_underperforming": 75.0,
                 "current_return": 3.5,
             },
             "Take-Profit Threshold",
@@ -415,7 +415,7 @@ def test_conditional_field_injected_when_feature_flag_active(
     field.  Tests are negative-capable: if the branch condition is removed
     from production code the field will be absent and the assertion will fail.
     """
-    prob_beating = extra_kwargs.pop("prob_beating", 55.0)
+    prob_underperforming = extra_kwargs.pop("prob_underperforming", 55.0)
     current_return = extra_kwargs.pop("current_return", 0.0)
 
     with patch.object(reporting.requests, "post") as mock_post, \
@@ -425,7 +425,7 @@ def test_conditional_field_injected_when_feature_flag_active(
         reporting.send_discord_alert(
             symphony_name="Test Symphony",
             current_return=current_return,
-            prob_beating=prob_beating,
+            prob_underperforming=prob_underperforming,
             stop_trigger_level=-5.0,
             high_water_mark=3.0,
             is_live=True,
@@ -487,7 +487,7 @@ def test_conditional_field_absent_when_feature_flag_not_set(
         reporting.send_discord_alert(
             symphony_name="Test Symphony",
             current_return=current_return,
-            prob_beating=55.0,
+            prob_underperforming=55.0,
             stop_trigger_level=-5.0,
             high_water_mark=3.0,
             is_live=True,
@@ -795,7 +795,7 @@ def test_send_discord_alert_no_op_when_webhook_url_is_none():
         reporting.send_discord_alert(
             symphony_name="Test",
             current_return=1.0,
-            prob_beating=60.0,
+            prob_underperforming=60.0,
             stop_trigger_level=-5.0,
             high_water_mark=3.0,
             is_live=False,

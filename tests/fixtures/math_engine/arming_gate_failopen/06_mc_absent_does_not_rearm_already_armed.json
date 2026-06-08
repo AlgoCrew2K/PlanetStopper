@@ -4,7 +4,7 @@
   "layer": "arming_gate",
   "scenario": "mc_absent_already_armed_no_duplicate_arm",
   "inputs": {
-    "prob_beating": null,
+    "prob_underperforming": null,
     "mc_available": false,
     "currently_armed": true,
     "is_triggered": false

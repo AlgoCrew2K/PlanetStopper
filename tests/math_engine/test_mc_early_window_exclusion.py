@@ -29,9 +29,9 @@ WHAT THESE TESTS ASSERT
 -----------------------
 1. THE PROOF: a history whose early-window days uniquely match today's query
    and carry an opposite-sign holding return. Excluding the early-window days
-   flips ``prob_beating`` from the structural 100.0 (early days in the pool) to
+   flips ``prob_underperforming`` from the structural 100.0 (early days in the pool) to
    the structural 0.0 (early days excluded).
-2. RED MARKER: pre-fix, the early-window days ARE in the pool (prob_beating
+2. RED MARKER: pre-fix, the early-window days ARE in the pool (prob_underperforming
    100.0).
 3. EDGE: a minimally-sufficient history (exactly ``MC_MIN_HISTORY_DAYS`` days)
    still returns a finite, bounded probability after the exclusion shrinks the
@@ -142,9 +142,9 @@ def test_excluding_early_window_days_flips_regime_selection() -> None:
     day carries a LOSING holding return.
 
     With the early-window days excluded from the kNN candidate pool, the only
-    candidates are full-window loss days, so prob_beating must be the
+    candidates are full-window loss days, so prob_underperforming must be the
     crash-side structural value 0.0. If the early-window days are still in the
-    pool (the pre-fix bug) prob_beating is the gain-side structural value 100.0.
+    pool (the pre-fix bug) prob_underperforming is the gain-side structural value 100.0.
 
     This test is RED against pre-fix code (returns 100.0) and GREEN once the
     first MC_VOL_WINDOW_DAYS - 1 days are dropped from the candidate pool.
@@ -176,10 +176,10 @@ def test_excluding_early_window_days_flips_regime_selection() -> None:
     in_pool_prob = fx["regime_selection"]["early_window_in_pool"]["structural_prob"]
 
     assert math.isfinite(result), f"run_monte_carlo returned non-finite {result!r}."
-    assert 0.0 <= result <= 100.0, f"prob_beating {result!r} escaped [0, 100]."
+    assert 0.0 <= result <= 100.0, f"prob_underperforming {result!r} escaped [0, 100]."
     assert result == excluded_prob, (
         f"run_monte_carlo returned {result!r}; expected the "
-        f"early-window-excluded structural prob_beating={excluded_prob!r}. "
+        f"early-window-excluded structural prob_underperforming={excluded_prob!r}. "
         f"A value of {in_pool_prob!r} means the first "
         f"{early_window_days} short-sample days are still in the kNN candidate "
         f"pool — their downward-biased volatility lets them be mis-selected as "

@@ -260,7 +260,7 @@ def _run_one_cycle(
 
         # Math stubs — safe defaults that won't trigger exits
         # run_monte_carlo returns (history_list, prob_float) in some callers;
-        # the current engine uses the float directly as prob_beating.
+        # the current engine uses the float directly as prob_underperforming.
         # Use a high probability so no exit arms under normal conditions.
         mock_math.run_monte_carlo.return_value = 80.0  # 80% — well above trigger threshold
         mock_math.calculate_20d_vol.return_value = 0.15

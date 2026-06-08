@@ -436,12 +436,12 @@ def test_fail_safe_composes_with_regime_adjustment(regime_label: str | None) -> 
 
     This test simulates the execution path:
       1. Apply regime adjustment to get adjusted_ticks.
-      2. Call compute_exit_confirmation with prob_beating=None (MC absent, fail-safe).
+      2. Call compute_exit_confirmation with prob_underperforming=None (MC absent, fail-safe).
       3. Assert the function still fires after adjusted_ticks consecutive confirmations.
 
     The MC-None path MUST NOT be disabled by the regime adjustment.  A mean-
     reverting regime that raises ticks to 5 still fires after 5 qualifying ticks
-    with prob_beating=None.
+    with prob_underperforming=None.
 
     Specifically: starting_count set to (adjusted_ticks - 1) so the next call
     should flip is_trailing_stop_hit to True.
@@ -460,7 +460,7 @@ def test_fail_safe_composes_with_regime_adjustment(regime_label: str | None) -> 
         is_triggered=False,
         current_return=-10.0,          # deep below any stop
         stop_trigger_level=-1.0,       # stop at -1.0 -> threshold -1.10
-        prob_beating=None,             # MC absent (fail-safe path)
+        prob_underperforming=None,             # MC absent (fail-safe path)
         current_below_stop_count=starting_count,
         exit_confirm_ticks=adjusted_ticks,  # regime-adjusted ticks parameter
     )
@@ -468,7 +468,7 @@ def test_fail_safe_composes_with_regime_adjustment(regime_label: str | None) -> 
     assert hit is True, (
         f"Fail-safe composition broken for regime_label={regime_label!r}: "
         f"compute_exit_confirmation should fire (is_trailing_stop_hit=True) "
-        f"after {adjusted_ticks} qualifying ticks with MC absent (prob_beating=None). "
+        f"after {adjusted_ticks} qualifying ticks with MC absent (prob_underperforming=None). "
         f"Starting at count={starting_count} (one below threshold), next tick "
         f"should produce count={adjusted_ticks} >= {adjusted_ticks} -> hit=True. "
         f"MC-None fail-safe must not be disabled by the regime adjustment."
@@ -483,7 +483,7 @@ def test_fail_safe_mc_absent_does_not_veto_stop_under_any_regime(
     regime_label: str | None,
 ) -> None:
     """
-    Inverse of the fail-safe composition test: with MC absent (prob_beating=None),
+    Inverse of the fail-safe composition test: with MC absent (prob_underperforming=None),
     the protective stop is NOT vetoed by any regime.
 
     Checks that compute_exit_confirmation with exit_confirm_ticks=adjusted_ticks
@@ -503,7 +503,7 @@ def test_fail_safe_mc_absent_does_not_veto_stop_under_any_regime(
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
-        prob_beating=None,             # MC absent — fail-safe must not block stop
+        prob_underperforming=None,             # MC absent — fail-safe must not block stop
         current_below_stop_count=starting_count,
         exit_confirm_ticks=adjusted_ticks,
     )
@@ -516,7 +516,7 @@ def test_fail_safe_mc_absent_does_not_veto_stop_under_any_regime(
         f"MC-absent fail-safe vetoed by regime adjustment for "
         f"regime_label={regime_label!r}: hit must be True when "
         f"new_count={new_count} >= adjusted_ticks={adjusted_ticks} and "
-        f"prob_beating=None. A regime adjustment must NOT disable the "
+        f"prob_underperforming=None. A regime adjustment must NOT disable the "
         f"protective stop."
     )
 
@@ -679,7 +679,7 @@ def test_exit_confirmation_exit_confirm_ticks_default_is_module_constant() -> No
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
-        prob_beating=None,
+        prob_underperforming=None,
         current_below_stop_count=base - 2,
         # exit_confirm_ticks intentionally omitted — must default to EXIT_CONFIRM_TICKS
     )
@@ -694,7 +694,7 @@ def test_exit_confirmation_exit_confirm_ticks_default_is_module_constant() -> No
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
-        prob_beating=None,
+        prob_underperforming=None,
         current_below_stop_count=base - 1,
         # exit_confirm_ticks intentionally omitted
     )
@@ -722,7 +722,7 @@ def test_exit_confirmation_exit_confirm_ticks_override_works() -> None:
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
-        prob_beating=None,
+        prob_underperforming=None,
         current_below_stop_count=override - 2,
         exit_confirm_ticks=override,
     )
@@ -740,7 +740,7 @@ def test_exit_confirmation_exit_confirm_ticks_override_works() -> None:
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
-        prob_beating=None,
+        prob_underperforming=None,
         current_below_stop_count=override - 1,
         exit_confirm_ticks=override,
     )

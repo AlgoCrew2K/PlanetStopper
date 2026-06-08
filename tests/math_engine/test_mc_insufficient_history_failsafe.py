@@ -6,7 +6,7 @@ THE DEFECT
 When MC history is below ``MC_MIN_HISTORY_DAYS``, ``run_monte_carlo`` returns
 the IN-BAND value ``MC_INSUFFICIENT_HISTORY_PROB = 100.0``. A comment claims
 this "skips MC exit gate." It does the opposite. ``compute_exit_confirmation``
-requires ``prob_beating < MC_SANITY_THRESHOLD`` (60.0) for the trailing-stop
+requires ``prob_underperforming < MC_BREAKDOWN_THRESHOLD`` (60.0) for the trailing-stop
 exit to confirm. ``100.0 >= 60.0`` makes ``below_stop_condition`` permanently
 False — the protective trailing-stop exit can NEVER confirm while MC history is
 insufficient. Insufficient MC data DISABLES the stop-loss. For a risk engine
@@ -157,7 +157,7 @@ def test_insufficient_history_returns_out_of_band_sentinel() -> None:
 def test_insufficient_sentinel_is_distinct_from_in_band_full_confidence() -> None:
     """
     The insufficient sentinel must be DISTINGUISHABLE from an in-band
-    prob_beating of 100.0. A genuine MC run that legitimately produces 100.0
+    prob_underperforming of 100.0. A genuine MC run that legitimately produces 100.0
     ("every bootstrapped path was below the current return") must not be
     confused with "MC could not run at all." The two carry opposite meanings
     for the exit gate and must be different values.
@@ -200,7 +200,7 @@ def test_protective_stop_still_fires_when_mc_history_insufficient() -> None:
     MUST confirm. Insufficient MC data must NEVER disable the protective stop.
 
     Pre-fix, run_monte_carlo returns 100.0, the MC sanity gate
-    (prob_beating < MC_SANITY_THRESHOLD) is False, below_stop_condition is
+    (prob_underperforming < MC_BREAKDOWN_THRESHOLD) is False, below_stop_condition is
     permanently False, the count resets every tick, is_trailing_stop_hit never
     becomes True — the stop is silently disabled. This test is RED against that.
 
@@ -215,13 +215,13 @@ def test_protective_stop_still_fires_when_mc_history_insufficient() -> None:
     spec = rmc["historical_data_spec"]
     scenario = fx["exit_confirmation_scenario"]
 
-    # Step 1: the engine computes prob_beating from insufficient history.
+    # Step 1: the engine computes prob_underperforming from insufficient history.
     history = _build_constant_history(
         num_days=spec["num_days"],
         spy_ret=spec["spy_daily_ret"],
         holding_ret=spec["holding_daily_ret"],
     )
-    prob_beating = math_engine.run_monte_carlo(
+    prob_underperforming = math_engine.run_monte_carlo(
         rmc["holdings"],
         history,
         rmc["spy_today_return"],
@@ -242,7 +242,7 @@ def test_protective_stop_still_fires_when_mc_history_insufficient() -> None:
     )
 
     # Step 2: drive compute_exit_confirmation for EXIT_CONFIRM_TICKS ticks with
-    # the insufficient prob_beating. The protective stop must confirm.
+    # the insufficient prob_underperforming. The protective stop must confirm.
     count = scenario["starting_below_stop_count"]
     hit = False
     for tick in range(math_engine.EXIT_CONFIRM_TICKS):
@@ -251,14 +251,14 @@ def test_protective_stop_still_fires_when_mc_history_insufficient() -> None:
             is_triggered=scenario["is_triggered"],
             current_return=scenario["current_return"],
             stop_trigger_level=scenario["stop_trigger_level"],
-            prob_beating=prob_beating,
+            prob_underperforming=prob_underperforming,
             current_below_stop_count=count,
         )
 
     assert hit is True, (
         f"The protective trailing stop did NOT fire after "
         f"{math_engine.EXIT_CONFIRM_TICKS} consecutive ticks below the stop "
-        f"while MC history was insufficient (prob_beating={prob_beating!r}). "
+        f"while MC history was insufficient (prob_underperforming={prob_underperforming!r}). "
         f"Insufficient MC data must NEVER disable the protective stop — the "
         f"exit must confirm on the ticks-below-stop condition alone. This is "
         f"the audit's fail-dangerous HIGH finding."
@@ -274,7 +274,7 @@ def test_protective_stop_still_fires_when_mc_history_insufficient() -> None:
 def test_insufficient_mc_does_not_veto_exit_on_a_single_qualifying_tick() -> None:
     """
     Granular companion to the fail-safe proof: a SINGLE qualifying tick (deeply
-    below the stop) with an insufficient prob_beating must INCREMENT the
+    below the stop) with an insufficient prob_underperforming must INCREMENT the
     below-stop count, not reset it to zero. A reset is the fingerprint of the
     MC gate vetoing.
 
@@ -290,7 +290,7 @@ def test_insufficient_mc_does_not_veto_exit_on_a_single_qualifying_tick() -> Non
         spy_ret=spec["spy_daily_ret"],
         holding_ret=spec["holding_daily_ret"],
     )
-    prob_beating = math_engine.run_monte_carlo(
+    prob_underperforming = math_engine.run_monte_carlo(
         rmc["holdings"],
         history,
         rmc["spy_today_return"],
@@ -304,12 +304,12 @@ def test_insufficient_mc_does_not_veto_exit_on_a_single_qualifying_tick() -> Non
         is_triggered=scenario["is_triggered"],
         current_return=scenario["current_return"],
         stop_trigger_level=scenario["stop_trigger_level"],
-        prob_beating=prob_beating,
+        prob_underperforming=prob_underperforming,
         current_below_stop_count=0,
     )
     assert new_count == 1, (
         f"A single qualifying tick (deeply below stop) with an insufficient "
-        f"prob_beating ({prob_beating!r}) produced below_stop_count={new_count}, "
+        f"prob_underperforming ({prob_underperforming!r}) produced below_stop_count={new_count}, "
         f"expected 1. A value of 0 means the insufficient sentinel was treated "
         f"as an MC veto and the count was reset — fail-dangerous."
     )

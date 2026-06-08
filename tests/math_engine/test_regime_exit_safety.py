@@ -271,7 +271,7 @@ def test_degenerate_regime_labels_are_safe_default(
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
-        prob_beating=None,
+        prob_underperforming=None,
         current_below_stop_count=base - 1,
         exit_confirm_ticks=adjusted,
     )
@@ -311,7 +311,7 @@ def test_exit_confirm_ticks_zero_is_disallowed() -> None:
             is_triggered=False,
             current_return=-5.0,
             stop_trigger_level=-1.0,
-            prob_beating=None,
+            prob_underperforming=None,
             current_below_stop_count=0,
             exit_confirm_ticks=0,
         )

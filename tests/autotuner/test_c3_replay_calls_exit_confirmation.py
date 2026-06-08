@@ -13,7 +13,7 @@ The replay currently re-implements the trailing-stop exit inline:
         else: below_stop_count = 0
 
 This open-codes three values that math_engine already names —
-MAGNITUDE_FLOOR_PCT (0.10), MC_SANITY_THRESHOLD (60.0) and
+MAGNITUDE_FLOOR_PCT (0.10), MC_BREAKDOWN_THRESHOLD (60.0) and
 EXIT_CONFIRM_TICKS (3). If a production constant is re-tuned the replay
 silently keeps the stale copy and optimizes the wrong exit rule.
 
@@ -164,7 +164,7 @@ def test_both_replay_functions_reach_compute_exit_confirmation() -> None:
 
 def test_replay_machinery_has_no_open_coded_exit_literals() -> None:
     """AC-1: the open-coded exit block duplicated MAGNITUDE_FLOOR_PCT (0.10),
-    MC_SANITY_THRESHOLD (60.0) and EXIT_CONFIRM_TICKS (3). After the fix the
+    MC_BREAKDOWN_THRESHOLD (60.0) and EXIT_CONFIRM_TICKS (3). After the fix the
     replay calls compute_exit_confirmation, so NONE of those three exit-rule
     literals may appear as bare numbers anywhere in the replay machinery
     (the two replay functions or any shared per-tick exit core).
@@ -177,7 +177,7 @@ def test_replay_machinery_has_no_open_coded_exit_literals() -> None:
     """
     forbidden = {
         "MAGNITUDE_FLOOR_PCT": math_engine.MAGNITUDE_FLOOR_PCT,
-        "MC_SANITY_THRESHOLD": math_engine.MC_SANITY_THRESHOLD,
+        "MC_BREAKDOWN_THRESHOLD": math_engine.MC_BREAKDOWN_THRESHOLD,
         "EXIT_CONFIRM_TICKS": float(math_engine.EXIT_CONFIRM_TICKS),
     }
     leaked: dict[str, dict[str, float]] = {}
@@ -191,7 +191,7 @@ def test_replay_machinery_has_no_open_coded_exit_literals() -> None:
     assert not leaked, (
         f"Replay machinery still contains exit-rule literals {leaked} as "
         f"bare numbers. These are named in math_engine (MAGNITUDE_FLOOR_PCT "
-        f"/ MC_SANITY_THRESHOLD / EXIT_CONFIRM_TICKS); the replay must call "
+        f"/ MC_BREAKDOWN_THRESHOLD / EXIT_CONFIRM_TICKS); the replay must call "
         f"compute_exit_confirmation, which owns them, so the values are "
         f"never duplicated in autotuner.py."
     )
