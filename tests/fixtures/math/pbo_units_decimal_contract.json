@@ -1,0 +1,43 @@
+{
+  "description": "C1 golden fixture — the PBO gate must feed DECIMAL returns into compute_crra_eu_objective, not RAW PERCENT. The autotuner objective stores cscv_date_returns; pre-fix it stores raw percent (a -1% day as -1.0), which the decimal-contract utility floors to WEALTH_ARG_FLOOR (W=max(0.001,1+r) collapses to 0.001 -> U=-999). Post-fix the store divides by RETURN_PCT_TO_FRACTION so a -1% day is -0.01 (W=0.99, U~=-0.0101). No producer-computed value is hardcoded: every expectation is derived from the raw input via the named RETURN_PCT_TO_FRACTION constant or asserted as a shape/finiteness property.",
+  "citation": "Bailey & Lopez de Prado 2014, DOI 10.21314/JCF.2014.005; validation/overfitting.md C1; GATE2-PLAN A1.",
+  "provenance": "Hand-authored RED scenario inputs (raw percent guard-alpha series). Expected decimal values are DERIVED from the raw inputs by dividing by RETURN_PCT_TO_FRACTION (=100.0). No compute_crra_eu_objective output is pinned as a literal; the floor-collapse assertions are inequalities (finite, > -1.0) not exact floats.",
+  "constants": {
+    "RETURN_PCT_TO_FRACTION": 100.0,
+    "WEALTH_ARG_FLOOR": 0.001,
+    "_note_constants": "These mirror autotuner.RETURN_PCT_TO_FRACTION and math_engine.WEALTH_ARG_FLOOR. Tests read the live module constants and only use these for fixture self-consistency checks."
+  },
+  "scenarios": {
+    "sub_one_percent_day_raw_vs_decimal": {
+      "description": "A single -1% day. Raw percent stores it as -1.0 (floors W to 0.001 -> U=-999 collapse). Decimal stores it as -0.01 (W=0.99, no floor).",
+      "raw_percent_minus_one_percent": -1.0,
+      "expected_decimal_after_fix_rule": "raw / RETURN_PCT_TO_FRACTION",
+      "raw_value_floors_wealth_argument": true,
+      "decimal_value_floors_wealth_argument": false,
+      "_assertion_kind": "the test derives expected decimal = raw / RETURN_PCT_TO_FRACTION at runtime; it does not hardcode -0.01"
+    },
+    "mixed_guard_alpha_series_raw_percent": {
+      "description": "A multi-day raw-percent guard-alpha series including a sub--1% day. The decimal-unit utility over this series must be FINITE and > -1.0 (no WEALTH_ARG_FLOOR collapse). The raw-percent utility floors and collapses to a large-negative dominating value.",
+      "raw_percent_series": [1.5, -1.0, -0.8, 0.6, -1.2],
+      "gamma": 2.0,
+      "decimal_series_rule": "[r / RETURN_PCT_TO_FRACTION for r in raw_percent_series]",
+      "decimal_utility_is_finite": true,
+      "decimal_utility_lower_bound_exclusive": -1.0,
+      "raw_utility_collapses_below": -1.0,
+      "_assertion_kind": "shape/bound — decimal mean(U) in (-1.0, +inf) finite; raw mean(U) <= some large-negative collapse. No exact float pinned."
+    },
+    "pbo_veto_preserved_under_correct_units": {
+      "description": "A config set whose PBO is genuinely low (IS-best generalizes OOS) must still PASS the PBO_REJECT_THRESHOLD gate (pbo <= 0.5) AFTER the unit fix. Inputs are already DECIMAL (what the consumer compute_pbo contracts on); this pins that the caller-side unit fix does not flip a correct veto decision. configs and dates are synthetic; the assertion is on the gate decision (pass), derived from the computed PBO vs the live PBO_REJECT_THRESHOLD constant.",
+      "configs_date_returns_decimal": [
+        {"2024-01-01": 0.012, "2024-01-02": 0.009, "2024-01-03": 0.011, "2024-01-04": 0.010, "2024-01-05": 0.013, "2024-01-06": 0.008, "2024-01-07": 0.012, "2024-01-08": 0.010, "2024-01-09": 0.011, "2024-01-10": 0.009, "2024-01-11": 0.012, "2024-01-12": 0.010, "2024-01-13": 0.011, "2024-01-14": 0.013, "2024-01-15": 0.009, "2024-01-16": 0.010},
+        {"2024-01-01": 0.004, "2024-01-02": 0.003, "2024-01-03": 0.005, "2024-01-04": 0.004, "2024-01-05": 0.003, "2024-01-06": 0.005, "2024-01-07": 0.004, "2024-01-08": 0.003, "2024-01-09": 0.005, "2024-01-10": 0.004, "2024-01-11": 0.003, "2024-01-12": 0.005, "2024-01-13": 0.004, "2024-01-14": 0.003, "2024-01-15": 0.005, "2024-01-16": 0.004},
+        {"2024-01-01": -0.001, "2024-01-02": 0.000, "2024-01-03": -0.002, "2024-01-04": 0.001, "2024-01-05": -0.001, "2024-01-06": 0.000, "2024-01-07": -0.002, "2024-01-08": 0.001, "2024-01-09": -0.001, "2024-01-10": 0.000, "2024-01-11": -0.002, "2024-01-12": 0.001, "2024-01-13": -0.001, "2024-01-14": 0.000, "2024-01-15": -0.002, "2024-01-16": 0.001}
+      ],
+      "eligible_dates": ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06", "2024-01-07", "2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12", "2024-01-13", "2024-01-14", "2024-01-15", "2024-01-16"],
+      "gamma": 2.0,
+      "S": 4,
+      "gate_decision_expected": "pass",
+      "_assertion_kind": "decision — pbo <= live PBO_REJECT_THRESHOLD (veto does NOT fire). Config 0 dominates IS and OOS; the IS-best generalizes. No exact PBO float pinned."
+    }
+  }
+}
