@@ -1407,6 +1407,56 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
     return dated_returns
 
 
+# Partial-sentinel detection threshold: a CPCV trial's value is the MEAN across
+# _CPCV_N_PATHS path scores. If ONE path is a Sortino sentinel (1e6, a zero-downside
+# path) and the rest are small, the mean is ~= _SORTINO_SENTINEL / _CPCV_N_PATHS — far
+# above any genuine Sortino/CRRA-EU score, yet != 1e6 so an exact-float compare misses
+# it. Any value at or above this threshold contains a sentinel path and is degenerate.
+_PARTIAL_SENTINEL_MEAN_THRESHOLD = math_engine._SORTINO_SENTINEL / _CPCV_N_PATHS
+
+
+def _trial_has_sentinel_path(t) -> bool:
+    """True if the trial's persisted per-path CPCV scores include a Sortino sentinel.
+
+    Path-score-level detection is the GAP-FREE check: a trial whose value is the
+    mean across _CPCV_N_PATHS paths can hide a sentinel path (1e6) when the OTHER
+    paths are net-negative enough to drag the mean below the aggregate threshold
+    (e.g. a path at the CRRA wealth floor ~-999, or large-negative Sortino). The
+    objective persists path_scores (set_user_attr) so the filter can see the
+    sentinel directly rather than inferring it from the aggregate value.
+    """
+    if not hasattr(t, "user_attrs"):
+        return False
+    path_scores = t.user_attrs.get("path_scores")
+    if not path_scores:
+        return False
+    return any(s == math_engine._SORTINO_SENTINEL for s in path_scores)
+
+
+def filter_sortino_sentinels(trials):
+    """Exclude zero-downside degenerate trials from a haircut candidate set.
+
+    Drops a trial if ANY of:
+      - value is None (no usable objective);
+      - a persisted per-path score equals math_engine._SORTINO_SENTINEL — the
+        gap-free PATH-SCORE-level check (see _trial_has_sentinel_path); catches a
+        one-sentinel-path mean even when net-negative other paths drag the mean
+        below the aggregate threshold;
+      - value >= _SORTINO_SENTINEL / _CPCV_N_PATHS — the aggregate fallback for
+        trials WITHOUT persisted path_scores (a pure sentinel, or a partial mean
+        whose non-sentinel paths are non-negative).
+    A sentinel's magnitude would dominate the cross-trial BHY/haircut distribution
+    and let a degenerate trial masquerade as a genuine signal. Returns a new list
+    preserving input order.
+    """
+    return [
+        t for t in trials
+        if t.value is not None
+        and not _trial_has_sentinel_path(t)
+        and t.value < _PARTIAL_SENTINEL_MEAN_THRESHOLD
+    ]
+
+
 def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn=compute_sortino_tstat, gamma: "float | None" = None):
     """Apply the Harvey & Liu selection-bias haircut to a set of completed trials.
 
@@ -1454,10 +1504,9 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn
 
     # Sentinel filter: exclude zero-downside degenerate trials regardless of objective.
     # A sentinel's magnitude would dominate the cross-trial distribution in the Sortino
-    # path; the filter is a no-op for CRRA-EU but must remain for both paths.
-    filtered_trials = [
-        t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
-    ]
+    # path; the filter is a no-op for CRRA-EU but must remain for both paths. Uses the
+    # named helper so partial-sentinel CPCV means (one sentinel path) are caught too.
+    filtered_trials = filter_sortino_sentinels(completed_trials)
     if not filtered_trials:
         return None, None, None
 
@@ -1469,7 +1518,14 @@ def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn
     _crra_gamma = gamma if gamma is not None else float(database.PHASE1_THEORY_GAMMA)
 
     tstats = []
-    for trial_idx, t in enumerate(completed_trials):
+    # H3 fix: iterate filtered_trials (sentinel-removed), NOT completed_trials, so the
+    # t-stat / p-value index space matches the returned-trial index space at the
+    # `filtered_trials[winner_idx]` return below. Looping completed_trials let a
+    # sentinel's strong series win the argmin while the return indexed into the
+    # shorter filtered list — returning the WRONG trial with the SENTINEL's t-stat
+    # (or IndexError with a trailing sentinel). Both live callers pre-filter, so this
+    # is byte-identical in production (filtered_trials == completed_trials there).
+    for trial_idx, t in enumerate(filtered_trials):
         series = t.user_attrs.get("daily_returns", []) if hasattr(t, "user_attrs") else []
         # H-1 fix: call the passed tstat_fn (the loop previously hardcoded the
         # Sortino t-stat, defeating the tstat_fn parameter). The two objective
@@ -2152,15 +2208,21 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             # n_optuna / compute_n_effective / BHY are UNTOUCHED — CPCV changes WHAT data
             # each trial scores on, not HOW MANY tests exist (AC-5 anti-double-count).
             path_scores: list[float] = []
-            all_path_returns: list[float] = []
-            # cscv_date_returns: date-labeled union of per-path triggered returns.
-            # Built as a dict (date -> guard_alpha) via union/update — NOT via list.extend.
-            # The CPCV partition invariant guarantees no date collision: each CPCV test-path
-            # covers a non-overlapping subset of the eligible window, so the union has
-            # exactly one entry per triggered date. This date-label-explicit approach
-            # avoids the path-concatenation contamination that a positional list would
-            # produce (the same date could appear in up to _CPCV_N_PATHS paths' outputs
-            # if we used extend, making CSCV block-partitioning ill-defined).
+            # daily_date_returns / cscv_date_returns: date-labeled unions of per-path
+            # triggered returns. Built as dicts (date -> guard_alpha) via union/update —
+            # NOT via list.extend. Under the current state-independent per-day sim
+            # (autotuner.py:1335 re-inits day_state per day), a given date yields the
+            # SAME guard_alpha in every CPCV path it appears in, so the CPCV paths
+            # overlap on dates (each path covers the full eligible window). A positional
+            # list.extend would therefore store _CPCV_N_PATHS copies of every date's
+            # return — inflating the haircut t-stat T by ~_CPCV_N_PATHS and the t-stat
+            # itself by ~sqrt(_CPCV_N_PATHS) (C2b), making the BHY/Yekutieli FDR gate too
+            # easy to clear. The date-keyed dicts collapse the duplication: exactly one
+            # entry per distinct triggered date, so T == the true distinct-date count.
+            #   - daily_date_returns: RAW PERCENT (daily_returns's T5 provenance contract;
+            #     _haircut_select:1493 divides by RETURN_PCT_TO_FRACTION before the U-transform).
+            #   - cscv_date_returns: DECIMAL (compute_pbo's contract; divided here — C1).
+            daily_date_returns: dict[str, float] = {}
             cscv_date_returns: dict[str, float] = {}
             for _path_hist in _cpcv_path_histories:
                 path_returns = _collect_sim_returns(p, _path_hist, [target_sym_id], current_date_str, deviation_dict)
@@ -2169,23 +2231,38 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
                         [r / RETURN_PCT_TO_FRACTION for r in path_returns], _gamma
                     ) if _objective_kind == "crra_eu" else compute_sortino_ratio(path_returns)
                 )
-                all_path_returns.extend(path_returns)
-                # Date-labeled union for the CSCV PBO gate. Uses _collect_sim_returns_dated
-                # (not an inline return_dates=True call) to avoid conflating the mock
-                # boundary: tests that patch _collect_sim_returns for flat-return assertions
-                # must not intercept the dated-variant call that feeds the CSCV dict.
+                # Date-labeled unions. Uses _collect_sim_returns_dated (not an inline
+                # return_dates=True call) to avoid conflating the mock boundary: tests
+                # that patch _collect_sim_returns for flat-return assertions must not
+                # intercept the dated-variant call that feeds these dicts.
                 for _date, _ga in _collect_sim_returns_dated(p, _path_hist, [target_sym_id], current_date_str, deviation_dict):
-                    cscv_date_returns[_date] = _ga
+                    # daily_returns is RAW PERCENT (T5 provenance) — no divide here.
+                    daily_date_returns[_date] = _ga
+                    # C1 fix: divide by RETURN_PCT_TO_FRACTION so the stored value is
+                    # DECIMAL, matching compute_pbo -> compute_crra_eu_objective's
+                    # contract (W = max(WEALTH_ARG_FLOOR, 1 + r)). Mirrors the inline
+                    # path-score divide above. Storing raw percent floored W on any
+                    # sub--1% day (U ~= -999), corrupting the PBO IS-best/OOS rank.
+                    cscv_date_returns[_date] = _ga / RETURN_PCT_TO_FRACTION
 
-            # Persist the CPCV-aggregated return series (all paths concatenated) so
-            # _haircut_select can source T = len(daily_returns) and re-transform through
-            # the active gamma. Raw percent (T5 provenance contract — not U values).
-            trial.set_user_attr("daily_returns", all_path_returns)
+            # Persist the per-date-aggregated return series (one entry per distinct
+            # triggered date — NOT _CPCV_N_PATHS copies) so _haircut_select can source
+            # T = len(daily_returns) == the true distinct-date count and re-transform
+            # through the active gamma. Raw percent (T5 provenance contract — not U values).
+            trial.set_user_attr("daily_returns", list(daily_date_returns.values()))
             # Persist the date-labeled union for the Phase-3 CSCV PBO gate.
             # Keys are date strings within the CPCV-eligible window (sorted_dates[:frozen_start_idx]).
-            # Values are decimal guard_alpha returns (percent / RETURN_PCT_TO_FRACTION not applied —
-            # raw percent, same provenance contract as daily_returns).
+            # Values are DECIMAL guard_alpha returns (raw percent / RETURN_PCT_TO_FRACTION,
+            # applied at the store site above — C1 fix). This matches compute_pbo's
+            # decimal contract; it does NOT share daily_returns's raw-percent contract.
             trial.set_user_attr("cscv_date_returns", cscv_date_returns)
+            # Persist the per-path CPCV scores so filter_sortino_sentinels can detect a
+            # sentinel path at the PATH-SCORE level. The trial value is the MEAN across
+            # paths; a single sentinel path (1e6) can be masked in the mean when the
+            # other paths are net-negative, so the aggregate value alone is insufficient
+            # to flag a degenerate zero-downside path (Sortino branch only — CRRA-EU
+            # never emits the sentinel).
+            trial.set_user_attr("path_scores", path_scores)
 
             # Trial score: mean across the _CPCV_N_PATHS path scores.
             # An empty path contributes 0.0 (same fallback as the pre-CPCV single-fold path).
@@ -2263,11 +2340,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             completed_trials = []
 
         # filter_sortino_sentinels excludes math_engine._SORTINO_SENTINEL (1e6)
-        # zero-downside trials — a sentinel's t-statistic would dominate the
-        # haircut and let a degenerate trial masquerade as a genuine signal.
-        haircut_trials = [
-            t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
-        ]
+        # zero-downside trials AND partial-sentinel CPCV means (one sentinel path,
+        # value ~= _SORTINO_SENTINEL/_CPCV_N_PATHS) — a sentinel's t-statistic would
+        # dominate the haircut and let a degenerate trial masquerade as a genuine signal.
+        haircut_trials = filter_sortino_sentinels(completed_trials)
 
         if haircut_trials:
             # Route tstat_fn based on objective_kind (sourced from spec_facets above).
@@ -2794,11 +2870,9 @@ def run_calibration_sweep(
         completed_trials = [t for t in study.trials if t.value is not None]
 
         # filter_sortino_sentinels excludes math_engine._SORTINO_SENTINEL (1e6)
-        # zero-downside trials before the haircut — a sentinel's t-statistic would
-        # dominate the BHY adjustment.
-        haircut_trials = [
-            t for t in completed_trials if t.value != math_engine._SORTINO_SENTINEL
-        ]
+        # zero-downside trials AND partial-sentinel CPCV means before the haircut —
+        # a sentinel's t-statistic would dominate the BHY adjustment.
+        haircut_trials = filter_sortino_sentinels(completed_trials)
 
         # haircut_outcome makes the FDR-gate verdict explicit on every report
         # row — without it a noise-grade naive winner (no trial cleared the

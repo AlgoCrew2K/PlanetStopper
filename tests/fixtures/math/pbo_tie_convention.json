@@ -1,0 +1,34 @@
+{
+  "description": "A4 PBO-tie golden fixture — the PBO rank tie-direction must treat a degenerate all-tie OOS as OVERFIT, not as not-overfit. compute_pbo ranks the IS-best config OOS via `rank_c = sum(1 for s in oos_scores if s <= is_best_oos)` (math_engine.py:1960). On an ALL-TIE OOS (every config scores identically) the `<=` counts every config -> rank_c = K -> omega_bar = (K-0.5)/K ~ 1 -> lambda > 0 -> NOT counted as overfit -> PBO -> 0 ('robust'). That is the optimistic tie direction: a degenerate strategy that distinguishes nothing OOS reads as maximally robust. The fix changes `<=` to `<` (strict): rank_c = 0 -> omega_bar ~ 0 -> lambda < 0 -> counted -> PBO -> 1 ('overfit').",
+  "citation": "Bailey & Lopez de Prado 2014, DOI 10.21314/JCF.2014.005; validation/overfitting.md PBO-tie; GATE2-PLAN A4.",
+  "provenance": "Hand-authored degenerate-tie config set (all configs identical -> every IS and OOS score equal). The pre-fix and post-fix PBO values (0.0 and 1.0) are STRUCTURAL endpoints of the tie convention, not SUT-derived literals: 0.0 = optimistic (current), 1.0 = pessimistic/overfit (fixed). The test asserts the post-fix value indicates overfit (PBO > PBO_REJECT_THRESHOLD) without pinning an exact float beyond the structural endpoint.",
+  "scenarios": {
+    "all_tie_oos_is_overfit": {
+      "description": "All configs identical -> every IS/OOS score ties. After the strict-tie fix the PBO must indicate OVERFIT (PBO == 1.0, and > PBO_REJECT_THRESHOLD). Pre-fix it is 0.0 (RED).",
+      "configs_date_returns_decimal": [
+        {"2024-01-01": 0.005, "2024-01-02": 0.005, "2024-01-03": 0.005, "2024-01-04": 0.005, "2024-01-05": 0.005, "2024-01-06": 0.005, "2024-01-07": 0.005, "2024-01-08": 0.005, "2024-01-09": 0.005, "2024-01-10": 0.005, "2024-01-11": 0.005, "2024-01-12": 0.005, "2024-01-13": 0.005, "2024-01-14": 0.005, "2024-01-15": 0.005, "2024-01-16": 0.005},
+        {"2024-01-01": 0.005, "2024-01-02": 0.005, "2024-01-03": 0.005, "2024-01-04": 0.005, "2024-01-05": 0.005, "2024-01-06": 0.005, "2024-01-07": 0.005, "2024-01-08": 0.005, "2024-01-09": 0.005, "2024-01-10": 0.005, "2024-01-11": 0.005, "2024-01-12": 0.005, "2024-01-13": 0.005, "2024-01-14": 0.005, "2024-01-15": 0.005, "2024-01-16": 0.005},
+        {"2024-01-01": 0.005, "2024-01-02": 0.005, "2024-01-03": 0.005, "2024-01-04": 0.005, "2024-01-05": 0.005, "2024-01-06": 0.005, "2024-01-07": 0.005, "2024-01-08": 0.005, "2024-01-09": 0.005, "2024-01-10": 0.005, "2024-01-11": 0.005, "2024-01-12": 0.005, "2024-01-13": 0.005, "2024-01-14": 0.005, "2024-01-15": 0.005, "2024-01-16": 0.005},
+        {"2024-01-01": 0.005, "2024-01-02": 0.005, "2024-01-03": 0.005, "2024-01-04": 0.005, "2024-01-05": 0.005, "2024-01-06": 0.005, "2024-01-07": 0.005, "2024-01-08": 0.005, "2024-01-09": 0.005, "2024-01-10": 0.005, "2024-01-11": 0.005, "2024-01-12": 0.005, "2024-01-13": 0.005, "2024-01-14": 0.005, "2024-01-15": 0.005, "2024-01-16": 0.005}
+      ],
+      "eligible_dates": ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06", "2024-01-07", "2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12", "2024-01-13", "2024-01-14", "2024-01-15", "2024-01-16"],
+      "gamma": 2.0,
+      "S": 4,
+      "pre_fix_pbo": 0.0,
+      "post_fix_pbo": 1.0,
+      "_assertion_kind": "decision — post-fix PBO indicates overfit (== 1.0 and > PBO_REJECT_THRESHOLD). RED pre-fix (== 0.0)."
+    },
+    "non_tie_golden_unaffected": {
+      "description": "Regression: a clearly-dominant config (config 0 best every day) must keep PBO == 0.0 under BOTH tie conventions (no all-tie OOS, so the <= vs < change is a no-op). Pins that the tie fix does NOT change the non-degenerate case.",
+      "configs_date_returns_decimal": [
+        {"2024-01-01": 0.020, "2024-01-02": 0.018, "2024-01-03": 0.022, "2024-01-04": 0.019, "2024-01-05": 0.021, "2024-01-06": 0.020, "2024-01-07": 0.018, "2024-01-08": 0.022, "2024-01-09": 0.019, "2024-01-10": 0.021, "2024-01-11": 0.020, "2024-01-12": 0.018, "2024-01-13": 0.022, "2024-01-14": 0.019, "2024-01-15": 0.021, "2024-01-16": 0.020},
+        {"2024-01-01": 0.002, "2024-01-02": 0.001, "2024-01-03": 0.003, "2024-01-04": 0.002, "2024-01-05": 0.001, "2024-01-06": 0.003, "2024-01-07": 0.002, "2024-01-08": 0.001, "2024-01-09": 0.003, "2024-01-10": 0.002, "2024-01-11": 0.001, "2024-01-12": 0.003, "2024-01-13": 0.002, "2024-01-14": 0.001, "2024-01-15": 0.003, "2024-01-16": 0.002}
+      ],
+      "eligible_dates": ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06", "2024-01-07", "2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12", "2024-01-13", "2024-01-14", "2024-01-15", "2024-01-16"],
+      "gamma": 2.0,
+      "S": 4,
+      "expected_pbo": 0.0,
+      "_assertion_kind": "regression — PBO == 0.0 (config 0 dominates IS and OOS; no tie). Unchanged by the <= -> < fix."
+    }
+  }
+}

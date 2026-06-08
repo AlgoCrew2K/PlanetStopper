@@ -1,0 +1,35 @@
+{
+  "description": "C2b golden fixture — the BHY haircut t-stat must NOT be inflated by CPCV path duplication. The objective accumulates daily_returns via all_path_returns.extend(path_returns) over _CPCV_N_PATHS paths (autotuner.py:2172); with the CPCV paths collapsed (C2a) those 5 paths are identical, so daily_returns holds 5x the distinct series. compute_crra_eu_tstat = mean(U)/(sd(U)/sqrt(T)) inflates by ~sqrt(5) when T is 5x too large, making the Benjamini-Hochberg-Yekutieli FDR gate too easy to clear -> noise-grade proposals pass. The fix aggregates per-date (mirroring the cscv_date_returns dict) so T == distinct eligible-date count.",
+  "citation": "Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013; validation/overfitting.md C2b; GATE2-PLAN A3.",
+  "provenance": "Hand-authored RED scenario inputs (raw-percent guard-alpha series). The inflation ratio (~sqrt(5)) and the FDR-gate flip are DERIVED at runtime from the live compute_crra_eu_tstat / _haircut_select on the single series vs its 5x concatenation. No SUT t-stat or p-value is pinned as a literal; assertions are ratio bounds and gate-decision flips.",
+  "constants": {
+    "_CPCV_N_PATHS_expected": 5,
+    "sqrt_n_paths_approx": 2.2360679774997896,
+    "_note": "_CPCV_N_PATHS is read live from autotuner; sqrt_n_paths_approx is for fixture self-consistency only. The Bessel (ddof=1) correction makes the observed ratio slightly above sqrt(5)."
+  },
+  "scenarios": {
+    "fdr_gate_flips_on_path_duplication": {
+      "description": "A weak-but-positive borderline raw-percent series. At the TRUE single-series T the BHY-adjusted p-value exceeds HARVEY_LIU_FDR_Q (rejected, no winner). At 5x duplication (the bug) the inflated t-stat drives p_adj below the gate (passes, winner). This is the live FDR-gate-too-easy consequence.",
+      "single_series_pct": [0.5, -0.3, 0.4, -0.2, 0.25, 0.1, -0.15, 0.3, 0.05, -0.25, 0.2, 0.15],
+      "duplication_factor": 5,
+      "single_series_clears_gate_expected": false,
+      "duplicated_series_clears_gate_expected": true,
+      "_assertion_kind": "gate-decision flip — derived from _haircut_select(single) vs _haircut_select(5x). No p-value literal pinned."
+    },
+    "tstat_inflation_ratio": {
+      "description": "The t-stat over a 5x-concatenated series must be ~sqrt(5) times the single-series t-stat (mean unchanged, sd ~unchanged, sqrt(T) -> sqrt(5T)). The ratio is bounded in (1.5, 3.0): comfortably above 1 (the bug is real) and near sqrt(5)~=2.236 (slightly above due to the ddof=1 Bessel correction as T grows).",
+      "single_series_pct": [0.5, -0.3, 0.4, -0.2, 0.25, 0.1, -0.15, 0.3, 0.05, -0.25, 0.2, 0.15],
+      "duplication_factor": 5,
+      "ratio_lower_bound_exclusive": 1.5,
+      "ratio_upper_bound_exclusive": 3.0,
+      "_assertion_kind": "ratio bound — derived from compute_crra_eu_tstat on the U-transformed single vs 5x series. No t-stat literal pinned."
+    },
+    "daily_returns_length_equals_distinct_dates": {
+      "description": "After the fix, the persisted daily_returns user_attr must have length == the distinct triggered-date count (the same count as cscv_date_returns), NOT _CPCV_N_PATHS x that count. Pre-fix the extend accumulation makes it 5x longer. Driven via the real objective(trial) closure with a 3-date mocked sim.",
+      "mocked_per_path_returns_pct": [0.5, -0.3, 0.4],
+      "mocked_dated_returns": [["2026-01-01", 0.5], ["2026-01-02", -0.3], ["2026-01-03", 0.4]],
+      "distinct_date_count": 3,
+      "_assertion_kind": "invariant — len(daily_returns) == len(cscv_date_returns) == distinct_date_count. Pre-fix len(daily_returns) == n_paths x distinct. No raw count compared against a hardcoded 5x."
+    }
+  }
+}

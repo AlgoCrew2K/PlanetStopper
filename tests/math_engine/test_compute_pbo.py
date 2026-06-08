@@ -412,3 +412,91 @@ class TestComputePboOrthogonality:
                     f"alpha_bot_execution.py references PBO symbol {sym!r} as a string — "
                     "possible dynamic import; must be removed."
                 )
+
+
+# ---------------------------------------------------------------------------
+# A4 PBO-tie convention (RED) — a degenerate all-tie OOS must read as OVERFIT.
+# ---------------------------------------------------------------------------
+
+_TIE_FIXTURE_PATH = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "tests" / "fixtures" / "math" / "pbo_tie_convention.json"
+)
+
+
+@pytest.fixture(scope="module")
+def pbo_tie_fixture() -> dict:
+    assert _TIE_FIXTURE_PATH.exists(), (
+        f"Fixture not found: {_TIE_FIXTURE_PATH}. "
+        "Create tests/fixtures/math/pbo_tie_convention.json first."
+    )
+    with _TIE_FIXTURE_PATH.open(encoding="utf-8") as f:
+        return json.load(f)
+
+
+class TestComputePboTieConvention:
+    """A4 PBO-tie ruling (GATE2-PLAN A4, validation/overfitting.md PBO-tie).
+
+    The rank tie-direction `rank_c = sum(1 for s in oos_scores if s <= is_best_oos)`
+    (math_engine.py:1960) treats a degenerate all-tie OOS as NOT overfit (PBO -> 0):
+    every config ties the IS-best OOS, so rank_c = K -> omega_bar ~ 1 -> lambda > 0
+    -> not counted. A strategy that distinguishes nothing OOS reading as maximally
+    robust is the optimistic tie direction. The fix changes `<=` to `<` (strict) so
+    the all-tie degenerate reads as OVERFIT (PBO -> 1).
+
+    RED until the operator is changed to strict `<`.
+    """
+
+    def test_all_tie_oos_reads_as_overfit_after_strict_fix(self, pbo_tie_fixture):
+        """All-identical configs (all-tie OOS) must yield a PBO indicating OVERFIT.
+
+        Post-fix the strict `<` makes rank_c = 0 -> omega_bar ~ 0 -> lambda < 0 ->
+        counted as overfit -> PBO == 1.0 (> PBO_REJECT_THRESHOLD). Pre-fix the `<=`
+        makes PBO == 0.0 (RED). The expected endpoint is the structural pessimistic
+        tie value (1.0), not a SUT-derived literal.
+        """
+        me = _import_math_engine()
+        sc = pbo_tie_fixture["scenarios"]["all_tie_oos_is_overfit"]
+
+        pbo = me.compute_pbo(
+            sc["configs_date_returns_decimal"],
+            sc["eligible_dates"],
+            sc["gamma"],
+            S=sc["S"],
+        )
+
+        assert pbo > me.PBO_REJECT_THRESHOLD, (
+            f"All-tie OOS PBO={pbo!r} must be > PBO_REJECT_THRESHOLD "
+            f"({me.PBO_REJECT_THRESHOLD}) — a degenerate strategy that distinguishes "
+            "nothing OOS is OVERFIT, not robust.\n"
+            "  PBO-tie BUG: pre-fix `rank_c = sum(... s <= is_best_oos)` counts every "
+            "tied config -> rank_c=K -> omega_bar~1 -> lambda>0 -> PBO=0 (optimistic). "
+            "Fix: change `<=` to `<` (strict) at math_engine.py:1960."
+        )
+        # The pessimistic endpoint is exactly 1.0 (every combo is lambda<=0).
+        assert pbo == pytest.approx(sc["post_fix_pbo"], abs=1e-9), (
+            # Tolerance abs=1e-9: PBO is a fraction of integer combo counts; the
+            # all-tie degenerate maps every combo to lambda<=0 -> exactly 1.0.
+            f"All-tie OOS PBO={pbo!r}; expected the pessimistic endpoint "
+            f"{sc['post_fix_pbo']} after the strict-tie fix."
+        )
+
+    def test_non_tie_pbo_unaffected_by_tie_fix(self, pbo_tie_fixture):
+        """Regression: a clearly-dominant config keeps PBO == 0.0 — the `<=` -> `<`
+        change is a no-op when there is no all-tie OOS. Pins that the tie fix does
+        not perturb the non-degenerate case (and that the existing golden scenarios
+        in TestComputePboGoldenFixture stay GREEN).
+        """
+        me = _import_math_engine()
+        sc = pbo_tie_fixture["scenarios"]["non_tie_golden_unaffected"]
+
+        pbo = me.compute_pbo(
+            sc["configs_date_returns_decimal"],
+            sc["eligible_dates"],
+            sc["gamma"],
+            S=sc["S"],
+        )
+        assert pbo == pytest.approx(sc["expected_pbo"], abs=1e-9), (
+            f"Non-tie PBO={pbo!r}; expected {sc['expected_pbo']} (config 0 dominates "
+            "IS and OOS; no tie). The strict-tie fix must NOT change this case."
+        )
