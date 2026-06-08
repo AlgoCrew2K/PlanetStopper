@@ -194,6 +194,10 @@ class SwapRunResult:
         The ``SwapObjective`` that drove this run.
     no_api_key:
         ``True`` when the Composer API key is absent; proposals are empty (AC-X4).
+    persistence_error:
+        Non-None when the advisor_observation write failed (RC-5).  The survivor is
+        still returned, but the operator/log must see that its audit-trail row never
+        landed — a persistence failure must be surfaced, never swallowed to a warning.
     """
 
     gate_batch: GatedBatch
@@ -203,6 +207,7 @@ class SwapRunResult:
     message: str = ""
     objective: Optional[SwapObjective] = None
     no_api_key: bool = False
+    persistence_error: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -465,22 +470,27 @@ def _build_objective_rationale(
 # ---------------------------------------------------------------------------
 
 
-def _persist_survivor(
+def _persist_observation(
     symphony_id: str,
     proposal: SwapProposalResult,
     gate_result: CandidateGateResult,
 ) -> None:
-    """Persist an ADOPT_CANDIDATE survivor as an advisor_observation.
+    """Persist a swap proposal as an advisor_observation, REGARDLESS of verdict (RC-4).
 
-    Writes with ``is_advisory_only=1`` and ``observation_type="asset_swap_proposal"``
-    (AC-X3 structural requirements).  Never writes for non-survivors.
+    Writes the ACTUAL gate verdict (ADOPT_CANDIDATE / KEEP_INCUMBENT /
+    REJECT_VETO_FAILED) with ``is_advisory_only=1`` and
+    ``observation_type="asset_swap_proposal"`` (AC-X3 structural requirements).
+
+    RC-4: persistence is verdict-agnostic so the operator sees the engine ran and
+    kept the incumbent — an ADOPT-only write left advisor_observations empty on the
+    common KEEP path, making the advisor look dead.
     """
     database.insert_advisor_observation(
         advisor_role="ASSET_SWAP",
         symphony_id=symphony_id,
         subject_type="asset_swap_proposal",
         subject_id=proposal.candidate_id,
-        verdict="ADOPT_CANDIDATE",
+        verdict=gate_result.verdict.decision,
         is_advisory_only=1,
         observation_type=_OBSERVATION_TYPE,
         raw_response={
@@ -704,17 +714,24 @@ def propose_operator_swap(
 
     if gate_result.verdict.decision == "ADOPT_CANDIDATE":
         survivors.append(proposal_shell)
-        # Persist every survivor (AC-X3): is_advisory_only=1 + observation_type.
-        try:
-            _persist_survivor(symphony_id, proposal_shell, gate_result)
-        except Exception:
-            logger.warning(
-                "propose_operator_swap: failed to persist survivor observation for %s",
-                proposal_shell.candidate_id,
-                exc_info=True,
-            )
     else:
         rejected.append(proposal_shell)
+
+    # RC-4: persist the observation REGARDLESS of verdict so the operator sees the
+    # engine ran (incl. KEEP_INCUMBENT / REJECT_VETO_FAILED), not just on ADOPT.
+    # RC-5: a persistence failure must be SURFACED (persistence_error), not swallowed
+    # to a warning — otherwise an adopted survivor is shown whose audit row never landed.
+    persistence_error = None
+    try:
+        _persist_observation(symphony_id, proposal_shell, gate_result)
+    except Exception as exc:
+        persistence_error = f"{type(exc).__name__}: {exc}"
+        logger.error(
+            "propose_operator_swap: failed to persist observation for %s (%s)",
+            proposal_shell.candidate_id,
+            persistence_error,
+            exc_info=True,
+        )
 
     message = (
         f"1 swap survived the gate for {symphony_name}"
@@ -724,6 +741,7 @@ def propose_operator_swap(
 
     return SwapRunResult(
         gate_batch=gate_batch,
+        persistence_error=persistence_error,
         proposals=proposals,
         survivors=survivors,
         rejected_candidates=rejected,
@@ -874,8 +892,11 @@ def suggest_swaps(
         gate_result_by_id = {}
 
     # Annotate proposal shells with gate results and build survivors/rejected lists.
+    # RC-4: persist every gated proposal regardless of verdict. RC-5: surface the
+    # first persistence failure (persistence_error), never swallow it to a warning.
     survivors = []
     rejected = []
+    persistence_error = None
     for shell in proposal_shells:
         gate_result = gate_result_by_id.get(shell.candidate_id)
         if gate_result is not None:
@@ -884,16 +905,20 @@ def suggest_swaps(
             shell.caveats = list(gate_result.caveats)
             if gate_result.verdict.decision == "ADOPT_CANDIDATE":
                 survivors.append(shell)
-                try:
-                    _persist_survivor(symphony_id, shell, gate_result)
-                except Exception:
-                    logger.warning(
-                        "suggest_swaps: failed to persist survivor for %s",
-                        shell.candidate_id,
-                        exc_info=True,
-                    )
             else:
                 rejected.append(shell)
+            try:
+                _persist_observation(symphony_id, shell, gate_result)
+            except Exception as exc:
+                if persistence_error is None:
+                    persistence_error = f"{type(exc).__name__}: {exc}"
+                logger.error(
+                    "suggest_swaps: failed to persist observation for %s (%s: %s)",
+                    shell.candidate_id,
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
+                )
         else:
             # Backtest failed for this candidate — goes into rejected.
             rejected.append(shell)
@@ -906,6 +931,7 @@ def suggest_swaps(
 
     return SwapRunResult(
         gate_batch=gate_batch,
+        persistence_error=persistence_error,
         proposals=proposal_shells,
         survivors=survivors,
         rejected_candidates=rejected,
