@@ -2152,15 +2152,21 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             # n_optuna / compute_n_effective / BHY are UNTOUCHED — CPCV changes WHAT data
             # each trial scores on, not HOW MANY tests exist (AC-5 anti-double-count).
             path_scores: list[float] = []
-            all_path_returns: list[float] = []
-            # cscv_date_returns: date-labeled union of per-path triggered returns.
-            # Built as a dict (date -> guard_alpha) via union/update — NOT via list.extend.
-            # The CPCV partition invariant guarantees no date collision: each CPCV test-path
-            # covers a non-overlapping subset of the eligible window, so the union has
-            # exactly one entry per triggered date. This date-label-explicit approach
-            # avoids the path-concatenation contamination that a positional list would
-            # produce (the same date could appear in up to _CPCV_N_PATHS paths' outputs
-            # if we used extend, making CSCV block-partitioning ill-defined).
+            # daily_date_returns / cscv_date_returns: date-labeled unions of per-path
+            # triggered returns. Built as dicts (date -> guard_alpha) via union/update —
+            # NOT via list.extend. Under the current state-independent per-day sim
+            # (autotuner.py:1335 re-inits day_state per day), a given date yields the
+            # SAME guard_alpha in every CPCV path it appears in, so the CPCV paths
+            # overlap on dates (each path covers the full eligible window). A positional
+            # list.extend would therefore store _CPCV_N_PATHS copies of every date's
+            # return — inflating the haircut t-stat T by ~_CPCV_N_PATHS and the t-stat
+            # itself by ~sqrt(_CPCV_N_PATHS) (C2b), making the BHY/Yekutieli FDR gate too
+            # easy to clear. The date-keyed dicts collapse the duplication: exactly one
+            # entry per distinct triggered date, so T == the true distinct-date count.
+            #   - daily_date_returns: RAW PERCENT (daily_returns's T5 provenance contract;
+            #     _haircut_select:1493 divides by RETURN_PCT_TO_FRACTION before the U-transform).
+            #   - cscv_date_returns: DECIMAL (compute_pbo's contract; divided here — C1).
+            daily_date_returns: dict[str, float] = {}
             cscv_date_returns: dict[str, float] = {}
             for _path_hist in _cpcv_path_histories:
                 path_returns = _collect_sim_returns(p, _path_hist, [target_sym_id], current_date_str, deviation_dict)
@@ -2169,12 +2175,13 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
                         [r / RETURN_PCT_TO_FRACTION for r in path_returns], _gamma
                     ) if _objective_kind == "crra_eu" else compute_sortino_ratio(path_returns)
                 )
-                all_path_returns.extend(path_returns)
-                # Date-labeled union for the CSCV PBO gate. Uses _collect_sim_returns_dated
-                # (not an inline return_dates=True call) to avoid conflating the mock
-                # boundary: tests that patch _collect_sim_returns for flat-return assertions
-                # must not intercept the dated-variant call that feeds the CSCV dict.
+                # Date-labeled unions. Uses _collect_sim_returns_dated (not an inline
+                # return_dates=True call) to avoid conflating the mock boundary: tests
+                # that patch _collect_sim_returns for flat-return assertions must not
+                # intercept the dated-variant call that feeds these dicts.
                 for _date, _ga in _collect_sim_returns_dated(p, _path_hist, [target_sym_id], current_date_str, deviation_dict):
+                    # daily_returns is RAW PERCENT (T5 provenance) — no divide here.
+                    daily_date_returns[_date] = _ga
                     # C1 fix: divide by RETURN_PCT_TO_FRACTION so the stored value is
                     # DECIMAL, matching compute_pbo -> compute_crra_eu_objective's
                     # contract (W = max(WEALTH_ARG_FLOOR, 1 + r)). Mirrors the inline
@@ -2182,10 +2189,11 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
                     # sub--1% day (U ~= -999), corrupting the PBO IS-best/OOS rank.
                     cscv_date_returns[_date] = _ga / RETURN_PCT_TO_FRACTION
 
-            # Persist the CPCV-aggregated return series (all paths concatenated) so
-            # _haircut_select can source T = len(daily_returns) and re-transform through
-            # the active gamma. Raw percent (T5 provenance contract — not U values).
-            trial.set_user_attr("daily_returns", all_path_returns)
+            # Persist the per-date-aggregated return series (one entry per distinct
+            # triggered date — NOT _CPCV_N_PATHS copies) so _haircut_select can source
+            # T = len(daily_returns) == the true distinct-date count and re-transform
+            # through the active gamma. Raw percent (T5 provenance contract — not U values).
+            trial.set_user_attr("daily_returns", list(daily_date_returns.values()))
             # Persist the date-labeled union for the Phase-3 CSCV PBO gate.
             # Keys are date strings within the CPCV-eligible window (sorted_dates[:frozen_start_idx]).
             # Values are DECIMAL guard_alpha returns (raw percent / RETURN_PCT_TO_FRACTION,
