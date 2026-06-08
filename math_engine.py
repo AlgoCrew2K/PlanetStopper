@@ -1968,7 +1968,7 @@ def compute_pbo(
         #     → omega_bar ≈ (K-0.5)/K → lambda > 0 → NOT overfit (PBO→0), unchanged from
         #     `<=`. The +1 restores the IS-best's own position; a bare strict `<` (no +1)
         #     would drop the dominant config to rank K-1 and wrongly flip it to overfit.
-        rank_c = sum(1 for s in oos_scores if s < is_best_oos)  # FALSIFY: bare < no +1
+        rank_c = sum(1 for s in oos_scores if s < is_best_oos) + 1
 
         # --- Step 2d-e: omega_bar and lambda.
         omega_bar = (rank_c - 0.5) / K
