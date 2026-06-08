@@ -2175,7 +2175,12 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
                 # boundary: tests that patch _collect_sim_returns for flat-return assertions
                 # must not intercept the dated-variant call that feeds the CSCV dict.
                 for _date, _ga in _collect_sim_returns_dated(p, _path_hist, [target_sym_id], current_date_str, deviation_dict):
-                    cscv_date_returns[_date] = _ga
+                    # C1 fix: divide by RETURN_PCT_TO_FRACTION so the stored value is
+                    # DECIMAL, matching compute_pbo -> compute_crra_eu_objective's
+                    # contract (W = max(WEALTH_ARG_FLOOR, 1 + r)). Mirrors the inline
+                    # path-score divide above. Storing raw percent floored W on any
+                    # sub--1% day (U ~= -999), corrupting the PBO IS-best/OOS rank.
+                    cscv_date_returns[_date] = _ga / RETURN_PCT_TO_FRACTION
 
             # Persist the CPCV-aggregated return series (all paths concatenated) so
             # _haircut_select can source T = len(daily_returns) and re-transform through
@@ -2183,8 +2188,9 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             trial.set_user_attr("daily_returns", all_path_returns)
             # Persist the date-labeled union for the Phase-3 CSCV PBO gate.
             # Keys are date strings within the CPCV-eligible window (sorted_dates[:frozen_start_idx]).
-            # Values are decimal guard_alpha returns (percent / RETURN_PCT_TO_FRACTION not applied —
-            # raw percent, same provenance contract as daily_returns).
+            # Values are DECIMAL guard_alpha returns (raw percent / RETURN_PCT_TO_FRACTION,
+            # applied at the store site above — C1 fix). This matches compute_pbo's
+            # decimal contract; it does NOT share daily_returns's raw-percent contract.
             trial.set_user_attr("cscv_date_returns", cscv_date_returns)
 
             # Trial score: mean across the _CPCV_N_PATHS path scores.
