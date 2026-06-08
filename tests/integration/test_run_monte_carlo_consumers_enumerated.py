@@ -13,8 +13,18 @@ This test grep-asserts the structural invariants from the consumer map so that:
   * New call sites are caught at CI time, not during review.
   * Consumer-guard patterns are present in every production file that consumes
     the result.
-  * No production file attempts a raw numeric comparison with ``prob_beating``
-    or ``mc_prob`` without an ``is None`` guard.
+  * No production file attempts a raw numeric comparison with
+    ``prob_underperforming`` or ``mc_prob`` without an ``is None`` guard.
+
+H1 RENAME NOTE
+--------------
+The MC metric was renamed ``prob_beating`` -> ``prob_underperforming`` (H1:
+the legacy name was the inverse of the value, which is the fraction of analog
+days that beat us — HIGH when underperforming). This meta-test is the rename-
+COMPLETENESS oracle: it asserts the NEW name appears in the canonical guard and
+format sites AND that the OLD name ``prob_beating`` is fully gone from
+production. A partial rename (any surviving ``prob_beating``) is a value-vs-name
+mismatch and fails here.
 
 WHAT IS ASSERTED
 ----------------
@@ -25,13 +35,14 @@ WHAT IS ASSERTED
    guard in the same file (the sentinel is always checked at the call site
    level).
 3. ``alpha_bot_execution.py`` contains the canonical ``mc_available`` guard
-   pattern — ``mc_available = prob_beating is not None`` — not a bare
+   pattern — ``mc_available = prob_underperforming is not None`` — not a bare
    comparison.
 4. ``autotuner.py`` contains the canonical ``mc_available`` guard pattern —
    ``mc_available = mc is not None`` — not a bare comparison.
 5. No production file contains an unguarded numeric comparison of the form
-   ``prob_beating < N`` or ``prob_beating > N`` or ``mc_prob < N`` or
-   ``mc_prob > N`` outside a context that first checks ``is not None``.
+   ``prob_underperforming < N`` or ``prob_underperforming > N`` or
+   ``mc_prob < N`` or ``mc_prob > N`` outside a context that first checks
+   ``is not None``.
    (This is a grep heuristic — it catches the class of pre-fix TypeError bugs
    that the math audit flagged as fail-dangerous.)
 6. The consumer-map document exists at the expected path.
@@ -173,25 +184,27 @@ def test_files_with_direct_calls_have_is_not_none_guard(filename: str) -> None:
 
 def test_alpha_bot_execution_has_mc_available_sentinel_guard() -> None:
     """
-    The canonical sentinel guard in alpha_bot_execution.py is:
-        mc_available = prob_beating is not None
+    The canonical sentinel guard in alpha_bot_execution.py is (post H1 rename):
+        mc_available = prob_underperforming is not None
     Every downstream branch in that file reads ``mc_available`` rather than
-    comparing ``prob_beating`` directly. If this guard is removed or renamed,
-    all 15 downstream consumer sites become unguarded.
+    comparing ``prob_underperforming`` directly. If this guard is removed or
+    renamed, all 15 downstream consumer sites become unguarded.
 
     RED trigger: renaming ``mc_available`` to something else without updating
-    the 15 consumer sites, or removing the guard entirely.
+    the 15 consumer sites, or removing the guard entirely, or leaving the OLD
+    ``prob_beating`` name in the guard (an incomplete H1 rename).
     """
     source = _read_production("alpha_bot_execution.py")
-    # The exact canonical form (whitespace-flexible).
+    # The exact canonical form (whitespace-flexible), NEW metric name.
     guard_pattern = re.compile(
-        r"mc_available\s*=\s*prob_beating\s+is\s+not\s+None"
+        r"mc_available\s*=\s*prob_underperforming\s+is\s+not\s+None"
     )
     assert guard_pattern.search(source), (
         "alpha_bot_execution.py is missing the canonical sentinel guard "
-        "'mc_available = prob_beating is not None'. "
+        "'mc_available = prob_underperforming is not None'. "
         "This guard is the entry point for all 15 downstream consumer branches. "
-        "Its absence means prob_beating is consumed without a None check."
+        "Its absence means the MC metric is consumed without a None check, or "
+        "the H1 rename left the legacy 'prob_beating' name in place."
     )
 
 
@@ -220,6 +233,78 @@ def test_autotuner_has_mc_available_sentinel_guard() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 4b. H1 rename completeness: the legacy ``prob_beating`` name is fully gone
+# ---------------------------------------------------------------------------
+
+# Files in the H1 rename scope. Distinct from _PRODUCTION_FILES (which is the
+# call-count baseline list): math_engine.py is the PRODUCER + owns the gate
+# parameters, so it carries the metric name even though it has 0 direct
+# run_monte_carlo *call sites*. synthetic_history.py calls run_monte_carlo but
+# uses the result positionally (no named prob_beating var), so it is not in the
+# rename scope unless it spells the identifier — the whole-word check below is a
+# no-op there if the token is absent.
+_H1_RENAME_SCOPE_FILES = [
+    "alpha_bot_execution.py",
+    "autotuner.py",
+    "math_engine.py",
+    "reporting.py",
+]
+
+
+@pytest.mark.parametrize("filename", _H1_RENAME_SCOPE_FILES)
+def test_legacy_prob_beating_name_is_gone_from_production(filename: str) -> None:
+    """
+    H1 RENAME-COMPLETENESS ORACLE.
+
+    ``prob_beating`` was the inverse of the value it named (the value is the
+    fraction of analog days that beat us — HIGH when underperforming). The H1
+    fix renames it ``prob_underperforming`` EVERYWHERE: caller variables, the
+    parameters of compute_exit_confirmation / compute_tp_confirmation, the
+    user_attr / bot_state keys, comments, and the format/log sites.
+
+    A SINGLE surviving ``prob_beating`` token anywhere in production is a
+    value-vs-name mismatch (the exact category of defect H1 exists to remove),
+    so this asserts the identifier is GONE from every production file — as a
+    whole-word match (so an unrelated substring would not false-positive, and a
+    real variable/keyword/attr WOULD be caught).
+
+    RED pre-fix: every production file still contains ``prob_beating``.
+    GREEN post-fix: zero occurrences.
+    """
+    source = _read_production(filename)
+    # Whole-word matches of the bare identifier and the most common compound
+    # forms (kwarg, attribute, dict-key, f-string field).
+    occurrences = re.findall(r"\bprob_beating\b", source)
+    assert not occurrences, (
+        f"{filename} still contains {len(occurrences)} occurrence(s) of the "
+        f"legacy name 'prob_beating'. The H1 rename to 'prob_underperforming' "
+        f"must be COMPLETE — a surviving 'prob_beating' is a value-vs-name "
+        f"mismatch (the defect H1 removes). Sweep every variable, parameter, "
+        f"user_attr/bot_state key, comment, and format site."
+    )
+
+
+def test_new_prob_underperforming_name_present_in_core_consumers() -> None:
+    """
+    The positive half of the completeness oracle: after the rename, the NEW
+    name ``prob_underperforming`` must appear in the two files that own the
+    live MC consumer logic (alpha_bot_execution.py producer/consumer and
+    math_engine.py gate parameters). This guards against a "delete don't
+    rename" regression that removed prob_beating without introducing the
+    corrected name.
+
+    RED pre-fix: prob_underperforming does not exist yet.
+    """
+    for filename in ("alpha_bot_execution.py", "math_engine.py"):
+        source = _read_production(filename)
+        assert re.search(r"\bprob_underperforming\b", source), (
+            f"{filename} does not contain the new metric name "
+            f"'prob_underperforming'. The H1 rename must introduce it (not "
+            f"merely delete 'prob_beating')."
+        )
+
+
+# ---------------------------------------------------------------------------
 # 5. No production file contains a bare unguarded numeric comparison of
 #    prob_beating or mc_prob outside a prior is-not-None context
 # ---------------------------------------------------------------------------
@@ -244,35 +329,37 @@ def test_reporting_uses_pre_guarded_variable_for_prob_beating_format() -> None:
     """
     source = _read_production("reporting.py")
 
-    # (a) The guarded assignment must exist.
+    # (a) The guarded assignment must exist (post H1 rename: prob_underperforming).
     guarded_pattern = re.compile(
-        r'mc_prob_text\s*=.+if\s+prob_beating\s+is\s+not\s+None'
+        r'mc_prob_text\s*=.+if\s+prob_underperforming\s+is\s+not\s+None'
     )
     assert guarded_pattern.search(source), (
         "reporting.py is missing the sentinel-safe 'mc_prob_text = ... if "
-        "prob_beating is not None else ...' assignment. All prob_beating format "
-        "sites must go through this pre-guard to avoid TypeError on None."
+        "prob_underperforming is not None else ...' assignment. All "
+        "prob_underperforming format sites must go through this pre-guard to "
+        "avoid TypeError on None (or the H1 rename left 'prob_beating' behind)."
     )
 
-    # (b) Every line with a {prob_beating: format expression must be the sentinel-safe
-    # conditional assignment line (mc_prob_text = f"..." if prob_beating is not None ...).
-    # Any OTHER line with a bare {prob_beating: format is an unguarded regression.
+    # (b) Every line with a {prob_underperforming: format expression must be the
+    # sentinel-safe conditional assignment line (mc_prob_text = f"..." if
+    # prob_underperforming is not None ...). Any OTHER line with a bare
+    # {prob_underperforming: format is an unguarded regression.
     lines = source.splitlines()
     violations = []
     for lineno, line in enumerate(lines, start=1):
-        if re.search(r'\{prob_beating\s*:', line):
-            # This line formats prob_beating. It is safe if it is the guarded
-            # mc_prob_text assignment — i.e. the same line also contains the
-            # "if prob_beating is not None" guard.
+        if re.search(r'\{prob_underperforming\s*:', line):
+            # Safe iff this line is the guarded mc_prob_text assignment — i.e.
+            # the same line also contains the "is not None" guard.
             if "is not None" not in line:
                 violations.append(f"  line {lineno}: {line.strip()}")
 
     assert not violations, (
         f"reporting.py contains {len(violations)} f-string format site(s) for "
-        f"prob_beating that are not on a line with an 'is not None' guard:\n"
+        f"prob_underperforming that are not on a line with an 'is not None' "
+        f"guard:\n"
         + "\n".join(violations)
-        + "\nAll prob_beating format sites must use mc_prob_text (pre-guarded) "
-        "or be on the guarded-assignment line itself."
+        + "\nAll prob_underperforming format sites must use mc_prob_text "
+        "(pre-guarded) or be on the guarded-assignment line itself."
     )
 
 
@@ -302,29 +389,30 @@ def test_alpha_bot_execution_prob_beating_format_sites_are_guarded() -> None:
     """
     source = _read_production("alpha_bot_execution.py")
 
-    # Phase-1 baseline: count all {prob_beating: format expressions.
-    # The current fork-point has exactly 5 sites (arm_reason, ternary status line,
-    # TP-armed transition ×2, TP snapshot). All are inside mc_available-gated
-    # contexts. Pinning the count ensures any addition is caught.
+    # Baseline: count all {prob_underperforming: format expressions (post H1
+    # rename). The fork-point had exactly 4 sites (arm_reason, ternary status
+    # line, TP-armed transition x2). All are inside mc_available-gated contexts.
+    # Pinning the count ensures any addition is caught. The rename is value-
+    # preserving so the COUNT is unchanged by H1 — only the identifier changes.
     _BASELINE_FORMAT_COUNT = 4
-    live_count = len(re.findall(r'\{prob_beating\s*:', source))
+    live_count = len(re.findall(r'\{prob_underperforming\s*:', source))
 
     assert live_count == _BASELINE_FORMAT_COUNT, (
-        f"alpha_bot_execution.py has {live_count} prob_beating format expression(s); "
-        f"Phase-1 baseline is {_BASELINE_FORMAT_COUNT}. "
-        f"A count increase means a new format site was added. Verify the new site "
-        f"is inside an mc_available-gated block before updating the baseline here. "
-        f"A count decrease means a format site was removed; update the baseline."
+        f"alpha_bot_execution.py has {live_count} prob_underperforming format "
+        f"expression(s); baseline is {_BASELINE_FORMAT_COUNT}. A count increase "
+        f"means a new format site was added — verify it is inside an "
+        f"mc_available-gated block before updating the baseline. A count below "
+        f"baseline likely means the H1 rename was incomplete (some sites still "
+        f"say 'prob_beating') or a site was removed."
     )
 
     # Also assert the sentinel-safe ternary pattern exists (the arm_prob_str line).
-    # The canonical form is: f"...{prob_beating:.1f}..." if mc_available else "N/A"
-    # The entire f-string literal comes before the `if mc_available` ternary.
+    # Canonical: f"...{prob_underperforming:.1f}..." if mc_available else "N/A".
     ternary_guard = re.compile(
-        r'\{prob_beating\s*:[^}]+\}[^"]*"\s+if\s+mc_available\s+else'
+        r'\{prob_underperforming\s*:[^}]+\}[^"]*"\s+if\s+mc_available\s+else'
     )
     assert ternary_guard.search(source), (
         "alpha_bot_execution.py is missing the canonical sentinel-safe ternary "
-        "format 'f\"...{prob_beating:...}...\" if mc_available else \"N/A\"'. "
-        "This pattern must be present as the model for new format sites."
+        "format 'f\"...{prob_underperforming:...}...\" if mc_available else "
+        "\"N/A\"'. This pattern must be present as the model for new format sites."
     )
