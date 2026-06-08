@@ -114,39 +114,39 @@ _MATH_ENGINE_PATH = _REPO_ROOT / "math_engine.py"
         (0.1, "10 percent coverage — single-name partial fill"),
     ],
 )
-def test_low_coverage_tick_suppresses_vwap_signals_in_canonical_function(
+def test_low_coverage_tick_suppresses_system_a_but_not_system_b_in_canonical_function(
     valid_vwap_weight: float,
     scenario_description: str,
 ) -> None:
     """
-    BEHAVIORAL PIN for the calibration fix from Cycles A + B.
+    [H2] BEHAVIORAL PIN — UPDATED for the Cycle-B H2 System-B decouple
+    (PM ruling B1).
 
-    When the autotuner threads a low-coverage tick into
-    math_engine.compute_vwap_breakdown_update, the canonical function MUST
-    return (0, 0, False, False) — both counters reset, both broken flags
-    False — regardless of how violent the inner-system signals would be.
+    HISTORY: task #24 (a prior cycle) made the autotuner SIM match LIVE by
+    suppressing BOTH VWAP systems on a low-coverage tick; this test originally
+    pinned (0, 0, False, False). Cycle-B H2 fixes a LIVE bug: System B (bleed)
+    must fire on a confirmed bleed (current_return <= vwap_bleed_arm_pct)
+    REGARDLESS of VWAP coverage or sign — a hard bleed is a hard bleed. The
+    coverage+diff gate is now System-A-ONLY.
 
-    Inputs deliberately chosen so that, but for the gate:
-      - vwap_diff = -0.001 (just barely below zero; minimum to satisfy the
-        diff < 0 half of the gate IF coverage were high)
-      - safe_hwm = 10.0, current_return = -50.0, vwap_cross = 1.0 -> System
-        A condition (hwm >= cross AND ret < hwm) is FAR met; would
-        increment new_a from 2 -> 3 and fire is_vwap_broken=True
-      - bleed_arm = -1.0, current_return = -50.0, threshold = 3 -> System B
-        condition (ret <= arm) is FAR met; would increment new_b from 2 ->
-        3 and fire is_vwap_bleed_broken=True
-      - prev counters at 2 (one increment away from the break threshold)
-        to maximize the cost of a false positive
+    PARITY IS PRESERVED, at the corrected behavior: the SIM path
+    (autotuner._replay_exit_tick) and LIVE both call this SAME canonical
+    function, so both now do A-coverage-gated / B-coverage-independent. Task
+    #24's "low coverage suppresses BOTH systems" parity is CONSCIOUSLY RETIRED
+    by H2; parity now holds at the H2-corrected behavior in BOTH sim and live.
+    (A walk-forward re-tune against the H2-corrected sim is a tracked
+    operational follow-up, not part of this cycle.)
 
-    A regression that removed the gate (e.g. by always passing
-    valid_vwap_weight=1.0 because "live is always full coverage") would
-    return (3, 3, True, True) and double-break this test.
+    With the inputs below (coverage low, current_return=-50.0 deep below the
+    bleed arm, prev counters 2, threshold 3):
+      - System A: coverage gate misses -> new_vwap_ticks resets to 0,
+        is_vwap_broken=False (UNCHANGED — System A still coverage-gated).
+      - System B: -50.0 <= -1.0 bleed arm met -> new_vwap_bleed_ticks 2 -> 3,
+        is_vwap_bleed_broken = (3 >= 3) = True (NEW — System B coverage-independent).
+    Expected: (0, 3, False, True).
 
-    If Cycle B is reverted (autotuner stops calling this function), Cycle
-    B's structural tests fail. This test stays GREEN against the canonical
-    function because the function itself is unchanged. The chain is:
-    Cycle-B-structural (function called with right args) AND this-test
-    (function does the right thing on those args).
+    A regression that re-coupled System B to the coverage gate (reverting H2)
+    would return (0, 0, False, False) and break this test.
     """
     result = math_engine.compute_vwap_breakdown_update(
         is_triggered=False,
@@ -160,27 +160,33 @@ def test_low_coverage_tick_suppresses_vwap_signals_in_canonical_function(
         current_vwap_ticks=2,
         current_vwap_bleed_ticks=2,
     )
-    assert result == (0, 0, False, False), (
-        f"CALIBRATION REGRESSION ({scenario_description}): "
-        f"valid_vwap_weight={valid_vwap_weight} must SUPPRESS VWAP signals "
-        f"(return (0, 0, False, False)). Got {result}. "
-        "The gate `valid_vwap_weight > VWAP_WEIGHT_THRESHOLD AND "
-        "weighted_vwap_diff < 0` must veto inner-system firing on "
-        "low-coverage ticks — this is the live-sim parity fix from Cycle A "
-        "+ Cycle B of task #24."
+    assert result == (0, 3, False, True), (
+        f"H2 DECOUPLE REGRESSION ({scenario_description}): "
+        f"valid_vwap_weight={valid_vwap_weight} must reset System A "
+        f"(coverage-gated) but let System B FOLLOW ITS OWN BLEED ARM "
+        f"(coverage-independent): expected (0, 3, False, True), got {result}. "
+        "Post-H2 the coverage+diff gate is System-A-only; a confirmed bleed "
+        "(current_return <= vwap_bleed_arm_pct) fires System B regardless of "
+        "coverage, in BOTH sim and live (parity preserved at corrected behavior)."
     )
 
 
-def test_low_coverage_exact_boundary_value_resets_high_prev_counters() -> None:
+def test_low_coverage_tick_resets_system_a_but_system_b_follows_own_arm_high_prev() -> None:
     """
-    BEHAVIORAL PIN, sharper variant: even when prev counters are HIGH
-    (already incremented many ticks ago on a high-coverage stretch), a
-    single low-coverage tick MUST wipe them to 0. The autotuner's prior
-    inline implementation had this behavior; the canonical function
-    preserves it; this test pins the preservation post-Cycle-B.
+    [H2] BEHAVIORAL PIN, sharper variant — UPDATED for the Cycle-B H2 decouple
+    (PM ruling B1).
 
-    Inputs: high prev counters (10 each), low coverage (0.3), but inner-
-    system conditions also met. Expected: full wipe to 0.
+    Pre-H2 this asserted a low-coverage tick wipes BOTH high prev counters to 0
+    (task-#24 parity). Post-H2 the coverage gate is System-A-ONLY: System A
+    still resets, but System B follows its OWN bleed arm regardless of coverage.
+
+    Inputs: high prev counters (10 each), low coverage (0.3),
+    current_return=-3.0 (<= bleed_arm -1.0 -> System B armed), threshold 3.
+      - System A: coverage gate misses -> new_vwap_ticks=0, is_vwap_broken=False.
+      - System B: -3.0 <= -1.0 -> new_vwap_bleed_ticks 10 -> 11,
+        is_vwap_bleed_broken = (11 >= 3) = True.
+    Expected: (0, 11, False, True). System B is a confirmation ladder on the
+    bleed arm, not coupled to coverage; only System A resets on a coverage miss.
     """
     new_a, new_b, broken, bleed = math_engine.compute_vwap_breakdown_update(
         is_triggered=False,
@@ -194,11 +200,12 @@ def test_low_coverage_exact_boundary_value_resets_high_prev_counters() -> None:
         current_vwap_ticks=10,
         current_vwap_bleed_ticks=10,
     )
-    assert (new_a, new_b, broken, bleed) == (0, 0, False, False), (
-        "CALIBRATION REGRESSION: high prev counters (10, 10) must be wiped "
-        f"to (0, 0) by a low-coverage tick. Got ({new_a}, {new_b}, "
-        f"{broken}, {bleed}). Partial decrement is forbidden by the "
-        "producer's `else: bot_state[...] = 0` reset semantics."
+    assert (new_a, new_b, broken, bleed) == (0, 11, False, True), (
+        "H2 DECOUPLE REGRESSION: a low-coverage tick must reset System A "
+        f"(10 -> 0) but System B must follow its own bleed arm (10 -> 11, "
+        f"broken since 11 >= 3). Got ({new_a}, {new_b}, {broken}, {bleed}); "
+        "expected (0, 11, False, True). Post-H2 the coverage+diff gate is "
+        "System-A-only; System B is coverage-independent."
     )
 
 

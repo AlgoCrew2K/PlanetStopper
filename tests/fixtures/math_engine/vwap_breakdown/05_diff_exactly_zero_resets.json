@@ -1,6 +1,6 @@
 {
   "name": "05_diff_exactly_zero_resets",
-  "description": "Branch 2 (gate fails): weighted_vwap_diff EXACTLY 0.0 fails the strict `< 0` gate, so both tick counters reset.",
+  "description": "[H2] System-A gate fails (weighted_vwap_diff EXACTLY 0.0 fails the strict `< 0` gate) so System A resets; System B is DECOUPLED and arms on its own condition (current_return -2.0 <= bleed_arm -1.0).",
   "function": "compute_vwap_breakdown_update",
   "inputs": {
     "is_triggered": false,
@@ -16,9 +16,9 @@
   },
   "expected": {
     "new_vwap_ticks": 0,
-    "new_vwap_bleed_ticks": 0,
+    "new_vwap_bleed_ticks": 2,
     "is_vwap_broken": false,
     "is_vwap_bleed_broken": false
   },
-  "derivation": "Outer guard passes. Inner gate: `weighted_vwap_diff < 0` -> 0.0 < 0 is FALSE (strict less-than). Gate fails -> both ticks reset to 0. Returns (0, 0, False, False). Boundary case: confirms diff gate uses `<` not `<=`."
+  "derivation": "Outer guard passes. System-A gate: `weighted_vwap_diff < 0` -> 0.0 < 0 is FALSE (strict). System A resets vwap_ticks to 0 (confirms diff gate uses `<` not `<=`). [H2 DECOUPLING] System B independent: arm -2.0 <= -1.0 TRUE -> new_vwap_bleed_ticks = 1+1 = 2; is_vwap_bleed_broken = (2 >= 3) FALSE. Returns (0, 2, False, False). Pre-H2 wrongly expected (0,0,False,False)."
 }

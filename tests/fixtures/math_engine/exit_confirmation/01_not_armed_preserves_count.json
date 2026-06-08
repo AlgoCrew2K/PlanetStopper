@@ -7,12 +7,12 @@
     "is_triggered": false,
     "current_return": -5.0,
     "stop_trigger_level": -1.0,
-    "prob_beating": 40.0,
+    "prob_underperforming": 40.0,
     "current_below_stop_count": 2
   },
   "expected": {
     "new_below_stop_count": 2,
     "is_trailing_stop_hit": false
   },
-  "derivation": "armed=False -> the `if armed and not triggered:` guard fails on the FIRST clause. The producer's entire stop-check block (both the magnitude/MC condition path AND the reset-else branch) is skipped, so below_stop_count is neither incremented nor reset. Function returns (current_below_stop_count, False) = (2, False). The inputs would otherwise (if armed) trigger an increment: current_return -5.0 <= stop_trigger_level - 0.10 = -1.10 is TRUE, and prob_beating 40.0 < 60.0 is TRUE -- BUT armed=False blocks all of that."
+  "derivation": "armed=False -> the `if armed and not triggered:` guard fails on the FIRST clause. The producer's entire stop-check block (both the magnitude/breakdown condition path AND the reset-else branch) is skipped, so below_stop_count is neither incremented nor reset. Function returns (current_below_stop_count, False) = (2, False). The breakdown-gate direction is irrelevant here (the guard short-circuits the whole block) -- armed=False blocks all of it regardless of prob_underperforming or current_return."
 }

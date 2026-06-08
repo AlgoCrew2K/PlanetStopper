@@ -1,0 +1,18 @@
+{
+  "name": "16_mc_just_below_breakdown_threshold_suppresses",
+  "description": "[H1] Magnitude exactly at boundary (inclusive pass) BUT prob_underperforming just BELOW the breakdown threshold (59.99 < 60). Under the corrected `>=` gate this is NOT a confirmed breakdown -> the count resets (no hair-trigger just under threshold).",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -1.1,
+    "stop_trigger_level": -1.0,
+    "prob_underperforming": 59.99,
+    "current_below_stop_count": 2
+  },
+  "expected": {
+    "new_below_stop_count": 0,
+    "is_trailing_stop_hit": false
+  },
+  "derivation": "Guard passes. Magnitude: -1.10 <= -1.0 - 0.10 = -1.10 is TRUE (inclusive). [H1 GATE] Breakdown gate: prob_underperforming 59.99 >= MC_BREAKDOWN_THRESHOLD(60.0) is FALSE (just under). Combined: True AND False = False. Reset branch; new_count = 0; hit = False. [DIRECTION FLIP vs pre-H1] the old gate `59.99 < 60` PASSED and counted; the corrected `>= 60` suppresses just-under-threshold. Pairs with fixture 15 (exactly-60 passes) to pin the inclusive boundary direction."
+}

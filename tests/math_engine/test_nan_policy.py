@@ -246,10 +246,10 @@ def test_compute_active_trailing_stop_output_is_finite_for_valid_inputs() -> Non
 # Signature:
 #   compute_exit_confirmation(
 #       armed, is_triggered, current_return, stop_trigger_level,
-#       prob_beating, current_below_stop_count,
+#       prob_underperforming, current_below_stop_count,
 #   ) -> (int, bool)
 #
-# Float positions: current_return, stop_trigger_level, prob_beating.
+# Float positions: current_return, stop_trigger_level, prob_underperforming.
 # Bools (armed, is_triggered) and int (current_below_stop_count) are
 # not float-input positions.
 #
@@ -268,13 +268,13 @@ _EXC_VALID = dict(
     is_triggered=False,
     current_return=-0.5,
     stop_trigger_level=-0.4,
-    prob_beating=50.0,
+    prob_underperforming=50.0,
     current_below_stop_count=0,
 )
 _EXC_FLOAT_POSITIONS = [
     "current_return",
     "stop_trigger_level",
-    "prob_beating",
+    "prob_underperforming",
 ]
 
 
@@ -298,13 +298,13 @@ def test_compute_exit_confirmation_output_is_finite_for_valid_inputs() -> None:
     that adds a float to the return value is still covered."""
     sweeps = [
         dict(armed=True, is_triggered=False, current_return=-1.0,
-             stop_trigger_level=-0.5, prob_beating=30.0, current_below_stop_count=0),
+             stop_trigger_level=-0.5, prob_underperforming=30.0, current_below_stop_count=0),
         dict(armed=True, is_triggered=False, current_return=-0.4,
-             stop_trigger_level=-0.5, prob_beating=80.0, current_below_stop_count=2),
+             stop_trigger_level=-0.5, prob_underperforming=80.0, current_below_stop_count=2),
         dict(armed=False, is_triggered=False, current_return=0.0,
-             stop_trigger_level=0.0, prob_beating=50.0, current_below_stop_count=5),
+             stop_trigger_level=0.0, prob_underperforming=50.0, current_below_stop_count=5),
         dict(armed=True, is_triggered=True, current_return=0.0,
-             stop_trigger_level=0.0, prob_beating=50.0, current_below_stop_count=5),
+             stop_trigger_level=0.0, prob_underperforming=50.0, current_below_stop_count=5),
     ]
     for kwargs in sweeps:
         result = math_engine.compute_exit_confirmation(**kwargs)

@@ -1,5 +1,5 @@
 {
-  "_description": "AC-6 parity fixture (MC sanity veto control): the position arms on tick 0 (mc=10 in [5,15)), then the return drops deep below the HWM-anchored stop for many ticks — BUT mc is held at 70, at/above MC_SANITY_THRESHOLD (60). compute_exit_confirmation's MC sanity gate vetoes the trailing-stop exit ('if we still think we beat the benchmark, don't capitulate'), so NO exit fires on either path. This is a control fixture: it confirms the production harness and the replay agree on the veto, and that the replay honours the MC sanity gate. The open-coded pre-fix replay used the same literal 60.0, so it also vetoes — this fixture must stay parity-green pre AND post fix, proving the parity harness does not emit false REDs.",
+  "_description": "[H1] AC-6 parity fixture (MC breakdown-gate SUPPRESS control): the position arms on tick 0 (mc=10 in [5,15)), then the return drops deep below the HWM-anchored stop for many ticks — BUT mc is held at 30, BELOW MC_BREAKDOWN_THRESHOLD (60). Under the corrected gate, prob_underperforming 30 < 60 means the analog distribution says today is NOT a confirmed breakdown, so compute_exit_confirmation suppresses the trailing-stop exit (no hair-trigger) and NO exit fires on either path. Control fixture: confirms the production harness and the replay agree on the suppression and that the replay honours the breakdown gate. [H1 NOTE] pre-H1 this used mc=70 to suppress (the inverted gate suppressed HIGH values); under the corrected gate a LOW value (<60) is what suppresses. Must stay parity-green post-fix, proving the parity harness emits no false REDs.",
   "_provenance": "Hand-derived input sequence. Schema = synthetic_history tick dict. The parity test asserts production and the replay produce an identical all-None exit-decision sequence (the veto holds for the whole session).",
   "grace_minutes": 0,
   "params": {
@@ -13,10 +13,10 @@
   },
   "ticks": [
     {"time": "09:30", "return": 6.0, "mc_prob": 10.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-    {"time": "09:31", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-    {"time": "09:32", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-    {"time": "09:33", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-    {"time": "09:34", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-    {"time": "09:35", "return": -20.0, "mc_prob": 70.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0}
+    {"time": "09:31", "return": -20.0, "mc_prob": 30.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:32", "return": -20.0, "mc_prob": 30.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:33", "return": -20.0, "mc_prob": 30.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:34", "return": -20.0, "mc_prob": 30.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+    {"time": "09:35", "return": -20.0, "mc_prob": 30.0, "vol": 0.5, "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0}
   ]
 }

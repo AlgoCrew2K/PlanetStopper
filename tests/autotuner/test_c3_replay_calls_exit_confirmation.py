@@ -13,7 +13,7 @@ The replay currently re-implements the trailing-stop exit inline:
         else: below_stop_count = 0
 
 This open-codes three values that math_engine already names —
-MAGNITUDE_FLOOR_PCT (0.10), MC_SANITY_THRESHOLD (60.0) and
+MAGNITUDE_FLOOR_PCT (0.10), MC_BREAKDOWN_THRESHOLD (60.0) and
 EXIT_CONFIRM_TICKS (3). If a production constant is re-tuned the replay
 silently keeps the stale copy and optimizes the wrong exit rule.
 
@@ -164,7 +164,7 @@ def test_both_replay_functions_reach_compute_exit_confirmation() -> None:
 
 def test_replay_machinery_has_no_open_coded_exit_literals() -> None:
     """AC-1: the open-coded exit block duplicated MAGNITUDE_FLOOR_PCT (0.10),
-    MC_SANITY_THRESHOLD (60.0) and EXIT_CONFIRM_TICKS (3). After the fix the
+    MC_BREAKDOWN_THRESHOLD (60.0) and EXIT_CONFIRM_TICKS (3). After the fix the
     replay calls compute_exit_confirmation, so NONE of those three exit-rule
     literals may appear as bare numbers anywhere in the replay machinery
     (the two replay functions or any shared per-tick exit core).
@@ -177,7 +177,7 @@ def test_replay_machinery_has_no_open_coded_exit_literals() -> None:
     """
     forbidden = {
         "MAGNITUDE_FLOOR_PCT": math_engine.MAGNITUDE_FLOOR_PCT,
-        "MC_SANITY_THRESHOLD": math_engine.MC_SANITY_THRESHOLD,
+        "MC_BREAKDOWN_THRESHOLD": math_engine.MC_BREAKDOWN_THRESHOLD,
         "EXIT_CONFIRM_TICKS": float(math_engine.EXIT_CONFIRM_TICKS),
     }
     leaked: dict[str, dict[str, float]] = {}
@@ -191,7 +191,7 @@ def test_replay_machinery_has_no_open_coded_exit_literals() -> None:
     assert not leaked, (
         f"Replay machinery still contains exit-rule literals {leaked} as "
         f"bare numbers. These are named in math_engine (MAGNITUDE_FLOOR_PCT "
-        f"/ MC_SANITY_THRESHOLD / EXIT_CONFIRM_TICKS); the replay must call "
+        f"/ MC_BREAKDOWN_THRESHOLD / EXIT_CONFIRM_TICKS); the replay must call "
         f"compute_exit_confirmation, which owns them, so the values are "
         f"never duplicated in autotuner.py."
     )
@@ -234,33 +234,39 @@ def test_no_open_coded_below_stop_count_increment() -> None:
 # ===========================================================================
 
 
-def test_replay_trailing_exit_tracks_retuned_mc_sanity_threshold(
+def test_replay_trailing_exit_tracks_retuned_mc_breakdown_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-1 (anti-drift): if MC_SANITY_THRESHOLD is re-tuned in math_engine,
-    the replay's trailing-stop decision must change accordingly — proving the
-    replay reads the constant through compute_exit_confirmation rather than a
-    stale hardcoded `60.0`.
+    """AC-1 (anti-drift) + H1: if MC_BREAKDOWN_THRESHOLD is re-tuned in
+    math_engine, the replay's trailing-stop decision must change accordingly —
+    proving the replay reads the constant through compute_exit_confirmation
+    rather than a stale hardcoded `60.0`.
 
-    Construct a fixture where every tick sits below the stop with mc just
-    above the DEFAULT MC_SANITY_THRESHOLD (so the default veto blocks every
-    exit) but below a RAISED threshold (so a raised threshold lets the exit
-    confirm). Run the replay under both thresholds; the exit decision must
-    flip.
+    [H1 SEMANTIC FLIP] The metric is prob_underperforming (HIGH when badly
+    underperforming) and the gate FIRES the protective stop on confirmed
+    breakdown: ``mc_breakdown_ok = mc is None or mc >= MC_BREAKDOWN_THRESHOLD``.
+    So the threshold's effect is INVERTED versus the pre-H1 gate:
+      * At the DEFAULT threshold (60), mc=70 >= 60 -> breakdown confirmed ->
+        the trailing stop FIRES (pre-H1 this WRONGLY suppressed the exit).
+      * At a RAISED threshold (80), mc=70 < 80 -> not yet "confirmed
+        breakdown" -> the stop is suppressed.
+    The exit decision must flip between the two thresholds — proving the replay
+    reads the re-tuned constant via compute_exit_confirmation.
 
-    RED: the replay hardcodes 60.0, so re-tuning math_engine.MC_SANITY_
-    THRESHOLD does NOT change the replay's decision — both runs agree and
-    the flip assertion fails.
+    RED pre-fix: the replay (and the gate) use the inverted operator and the
+    old constant name, so this test's corrected expectations fail. POST-FIX
+    (rename + operator flip) they pass.
     """
     if not hasattr(autotuner, "replay_exit_sequence"):
         pytest.fail(
             "autotuner.replay_exit_sequence missing — AC-6 helper required."
         )
 
-    default_threshold = math_engine.MC_SANITY_THRESHOLD
+    default_threshold = math_engine.MC_BREAKDOWN_THRESHOLD
     raised_threshold = default_threshold + 20.0  # 80.0 with the stock 60.0
 
-    # mc between the two thresholds: default veto blocks; raised veto passes.
+    # mc between the two thresholds: at default it confirms breakdown (>= 60 ->
+    # FIRE); at raised it does not (< 80 -> suppress).
     mc_between = (default_threshold + raised_threshold) / 2.0  # 70.0
 
     params = {
@@ -273,9 +279,9 @@ def test_replay_trailing_exit_tracks_retuned_mc_sanity_threshold(
         "MAX_PARABOLIC_SQUEEZE": 0.5,
     }
 
-    # Ticks: armed (mc in [5,15) on tick 0 to arm), then a deep, sustained
-    # drop below the stop for well over EXIT_CONFIRM_TICKS ticks, mc held at
-    # mc_between. valid_vwap_weight 0 so VWAP gate never even evaluates.
+    # Ticks: arm tick (mc in [5,15) to arm), then a deep, sustained drop below
+    # the stop for well over EXIT_CONFIRM_TICKS ticks, mc held at mc_between.
+    # valid_vwap_weight 0 so the VWAP gate never evaluates.
     arm_tick = {
         "time": "09:30", "return": 5.0, "mc_prob": 10.0, "vol": 0.5,
         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0,
@@ -290,25 +296,29 @@ def test_replay_trailing_exit_tracks_retuned_mc_sanity_threshold(
         seq = autotuner.replay_exit_sequence(ticks, params, grace_minutes=0)
         return [(d["tick_idx"], d["exit_reason"]) for d in seq]
 
-    # Default threshold (60.0): mc 70 >= 60 -> veto -> NO trailing exit.
-    monkeypatch.setattr(math_engine, "MC_SANITY_THRESHOLD", default_threshold)
+    # Default threshold (60.0): mc 70 >= 60 -> confirmed breakdown -> the
+    # trailing stop FIRES after EXIT_CONFIRM_TICKS qualifying ticks.
+    monkeypatch.setattr(math_engine, "MC_BREAKDOWN_THRESHOLD", default_threshold)
     default_seq = _run()
 
-    # Raised threshold (80.0): mc 70 < 80 -> veto passes -> trailing exit
-    # confirms after EXIT_CONFIRM_TICKS qualifying ticks.
-    monkeypatch.setattr(math_engine, "MC_SANITY_THRESHOLD", raised_threshold)
+    # Raised threshold (80.0): mc 70 < 80 -> not confirmed breakdown -> the
+    # protective stop is SUPPRESSED.
+    monkeypatch.setattr(math_engine, "MC_BREAKDOWN_THRESHOLD", raised_threshold)
     raised_seq = _run()
 
     default_exited = any(reason for _, reason in default_seq)
     raised_exited = any(reason for _, reason in raised_seq)
 
-    assert not default_exited, (
-        "With the stock MC_SANITY_THRESHOLD the MC veto (mc 70 >= 60) must "
-        f"block every trailing-stop exit; got exit sequence {default_seq}."
+    assert default_exited, (
+        "With the stock MC_BREAKDOWN_THRESHOLD (60) the MC reading 70 >= 60 "
+        "confirms breakdown and the trailing stop MUST fire on the sustained "
+        f"crash; got exit sequence {default_seq}. (Pre-H1 the inverted gate "
+        f"wrongly suppressed this — the exact bug H1 fixes.)"
     )
-    assert raised_exited, (
-        "With MC_SANITY_THRESHOLD raised to 80 the veto (mc 70 < 80) must "
-        "PASS and the trailing stop must confirm. The replay's decision did "
-        "not change when the threshold was re-tuned — it is reading a "
-        "hardcoded 60.0 instead of calling compute_exit_confirmation."
+    assert not raised_exited, (
+        "With MC_BREAKDOWN_THRESHOLD raised to 80 the MC reading 70 < 80 is "
+        "not yet 'confirmed breakdown' -> the protective stop must be "
+        f"suppressed; got exit sequence {raised_seq}. If the decision did NOT "
+        f"change when the threshold was re-tuned, the replay is reading a "
+        f"hardcoded 60.0 instead of calling compute_exit_confirmation."
     )

@@ -17,7 +17,7 @@ Safety requirements covered:
   REQ-FS-2:  resolve_trigger_priority order preserved under all regime labels
   REQ-FS-3:  adjusted N-confirms >= 1 under all regime labels (ladder cannot be disabled)
   REQ-FS-4:  breakeven_locked latch preserved under all regime labels
-  REQ-FS-5:  MC_SANITY_THRESHOLD direction: mean-reverting must NOT lower the MC bar
+  REQ-FS-5:  MC_BREAKDOWN_THRESHOLD must NOT be modified by a regime adjustment
   REQ-DIR-3: None/unknown regime -> safe default (identical to no-adjustment baseline)
   REQ-DEGRADE-1: degenerate/garbage regime labels -> same as None safe default
   REQ-DEGRADE-3: exit_confirm_ticks=0 is rejected (would disable the confirmation ladder)
@@ -202,34 +202,31 @@ def test_breakeven_locked_latch_preserved_under_all_regimes(
 
 
 # ---------------------------------------------------------------------------
-# REQ-FS-5: MC_SANITY_THRESHOLD direction — mean-reverting must NOT lower the bar
+# REQ-FS-5: MC_BREAKDOWN_THRESHOLD must NOT be modified by a regime adjustment
 # ---------------------------------------------------------------------------
 
 
-def test_mean_reverting_does_not_lower_mc_sanity_threshold() -> None:
+def test_mean_reverting_does_not_modify_mc_breakdown_threshold() -> None:
     """
-    REQ-FS-5: MC_SANITY_THRESHOLD=60.0 is the veto that suppresses exit when
-    MC says we're still likely to beat the benchmark.  A mean-reverting regime
-    calls for RESTRAINT (fewer exits).  It must NOT lower this threshold (which
-    would make it EASIER to exit — wrong direction).
-
-    Since the regime adjustment in Phase 3c adjusts exit_confirm_ticks only
-    (NOT MC_SANITY_THRESHOLD), this requirement is vacuously satisfied by the
-    chosen knob.  This test encodes that the MC_SANITY_THRESHOLD constant must
+    REQ-FS-5 [H1]: MC_BREAKDOWN_THRESHOLD=60.0 is the breakdown bar — at or above
+    it the analog distribution confirms underperformance and the protective stop
+    may fire.  The Phase-3c regime adjustment adjusts exit_confirm_ticks ONLY
+    (NOT the MC threshold), so this requirement is vacuously satisfied by the
+    chosen knob.  This test encodes that the MC_BREAKDOWN_THRESHOLD constant must
     not be modified or shadowed as a side-effect of the regime adjustment.
 
-    Test: MC_SANITY_THRESHOLD must still equal its pre-Phase-3c value (60.0)
-    after apply_regime_exit_adjustment is called with 'mean-reverting'.
+    Test: MC_BREAKDOWN_THRESHOLD must still equal 60.0 after
+    apply_regime_exit_adjustment is called with 'mean-reverting'.
     """
     _ = math_engine.apply_regime_exit_adjustment(
         regime_label="mean-reverting",
         base_ticks=math_engine.EXIT_CONFIRM_TICKS,
     )
-    assert math_engine.MC_SANITY_THRESHOLD == 60.0, (
-        f"REQ-FS-5 VIOLATED: MC_SANITY_THRESHOLD was modified by the regime "
-        f"adjustment (mean-reverting call). MC_SANITY_THRESHOLD must remain "
-        f"60.0. Got {math_engine.MC_SANITY_THRESHOLD!r}. The regime adjustment "
-        f"must touch ONLY exit_confirm_ticks — never MC_SANITY_THRESHOLD."
+    assert math_engine.MC_BREAKDOWN_THRESHOLD == 60.0, (
+        f"REQ-FS-5 VIOLATED: MC_BREAKDOWN_THRESHOLD was modified by the regime "
+        f"adjustment (mean-reverting call). It must remain 60.0; got "
+        f"{math_engine.MC_BREAKDOWN_THRESHOLD!r}. The regime adjustment must "
+        f"touch ONLY exit_confirm_ticks — never the breakdown threshold."
     )
 
 
@@ -274,7 +271,7 @@ def test_degenerate_regime_labels_are_safe_default(
         is_triggered=False,
         current_return=-5.0,
         stop_trigger_level=-1.0,
-        prob_beating=None,
+        prob_underperforming=None,
         current_below_stop_count=base - 1,
         exit_confirm_ticks=adjusted,
     )
@@ -314,7 +311,7 @@ def test_exit_confirm_ticks_zero_is_disallowed() -> None:
             is_triggered=False,
             current_return=-5.0,
             stop_trigger_level=-1.0,
-            prob_beating=None,
+            prob_underperforming=None,
             current_below_stop_count=0,
             exit_confirm_ticks=0,
         )
@@ -410,14 +407,14 @@ def test_apply_regime_exit_adjustment_does_not_modify_module_constants() -> None
 
     This test verifies that calling apply_regime_exit_adjustment does not
     mutate ANY module-level constant.  The function is pure — it must not
-    reassign EXIT_CONFIRM_TICKS, MC_SANITY_THRESHOLD, MAGNITUDE_FLOOR_PCT,
+    reassign EXIT_CONFIRM_TICKS, MC_BREAKDOWN_THRESHOLD, MAGNITUDE_FLOOR_PCT,
     MULT_OPEN, MULT_CLOSE, or any other module attribute.
 
     A mutation would violate the one-knob budget AND the purity requirement.
     """
     constants_before = {
         "EXIT_CONFIRM_TICKS": math_engine.EXIT_CONFIRM_TICKS,
-        "MC_SANITY_THRESHOLD": math_engine.MC_SANITY_THRESHOLD,
+        "MC_BREAKDOWN_THRESHOLD": math_engine.MC_BREAKDOWN_THRESHOLD,
         "MAGNITUDE_FLOOR_PCT": math_engine.MAGNITUDE_FLOOR_PCT,
         "MULT_OPEN": math_engine.MULT_OPEN,
         "MULT_CLOSE": math_engine.MULT_CLOSE,

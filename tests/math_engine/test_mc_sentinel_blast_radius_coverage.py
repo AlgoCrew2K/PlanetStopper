@@ -14,7 +14,7 @@ R-7  — 20 raw days → sentinel (pins the pre-fix in-band 100.0 is gone).
 R-8  — compute_tp_confirmation with mc_available=False does NOT arm TP.
 R-9  — compute_tp_confirmation with mc_available=False does NOT confirm TP exit.
 R-10 — mc_sanity_gate_would_block expression is always False when mc_available=False,
-        regardless of prob_beating value.
+        regardless of prob_underperforming value.
 R-14 — mc_history list never contains None after a sentinel-returning tick.
 C-13 — autotuner tick with mc_prob=None key present → mc_available=False (not 50.0
         default).
@@ -240,19 +240,19 @@ def test_tp_confirmation_does_not_arm_when_mc_unavailable() -> None:
     arm gate must not transition tp_armed from False to True. An absent MC
     opinion is not an "exceptional gain" signal.
 
-    Tested across a range of prob_beating values (None and plausible floats
+    Tested across a range of prob_underperforming values (None and plausible floats
     that would arm if mc_available were True) to confirm the gate is the
-    binding control, not the prob_beating value.
+    binding control, not the prob_underperforming value.
 
     RED trigger: a regression that removes the ``if mc_available`` guard from
     the TP arm branch in compute_tp_confirmation.
     """
-    # A low prob_beating (below take_profit_mc_pct) would arm IF mc_available.
+    # A low prob_underperforming (below take_profit_mc_pct) would arm IF mc_available.
     take_profit_mc_pct = 35.0  # threshold below which TP arms
     for prob_beating_value in [None, 10.0, 0.0, 34.9]:
         new_tp_armed, new_above_tp_count, is_tp_hit = math_engine.compute_tp_confirmation(
             mc_available=False,
-            prob_beating=prob_beating_value,
+            prob_underperforming=prob_beating_value,
             take_profit_mc_pct=take_profit_mc_pct,
             current_return=5.0,
             is_triggered=False,
@@ -260,12 +260,12 @@ def test_tp_confirmation_does_not_arm_when_mc_unavailable() -> None:
             above_tp_count=0,
         )
         assert new_tp_armed is False, (
-            f"compute_tp_confirmation(mc_available=False, prob_beating={prob_beating_value!r}) "
+            f"compute_tp_confirmation(mc_available=False, prob_underperforming={prob_beating_value!r}) "
             f"set tp_armed=True. An absent MC opinion must never arm the take-profit "
             f"gate. The mc_available guard must block the arm transition."
         )
         assert is_tp_hit is False, (
-            f"compute_tp_confirmation(mc_available=False, prob_beating={prob_beating_value!r}) "
+            f"compute_tp_confirmation(mc_available=False, prob_underperforming={prob_beating_value!r}) "
             f"set is_tp_hit=True from an unarmed state. Impossible: TP confirm requires "
             f"armed + mc_available."
         )
@@ -292,7 +292,7 @@ def test_tp_confirmation_does_not_confirm_exit_when_mc_unavailable() -> None:
     # If mc_available=False, count must reset to 0, not increment to TP_CONFIRM_TICKS.
     new_tp_armed, new_above_tp_count, is_tp_hit = math_engine.compute_tp_confirmation(
         mc_available=False,
-        prob_beating=None,
+        prob_underperforming=None,
         take_profit_mc_pct=take_profit_mc_pct,
         current_return=5.0,
         is_triggered=False,
@@ -328,7 +328,7 @@ def test_tp_confirmation_does_not_confirm_exit_when_mc_unavailable_at_threshold(
 
     new_tp_armed, new_above_tp_count, is_tp_hit = math_engine.compute_tp_confirmation(
         mc_available=False,
-        prob_beating=None,
+        prob_underperforming=None,
         take_profit_mc_pct=take_profit_mc_pct,
         current_return=5.0,
         is_triggered=False,
@@ -352,9 +352,9 @@ def test_tp_confirmation_does_not_confirm_exit_when_mc_unavailable_at_threshold(
 def test_mc_sanity_gate_would_block_is_false_when_mc_unavailable() -> None:
     """
     R-10 — The mc_sanity_gate_would_block snapshot field is computed as:
-        bool(mc_available and prob_beating >= acc_TRIGGER_THRESHOLD_PCT)
+        bool(mc_available and prob_underperforming >= acc_TRIGGER_THRESHOLD_PCT)
     When mc_available=False, short-circuit evaluation makes this False
-    regardless of prob_beating. This test pins that contract explicitly.
+    regardless of prob_underperforming. This test pins that contract explicitly.
 
     This matters because mc_sanity_gate_would_block is stored in the chart-data
     snapshot and is read by the dashboard and reporting layers. A True value
@@ -365,13 +365,13 @@ def test_mc_sanity_gate_would_block_is_false_when_mc_unavailable() -> None:
     full execution pipeline. The expression is the canonical production form.
 
     RED trigger: changing the expression to
-    ``bool(prob_beating is not None and prob_beating >= threshold)``
-    would change the semantics for non-None prob_beating with mc_available=False
+    ``bool(prob_underperforming is not None and prob_underperforming >= threshold)``
+    would change the semantics for non-None prob_underperforming with mc_available=False
     (impossible in production but tests the contract precisely).
     """
     threshold = 50.0  # representative trigger threshold
 
-    # Test across plausible prob_beating values including values that would
+    # Test across plausible prob_underperforming values including values that would
     # trigger the gate if mc_available were True.
     for prob_value in [None, 0.0, 49.9, 50.0, 75.0, 100.0]:
         mc_available = False
@@ -379,7 +379,7 @@ def test_mc_sanity_gate_would_block_is_false_when_mc_unavailable() -> None:
         mc_sanity_gate_would_block = bool(mc_available and prob_value >= threshold)  # type: ignore[operator]
         assert mc_sanity_gate_would_block is False, (
             f"mc_sanity_gate_would_block = bool(mc_available=False and "
-            f"prob_beating={prob_value!r} >= {threshold}) evaluated to True. "
+            f"prob_underperforming={prob_value!r} >= {threshold}) evaluated to True. "
             f"When MC is unavailable, the gate would never block — False is the "
             f"only correct value for the audit trail."
         )
@@ -401,9 +401,9 @@ def test_mc_history_not_polluted_with_sentinel_after_insufficient_mc() -> None:
     from the rest of the execution pipeline.
 
     The production guard pattern:
-        mc_available = prob_beating is not None
+        mc_available = prob_underperforming is not None
         if mc_available:
-            mc_history.append(prob_beating)
+            mc_history.append(prob_underperforming)
 
     RED trigger: removing the ``if mc_available:`` guard before mc_history.append.
     """
@@ -418,20 +418,20 @@ def test_mc_history_not_polluted_with_sentinel_after_insufficient_mc() -> None:
         }
     }
     holdings = [{"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}]
-    prob_beating = math_engine.run_monte_carlo(
+    prob_underperforming = math_engine.run_monte_carlo(
         holdings, one_day_history, 0.1, simulation_paths=100, neighbor_k=5, seed=42
     )
 
     # Confirm the harness actually exercises the sentinel path.
-    assert prob_beating is math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL, (
-        f"1-day history did not return the insufficient sentinel; got {prob_beating!r}. "
+    assert prob_underperforming is math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL, (
+        f"1-day history did not return the insufficient sentinel; got {prob_underperforming!r}. "
         f"This harness invariant must hold for R-14 to test the right path."
     )
 
     # Production guard: only append when mc_available.
-    mc_available = prob_beating is not None
+    mc_available = prob_underperforming is not None
     if mc_available:
-        mc_history.append(prob_beating)
+        mc_history.append(prob_underperforming)
 
     # The list must be unchanged — None must not have been appended.
     assert len(mc_history) == initial_len, (
@@ -446,7 +446,7 @@ def test_mc_history_not_polluted_with_sentinel_after_insufficient_mc() -> None:
 
 def test_mc_history_does_append_valid_prob_beating() -> None:
     """
-    Companion to R-14: a valid (non-None) prob_beating MUST be appended to
+    Companion to R-14: a valid (non-None) prob_underperforming MUST be appended to
     mc_history. This ensures the guard does not accidentally block legitimate
     appends (i.e. tests the True branch, not just the False branch).
 
@@ -462,26 +462,26 @@ def test_mc_history_does_append_valid_prob_beating() -> None:
         for i in range(minimum_raw)
     }
     holdings = [{"ticker": "AAA", "allocation": 1.0, "last_percent_change": 0.0}]
-    prob_beating = math_engine.run_monte_carlo(
+    prob_underperforming = math_engine.run_monte_carlo(
         holdings, history, 0.1, simulation_paths=500, neighbor_k=5, seed=42
     )
-    assert prob_beating is not None, (
+    assert prob_underperforming is not None, (
         f"Minimum-sufficient history ({minimum_raw} raw days) returned the sentinel. "
         f"This fixture is invalid for the R-14 valid-append companion test."
     )
 
     mc_history: list = []
-    mc_available = prob_beating is not None
+    mc_available = prob_underperforming is not None
     if mc_available:
-        mc_history.append(prob_beating)
+        mc_history.append(prob_underperforming)
 
     assert len(mc_history) == 1, (
-        f"mc_history did not grow after a valid prob_beating={prob_beating!r}. "
+        f"mc_history did not grow after a valid prob_underperforming={prob_underperforming!r}. "
         f"The guard must permit appending when mc_available=True."
     )
-    assert mc_history[0] is prob_beating, (
+    assert mc_history[0] is prob_underperforming, (
         f"The appended value {mc_history[0]!r} is not the same object as "
-        f"prob_beating={prob_beating!r}."
+        f"prob_underperforming={prob_underperforming!r}."
     )
 
 
@@ -560,19 +560,19 @@ def test_exit_confirmation_fires_when_mc_sentinel_and_below_stop() -> None:
     R-4b — F-4 plan scope item 1: "protective stop always fires on ticks-below-stop
     alone in every sentinel branch."
 
-    compute_exit_confirmation with prob_beating=None (MC sentinel) and the below-
+    compute_exit_confirmation with prob_underperforming=None (MC sentinel) and the below-
     stop condition met must:
       * Increment below_stop_count each qualifying tick.
       * Return is_trailing_stop_hit=True once below_stop_count reaches EXIT_CONFIRM_TICKS.
 
     This is the primary F-4 fail-safe path. The MC sanity gate evaluates as
-    ``mc_sanity_ok = prob_beating is None or prob_beating < MC_SANITY_THRESHOLD``,
+    ``mc_sanity_ok = prob_underperforming is None or prob_underperforming < MC_BREAKDOWN_THRESHOLD``,
     so None → mc_sanity_ok=True → the below-stop condition is gated only on the
     return magnitude, not the MC opinion. The protective stop must not be suppressed
     by insufficient MC history.
 
     RED trigger: changing the mc_sanity_ok expression to
-    ``mc_sanity_ok = prob_beating is not None and prob_beating < MC_SANITY_THRESHOLD``
+    ``mc_sanity_ok = prob_underperforming is not None and prob_underperforming < MC_BREAKDOWN_THRESHOLD``
     (removing the None pass-through), which would make the sentinel BLOCK the
     protective stop — the pre-fix fail-dangerous behavior this cycle exists to pin.
     """
@@ -593,13 +593,13 @@ def test_exit_confirmation_fires_when_mc_sentinel_and_below_stop() -> None:
             is_triggered=False,
             current_return=current_return,
             stop_trigger_level=stop_trigger_level,
-            prob_beating=None,  # MC sentinel — insufficient history
+            prob_underperforming=None,  # MC sentinel — insufficient history
             current_below_stop_count=below_stop_count,
         )
         assert new_count == tick_num, (
             f"Tick {tick_num}: expected below_stop_count={tick_num}, "
             f"got {new_count}. compute_exit_confirmation must increment the count "
-            f"on each qualifying tick when prob_beating=None (MC sentinel). "
+            f"on each qualifying tick when prob_underperforming=None (MC sentinel). "
             f"The sentinel must not reset or suppress the count."
         )
         if tick_num < math_engine.EXIT_CONFIRM_TICKS:
@@ -612,61 +612,69 @@ def test_exit_confirmation_fires_when_mc_sentinel_and_below_stop() -> None:
             assert is_hit is True, (
                 f"Tick {tick_num} (= EXIT_CONFIRM_TICKS={math_engine.EXIT_CONFIRM_TICKS}): "
                 f"is_trailing_stop_hit=False. The protective stop must fire once the "
-                f"confirmation window is saturated. MC sentinel (prob_beating=None) "
+                f"confirmation window is saturated. MC sentinel (prob_underperforming=None) "
                 f"must not suppress the exit."
             )
         below_stop_count = new_count
 
 
-def test_exit_confirmation_mc_sentinel_does_not_suppress_stop_when_mc_would_have_blocked() -> None:
+def test_exit_confirmation_mc_sentinel_does_not_suppress_stop_when_low_value_would_suppress() -> None:
     """
-    R-4b hostile variant: prob_beating=None with a value that, if it WERE a real
-    float, would exceed MC_SANITY_THRESHOLD and block the stop.
+    [H1] R-4b hostile variant: prob_underperforming=None with a value that, if it
+    WERE a real float, would FALL BELOW MC_BREAKDOWN_THRESHOLD and suppress the
+    stop.
 
-    Concretely: if prob_beating were 99.0 (well above MC_SANITY_THRESHOLD=60.0),
-    mc_sanity_ok would be False and the stop would be suppressed. But because
-    prob_beating is None (sentinel), mc_sanity_ok must be True (fail-safe) and
-    the stop must still fire.
+    [DIRECTION FLIP vs pre-H1] Under the corrected gate, a real LOW
+    prob_underperforming (< 60, "analogs say today is normal") makes
+    mc_breakdown_ok False and SUPPRESSES the stop. But because
+    prob_underperforming is None (sentinel = MC unavailable), the gate must FAIL
+    OPEN (mc_breakdown_ok True) and the stop must still fire on magnitude alone.
 
-    This is the sharpest regression test: it proves that None is treated as
-    "MC unavailable → do not block" and not as "extreme bullishness → always block."
+    This is the sharpest regression test: it proves None is treated as "MC
+    unavailable → fail open → do not suppress", NOT as a low value that would
+    suppress. (Pre-H1 the hostile value was a HIGH 99 that the inverted gate
+    suppressed on; under the corrected gate a LOW value is the suppressing one.)
 
-    RED trigger: any expression that maps prob_beating=None to mc_sanity_ok=False,
-    such as ``mc_sanity_ok = prob_beating is not None and prob_beating < MC_SANITY_THRESHOLD``.
+    RED trigger: any expression that maps prob_underperforming=None to
+    mc_breakdown_ok=False, e.g.
+    ``mc_breakdown_ok = prob_underperforming is not None and prob_underperforming >= MC_BREAKDOWN_THRESHOLD``.
     """
     stop_trigger_level = -2.0
     current_return = stop_trigger_level - (math_engine.MAGNITUDE_FLOOR_PCT + 1.0)
 
-    # Confirm that a real high prob_beating DOES block the stop (sanity check that
-    # the test is testing the right thing).
-    _count, blocked = math_engine.compute_exit_confirmation(
+    # Confirm that a real LOW prob_underperforming SUPPRESSES the stop (sanity
+    # check that the test is testing the right thing): below the breakdown
+    # threshold the analogs say today is normal -> no capitulation.
+    _count, suppressed_hit = math_engine.compute_exit_confirmation(
         armed=True,
         is_triggered=False,
         current_return=current_return,
         stop_trigger_level=stop_trigger_level,
-        prob_beating=math_engine.MC_SANITY_THRESHOLD + 10.0,  # well above threshold
+        prob_underperforming=math_engine.MC_BREAKDOWN_THRESHOLD - 10.0,  # below threshold
         current_below_stop_count=math_engine.EXIT_CONFIRM_TICKS - 1,
     )
-    assert blocked is False, (
-        f"Sanity check failed: a high prob_beating ({math_engine.MC_SANITY_THRESHOLD + 10.0}) "
-        f"did not block the stop. The MC sanity gate must veto when prob_beating >= "
-        f"MC_SANITY_THRESHOLD ({math_engine.MC_SANITY_THRESHOLD})."
+    assert suppressed_hit is False, (
+        f"Sanity check failed: a low prob_underperforming "
+        f"({math_engine.MC_BREAKDOWN_THRESHOLD - 10.0}) did not suppress the stop. "
+        f"The breakdown gate must suppress when prob_underperforming < "
+        f"MC_BREAKDOWN_THRESHOLD ({math_engine.MC_BREAKDOWN_THRESHOLD}) — analogs "
+        f"say today is normal."
     )
 
-    # Now confirm that None (sentinel) does NOT block — even though the equivalent
-    # high float would.
+    # Now confirm that None (sentinel) does NOT suppress — even though a low real
+    # float would. None = MC unavailable -> fail open -> fire on magnitude.
     _count, sentinel_fires = math_engine.compute_exit_confirmation(
         armed=True,
         is_triggered=False,
         current_return=current_return,
         stop_trigger_level=stop_trigger_level,
-        prob_beating=None,  # sentinel — "MC unavailable"
+        prob_underperforming=None,  # sentinel — "MC unavailable"
         current_below_stop_count=math_engine.EXIT_CONFIRM_TICKS - 1,  # one tick from firing
     )
     assert sentinel_fires is True, (
-        f"compute_exit_confirmation(prob_beating=None) at EXIT_CONFIRM_TICKS-1 "
-        f"returned is_trailing_stop_hit=False. The MC sentinel must not block the "
-        f"protective stop. The fail-safe is: None → mc_sanity_ok=True → stop fires "
-        f"on magnitude alone. A real high prob_beating would have blocked; None "
-        f"must not recapitulate that suppression."
+        f"compute_exit_confirmation(prob_underperforming=None) at "
+        f"EXIT_CONFIRM_TICKS-1 returned is_trailing_stop_hit=False. The MC "
+        f"sentinel must FAIL OPEN, not suppress: None → mc_breakdown_ok=True → "
+        f"stop fires on magnitude alone. A real low prob_underperforming would "
+        f"have suppressed; None must not recapitulate that suppression."
     )

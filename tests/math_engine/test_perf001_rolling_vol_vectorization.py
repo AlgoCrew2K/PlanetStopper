@@ -485,7 +485,7 @@ def test_run_monte_carlo_returns_float_in_range_on_sufficient_history() -> None:
     """Per [[project_mc_sentinel_consumer_blast_radius]]: the return type
     must remain `float in [0, 100]` on a sufficient history. A vectorization
     that accidentally returns a numpy scalar or an ndarray would break the
-    7+ consumer sites that do `f"{prob_beating:.1f}"` or numeric comparison.
+    7+ consumer sites that do `f"{prob_underperforming:.1f}"` or numeric comparison.
     """
     fixture = _load_fixture("curated_input_scenarios.json")
     scenario = next(

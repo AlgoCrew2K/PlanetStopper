@@ -8,7 +8,7 @@ THE DEFECT
 z-scored Euclidean distance on (SPY return, rolling 20d vol). It then bootstraps
 the symphony return distribution from those neighbours and the caller's MC
 sanity gate (``compute_exit_confirmation``) vetoes the trailing-stop exit when
-``prob_beating >= MC_SANITY_THRESHOLD`` (60.0).
+``prob_underperforming >= MC_BREAKDOWN_THRESHOLD`` (60.0).
 
 The MC gate NEVER asks whether those K neighbours are actually CLOSE to today.
 On a regime break (COVID, the 2022 rates shock, late-2023) every historical day
@@ -91,7 +91,7 @@ CONTRACT THIS MODULE PINS
 8. The fail-safe protective stop discipline is UNCHANGED. The
    ``compute_exit_confirmation`` signature is unchanged. Suppression of the MC
    veto is implemented by the caller: when ``is_unprecedented`` is True the
-   caller passes ``prob_beating=None`` to ``compute_exit_confirmation`` — which
+   caller passes ``prob_underperforming=None`` to ``compute_exit_confirmation`` — which
    exercises the EXISTING MC-unavailable fail-safe path. The trailing stop
    then fires on the ticks-below-stop condition alone.
 9. ``compute_regime_match_quality`` does NOT compute, return, or persist any
@@ -445,7 +445,7 @@ def test_insufficient_pool_returns_score_none_and_not_unprecedented() -> None:
         mirroring MC_INSUFFICIENT_HISTORY_SENTINEL).
       - is_unprecedented is False (an absent diagnostic is not a
         suppression signal; the EXISTING MC sentinel path already short-
-        circuits prob_beating to None and the protective stop fires on
+        circuits prob_underperforming to None and the protective stop fires on
         its own condition; flagging unprecedented here would double-count
         the same path).
       - insufficient_reason is a non-empty human-readable string so an
@@ -472,7 +472,7 @@ def test_insufficient_pool_returns_score_none_and_not_unprecedented() -> None:
     assert assessment.is_unprecedented is False, (
         f"is_unprecedented is {assessment.is_unprecedented!r} for an "
         f"insufficient eligible pool. Fail-safe contract: False. The "
-        f"existing MC sentinel already short-circuits prob_beating; an "
+        f"existing MC sentinel already short-circuits prob_underperforming; an "
         f"unprecedented=True here would double-count the same fail-safe "
         f"path in telemetry."
     )
@@ -489,9 +489,9 @@ def test_protective_stop_still_fires_when_regime_unprecedented() -> None:
     Fail-safe end-to-end PROOF: even when the regime is unprecedented and
     the helper would suppress the MC veto, the protective trailing stop
     MUST fire on its own ticks-below-stop condition. The caller wires the
-    suppression by passing prob_beating=None to compute_exit_confirmation
+    suppression by passing prob_underperforming=None to compute_exit_confirmation
     on the unprecedented branch; this test exercises that wiring by
-    asserting compute_exit_confirmation(..., prob_beating=None, ...) drives
+    asserting compute_exit_confirmation(..., prob_underperforming=None, ...) drives
     the count to EXIT_CONFIRM_TICKS over consecutive qualifying ticks.
 
     This guards architecture constraint #1 from the project CLAUDE.md
@@ -514,7 +514,7 @@ def test_protective_stop_still_fires_when_regime_unprecedented() -> None:
     )
 
     # When the caller suppresses the MC veto (because is_unprecedented=True)
-    # it passes prob_beating=None -- the EXISTING MC-unavailable fail-safe
+    # it passes prob_underperforming=None -- the EXISTING MC-unavailable fail-safe
     # path. Drive the confirm machine for EXIT_CONFIRM_TICKS qualifying
     # ticks and assert the stop fires.
     count = scenario["starting_below_stop_count"]
@@ -525,14 +525,14 @@ def test_protective_stop_still_fires_when_regime_unprecedented() -> None:
             is_triggered=scenario["is_triggered"],
             current_return=scenario["current_return"],
             stop_trigger_level=scenario["stop_trigger_level"],
-            prob_beating=None,
+            prob_underperforming=None,
             current_below_stop_count=count,
         )
     assert hit is True, (
         f"The protective trailing stop did NOT fire after "
         f"{math_engine.EXIT_CONFIRM_TICKS} ticks below stop with the MC veto "
-        f"suppressed (prob_beating=None). The unprecedented-regime gate must "
-        f"reuse the existing fail-safe -- passing prob_beating=None drives "
+        f"suppressed (prob_underperforming=None). The unprecedented-regime gate must "
+        f"reuse the existing fail-safe -- passing prob_underperforming=None drives "
         f"compute_exit_confirmation through its MC-unavailable branch and the "
         f"trailing stop confirms on its own."
     )

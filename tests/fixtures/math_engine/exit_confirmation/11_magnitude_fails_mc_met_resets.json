@@ -1,18 +1,18 @@
 {
   "name": "11_magnitude_fails_mc_met_resets",
-  "description": "MC sanity met (model says we're losing) but magnitude fails (price hasn't dropped far enough yet). Resets count -- magnitude is a hard floor.",
+  "description": "[H1] Magnitude fails (price hasn't dropped far enough) AND the breakdown gate also fails (low underperformance). Resets count -- magnitude is a hard floor.",
   "function": "compute_exit_confirmation",
   "inputs": {
     "armed": true,
     "is_triggered": false,
     "current_return": -1.05,
     "stop_trigger_level": -1.0,
-    "prob_beating": 30.0,
+    "prob_underperforming": 30.0,
     "current_below_stop_count": 2
   },
   "expected": {
     "new_below_stop_count": 0,
     "is_trailing_stop_hit": false
   },
-  "derivation": "Guard passes. Magnitude: -1.05 <= -1.0 - 0.10 = -1.10 is FALSE (just above floor). MC: 30.0 < 60.0 is TRUE. Combined: False AND True = False. Reset branch; new_count = 0; hit = False. Canonical 'magnitude buffer protects against MC noise' case."
+  "derivation": "Guard passes. Magnitude: -1.05 <= -1.0 - 0.10 = -1.10 is FALSE (just above floor). [H1 GATE] Breakdown: prob_underperforming 30.0 >= MC_BREAKDOWN_THRESHOLD(60.0) is FALSE (low underperformance). Combined: False AND False = False. Reset branch; new_count = 0; hit = False. Canonical 'magnitude buffer is a hard floor' case -- the price has not breached the floor, so no exit regardless of the breakdown reading."
 }

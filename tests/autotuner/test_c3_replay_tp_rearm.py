@@ -13,7 +13,7 @@ TP machines against the live code disproves that:
     production: above_tp_count = 0,1,1,2 -> TP exit on tick 3
     replay:     above_tp_count = 0,1,1,2 -> TP exit on tick 3   (IDENTICAL)
 
-Production's `if mc_available and prob_beating < TAKE_PROFIT_MC_PCT` branch
+Production's `if mc_available and prob_underperforming < TAKE_PROFIT_MC_PCT` branch
 does `if not tp_armed: ...` — when already tp_armed it does nothing; the
 counter is NOT reset. Same as the replay. There is no sub-threshold-dip
 divergence.
@@ -139,7 +139,7 @@ def test_replay_does_not_confirm_tp_on_the_mc_unavailable_tick_itself() -> None:
     FIRST and only THEN checks mc_available would take the counter 1 -> 2 on
     the null tick and confirm a phantom TP exit ON TICK 2 (return 3.0 > 0).
     A correct GREEN — mirroring production, where the increment lives inside
-    the `mc_available and prob_beating >= TAKE_PROFIT_MC_PCT` branch — resets
+    the `mc_available and prob_underperforming >= TAKE_PROFIT_MC_PCT` branch — resets
     the counter to 0 on the null tick instead.
 
     Asserts specifically that NO exit fires on the MC-unavailable tick index.
@@ -186,7 +186,7 @@ def test_replay_does_not_confirm_tp_on_the_mc_unavailable_tick_itself() -> None:
         f"NEVER confirm a TP exit — it carries no MC opinion. This is the "
         f"increment-before-check ordering bug: the counter must not advance "
         f"on a None tick. Production keeps the increment INSIDE the "
-        f"`mc_available and prob_beating >= TAKE_PROFIT_MC_PCT` branch."
+        f"`mc_available and prob_underperforming >= TAKE_PROFIT_MC_PCT` branch."
     )
 
 

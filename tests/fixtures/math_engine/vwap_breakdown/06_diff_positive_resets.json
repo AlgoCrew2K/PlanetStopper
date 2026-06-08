@@ -1,6 +1,6 @@
 {
   "name": "06_diff_positive_resets",
-  "description": "Branch 2 (gate fails): weighted_vwap_diff slightly positive fails the gate, both ticks reset.",
+  "description": "[H2] System-A gate fails (weighted_vwap_diff slightly positive) so System A resets; System B is DECOUPLED and arms on its own condition (current_return -3.0 <= bleed_arm -1.0).",
   "function": "compute_vwap_breakdown_update",
   "inputs": {
     "is_triggered": false,
@@ -16,9 +16,9 @@
   },
   "expected": {
     "new_vwap_ticks": 0,
-    "new_vwap_bleed_ticks": 0,
+    "new_vwap_bleed_ticks": 6,
     "is_vwap_broken": false,
-    "is_vwap_bleed_broken": false
+    "is_vwap_bleed_broken": true
   },
-  "derivation": "Outer guard passes (is_triggered=False). Weight 0.7 > 0.5 passes the weight clause, but diff 0.25 < 0 is FALSE. Gate fails -> both ticks reset to 0. Returns (0, 0, False, False). Confirms the AND-gate: either clause failing trips the reset."
+  "derivation": "Outer guard passes (is_triggered=False). Weight 0.7 > 0.5 passes the weight clause, but diff 0.25 < 0 is FALSE -> System-A gate fails. System A resets vwap_ticks to 0 (confirms the AND-gate: either clause failing trips the System-A reset). [H2 DECOUPLING] System B independent: arm -3.0 <= -1.0 TRUE -> new_vwap_bleed_ticks = 5+1 = 6; is_vwap_bleed_broken = (6 >= 3) TRUE. Returns (0, 6, False, True). Pre-H2 wrongly expected (0,0,False,False)."
 }

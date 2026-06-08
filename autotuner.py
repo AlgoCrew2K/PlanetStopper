@@ -1169,14 +1169,17 @@ def _replay_exit_tick(
     )
 
     # Check 1: Trailing Stop — the canonical math_engine primitive. It owns
-    # MAGNITUDE_FLOOR_PCT, MC_SANITY_THRESHOLD and EXIT_CONFIRM_TICKS; the
-    # replay never duplicates those exit-rule literals (AC-1).
+    # MAGNITUDE_FLOOR_PCT, MC_BREAKDOWN_THRESHOLD and EXIT_CONFIRM_TICKS; the
+    # replay never duplicates those exit-rule literals (AC-1). The replay passes
+    # prob_underperforming=mc to the SAME primitive, so the corrected gate
+    # (>= MC_BREAKDOWN_THRESHOLD) flows through automatically — replay parity is
+    # preserved by a value-preserving rename (mc local is unchanged).
     state["below_stop_count"], is_trailing_hit = math_engine.compute_exit_confirmation(
         armed=state["armed"],
         is_triggered=False,
         current_return=ret,
         stop_trigger_level=stop_level,
-        prob_beating=mc,
+        prob_underperforming=mc,
         current_below_stop_count=state["below_stop_count"],
     )
 
@@ -1188,7 +1191,7 @@ def _replay_exit_tick(
     state["tp_armed"], state["above_tp_count"], is_tp_hit = (
         math_engine.compute_tp_confirmation(
             mc_available=mc_available,
-            prob_beating=mc,
+            prob_underperforming=mc,
             take_profit_mc_pct=take_profit_mc,
             current_return=ret,
             is_triggered=False,

@@ -7,7 +7,7 @@
     "is_triggered": true,
     "current_return": 3.0,
     "stop_trigger_level": -1.0,
-    "prob_beating": 80.0,
+    "prob_underperforming": 80.0,
     "current_below_stop_count": 5
   },
   "expected": {

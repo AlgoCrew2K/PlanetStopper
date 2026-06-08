@@ -643,7 +643,7 @@ def test_discord_alert_receives_per_symphony_effective_mode():
         pytest.skip("No Discord alert was sent — symphony did not trigger; check test setup.")
 
     # Locate the is_live positional argument (6th positional, 0-indexed=5) in
-    # send_discord_alert(symphony_name, current_return, prob_beating,
+    # send_discord_alert(symphony_name, current_return, prob_underperforming,
     #                    stop_trigger_level, safe_hwm, is_live, ...)
     call_args = reporting_mock.send_discord_alert.call_args
 

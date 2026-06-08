@@ -146,7 +146,7 @@ def patched_env():
       - compute_vwap_breakdown_update → controls is_vwap_broken + is_vwap_bleed_broken
       - tp_triggered_now is set by the TP arm/fire logic; we force it by seeding
         above_tp_count >= 2, tp_armed=True, and current_return > 0 (positive return
-        in payload), plus prob_beating >= acc_TAKE_PROFIT_MC_PCT (so TP fires).
+        in payload), plus prob_underperforming >= acc_TAKE_PROFIT_MC_PCT (so TP fires).
         We control tp NOT firing by patching mc_prob so prob < threshold
         never reached, or by pre-seeding tp_armed=False.
       - execute_sell_to_cash → returns True so state mutations run
@@ -171,7 +171,7 @@ def patched_env():
         # ladder from the underlying math. They already surgically patch
         # compute_exit_confirmation and compute_vwap_breakdown_update to control
         # the Trailing-Stop / VWAP trigger booleans; run_monte_carlo is patched
-        # here for the same reason — to give a real, in-band prob_beating that
+        # here for the same reason — to give a real, in-band prob_underperforming that
         # the TP-confirm gate can act on. The single-day _make_minimal_history
         # fixture is below MC_MIN_HISTORY_DAYS, so the real run_monte_carlo would
         # return the insufficient sentinel (None) and the TP path could never
@@ -254,7 +254,7 @@ def test_vwap_breakdown_wins_when_tp_and_trailing_stop_also_true(patched_env):
 
     # Force VWAP Breakdown True, Trailing Stop True via surgical patches.
     # TP is forced True by seeding: tp_armed=True, above_tp_count=2, current_return>0,
-    # and prob_beating >= TAKE_PROFIT_MC_PCT (TP-fire condition: above_tp_count>=2
+    # and prob_underperforming >= TAKE_PROFIT_MC_PCT (TP-fire condition: above_tp_count>=2
     # AND current_return > 0 per alpha_bot_execution.py:860-862).
     mock_db.load_state.return_value = _seed_state(
         tp_armed=True, above_tp_count=2, below_stop_count=3
@@ -271,7 +271,7 @@ def test_vwap_breakdown_wins_when_tp_and_trailing_stop_also_true(patched_env):
             "compute_vwap_breakdown_update",
             return_value=(3, 2, True, False),  # (vwap_ticks, bleed_ticks, is_vwap_broken, is_vwap_bleed_broken)
         ),
-        # prob_beating >= TAKE_PROFIT_MC_PCT so TP arm fires (above_tp_count increment)
+        # prob_underperforming >= TAKE_PROFIT_MC_PCT so TP arm fires (above_tp_count increment)
         # but we also need current_return > 0 (payload sets last_percent_change=0.05>0)
         # above_tp_count starts at 2 → >=2 → tp_triggered_now = True
         # So TP is also True.

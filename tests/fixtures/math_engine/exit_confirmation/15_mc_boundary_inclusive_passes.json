@@ -1,0 +1,18 @@
+{
+  "name": "15_mc_boundary_inclusive_passes",
+  "description": "[H1] Boundary: prob_underperforming == MC_BREAKDOWN_THRESHOLD exactly. The corrected gate uses `>=` (inclusive), so the boundary PASSES -- a value exactly at the breakdown threshold counts as confirmed breakdown; the count increments toward exit.",
+  "function": "compute_exit_confirmation",
+  "inputs": {
+    "armed": true,
+    "is_triggered": false,
+    "current_return": -5.0,
+    "stop_trigger_level": -1.0,
+    "prob_underperforming": 60.0,
+    "current_below_stop_count": 2
+  },
+  "expected": {
+    "new_below_stop_count": 3,
+    "is_trailing_stop_hit": true
+  },
+  "derivation": "Guard passes. Magnitude: -5.0 <= -1.10 is TRUE. [H1 GATE] Breakdown gate: prob_underperforming 60.0 >= MC_BREAKDOWN_THRESHOLD(60.0) is TRUE (inclusive `>=`; equality PASSES). Combined: True AND True = True. new_count = 2 + 1 = 3; hit = (3 >= 3) is True. [DIRECTION FLIP vs pre-H1] the old gate used `< 60` so exactly-60 FAILED and reset; the corrected `>= 60` makes exactly-60 a confirmed breakdown that fires. Pinned to catch an impl that mistakenly used `>` (strict) for the breakdown gate (which would drop the exact-threshold case)."
+}
