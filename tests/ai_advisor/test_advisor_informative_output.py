@@ -39,10 +39,14 @@ Vol/atr bug (AC5):
 
 Mocking strategy:
   Route-level tests (AC1, AC2, AC6): hit the real ``ai_advisor`` module;
-  mock ONLY the Anthropic LLM client (``ai_advisor._build_client``) and the DB
-  reads (``database.get_latest_autotune_run``, ``database.load_state``,
-  ``database.normalize_name``). Do NOT mock ``ai_advisor`` wholesale — a
-  fully-mocked module test passes while the live route 500s/blanks.
+  mock BOTH the app.py database binding (``app_module.database``) AND the
+  ai_advisor module's own database binding (``ai_advisor.database``). Both
+  bindings must be mocked because ``assemble_advisor_context`` calls
+  ``database.get_latest_autotune_run`` through ai_advisor's OWN import binding
+  (~ai_advisor.py:501) — a separate object from app_module.database. Without
+  patching both, ``assemble_advisor_context`` hits the real SQLite and the
+  tests are non-hermetic. Do NOT mock ``ai_advisor`` wholesale — a fully-mocked
+  module test passes while the live route 500s/blanks.
 
   Unit tests (AC5): call ``ai_advisor._build_volatility_regime`` directly
   with controlled autotune_run dicts.
@@ -50,6 +54,16 @@ Mocking strategy:
 Fixture discipline:
   Expected values in assertions are derived from the fixture dicts fed into the
   route, never hardcoded producer outputs.
+
+B-1 HERMETICITY FIX:
+  All route-level tests now patch BOTH ``app_module.database`` (covers the route)
+  AND ``ai_advisor.database`` (covers ``assemble_advisor_context``'s own import
+  binding at ai_advisor.py:501). Without the ai_advisor.database patch, the
+  route test passes even when ``assemble_advisor_context`` builds assessment={}
+  because the isinstance guard at app.py silently replaces a MagicMock result.
+  The new RED test ``test_route_level_db_mock_covers_ai_advisor_database_binding``
+  asserts both that ``ai_advisor.database.get_latest_autotune_run`` was called
+  AND that the assessment is non-empty (not masked by the isinstance guard).
 """
 
 from __future__ import annotations
@@ -142,15 +156,16 @@ class TestAC1AssessmentAlwaysPresent:
     ):
         """Route-level: ``assessment`` key must be present in the JSON response.
 
-        Mocks ONLY the LLM client and DB read — ai_advisor module is the
-        real implementation. Fails if the route omits the assessment entirely.
+        Mocks BOTH app_module.database (the route's DB binding) AND
+        ai_advisor.database (assemble_advisor_context's own import binding at
+        ai_advisor.py:501). Without the ai_advisor.database patch the test is
+        non-hermetic — assemble_advisor_context can fall through to real SQLite.
         """
         monkeypatch.delenv("DEV_ADVISOR_FIXTURE", raising=False)
 
         with (
-            patch.object(
-                app_module, "database"
-            ) as db_mock,
+            patch.object(app_module, "database") as db_mock,
+            patch.object(ai_advisor, "database") as ai_db_mock,
             patch.object(ai_advisor, "_build_client", return_value=_make_anthropic_client_mock()),
             patch.object(ai_advisor, "symphony_logic") as logic_mock,
         ):
@@ -158,6 +173,12 @@ class TestAC1AssessmentAlwaysPresent:
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
             db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            # ai_advisor.database is a separate module-level binding; patch it so
+            # assemble_advisor_context (ai_advisor.py:501) never touches real SQLite.
+            ai_db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
+            ai_db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.DEFAULT_STRATEGY = {}
+            ai_db_mock.DEFAULT_LOCKED_VARS = []
             logic_mock.get_condensed_logic.return_value = None
 
             resp = client.post(
@@ -192,6 +213,7 @@ class TestAC1AssessmentAlwaysPresent:
 
         with (
             patch.object(app_module, "database") as db_mock,
+            patch.object(ai_advisor, "database") as ai_db_mock,
             patch.object(ai_advisor, "_build_client", return_value=_make_anthropic_client_mock()),
             patch.object(ai_advisor, "symphony_logic") as logic_mock,
         ):
@@ -199,6 +221,10 @@ class TestAC1AssessmentAlwaysPresent:
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
             db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
+            ai_db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.DEFAULT_STRATEGY = {}
+            ai_db_mock.DEFAULT_LOCKED_VARS = []
             logic_mock.get_condensed_logic.return_value = None
 
             resp = client.post(
@@ -245,6 +271,7 @@ class TestAC1AssessmentAlwaysPresent:
 
         with (
             patch.object(app_module, "database") as db_mock,
+            patch.object(ai_advisor, "database") as ai_db_mock,
             patch.object(ai_advisor, "_build_client", return_value=_make_anthropic_client_mock()),
             patch.object(ai_advisor, "symphony_logic") as logic_mock,
         ):
@@ -252,6 +279,10 @@ class TestAC1AssessmentAlwaysPresent:
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
             db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
+            ai_db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.DEFAULT_STRATEGY = {}
+            ai_db_mock.DEFAULT_LOCKED_VARS = []
             logic_mock.get_condensed_logic.return_value = None
 
             resp = client.post(
@@ -281,6 +312,7 @@ class TestAC1AssessmentAlwaysPresent:
 
         with (
             patch.object(app_module, "database") as db_mock,
+            patch.object(ai_advisor, "database") as ai_db_mock,
             patch.object(ai_advisor, "_build_client", return_value=_make_anthropic_client_mock()),
             patch.object(ai_advisor, "symphony_logic") as logic_mock,
         ):
@@ -288,6 +320,10 @@ class TestAC1AssessmentAlwaysPresent:
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
             db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
+            ai_db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.DEFAULT_STRATEGY = {}
+            ai_db_mock.DEFAULT_LOCKED_VARS = []
             logic_mock.get_condensed_logic.return_value = None
 
             resp = client.post(
@@ -314,6 +350,7 @@ class TestAC1AssessmentAlwaysPresent:
 
         with (
             patch.object(app_module, "database") as db_mock,
+            patch.object(ai_advisor, "database") as ai_db_mock,
             patch.object(ai_advisor, "_build_client", return_value=_make_anthropic_client_mock()),
             patch.object(ai_advisor, "symphony_logic") as logic_mock,
         ):
@@ -321,6 +358,10 @@ class TestAC1AssessmentAlwaysPresent:
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_latest_autotune_run.return_value = None  # Optuna never ran
             db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.get_latest_autotune_run.return_value = None  # Optuna never ran
+            ai_db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.DEFAULT_STRATEGY = {}
+            ai_db_mock.DEFAULT_LOCKED_VARS = []
             logic_mock.get_condensed_logic.return_value = None
 
             resp = client.post(
@@ -355,11 +396,16 @@ class TestAC2Differentiation:
     def _call_suggest(self, client, monkeypatch, autotune_run_fixture: dict) -> dict:
         """Helper: POST /ai-advisor/suggest with the given autotune_run fixture.
 
+        Patches both app_module.database and ai_advisor.database so the test is
+        hermetic — assemble_advisor_context calls database.get_latest_autotune_run
+        through ai_advisor's own module-level binding (ai_advisor.py:501).
+
         Returns the parsed JSON body.
         """
         monkeypatch.delenv("DEV_ADVISOR_FIXTURE", raising=False)
         with (
             patch.object(app_module, "database") as db_mock,
+            patch.object(ai_advisor, "database") as ai_db_mock,
             patch.object(ai_advisor, "_build_client", return_value=_make_anthropic_client_mock()),
             patch.object(ai_advisor, "symphony_logic") as logic_mock,
         ):
@@ -367,6 +413,10 @@ class TestAC2Differentiation:
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_latest_autotune_run.return_value = dict(autotune_run_fixture)
             db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.get_latest_autotune_run.return_value = dict(autotune_run_fixture)
+            ai_db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.DEFAULT_STRATEGY = {}
+            ai_db_mock.DEFAULT_LOCKED_VARS = []
             logic_mock.get_condensed_logic.return_value = None
 
             resp = client.post(
@@ -844,10 +894,17 @@ class TestAC6SecurityContracts:
 
         with (
             patch.object(app_module, "database") as db_mock,
+            patch.object(ai_advisor, "database") as ai_db_mock,
             patch.object(ai_advisor, "_build_client", side_effect=_raise_with_secret),
         ):
             db_mock.load_state.return_value = {}
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
+            db_mock.get_latest_autotune_run.return_value = None
+            # ai_advisor.database patched for hermeticity even though the route
+            # will raise before completing context assembly.
+            ai_db_mock.get_latest_autotune_run.return_value = None
+            ai_db_mock.DEFAULT_STRATEGY = {}
+            ai_db_mock.DEFAULT_LOCKED_VARS = []
 
             resp = client.post(
                 "/ai-advisor/suggest",
@@ -877,6 +934,7 @@ class TestAC6SecurityContracts:
 
         with (
             patch.object(app_module, "database") as db_mock,
+            patch.object(ai_advisor, "database") as ai_db_mock,
             patch.object(ai_advisor, "_build_client", return_value=_make_anthropic_client_mock()),
             patch.object(ai_advisor, "symphony_logic") as logic_mock,
         ):
@@ -884,6 +942,10 @@ class TestAC6SecurityContracts:
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
             db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
+            ai_db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.DEFAULT_STRATEGY = {}
+            ai_db_mock.DEFAULT_LOCKED_VARS = []
             logic_mock.get_condensed_logic.return_value = None
 
             resp = client.post(
@@ -901,3 +963,112 @@ class TestAC6SecurityContracts:
                 f"D-1 security contract: the response must not contain internal path "
                 f"fragment {bad_fragment!r}. Got response: {json.dumps(body)!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# B-1 — Route-level DB mock must cover ai_advisor.database binding.
+# ---------------------------------------------------------------------------
+
+
+class TestB1RouteDbMockHermeticity:
+    """B-1 (reviewer finding): the route-level tests previously mocked ONLY
+    ``app_module.database``, leaving ``ai_advisor.database`` — a SEPARATE
+    module-level import binding in ai_advisor.py (~line 501) — unmocked.
+
+    ``assemble_advisor_context`` calls ``database.get_latest_autotune_run``
+    through that binding.  When only ``app_module.database`` is mocked, the
+    masking isinstance guard at app.py:3351 silently returns ``assessment: {}``
+    whenever ``assemble_advisor_context`` produces a non-dict result (e.g. a
+    MagicMock from the unmocked ``ai_advisor.database``).  The tests then pass
+    for the wrong reason — the assessment object is empty, not built from
+    fixture data.
+
+    This test is written RED against the code state where ``assemble_advisor_context``
+    does NOT check ``autotune_run is _SENTINEL`` before overwriting ``autotune_run``
+    (ai_advisor.py:497-501 unconditionally calls ``database.get_latest_autotune_run``
+    regardless of the passed-in argument).  Going GREEN requires EITHER:
+      (a) ``assemble_advisor_context`` respects the sentinel and skips the internal
+          DB call when a value was passed (then the route's pre-fetch covers it), OR
+      (b) the sentinel check is implemented AND the ai_advisor.database path is also
+          covered by the test mocks in all scenarios.
+
+    The fix removes the isinstance guard from app.py that masked the issue.
+    """
+
+    def test_route_level_db_mock_covers_ai_advisor_database_binding(
+        self, client, monkeypatch
+    ):
+        """Proves that ``ai_advisor.database.get_latest_autotune_run`` is actually
+        exercised under the route test mock setup AND that the assessment is non-empty.
+
+        Failure modes this test catches:
+          (1) ``assemble_advisor_context`` calls ``ai_advisor.database.get_latest_autotune_run``
+              with an unmocked binding → returns a real DB value or raises → assessment broken.
+          (2) The isinstance guard at app.py silently swallows a bad assessment → {} returned
+              → user sees no per-symphony context even when the mock is set up correctly.
+
+        The test asserts BOTH that ``ai_advisor.database.get_latest_autotune_run``
+        was called (proving the mock covered the right binding) AND that the
+        returned assessment is a non-empty dict (proving the masking guard is absent).
+        """
+        monkeypatch.delenv("DEV_ADVISOR_FIXTURE", raising=False)
+
+        with (
+            patch.object(app_module, "database") as db_mock,
+            patch.object(ai_advisor, "database") as ai_db_mock,
+            patch.object(ai_advisor, "_build_client", return_value=_make_anthropic_client_mock()),
+            patch.object(ai_advisor, "symphony_logic") as logic_mock,
+        ):
+            db_mock.load_state.return_value = {}
+            db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
+            db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
+            db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.get_latest_autotune_run.return_value = dict(_FIXTURE_REVERTED)
+            ai_db_mock.get_symphony_strategy.return_value = {"parameters": {}, "locked_vars": []}
+            ai_db_mock.DEFAULT_STRATEGY = {}
+            ai_db_mock.DEFAULT_LOCKED_VARS = []
+            logic_mock.get_condensed_logic.return_value = None
+
+            resp = client.post(
+                "/ai-advisor/suggest",
+                json={"symphony_id": "symphony_no_edge"},
+                content_type="application/json",
+            )
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assessment = body.get("assessment", {})
+
+        # Part 1: ai_advisor.database.get_latest_autotune_run must have been
+        # called — proving the mock covered assemble_advisor_context's own import
+        # binding.  If this fails, the sentinel check in assemble_advisor_context
+        # is broken and the internal DB call falls through to real SQLite.
+        assert ai_db_mock.get_latest_autotune_run.call_count >= 1, (
+            "ai_advisor.database.get_latest_autotune_run was NOT called during the "
+            "route request. This means assemble_advisor_context bypassed its own "
+            "database binding (expected when the sentinel check is correctly implemented "
+            "and the route pre-fetches autotune_run). If the sentinel check is absent, "
+            "this call count will be >=1 (the internal fetch runs unguarded). "
+            "Either way the test mock must be present to ensure hermetic isolation."
+        )
+
+        # Part 2: the assessment must be a non-empty dict derived from the fixture.
+        # If this fails, the isinstance masking guard is present and swallowing the
+        # assessment — the fix requires removing it from app.py.
+        assert isinstance(assessment, dict) and assessment != {}, (
+            "assessment must be a non-empty dict built from the fixture data. "
+            f"Got: {assessment!r}. "
+            "If assessment == {{}} the isinstance masking guard at app.py is present "
+            "and must be removed — it silently hides the isolation gap by replacing "
+            "any non-dict assessment (e.g. a MagicMock) with an empty dict."
+        )
+
+        # Part 3: the assessment must contain the fixture's baseline_decision.
+        # This is the end-to-end proof that fixture data flows through to the response.
+        expected_decision = _FIXTURE_REVERTED["baseline_decision"]
+        assert assessment.get("baseline_decision") == expected_decision, (
+            f"assessment.baseline_decision must equal the fixture value "
+            f"({expected_decision!r}); got {assessment.get('baseline_decision')!r}. "
+            "The fixture data is not flowing through assemble_advisor_context → "
+            "build_assessment_from_context → route response."
+        )
