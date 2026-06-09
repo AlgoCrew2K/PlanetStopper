@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: N/A — defect fix (D3 from .design-handoff/advisor-ui-diag/TAB-DEFECTS-RCA.md)
 Branch: feat/advisor-tab-fixes
-Phase: red
+Phase: green
 
 ## Test Files
 - `tests/ai_advisor/test_advisor_chat_handoff.py` — 30 tests total (21 failing, 5 skipped, 4 passing)
@@ -56,3 +56,24 @@ introduced.  The test imports only stdlib (pathlib, re, subprocess) plus pytest.
   Failing = the D3 sessionStorage codepath does not exist yet (correct RED).
   Skipped = order/robustness tests that gate on getItem being present (will ungate automatically).
   Passing = node --check (files are syntax-valid today) + no-typo check (both correct baselines).
+- [2026-06-09] implementer: GREEN complete — 26/30 tests passing, 4 skipped (TestCurrentStateIsRed
+  correctly skip when fix is present), 0 test bugs. Full advisor suite: 636 passed / 0 failed /
+  6 skipped on commit eb40ded. Typecheck N/A (JS pattern tests). No regressions.
+
+## Implementation Notes
+- D2A: Straightforward tuple destructure at app.py:2805 — `_dates, live_rets, _shadow = ...` then
+  assign only `live_rets`.
+- D1A: Wrapped lazy imports in `try/except ImportError` that returns 200+JSON error, consistent
+  with existing exception handling in the route's main try/except.
+- D1B: Wrapped the final `return jsonify({...})` block in try/except to guard serialization errors.
+- D2B: Added `if (!list) return;` guard in ai_advisor.js:loadRecentRuns() after getElementById.
+- D3 asset_swaps: The onclick is built via single-quoted JS string concatenation. Used double quotes
+  for the sessionStorage key and href path inside the onclick to avoid `\'` escaping, which would
+  have caused the test regex `['"]` to fail to match backslash-escaped quote characters.
+- D3 logic_changes: Template literal inline onclick — sessionStorage writes added in both branches
+  using single quotes (template literal context; no escaping needed for `'` inside backtick string).
+- D3 chat receiver: Added try/catch block inside DOMContentLoaded after `_syncSendBtn()`, before
+  the closing `});`. Order: getItem → if present → openChatPanel → removeItem.
+
+## Test File Issues (for test-writer to fix)
+None.
