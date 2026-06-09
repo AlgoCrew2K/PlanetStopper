@@ -1,0 +1,20 @@
+{
+  "_fixture_provenance": "Hand-authored per _autotune_run_row_to_dict column map (database.py:718-735). Represents a symphony where 500/500 trials failed the FDR gate — oos_alpha is null (sentinel for -inf), baseline_decision is Reverted to Fallback.",
+  "_cycle": "advisor-informative",
+  "id": 101,
+  "run_timestamp": "2026-06-01T09:30:00",
+  "symphony_id": "symphony_no_edge",
+  "oos_alpha": null,
+  "train_alpha": null,
+  "baseline_decision": "Reverted to Fallback",
+  "fallback_oos_alpha": -1.23,
+  "default_oos_alpha": -2.45,
+  "selection_tstat": null,
+  "naive_sharpe": 0.12,
+  "validation_sharpe": null,
+  "frozen_eval_sharpe": null,
+  "math_mode": "per_symphony",
+  "account_id": null,
+  "sortino_sentinel_pct": null,
+  "pbo": null
+}
