@@ -918,10 +918,11 @@ def main():
 
                     # cycle_id formatted as YYYYMMDD_HHMM (PA-M1F-4)
                     cycle_id_str = current_et.strftime("%Y%m%d_%H%M")
-                    # ts_et hardcoded UTC-4 (matches H1 pattern, PA-M1F-6)
+                    # ts_et via ZoneInfo-correct ET helper; preserves DST accuracy
+                    # (replaces hardcoded UTC-4 that was wrong during EST, PA-M5)
                     now_utc = datetime.now(UTC)
                     ts_utc_str = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
-                    ts_et_str = (now_utc - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S")
+                    ts_et_str = current_et.strftime("%Y-%m-%dT%H:%M:%S")
 
                     database.record_shadow_observation(
                         symphony_id=s_id,
@@ -1344,9 +1345,13 @@ def main():
                         bot_state[symphony_id]["below_stop_count"] = 0
                         print(f"  *** {symphony_name} DISARMED (Conditions Recovered) ***")
 
-                # Do not pollute the rolling MC history with the None sentinel —
-                # a None entry would break any later averaging/comparison.
-                if mc_available:
+                # Do not pollute the rolling MC history with:
+                #   (a) the None sentinel — a None entry breaks averaging/comparison;
+                #   (b) a triggered-cycle prob — after trigger, prob_underperforming
+                #       is computed against a fictional 0 % baseline (exit already
+                #       fired) and would corrupt the pre-trigger arm/disarm signal
+                #       buffer.  (PA-M4)
+                if mc_available and not bot_state[symphony_id]["triggered"]:
                     bot_state[symphony_id]["mc_history"].append(prob_underperforming)
                     if len(bot_state[symphony_id]["mc_history"]) > 5:
                         bot_state[symphony_id]["mc_history"].pop(0)
