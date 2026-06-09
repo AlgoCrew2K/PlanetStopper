@@ -421,8 +421,11 @@ def build_assessment_from_context(context: dict) -> dict:
             f"Baseline decision: {baseline_decision}. Holding current config."
         )
     else:
+        # Guard oos_alpha format: only apply .4f when it is a real numeric type.
+        # A MagicMock or unexpected value must not crash the summary builder.
+        oos_str = f"{oos_alpha:.4f}" if isinstance(oos_alpha, (int, float)) else str(oos_alpha)
         summary = (
-            f"Optimizer found a validated edge: OOS alpha={oos_alpha:.4f}, "
+            f"Optimizer found a validated edge: OOS alpha={oos_str}, "
             f"baseline decision={baseline_decision}. "
             f"Fallback OOS alpha={fallback_oos_alpha}, "
             f"default OOS alpha={default_oos_alpha}."
