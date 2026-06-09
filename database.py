@@ -2387,13 +2387,14 @@ def record_exit_trigger(
     no co-fires.  Stored as JSON via json.dumps — dual-stored in also_true_json
     column AND retained in the gate_state_json blob (Option A, ruling 2026-06-01).
     """
-    from datetime import timedelta
+    from zoneinfo import ZoneInfo
 
     if ts_utc is None or ts_et is None:
         now_utc = datetime.now(UTC)
         ts_utc = ts_utc or now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
-        # ET offset approximation for display; EDT = UTC-4.
-        ts_et = ts_et or (now_utc - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S")
+        # Use the real America/New_York timezone so EST (UTC-5) and EDT (UTC-4)
+        # are both handled correctly — mirrors get_current_et() in alpha_bot_execution.py.
+        ts_et = ts_et or datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%dT%H:%M:%S")
 
     if gate_state_json is None and gate_state is not None:
         gate_state_json = json.dumps(gate_state)
