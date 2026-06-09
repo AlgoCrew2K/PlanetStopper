@@ -165,3 +165,15 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** PBO is a sample-robustness check orthogonal to BHY (which addresses multiplicity). PBO > 0.5 means the IS-best config generalizes OOS less than half the time across the CPCV partitions — a straightforward disqualifying signal. The combination of BHY + PBO closes two independent overfitting axes.
 
 **Status:** Merged (849a11e). Full tree clean at 5146/0.
+
+---
+
+## Test infrastructure (2026-06-09)
+
+### DE-TEST-001: pytest-sentinel guard in database._db_file() — prod-DB write leak closed
+
+**Decision:** `database._db_file()` raises `RuntimeError` when `"pytest" in sys.modules` AND the resolved path basename is `alphabot_state.db`. `tests/conftest.py` adds a `pytest_configure()` hook (earliest pytest lifecycle point, before collection) that sets `DB_PATH` to a `tempfile.TemporaryDirectory` session path if not already set. The guard is completely inert in the live daemon (pytest is never imported there).
+
+**Rationale:** Advisor producers (`overfitting_conscience`, `divergence_explainer`, `spec_critic`) each hold their own `import database` reference not covered by `patch("autotuner.database")` mocks. A test running without `DB_PATH` set would silently write to `alphabot_state.db`. The `pytest_configure()` hook fires before any module-level `import database` (which triggers `init_db()`), closing the gap that a fixture-level fix cannot reach. The sentinel guard in `_db_file()` converts any slip-through into a loud immediate failure rather than silent prod corruption.
+
+**Status:** Merged (72d1d20). Full tree clean at 5802/0. Four latent `save_autotune_run` mock return-value bugs also exposed and fixed.
