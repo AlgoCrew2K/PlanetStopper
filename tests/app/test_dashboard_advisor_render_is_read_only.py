@@ -84,6 +84,15 @@ def _make_advisor_mock() -> MagicMock:
     response.suggestions = [suggestion]
     mock.request_suggestions.return_value = (response, None)
     mock.assemble_advisor_context.return_value = {}
+    # build_assessment_from_context is called by the route; return a plain dict
+    # so jsonify can serialize the response without TypeError.
+    mock.build_assessment_from_context.return_value = {
+        "baseline_decision": "Adopted AI",
+        "oos_alpha": None,
+        "fallback_oos_alpha": None,
+        "default_oos_alpha": None,
+        "summary": "test assessment",
+    }
     mock.enforce_suggestion_allowlist.return_value = ([suggestion], [])
     mock.check_risk_direction_agreement.return_value = {"agrees": True}
     mock._read_current_strategy.return_value = ({}, [])
