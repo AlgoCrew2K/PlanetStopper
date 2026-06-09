@@ -246,6 +246,7 @@ class TestPersistedDailyReturnsNotPathInflated:
             mock_db.normalize_name.side_effect = lambda x: x.lower().replace(" ", "_")
             mock_db.load_chart_history.return_value = {}
             mock_db.get_researcher_dof_ledger_for_run.return_value = []
+            mock_db.save_autotune_run.return_value = 1
             mock_db.PHASE1_THEORY_GAMMA = "2.0"
             mock_db.DEFAULT_STRATEGY = dict(params)
 
