@@ -3142,7 +3142,11 @@ def ai_advisor_logic_changes_evaluate():
             "variant_stats": p.variant_stats,
             # Gate verdict (AC-3.3)
             "gate_decision": gr.verdict.decision if gr else None,
-            "gate_reason": gr.verdict.reason if gr else None,
+            "gate_reason": (
+                gr.verdict.decision.replace("_", " ").title()
+                if gr and gr.verdict.vetoes_passed
+                else ("veto failed" if gr else None)
+            ),
             "validation_days": gr.validation_days if gr else None,
             "oos_alpha": gr.oos_alpha if gr else None,
             "winner_p_adj": gr.winner_p_adj if gr else None,

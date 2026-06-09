@@ -936,3 +936,289 @@ class TestNoDuplicateParseFunction:
             "The route must pass change_description= to propose_operator_logic_change "
             "and let the engine's own parser run."
         )
+
+
+# ===========================================================================
+# Section 11 — Regression: AcceptanceVerdict.reason AttributeError (app.py:3126)
+# ===========================================================================
+
+
+class TestAcceptanceVerdictGateReason:
+    """Regression tests for app.py bug: gr.verdict.reason does not exist on AcceptanceVerdict.
+
+    AcceptanceVerdict (acceptance_gate.py:111) is a NamedTuple with fields:
+      vetoes_passed, panel_score, panel_breakdown, decision
+    There is NO .reason field.  The route was accessing gr.verdict.reason, causing
+    an AttributeError that propagated as "evaluation error" in the tab.
+
+    The fix derives gate_reason from the valid fields (decision + vetoes_passed).
+    These tests use a real AcceptanceVerdict to ensure the route never accesses
+    a non-existent attribute.
+    """
+
+    def _make_run_result_with_gate(
+        self,
+        vetoes_passed: bool,
+        decision: str,
+        panel_score: "float | None" = None,
+    ) -> object:
+        """Build a LogicChangeRunResult whose proposal carries a real CandidateGateResult
+        with a real AcceptanceVerdict (no .reason attribute).
+
+        Both mock LLM calls and Composer backtest calls are excluded from this
+        builder — callers patch those at the route level.
+        """
+        _ensure_repo_on_path()
+        from acceptance_gate import AcceptanceVerdict
+        from advisors.backtest_gate_engine import CandidateGateResult, HARVEY_LIU_FDR_Q, GatedBatch
+        from advisors.logic_change_engine import (
+            LogicChangeRunResult,
+            LogicProposalResult,
+            LogicChangeObjective,
+            LogicTweak,
+        )
+
+        verdict = AcceptanceVerdict(
+            vetoes_passed=vetoes_passed,
+            panel_score=panel_score,
+            panel_breakdown={"stability": 0.8, "prior_anchor": 0.7} if vetoes_passed else {},
+            decision=decision,
+        )
+        gate_result = CandidateGateResult(
+            candidate_id="sym-test:window@children>0:20->16",
+            verdict=verdict,
+            validation_days=60,
+            oos_alpha=0.5,
+            caveats=[
+                "The gate screens for statistical significance (BHY/Yekutieli FDR) "
+                "but selecting the best backtest from N candidates still concentrates "
+                "selection bias even after correction. Treat survivors as hypotheses."
+            ] if vetoes_passed and decision == "ADOPT_CANDIDATE" else [],
+            winner_p_adj=0.03,
+        )
+        objective = LogicChangeObjective(
+            objective_type="reduce_drawdown",
+            measured_value=-0.25,
+            rationale="measured drawdown from backtest",
+        )
+        tweak = LogicTweak(
+            node_path=["children", 0],
+            param_key="window",
+            old_value=20,
+            new_value=16,
+            node_description="window=20 at path [children, 0]",
+        )
+        is_survivor = vetoes_passed and decision == "ADOPT_CANDIDATE"
+        proposal = LogicProposalResult(
+            candidate_id="sym-test:window@children>0:20->16",
+            symphony_id="sym-test",
+            tweak=tweak,
+            objective=objective,
+            objective_rationale="Adjusting window from 20 to 16 targets reduction of the measured -25.0% drawdown.",
+            gate_result=gate_result,
+            baseline_stats={"sharpe_ratio": None, "sortino_ratio": None},
+            variant_stats={"sharpe_ratio": None, "sortino_ratio": None},
+            caveats=gate_result.caveats,
+            apply_guidance="To apply: open Test Symphony in Composer and manually adjust window.",
+            backtest_error=None,
+        )
+        gate_batch = GatedBatch(
+            results=[gate_result],
+            survivors=[proposal] if is_survivor else [],
+            n_candidates=1,
+            fdr_q=HARVEY_LIU_FDR_Q,
+        )
+        return LogicChangeRunResult(
+            gate_batch=gate_batch,
+            proposals=[proposal],
+            survivors=[proposal] if is_survivor else [],
+            rejected_candidates=[] if is_survivor else [proposal],
+            message=(
+                "1 logic change survived the gate for Test Symphony"
+                if is_survivor
+                else "No logic change cleared the gate."
+            ),
+            objective=objective,
+            no_api_key=False,
+        )
+
+    def test_route_200_no_attribute_error_with_adopt_verdict(self, flask_client):
+        """POST /evaluate with ADOPT_CANDIDATE AcceptanceVerdict must return HTTP 200.
+
+        Before the fix: gr.verdict.reason raised AttributeError → "evaluation error".
+        After the fix: route reads only valid AcceptanceVerdict fields and returns a
+        well-formed JSON result.
+        """
+        from acceptance_gate import DECISION_ADOPT_CANDIDATE
+        mock_result = self._make_run_result_with_gate(
+            vetoes_passed=True,
+            decision=DECISION_ADOPT_CANDIDATE,
+            panel_score=0.75,
+        )
+
+        with (
+            patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch("symphony_logic.fetch_symphony_score", return_value=_minimal_score_tree()),
+            patch(
+                "advisors.logic_change_engine.propose_operator_logic_change",
+                return_value=mock_result,
+            ),
+        ):
+            resp = flask_client.post(
+                "/ai-advisor/logic-changes/evaluate",
+                json={
+                    "symphony_id": "sym-test",
+                    "change_description": "change window from 20 to 16",
+                },
+            )
+
+        assert resp.status_code == 200, (
+            f"Route must return 200 when AcceptanceVerdict is ADOPT_CANDIDATE. "
+            f"Got {resp.status_code}. "
+            "A 500 or 'evaluation error' here means gr.verdict.reason AttributeError is still present."
+        )
+        data = resp.get_json()
+        assert data is not None, "Response must be valid JSON."
+        assert "error" not in data, (
+            f"Route must not return an error with a valid ADOPT_CANDIDATE verdict. "
+            f"Got: {data.get('error')!r}"
+        )
+
+    def test_gate_decision_present_in_response(self, flask_client):
+        """gate_decision must be present and equal to the AcceptanceVerdict.decision value."""
+        from acceptance_gate import DECISION_ADOPT_CANDIDATE
+        mock_result = self._make_run_result_with_gate(
+            vetoes_passed=True,
+            decision=DECISION_ADOPT_CANDIDATE,
+            panel_score=0.75,
+        )
+
+        with (
+            patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch("symphony_logic.fetch_symphony_score", return_value=_minimal_score_tree()),
+            patch(
+                "advisors.logic_change_engine.propose_operator_logic_change",
+                return_value=mock_result,
+            ),
+        ):
+            resp = flask_client.post(
+                "/ai-advisor/logic-changes/evaluate",
+                json={
+                    "symphony_id": "sym-test",
+                    "change_description": "change window from 20 to 16",
+                },
+            )
+
+        data = resp.get_json()
+        assert data is not None
+        assert "gate_decision" in data, (
+            "Response must include gate_decision field."
+        )
+        assert data["gate_decision"] == DECISION_ADOPT_CANDIDATE, (
+            f"gate_decision must equal the AcceptanceVerdict.decision. "
+            f"Expected {DECISION_ADOPT_CANDIDATE!r}, got {data['gate_decision']!r}."
+        )
+
+    def test_gate_reason_is_string_in_proposal_detail(self, flask_client):
+        """gate_reason in each proposal dict must be a string, not raise AttributeError.
+
+        The JS (ai_advisor_logic_changes.js:203) reads proposal.gate_reason and passes
+        it to _escapeHtml — it must be a string (or null/falsy for the empty-span path).
+        This is the direct regression guard for the gr.verdict.reason bug.
+        """
+        from acceptance_gate import DECISION_ADOPT_CANDIDATE
+        mock_result = self._make_run_result_with_gate(
+            vetoes_passed=True,
+            decision=DECISION_ADOPT_CANDIDATE,
+            panel_score=0.75,
+        )
+
+        with (
+            patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch("symphony_logic.fetch_symphony_score", return_value=_minimal_score_tree()),
+            patch(
+                "advisors.logic_change_engine.propose_operator_logic_change",
+                return_value=mock_result,
+            ),
+        ):
+            resp = flask_client.post(
+                "/ai-advisor/logic-changes/evaluate",
+                json={
+                    "symphony_id": "sym-test",
+                    "change_description": "change window from 20 to 16",
+                },
+            )
+
+        data = resp.get_json()
+        assert data is not None
+        all_proposals = data.get("survivors_detail", []) + data.get("rejected_detail", [])
+        assert len(all_proposals) > 0, (
+            "Expected at least one proposal in survivors_detail or rejected_detail."
+        )
+        for proposal in all_proposals:
+            assert "gate_reason" in proposal, (
+                f"Each proposal dict must include gate_reason. "
+                f"Got keys: {list(proposal.keys())}."
+            )
+            # gate_reason must be a string (or None) — never an AttributeError
+            gr_value = proposal["gate_reason"]
+            assert gr_value is None or isinstance(gr_value, str), (
+                f"gate_reason must be a string or None (JS consumes it via _escapeHtml). "
+                f"Got {type(gr_value).__name__!r}: {gr_value!r}."
+            )
+
+    def test_gate_reason_string_for_veto_failed_verdict(self, flask_client):
+        """gate_reason must be a non-None string even when vetoes_passed=False."""
+        from acceptance_gate import DECISION_REJECT_VETO_FAILED
+        mock_result = self._make_run_result_with_gate(
+            vetoes_passed=False,
+            decision=DECISION_REJECT_VETO_FAILED,
+            panel_score=None,
+        )
+
+        with (
+            patch("advisors.logic_change_engine._has_composer_key", return_value=True),
+            patch("symphony_logic.fetch_symphony_score", return_value=_minimal_score_tree()),
+            patch(
+                "advisors.logic_change_engine.propose_operator_logic_change",
+                return_value=mock_result,
+            ),
+        ):
+            resp = flask_client.post(
+                "/ai-advisor/logic-changes/evaluate",
+                json={
+                    "symphony_id": "sym-test",
+                    "change_description": "change window from 20 to 16",
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data is not None
+        all_proposals = data.get("survivors_detail", []) + data.get("rejected_detail", [])
+        for proposal in all_proposals:
+            gr_value = proposal.get("gate_reason")
+            assert isinstance(gr_value, str), (
+                f"gate_reason must be a string for REJECT_VETO_FAILED verdict. "
+                f"Got {type(gr_value).__name__!r}: {gr_value!r}."
+            )
+
+    def test_acceptance_verdict_has_no_reason_attr(self):
+        """Regression guard: confirm AcceptanceVerdict has no .reason field.
+
+        If acceptance_gate.py were ever updated to add .reason, this test would
+        fail (intentionally) to prompt re-evaluation of the fix approach.
+        """
+        _ensure_repo_on_path()
+        from acceptance_gate import AcceptanceVerdict
+        verdict = AcceptanceVerdict(
+            vetoes_passed=True,
+            panel_score=0.8,
+            panel_breakdown={},
+            decision="ADOPT_CANDIDATE",
+        )
+        assert not hasattr(verdict, "reason"), (
+            "AcceptanceVerdict unexpectedly gained a .reason attribute. "
+            "If this field was intentionally added, update the gate_reason derivation "
+            "in app.py _proposal_to_dict to use verdict.reason directly."
+        )
