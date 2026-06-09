@@ -235,6 +235,7 @@ class TestCscvDateReturnsStoredInDecimalUnits:
             mock_db.record_autotune_run.return_value = None
             mock_db.update_symphony_strategy.return_value = None
             mock_db.get_researcher_dof_ledger_for_run.return_value = []
+            mock_db.save_autotune_run.return_value = 1
             mock_db.PHASE1_THEORY_GAMMA = "2.0"
             mock_db.DEFAULT_STRATEGY = {
                 "TAKE_PROFIT_MC_PCT": 0.5, "VWAP_CROSS_HWM_PCT": 0.5,

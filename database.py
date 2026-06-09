@@ -7,6 +7,7 @@ import math
 import os
 import re
 import sqlite3
+import sys
 import time
 import uuid
 from datetime import UTC, datetime
@@ -55,8 +56,22 @@ def _db_file() -> str:
     # Explicit per-test patch.object(database, "DB_FILE", path) takes precedence.
     # Ambient DB_PATH env var (set by autouse conftest isolation fixture) is the fallback.
     if DB_FILE != _DB_FILE_DEFAULT:
-        return DB_FILE
-    return os.environ.get("DB_PATH", DB_FILE)
+        resolved = DB_FILE
+    else:
+        resolved = os.environ.get("DB_PATH", DB_FILE)
+    # Guard: under pytest, opening the production DB basename is always a test
+    # isolation bug — the session-scoped _session_db_guard fixture must have set
+    # DB_PATH to a temp file before any test runs.  This guard converts a silent
+    # test→prod-DB leak into a loud, immediate failure.
+    # CRITICAL: gated on "pytest" in sys.modules so the live daemon (which never
+    # imports pytest) is completely unaffected.
+    if "pytest" in sys.modules and os.path.basename(resolved) == "alphabot_state.db":
+        raise RuntimeError(
+            f"test attempted to open the production DB at {resolved!r} — "
+            "DB isolation bug: set DB_PATH env var to a temp file "
+            "(the _session_db_guard or _isolate_db fixture must be active)."
+        )
+    return resolved
 
 
 def get_connection():

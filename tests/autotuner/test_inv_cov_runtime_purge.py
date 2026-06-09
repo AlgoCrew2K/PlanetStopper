@@ -117,7 +117,7 @@ def _autotuner_patches(best_params: dict, history: dict):
                             "locked_vars": []}),
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", best_params.copy()),
-        patch("autotuner.database.save_autotune_run"),
+        patch("autotuner.database.save_autotune_run", return_value=1),
         patch("autotuner.math_engine.compute_para_arm_decision",
               side_effect=lambda **kw: (0.0, False)),
         patch("autotuner.math_engine.compute_time_squeeze_decay",
