@@ -216,20 +216,52 @@ def _build_volatility_regime(autotune_run: dict | None) -> dict:
     range. Values come from the autotune run when available; when Optuna has
     not run, the section is still well-shaped but marked unavailable so Claude
     can invoke the insufficient-data escape hatch.
+
+    Honest availability: ``_autotune_run_row_to_dict`` (database.py:718-735)
+    does not project ``symphony_vol`` or ``atr_pct_14d`` columns — those
+    columns do not yet exist in the schema. Marking ``available:True`` with
+    all-null fields fabricates regime context for Claude. We mark
+    ``available:False`` whenever the actual vol/atr fields are absent or null,
+    and set ``available:True`` only when the fields are genuinely present and
+    non-null (forward-compatible once the schema gains those columns).
     """
-    regime: dict = {
+    if autotune_run is None:
+        return {
+            "vol_20d": None,
+            "vol_20d_window_range": None,
+            "atr_pct_14d": None,
+            "atr_pct_14d_window_range": None,
+            "available": False,
+            "reason": "Optuna has not run for this symphony — no vol/atr data available.",
+        }
+
+    vol_20d = autotune_run.get("symphony_vol")
+    atr_pct_14d = autotune_run.get("atr_pct_14d")
+
+    # Both fields must be non-null to claim regime data is available.
+    # Currently neither column exists in the autotune_runs schema, so this
+    # path is never True — but it will be once the schema is extended.
+    if vol_20d is not None and atr_pct_14d is not None:
+        return {
+            "vol_20d": vol_20d,
+            "vol_20d_window_range": autotune_run.get("vol_window_range"),
+            "atr_pct_14d": atr_pct_14d,
+            "atr_pct_14d_window_range": autotune_run.get("atr_pct_window_range"),
+            "available": True,
+        }
+
+    return {
         "vol_20d": None,
         "vol_20d_window_range": None,
         "atr_pct_14d": None,
         "atr_pct_14d_window_range": None,
-        "available": autotune_run is not None,
+        "available": False,
+        "reason": (
+            "vol/atr columns not yet in autotune schema — "
+            "symphony_vol and atr_pct_14d are not projected by "
+            "_autotune_run_row_to_dict (database.py:718-735)."
+        ),
     }
-    if autotune_run is not None:
-        regime["vol_20d"] = autotune_run.get("symphony_vol")
-        regime["vol_20d_window_range"] = autotune_run.get("vol_window_range")
-        regime["atr_pct_14d"] = autotune_run.get("atr_pct_14d")
-        regime["atr_pct_14d_window_range"] = autotune_run.get("atr_pct_window_range")
-    return regime
 
 
 def _build_optuna_section(autotune_run: dict | None) -> dict:
@@ -240,7 +272,9 @@ def _build_optuna_section(autotune_run: dict | None) -> dict:
     has not run for this symphony yet) the section is well-shaped but flagged
     absent — assembly must not break (refinement 5).
     """
-    if autotune_run is None:
+    if not isinstance(autotune_run, dict):
+        # Guard against None (Optuna not yet run) and any non-dict value
+        # (e.g. test mocks that replace the whole database module).
         return {
             "available": False,
             "note": (
@@ -340,10 +374,79 @@ def _read_current_strategy(
     return merged, list(locked)
 
 
+# Sentinel used by assemble_advisor_context to distinguish "caller did not
+# pass autotune_run" (fetch from DB) from "caller explicitly passed None"
+# (Optuna has not run — skip the DB fetch).
+_SENTINEL = object()
+
+
+def build_assessment_from_context(context: dict) -> dict:
+    """Build a per-symphony assessment dict from the assembled context.
+
+    AC3 resolution: ``ConfigSuggestionsResponse`` (ai_advisor.py:197-204) has
+    only a ``suggestions: list[ConfigSuggestion]`` field — no summary/assessment
+    at the response level. The route extracts only ``.suggestions`` and
+    previously discarded the assembled context entirely. The assessment is
+    therefore built here from ``context["optuna_evidence"]``, which already
+    carries ``baseline_decision``, ``oos_alpha``, ``fallback_oos_alpha``,
+    ``default_oos_alpha``, and ``available``.
+
+    Returns a dict with at minimum:
+      - ``baseline_decision``: the autotuner's decision for this symphony.
+      - ``oos_alpha``: finite float or None (sentinel for -inf / no valid trial).
+      - ``fallback_oos_alpha``: the fallback OOS guard-alpha.
+      - ``default_oos_alpha``: the default OOS guard-alpha.
+      - ``summary``: a human-readable string explaining the tuning state.
+
+    The summary is per-symphony — two symphonies in different states produce
+    different summaries so the UI is differentiated rather than generic.
+    """
+    evidence: dict = context.get("optuna_evidence") or {}
+    baseline_decision = evidence.get("baseline_decision")
+    oos_alpha = evidence.get("oos_alpha")
+    fallback_oos_alpha = evidence.get("fallback_oos_alpha")
+    default_oos_alpha = evidence.get("default_oos_alpha")
+    available = evidence.get("available", False)
+
+    if not available:
+        summary = (
+            "Optuna has not yet run for this symphony — no walk-forward "
+            "validation evidence is available. Config is unvalidated; "
+            "Claude is reasoning without OOS data."
+        )
+    elif oos_alpha is None:
+        # -inf sentinel: all trials were haircut-rejected by FDR gate.
+        summary = (
+            f"No statistically-significant tuning edge: all optimizer trials "
+            f"failed the FDR significance gate; out-of-sample guard-alpha is "
+            f"negative (fallback={fallback_oos_alpha}, default={default_oos_alpha}). "
+            f"Baseline decision: {baseline_decision}. Holding current config."
+        )
+    else:
+        # Guard oos_alpha format: only apply .4f when it is a real numeric type.
+        # A MagicMock or unexpected value must not crash the summary builder.
+        oos_str = f"{oos_alpha:.4f}" if isinstance(oos_alpha, (int, float)) else str(oos_alpha)
+        summary = (
+            f"Optimizer found a validated edge: OOS alpha={oos_str}, "
+            f"baseline decision={baseline_decision}. "
+            f"Fallback OOS alpha={fallback_oos_alpha}, "
+            f"default OOS alpha={default_oos_alpha}."
+        )
+
+    return {
+        "baseline_decision": baseline_decision,
+        "oos_alpha": oos_alpha,
+        "fallback_oos_alpha": fallback_oos_alpha,
+        "default_oos_alpha": default_oos_alpha,
+        "summary": summary,
+    }
+
+
 def assemble_advisor_context(
     scope: str,
     symphony_id: str | None = None,
     composer_symphony_id: str | None = None,
+    autotune_run=_SENTINEL,
 ) -> dict:
     """Assemble the prompt-ready context blob for the Claude config advisor.
 
@@ -374,6 +477,10 @@ def assemble_advisor_context(
             supplied it is passed to ``symphony_logic.get_condensed_logic`` so
             the Composer ``/score`` API receives the hash it expects; if omitted,
             ``symphony_id`` is used for the logic fetch (backward-compatible).
+        autotune_run: optional pre-fetched autotune run dict. When supplied the
+            internal ``database.get_latest_autotune_run`` call is skipped —
+            the caller is responsible for fetching (useful when the caller
+            already holds a DB reference that may be patched in tests).
 
     Returns:
         A well-shaped context dict — even when Optuna has not run for the
@@ -491,8 +598,11 @@ def request_suggestions(
     try:
         client = _build_client()
     except Exception as exc:  # noqa: BLE001 - graceful degradation contract
-        msg = f"Claude advisor unavailable: could not build client ({exc})."
-        logger.warning("ai_advisor: client construction failed: %s", exc)
+        # D-1 security contract: do NOT embed str(exc) in the browser-facing
+        # message — exception text may contain API keys or internal paths.
+        # exc_info detail is logged server-side only.
+        msg = f"Claude advisor unavailable: could not build client ({type(exc).__name__})."
+        logger.warning("ai_advisor: client construction failed: %s", exc, exc_info=True)
         return None, msg
 
     # Call Claude's structured-output endpoint. anthropic 0.85.0 exposes

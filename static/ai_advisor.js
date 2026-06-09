@@ -81,17 +81,44 @@
         return 'color:' + cssVar('--studio-ink') + ';';
     }
 
-    function renderSuggestions(suggestions, symphonyId) {
+    function renderSuggestions(suggestions, symphonyId, body) {
         var container = document.getElementById('suggestions-container');
         updateChips(suggestions);
 
         if (suggestions.length === 0) {
+            // AC1/AC4: render the per-symphony assessment so the empty-state
+            // box shows real context (why no edit is suggested) rather than a
+            // generic message identical for every symphony.
+            // body.assessment carries baseline_decision, oos_alpha,
+            // fallback_oos_alpha, default_oos_alpha, and summary.
+            var assessment = (typeof body !== 'undefined' && body && body.assessment) ? body.assessment : null;
+            var summaryHtml = assessment && assessment.summary
+                ? escHtml(assessment.summary)
+                : 'No suggestions — the advisor did not find a well-supported edit at this time.';
+            var decisionHtml = assessment && assessment.baseline_decision
+                ? '<div style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.5rem;">' +
+                  'Baseline decision: <strong>' + escHtml(String(assessment.baseline_decision)) + '</strong></div>'
+                : '';
+            var oosHtml = '';
+            if (assessment) {
+                var oosVal = assessment.oos_alpha !== null && assessment.oos_alpha !== undefined
+                    ? fmtSharpe(assessment.oos_alpha)
+                    : 'N/A';
+                var fallbackVal = assessment.fallback_oos_alpha !== null && assessment.fallback_oos_alpha !== undefined
+                    ? fmtSharpe(assessment.fallback_oos_alpha)
+                    : 'N/A';
+                oosHtml = '<div style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
+                    'OOS alpha: <code>' + escHtml(oosVal) + '</code>' +
+                    ' &nbsp;|&nbsp; Fallback OOS: <code>' + escHtml(fallbackVal) + '</code>' +
+                    '</div>';
+            }
             container.innerHTML =
                 '<div style="background:' + cssVar('--studio-surface') + ';' +
                 'border:1px solid ' + cssVar('--studio-border') + ';' +
                 'border-radius:1rem;padding:1.5rem;' +
                 'color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;grid-column:1/-1;">' +
-                'No suggestions — the advisor did not find a well-supported edit at this time.</div>';
+                summaryHtml + decisionHtml + oosHtml +
+                '</div>';
             return;
         }
 
@@ -302,7 +329,7 @@
                     errorEl.textContent = 'Advisor unavailable: ' + body.error;
                     return;
                 }
-                renderSuggestions(body.suggestions || [], symphonyId);
+                renderSuggestions(body.suggestions || [], symphonyId, body);
             })
             .catch(function (err) {
                 container.innerHTML = '';
