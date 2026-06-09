@@ -490,6 +490,7 @@
 
     function loadRecentRuns() {
         var list = document.getElementById('autotune-runs-list');
+        if (!list) return;
         fetch('/api/autotune-runs')
             .then(function (resp) { return resp.json(); })
             .then(function (rows) {

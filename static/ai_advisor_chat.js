@@ -289,6 +289,16 @@
         });
 
         _syncSendBtn();
+
+        // D3: consume pending artifact from sessionStorage (written by Asset Swaps /
+        // Logic Changes "Chat about this" when openChatPanel was unavailable there).
+        try {
+            var _pendingArtifact = sessionStorage.getItem('pendingChatArtifact');
+            if (_pendingArtifact) {
+                openChatPanel(JSON.parse(_pendingArtifact));
+                sessionStorage.removeItem('pendingChatArtifact');
+            }
+        } catch (e) { /* absent key or invalid JSON — no-op */ }
     });
 
 })();

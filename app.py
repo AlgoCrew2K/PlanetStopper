@@ -2802,9 +2802,9 @@ def ai_advisor_correlations():
     sym_ids = analytics.list_available_symphonies(history)
     series_dict: dict[str, list[float]] = {}
     for sym_id in sym_ids:
-        ret_series = analytics.compute_per_symphony_returns(history, sym_id)
-        if ret_series:
-            series_dict[sym_id] = ret_series
+        _dates, live_rets, _shadow = analytics.compute_per_symphony_returns(history, sym_id)
+        if live_rets:
+            series_dict[sym_id] = live_rets
 
     # Run the pure correlation diagnostic — no DB writes, no engine calls.
     matrix = correlation_diagnostic.compute_pairwise_correlations(series_dict)
@@ -3039,14 +3039,18 @@ def ai_advisor_logic_changes_evaluate():
     Returns JSON with the logic-change result for rendering in the UI.
     """
     # Lazy imports (AC-X2 — keep logic_change_engine off the live execution path).
-    from advisors.logic_change_engine import (  # noqa: PLC0415
-        propose_operator_logic_change,
-        LogicTweak,
-        LogicChangeObjective,
-        _has_composer_key,
-        NO_SURVIVORS_MESSAGE,
-    )
-    from symphony_logic import fetch_symphony_score  # noqa: PLC0415
+    try:
+        from advisors.logic_change_engine import (  # noqa: PLC0415
+            propose_operator_logic_change,
+            LogicTweak,
+            LogicChangeObjective,
+            _has_composer_key,
+            NO_SURVIVORS_MESSAGE,
+        )
+        from symphony_logic import fetch_symphony_score  # noqa: PLC0415
+    except ImportError as _ie:
+        _daemon_log.error("ai_advisor_logic_changes_evaluate import failed: %s", _ie, exc_info=True)
+        return jsonify({"error": f"advisor unavailable: {type(_ie).__name__}: {_ie}"}), 200
 
     if not _has_composer_key():
         return jsonify({"error": "advisor unavailable: API key not configured"}), 200
@@ -3154,32 +3158,36 @@ def ai_advisor_logic_changes_evaluate():
             "data_warnings": p.data_warnings,
         }
 
-    return jsonify({
-        # Run-level fields (AC-3.1: zero survivors is valid, not silent)
-        "message": run_result.message,
-        "survivors": len(run_result.survivors),
-        "no_api_key": run_result.no_api_key,
-        # Proposal detail for rendering
-        "survivors_detail": [_proposal_to_dict(p) for p in run_result.survivors],
-        "rejected_detail": [_proposal_to_dict(p) for p in run_result.rejected_candidates],
-        # Gate verdict shortcut (for tests that check flat gate_decision key)
-        "gate_decision": gate_result.verdict.decision if gate_result else None,
-        "gate_result": {
-            "decision": gate_result.verdict.decision,
-            "validation_days": gate_result.validation_days,
-            "oos_alpha": gate_result.oos_alpha,
-            "winner_p_adj": gate_result.winner_p_adj,
-        } if gate_result else None,
-        # FDR metadata at run level (AC-3.2)
-        "n_candidates": gate_batch.n_candidates if gate_batch else None,
-        "fdr_q": gate_batch.fdr_q if gate_batch else None,
-        "fdr_adjusted_threshold": fdr_adjusted_threshold,
-        # Caveats + guidance from the primary proposal (operator-initiated = single candidate)
-        "caveats": proposal.caveats if proposal else [],
-        "apply_guidance": proposal.apply_guidance if proposal else "",
-        "backtest_error": _translate_backtest_error(proposal.backtest_error) if proposal else None,
-        "objective_rationale": proposal.objective_rationale if proposal else "",
-    }), 200
+    try:
+        return jsonify({
+            # Run-level fields (AC-3.1: zero survivors is valid, not silent)
+            "message": run_result.message,
+            "survivors": len(run_result.survivors),
+            "no_api_key": run_result.no_api_key,
+            # Proposal detail for rendering
+            "survivors_detail": [_proposal_to_dict(p) for p in run_result.survivors],
+            "rejected_detail": [_proposal_to_dict(p) for p in run_result.rejected_candidates],
+            # Gate verdict shortcut (for tests that check flat gate_decision key)
+            "gate_decision": gate_result.verdict.decision if gate_result else None,
+            "gate_result": {
+                "decision": gate_result.verdict.decision,
+                "validation_days": gate_result.validation_days,
+                "oos_alpha": gate_result.oos_alpha,
+                "winner_p_adj": gate_result.winner_p_adj,
+            } if gate_result else None,
+            # FDR metadata at run level (AC-3.2)
+            "n_candidates": gate_batch.n_candidates if gate_batch else None,
+            "fdr_q": gate_batch.fdr_q if gate_batch else None,
+            "fdr_adjusted_threshold": fdr_adjusted_threshold,
+            # Caveats + guidance from the primary proposal (operator-initiated = single candidate)
+            "caveats": proposal.caveats if proposal else [],
+            "apply_guidance": proposal.apply_guidance if proposal else "",
+            "backtest_error": _translate_backtest_error(proposal.backtest_error) if proposal else None,
+            "objective_rationale": proposal.objective_rationale if proposal else "",
+        }), 200
+    except Exception as _je:
+        _daemon_log.error("ai_advisor_logic_changes_evaluate response serialization failed: %s", _je, exc_info=True)
+        return jsonify({"error": f"{type(_je).__name__}: {_je}"}), 200
 
 
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
