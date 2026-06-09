@@ -3297,14 +3297,27 @@ def ai_advisor_suggest():
     try:
         payload = request.json or {}
         symphony_id = payload.get("symphony_id", "")
-        context = ai_advisor.assemble_advisor_context(scope="symphony", symphony_id=symphony_id)
+        # Resolve Composer hash ID → normalized symphony name so that
+        # get_latest_autotune_run (keyed by name) returns the correct row.
+        # Mirrors the hash→name resolution pattern at app.py:2497-2507.
+        _bot_state = database.load_state()
+        resolved_id = symphony_id  # fallback: pass as-is if no match found
+        for _sym_key, _sym_data in _bot_state.items():
+            if not isinstance(_sym_data, dict) or "name" not in _sym_data:
+                continue
+            _norm_name = database.normalize_name(_sym_data["name"])
+            if (database.normalize_name(_sym_key) == database.normalize_name(symphony_id)
+                    or _norm_name == database.normalize_name(symphony_id)):
+                resolved_id = _norm_name
+                break
+        context = ai_advisor.assemble_advisor_context(scope="symphony", symphony_id=resolved_id)
         suggestions_response, error_msg = ai_advisor.request_suggestions(context)
         if error_msg is not None:
             return jsonify({"error": error_msg}), 200
         suggestions = []
         for s in suggestions_response.suggestions:
             s_dict = s.model_dump()
-            s_dict["four_gates_verdict"] = _compute_suggestion_gates(s, symphony_id)
+            s_dict["four_gates_verdict"] = _compute_suggestion_gates(s, resolved_id)
             s_dict["impact"] = _enrich_suggestion_impact(s)
             suggestions.append(s_dict)
         return jsonify({"suggestions": suggestions})
