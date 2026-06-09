@@ -253,8 +253,8 @@
             'white-space:nowrap;"' +
             ' onclick="(function(e){var d=e.currentTarget.dataset.artifactJson;' +
             'try{if(typeof openChatPanel===\'function\'){openChatPanel(JSON.parse(d));}' +
-            'else{window.location.href=\'/ai-advisor/chat\';}}' +
-            'catch(ex){window.location.href=\'/ai-advisor/chat\';}})(event)">' +
+            'else{sessionStorage.setItem("pendingChatArtifact",d);window.location.href="/ai-advisor/chat";}}' +
+            'catch(ex){sessionStorage.setItem("pendingChatArtifact",d);window.location.href="/ai-advisor/chat";}})(event)">' +
             'Chat about this' +
             '</button>' +
             '</div>';
