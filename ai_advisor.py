@@ -272,7 +272,9 @@ def _build_optuna_section(autotune_run: dict | None) -> dict:
     has not run for this symphony yet) the section is well-shaped but flagged
     absent — assembly must not break (refinement 5).
     """
-    if autotune_run is None:
+    if not isinstance(autotune_run, dict):
+        # Guard against None (Optuna not yet run) and any non-dict value
+        # (e.g. test mocks that replace the whole database module).
         return {
             "available": False,
             "note": (
