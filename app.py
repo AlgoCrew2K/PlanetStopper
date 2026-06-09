@@ -3310,12 +3310,21 @@ def ai_advisor_suggest():
                     or _norm_name == database.normalize_name(symphony_id)):
                 resolved_id = _norm_name
                 break
+        # Fetch the autotune run here (through app.py's database reference) so
+        # the per-symphony assessment can be built from real DB data — and so
+        # route-level tests can mock this call via patch.object(app_module, "database").
+        autotune_run = database.get_latest_autotune_run(resolved_id)
         context = ai_advisor.assemble_advisor_context(
             scope="symphony",
             symphony_id=resolved_id,
             # Pass the original Composer hash so get_condensed_logic can call
             # the Composer /score API correctly (it expects a hash, not a name).
             composer_symphony_id=symphony_id,
+            # Pass the pre-fetched autotune run so assemble_advisor_context
+            # skips its own database.get_latest_autotune_run call — avoids a
+            # second DB round-trip and ensures the route-level DB mock covers
+            # the context assembly (ai_advisor.database is a separate import).
+            autotune_run=autotune_run,
         )
         suggestions_response, error_msg = ai_advisor.request_suggestions(context)
         if error_msg is not None:
@@ -3326,7 +3335,17 @@ def ai_advisor_suggest():
             s_dict["four_gates_verdict"] = _compute_suggestion_gates(s, resolved_id)
             s_dict["impact"] = _enrich_suggestion_impact(s)
             suggestions.append(s_dict)
-        return jsonify({"suggestions": suggestions})
+        # AC1: include per-symphony assessment alongside suggestions so the UI
+        # can show real context when the suggestions list is empty (the common
+        # case for symphonies with no validated edge). Build assessment from the
+        # autotune_run fetched above (through this module's database reference,
+        # so route-level tests can mock it) by constructing an optuna_evidence
+        # context slice and delegating to build_assessment_from_context.
+        _evidence_context = {
+            "optuna_evidence": ai_advisor._build_optuna_section(autotune_run),
+        }
+        assessment = ai_advisor.build_assessment_from_context(_evidence_context)
+        return jsonify({"suggestions": suggestions, "assessment": assessment})
     except Exception as _exc:
         _daemon_log.error("ai_advisor_suggest failed: %s", _exc, exc_info=True)
         # D-1 security contract: do NOT echo str(exc) — exception messages may contain
