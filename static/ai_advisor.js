@@ -91,7 +91,7 @@
                 'border:1px solid ' + cssVar('--studio-border') + ';' +
                 'border-radius:1rem;padding:1.5rem;' +
                 'color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;grid-column:1/-1;">' +
-                'No suggestions — the current config looks sound.</div>';
+                'No suggestions — the advisor did not find a well-supported edit at this time.</div>';
             return;
         }
 

@@ -554,6 +554,56 @@ def test_context_invokes_p2_condensed_logic_accessor(fake_autotune_run,
     )
 
 
+def test_context_uses_composer_symphony_id_for_condensed_logic(fake_autotune_run,
+                                                                fake_condensed_logic):
+    """When composer_symphony_id is supplied, get_condensed_logic MUST be called
+    with the Composer hash, NOT the normalized DB name.
+
+    This pins the fix for the symphony-logic data-starvation bug: the route
+    resolves hash→normalized-name for DB lookups, but Composer's /score endpoint
+    requires the original hash.  Passing the normalized name returns HTTP 400 and
+    an all-empty logic struct — the advisor receives no asset universe, no
+    indicators, no tree shape.
+
+    Regression contract: if this test fails, the Composer /score call will
+    silently return an empty dict and Claude will have no composition context.
+    """
+    import ai_advisor
+
+    hash_id = "n2ooAZTvBRN6ZzpMmWmU"
+    normalized_name = "(invest:crypto) we do a little trolling planet's mix v1.4 | 10.19.2022"
+
+    with patch.object(
+        ai_advisor.database, "get_latest_autotune_run",
+        return_value=fake_autotune_run,
+    ) as mock_p1, patch.object(
+        ai_advisor.symphony_logic, "get_condensed_logic",
+        return_value=fake_condensed_logic,
+    ) as mock_p2:
+        ai_advisor.assemble_advisor_context(
+            scope="symphony",
+            symphony_id=normalized_name,
+            composer_symphony_id=hash_id,
+        )
+
+    mock_p2.assert_called_once()
+    called_args = mock_p2.call_args
+    first_arg = called_args.args[0] if called_args.args else called_args.kwargs.get("symphony_id")
+    assert first_arg == hash_id, (
+        f"get_condensed_logic called with {first_arg!r}; expected Composer hash {hash_id!r}. "
+        "When composer_symphony_id is provided it MUST be used for the /score call — "
+        "passing the normalized name produces Composer HTTP 400 and an empty logic struct."
+    )
+    # DB lookup (autotune) must still use the normalized name, not the hash.
+    mock_p1.assert_called_once()
+    db_call_args = mock_p1.call_args
+    db_first_arg = db_call_args.args[0] if db_call_args.args else db_call_args.kwargs.get("symphony_id")
+    assert db_first_arg == normalized_name, (
+        f"get_latest_autotune_run called with {db_first_arg!r}; expected normalized name "
+        f"{normalized_name!r}. The DB lookup key must not be replaced by the Composer hash."
+    )
+
+
 def test_context_embeds_p1_autotune_output(symphony_context, fake_autotune_run):
     """The P1 accessor's output (the autotune-run metrics) must be present in
     the assembled context — not just fetched and discarded."""

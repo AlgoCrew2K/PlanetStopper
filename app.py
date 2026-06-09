@@ -3310,7 +3310,13 @@ def ai_advisor_suggest():
                     or _norm_name == database.normalize_name(symphony_id)):
                 resolved_id = _norm_name
                 break
-        context = ai_advisor.assemble_advisor_context(scope="symphony", symphony_id=resolved_id)
+        context = ai_advisor.assemble_advisor_context(
+            scope="symphony",
+            symphony_id=resolved_id,
+            # Pass the original Composer hash so get_condensed_logic can call
+            # the Composer /score API correctly (it expects a hash, not a name).
+            composer_symphony_id=symphony_id,
+        )
         suggestions_response, error_msg = ai_advisor.request_suggestions(context)
         if error_msg is not None:
             return jsonify({"error": error_msg}), 200

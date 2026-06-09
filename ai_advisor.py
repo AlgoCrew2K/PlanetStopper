@@ -340,7 +340,11 @@ def _read_current_strategy(
     return merged, list(locked)
 
 
-def assemble_advisor_context(scope: str, symphony_id: str | None = None) -> dict:
+def assemble_advisor_context(
+    scope: str,
+    symphony_id: str | None = None,
+    composer_symphony_id: str | None = None,
+) -> dict:
     """Assemble the prompt-ready context blob for the Claude config advisor.
 
     Carries all 8 must-have prompt elements plus role framing
@@ -363,7 +367,13 @@ def assemble_advisor_context(scope: str, symphony_id: str | None = None) -> dict
 
     Args:
         scope: "symphony" (per-symphony advisory) or "global".
-        symphony_id: required when ``scope == "symphony"``.
+        symphony_id: required when ``scope == "symphony"``. Used as the key for
+            all state-DB lookups (autotune_runs, symphony_strategies) — keyed by
+            normalized name in this project.
+        composer_symphony_id: optional Composer hash ID for the symphony. When
+            supplied it is passed to ``symphony_logic.get_condensed_logic`` so
+            the Composer ``/score`` API receives the hash it expects; if omitted,
+            ``symphony_id`` is used for the logic fetch (backward-compatible).
 
     Returns:
         A well-shaped context dict — even when Optuna has not run for the
@@ -383,7 +393,11 @@ def assemble_advisor_context(scope: str, symphony_id: str | None = None) -> dict
         # P1 dependency — Optuna walk-forward metrics. May be None (not tuned).
         autotune_run = database.get_latest_autotune_run(symphony_id)
         # P2 dependency — condensed symphony logic / composition.
-        condensed_logic = symphony_logic.get_condensed_logic(symphony_id)
+        # Use the Composer hash ID when available; the Composer /score endpoint
+        # requires the hash, not the normalized name (bug fix: passing the
+        # normalized name produced HTTP 400 and an all-empty logic struct).
+        logic_id = composer_symphony_id if composer_symphony_id is not None else symphony_id
+        condensed_logic = symphony_logic.get_condensed_logic(logic_id)
 
     context: dict = {
         "scope": scope,
