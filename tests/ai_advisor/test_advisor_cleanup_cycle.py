@@ -432,17 +432,24 @@ def test_orphaned_advisor_template_does_not_exist(template_name):
 
 
 def test_no_render_template_calls_for_orphaned_templates():
-    """app.py must not contain render_template(... ai_advisor_{correlations,
-    asset_swaps,logic_changes,chat}.html ...) references.
+    """app.py must not contain render_template("<name>") calls for any of the
+    4 orphaned templates — those routes must only 302-redirect.
 
-    This asserts the absence of render_template calls for the 4 dead templates
-    as a source-inspection guard, complementing the file-existence check.
+    Source-inspection guard: search for the template filename inside the source
+    text near a render_template call. The orphaned templates' ROUTE FUNCTIONS
+    may still exist (they 302-redirect) but must not render the dead templates.
     """
+    import re as _re
+
     app_source = (_WORKTREE / "app.py").read_text(encoding="utf-8")
     for template_name in _ORPHANED_TEMPLATES:
-        assert f"render_template" not in app_source or template_name not in app_source, (
-            f"app.py contains a reference to orphaned template {template_name!r}. "
-            "Remove the render_template call — the route must 302-redirect only."
+        # A render_template call using the orphaned template would look like:
+        # render_template("ai_advisor_correlations.html", ...)
+        pattern = rf'render_template\s*\(\s*["\']' + _re.escape(template_name)
+        assert not _re.search(pattern, app_source), (
+            f"app.py contains render_template({template_name!r}) — "
+            "this orphaned template must never be rendered; "
+            "its route must 302-redirect to /ai-advisor only."
         )
 
 
