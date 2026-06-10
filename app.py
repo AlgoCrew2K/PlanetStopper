@@ -2945,8 +2945,10 @@ def ai_advisor_asset_swaps_evaluate():
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_asset_swaps_evaluate failed: %s", exc, exc_info=True)
-        # RC-5: surface the error class so the operator/log can diagnose the failure.
-        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 200
+        # D-1 security contract: do NOT echo str(exc) — exception messages may contain
+        # API keys or internal paths. Surface only the error class for operator triage;
+        # full detail is logged server-side via exc_info=True above.
+        return jsonify({"error": type(exc).__name__}), 200
 
     # Build response from the first proposal (single-candidate operator-initiated mode)
     # plus the run-level message and gate batch metadata (AC-2.3 / AC-2.5).
@@ -3026,7 +3028,8 @@ def ai_advisor_logic_changes_evaluate():
         from symphony_logic import fetch_symphony_score  # noqa: PLC0415
     except ImportError as _ie:
         _daemon_log.error("ai_advisor_logic_changes_evaluate import failed: %s", _ie, exc_info=True)
-        return jsonify({"error": f"advisor unavailable: {type(_ie).__name__}: {_ie}"}), 200
+        # D-1: surface only the error class, not str(_ie).
+        return jsonify({"error": f"advisor unavailable: {type(_ie).__name__}"}), 200
 
     if not _has_composer_key():
         return jsonify({"error": "advisor unavailable: API key not configured"}), 200
@@ -3082,8 +3085,10 @@ def ai_advisor_logic_changes_evaluate():
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_logic_changes_evaluate failed: %s", exc, exc_info=True)
-        # RC-5: surface the error class so the operator/log can diagnose the failure.
-        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 200
+        # D-1 security contract: do NOT echo str(exc) — exception messages may contain
+        # API keys or internal paths. Surface only the error class for operator triage;
+        # full detail is logged server-side via exc_info=True above.
+        return jsonify({"error": type(exc).__name__}), 200
 
     # Build FDR metadata for the operator audit trail (AC-3.2).
     gate_batch = run_result.gate_batch
