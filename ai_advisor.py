@@ -59,9 +59,9 @@ _REQUEST_TIMEOUT_SECONDS = 30.0
 
 
 # ---------------------------------------------------------------------------
-# Suggestible config surface — the 9-item ALLOWLIST (config-surface.md §1).
+# Suggestible config surface — the 7-item ALLOWLIST (config-surface.md §1).
 # An allowlist, not a denylist: anything not enumerated here is structurally
-# excluded from the context. The 7 Optuna search-space keys are read from
+# excluded from the context. The 6 Optuna search-space keys are read from
 # _OPTUNA_SEARCH_SPACE_KEYS so this never drifts from the optimizer.
 # ---------------------------------------------------------------------------
 
@@ -72,6 +72,10 @@ _UNTUNED_SUGGESTIBLE_KEY = "MAX_SQUEEZE_FLOOR"
 # tighten risk?). Element 1 of the 8 must-have prompt elements
 # (prompt-methodology.md §1.1). Claude cannot reason about whether a suggestion
 # is safe without the polarity.
+# NOTE: TRIGGER_THRESHOLD_PCT is included here for prompt context (the operator
+# sees it in the suggestible surface as a locked param), but it is NOT in
+# _OPTUNA_SEARCH_SPACE_KEYS and NOT in _SUGGESTIBLE_ALLOWLIST — it is a locked
+# var and must never appear in the allowed partition of enforce_suggestion_allowlist.
 _PARAM_DEFINITIONS: dict[str, dict[str, str]] = {
     "TRIGGER_THRESHOLD_PCT": {
         "definition": (
@@ -308,12 +312,12 @@ def _safe_gap(oos: object, train: object) -> float | None:
 
 
 def _build_suggestible_surface(symphony_id: str | None) -> list[dict]:
-    """The 9-item allowlisted config surface, each with definition + range +
+    """The 7-item allowlisted config surface, each with definition + range +
     current live value + locked flag.
 
     Elements 1, 2, 4, 5. The current live values come from the per-symphony
     ``symphony_strategies`` row (falling back to DEFAULT_STRATEGY) — NEVER from
-    os.environ. The set of keys is the 7 Optuna search-space keys plus the
+    os.environ. The set of keys is the 6 Optuna search-space keys plus the
     untuned MAX_SQUEEZE_FLOOR: a curated allowlist, not a denylist.
     """
     current_params, locked_vars = _read_current_strategy(symphony_id)
@@ -494,11 +498,22 @@ def assemble_advisor_context(
             "scope='symphony' requires a symphony_id — refusing to assemble a contextless prompt."
         )
 
-    autotune_run: dict | None = None
+    # Resolve the autotune_run: use the caller-supplied value when provided
+    # (non-_SENTINEL), otherwise fetch from DB. This avoids a redundant DB
+    # round-trip when the route already holds a reference (e.g. app.py's
+    # ai_advisor_suggest fetches it to build the assessment context and passes
+    # it here so both uses share the same row).
+    if autotune_run is _SENTINEL:
+        autotune_run = None
+        _fetch_autotune = True
+    else:
+        _fetch_autotune = False
+
     condensed_logic: dict | None = None
     if scope == "symphony":
         # P1 dependency — Optuna walk-forward metrics. May be None (not tuned).
-        autotune_run = database.get_latest_autotune_run(symphony_id)
+        if _fetch_autotune:
+            autotune_run = database.get_latest_autotune_run(symphony_id)
         # P2 dependency — condensed symphony logic / composition.
         # Use the Composer hash ID when available; the Composer /score endpoint
         # requires the hash, not the normalized name (bug fix: passing the
@@ -620,14 +635,19 @@ def request_suggestions(
             timeout=_REQUEST_TIMEOUT_SECONDS,
         )
     except Exception as exc:  # noqa: BLE001 - the whole contract: never raise
+        # D-1 security contract: do NOT embed str(exc) in the browser-facing
+        # message — exception text may contain API keys or internal paths.
+        # Full detail is logged server-side via exc_info=True; the UI sees only
+        # the error class name, mirroring the client-construction failure path.
         msg = (
-            f"Claude advisor request failed ({type(exc).__name__}): {exc}. "
+            f"Claude advisor request failed ({type(exc).__name__}). "
             "Try again, or decide manually."
         )
         logger.warning(
             "ai_advisor: messages.parse failed: %s: %s",
             type(exc).__name__,
             exc,
+            exc_info=True,
         )
         return None, msg
 
@@ -692,7 +712,7 @@ def request_suggestions(
 #      autotuner's run_simulation OOS gate before it can reach live config.
 # ---------------------------------------------------------------------------
 
-# The 9-item suggestible allowlist: the 7 Optuna search-space keys plus the one
+# The 7-item suggestible allowlist: the 6 Optuna search-space keys plus the one
 # untuned hand-set key. Derived from the C1 constants so it cannot drift.
 # (config-surface.md §1 — an allowlist, not a denylist.)
 _SUGGESTIBLE_ALLOWLIST = frozenset(_OPTUNA_SEARCH_SPACE_KEYS) | {_UNTUNED_SUGGESTIBLE_KEY}
@@ -728,7 +748,7 @@ def enforce_suggestion_allowlist(
     Defense-in-depth: even though the C1 *context* is allowlisted, Claude could
     hallucinate a ``config_key`` that was never in the prompt — or emit a
     credential, the ``LIVE_EXECUTION`` master safety flag, an account UUID, or a
-    methodology knob. Any ``config_key`` not in the 9-item suggestible allowlist
+    methodology knob. Any ``config_key`` not in the 7-item suggestible allowlist
     is structurally routed to ``rejected``; it must be impossible for such a key
     to reach a live config write.
 
