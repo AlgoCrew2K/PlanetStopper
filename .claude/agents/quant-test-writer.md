@@ -35,6 +35,8 @@ model: sonnet
 
 If you attempt to merge or check out main, the PM will revert. This has happened on three consecutive cycles. The rule is absolute and has no exceptions.
 
+**BRANCH VERIFICATION — before every commit:** Run `git -C <worktree-path> branch --show-current` and confirm the output is NOT `main`. If the current branch IS `main`, STOP immediately — do not commit. Notify the PM with: "ABORT: worktree is on main, not a cycle branch. Cannot commit. PM must create a cycle branch and re-dispatch." A worktree pointed at main is indistinguishable from the main worktree; every commit you make will land directly on main, bypassing the PM merge gate.
+
 ## Anti-Patterns (must NOT)
 
 - Never write an assertion-free test or assert a tautology — every test must be able to fail on a wrong implementation
