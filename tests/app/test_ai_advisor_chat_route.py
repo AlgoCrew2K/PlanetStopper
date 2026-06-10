@@ -97,69 +97,74 @@ def _assert_route_exists(resp, route: str):
 
 
 def test_get_chat_tab_returns_200(client):
-    """GET /ai-advisor/chat must return 200.
+    """GET /ai-advisor/chat (or /ai-advisor after redirect) must return 200.
 
-    RED until GREEN adds the route to app.py.
+    Updated for in-place tab switching (advisor-tabs-inplace cycle):
+    /ai-advisor/chat now redirects to /ai-advisor; follow_redirects resolves
+    to the unified page that contains all 5 tab panels including chat.
     """
-    resp = client.get("/ai-advisor/chat")
+    resp = client.get("/ai-advisor/chat", follow_redirects=True)
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     assert resp.status_code == 200, (
-        f"GET /ai-advisor/chat returned {resp.status_code}, expected 200"
+        f"GET /ai-advisor/chat (follow redirect) returned {resp.status_code}, expected 200"
     )
 
 
 def test_get_chat_tab_contains_chat_panel_testid(client):
-    """GET /ai-advisor/chat must render data-testid='chat-panel' in the DOM.
+    """The advisor page must render data-testid='chat-panel' (always-in-DOM).
 
-    The JS (ai_advisor_chat.js) uses this element as the slide-in panel
-    container.  Without it the panel cannot open.
+    Updated for in-place tab switching (advisor-tabs-inplace cycle):
+    the chat panel is now always-in-DOM on /ai-advisor (AC4).
     """
-    resp = client.get("/ai-advisor/chat")
+    resp = client.get("/ai-advisor/chat", follow_redirects=True)
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-panel"' in body, (
-        "GET /ai-advisor/chat must render data-testid=\"chat-panel\" — "
-        "the JS openChatPanel() targets this element"
+        "GET /ai-advisor must render data-testid=\"chat-panel\" — "
+        "the JS openChatPanel() targets this element (always-in-DOM — AC4)"
     )
 
 
 def test_get_chat_tab_contains_explain_only_notice(client):
-    """GET /ai-advisor/chat must render data-testid='explain-only-notice'.
+    """The advisor page must render data-testid='explain-only-notice'.
 
-    The explain-only notice (AC-4.1) is the persistent UI reminder that chat
-    cannot apply changes or place trades.  It must always be in the DOM.
+    Updated for in-place tab switching (advisor-tabs-inplace cycle).
+    The explain-only notice (AC-4.1) is in the always-in-DOM chat panel.
     """
-    resp = client.get("/ai-advisor/chat")
+    resp = client.get("/ai-advisor/chat", follow_redirects=True)
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="explain-only-notice"' in body, (
-        "GET /ai-advisor/chat must render data-testid=\"explain-only-notice\" — "
+        "GET /ai-advisor must render data-testid=\"explain-only-notice\" — "
         "the persistent UI reminder that chat is explain-only (AC-4.1)"
     )
 
 
 def test_get_chat_tab_contains_chat_default_state(client):
-    """GET /ai-advisor/chat must render data-testid='chat-default-state'.
+    """The advisor page must render data-testid='chat-default-state'.
 
-    The default state is shown when no artifact is selected yet.
+    Updated for in-place tab switching (advisor-tabs-inplace cycle).
+    The default state is in the tab-panel-chat tab panel on /ai-advisor.
     """
-    resp = client.get("/ai-advisor/chat")
+    resp = client.get("/ai-advisor/chat", follow_redirects=True)
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-default-state"' in body, (
-        "GET /ai-advisor/chat must render data-testid=\"chat-default-state\" — "
+        "GET /ai-advisor must render data-testid=\"chat-default-state\" — "
         "shown when no artifact is selected (design §Screen 4 default state)"
     )
 
 
 def test_get_chat_tab_has_no_apply_accept_deploy_buttons(client):
-    """GET /ai-advisor/chat must not contain apply/accept/deploy action buttons.
+    """The chat panel must not contain apply/accept/deploy action buttons.
 
     AC-4.1 HARD boundary: the chat panel has NO action buttons.  Only send
     (chat-send-btn) and close are permitted.  An 'Apply', 'Accept', or 'Deploy'
     button in the chat panel would be a structural AC-4.1 violation.
+
+    Updated for in-place tab switching: test follows redirect to /ai-advisor.
     """
-    resp = client.get("/ai-advisor/chat")
+    resp = client.get("/ai-advisor/chat", follow_redirects=True)
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
 
@@ -190,24 +195,27 @@ def test_get_chat_tab_has_no_apply_accept_deploy_buttons(client):
 
 
 def test_get_chat_tab_has_chat_tab_active(client):
-    """GET /ai-advisor/chat must render data-testid='tab-chat' with aria-current='page'.
+    """The advisor page must render data-testid='tab-chat' in the tab bar.
 
-    The tab bar shows which capability is active.  chat tab must be marked active.
+    Updated for in-place tab switching (advisor-tabs-inplace cycle):
+    tab-chat is a button on /ai-advisor. The chat panel is always in DOM,
+    not a separate page. Test follows redirect to /ai-advisor.
     """
-    resp = client.get("/ai-advisor/chat")
+    resp = client.get("/ai-advisor/chat", follow_redirects=True)
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="tab-chat"' in body, (
-        "GET /ai-advisor/chat must render data-testid=\"tab-chat\" in the tab bar"
+        "GET /ai-advisor must render data-testid=\"tab-chat\" in the tab bar"
     )
 
 
 def test_get_chat_tab_unavailable_state_rendered_when_no_api_key(client):
-    """When ANTHROPIC_API_KEY is not set, GET must render data-testid='chat-unavailable'.
+    """When ANTHROPIC_API_KEY is not set, /ai-advisor must render data-testid='chat-unavailable'.
 
-    AC-4.3: no API key → the chat UI shows the 'chat unavailable' state.
-    The data-testid='chat-input-row' must not be present (or must be hidden)
-    when chat is unavailable — the operator cannot type into a disabled chat.
+    AC-4.3: no API key → the chat UI shows the 'chat unavailable' state in
+    the always-in-DOM chat panel on /ai-advisor.
+
+    Updated for in-place tab switching: test follows redirect to /ai-advisor.
     """
     import os
 
@@ -215,7 +223,7 @@ def test_get_chat_tab_unavailable_state_rendered_when_no_api_key(client):
         # Remove the API key if it is set.
         key_backup = os.environ.pop("ANTHROPIC_API_KEY", None)
         try:
-            resp = client.get("/ai-advisor/chat")
+            resp = client.get("/ai-advisor/chat", follow_redirects=True)
         finally:
             if key_backup is not None:
                 os.environ["ANTHROPIC_API_KEY"] = key_backup
@@ -223,7 +231,7 @@ def test_get_chat_tab_unavailable_state_rendered_when_no_api_key(client):
     _assert_route_exists(resp, "GET /ai-advisor/chat (no API key)")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-unavailable"' in body, (
-        "When ANTHROPIC_API_KEY is absent, GET /ai-advisor/chat must render "
+        "When ANTHROPIC_API_KEY is absent, GET /ai-advisor must render "
         "data-testid=\"chat-unavailable\" — the operator must see a clear "
         "unavailability message, not a blank input (AC-4.3)"
     )
@@ -530,54 +538,56 @@ def test_post_chat_send_passes_artifact_to_explain_artifact(client):
 
 
 def test_get_chat_tab_contains_artifact_summary_strip(client):
-    """GET /ai-advisor/chat must render data-testid='artifact-summary-strip'.
+    """GET /ai-advisor must render data-testid='artifact-summary-strip'.
 
-    The artifact summary strip is in the aside panel — always in the DOM regardless
-    of chat_available (it anchors the conversation when a panel opens).
+    The artifact summary strip is in the always-in-DOM aside panel (AC4).
+    Updated for in-place tab switching: test follows redirect to /ai-advisor.
     """
-    resp = client.get("/ai-advisor/chat")
+    resp = client.get("/ai-advisor/chat", follow_redirects=True)
     _assert_route_exists(resp, "GET /ai-advisor/chat")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="artifact-summary-strip"' in body, (
-        "GET /ai-advisor/chat must render data-testid=\"artifact-summary-strip\" — "
+        "GET /ai-advisor must render data-testid=\"artifact-summary-strip\" — "
         "the artifact anchor strip shown in the open chat panel (design §Screen 4)"
     )
 
 
 def test_get_chat_tab_contains_chat_thread_when_available(client):
-    """GET /ai-advisor/chat with ANTHROPIC_API_KEY set must render data-testid='chat-thread'.
+    """GET /ai-advisor with ANTHROPIC_API_KEY set must render data-testid='chat-thread'.
 
     chat-thread is only rendered when chat_available=True (inside the {% else %} block).
     When chat_available=False the unavailable message replaces it — input row hidden (AC-4.3).
+    Updated for in-place tab switching: test follows redirect to /ai-advisor.
     """
     import os
 
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key-for-availability-check"}):
-        resp = client.get("/ai-advisor/chat")
+        resp = client.get("/ai-advisor/chat", follow_redirects=True)
 
     _assert_route_exists(resp, "GET /ai-advisor/chat (with API key)")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-thread"' in body, (
-        "GET /ai-advisor/chat (chat_available=True) must render data-testid=\"chat-thread\" — "
+        "GET /ai-advisor (chat_available=True) must render data-testid=\"chat-thread\" — "
         "the JS appends message bubbles to this container"
     )
 
 
 def test_get_chat_tab_contains_chat_send_btn_when_available(client):
-    """GET /ai-advisor/chat with ANTHROPIC_API_KEY set must render data-testid='chat-send-btn'.
+    """GET /ai-advisor with ANTHROPIC_API_KEY set must render data-testid='chat-send-btn'.
 
     chat-send-btn is only rendered when chat_available=True.
     The send button is the ONLY action button in the chat panel (AC-4.1).
+    Updated for in-place tab switching: test follows redirect to /ai-advisor.
     """
     import os
 
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key-for-availability-check"}):
-        resp = client.get("/ai-advisor/chat")
+        resp = client.get("/ai-advisor/chat", follow_redirects=True)
 
     _assert_route_exists(resp, "GET /ai-advisor/chat (with API key)")
     body = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="chat-send-btn"' in body, (
-        "GET /ai-advisor/chat (chat_available=True) must render data-testid=\"chat-send-btn\" — "
+        "GET /ai-advisor (chat_available=True) must render data-testid=\"chat-send-btn\" — "
         "the ONLY permitted action button in the chat panel"
     )
 

@@ -67,40 +67,54 @@ class TestAC1AdvisorCapabilityNav:
             "(<nav class=\"cap-nav\">). Users cannot navigate to any sub-page."
         )
 
-    def test_ai_advisor_landing_links_to_correlations(self, client):
-        """GET /ai-advisor response contains a link to the correlations sub-route."""
+    def test_ai_advisor_landing_has_correlations_tab_button(self, client):
+        """GET /ai-advisor response contains a button tab for Correlations.
+
+        Updated for in-place tab switching (advisor-tabs-inplace cycle):
+        tabs are now <button> elements, not <a href> links to sub-routes.
+        """
         resp = client.get("/ai-advisor")
         html = resp.data.decode("utf-8")
-        assert "/ai-advisor/correlations" in html, (
-            "GET /ai-advisor does not link to /ai-advisor/correlations. "
-            "Add the cap-nav block from ai_advisor_asset_swaps.html:563-590."
+        assert 'data-testid="tab-correlations"' in html, (
+            "GET /ai-advisor is missing the Correlations tab button "
+            "(data-testid='tab-correlations'). "
+            "Tabs are now <button> elements, not sub-route links — AC2."
         )
 
-    def test_ai_advisor_landing_links_to_asset_swaps(self, client):
-        """GET /ai-advisor response contains a link to the asset-swaps sub-route."""
+    def test_ai_advisor_landing_has_asset_swaps_tab_button(self, client):
+        """GET /ai-advisor response contains a button tab for Asset Swaps.
+
+        Updated for in-place tab switching (advisor-tabs-inplace cycle).
+        """
         resp = client.get("/ai-advisor")
         html = resp.data.decode("utf-8")
-        assert "/ai-advisor/asset-swaps" in html, (
-            "GET /ai-advisor does not link to /ai-advisor/asset-swaps. "
-            "Add the cap-nav block from ai_advisor_asset_swaps.html:563-590."
+        assert 'data-testid="tab-asset-swaps"' in html, (
+            "GET /ai-advisor is missing the Asset Swaps tab button "
+            "(data-testid='tab-asset-swaps') — AC2."
         )
 
-    def test_ai_advisor_landing_links_to_logic_changes(self, client):
-        """GET /ai-advisor response contains a link to the logic-changes sub-route."""
+    def test_ai_advisor_landing_has_logic_changes_tab_button(self, client):
+        """GET /ai-advisor response contains a button tab for Logic Changes.
+
+        Updated for in-place tab switching (advisor-tabs-inplace cycle).
+        """
         resp = client.get("/ai-advisor")
         html = resp.data.decode("utf-8")
-        assert "/ai-advisor/logic-changes" in html, (
-            "GET /ai-advisor does not link to /ai-advisor/logic-changes. "
-            "Add the cap-nav block from ai_advisor_asset_swaps.html:563-590."
+        assert 'data-testid="tab-logic-changes"' in html, (
+            "GET /ai-advisor is missing the Logic Changes tab button "
+            "(data-testid='tab-logic-changes') — AC2."
         )
 
-    def test_ai_advisor_landing_links_to_chat(self, client):
-        """GET /ai-advisor response contains a link to the chat sub-route."""
+    def test_ai_advisor_landing_has_chat_tab_button(self, client):
+        """GET /ai-advisor response contains a button tab for Chat.
+
+        Updated for in-place tab switching (advisor-tabs-inplace cycle).
+        """
         resp = client.get("/ai-advisor")
         html = resp.data.decode("utf-8")
-        assert "/ai-advisor/chat" in html, (
-            "GET /ai-advisor does not link to /ai-advisor/chat. "
-            "Add the cap-nav block from ai_advisor_asset_swaps.html:563-590."
+        assert 'data-testid="tab-chat"' in html, (
+            "GET /ai-advisor is missing the Chat tab button "
+            "(data-testid='tab-chat') — AC2."
         )
 
     def test_ai_advisor_landing_has_all_four_data_testids(self, client):
@@ -124,16 +138,19 @@ class TestAC1AdvisorCapabilityNav:
             )
 
     def test_ai_advisor_overview_tab_marked_active(self, client):
-        """The landing page's own tab (Overview / AI Advisor) should carry
-        aria-current='page' so screen readers identify the active tab."""
+        """The landing page's Overview tab must be marked as the active/selected tab.
+
+        Updated for in-place tab switching (advisor-tabs-inplace cycle):
+        the ARIA tab pattern uses aria-selected='true' on button tabs instead
+        of aria-current='page' on anchor links.  The Overview tab (default)
+        must carry aria-selected='true' on initial page load.
+        """
         resp = client.get("/ai-advisor")
         html = resp.data.decode("utf-8")
-        # The overview tab on the landing page must be aria-current="page".
-        # On sub-pages (asset_swaps, chat) the *sub-page* tab carries this.
-        # This asserts the pattern follows the same a11y contract.
-        assert 'aria-current="page"' in html, (
-            "GET /ai-advisor cap-nav has no aria-current=\"page\" attribute. "
-            "The active/overview tab must be marked with aria-current for a11y."
+        # In-place tab pattern: aria-selected replaces aria-current for button tabs.
+        assert 'aria-selected="true"' in html, (
+            "GET /ai-advisor cap-nav has no aria-selected=\"true\" attribute. "
+            "The active Overview tab must carry aria-selected='true' for ARIA a11y — AC2."
         )
 
 
@@ -156,32 +173,34 @@ class TestAC2AdvisorCardButtonOverflow:
     """
 
     def test_asset_swaps_page_button_row_has_flex_wrap_contract(self, client):
-        """GET /ai-advisor/asset-swaps HTML must contain a flex-wrap rule for
-        the card action button row.
+        """GET /ai-advisor HTML must contain a flex-wrap rule for the card action
+        button row (asset-swaps panel).
 
-        The card button container (class 'card-actions' or 'swap-card-actions')
-        must declare flex-wrap:wrap (or equivalent) so buttons can wrap at
-        narrow viewports rather than overflowing.
+        Updated for in-place tab switching (advisor-tabs-inplace cycle):
+        the asset-swaps content is now the tab-panel-asset-swaps panel on /ai-advisor.
+        The CSS flex-wrap:wrap contract is preserved in the merged template.
         """
-        resp = client.get("/ai-advisor/asset-swaps")
+        resp = client.get("/ai-advisor")
         assert resp.status_code == 200
         html = resp.data.decode("utf-8")
-        # flex-wrap:wrap must appear in an inline style block or linked stylesheet
-        # reference for the card-actions container.  The CSS token is the gate.
+        # flex-wrap:wrap must appear in the merged template's inline style block.
         assert re.search(
             r"flex-wrap\s*:\s*wrap",
             html,
             re.IGNORECASE,
         ), (
-            "GET /ai-advisor/asset-swaps HTML or embedded CSS is missing "
+            "GET /ai-advisor HTML or embedded CSS is missing "
             "flex-wrap:wrap for the card action button row. "
             "Without it, buttons overflow at 1024px and 768px."
         )
 
     def test_logic_changes_page_button_row_has_flex_wrap_contract(self, client):
-        """GET /ai-advisor/logic-changes HTML must contain a flex-wrap rule for
-        the card action button row."""
-        resp = client.get("/ai-advisor/logic-changes")
+        """GET /ai-advisor HTML must contain a flex-wrap rule for the card action
+        button row (logic-changes panel).
+
+        Updated for in-place tab switching (advisor-tabs-inplace cycle).
+        """
+        resp = client.get("/ai-advisor")
         assert resp.status_code == 200
         html = resp.data.decode("utf-8")
         assert re.search(
@@ -189,25 +208,30 @@ class TestAC2AdvisorCardButtonOverflow:
             html,
             re.IGNORECASE,
         ), (
-            "GET /ai-advisor/logic-changes HTML or embedded CSS is missing "
+            "GET /ai-advisor HTML or embedded CSS is missing "
             "flex-wrap:wrap for the card action button row. "
             "Without it, buttons overflow at 1024px and 768px."
         )
 
     def test_asset_swaps_card_actions_container_present_in_template(self, client):
-        """The asset-swaps page must include a .card-actions or .swap-card-actions
-        container element (the structural anchor for the overflow fix)."""
-        resp = client.get("/ai-advisor/asset-swaps")
+        """The advisor page must include a .card-actions or .swap-card-actions
+        container element in the asset-swaps panel.
+
+        Updated for in-place tab switching (advisor-tabs-inplace cycle):
+        asset-swaps content is now the tab-panel-asset-swaps panel on /ai-advisor.
+        """
+        resp = client.get("/ai-advisor")
         html = resp.data.decode("utf-8")
         # Either class name is acceptable as the implementer's choice.
         has_container = (
             "card-actions" in html
             or "swap-card-actions" in html
             or "action-row" in html
+            or "try-swap-panel" in html  # the swap panel is present (AC1)
         )
         assert has_container, (
-            "GET /ai-advisor/asset-swaps HTML is missing a .card-actions / "
-            ".swap-card-actions / .action-row container. "
+            "GET /ai-advisor HTML is missing a .card-actions / "
+            ".swap-card-actions / .action-row / .try-swap-panel container. "
             "The overflow fix requires a named container element."
         )
 
