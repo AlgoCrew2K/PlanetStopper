@@ -698,3 +698,43 @@ def test_d1_logic_changes_evaluate_import_error_does_not_leak_exception_text(fla
         f"The error field must contain 'ImportError' for operator triage. "
         f"Got: {error_text!r}"
     )
+
+
+
+# ---------------------------------------------------------------------------
+# AC5-C -- Source-inspection pin: NO advisor error return in app.py may embed
+# str(exc). Guards the response-serialization failure path and any future
+# advisor routes against D-1 regression.
+# ---------------------------------------------------------------------------
+
+_WORKTREE_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+# Patterns that indicate str(exc) embedding in a jsonify error field.
+_D1_ADVISOR_VIOLATION_PATTERNS = [
+    r"""jsonify\(\{"error":\s*f"[^"]*\{exc\}""",
+    r"""jsonify\(\{"error":\s*f"[^"]*\{_je\}""",
+    r"""jsonify\(\{"error":\s*f"[^"]*\{_ie\}""",
+]
+
+
+def test_no_str_exc_embedding_in_advisor_error_returns():
+    """All jsonify({"error": ...}) returns in app.py advisor routes must use
+    type(exc).__name__ only -- never embed str(exc).
+
+    Source-inspection pin covering the response-serialization path (~app.py:3175)
+    that is not easily exercised via mock, and any future advisor routes.
+    """
+    import re
+
+    app_source = (_WORKTREE_ROOT / "app.py").read_text(encoding="utf-8")
+    violations = []
+    for pattern in _D1_ADVISOR_VIOLATION_PATTERNS:
+        for match in re.finditer(pattern, app_source):
+            line_no = app_source[: match.start()].count(chr(10)) + 1
+            violations.append(f"line {line_no}: {match.group()!r}")
+
+    assert not violations, (
+        "D-1 violation(s) found in app.py advisor error returns -- "
+        "str(exc) must never be embedded in a jsonify error field. "
+        f"Found {len(violations)} violation(s): " + "; ".join(violations)
+    )
