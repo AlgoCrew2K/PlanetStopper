@@ -1,6 +1,6 @@
 # ai_advisor
 
-> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, and safety gates (9-item allowlist, risk-direction cross-check, OOS re-validation).
+> Claude-backed config advisor: context assembly, structured-output Claude call, per-symphony assessment, and safety gates (7-item allowlist, risk-direction cross-check, OOS re-validation).
 
 **Source:** `ai_advisor.py`
 **Last updated:** 2026-06-10
@@ -9,13 +9,13 @@
 
 `ai_advisor.py` is the operator-assist config advisory surface. It is split into two cycles:
 
-- **C1** — Context assembly + synchronous Claude call. `assemble_advisor_context` reads a curated 9-item allowlist of config values (7 Optuna search-space keys + `TRIGGER_THRESHOLD_PCT` + `MAX_SQUEEZE_FLOOR`), never `os.environ`. `request_suggestions` calls Claude with structured output (`ConfigSuggestionsResponse`). `build_assessment_from_context` synthesises a per-symphony assessment from the assembled context so the UI can explain why no suggestion was made — the common case for symphonies with no validated edge. Never raises — every failure degrades to `(None, error_message)`.
+- **C1** — Context assembly + synchronous Claude call. `assemble_advisor_context` reads a curated 7-item allowlist of config values (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`), never `os.environ`. `request_suggestions` calls Claude with structured output (`ConfigSuggestionsResponse`). `build_assessment_from_context` synthesises a per-symphony assessment from the assembled context so the UI can explain why no suggestion was made — the common case for symphonies with no validated edge. Never raises — every failure degrades to `(None, error_message)`.
 
 - **C2** — Safety gates. Three independent defense-in-depth layers on top of C1's context allowlist: `enforce_suggestion_allowlist`, `check_risk_direction_agreement`, `revalidate_suggestion_oos`.
 
 Real-money-critical input governance: `assemble_advisor_context` never includes credentials, account IDs, safety flags, or methodology knobs. The config surface is an allowlist, not a denylist.
 
-**Liveness fix (2026-06-10):** `assemble_advisor_context` now accepts `composer_symphony_id` and `autotune_run` parameters. The route passes the Composer hash ID via `composer_symphony_id` so that `symphony_logic.get_condensed_logic` receives the hash the Composer `/score` API expects — passing the normalized name previously produced HTTP 400 and an empty logic struct. The `autotune_run` parameter lets the calling route pass a pre-fetched row, avoiding a second DB round-trip and ensuring route-level DB mocks cover context assembly.
+**Liveness fix (2026-06-10):** `assemble_advisor_context` now accepts `composer_symphony_id` and `autotune_run` parameters. The route passes the Composer hash ID via `composer_symphony_id` so that `symphony_logic.get_condensed_logic` receives the hash the Composer `/score` API expects — passing the normalized name previously produced HTTP 400 and an empty logic struct. Note: the `autotune_run` parameter is currently a no-op — `ai_advisor.py:497` unconditionally overwrites it with `None` and always fetches from the DB at `:501`; the passed value is discarded.
 
 **Regime context fix (2026-06-10):** `_build_volatility_regime` sets `available: False` with an explicit `reason` when `vol/atr` keys are absent from the autotune run row, rather than fabricating `available: True` with all-null fields.
 
@@ -43,7 +43,7 @@ Assembles the prompt-ready context blob carrying all 9 must-have prompt elements
 | `scope` | `str` | `"symphony"` or `"global"` |
 | `symphony_id` | `str \| None` | Required when `scope == "symphony"`; used as key for all state-DB lookups (autotune_runs, symphony_strategies) |
 | `composer_symphony_id` | `str \| None` | Optional Composer hash ID; passed to `get_condensed_logic` when present (hash required by Composer /score API) |
-| `autotune_run` | `dict \| None \| _SENTINEL` | Pre-fetched autotune run dict. `_SENTINEL` (default) triggers internal DB fetch; explicit `None` skips the fetch |
+| `autotune_run` | `dict \| None \| _SENTINEL` | Currently a no-op parameter — the value is unconditionally discarded at `ai_advisor.py:497`; an internal DB fetch always runs at `:501` regardless of what is passed |
 
 **Returns:** Well-shaped context dict. Never raises; degrades gracefully when Optuna has not run.
 
@@ -80,7 +80,7 @@ Calls Claude's structured-output endpoint. Synchronous — blocks until the resp
 
 **Model:** `claude-opus-4-7`, `max_tokens=2048`.
 
-An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: the error message returned to the browser contains only `type(exc).__name__`, never `str(exc)` — exception text may contain API keys or internal paths.
+An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: partially honored — the client-construction failure path returns only `type(exc).__name__` to the browser, but the `messages.parse` failure path at `ai_advisor.py:624` embeds the full `{exc}` in the error message returned via `app.py:3319`.
 
 ---
 
@@ -88,7 +88,7 @@ An empty `suggestions` list is a valid non-error response ("no edit is well-supp
 
 #### `enforce_suggestion_allowlist(suggestions: list[ConfigSuggestion]) → tuple[list[ConfigSuggestion], list[ConfigSuggestion]]`
 
-Partitions suggestions into `(allowed, rejected)` by `config_key`. Any key not in the 9-item suggestible allowlist is routed to `rejected`. Defense-in-depth: even if Claude hallucinates a key or emits a credential, it can never reach a live config write.
+Partitions suggestions into `(allowed, rejected)` by `config_key`. Any key not in the 7-item suggestible allowlist is routed to `rejected`. Defense-in-depth: even if Claude hallucinates a key or emits a credential, it can never reach a live config write.
 
 **Returns:** `(allowed, rejected)` — order-preserving; every suggestion in exactly one partition.
 
@@ -120,7 +120,7 @@ The `autotuner` import is lazy (inside the function body) to avoid import-collis
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `config_key` | `str` | One of the 9 suggestible keys |
+| `config_key` | `str` | One of the 7 suggestible keys |
 | `current_value` | `float \| int \| str` | Current live value |
 | `suggested_value` | `float \| int \| str` | Claude's proposed value |
 | `rationale` | `str` | Claude's reasoning, citing supplied numbers |
@@ -139,11 +139,10 @@ The `autotuner` import is lazy (inside the function body) to avoid import-collis
 
 ### Suggestible Config Surface
 
-The 9-item allowlist (7 Optuna search-space keys + `TRIGGER_THRESHOLD_PCT` + `MAX_SQUEEZE_FLOOR`):
+The 7-item allowlist (6 Optuna search-space keys + `MAX_SQUEEZE_FLOOR`). Note: `TRIGGER_THRESHOLD_PCT` is the default locked variable (`database.DEFAULT_LOCKED_VARS`) and is NOT suggestible — any suggestion for it would be routed to `rejected` by `enforce_suggestion_allowlist`.
 
 | Key | Optuna-tuned | Risk Polarity |
 |-----|-------------|---------------|
-| `TRIGGER_THRESHOLD_PCT` | No | raising loosens risk |
 | `TAKE_PROFIT_MC_PCT` | Yes | raising tightens risk (inverted) |
 | `VWAP_CROSS_HWM_PCT` | Yes | raising loosens risk |
 | `VWAP_BLEED_MULTIPLIER` | Yes | raising loosens risk |

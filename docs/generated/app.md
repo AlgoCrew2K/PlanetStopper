@@ -162,7 +162,7 @@ Unified single-page render for all 5 in-place tab panels. Server-side assembles 
 | `symphonies` | `analytics.list_available_symphonies` | Asset Swaps, Logic Changes forms |
 | `chat_available` | `bool(os.environ.get("ANTHROPIC_API_KEY"))` — key presence only, value never passed to template | Chat |
 
-All data assembly is wrapped in `try/except` — if one panel's data fails, the others still render.
+The Correlations, API-key, and Symphonies data assembly sections are wrapped in `try/except` — if those panels' data fails, the others still render. The Overview observations loop (`app.py:2756-2778`) is not wrapped.
 
 #### `GET /ai-advisor/correlations` → 302 redirect to `/ai-advisor`
 #### `GET /ai-advisor/asset-swaps` → 302 redirect to `/ai-advisor`
@@ -185,7 +185,7 @@ Accepts JSON: `{ symphony_id, objective_type?, change_description }`. Same name�
 
 #### `POST /ai-advisor/suggest` — `ai_advisor_suggest()`
 
-Resolves the Composer hash → normalized symphony name for DB lookups; pre-fetches the autotune run; passes both `symphony_id` (normalized name) and `composer_symphony_id` (original hash) to `ai_advisor.assemble_advisor_context`. Returns `{"suggestions": [...], "assessment": {...}}` — the `assessment` key is new (2026-06-10) and carries `build_assessment_from_context` output so the UI can explain the empty-suggestions state per symphony.
+Resolves the Composer hash → normalized symphony name for DB lookups; pre-fetches the autotune run (note: the fetched value is passed to `ai_advisor.assemble_advisor_context` but is currently a no-op there — the function unconditionally discards it and fetches from DB again at `ai_advisor.py:501`, resulting in two DB fetches); passes both `symphony_id` (normalized name) and `composer_symphony_id` (original hash) to `ai_advisor.assemble_advisor_context`. Returns `{"suggestions": [...], "assessment": {...}}` — the `assessment` key is new (2026-06-10) and carries `build_assessment_from_context` output so the UI can explain the empty-suggestions state per symphony.
 
 D-1 security contract: on exception, returns `{"error": type(_exc).__name__}` only — never `str(exc)`.
 
