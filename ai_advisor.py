@@ -126,9 +126,11 @@ _PARAM_DEFINITIONS: dict[str, dict[str, str]] = {
     },
 }
 
-# Hard min/max valid ranges. The 7 Optuna keys mirror the suggest_* bounds in
-# autotuner.objective() (autotuner.py:306-312). MAX_SQUEEZE_FLOOR has no Optuna
-# range; 0.05-0.50 is the research placeholder (config-surface.md §1, Layer B).
+# Hard min/max valid ranges. The 6 Optuna search-space keys mirror the
+# suggest_* bounds in autotuner.objective() (autotuner.py:306-312).
+# TRIGGER_THRESHOLD_PCT is included for display context only (it is locked, not
+# suggestible). MAX_SQUEEZE_FLOOR has no Optuna range; 0.05-0.50 is the
+# research placeholder (config-surface.md §1, Layer B).
 _PARAM_VALID_RANGES: dict[str, dict[str, float | str]] = {
     "TRIGGER_THRESHOLD_PCT": {"low": 5.0, "high": 25.0, "type": "float"},
     "TAKE_PROFIT_MC_PCT": {"low": 2.0, "high": 10.0, "type": "float"},
