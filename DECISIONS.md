@@ -239,3 +239,43 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** The rows were written by tests that ran without DB isolation before the pytest-sentinel guard (DE-TEST-001). They polluted the autotune run history visible in the dashboard and inflated advisor observation counts with non-production data. The cleanup was performed with backups in place per additive-first / conservative data-handling norms.
 
 **Status:** Complete. Data integrity restored. DE-TEST-001 prevents recurrence.
+
+
+---
+
+## AI Advisor cleanup (2026-06-10)
+
+### DE-ADV-005: D-1 security fix — all advisor error paths return class name only
+
+**Decision:** All advisor error return paths in `ai_advisor.py` and `app.py` now return only `type(exc).__name__` to the browser. No `str(exc)` or f-string embedding of exception text in any `jsonify({"error": ...})` response. Full detail is logged server-side via `exc_info=True`.
+
+**Paths fixed:**
+- `ai_advisor.py` `request_suggestions` `messages.parse` failure path (was `f"...{exc}"`)
+- `app.py` `ai_advisor_asset_swaps_evaluate` engine-call except (was `f"{type(exc).__name__}: {exc}"`)
+- `app.py` `ai_advisor_logic_changes_evaluate` engine-call except (was `f"{type(exc).__name__}: {exc}"`)
+- `app.py` `ai_advisor_logic_changes_evaluate` ImportError handler (was `f"advisor unavailable: {type(_ie).__name__}: {_ie}"`)
+- `app.py` `ai_advisor_logic_changes_evaluate` response-serialization except (was `f"{type(_je).__name__}: {_je}"`)
+
+**Rationale:** Exception messages may contain API keys, internal paths, or other secrets. D-1 contract requires class-name-only browser-facing errors; full detail stays server-side. Pinned by source-inspection test `test_no_str_exc_embedding_in_advisor_error_returns`.
+
+**Status:** Merged (be9a31f). Full tree clean.
+
+---
+
+### DE-ADV-006: assemble_advisor_context honors passed autotune_run — single DB fetch
+
+**Decision:** `assemble_advisor_context` now honors a caller-supplied `autotune_run` parameter. When a non-`_SENTINEL` value is passed, the internal `database.get_latest_autotune_run` call is skipped. The suggest route (`app.py:ai_advisor_suggest`) pre-fetches the autotune run once and passes it, eliminating the previous double DB fetch.
+
+**Rationale:** The parameter was documented as functional but the implementation unconditionally overwrote it (line 497) and always fetched from DB (line 501). This caused two DB calls per suggest request and broke route-level DB mock coverage in tests. The fix honors the _SENTINEL sentinel pattern already present in the signature.
+
+**Status:** Merged (e5b0c18). Full tree clean.
+
+---
+
+### DE-ADV-007: 4 orphaned advisor templates deleted
+
+**Decision:** `templates/ai_advisor_correlations.html`, `ai_advisor_asset_swaps.html`, `ai_advisor_logic_changes.html`, and `ai_advisor_chat.html` are deleted. Their GET routes 302-redirect to `/ai-advisor`; no `render_template` call references them.
+
+**Rationale:** The templates became dead code after the in-place SPA migration (DE-ADV-004). Keeping them was misleading — they appeared to be render targets but were not. Deletion is safe: confirmed no `render_template` or `include` references exist in `app.py` or any other template.
+
+**Status:** Merged (507ddd3). Pinned by `test_orphaned_advisor_template_does_not_exist`.

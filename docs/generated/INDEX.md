@@ -1,6 +1,6 @@
 # Planet Stopper -- Generated Module Reference Index
 
-**Last regenerated:** 2026-06-10 (AI Advisor SPA migration + liveness fixes + DB isolation guard)
+**Last regenerated:** 2026-06-10 (AI Advisor SPA migration + liveness fixes + DB isolation guard + advisor-cleanup: D-1 fix, autotune_run dedupe, template deletion)
 
 All pages in this directory are auto-generated from source. Do not hand-edit generated sections. Sections marked `<!-- manual -->` are preserved across regenerations.
 
@@ -42,16 +42,14 @@ The following modules were deleted in Sprint 3 port-level deprecation and have n
 
 ---
 
-## Orphaned Templates (deletion candidates)
+## Deleted Templates (advisor-cleanup cycle, 2026-06-10)
 
-The following per-tab templates are dead code after the AI Advisor SPA migration (2026-06-10). Their GET routes 302-redirect to `/ai-advisor`; the templates are no longer rendered. They may be deleted in a future cleanup cycle:
+The 4 per-tab advisor templates were deleted in the advisor-cleanup cycle. They were dead code after the SPA migration — their GET routes 302-redirect to `/ai-advisor` and the templates were never rendered:
 
-| Template | Formerly served by |
-|----------|--------------------|
-| `templates/ai_advisor_correlations.html` | `GET /ai-advisor/correlations` |
-| `templates/ai_advisor_asset_swaps.html` | `GET /ai-advisor/asset-swaps` |
-| `templates/ai_advisor_logic_changes.html` | `GET /ai-advisor/logic-changes` |
-| `templates/ai_advisor_chat.html` | `GET /ai-advisor/chat` |
+- `templates/ai_advisor_correlations.html` (deleted)
+- `templates/ai_advisor_asset_swaps.html` (deleted)
+- `templates/ai_advisor_logic_changes.html` (deleted)
+- `templates/ai_advisor_chat.html` (deleted)
 
 ---
 
@@ -63,4 +61,4 @@ The following per-tab templates are dead code after the AI Advisor SPA migration
 - **Return units:** `synthetic_history.py` emits returns in **percent**. The CRRA-EU branch converts at its boundary via `RETURN_PCT_TO_FRACTION = 100.0`.
 - **Per-symphony live mode:** `database.set_symphony_live_mode` / `get_symphony_live_mode` (migration 030) + `POST /api/symphony-settings/<name>` (CSRF-protected). Default is dry-run (0).
 - **DB isolation guard:** `database._db_file()` raises `RuntimeError` under pytest if path resolves to `alphabot_state.db`. `tests/conftest.py` `pytest_configure()` hook sets a session temp path before any module import.
-- **AI Advisor SPA:** All 5 advisor panels render from a single `templates/ai_advisor.html`; tab switching is in-place JS (`initTabSwitcher` in `static/ai_advisor.js`). The 4 old per-tab templates are orphaned dead code (see Orphaned Templates above).
+- **AI Advisor SPA:** All 5 advisor panels render from a single `templates/ai_advisor.html`; tab switching is in-place JS (`initTabSwitcher` in `static/ai_advisor.js`). The 4 old per-tab templates were deleted in the advisor-cleanup cycle (2026-06-10).

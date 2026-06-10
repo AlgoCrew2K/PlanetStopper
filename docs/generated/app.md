@@ -185,9 +185,9 @@ Accepts JSON: `{ symphony_id, objective_type?, change_description }`. Same name�
 
 #### `POST /ai-advisor/suggest` — `ai_advisor_suggest()`
 
-Resolves the Composer hash → normalized symphony name for DB lookups; pre-fetches the autotune run (note: the fetched value is passed to `ai_advisor.assemble_advisor_context` but is currently a no-op there — the function unconditionally discards it and fetches from DB again at `ai_advisor.py:501`, resulting in two DB fetches); passes both `symphony_id` (normalized name) and `composer_symphony_id` (original hash) to `ai_advisor.assemble_advisor_context`. Returns `{"suggestions": [...], "assessment": {...}}` — the `assessment` key is new (2026-06-10) and carries `build_assessment_from_context` output so the UI can explain the empty-suggestions state per symphony.
+Resolves the Composer hash → normalized symphony name for DB lookups; pre-fetches the autotune run once via `database.get_latest_autotune_run` and passes it to `ai_advisor.assemble_advisor_context` (which now honors the passed value and skips its own internal fetch — single DB round-trip total). Passes both `symphony_id` (normalized name) and `composer_symphony_id` (original hash) to `ai_advisor.assemble_advisor_context`. Returns `{"suggestions": [...], "assessment": {...}}` — the `assessment` key carries `build_assessment_from_context` output so the UI can explain the empty-suggestions state per symphony.
 
-D-1 security contract: on exception, returns `{"error": type(_exc).__name__}` only — never `str(exc)`.
+D-1 security contract: fully honored on this route and all advisor routes (asset-swaps/evaluate, logic-changes/evaluate, and the ImportError handler) — on exception, returns `{"error": type(exc).__name__}` only, never `str(exc)`.
 
 #### `POST /ai-advisor/accept` — `ai_advisor_accept()`
 

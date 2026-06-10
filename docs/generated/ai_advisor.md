@@ -15,7 +15,7 @@
 
 Real-money-critical input governance: `assemble_advisor_context` never includes credentials, account IDs, safety flags, or methodology knobs. The config surface is an allowlist, not a denylist.
 
-**Liveness fix (2026-06-10):** `assemble_advisor_context` now accepts `composer_symphony_id` and `autotune_run` parameters. The route passes the Composer hash ID via `composer_symphony_id` so that `symphony_logic.get_condensed_logic` receives the hash the Composer `/score` API expects — passing the normalized name previously produced HTTP 400 and an empty logic struct. Note: the `autotune_run` parameter is currently a no-op — `ai_advisor.py:497` unconditionally overwrites it with `None` and always fetches from the DB at `:501`; the passed value is discarded.
+**Liveness fix (2026-06-10):** `assemble_advisor_context` now accepts `composer_symphony_id` and `autotune_run` parameters. The route passes the Composer hash ID via `composer_symphony_id` so that `symphony_logic.get_condensed_logic` receives the hash the Composer `/score` API expects — passing the normalized name previously produced HTTP 400 and an empty logic struct. The `autotune_run` parameter is now fully honored — when a pre-fetched row is passed (non-`_SENTINEL`), the internal `database.get_latest_autotune_run` call is skipped, avoiding a redundant DB round-trip.
 
 **Regime context fix (2026-06-10):** `_build_volatility_regime` sets `available: False` with an explicit `reason` when `vol/atr` keys are absent from the autotune run row, rather than fabricating `available: True` with all-null fields.
 
@@ -43,7 +43,7 @@ Assembles the prompt-ready context blob carrying all 9 must-have prompt elements
 | `scope` | `str` | `"symphony"` or `"global"` |
 | `symphony_id` | `str \| None` | Required when `scope == "symphony"`; used as key for all state-DB lookups (autotune_runs, symphony_strategies) |
 | `composer_symphony_id` | `str \| None` | Optional Composer hash ID; passed to `get_condensed_logic` when present (hash required by Composer /score API) |
-| `autotune_run` | `dict \| None \| _SENTINEL` | Currently a no-op parameter — the value is unconditionally discarded at `ai_advisor.py:497`; an internal DB fetch always runs at `:501` regardless of what is passed |
+| `autotune_run` | `dict \| None \| _SENTINEL` | Optional pre-fetched autotune run. When non-`_SENTINEL`, the value is used directly and `database.get_latest_autotune_run` is skipped (avoids a second DB round-trip). Pass `_SENTINEL` (the default) to have the function fetch from DB internally. Explicit `None` means "Optuna has not run" — also skips the fetch. |
 
 **Returns:** Well-shaped context dict. Never raises; degrades gracefully when Optuna has not run.
 
@@ -80,7 +80,7 @@ Calls Claude's structured-output endpoint. Synchronous — blocks until the resp
 
 **Model:** `claude-opus-4-7`, `max_tokens=2048`.
 
-An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: partially honored — the client-construction failure path returns only `type(exc).__name__` to the browser, but the `messages.parse` failure path at `ai_advisor.py:624` embeds the full `{exc}` in the error message returned via `app.py:3319`.
+An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: fully honored — all failure paths (`messages.parse` at `ai_advisor.py:631` and client construction) return only `type(exc).__name__` to the browser. Full exception detail is logged server-side via `exc_info=True`; no exception text reaches the JSON response.
 
 ---
 

@@ -19,7 +19,7 @@
 | `reporting.py` | Discord webhooks + QuickChart embeds |
 | `synthetic_history.py` | 250-day live Alpaca historical fetcher (parallel + file cache); feeds autotuner replay |
 | `acceptance_gate.py` | Reusable overfitting acceptance gate — used by autotuner and AI Advisor proposal suite |
-| `ai_advisor.py` | Claude-backed config advisor: `assemble_advisor_context` (accepts `composer_symphony_id` + `autotune_run` params; note `autotune_run` is currently a no-op), `build_assessment_from_context` (per-symphony informative empty-state), `request_suggestions`, C2 safety gates; 7-item suggestible allowlist (6 Optuna search-space keys + MAX_SQUEEZE_FLOOR) |
+| `ai_advisor.py` | Claude-backed config advisor: `assemble_advisor_context` (accepts `composer_symphony_id` + `autotune_run` params; `autotune_run` is HONORED — pass a pre-fetched row to skip the internal DB fetch, or use the default `_SENTINEL` to fetch internally), `build_assessment_from_context` (per-symphony informative empty-state), `request_suggestions` (D-1 fully honored: all error paths return `type(exc).__name__` only), C2 safety gates; 7-item suggestible allowlist (6 Optuna search-space keys + MAX_SQUEEZE_FLOOR) |
 | `advisors/` | Phase-1 Advisor producers: `overfitting_conscience.py`, `spec_critic.py`, `divergence_explainer.py`. Narrator deferred. AI Advisor proposal suite: `correlation_diagnostic.py`, `composer_backtest_client.py`, `backtest_gate_engine.py`, `asset_swap_engine.py`, `logic_change_engine.py`, `advisor_chat.py`. All observations write to `advisor_observations` keyed by `symphony_id`. Called post-walk-forward from `autotuner.py`. |
 | `templates/ai_advisor.html` | Single unified AI Advisor SPA template — all 5 tabs (Overview, Correlations, Asset Swaps, Logic Changes, Chat) rendered in one server-side render; tab switching in-place via JS |
 | `static/ai_advisor.js` | AI Advisor client logic: `initTabSwitcher`, suggestion card rendering with per-symphony assessment block, accept/reject, autotune run feed |
@@ -58,7 +58,7 @@ python app.py          # run daemon
 | Blast-radius scanners sweeping `.claude/worktrees/` | `rglob("*.py")` scanners must exclude `.claude/worktrees/` and `.claude/audit-worktrees/`; stale pre-deletion .py files in orphan worktrees produce false-positive import violations. |
 | Test writing to production DB | `database._db_file()` raises `RuntimeError` under pytest if `DB_PATH` resolves to `alphabot_state.db`. Fix: ensure `tests/conftest.py` `pytest_configure()` runs before any DB import. Per-test isolation via `_isolate_db` autouse fixture. |
 | AI Advisor empty suggestions (most symphonies) | Expected. The CRRA-EU + Harvey-Liu FDR gate is intentionally strict. `build_assessment_from_context` explains why — `oos_alpha=None` means all trials were haircut-rejected, not an error. |
-| 4 old advisor tab templates | `templates/ai_advisor_correlations.html`, `ai_advisor_asset_swaps.html`, `ai_advisor_logic_changes.html`, `ai_advisor_chat.html` are orphaned dead code — their routes 302-redirect to `/ai-advisor`. Do not add logic to them. Delete candidates. |
+| Advisor tab templates deleted | The 4 old per-tab advisor templates (`ai_advisor_correlations.html`, etc.) were deleted in the advisor-cleanup cycle (2026-06-10). Do not recreate them — the unified SPA at `templates/ai_advisor.html` is canonical. |
 
 ## Project-Local Specialist Agents (`.claude/agents/`)
 **Task-engine specialists:**
