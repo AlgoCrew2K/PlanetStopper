@@ -914,3 +914,190 @@ def test_caller_cannot_override_is_advisory_only_for_new_roles():
             f"hard-wire is_advisory_only=1. Got {row.get('is_advisory_only')!r}. "
             f"CC-1 violation — callers must not be able to clear this flag."
         )
+
+
+# ---------------------------------------------------------------------------
+# 10. Gap tests: behaviors not caught by the first RED batch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("lens_name", CYCLE1_LENSES)
+def test_stub_lens_called_with_non_none_arg_still_returns_available_false(
+    lens_name: str,
+):
+    """Stub lens helpers return available=False even when called with data.
+
+    A stub that only returns available=False when called with None but switches
+    to available=True when given any data object would be a cycle-1 violation.
+    Each stub is called with a non-None sentinel to confirm the stub nature is
+    unconditional.
+    """
+    import ai_advisor
+
+    helper = getattr(ai_advisor, f"_build_{lens_name}_section")
+    # Pass various non-None values that a future producer might use
+    for arg in (
+        {},
+        {"some": "data"},
+        [1, 2, 3],
+        "string data",
+        42,
+        True,
+    ):
+        result = helper(arg)
+        assert isinstance(result, dict), (
+            f"_build_{lens_name}_section({arg!r}) must return dict, "
+            f"got {type(result)}"
+        )
+        assert result.get("available") is False, (
+            f"_build_{lens_name}_section({arg!r}) returned available={result.get('available')!r}. "
+            f"Cycle-1 stubs must always return available=False regardless of "
+            f"argument — they have no live data source to draw from."
+        )
+
+
+def test_lens_blocks_in_context_are_dicts_not_callables(assembled_context: dict):
+    """The context dict stores the result of calling each helper, not the helper
+    itself.
+
+    A naive implementation might accidentally store the function object rather
+    than calling it. This test catches that.
+    """
+    for lens_name in CYCLE1_LENSES:
+        block = assembled_context.get(lens_name)
+        assert not callable(block), (
+            f"assembled_context['{lens_name}'] is callable — it appears to be "
+            f"the function object rather than the result of calling it. "
+            f"The context must store _build_{lens_name}_section() (called), "
+            f"not _build_{lens_name}_section (the function)."
+        )
+
+
+def test_citation_sources_inner_oversized_values_are_not_silently_truncated_to_broken_url():
+    """An inner citation URL that is long but valid must either pass intact or
+    be dropped — never truncated to a broken fragment.
+
+    validate_artifact does NOT truncate inner dict values (sources is a list,
+    not a top-level string). This test documents that behavior as intentional:
+    inner-string values longer than CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS pass
+    through intact (the truncation boundary applies to top-level strings only).
+    If a future impl adds inner-string truncation, the URL must be dropped rather
+    than truncated mid-value.
+    """
+    from advisors.advisor_chat import validate_artifact, CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS
+
+    # A long but valid URL
+    long_url = "https://api.gdeltproject.org/api/v2/doc/doc?query=markets&output=artlist&" + (
+        "param=value&" * 50
+    )
+    assert len(long_url) > CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS, (
+        "Test setup: long_url is not actually longer than CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS"
+    )
+
+    artifact = {
+        "sources": [
+            {
+                "title": "GDELT Query",
+                "url": long_url,
+                "published": "2026-06-10T12:00:00Z",
+                "lens": "sentiment",
+            }
+        ]
+    }
+    result = validate_artifact(artifact)
+    sources = result.get("sources", [])
+
+    if sources and isinstance(sources[0], dict):
+        inner_url = sources[0].get("url", "")
+        if inner_url:
+            # If the URL survived, it must NOT be a broken truncation
+            # A truncated URL does not end with a complete parameter value
+            assert inner_url == long_url or not inner_url.startswith("https://"), (
+                f"validate_artifact silently truncated an inner citation URL to a "
+                f"broken fragment ({len(inner_url)} chars). Either pass the full URL "
+                f"or drop it entirely — a half-truncated URL is worse than no URL (CC-4)."
+            )
+
+
+def test_build_citation_rejects_ftp_scheme():
+    """build_citation rejects ftp:// URLs — only http/https are permitted.
+
+    News citations must use web-clickable URLs. FTP links are not valid
+    clickable citations for news claims (CC-4).
+    """
+    import ai_advisor
+
+    ftp_citation = {
+        "title": "Old School FTP Article",
+        "url": "ftp://files.example.com/article.txt",
+        "published": "2026-06-10T12:00:00Z",
+        "lens": "macro",
+    }
+    result = ai_advisor.build_citation(ftp_citation)
+    assert result is None, (
+        f"build_citation accepted an ftp:// URL: {ftp_citation['url']!r}. "
+        f"Only http:// and https:// are permitted for clickable news links."
+    )
+
+
+def test_build_citation_rejects_xss_javascript_url():
+    """build_citation rejects javascript: URLs — a stored XSS vector.
+
+    If a citation URL containing javascript: reached the dashboard renderer
+    (static/ai_advisor.js) and was rendered as <a href=...>, it would execute
+    arbitrary JS in the operator's browser. Must be rejected at persist time.
+    """
+    import ai_advisor
+
+    xss_citation = {
+        "title": "XSS Test",
+        "url": "javascript:alert(document.cookie)",
+        "published": "2026-06-10T12:00:00Z",
+        "lens": "sentiment",
+    }
+    result = ai_advisor.build_citation(xss_citation)
+    assert result is None, (
+        f"build_citation accepted a javascript: URL — a stored XSS vector. "
+        f"This URL would execute JS in the operator's browser if rendered as "
+        f"<a href='javascript:...'> in static/ai_advisor.js."
+    )
+
+
+def test_build_citation_roundtrip_valid_citation_preserves_all_fields(
+    citation_helper, citation_fixture: dict
+):
+    """A valid citation passes through build_citation with all fields intact.
+
+    The returned dict must contain the same values for title, url, published,
+    lens as the input — no field is mutated or normalized unexpectedly.
+    """
+    valid = citation_fixture["valid_citation"]
+    result = citation_helper(valid)
+    assert result is not None
+
+    for field in ("title", "url", "published", "lens"):
+        assert result.get(field) == valid[field], (
+            f"build_citation mutated citation field '{field}': "
+            f"input={valid[field]!r}, returned={result.get(field)!r}. "
+            f"The helper must return the citation unchanged on success."
+        )
+
+
+def test_assemble_advisor_context_lens_blocks_carry_correct_lens_name(
+    assembled_context: dict,
+):
+    """Each lens block in the assembled context carries a 'lens' key matching
+    its dict key name.
+
+    A cut-and-paste error could produce {'lens': 'technicals', ...} at the
+    'fundamentals' key. This test catches it.
+    """
+    for lens_name in CYCLE1_LENSES:
+        block = assembled_context.get(lens_name, {})
+        assert isinstance(block, dict), f"Context key '{lens_name}' is not a dict"
+        inner_lens = block.get("lens")
+        assert inner_lens == lens_name, (
+            f"assembled_context['{lens_name}']['lens'] = {inner_lens!r}. "
+            f"Expected '{lens_name}'. A copy-paste error in a stub likely "
+            f"assigned the wrong lens name to the block."
+        )
