@@ -1,0 +1,57 @@
+{
+  "_provenance": "Schema-derived fixture — Cycle 1 RED. Valid and invalid citation shapes for validate_citation and build_citation tests. Values are test sentinels.",
+  "valid_citation": {
+    "title": "GDELT: Markets Signal Risk-Off Shift",
+    "url": "https://api.gdeltproject.org/api/v2/doc/doc?query=markets&mode=artlist",
+    "published": "2026-06-10T12:00:00Z",
+    "lens": "sentiment"
+  },
+  "invalid_citations": [
+    {
+      "_desc": "missing title",
+      "url": "https://example.com/article",
+      "published": "2026-06-10T12:00:00Z",
+      "lens": "sentiment"
+    },
+    {
+      "_desc": "malformed url — no scheme",
+      "title": "Bad Article",
+      "url": "not-a-url",
+      "published": "2026-06-10T12:00:00Z",
+      "lens": "sentiment"
+    },
+    {
+      "_desc": "empty url",
+      "title": "Empty URL Article",
+      "url": "",
+      "published": "2026-06-10T12:00:00Z",
+      "lens": "sentiment"
+    },
+    {
+      "_desc": "missing lens",
+      "title": "No Lens Article",
+      "url": "https://example.com/article",
+      "published": "2026-06-10T12:00:00Z"
+    },
+    {
+      "_desc": "missing published",
+      "title": "No Published Article",
+      "url": "https://example.com/article",
+      "lens": "macro"
+    }
+  ],
+  "valid_sources_list": [
+    {
+      "title": "FRED: US 10Y Treasury Yield",
+      "url": "https://fred.stlouisfed.org/series/DGS10",
+      "published": "2026-06-09T20:00:00Z",
+      "lens": "macro"
+    },
+    {
+      "title": "SEC EDGAR: AAPL 10-K Filing",
+      "url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=AAPL",
+      "published": "2026-03-01T00:00:00Z",
+      "lens": "fundamentals"
+    }
+  ]
+}

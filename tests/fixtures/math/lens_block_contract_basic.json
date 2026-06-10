@@ -1,0 +1,8 @@
+{
+  "_provenance": "Schema-derived fixture — Cycle 1 RED. Input shapes for lens block contract tests. Values are test sentinels, not producer outputs. See tests/ai_advisor/test_cycle1_multilens_foundation.py.",
+  "_lenses": ["technicals", "sentiment", "derivatives", "macro", "fundamentals"],
+  "_required_keys": ["lens", "available"],
+  "_available_true_required_keys": ["lens", "available", "payload", "sources"],
+  "_available_false_required_keys": ["lens", "available", "reason"],
+  "cycle1_scaffold_reason_suffix": "source not connected — cycle-1 scaffold"
+}
