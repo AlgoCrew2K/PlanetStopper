@@ -533,3 +533,168 @@ def test_d1_client_construction_failure_does_not_leak_secrets():
     assert "ConnectionError" in error_msg, (
         "Client-construction error_msg must contain the exception class name."
     )
+
+
+# ---------------------------------------------------------------------------
+# AC5-B — D-1 violations in app.py advisor routes: asset-swaps/evaluate and
+# logic-changes/evaluate still embed str(exc) in their JSON error response
+# (app.py:2949 and app.py:3086). These were pre-existing at fork-point and are
+# in AC5 scope ("D-1 holds on ALL advisor error paths").
+#
+# A third violation exists at app.py:3029 — the ImportError handler for
+# logic_change_engine. All three must be fixed.
+#
+# Fix target: change `f"{type(exc).__name__}: {exc}"` to `type(exc).__name__`
+# only in each jsonify({"error": ...}) return, mirroring app.py:3337-3343.
+#
+# Mocking strategy: the exceptions fire inside the `try` block that wraps the
+# engine call (propose_operator_swap / propose_operator_logic_change). We patch
+# those engine functions to raise with a secret-containing message. DB and
+# symphony_logic are patched to let the route reach the engine call.
+# ---------------------------------------------------------------------------
+
+
+def test_d1_asset_swaps_evaluate_does_not_leak_exception_text(flask_client):
+    """POST /ai-advisor/asset-swaps/evaluate must NOT embed str(exc) in the
+    JSON error response when propose_operator_swap raises.
+
+    Bug: app.py:2949 returns `jsonify({"error": f"{type(exc).__name__}: {exc}"})`.
+    The `{exc}` embeds the full exception message — violating D-1.
+
+    Fix: return only `type(exc).__name__` (no str(exc)).
+    """
+    with (
+        patch.object(app_module, "database") as mock_db,
+        # fetch_symphony_score is lazily imported inside the route body:
+        # `from symphony_logic import fetch_symphony_score`
+        # Patch target is the source module so the local binding picks it up.
+        patch("symphony_logic.fetch_symphony_score", return_value={"type": "root"}),
+        # propose_operator_swap is lazily imported: `from advisors.asset_swap_engine import ...`
+        patch(
+            "advisors.asset_swap_engine.propose_operator_swap",
+            side_effect=RuntimeError(
+                f"internal-error: db_key={_SECRET_SENTINEL}"
+            ),
+        ),
+    ):
+        mock_db.load_state.return_value = {
+            "hash-abc123": {"name": "Test Symphony"}
+        }
+        mock_db.normalize_name.side_effect = lambda x: x.lower().replace(" ", "-")
+
+        resp = flask_client.post(
+            "/ai-advisor/asset-swaps/evaluate",
+            json={
+                "symphony_id": "Test Symphony",
+                "from_ticker": "SPY",
+                "to_ticker": "QQQ",
+            },
+        )
+
+    data = resp.get_json()
+    assert data is not None, "Route must return JSON"
+    error_text = str(data.get("error", ""))
+    assert _SECRET_SENTINEL not in error_text, (
+        f"D-1 violation at app.py:2949: secret sentinel leaked in "
+        f"/ai-advisor/asset-swaps/evaluate JSON response. "
+        f"response JSON={data!r}. Fix: return only type(exc).__name__, "
+        "not f\"{type(exc).__name__}: {exc}\"."
+    )
+    assert "RuntimeError" in error_text, (
+        f"The error field must contain the exception class name ('RuntimeError') "
+        f"for operator triage. Got: {error_text!r}"
+    )
+
+
+def test_d1_logic_changes_evaluate_does_not_leak_exception_text(flask_client):
+    """POST /ai-advisor/logic-changes/evaluate must NOT embed str(exc) in the
+    JSON error response when propose_operator_logic_change raises.
+
+    Bug: app.py:3086 returns `jsonify({"error": f"{type(exc).__name__}: {exc}"})`.
+
+    Fix: return only `type(exc).__name__` (no str(exc)).
+    """
+    with (
+        patch.object(app_module, "database") as mock_db,
+        # fetch_symphony_score is lazily imported inside the route body.
+        patch("symphony_logic.fetch_symphony_score", return_value={"type": "root"}),
+        # propose_operator_logic_change is lazily imported from advisors.logic_change_engine.
+        patch(
+            "advisors.logic_change_engine.propose_operator_logic_change",
+            side_effect=ValueError(
+                f"parse-failure: token={_SECRET_SENTINEL}"
+            ),
+        ),
+    ):
+        mock_db.load_state.return_value = {
+            "hash-abc123": {"name": "Test Symphony"}
+        }
+        mock_db.normalize_name.side_effect = lambda x: x.lower().replace(" ", "-")
+
+        resp = flask_client.post(
+            "/ai-advisor/logic-changes/evaluate",
+            json={
+                "symphony_id": "Test Symphony",
+                "change_description": "change momentum from 20 to 10",
+            },
+        )
+
+    data = resp.get_json()
+    assert data is not None, "Route must return JSON"
+    error_text = str(data.get("error", ""))
+    assert _SECRET_SENTINEL not in error_text, (
+        f"D-1 violation at app.py:3086: secret sentinel leaked in "
+        f"/ai-advisor/logic-changes/evaluate JSON response. "
+        f"response JSON={data!r}. Fix: return only type(exc).__name__, "
+        "not f\"{type(exc).__name__}: {exc}\"."
+    )
+    assert "ValueError" in error_text, (
+        f"The error field must contain the exception class name ('ValueError') "
+        f"for operator triage. Got: {error_text!r}"
+    )
+
+
+def test_d1_logic_changes_evaluate_import_error_does_not_leak_exception_text(flask_client):
+    """POST /ai-advisor/logic-changes/evaluate must NOT embed str(_ie) in the
+    JSON error response when the lazy import of logic_change_engine fails.
+
+    Bug: app.py:3029 returns
+        `jsonify({"error": f"advisor unavailable: {type(_ie).__name__}: {_ie}"})`.
+    The `{_ie}` embeds the full ImportError message — violating D-1.
+
+    Fix: return `f"advisor unavailable: {type(_ie).__name__}"` only.
+    """
+    import builtins
+    import importlib
+
+    original_import = builtins.__import__
+
+    def _blocking_import(name, *args, **kwargs):
+        if name == "advisors.logic_change_engine":
+            raise ImportError(
+                f"cannot import: missing_dep={_SECRET_SENTINEL}"
+            )
+        return original_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_blocking_import):
+        resp = flask_client.post(
+            "/ai-advisor/logic-changes/evaluate",
+            json={
+                "symphony_id": "Test Symphony",
+                "change_description": "change momentum from 20 to 10",
+            },
+        )
+
+    data = resp.get_json()
+    assert data is not None, "Route must return JSON"
+    error_text = str(data.get("error", ""))
+    assert _SECRET_SENTINEL not in error_text, (
+        f"D-1 violation at app.py:3029: secret sentinel leaked in ImportError "
+        f"handler of /ai-advisor/logic-changes/evaluate. "
+        f"response JSON={data!r}. Fix: return only the error class name, "
+        "not f\"advisor unavailable: {type(_ie).__name__}: {_ie}\"."
+    )
+    assert "ImportError" in error_text, (
+        f"The error field must contain 'ImportError' for operator triage. "
+        f"Got: {error_text!r}"
+    )
