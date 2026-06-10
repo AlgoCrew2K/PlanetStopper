@@ -10,7 +10,7 @@ All pages in this directory are auto-generated from source. Do not hand-edit gen
 
 | Module | File | Description | Last Updated |
 |--------|------|-------------|--------------|
-| `ai_advisor` | [ai_advisor.md](ai_advisor.md) | Claude-backed config advisor: context assembly, per-symphony assessment (build_assessment_from_context), structured-output Claude call, and safety gates (9-item allowlist, risk-direction check, OOS re-validation) | 2026-06-10 |
+| `ai_advisor` | [ai_advisor.md](ai_advisor.md) | Claude-backed config advisor: context assembly, per-symphony assessment (build_assessment_from_context), structured-output Claude call, and safety gates (7-item allowlist, risk-direction check, OOS re-validation) | 2026-06-10 |
 | `alpha_bot_execution` | [alpha_bot_execution.md](alpha_bot_execution.md) | Core per-cycle execution engine: fetches live Composer state, runs per-symphony exit decisions with regime-exit adjustment and per-symphony live-mode dispatch, calls autotuner post-market | 2026-06-02 |
 | `app` | [app.md](app.md) | Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor routes (single-page SPA at /ai-advisor, 5 in-place tabs), CSRF infrastructure, settings write paths, daemon singleton lifecycle | 2026-06-10 |
 | `autotuner` | [autotuner.md](autotuner.md) | Optuna walk-forward optimizer: 250-day window, CPCV folds (N=6, k=2, 15 splits, 5 paths), CRRA-EU objective, Harvey & Liu BHY haircut, CSCV PBO acceptance gate, and NN1 spec-freeze enforcement | 2026-06-02 |

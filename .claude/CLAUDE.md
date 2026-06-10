@@ -19,7 +19,7 @@
 | `reporting.py` | Discord webhooks + QuickChart embeds |
 | `synthetic_history.py` | 250-day live Alpaca historical fetcher (parallel + file cache); feeds autotuner replay |
 | `acceptance_gate.py` | Reusable overfitting acceptance gate — used by autotuner and AI Advisor proposal suite |
-| `ai_advisor.py` | Claude-backed config advisor: `assemble_advisor_context` (accepts `composer_symphony_id` + `autotune_run` params), `build_assessment_from_context` (per-symphony informative empty-state), `request_suggestions`, C2 safety gates; 9-item suggestible allowlist |
+| `ai_advisor.py` | Claude-backed config advisor: `assemble_advisor_context` (accepts `composer_symphony_id` + `autotune_run` params; note `autotune_run` is currently a no-op), `build_assessment_from_context` (per-symphony informative empty-state), `request_suggestions`, C2 safety gates; 7-item suggestible allowlist (6 Optuna search-space keys + MAX_SQUEEZE_FLOOR) |
 | `advisors/` | Phase-1 Advisor producers: `overfitting_conscience.py`, `spec_critic.py`, `divergence_explainer.py`. Narrator deferred. AI Advisor proposal suite: `correlation_diagnostic.py`, `composer_backtest_client.py`, `backtest_gate_engine.py`, `asset_swap_engine.py`, `logic_change_engine.py`, `advisor_chat.py`. All observations write to `advisor_observations` keyed by `symphony_id`. Called post-walk-forward from `autotuner.py`. |
 | `templates/ai_advisor.html` | Single unified AI Advisor SPA template — all 5 tabs (Overview, Correlations, Asset Swaps, Logic Changes, Chat) rendered in one server-side render; tab switching in-place via JS |
 | `static/ai_advisor.js` | AI Advisor client logic: `initTabSwitcher`, suggestion card rendering with per-symphony assessment block, accept/reject, autotune run feed |
