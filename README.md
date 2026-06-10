@@ -220,6 +220,15 @@ The operator reviews each suggestion on the `/ai-advisor` tab and explicitly **a
 
 > **Note:** The config advisor and the chat backend require the Anthropic SDK and an API key to produce output. Neither is required to run the daemon; without a key, the relevant tab simply reports that no suggestion / no chat is available.
 
+
+### 6.2.1 Multi-lens scaffold (Cycle-1 foundation)
+
+The config advisor context now includes **five lens blocks** as top-level keys in the assembled context dict: `technicals`, `sentiment`, `derivatives`, `macro`, and `fundamentals`. Each follows an honest-availability contract: `{lens, available: bool, reason, payload, sources}`. In Cycle-1 all five are stubs with `available=False` because the free-data sources are not yet connected. Fast-follow cycles wire in real producers independently.
+
+The scaffold establishes the contract and extension points now so producers can be added without touching `assemble_advisor_context` call sites.
+
+**Citation convention:** `ai_advisor.build_citation(citation)` validates a structured source `{title, url, published, lens}`. A well-formed `http`/`https` URL is required; malformed citations return `None`. A claim with no valid source is suppressed. Citations are stored in the existing `advisor_observations.raw_response` JSON column — no schema migration is required. See `DE-ML-001` and `DE-ML-002` in `DECISIONS.md`.
+
 ### 6.3 The observer producers (`advisors/`)
 
 After each autotune run, three **independent** observer producers write observations to the database. They share no synthesized verdict — each is independently testable and independently failure-resilient, so if one crashes the others still run. The operator reads them on the `/ai-advisor` tab.

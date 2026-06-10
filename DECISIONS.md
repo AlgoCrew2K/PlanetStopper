@@ -279,3 +279,45 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** The templates became dead code after the in-place SPA migration (DE-ADV-004). Keeping them was misleading — they appeared to be render targets but were not. Deletion is safe: confirmed no `render_template` or `include` references exist in `app.py` or any other template.
 
 **Status:** Merged (507ddd3). Pinned by `test_orphaned_advisor_template_does_not_exist`.
+
+---
+
+## Multi-Lens AI Advisor — Cycle 1 Foundation (2026-06-10)
+
+### DE-ML-001: Honest-availability lens-block contract
+
+**Decision:** Every lens helper in `ai_advisor.py` returns a dict with a fixed 5-key contract: `{lens, available: bool, reason: str, payload, sources}`. A lens with `available=False` MUST NOT fabricate a payload — `payload` is `None` and `sources` is `[]`. The `reason` field is always a non-empty string explaining the unavailability (naming the missing source).
+
+**Rationale:** Mirrors the existing `_build_volatility_regime` pattern (`ai_advisor.py:218–270`), which was introduced to fix the fabricated-context problem (GATE-1-AC CC-3: data-wall; analytical context must never be invented). Honest degradation is preferable to plausible-but-wrong context reaching the LLM. Cycle-1 stubs all return `available=False`; fast-follow producers will wire in real sources per lens.
+
+**Status:** Merged (95ba125). Pinned by `test_lens_block_contract_*` in `tests/test_cycle1_foundation.py`.
+
+---
+
+### DE-ML-002: No migration for citation convention — raw_response is JSON
+
+**Decision:** The structured citation convention (`{title, url, published, lens}`) is stored in the existing `advisor_observations.raw_response` JSON column. No schema migration is required.
+
+**Rationale:** `raw_response` is already an untyped JSON blob by design — it holds each producer's full structured output. Citations are part of that output, not a new first-class DB column. Adding a separate `citations` column would require a migration (additive-first, NULLable+DEFAULT), increase cross-producer coupling, and provide no query benefit (citations are read as part of the full observation, never queried independently). The existing column handles it without schema change.
+
+**Status:** Merged (95ba125). No migration file needed.
+
+---
+
+### DE-ML-003: MARKET_PRISM and ADD_CANDIDATE are advisory-only (is_advisory_only=1)
+
+**Decision:** The two new advisor roles (`MARKET_PRISM`, `ADD_CANDIDATE`) are added to `_ADVISOR_ROLES` in `app.py` (`app.py:3565–3571`) with `is_advisory_only` hard-wired to 1 in `database.insert_advisor_observation` (`database.py:1068/1089`). Neither role has any path to a trade, config-write, or Composer endpoint.
+
+**Rationale:** All advisor roles are advise-only by architectural mandate (GATE-1-AC §8). The `is_advisory_only=1` constraint is enforced at the DB insert layer (not just the application layer) so that a future code path cannot accidentally drop the flag. These roles are backtest-agnostic: `MARKET_PRISM` produces always-on market-overview observations; `ADD_CANDIDATE` produces proposal observations for human review. No money path touches either.
+
+**Status:** Merged (95ba125). Pinned by `test_new_roles_is_advisory_only` in `tests/test_cycle1_foundation.py`.
+
+---
+
+### DE-ML-004: 7-item suggestible allowlist — docstring correction
+
+**Decision:** The `assemble_advisor_context` docstring at `ai_advisor.py:600` previously read "9-item curated ALLOWLIST". Corrected to "7-item". The canonical count is 7: 6 Optuna search-space keys (`TAKE_PROFIT_MC_PCT`, `VWAP_CROSS_HWM_PCT`, `VWAP_BLEED_MULTIPLIER`, `VWAP_BLEED_TICKS`, `PARABOLIC_VELOCITY_THRESHOLD`, `MAX_PARABOLIC_SQUEEZE`) plus one non-Optuna key (`MAX_SQUEEZE_FLOOR`).
+
+**Rationale:** `TRIGGER_THRESHOLD_PCT` is the default locked variable and is NOT suggestible (verified at `database.DEFAULT_LOCKED_VARS`). The "9-item" figure was a carry-over from an earlier spec draft. The `_PARAM_VALID_RANGES` comment was corrected in a prior commit (540d89d); this commit aligns the docstring.
+
+**Status:** Merged (95ba125). Pinned by `test_docstring_says_7_item_allowlist` in `tests/test_cycle1_foundation.py`.

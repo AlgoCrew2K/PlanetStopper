@@ -1,6 +1,6 @@
 # Planet Stopper -- Generated Module Reference Index
 
-**Last regenerated:** 2026-06-10 (AI Advisor SPA migration + liveness fixes + DB isolation guard + advisor-cleanup: D-1 fix, autotune_run dedupe, template deletion)
+**Last regenerated:** 2026-06-10 (Cycle-1 multi-lens advisor foundation — lens-block contract, citation convention, new advisor roles, chat-allowlist extension)
 
 All pages in this directory are auto-generated from source. Do not hand-edit generated sections. Sections marked `<!-- manual -->` are preserved across regenerations.
 
@@ -10,7 +10,7 @@ All pages in this directory are auto-generated from source. Do not hand-edit gen
 
 | Module | File | Description | Last Updated |
 |--------|------|-------------|--------------|
-| `ai_advisor` | [ai_advisor.md](ai_advisor.md) | Claude-backed config advisor: context assembly, per-symphony assessment (build_assessment_from_context), structured-output Claude call, and safety gates (7-item allowlist, risk-direction check, OOS re-validation) | 2026-06-10 |
+| `ai_advisor` | [ai_advisor.md](ai_advisor.md) | Claude-backed config advisor: context assembly, per-symphony assessment, structured-output Claude call, safety gates (7-item allowlist, risk-direction check, OOS re-validation), and Cycle-1 multi-lens scaffold (5 honest-availability stub lens blocks + citation convention) | 2026-06-10 |
 | `alpha_bot_execution` | [alpha_bot_execution.md](alpha_bot_execution.md) | Core per-cycle execution engine: fetches live Composer state, runs per-symphony exit decisions with regime-exit adjustment and per-symphony live-mode dispatch, calls autotuner post-market | 2026-06-02 |
 | `app` | [app.md](app.md) | Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor routes (single-page SPA at /ai-advisor, 5 in-place tabs), CSRF infrastructure, settings write paths, daemon singleton lifecycle | 2026-06-10 |
 | `autotuner` | [autotuner.md](autotuner.md) | Optuna walk-forward optimizer: 250-day window, CPCV folds (N=6, k=2, 15 splits, 5 paths), CRRA-EU objective, Harvey & Liu BHY haircut, CSCV PBO acceptance gate, and NN1 spec-freeze enforcement | 2026-06-02 |
@@ -19,6 +19,7 @@ All pages in this directory are auto-generated from source. Do not hand-edit gen
 | `math_engine` | [math_engine.md](math_engine.md) | Pure risk-math primitives: trailing-stop mechanics, sqrt-time squeeze (1-sqrt(1-t)), CRRA-EU utility, CVaR diagnostics, PBO (CSCV), regime-match guard, Monte Carlo gating, VWAP signals, 6-layer exit resolver | 2026-06-02 |
 | `reporting` | [reporting.md](reporting.md) | Discord webhook notifications and QuickChart-embedded EOD post-mortem generation | 2026-05-27 |
 | `synthetic_history` | [synthetic_history.md](synthetic_history.md) | 250-day Alpaca historical fetcher with parallel download, file cache, and eligibility guards -- feeds the autotuner replay | 2026-06-02 |
+| `advisors/advisor_chat` | [advisors_advisor_chat.md](advisors_advisor_chat.md) | Explain-only chat backend (M5): scopes client artifacts to the known M1–M4 allowlist (with Cycle-1 ADD_CANDIDATE + citation fields), calls Claude to explain a surfaced artifact, enforces hard boundary against any write/trade/config-mutation path | 2026-06-10 |
 | `advisors/divergence_explainer` | [advisors_divergence_explainer.md](advisors_divergence_explainer.md) | Sprint 3 Stream B producer: surfaces two independent CVaR window values; permanently forbids signed divergence quantities | 2026-05-27 |
 | `advisors/overfitting_conscience` | [advisors_overfitting_conscience.md](advisors_overfitting_conscience.md) | Sprint 3 producer: characterises overfitting risk via S-counter vs N_effective; verdicts CLEAR / WATCH / BREACH | 2026-05-27 |
 | `advisors/spec_critic` | [advisors_spec_critic.md](advisors_spec_critic.md) | Sprint 3 producer: critiques Phase-1 spec bundle structural integrity (facet completeness, freeze-discipline validity, age, phase-scope leaks) | 2026-05-27 |
@@ -62,3 +63,4 @@ The 4 per-tab advisor templates were deleted in the advisor-cleanup cycle. They 
 - **Per-symphony live mode:** `database.set_symphony_live_mode` / `get_symphony_live_mode` (migration 030) + `POST /api/symphony-settings/<name>` (CSRF-protected). Default is dry-run (0).
 - **DB isolation guard:** `database._db_file()` raises `RuntimeError` under pytest if path resolves to `alphabot_state.db`. `tests/conftest.py` `pytest_configure()` hook sets a session temp path before any module import.
 - **AI Advisor SPA:** All 5 advisor panels render from a single `templates/ai_advisor.html`; tab switching is in-place JS (`initTabSwitcher` in `static/ai_advisor.js`). The 4 old per-tab templates were deleted in the advisor-cleanup cycle (2026-06-10).
+- **Multi-lens scaffold (Cycle-1):** Five lens blocks (`technicals`, `sentiment`, `derivatives`, `macro`, `fundamentals`) are added to the `assemble_advisor_context` output dict. All return `available=False` in Cycle-1 (stubs). The honest-availability contract and citation convention (`build_citation`) are established; fast-follow producers connect real sources. Two new advisor roles (`MARKET_PRISM`, `ADD_CANDIDATE`) added to `_ADVISOR_ROLES` with `is_advisory_only=1`. See `DE-ML-001` through `DE-ML-004` in `DECISIONS.md`.
