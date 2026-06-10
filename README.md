@@ -22,6 +22,7 @@ Planet Stopper is a single Python/Flask daemon. It runs on a machine you control
 12. [Testing](#12-testing)
 13. [Safety boundaries](#13-safety-boundaries)
 14. [What Planet Stopper does NOT do](#14-what-planet-stopper-does-not-do)
+15. [Bug-Fix Log](#15-bug-fix-log)
 
 ---
 
@@ -168,7 +169,7 @@ The dashboard's tabs:
 - **Home (`/`)** — per-symphony live state: current return, distance to the active trailing stop, status (idle / armed / exiting), Monte-Carlo probability with a regime-match indicator, VWAP and VWAP-bleed thresholds, the CVaR diagnostic, and a feed of recent decision events.
 - **History (`/history`)** — past exit decisions and daily outcomes.
 - **Performance (`/performance`)** — returns, Sharpe/Sortino, drawdown, calmar, win-rate, and the live-vs-counterfactual ("Guard Alpha") comparison. The route surfaces an "insufficient history" banner below a minimum sample size so underpowered metrics are not shown as precise.
-- **AI Advisor (`/ai-advisor` and its sub-tabs)** — the config-advisor surface, the autotune/advisor-observation feed, and the proposal suite: correlations, asset swaps, logic changes, and explain-only chat (§[6](#6-the-ai-advisor)).
+- **AI Advisor (`/ai-advisor`)** — the config-advisor surface, the autotune/advisor-observation feed, and the proposal suite (§[6](#6-the-ai-advisor)).
 - **Settings (`/settings`)** — a guarded write path in the dashboard: editing allowlisted operator-config rows (algorithm parameters). Credential keys and `LIVE_EXECUTION` are excluded from the allowlist. Webhook URLs are masked and cannot be written via the dashboard. Secrets are masked throughout.
 - **Per-symphony settings** (gear icon on the home tab) — a second guarded write path: the per-symphony settings modal (`GET/POST /api/symphony-settings/<name>`) lets the operator toggle a symphony between dry-run and live mode. Requires an explicit CONFIRMED step; default is dry-run. Both write paths are CSRF-protected.
 
@@ -178,7 +179,7 @@ The only operator-initiated *trade* surface is a deliberate **panic button** —
 
 ## 6. The AI Advisor
 
-Planet Stopper's AI surface is **advise-only, end to end**. Nothing on it acts on your behalf; everything it produces is a hypothesis, a proposal, or an observation for a human to read, accept, or reject. It has three distinct parts: the **proposal suite** (the headline feature), the **config advisor**, and the **observer producers**. All three live in or alongside the `advisors/` package and surface on the `/ai-advisor` tabs.
+Planet Stopper's AI surface is **advise-only, end to end**. Nothing on it acts on your behalf; everything it produces is a hypothesis, a proposal, or an observation for a human to read, accept, or reject. It has three distinct parts: the **proposal suite** (the headline feature), the **config advisor**, and the **observer producers**. All three live in or alongside the `advisors/` package and surface on the `/ai-advisor` single-page app.
 
 ### 6.1 The proposal suite (the headline feature)
 
@@ -202,7 +203,7 @@ The pieces, in order of the loop:
 
 - **Explain-only chat** (`advisor_chat.py`) — a contextual "chat about this" backend. You point it at a *specific* surfaced artifact (a gate verdict, a correlation result, a swap or logic-change proposal, an observation) and it explains that artifact in plain language. It is a **hard boundary**: chat cannot issue trade directives, cannot propose/apply/accept any change, cannot generate new unvalidated recommendations, and has no write path. The boundary is enforced both by the system prompt and structurally — the module imports no write, trade, or config-mutation surface. Like the rest of the AI surface it never raises; with no LLM key it returns a clear "chat unavailable" message.
 
-The suite is surfaced across the AI Advisor sub-tabs: **Correlations** (`/ai-advisor/correlations`), **Asset Swaps** (`/ai-advisor/asset-swaps`), **Logic Changes** (`/ai-advisor/logic-changes`), and **Chat** (`/ai-advisor/chat`). Each is a read-only surface; the "evaluate" endpoints run the offline backtest-and-gate pipeline and render the gated results.
+The suite is surfaced on the **AI Advisor single-page app** at `/ai-advisor` as five in-place tabs: **Overview**, **Correlations**, **Asset Swaps**, **Logic Changes**, and **Chat** (always-in-DOM slide-in panel). Each tab is a read-only surface; the "evaluate" endpoints run the offline backtest-and-gate pipeline and render the gated results. Old per-tab URLs (`/ai-advisor/correlations`, etc.) 302-redirect to `/ai-advisor`.
 
 ### 6.2 The config advisor (`ai_advisor.py`)
 
@@ -502,6 +503,12 @@ The system's guarantees, gathered in one place:
 - It does **not use CVaR as a trigger** — CVaR is a diagnostic only, and there is no CVaR-divergence signal.
 - It does **not expose a manual force-trigger** on the dashboard — the scheduler is the only legal engine spawner.
 - It does **not auto-apply AI suggestions or proposals** — every suggestion, swap, and logic change is operator-reviewed and applied by hand in Composer. The AI Advisor never touches your live account.
+
+---
+
+## 15. Bug-Fix Log
+
+A chronological record of genuine code-correctness bugs fixed in this fork is maintained at [`docs/BUGFIX-LOG.md`](docs/BUGFIX-LOG.md). Each entry maps to a real commit SHA and describes what was wrong and what changed. The log covers `0a3bd20` (2026-05-22) through `006de9c` (2026-06-09).
 
 ---
 

@@ -1,9 +1,9 @@
 # app
 
-> Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints, and daemon singleton lifecycle.
+> Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-02
+**Last updated:** 2026-06-10
 
 ## Overview
 
@@ -12,7 +12,7 @@
 - **Daemon singleton** — pidfile-based single-instance enforcement at startup.
 - **Minute scheduler** — spawns `alpha_bot_execution.py` at `:00` via `subprocess.run`; refreshes Composer account totals once per minute; prunes telemetry at 02:00.
 - **Dashboard routes** — operator UI routes. Two CSRF-protected write paths exist: `POST /api/settings` (allowlisted .env keys) and `POST /api/symphony-settings/<name>` (per-symphony live-mode toggle). Templates open SQLite read-only; the dashboard is NOT a live-trade-action surface.
-- **AI Advisor routes** — 13+ routes across context assembly, suggestion, accept/reject, chat, and tab-view endpoints.
+- **AI Advisor routes** — unified single-page SPA at `GET /ai-advisor` renders all 5 tabs in one server-side render; GET sub-routes for the 4 old per-tab pages now 302-redirect to `/ai-advisor`; POST action routes (suggest, evaluate, accept, reject, chat/send) are unchanged.
 - **CSRF infrastructure** — `_validate_csrf()` hook; `_csrf_before_request` before-request handler; `GET /api/csrf-token` token endpoint; `_SETTINGS_WRITE_ALLOWLIST` restricts which .env keys the settings write path can touch.
 
 Module-level thread-safety constructs:
@@ -144,38 +144,62 @@ CSRF-protected write path. Requires explicit `confirmed=true` in request body. C
 
 ### AI Advisor Routes
 
-#### `GET /ai-advisor`
-Main AI Advisor tab. Renders suggestion context for all `_ADVISOR_ROLES`.
+The AI Advisor was converted from 5 separate MPA templates to a **single-page SPA** (merged 2026-06-10). All 5 panels (Overview, Correlations, Asset Swaps, Logic Changes, Chat) are rendered in one server-side template at `GET /ai-advisor`. Tab switching is in-place via JS (`initTabSwitcher` in `static/ai_advisor.js`). The 4 old GET sub-routes 302-redirect to `/ai-advisor`; the POST action routes are unchanged.
 
-#### `GET /ai-advisor/correlations`
-AI Advisor correlation diagnostic tab.
+#### `GET /ai-advisor` — `ai_advisor_tab()`
 
-#### `GET /ai-advisor/asset-swaps`
-AI Advisor asset-swap tab — lists current portfolio tickers and potential swap candidates.
+Unified single-page render for all 5 in-place tab panels. Server-side assembles all data needed for every panel in one request:
 
-#### `POST /ai-advisor/asset-swaps/evaluate`
-Evaluates a proposed asset swap through the OOS backtest gate.
+**Template context:**
+| Key | Source | Panel |
+|-----|--------|-------|
+| `observations` | `database.get_advisor_observations_for_role` per `_ADVISOR_ROLES`; deduped; `NOT_APPLICABLE`/`feature_flag=off` stubs suppressed | Overview |
+| `correlation_matrix` | `correlation_diagnostic.compute_pairwise_correlations` over analytics history | Correlations |
+| `as_of` | `datetime.now(_ET).isoformat()` | Correlations |
+| `crisis_caveat` | `correlation_diagnostic.CRISIS_CAVEAT` | Correlations |
+| `insufficient_data` | `True` when matrix is empty | Correlations |
+| `no_api_key` | `True` when Composer credentials absent | Asset Swaps, Logic Changes |
+| `symphonies` | `analytics.list_available_symphonies` | Asset Swaps, Logic Changes forms |
+| `chat_available` | `bool(os.environ.get("ANTHROPIC_API_KEY"))` — key presence only, value never passed to template | Chat |
 
-#### `GET /ai-advisor/logic-changes`
-AI Advisor logic-change tab — lists current Composer symphony logic and potential structural changes.
+All data assembly is wrapped in `try/except` — if one panel's data fails, the others still render.
 
-#### `POST /ai-advisor/logic-changes/evaluate`
-Evaluates a proposed logic change through the OOS backtest gate.
+#### `GET /ai-advisor/correlations` → 302 redirect to `/ai-advisor`
+#### `GET /ai-advisor/asset-swaps` → 302 redirect to `/ai-advisor`
+#### `GET /ai-advisor/logic-changes` → 302 redirect to `/ai-advisor`
+#### `GET /ai-advisor/chat` → 302 redirect to `/ai-advisor`
 
-#### `POST /ai-advisor/suggest`
-Assembles advisor context via `ai_advisor.assemble_advisor_context`, calls `ai_advisor.request_suggestions`, applies `enforce_suggestion_allowlist` and `check_risk_direction_agreement`. Returns the allowed suggestions with risk-direction flags and enriched impact via `_enrich_suggestion_impact`.
+Old bookmarks redirect cleanly rather than 404ing.
 
-#### `POST /ai-advisor/accept`
-Accepts one Claude suggestion. Calls `ai_advisor.revalidate_suggestion_oos`; on pass, writes the new param value to the symphony strategy via `database.save_symphony_strategy` (`app.py:3029`). Records the accepted suggestion in `llm_suggestions` via the audit path. Does NOT call `database.record_llm_suggestion`.
+#### `POST /ai-advisor/asset-swaps/evaluate` — `ai_advisor_asset_swaps_evaluate()`
 
-#### `POST /ai-advisor/reject`
-Records a rejected suggestion to the audit trail.
+Accepts JSON: `{ symphony_id, from_ticker, to_ticker, objective_type? }`. Resolves the display name to a Composer hash (fails loudly if unresolvable — RC-6). Constructs a typed `SwapObjective`, calls `propose_operator_swap`, returns `SwapRunResult` fields as JSON. Never calls Composer write endpoints. Persistence handled inside `propose_operator_swap`.
 
-#### `GET /ai-advisor/chat`
-Renders AI Advisor chat page.
+**Key fix (2026-06-10):** Routes now resolve the display name → Composer hash before calling the engine (AC-8). Previously passing the display name to the engine caused silent empty results from the Composer backtest API.
 
-#### `POST /ai-advisor/chat/send`
-Rate-limited (per-IP via `_CHAT_RATE_LIMITER`) chat endpoint. Enforces CSRF. Calls `ai_advisor.advisor_chat` or equivalent.
+#### `POST /ai-advisor/logic-changes/evaluate` — `ai_advisor_logic_changes_evaluate()`
+
+Accepts JSON: `{ symphony_id, objective_type?, change_description }`. Same name→hash resolution as asset-swaps. Calls `propose_operator_logic_change` with the Composer hash. Returns `LogicChangeRunResult` fields as JSON including FDR metadata (n_candidates, fdr_q, fdr_adjusted_threshold via Yekutieli c(n) harmonic-sum).
+
+**Key fix (2026-06-10):** `gate_reason` is derived as `gr.verdict.decision.replace("_", " ").title()` when `vetoes_passed` is True, else `"veto failed"`. The previous code attempted `gr.verdict.reason` which does not exist on `AcceptanceVerdict`.
+
+#### `POST /ai-advisor/suggest` — `ai_advisor_suggest()`
+
+Resolves the Composer hash → normalized symphony name for DB lookups; pre-fetches the autotune run; passes both `symphony_id` (normalized name) and `composer_symphony_id` (original hash) to `ai_advisor.assemble_advisor_context`. Returns `{"suggestions": [...], "assessment": {...}}` — the `assessment` key is new (2026-06-10) and carries `build_assessment_from_context` output so the UI can explain the empty-suggestions state per symphony.
+
+D-1 security contract: on exception, returns `{"error": type(_exc).__name__}` only — never `str(exc)`.
+
+#### `POST /ai-advisor/accept` — `ai_advisor_accept()`
+
+Applies one suggestion through C2 safety gates: (1) allowlist, (2) risk-direction log, (3) OOS revalidation via `ai_advisor.revalidate_suggestion_oos`, (4) locked-var guard. On all-pass, writes new param value via `database.save_symphony_strategy` and persists the operator decision to `llm_suggestions` via `database.record_llm_suggestion`.
+
+#### `POST /ai-advisor/reject` — `ai_advisor_reject()`
+
+Records operator rejection to `llm_suggestions` audit trail. No config write, no `save_symphony_strategy` call.
+
+#### `POST /ai-advisor/chat/send` — `ai_advisor_chat_send()`
+
+Rate-limited (per-IP via `_CHAT_RATE_LIMITER`) explain-only chat endpoint. Accepts `{ artifact_type, artifact_id, artifact, history, message }`. Delegates to `advisors.advisor_chat.explain_artifact`. Hard constraints: no write path, no trade directives, no new unvalidated recommendations. Returns `{reply: str}` on success, `{error: str}` on failure; never returns 500 or HTML.
 
 ---
 
@@ -184,36 +208,22 @@ Rate-limited (per-IP via `_CHAT_RATE_LIMITER`) chat endpoint. Enforces CSRF. Cal
 #### `get_api_state_dict() → dict`
 Assembles the full state payload for `/api/state` and the dashboard template. Reads `bot_state`, computes `portfolio_strip`, builds `meta`, adds `exit_authority` via `os.getenv("EXIT_AUTHORITY")`.
 
-#### `_compute_suggestion_gates(suggestion, symphony_id) → dict`
-Computes display-side gate indicators for a suggestion (allowlist, risk-direction, OOS status).
+#### `_compute_suggestion_gates(suggestion, symphony_id: str) → dict`
+Computes four-gates verdict booleans for one suggestion: `allowlist`, `risk_direction`, `oos_frozen_eval`, `locked_vars`.
 
-#### `_enrich_suggestion_impact(suggestion, symphony_id) → dict`
-Enriches a suggestion dict with OOS-alpha delta and other impact metadata.
+#### `_enrich_suggestion_impact(suggestion) → dict`
+Builds impact dict with `before`, `after`, `delta`, `metric` fields from the suggestion's raw impact payload.
 
 #### `_normalize_autotune_row(row: dict) → dict`
 Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 
-## Types
-
-### Module-Level Globals
-
-| Symbol | Type | Description |
-|--------|------|-------------|
-| `_DISMISS_EXECUTOR` | `ThreadPoolExecutor` | Single-worker executor for fleet-alert dismiss writes |
-| `_FLUSH_STATE_LOCK` | `threading.Lock` | Serializes flush_resync against engine save_state |
-| `_DAEMON_STARTED_AT` | `str` | ISO 8601 UTC timestamp captured at import time |
-| `_account_totals_cache` | `dict` | TTL cache for Composer account totals |
-| `_symphony_settings_cache` | `dict` | Per-symphony settings cache for gear-icon modal |
-| `_SETTINGS_WRITE_ALLOWLIST` | `frozenset` | Allowlisted .env keys writable via `POST /api/settings`; excludes credentials and safety flags |
-| `_MASKED_SETTINGS_KEYS` | `frozenset` | Keys whose values are redacted in `GET /api/settings` responses |
-| `_ALGO_PARAM_META` | `dict` | 8-key algorithm parameter metadata (help text, unit, kind) for the Settings screen |
-| `_ADVISOR_ROLES` | `list` | Valid advisor role strings |
-| `_CHAT_RATE_LIMITER` | `dict` | Per-IP rate-limiter for AI Advisor chat (cost-DoS guard) |
-
 ## Internal Dependencies
 
-- `database` — state reads/writes, advisor observations, strategy management, `set_symphony_live_mode`
-- `ai_advisor` — `assemble_advisor_context`, `request_suggestions`, C2 safety gates
-- `analytics` — performance metrics for dashboard
-- `market_calendar` — `get_market_state`
-- `engine.exit_authority` — exit-authority badge and restart-notice context helpers
+- `ai_advisor` — context assembly, Claude call, C2 safety gates, assessment builder
+- `database` — all state-DB reads and writes for advisor routes
+- `analytics` — symphony history, correlation data, symphony list
+- `advisors.correlation_diagnostic` — `compute_pairwise_correlations`, `CRISIS_CAVEAT`
+- `advisors.asset_swap_engine` — `propose_operator_swap`, `SwapObjective`, `_has_composer_key`
+- `advisors.logic_change_engine` — `propose_operator_logic_change`, `LogicTweak`, `LogicChangeObjective`
+- `advisors.advisor_chat` — `explain_artifact`
+- `symphony_logic` — `fetch_symphony_score`

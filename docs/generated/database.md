@@ -1,15 +1,17 @@
 # database
 
-> SQLite state management for Planet Stopper: schema, migrations, and all read/write accessors for the state DB.
+> SQLite state management for Planet Stopper: schema, migrations, all read/write accessors for the state DB, and a pytest sentinel guard that structurally prevents tests from writing to the production DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-06-02
+**Last updated:** 2026-06-10
 
 ## Overview
 
 `database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 31 numbered migration SQL files (001–031), and every public accessor function. `_MIGRATION_FILES` wires 28 active entries (004–031); migrations 001–003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
 
 WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads while the engine holds a write lock.
+
+**Pytest sentinel guard (added 2026-06-10):** `_db_file()` raises `RuntimeError` when `"pytest" in sys.modules` AND the resolved path basename equals `alphabot_state.db`. This is gated on `sys.modules` so the live daemon (which never imports pytest) is completely unaffected. Tests must set `DB_PATH` to a temp file before triggering any DB access; `tests/conftest.py` does this via `pytest_configure()` (the earliest hook, before collection) and reinforces it with an autouse `_isolate_db` fixture per test.
 
 ## Schema Migrations
 
@@ -28,6 +30,10 @@ Migrations 026–031:
 ## Public API Reference
 
 ### Connection Helpers
+
+#### `_db_file() → str` (internal)
+
+Resolves the active DB path: explicit `DB_FILE` override first; then `DB_PATH` env var; then `DB_FILE` default. **Pytest sentinel guard:** raises `RuntimeError` when `"pytest" in sys.modules` and `os.path.basename(resolved) == "alphabot_state.db"`. This converts a silent test→prod-DB leak into a loud, immediate failure. Completely inert in the live daemon.
 
 #### `get_connection() → sqlite3.Connection`
 Opens a read-write connection to the state DB (10s timeout).
@@ -304,7 +310,17 @@ Upserts the `port_state` row for the account.
 | `DEFAULT_STRATEGY` | dict | Default per-symphony strategy parameters |
 | `DEFAULT_LOCKED_VARS` | `["TRIGGER_THRESHOLD_PCT"]` | Default locked strategy variables |
 
+## Test Infrastructure
+
+`tests/conftest.py` provides two layers of DB isolation that work with the sentinel guard in `_db_file()`:
+
+1. **`pytest_configure()` hook** — fires before any module import (before collection). Sets `DB_PATH` to a `tempfile.TemporaryDirectory` session path if not already set. Ensures that when `database.py` is imported (triggering `init_db()` at module level), `_db_file()` resolves to the temp path, not `alphabot_state.db`.
+
+2. **`_isolate_db` autouse fixture** — per-test. Uses `monkeypatch.setenv("DB_PATH", str(tmp_path / "test_alphabot_state.db"))` and calls `init_db()` so each test gets a fresh, fully-migrated schema. Monkeypatch restores the original env after each test.
+
+The `_session_db_guard` autouse session fixture documents and asserts the session guard contract.
+
 ## Internal Dependencies
 
-- `hashlib`, `json`, `sqlite3`, `uuid` — stdlib
+- `hashlib`, `json`, `sqlite3`, `uuid`, `sys`, `os` — stdlib
 - No imports from other Planet Stopper modules (dependency-free base layer)

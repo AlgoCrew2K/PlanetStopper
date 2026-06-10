@@ -11,15 +11,19 @@
 ## Key Files (quick reference for workers)
 | File | Role |
 |------|------|
-| `app.py` | Flask dashboard + minute-by-minute scheduler; `_DISMISS_EXECUTOR` (background dismiss thread) + `_FLUSH_STATE_LOCK` (flush serialization); spawns `alpha_bot_execution.py` at :00; CSRF infrastructure (`_validate_csrf`, `_csrf_before_request`); `_SETTINGS_WRITE_ALLOWLIST` gates the two guarded write paths |
+| `app.py` | Flask dashboard + minute-by-minute scheduler; `_DISMISS_EXECUTOR` (background dismiss thread) + `_FLUSH_STATE_LOCK` (flush serialization); spawns `alpha_bot_execution.py` at :00; CSRF infrastructure (`_validate_csrf`, `_csrf_before_request`); `_SETTINGS_WRITE_ALLOWLIST` gates the two guarded write paths; AI Advisor routes — unified SPA at `GET /ai-advisor` renders all 5 tabs; GET sub-routes 302-redirect; POST action routes unchanged |
 | `alpha_bot_execution.py` | Core engine — per-cycle execution; wired to canonical THEORY spec bundle via `get_or_create_phase1_theory_bundle_id` |
 | `math_engine.py` | Risk math: volatility scaling, sqrt-time squeeze (`1-sqrt(1-t)`), parabolic ratchet, MC gating, VWAP, breakeven, exit confirm, regime-match guard; CRRA-EU utility (`compute_crra_eu_objective`); CVaR diagnostic (`compute_portfolio_cvar`, `CVaRAssessment`); PBO (`compute_pbo`); 6-layer exit decision (`resolve_trigger_priority`) |
 | `autotuner.py` | Optuna walk-forward (250 trading days, 500 trials per symphony); CPCV folds (`_generate_cpcv_folds`, N=6, k=2, 15 splits, 5 paths); CRRA-EU `_haircut_select` objective with `compute_n_effective` additive accounting; PHASE-3 PBO gate (`compute_pbo`, top-20 pre-BHY, PBO>0.5 veto); `compute_crra_eu_tstat` lives here (not math_engine); NN1 spec-freeze enforcement at entry; invokes Overfitting Conscience + Spec Critic + Divergence Explainer post-walk-forward; OC reads `prior_runs` via `advisor_ro_query`; `save_autotune_run` returns the inserted row id |
-| `database.py` | State DB: 31 numbered migration SQL files (001–031); `_MIGRATION_FILES` wires 28 entries (004–031, 021 precedes 020 — intentional, see ARCH-002 inline comment); public accessors include Phase-1 originals (`record_cvar_diagnostic`, `read_cvar_diagnostic_for_symphony`, `get_or_create_phase1_theory_bundle_id`, `insert_dof_ledger_row`, `query_wall_breach_tripwire`) plus post-Sprint-3 additions: `insert_advisor_observation` (accepts `symphony_id`), `get_advisor_observations_for_symphony`, `get_symphony_live_mode`, `set_symphony_live_mode`, `save_regime_label`, `get_cached_regime_label`, `get_or_create_phase15_m3_bundle_id`; `compute_composition_hash` promoted here from deleted `port_selector.py` |
+| `database.py` | State DB: 31 numbered migration SQL files (001–031); `_MIGRATION_FILES` wires 28 entries (004–031, 021 precedes 020 — intentional, see ARCH-002 inline comment); public accessors include Phase-1 originals (`record_cvar_diagnostic`, `read_cvar_diagnostic_for_symphony`, `get_or_create_phase1_theory_bundle_id`, `insert_dof_ledger_row`, `query_wall_breach_tripwire`) plus post-Sprint-3 additions: `insert_advisor_observation` (accepts `symphony_id`), `get_advisor_observations_for_symphony`, `get_symphony_live_mode`, `set_symphony_live_mode`, `save_regime_label`, `get_cached_regime_label`, `get_or_create_phase15_m3_bundle_id`; `compute_composition_hash` promoted here from deleted `port_selector.py`; **pytest sentinel guard**: `_db_file()` raises `RuntimeError` when `"pytest" in sys.modules` AND basename == `alphabot_state.db` — tests MUST set `DB_PATH` via `tests/conftest.py` |
 | `reporting.py` | Discord webhooks + QuickChart embeds |
 | `synthetic_history.py` | 250-day live Alpaca historical fetcher (parallel + file cache); feeds autotuner replay |
 | `acceptance_gate.py` | Reusable overfitting acceptance gate — used by autotuner and AI Advisor proposal suite |
+| `ai_advisor.py` | Claude-backed config advisor: `assemble_advisor_context` (accepts `composer_symphony_id` + `autotune_run` params), `build_assessment_from_context` (per-symphony informative empty-state), `request_suggestions`, C2 safety gates; 9-item suggestible allowlist |
 | `advisors/` | Phase-1 Advisor producers: `overfitting_conscience.py`, `spec_critic.py`, `divergence_explainer.py`. Narrator deferred. AI Advisor proposal suite: `correlation_diagnostic.py`, `composer_backtest_client.py`, `backtest_gate_engine.py`, `asset_swap_engine.py`, `logic_change_engine.py`, `advisor_chat.py`. All observations write to `advisor_observations` keyed by `symphony_id`. Called post-walk-forward from `autotuner.py`. |
+| `templates/ai_advisor.html` | Single unified AI Advisor SPA template — all 5 tabs (Overview, Correlations, Asset Swaps, Logic Changes, Chat) rendered in one server-side render; tab switching in-place via JS |
+| `static/ai_advisor.js` | AI Advisor client logic: `initTabSwitcher`, suggestion card rendering with per-symphony assessment block, accept/reject, autotune run feed |
+| `tests/conftest.py` | Pytest configuration: `pytest_configure()` hook sets `DB_PATH` to a session temp path before collection; autouse `_isolate_db` per-test fixture; `_disable_csrf_for_tests` autouse fixture |
 
 ## Build / Run
 ```
@@ -34,6 +38,7 @@ python app.py          # run daemon
 3. Two-DB pattern: state DB owns live positions/decisions; optimization DB owns Optuna studies. **Never cross-join across DBs in app code** — copy needed rows.
 4. `is_live=True` is explicit, never a default.
 5. Templates open SQLite read-only; UI never reruns the engine.
+6. **AI Advisor Composer hash rule:** all Advisor routes that call Composer endpoints must use the Composer hash ID, not the normalized display name. The route resolves NAME→hash from `bot_state`; `assemble_advisor_context` receives the hash via `composer_symphony_id`. Passing the name causes HTTP 400 from Composer's `/score` API.
 
 ## Coding Standards (project additions)
 - No magic numbers in `math_engine.py` — every constant named + source comment
@@ -51,6 +56,9 @@ python app.py          # run daemon
 | `test_live_*.py` files | Excluded by default — opt-in via `--include-live` |
 | Migration 021 listed before 020 in `_MIGRATION_FILES` | Intentional — see ARCH-002 inline comment in `database.py`. Reordering would corrupt live DBs that already have 021 applied. |
 | Blast-radius scanners sweeping `.claude/worktrees/` | `rglob("*.py")` scanners must exclude `.claude/worktrees/` and `.claude/audit-worktrees/`; stale pre-deletion .py files in orphan worktrees produce false-positive import violations. |
+| Test writing to production DB | `database._db_file()` raises `RuntimeError` under pytest if `DB_PATH` resolves to `alphabot_state.db`. Fix: ensure `tests/conftest.py` `pytest_configure()` runs before any DB import. Per-test isolation via `_isolate_db` autouse fixture. |
+| AI Advisor empty suggestions (most symphonies) | Expected. The CRRA-EU + Harvey-Liu FDR gate is intentionally strict. `build_assessment_from_context` explains why — `oos_alpha=None` means all trials were haircut-rejected, not an error. |
+| 4 old advisor tab templates | `templates/ai_advisor_correlations.html`, `ai_advisor_asset_swaps.html`, `ai_advisor_logic_changes.html`, `ai_advisor_chat.html` are orphaned dead code — their routes 302-redirect to `/ai-advisor`. Do not add logic to them. Delete candidates. |
 
 ## Project-Local Specialist Agents (`.claude/agents/`)
 **Task-engine specialists:**
