@@ -165,3 +165,75 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** PBO is a sample-robustness check orthogonal to BHY (which addresses multiplicity). PBO > 0.5 means the IS-best config generalizes OOS less than half the time across the CPCV partitions — a straightforward disqualifying signal. The combination of BHY + PBO closes two independent overfitting axes.
 
 **Status:** Merged (849a11e). Full tree clean at 5146/0.
+
+---
+
+## Test infrastructure (2026-06-09)
+
+### DE-TEST-001: pytest-sentinel guard in database._db_file() — prod-DB write leak closed
+
+**Decision:** `database._db_file()` raises `RuntimeError` when `"pytest" in sys.modules` AND the resolved path basename is `alphabot_state.db`. `tests/conftest.py` adds a `pytest_configure()` hook (earliest pytest lifecycle point, before collection) that sets `DB_PATH` to a `tempfile.TemporaryDirectory` session path if not already set. The guard is completely inert in the live daemon (pytest is never imported there).
+
+**Rationale:** Advisor producers (`overfitting_conscience`, `divergence_explainer`, `spec_critic`) each hold their own `import database` reference not covered by `patch("autotuner.database")` mocks. A test running without `DB_PATH` set would silently write to `alphabot_state.db`. The `pytest_configure()` hook fires before any module-level `import database` (which triggers `init_db()`), closing the gap that a fixture-level fix cannot reach. The sentinel guard in `_db_file()` converts any slip-through into a loud immediate failure rather than silent prod corruption.
+
+**Status:** Merged (72d1d20). Full tree clean at 5802/0. Four latent `save_autotune_run` mock return-value bugs also exposed and fixed.
+
+---
+
+## AI Advisor liveness + SPA migration (2026-06-09 / 2026-06-10)
+
+### DE-ADV-001: Advisor suggest route passes Composer hash to get_condensed_logic
+
+**Decision:** `assemble_advisor_context` accepts a `composer_symphony_id` parameter (the Composer hash). The route resolves the Composer hash from `bot_state` and passes it as `composer_symphony_id`; `assemble_advisor_context` uses this hash when calling `symphony_logic.get_condensed_logic`. The prior behaviour — passing the normalized name — caused HTTP 400 from the Composer `/score` API and an all-empty logic struct for every symphony.
+
+**Rationale:** Composer's `/score` API requires the opaque hash identifier, not a human-readable name. All other Composer API call sites in the codebase already use the hash. The normalized name is the correct key for internal DB lookups; these are now kept separate. The parameter is optional and backward-compatible (`None` falls back to `symphony_id`).
+
+**Status:** Merged (2039f62, 7fbbe04). Full tree clean.
+
+---
+
+### DE-ADV-002: build_assessment_from_context — per-symphony informative empty state
+
+**Decision:** A new function `ai_advisor.build_assessment_from_context(context)` derives a per-symphony assessment dict from the assembled context. The `/ai-advisor/suggest` route includes this as `assessment` in every response. The client renders the assessment block instead of a generic placeholder when the suggestions list is empty.
+
+**Rationale:** Most symphonies produce an empty suggestion list because the CRRA-EU + Harvey-Liu FDR gate is intentionally strict — this is correct behaviour, not a bug. Previously the result box showed "No suggestions — the advisor did not find a well-supported edit at this time." for every symphony regardless of tuning state, giving the operator no actionable information. The assessment block surfaces `baseline_decision`, `oos_alpha`, `fallback_oos_alpha`, and a differentiated `summary` string so the operator understands why no edit is suggested.
+
+**Open question (non-blocking):** Whether the CRRA-EU + Harvey-Liu FDR gate combination is too strict for the current 250-day walk-forward window — most symphonies show `oos_alpha = None` (all trials haircut-rejected). This is mathematically defensible (the gate is intentionally high-bar) but may mean the advisor produces meaningful suggestions only after the autotuner has accumulated substantially more trial history. No change to the gate is proposed without a council-level review.
+
+**Status:** Merged (9c0e246). Full tree clean at 5766/0.
+
+---
+
+### DE-ADV-003: _build_volatility_regime honest availability
+
+**Decision:** `_build_volatility_regime` returns `available: False` with a human-readable `reason` string when `symphony_vol` and `atr_pct_14d` are absent from the autotune run row. The prior code returned `available: True` with all-null fields, fabricating regime availability context for Claude and defeating the data-wall contract.
+
+**Rationale:** Claude's `data_sufficiency` gate is only meaningful if the regime context is honest. Fabricating `available: True` with null vol/atr gave Claude false confidence that regime data was present. The columns do not yet exist in the autotune_runs schema; when the schema gains them the function will naturally start returning `available: True` (forward-compatible).
+
+**Status:** Merged (da44f69). Binding: the function must never report `available: True` unless both `symphony_vol` and `atr_pct_14d` are non-null.
+
+---
+
+### DE-ADV-004: AI Advisor — in-place 5-tab SPA replacing 5 separate MPA templates
+
+**Decision:** The AI Advisor is consolidated from 5 separate MPA templates (`ai_advisor.html`, `ai_advisor_correlations.html`, `ai_advisor_asset_swaps.html`, `ai_advisor_logic_changes.html`, `ai_advisor_chat.html`) into a single `templates/ai_advisor.html` with in-place JS tab switching (`initTabSwitcher` in `static/ai_advisor.js`). The GET sub-routes for the 4 tab pages now 302-redirect to `/ai-advisor`. The POST action routes (suggest, evaluate, accept, reject, chat/send) are unchanged. Chat is now an always-in-DOM right-side slide-in panel. The Overview tab is retained as the 5th tab (operator decision — no content was deleted).
+
+**Rationale:** Each of the 5 templates was independently building overlapping context data for its single panel, and navigation between tabs required full page loads. Consolidating into a single server-side render eliminates duplicate DB queries (correlation matrix, symphony list, API-key check) and reduces round-trips. JS in-place switching matches the `.active-toggle` pattern already used in `static/index.js`. ARIA tab semantics are maintained throughout.
+
+**Status:** Merged (d392a6c). Full tree clean.
+
+**Orphaned templates (deletion candidates):** The 4 per-tab templates are now dead code. Their routes redirect to `/ai-advisor` and the templates are no longer rendered. They may be deleted in a future cleanup cycle:
+- `templates/ai_advisor_correlations.html`
+- `templates/ai_advisor_asset_swaps.html`
+- `templates/ai_advisor_logic_changes.html`
+- `templates/ai_advisor_chat.html`
+
+---
+
+### DE-DATA-001: State DB cleanup — ~1,643 test-fixture rows removed from production DB
+
+**Decision:** ~1,643 test-fixture / seed rows were removed from the live `alphabot_state.db`: `autotune_runs` reduced from 1,689 to 66 rows; fake `symphony_strategies`, `port_state`, and `advisor_observations` rows also removed. Backups retained as `alphabot_state.db.pre-seed-cleanup-*` files.
+
+**Rationale:** The rows were written by tests that ran without DB isolation before the pytest-sentinel guard (DE-TEST-001). They polluted the autotune run history visible in the dashboard and inflated advisor observation counts with non-production data. The cleanup was performed with backups in place per additive-first / conservative data-handling norms.
+
+**Status:** Complete. Data integrity restored. DE-TEST-001 prevents recurrence.
