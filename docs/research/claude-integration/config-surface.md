@@ -1,5 +1,7 @@
 # Research — Suggestible Config Surface + Optuna-as-Claude-Context
 
+> **⚠️ SUPERSEDED BY IMPLEMENTATION (noted 2026-06-10).** This is the original 2026-05-14 design research; its body is preserved as a historical record. The shipped suggestible surface is **7 items** — the **6** Optuna search-space keys + `MAX_SQUEEZE_FLOOR` — **not 9**. `TRIGGER_THRESHOLD_PCT` is a **locked** variable (`database.DEFAULT_LOCKED_VARS`), not suggestible. For current truth see `docs/generated/ai_advisor.md` (`_SUGGESTIBLE_ALLOWLIST`, `ai_advisor.py:698`).
+
 **Status:** Research only. No feature code. Owner surface: `autotuner.py` + optimization DB + `.env` + `symphony_strategies`.
 **Date:** 2026-05-14
 **Feature under scope:** Operator-triggered, on-demand "Claude suggests config edits" — Claude receives engine quant data + Optuna's current tuned config + symphony info, returns accept/reject config diffs with rationale.
