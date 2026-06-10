@@ -286,7 +286,7 @@
             border: 1px solid;
         }
 
-        /* Capability tab nav — shared style with sub-pages (AC-1) */
+        /* Capability tab nav — in-place switching via JS (window-selector pattern) */
         .cap-nav {
             display: flex;
             gap: 0.25rem;
@@ -295,6 +295,7 @@
             padding-bottom: 0;
         }
 
+        /* Tab buttons — not anchors; JS handles switching (AC2) */
         .cap-tab {
             padding: 0.5rem 1rem;
             font-size: 0.8125rem;
@@ -306,11 +307,15 @@
             border-bottom: none;
             position: relative;
             bottom: -1px;
+            background: transparent;
+            cursor: pointer;
+            font-family: var(--studio-sans, sans-serif);
         }
 
         .cap-tab:hover { color: var(--studio-ink); }
 
-        .cap-tab[aria-current="page"] {
+        .cap-tab.active,
+        .cap-tab[aria-selected="true"] {
             color: var(--studio-ink);
             background: var(--studio-surface);
             border-color: var(--studio-border);
@@ -328,6 +333,205 @@
         }
 
         .cap-tab-badge--yellow { background: var(--studio-warn); }
+
+        /* Tab panels — in-place switching: only the active panel is visible */
+        .tab-panel { display: none; }
+        .tab-panel--active { display: block; }
+
+        /* ------------------------------------------------------------------ */
+        /* Styles imported from the merged sub-page templates                  */
+        /* ------------------------------------------------------------------ */
+
+        /* Correlations panel */
+        .crisis-caveat {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 1rem 1.25rem;
+            border-radius: 0.75rem;
+            border: 1px solid var(--studio-warn-border, var(--studio-border));
+            border-left: 3px solid var(--studio-warn);
+            background: var(--studio-warn-tint, rgba(176, 116, 25, 0.08));
+            margin-bottom: 1.25rem;
+            font-size: 0.8125rem;
+            color: var(--studio-ink);
+        }
+        .crisis-caveat-icon { font-size: 1rem; flex-shrink: 0; color: var(--studio-warn); }
+        .crisis-caveat-text { margin: 0; }
+        .insufficient-data {
+            padding: 2rem 1.5rem;
+            text-align: center;
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            margin-bottom: 1rem;
+        }
+        .insufficient-data-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
+        .insufficient-data-body { color: var(--studio-ink-dim); font-size: 0.875rem; }
+        .meta-strip {
+            display: flex; gap: 0.75rem; align-items: center;
+            font-size: 0.75rem; color: var(--studio-ink-dim);
+            margin-bottom: 1rem; flex-wrap: wrap;
+        }
+        .meta-strip-label { font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.625rem; }
+        .meta-strip-value { font-variant-numeric: tabular-nums; }
+        .refresh-link { color: var(--studio-accent); text-decoration: none; font-size: 0.75rem; }
+        .refresh-link:hover { text-decoration: underline; }
+        .matrix-card {
+            background: var(--studio-surface); border: 1px solid var(--studio-border);
+            border-radius: 1rem; padding: 1.25rem 1.5rem; overflow-x: auto; margin-bottom: 1rem;
+        }
+        .matrix-card-header {
+            font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.1em; color: var(--studio-ink-dim); margin-bottom: 1rem;
+        }
+        .heatmap-table { border-collapse: collapse; min-width: 100%; font-size: 0.8125rem; }
+        .heatmap-table th, .heatmap-table td { padding: 0.375rem 0.5rem; text-align: center; }
+        .heatmap-table th { font-size: 0.6875rem; font-weight: 700; color: var(--studio-ink-dim); white-space: nowrap; }
+        .corr-cell { display: flex; flex-direction: column; align-items: center; gap: 0.15rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+        .corr-diagonal { background: var(--studio-chip-bg, rgba(0,0,0,0.04)); }
+        .corr-danger { color: var(--studio-neg); }
+        .corr-caution { color: var(--studio-warn); }
+        .corr-ok { color: var(--studio-pos); }
+        .n-indicator { font-size: 0.5625rem; color: var(--studio-ink-dim); font-weight: 400; }
+        .n-indicator--thin { color: var(--studio-warn); }
+        .matrix-legend { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.875rem; font-size: 0.6875rem; color: var(--studio-ink-dim); }
+        .legend-item { display: flex; align-items: center; gap: 0.375rem; }
+        .legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .legend-dot--danger { background: var(--studio-neg); }
+        .legend-dot--caution { background: var(--studio-warn); }
+        .legend-dot--ok { background: var(--studio-pos); }
+        .thin-footnote { font-size: 0.625rem; color: var(--studio-warn); }
+
+        /* Asset-swaps + Logic-changes panels */
+        .advise-only-banner, .fdr-warning-banner {
+            display: flex; align-items: flex-start; gap: 0.75rem;
+            padding: 0.875rem 1.25rem; border-radius: 0.75rem;
+            border: 1px solid var(--studio-border);
+            border-left: 3px solid var(--studio-warn);
+            background: var(--studio-warn-tint, rgba(176, 116, 25, 0.08));
+            margin-bottom: 1.25rem; font-size: 0.8125rem;
+        }
+        .advise-only-banner-icon, .fdr-warning-banner-icon { color: var(--studio-warn); flex-shrink: 0; }
+        .advise-only-banner-text, .fdr-warning-banner-text { margin: 0; }
+        .no-api-key-state {
+            padding: 2rem 1.5rem; text-align: center; background: var(--studio-surface);
+            border: 1px solid var(--studio-border); border-radius: 1rem; margin-bottom: 1rem;
+        }
+        .no-api-key-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
+        .no-api-key-body { color: var(--studio-ink-dim); font-size: 0.875rem; }
+        .try-swap-panel, .try-tweak-panel {
+            background: var(--studio-surface); border: 1px solid var(--studio-border);
+            border-radius: 1rem; padding: 1.25rem 1.5rem; margin-bottom: 1rem;
+        }
+        .try-swap-header, .try-tweak-header {
+            font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.1em; color: var(--studio-ink-dim); margin-bottom: 1rem;
+        }
+        .try-swap-form, .try-tweak-form { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
+        .form-row { display: flex; flex-wrap: wrap; gap: 1rem; width: 100%; }
+        .form-group { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; min-width: 10rem; }
+        .form-label { font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-muted); font-weight: 700; }
+        .form-select, .form-input {
+            background: var(--studio-bg); border: 1px solid var(--studio-border);
+            border-radius: 0.5rem; padding: 0.4rem 0.75rem; font-size: 0.875rem;
+            color: var(--studio-ink); font-family: var(--studio-sans, sans-serif);
+        }
+        .form-select:focus, .form-input:focus { outline: none; border-color: var(--studio-accent); }
+        .form-textarea {
+            background: var(--studio-bg); border: 1px solid var(--studio-border);
+            border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.875rem;
+            color: var(--studio-ink); font-family: var(--studio-sans, sans-serif);
+            resize: vertical; min-height: 4rem; width: 100%;
+        }
+        .form-textarea:focus { outline: none; border-color: var(--studio-accent); }
+        .try-swap-btn, .try-tweak-btn {
+            padding: 0.5rem 1.25rem; background: var(--studio-accent); color: var(--studio-white);
+            border: none; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 700;
+            cursor: pointer; white-space: nowrap; font-family: var(--studio-sans, sans-serif);
+        }
+        .try-swap-btn:disabled, .try-tweak-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .try-swap-error, .try-tweak-error { color: var(--studio-neg); font-size: 0.8125rem; margin-top: 0.5rem; }
+
+        /* Result card action row — JS-rendered swap/logic suggestion cards use this class */
+        .card-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+            padding-top: 0.625rem;
+            border-top: 1px solid var(--studio-border);
+        }
+
+        /* Chat panel (slide-in, always in DOM — AC4) */
+        .chat-default-state {
+            padding: 3rem 1.5rem; text-align: center; background: var(--studio-surface);
+            border: 1px solid var(--studio-border); border-radius: 1rem; margin-bottom: 1rem;
+        }
+        .chat-default-icon { font-size: 2rem; margin-bottom: 0.75rem; }
+        .chat-default-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
+        .chat-default-body { color: var(--studio-ink-dim); font-size: 0.875rem; margin-bottom: 1rem; }
+        .chat-example-prompts { color: var(--studio-ink-dim); font-size: 0.8125rem; font-style: italic; list-style: none; padding: 0; }
+        .chat-example-prompts li { padding: 0.25rem 0; }
+        .chat-panel {
+            position: fixed; top: 0; right: -440px; width: 420px; height: 100vh;
+            background: var(--studio-paper, var(--studio-surface));
+            border-left: 1px solid var(--studio-rule-hi, var(--studio-border));
+            z-index: 200; display: flex; flex-direction: column;
+            transition: right 0.25s ease; overflow: hidden;
+        }
+        .chat-panel.chat-panel--open { right: 0; }
+        .chat-panel-header {
+            display: flex; justify-content: space-between; align-items: flex-start;
+            padding: 1rem 1.25rem; border-bottom: 1px solid var(--studio-border); flex-shrink: 0;
+        }
+        .chat-panel-title { font-weight: 700; font-size: 1rem; }
+        .chat-panel-breadcrumb { display: flex; align-items: center; gap: 0.375rem; font-size: 0.6875rem; color: var(--studio-ink-dim); margin-top: 0.25rem; }
+        .chat-panel-breadcrumb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--studio-plum, var(--studio-accent)); display: inline-block; }
+        .chat-panel-close { background: transparent; border: none; cursor: pointer; font-size: 1.25rem; color: var(--studio-ink-dim); padding: 0.25rem; line-height: 1; }
+        .artifact-summary-strip {
+            display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.25rem;
+            background: var(--studio-chip-bg, rgba(0,0,0,0.04)); border-bottom: 1px solid var(--studio-border);
+            flex-shrink: 0; font-size: 0.8125rem; flex-wrap: wrap;
+        }
+        .artifact-gate-pill {
+            padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.625rem; font-weight: 700;
+            border: 1px solid; text-transform: uppercase; letter-spacing: 0.06em;
+        }
+        .artifact-key-stat { font-size: 0.75rem; color: var(--studio-ink-dim); }
+        .explain-only-notice {
+            display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.625rem 1.25rem;
+            background: rgba(26, 110, 136, 0.08); border-bottom: 1px solid rgba(26, 110, 136, 0.25);
+            font-size: 0.75rem; color: var(--studio-cyan, var(--studio-ink-dim)); flex-shrink: 0;
+        }
+        .explain-only-notice-icon { flex-shrink: 0; }
+        .chat-unavailable {
+            padding: 2rem 1.25rem; text-align: center;
+        }
+        .chat-unavailable-title { font-weight: 700; margin-bottom: 0.5rem; color: var(--studio-warn); }
+        .chat-unavailable-body { font-size: 0.875rem; color: var(--studio-ink-dim); }
+        .chat-thread {
+            flex: 1; overflow-y: auto; padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: 0.75rem;
+        }
+        .chat-input-row {
+            display: flex; gap: 0.5rem; padding: 0.75rem 1.25rem;
+            border-top: 1px solid var(--studio-border); flex-shrink: 0; align-items: flex-end;
+        }
+        .chat-input {
+            flex: 1; background: var(--studio-bg); border: 1px solid var(--studio-border);
+            border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.875rem;
+            color: var(--studio-ink); font-family: var(--studio-sans, sans-serif); resize: none;
+        }
+        .chat-input:focus { outline: none; border-color: var(--studio-accent); }
+        .chat-send-btn {
+            padding: 0.5rem 1rem; background: var(--studio-accent); color: var(--studio-white);
+            border: none; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 700;
+            cursor: pointer; white-space: nowrap; font-family: var(--studio-sans, sans-serif);
+        }
+        .chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        @media (max-width: 768px) {
+            .chat-panel { width: 100%; right: -100%; }
+        }
     </style>
 </head>
 
@@ -348,38 +552,63 @@
             <a href="/" class="back-link">&larr; Dashboard</a>
         </header>
 
-        <!-- Capability tab nav — matches sub-page nav pattern (AC-1) -->
-        <nav class="cap-nav" aria-label="Advisor capabilities">
-            <a href="{{ url_for('ai_advisor_tab') }}"
-               aria-current="page"
-               class="cap-tab"
-               data-testid="tab-overview">
+        <!-- Capability tab nav — in-place switching via JS (AC2: button not anchor) -->
+        <nav class="cap-nav" role="tablist" aria-label="Advisor capabilities">
+            <button role="tab"
+                    aria-selected="true"
+                    aria-controls="tab-panel-overview"
+                    class="cap-tab active"
+                    data-testid="tab-overview"
+                    data-tab="overview">
                 Overview
                 <span class="cap-tab-badge" title="Summary &amp; autotune runs"></span>
-            </a>
-            <a href="{{ url_for('ai_advisor_correlations') }}"
-               class="cap-tab"
-               data-testid="tab-correlations">
+            </button>
+            <button role="tab"
+                    aria-selected="false"
+                    aria-controls="tab-panel-correlations"
+                    class="cap-tab"
+                    data-testid="tab-correlations"
+                    data-tab="correlations">
                 Correlations
                 <span class="cap-tab-badge" title="Low risk — pure measurement"></span>
-            </a>
-            <a href="{{ url_for('ai_advisor_asset_swaps') }}"
-               class="cap-tab"
-               data-testid="tab-asset-swaps">
+            </button>
+            <button role="tab"
+                    aria-selected="false"
+                    aria-controls="tab-panel-asset-swaps"
+                    class="cap-tab"
+                    data-testid="tab-asset-swaps"
+                    data-tab="asset-swaps">
                 Asset Swaps
                 <span class="cap-tab-badge" title="Low risk when gated"></span>
-            </a>
-            <a href="{{ url_for('ai_advisor_logic_changes') }}"
-               class="cap-tab"
-               data-testid="tab-logic-changes">
+            </button>
+            <button role="tab"
+                    aria-selected="false"
+                    aria-controls="tab-panel-logic-changes"
+                    class="cap-tab"
+                    data-testid="tab-logic-changes"
+                    data-tab="logic-changes">
                 Logic Changes
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Higher overfitting risk"></span>
-            </a>
-            <a href="{{ url_for('ai_advisor_chat') }}" class="cap-tab" data-testid="tab-chat">
+            </button>
+            <button role="tab"
+                    aria-selected="false"
+                    aria-controls="tab-panel-chat"
+                    class="cap-tab"
+                    data-testid="tab-chat"
+                    data-tab="chat">
                 Chat
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Explain-only"></span>
-            </a>
+            </button>
         </nav>
+
+        <!-- ============================================================ -->
+        <!-- TAB PANEL: Overview (default active panel)                    -->
+        <!-- ============================================================ -->
+        <div id="tab-panel-overview"
+             role="tabpanel"
+             data-testid="tab-panel-overview"
+             data-tab="overview"
+             class="tab-panel tab-panel--active">
 
         <!-- Controls bar -->
         <div data-testid="advisor-controls" class="adv-controls">
@@ -430,7 +659,376 @@
             </aside>
 
         </div>
-    </div>
+        </div>{# /tab-panel-overview #}
+
+        <!-- ============================================================ -->
+        <!-- TAB PANEL: Correlations                                        -->
+        <!-- ============================================================ -->
+        <div id="tab-panel-correlations"
+             role="tabpanel"
+             data-testid="tab-panel-correlations"
+             data-tab="correlations"
+             class="tab-panel">
+
+            <!-- Crisis caveat banner — always on (AC-1.4) -->
+            <div class="crisis-caveat" data-testid="crisis-caveat-banner" role="note">
+                <span class="crisis-caveat-icon" aria-hidden="true">&#x26A0;</span>
+                <p class="crisis-caveat-text">
+                    <strong>Correlations destabilize toward 1.0 in market stress.</strong>
+                    {{ crisis_caveat }}
+                </p>
+            </div>
+
+            {% if insufficient_data %}
+
+            <!-- Insufficient data state -->
+            <div class="insufficient-data" data-testid="insufficient-data-state">
+                <div class="insufficient-data-title">Insufficient Data</div>
+                <div class="insufficient-data-body">
+                    No return series are available yet. The diagnostic requires at least two
+                    symphonies with overlapping return history.
+                </div>
+            </div>
+
+            {% else %}
+
+            <!-- Metadata strip -->
+            <div class="meta-strip" data-testid="as-of-strip">
+                <span class="meta-strip-label">As of</span>
+                <span class="meta-strip-value" data-testid="as-of-timestamp">{{ as_of }}</span>
+                <span>&bull;</span>
+                <span class="meta-strip-value">{{ correlation_matrix | length }} pair{{ 's' if correlation_matrix | length != 1 else '' }}</span>
+            </div>
+
+            <!-- Pairwise return correlation matrix -->
+            {%- set sym_names = [] -%}
+            {%- for pair in correlation_matrix -%}
+                {%- if pair.sym_a not in sym_names -%}{%- set _ = sym_names.append(pair.sym_a) -%}{%- endif -%}
+                {%- if pair.sym_b not in sym_names -%}{%- set _ = sym_names.append(pair.sym_b) -%}{%- endif -%}
+            {%- endfor -%}
+            {%- set pair_lookup = {} -%}
+            {%- for pair in correlation_matrix -%}
+                {%- set _ = pair_lookup.update({(pair.sym_a, pair.sym_b): pair}) -%}
+                {%- set _ = pair_lookup.update({(pair.sym_b, pair.sym_a): pair}) -%}
+            {%- endfor -%}
+
+            <section class="matrix-card" data-testid="pairwise-matrix-card">
+                <div class="matrix-card-header">Pairwise Return Correlation</div>
+                <table class="heatmap-table" data-testid="correlation-matrix-table">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            {%- for name in sym_names -%}
+                            <th title="{{ name | e }}">{{ name | truncate(12, True, '…') | e }}</th>
+                            {%- endfor -%}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {%- for row_name in sym_names -%}
+                        <tr>
+                            <td style="font-size:0.75rem;font-weight:600;color:var(--studio-ink);padding-right:1rem;white-space:nowrap;">
+                                {{ row_name | truncate(18, True, '…') | e }}
+                            </td>
+                            {%- for col_name in sym_names -%}
+                                {%- if row_name == col_name -%}
+                                <td class="corr-diagonal" data-testid="corr-cell-diagonal">
+                                    <span class="corr-cell">1.00</span>
+                                </td>
+                                {%- else -%}
+                                    {%- set pair = pair_lookup.get((row_name, col_name)) -%}
+                                    {%- if pair is not none -%}
+                                        {%- set corr_val = pair.correlation -%}
+                                        {%- set abs_corr = corr_val | abs if corr_val is not none else 0 -%}
+                                        {%- if abs_corr >= 0.70 -%}{%- set heat_class = "corr-danger" -%}
+                                        {%- elif abs_corr >= 0.40 -%}{%- set heat_class = "corr-caution" -%}
+                                        {%- else -%}{%- set heat_class = "corr-ok" -%}{%- endif -%}
+                                    <td data-testid="corr-cell"
+                                        data-sym-a="{{ pair.sym_a | e }}"
+                                        data-sym-b="{{ pair.sym_b | e }}"
+                                        data-n-obs="{{ pair.n_obs }}"
+                                        data-thin="{{ 'true' if pair.thin_data else 'false' }}">
+                                        <span class="corr-cell {{ heat_class }}">
+                                            {%- if corr_val is not none -%}{{ "%+.2f" | format(corr_val) }}{%- else -%}—{%- endif -%}
+                                            <span class="n-indicator {% if pair.thin_data %}n-indicator--thin{% endif %}"
+                                                  data-testid="n-indicator">
+                                                n={{ pair.n_obs }}{% if pair.thin_data %} thin{% endif %}
+                                            </span>
+                                        </span>
+                                    </td>
+                                    {%- else -%}
+                                    <td class="corr-diagonal" data-testid="corr-cell-no-data">
+                                        <span class="corr-cell" style="color:var(--studio-ink-faint);">—</span>
+                                    </td>
+                                    {%- endif -%}
+                                {%- endif -%}
+                            {%- endfor -%}
+                        </tr>
+                        {%- endfor -%}
+                    </tbody>
+                </table>
+                <div class="matrix-legend" data-testid="matrix-legend">
+                    <span class="legend-item"><span class="legend-dot legend-dot--danger"></span>High (|r| &ge; 0.70)</span>
+                    <span class="legend-item"><span class="legend-dot legend-dot--caution"></span>Moderate</span>
+                    <span class="legend-item"><span class="legend-dot legend-dot--ok"></span>De-correlated</span>
+                    {%- set has_thin = correlation_matrix | selectattr('thin_data') | list -%}
+                    {%- if has_thin -%}<span class="thin-footnote" data-testid="thin-data-footnote">&dagger; thin data</span>{%- endif -%}
+                </div>
+            </section>
+
+            {% endif %}{# insufficient_data #}
+
+        </div>{# /tab-panel-correlations #}
+
+        <!-- ============================================================ -->
+        <!-- TAB PANEL: Asset Swaps                                         -->
+        <!-- ============================================================ -->
+        <div id="tab-panel-asset-swaps"
+             role="tabpanel"
+             data-testid="tab-panel-asset-swaps"
+             data-tab="asset-swaps"
+             class="tab-panel">
+
+            <div class="advise-only-banner" data-testid="advise-only-banner" role="note">
+                <span class="advise-only-banner-icon" aria-hidden="true">&#x26A0;</span>
+                <p class="advise-only-banner-text">
+                    <strong>Advise only — no trades are placed from this screen.</strong>
+                    Swap proposals that survive the gate are recommendations only.
+                    Apply changes manually in Composer.
+                </p>
+            </div>
+
+            {% if no_api_key %}
+            <div class="no-api-key-state" data-testid="no-api-key-state">
+                <div class="no-api-key-title">Advisor Unavailable</div>
+                <div class="no-api-key-body">
+                    Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
+                    <code>COMPOSER_SECRET</code> to enable swap proposals.
+                </div>
+            </div>
+            {% else %}
+            <div class="try-swap-panel" data-testid="try-swap-panel">
+                <div class="try-swap-header">Try a Swap</div>
+                <div class="try-swap-form" data-testid="try-swap-form">
+                    <div class="form-group">
+                        <label class="form-label" for="swap-symphony-select">Symphony</label>
+                        <select id="swap-symphony-select" class="form-select"
+                                data-testid="swap-symphony-select" aria-label="Symphony">
+                            <option value="">Select symphony…</option>
+                            {% for sym in symphonies %}
+                            <option value="{{ sym | e }}">{{ sym | e }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="swap-from-ticker">Replace ticker</label>
+                        <input id="swap-from-ticker" class="form-input" type="text"
+                               placeholder="e.g. QQQ" maxlength="10" autocomplete="off"
+                               spellcheck="false" data-testid="swap-from-ticker"
+                               aria-label="Ticker to replace">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="swap-to-ticker">With ticker</label>
+                        <input id="swap-to-ticker" class="form-input" type="text"
+                               placeholder="e.g. IALT" maxlength="10" autocomplete="off"
+                               spellcheck="false" data-testid="swap-to-ticker"
+                               aria-label="Replacement ticker">
+                    </div>
+                    <button id="swap-evaluate-btn" class="try-swap-btn"
+                            data-testid="swap-evaluate-btn" disabled>
+                        Evaluate swap
+                    </button>
+                </div>
+                <div id="try-swap-error" class="try-swap-error" data-testid="try-swap-error"
+                     style="display:none;" role="alert"></div>
+            </div>
+            <div id="swap-results-area" data-testid="swap-results-area"></div>
+            {% endif %}{# no_api_key #}
+
+        </div>{# /tab-panel-asset-swaps #}
+
+        <!-- ============================================================ -->
+        <!-- TAB PANEL: Logic Changes                                       -->
+        <!-- ============================================================ -->
+        <div id="tab-panel-logic-changes"
+             role="tabpanel"
+             data-testid="tab-panel-logic-changes"
+             data-tab="logic-changes"
+             class="tab-panel">
+
+            <div class="fdr-warning-banner"
+                 data-testid="fdr-warning-banner"
+                 role="note"
+                 aria-live="polite">
+                <span class="fdr-warning-banner-icon" aria-hidden="true">&#x26A0;</span>
+                <p class="fdr-warning-banner-text">
+                    <strong>Logic-change proposals carry the highest overfitting risk.</strong>
+                    FDR/Yekutieli correction applied. Survivors are sound-but-unprovable.
+                </p>
+            </div>
+
+            {% if no_api_key %}
+            <div class="no-api-key-state" data-testid="no-api-key-state-logic">
+                <div class="no-api-key-title">Advisor Unavailable</div>
+                <div class="no-api-key-body">
+                    Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
+                    <code>COMPOSER_SECRET</code> to enable logic-change proposals.
+                </div>
+            </div>
+            {% else %}
+            <div class="try-tweak-panel" data-testid="try-tweak-panel">
+                <div class="try-tweak-header">Try a Logic Tweak</div>
+                <div class="try-tweak-form" data-testid="try-tweak-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label" for="tweak-symphony-select">Symphony</label>
+                            <select id="tweak-symphony-select" class="form-select"
+                                    data-testid="tweak-symphony-select" aria-label="Symphony">
+                                <option value="">Select symphony&hellip;</option>
+                                {% for sym in symphonies %}
+                                <option value="{{ sym | e }}">{{ sym | e }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="tweak-objective-select">Objective</label>
+                            <select id="tweak-objective-select" class="form-select"
+                                    data-testid="tweak-objective-select" aria-label="Objective">
+                                <option value="reduce_drawdown">Reduce drawdown</option>
+                                <option value="lift_risk_adjusted">Lift risk-adjusted return</option>
+                                <option value="reduce_turnover">Reduce turnover</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label" for="tweak-description">Describe the logic change</label>
+                            <textarea id="tweak-description" class="form-textarea"
+                                      data-testid="tweak-description"
+                                      placeholder="e.g. change the momentum lookback from 20 to 10 days"
+                                      aria-label="Logic change description"
+                                      maxlength="500" spellcheck="true"></textarea>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <button id="tweak-evaluate-btn" class="try-tweak-btn"
+                                data-testid="tweak-evaluate-btn" disabled>
+                            Evaluate logic change
+                        </button>
+                    </div>
+                </div>
+                <div id="try-tweak-error" class="try-tweak-error" data-testid="try-tweak-error"
+                     style="display:none;" role="alert"></div>
+            </div>
+            <div id="logic-results-area" data-testid="logic-results-area"></div>
+            {% endif %}{# no_api_key #}
+
+        </div>{# /tab-panel-logic-changes #}
+
+        <!-- ============================================================ -->
+        <!-- TAB PANEL: Chat (default state — panel trigger lives below)    -->
+        <!-- ============================================================ -->
+        <div id="tab-panel-chat"
+             role="tabpanel"
+             data-testid="tab-panel-chat"
+             data-tab="chat"
+             class="tab-panel">
+
+            <div data-testid="chat-default-state" class="chat-default-state">
+                <div class="chat-default-icon" aria-hidden="true">&#x1F4AC;</div>
+                <div class="chat-default-title">
+                    Select a recommendation or diagnostic figure to open a contextual explanation.
+                </div>
+                <p class="chat-default-body">
+                    Chat explains what the advisor found and why. Click &ldquo;Discuss this&rdquo;
+                    on any proposal card to start a scoped conversation.
+                </p>
+                <ul class="chat-example-prompts" aria-label="Example questions">
+                    <li>"Why did the gate reject this swap?"</li>
+                    <li>"What does this correlation mean for my portfolio?"</li>
+                    <li>"Why is this logic change considered high overfitting risk?"</li>
+                </ul>
+            </div>
+
+        </div>{# /tab-panel-chat #}
+
+    </div>{# /page-wrap #}
+
+    <!-- ============================================================ -->
+    <!-- Chat slide panel — ALWAYS in DOM (AC4). Opens via              -->
+    <!-- openChatPanel() from any tab's "Discuss this" link.            -->
+    <!-- AC-4.1 HARD: NO apply/accept/deploy/trade buttons here.        -->
+    <!-- ============================================================ -->
+    <aside data-testid="chat-panel" class="chat-panel" aria-label="Contextual explanation panel"
+           role="complementary">
+
+        <div data-testid="chat-panel-header" class="chat-panel-header">
+            <div>
+                <div class="chat-panel-title" id="chat-panel-title">Explain</div>
+                <div class="chat-panel-breadcrumb" id="chat-panel-breadcrumb">
+                    <span class="chat-panel-breadcrumb-dot" aria-hidden="true"></span>
+                    <span id="chat-panel-context-label">AI Advisor</span>
+                </div>
+            </div>
+            <button class="chat-panel-close"
+                    data-testid="chat-panel-close"
+                    onclick="closeChatPanel()"
+                    aria-label="Close explanation panel">
+                &times;
+            </button>
+        </div>
+
+        <div data-testid="artifact-summary-strip" class="artifact-summary-strip" id="artifact-summary-strip">
+            <span class="artifact-summary-objective" id="artifact-objective">—</span>
+            <span class="artifact-gate-pill" id="artifact-gate-pill"
+                  style="color:var(--studio-ink-dim);border-color:var(--studio-border);">—</span>
+            <span class="artifact-key-stat" id="artifact-key-stat"></span>
+        </div>
+
+        <div data-testid="explain-only-notice" class="explain-only-notice" role="note">
+            <span class="explain-only-notice-icon" aria-hidden="true">&#x2139;</span>
+            <span class="explain-only-notice-text">
+                This chat explains advisor findings. It cannot apply changes, place trades,
+                or generate new recommendations.
+            </span>
+        </div>
+
+        {% if not chat_available %}
+        <div data-testid="chat-unavailable" class="chat-unavailable">
+            <div class="chat-unavailable-title">Chat unavailable</div>
+            <p class="chat-unavailable-body">
+                Anthropic API key not configured.<br>
+                Set <code>ANTHROPIC_API_KEY</code> to enable explanations.
+            </p>
+        </div>
+        {% else %}
+
+        <div data-testid="chat-thread" class="chat-thread" id="chat-thread"
+             aria-live="polite" aria-label="Explanation messages">
+        </div>
+
+        <div data-testid="chat-input-row" class="chat-input-row" id="chat-input-row">
+            <textarea data-testid="chat-input"
+                      class="chat-input"
+                      id="chat-input"
+                      rows="1"
+                      placeholder="Ask about this recommendation&#x2026;"
+                      aria-label="Chat message"></textarea>
+            <button data-testid="chat-send-btn"
+                    class="chat-send-btn"
+                    id="chat-send-btn"
+                    onclick="sendChatMessage()"
+                    disabled>
+                Send
+            </button>
+        </div>
+
+        {% endif %}{# chat_available #}
+
+    </aside>
+
+    <script>
+        window._chatAvailable = {{ 'true' if chat_available else 'false' }};
+    </script>
 
     <!-- Advisor Observations — read-only display of advisor_observations rows. -->
     <!-- data-testid used by tests: advisor-observations-section                 -->
@@ -578,5 +1176,8 @@
     </section>
 
     <script src="{{ url_for('static', filename='ai_advisor.js') }}"></script>
+    <script src="{{ url_for('static', filename='ai_advisor_asset_swaps.js') }}"></script>
+    <script src="{{ url_for('static', filename='ai_advisor_logic_changes.js') }}"></script>
+    <script src="{{ url_for('static', filename='ai_advisor_chat.js') }}"></script>
 </body>
 </html>

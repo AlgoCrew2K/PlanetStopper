@@ -20,7 +20,7 @@ import psutil
 import requests
 import schedule
 from dotenv import dotenv_values, set_key
-from flask import Flask, abort, jsonify, render_template, request, session
+from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 
 import ai_advisor
 import analytics
@@ -2734,12 +2734,25 @@ def _translate_backtest_error(err: "str | None") -> "str | None":
 
 @app.route("/ai-advisor", methods=["GET"])
 def ai_advisor_tab():
-    """Render the Claude AI Config Advisor tab.
+    """Render the single unified AI Advisor page with all 5 in-place tab panels.
 
-    Passes the last _ADVISOR_OBSERVATIONS_PAGE_LIMIT advisor observations
-    to the template for the observations section.  Observations are fetched
-    across all known advisor roles using read-only accessors.
+    Consolidates the data formerly spread across 5 separate GET routes
+    (Overview, Correlations, Asset Swaps, Logic Changes, Chat) into one
+    server-side render.  Tab switching is handled in-place by JS (no navigation).
+
+    Template context:
+      observations       — advisor_observations rows for the Overview panel
+      correlation_matrix — PairResult list for the Correlations panel
+      as_of              — ISO timestamp for the matrix
+      crisis_caveat      — instability warning string
+      insufficient_data  — True when no correlation pairs available
+      no_api_key         — True when Composer credentials absent (swaps + logic)
+      symphonies         — known symphony IDs (swap + logic forms)
+      chat_available     — True when ANTHROPIC_API_KEY is set
     """
+    # ------------------------------------------------------------------ #
+    # Overview panel: advisor observations                                  #
+    # ------------------------------------------------------------------ #
     observations: list[dict] = []
     for role in _ADVISOR_ROLES:
         observations.extend(
@@ -2747,18 +2760,13 @@ def ai_advisor_tab():
                 role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
             )
         )
-    # Deduplicate by id and apply page limit
     seen: set = set()
     deduped_obs: list[dict] = []
     for obs in observations:
         if obs["id"] not in seen:
             seen.add(obs["id"])
             deduped_obs.append(obs)
-    # Suppress pure feature-off stubs: NOT_APPLICABLE rows whose raw_response
-    # carries {"feature_flag": "off"} are audit-trail bookkeeping, not advice.
-    # Showing them in the recommendations table misleads the operator.
-    # The Divergence Explainer writes these when §B is disabled (the current
-    # default — CVaR divergence detection is deferred per council verdict).
+    # Suppress pure feature-off stubs (NOT_APPLICABLE / feature_flag=off).
     deduped_obs = [
         obs for obs in deduped_obs
         if not (
@@ -2769,96 +2777,91 @@ def ai_advisor_tab():
     ]
     observations = deduped_obs[: _ADVISOR_OBSERVATIONS_PAGE_LIMIT]
 
+    # ------------------------------------------------------------------ #
+    # Correlations panel: pairwise return matrix                           #
+    # Lazy import keeps the module off the live 1-minute execution path.   #
+    # ------------------------------------------------------------------ #
+    correlation_matrix: list = []
+    crisis_caveat: str = ""
+    try:
+        from advisors import correlation_diagnostic as _corr_diag  # noqa: PLC0415
+        _history = analytics.get_history_with_cache_invalidation(
+            base_dir=analytics._POST_MORTEMS_DIR
+        )
+        _sym_ids = analytics.list_available_symphonies(_history)
+        _series_dict: dict[str, list[float]] = {}
+        for _sym_id in _sym_ids:
+            _dates, _live_rets, _shadow = analytics.compute_per_symphony_returns(
+                _history, _sym_id
+            )
+            if _live_rets:
+                _series_dict[_sym_id] = _live_rets
+        correlation_matrix = _corr_diag.compute_pairwise_correlations(_series_dict)
+        crisis_caveat = _corr_diag.CRISIS_CAVEAT
+    except Exception:
+        pass  # Correlations panel renders as insufficient_data on any error.
+
+    insufficient_data: bool = len(correlation_matrix) == 0
+
+    # ------------------------------------------------------------------ #
+    # Asset Swaps + Logic Changes panels: API key availability             #
+    # ------------------------------------------------------------------ #
+    no_api_key: bool = True
+    try:
+        from advisors.asset_swap_engine import _has_composer_key  # noqa: PLC0415
+        no_api_key = not _has_composer_key()
+    except Exception:
+        pass
+
+    # ------------------------------------------------------------------ #
+    # Symphony list for the swap + logic forms                             #
+    # ------------------------------------------------------------------ #
+    symphonies: list[str] = []
+    try:
+        _hist2 = analytics.get_history_with_cache_invalidation(
+            base_dir=analytics._POST_MORTEMS_DIR
+        )
+        symphonies = analytics.list_available_symphonies(_hist2)
+    except Exception:
+        pass
+
+    # ------------------------------------------------------------------ #
+    # Chat panel: key presence only (value never passes to template)       #
+    # ------------------------------------------------------------------ #
+    chat_available: bool = bool(os.environ.get("ANTHROPIC_API_KEY"))
+
     return render_template(
         "ai_advisor.html",
         active_route="advisor",
         meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
         observations=observations,
+        correlation_matrix=correlation_matrix,
+        as_of=datetime.now(_ET).isoformat(),
+        crisis_caveat=crisis_caveat,
+        insufficient_data=insufficient_data,
+        no_api_key=no_api_key,
+        symphonies=symphonies,
+        chat_available=chat_available,
     )
 
 
 @app.route("/ai-advisor/correlations", methods=["GET"])
 def ai_advisor_correlations():
-    """Render the M1 Correlations diagnostic tab (AC-1.1..1.4).
+    """Redirect to the unified /ai-advisor page (in-place tabs migration).
 
-    Pure measurement — no backtest, no gate, no write path.  The route
-    imports advisors.correlation_diagnostic lazily (inside the function)
-    so the module stays off the live execution path and sys.modules
-    injection in tests can intercept the import at call time (AC-X2).
-
-    Template context:
-      correlation_matrix  — list of PairResult objects from compute_pairwise_correlations
-      as_of               — ISO timestamp string for the operator's reference (AC-1.2)
-      crisis_caveat       — always-on instability warning string (AC-1.4)
-      insufficient_data   — True when no pairs are available (AC-1.3)
+    The correlations content is now a tab panel on /ai-advisor.  Old bookmarks
+    and links redirect cleanly rather than 404ing.
     """
-    # Lazy import keeps the module off the live 1-minute execution path (AC-X2).
-    from advisors import correlation_diagnostic  # noqa: PLC0415
-
-    # Build per-symphony return series from post-mortem history (read-only).
-    history = analytics.get_history_with_cache_invalidation(
-        base_dir=analytics._POST_MORTEMS_DIR
-    )
-    sym_ids = analytics.list_available_symphonies(history)
-    series_dict: dict[str, list[float]] = {}
-    for sym_id in sym_ids:
-        _dates, live_rets, _shadow = analytics.compute_per_symphony_returns(history, sym_id)
-        if live_rets:
-            series_dict[sym_id] = live_rets
-
-    # Run the pure correlation diagnostic — no DB writes, no engine calls.
-    matrix = correlation_diagnostic.compute_pairwise_correlations(series_dict)
-
-    # AC-1.4: the crisis-instability caveat is mandatory and always surfaced.
-    # Single source of truth lives in the module that owns the concept.
-    crisis_caveat = correlation_diagnostic.CRISIS_CAVEAT
-
-    return render_template(
-        "ai_advisor_correlations.html",
-        active_route="advisor",
-        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
-        correlation_matrix=matrix,
-        as_of=datetime.now(_ET).isoformat(),
-        crisis_caveat=crisis_caveat,
-        insufficient_data=len(matrix) == 0,
-    )
+    return redirect(url_for("ai_advisor_tab"), code=302)
 
 
 @app.route("/ai-advisor/asset-swaps", methods=["GET"])
 def ai_advisor_asset_swaps():
-    """Render the M3 Asset Swaps tab (AC-2.1..2.5, AC-X1..X5).
+    """Redirect to the unified /ai-advisor page (in-place tabs migration).
 
-    Read-only surface — no writes to live positions, no Composer write endpoints.
-    All swap proposals are advisory-only (apply manually in Composer).
-
-    Template context:
-      no_api_key        — True when Composer credentials are absent (AC-X4)
-      symphonies        — list of known symphony IDs for the operator-initiated form
+    The asset-swaps content is now a tab panel on /ai-advisor.
     """
-    # Lazy import keeps the module off the live 1-minute execution path (AC-X2).
-    from advisors.asset_swap_engine import _has_composer_key  # noqa: PLC0415
-
-    no_api_key = not _has_composer_key()
-
-    # Provide the symphony list for the operator-initiated "Try a swap" form.
-    # Reads from the same performance API endpoint the existing advisor tab uses.
-    symphonies: list[str] = []
-    try:
-        import analytics as _analytics  # noqa: PLC0415
-        history = _analytics.get_history_with_cache_invalidation(
-            base_dir=_analytics._POST_MORTEMS_DIR
-        )
-        symphonies = _analytics.list_available_symphonies(history)
-    except Exception:
-        pass  # Symphony list is optional; the form still renders without it.
-
-    return render_template(
-        "ai_advisor_asset_swaps.html",
-        active_route="advisor",
-        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
-        no_api_key=no_api_key,
-        symphonies=symphonies,
-    )
+    return redirect(url_for("ai_advisor_tab"), code=302)
 
 
 @app.route("/ai-advisor/asset-swaps/evaluate", methods=["POST"])
@@ -2983,38 +2986,11 @@ def ai_advisor_asset_swaps_evaluate():
 
 @app.route("/ai-advisor/logic-changes", methods=["GET"])
 def ai_advisor_logic_changes():
-    """Render the M4 Logic Changes tab (AC-3.1..3.4, AC-X1..X5).
+    """Redirect to the unified /ai-advisor page (in-place tabs migration).
 
-    Read-only surface — no writes to live positions, no Composer write endpoints.
-    All logic-change proposals are advisory-only (apply manually in Composer).
-
-    Template context:
-      no_api_key  — True when Composer credentials are absent (AC-X4)
-      symphonies  — list of known symphony IDs for the operator-initiated form
+    The logic-changes content is now a tab panel on /ai-advisor.
     """
-    # Lazy import keeps the module off the live 1-minute execution path (AC-X2).
-    from advisors.logic_change_engine import _has_composer_key  # noqa: PLC0415
-
-    no_api_key = not _has_composer_key()
-
-    # Provide the symphony list for the operator-initiated form.
-    symphonies: list[str] = []
-    try:
-        import analytics as _analytics  # noqa: PLC0415
-        history = _analytics.get_history_with_cache_invalidation(
-            base_dir=_analytics._POST_MORTEMS_DIR
-        )
-        symphonies = _analytics.list_available_symphonies(history)
-    except Exception:
-        pass  # Symphony list is optional; the form still renders without it.
-
-    return render_template(
-        "ai_advisor_logic_changes.html",
-        active_route="advisor",
-        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
-        no_api_key=no_api_key,
-        symphonies=symphonies,
-    )
+    return redirect(url_for("ai_advisor_tab"), code=302)
 
 
 @app.route("/ai-advisor/logic-changes/evaluate", methods=["POST"])
@@ -3477,41 +3453,11 @@ def ai_advisor_reject():
 
 @app.route("/ai-advisor/chat", methods=["GET"])
 def ai_advisor_chat():
-    """Render the M5 Chat (explain-only) tab (AC-4.1..4.3, AC-X1..X3).
+    """Redirect to the unified /ai-advisor page (in-place tabs migration).
 
-    Read-only surface — no writes to live positions, no Composer write endpoints,
-    no DB writes of any kind.  Chat explains existing advisor artifacts; it does
-    not generate new recommendations or accept/apply any changes.
-
-    Template context:
-      chat_available  — True when ANTHROPIC_API_KEY is present; the template
-                        renders the 'chat unavailable' state (data-testid=
-                        'chat-unavailable') when False (AC-4.3).
-                        NEVER pass the API key value itself to the template.
-      symphonies      — list of known symphony IDs for artifact-anchor display.
+    Chat is now an always-in-DOM slide panel on /ai-advisor, not a separate page.
     """
-    # chat_available: True only when the key is set.  We check existence only;
-    # the value is NEVER passed to the template (AC-4.1 / security hygiene).
-    chat_available = bool(os.environ.get("ANTHROPIC_API_KEY"))
-
-    # Provide the symphony list for artifact-context display.
-    symphonies: list[str] = []
-    try:
-        import analytics as _analytics  # noqa: PLC0415
-        history = _analytics.get_history_with_cache_invalidation(
-            base_dir=_analytics._POST_MORTEMS_DIR
-        )
-        symphonies = _analytics.list_available_symphonies(history)
-    except Exception:
-        pass  # Symphony list is optional; the page still renders without it.
-
-    return render_template(
-        "ai_advisor_chat.html",
-        active_route="advisor",
-        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
-        chat_available=chat_available,
-        symphonies=symphonies,
-    )
+    return redirect(url_for("ai_advisor_tab"), code=302)
 
 
 @app.route("/ai-advisor/chat/send", methods=["POST"])

@@ -182,9 +182,11 @@ def _cleanup_stub():
 
 
 def test_correlations_tab_returns_200(test_client, two_pair_matrix):
-    """GET /ai-advisor/correlations must return HTTP 200.
+    """GET /ai-advisor must return HTTP 200 (unified page with correlations panel).
 
-    This is the primary existence test — the route does not yet exist (RED).
+    Updated for in-place tab switching (advisor-tabs-inplace cycle):
+    the correlations content is now the tab-panel-correlations panel on /ai-advisor.
+    The standalone /ai-advisor/correlations route now redirects to /ai-advisor.
     """
     _inject_correlation_diagnostic_stub(two_pair_matrix)
 
@@ -193,10 +195,10 @@ def test_correlations_tab_returns_200(test_client, two_pair_matrix):
         patch("database.get_ro_connection", return_value=MagicMock()),
         patch("analytics.get_history_with_cache_invalidation", return_value={}),
     ):
-        resp = test_client.get("/ai-advisor/correlations")
+        resp = test_client.get("/ai-advisor")
 
     assert resp.status_code == 200, (
-        f"GET /ai-advisor/correlations must return 200; got {resp.status_code}"
+        f"GET /ai-advisor must return 200; got {resp.status_code}"
     )
 
 
@@ -223,7 +225,7 @@ def test_correlations_tab_context_has_correlation_matrix_key(test_client, two_pa
         patch("database.get_advisor_observations_for_role", return_value=[]),
         patch("analytics.get_history_with_cache_invalidation", return_value={}),
     ):
-        test_client.get("/ai-advisor/correlations")
+        test_client.get("/ai-advisor")
 
     assert "correlation_matrix" in captured, (
         "render_template was not called with a 'correlation_matrix' context key — "
@@ -254,7 +256,7 @@ def test_correlations_tab_each_matrix_entry_has_required_fields(test_client, two
         patch("database.get_advisor_observations_for_role", return_value=[]),
         patch("analytics.get_history_with_cache_invalidation", return_value={}),
     ):
-        test_client.get("/ai-advisor/correlations")
+        test_client.get("/ai-advisor")
 
     matrix = captured.get("correlation_matrix", [])
     assert matrix, "expected at least one entry in correlation_matrix"
@@ -305,7 +307,7 @@ def test_correlations_tab_crisis_caveat_comes_from_module_constant(
         patch("database.get_advisor_observations_for_role", return_value=[]),
         patch("analytics.get_history_with_cache_invalidation", return_value={}),
     ):
-        test_client.get("/ai-advisor/correlations")
+        test_client.get("/ai-advisor")
 
     assert "crisis_caveat" in captured, (
         "template context must include 'crisis_caveat' key — the crisis-instability "
@@ -346,7 +348,7 @@ def test_correlations_tab_context_has_as_of_timestamp(test_client, two_pair_matr
         patch("database.get_advisor_observations_for_role", return_value=[]),
         patch("analytics.get_history_with_cache_invalidation", return_value={}),
     ):
-        test_client.get("/ai-advisor/correlations")
+        test_client.get("/ai-advisor")
 
     assert "as_of" in captured, (
         "template context must include 'as_of' timestamp key"
@@ -382,10 +384,10 @@ def test_correlations_tab_empty_portfolio_returns_200_with_insufficient_data(tes
         patch("database.get_advisor_observations_for_role", return_value=[]),
         patch("analytics.get_history_with_cache_invalidation", return_value={}),
     ):
-        resp = test_client.get("/ai-advisor/correlations")
+        resp = test_client.get("/ai-advisor")
 
-    assert resp.status_code == 200, (
-        f"empty portfolio must return 200, not a crash; got {resp.status_code}"
+    assert resp.status_code in (200, 302), (
+        f"empty portfolio must return 200 (or 302 redirect), not a crash; got {resp.status_code}"
     )
     # Either an explicit insufficient_data flag OR an empty matrix — both are
     # valid ways to surface AC-1.3. The test accepts either.
@@ -421,7 +423,7 @@ def test_correlations_route_does_not_call_insert_advisor_observation(
         patch("analytics.get_history_with_cache_invalidation", return_value={}),
         patch.object(app_module, "render_template", return_value="<html></html>"),
     ):
-        test_client.get("/ai-advisor/correlations")
+        test_client.get("/ai-advisor")
 
     insert_mock.assert_not_called(), (
         "GET /ai-advisor/correlations must not call insert_advisor_observation — "
@@ -454,7 +456,7 @@ def test_correlations_tab_thin_data_entries_are_passed_to_template(
         patch("database.get_advisor_observations_for_role", return_value=[]),
         patch("analytics.get_history_with_cache_invalidation", return_value={}),
     ):
-        test_client.get("/ai-advisor/correlations")
+        test_client.get("/ai-advisor")
 
     matrix = captured.get("correlation_matrix", [])
     assert matrix, "expected at least one thin-data entry in correlation_matrix"

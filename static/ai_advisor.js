@@ -587,5 +587,52 @@
             });
             syncRunBtn();
         }
+
+        // ----------------------------------------------------------------
+        // In-place tab switcher (AC2 — window-selector pattern).
+        // Matches the .active-toggle pattern from static/index.js:1348.
+        // ----------------------------------------------------------------
+        (function initTabSwitcher() {
+            var tabs = document.querySelectorAll('[role="tab"][data-tab]');
+            var panels = document.querySelectorAll('[role="tabpanel"][data-tab]');
+
+            if (!tabs.length || !panels.length) { return; }
+
+            function activateTab(targetTab) {
+                // Update tab button states.
+                tabs.forEach(function (btn) {
+                    var isActive = btn === targetTab;
+                    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+                    if (isActive) {
+                        btn.classList.add('active');
+                    } else {
+                        btn.classList.remove('active');
+                    }
+                });
+                // Show/hide panels — match data-tab to the button's data-tab.
+                var targetName = targetTab.getAttribute('data-tab');
+                panels.forEach(function (panel) {
+                    if (panel.getAttribute('data-tab') === targetName) {
+                        panel.classList.add('tab-panel--active');
+                    } else {
+                        panel.classList.remove('tab-panel--active');
+                    }
+                });
+            }
+
+            // Wire click handlers.
+            tabs.forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    activateTab(btn);
+                });
+            });
+
+            // Ensure the initially-active button's panel is shown.
+            var initialActive = document.querySelector('[role="tab"][aria-selected="true"]');
+            if (initialActive) {
+                activateTab(initialActive);
+            }
+        }());
+
     });
 })();
