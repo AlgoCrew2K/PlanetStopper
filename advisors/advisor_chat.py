@@ -118,6 +118,16 @@ CHAT_ARTIFACT_ALLOWED_FIELDS: frozenset = frozenset({
     "verdict",
     "weight",
     "symbol",
+    # Cycle-1 multi-lens additions — ADD_CANDIDATE candidate fields (GATE-1-AC §3/§5)
+    "candidate_symphony",  # proposed addition
+    "lens_evidence",       # {lens: signal} dict from multi-lens overlay
+    "apply_guidance",      # plain-text operator guidance (never a button)
+    # Cycle-1 citation fields — {title, url, published, lens} per source (CC-4/CC-12)
+    "sources",    # list of citation dicts
+    "title",      # citation title
+    "url",        # citation url (must be well-formed http/https)
+    "published",  # citation publish timestamp
+    "lens",       # which lens the citation belongs to
 })
 
 # Maximum nesting depth for artifact field values.  We strip rather than

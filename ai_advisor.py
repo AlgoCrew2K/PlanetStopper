@@ -270,6 +270,137 @@ def _build_volatility_regime(autotune_run: dict | None) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Cycle-1 multi-lens scaffold — 5 stub lens helpers + citation convention.
+# Each stub follows the honest-availability pattern of _build_volatility_regime:
+# available=False + a non-empty reason naming the missing source.  No network
+# calls, no fabricated payloads.  Producers wire in on fast-follow cycles.
+# ---------------------------------------------------------------------------
+
+_LENS_STUB_REASON = "{lens} source not connected — cycle-1 scaffold"
+
+
+def _build_technicals_section(_data: object = None) -> dict:
+    """Technicals lens block — cycle-1 stub.
+
+    Honest availability: Alpaca IEX / Alpha Vantage indicator source not yet
+    connected.  Returns available=False with an informative reason.
+    """
+    return {
+        "lens": "technicals",
+        "available": False,
+        "reason": "technicals source not connected — cycle-1 scaffold",
+        "payload": None,
+        "sources": [],
+    }
+
+
+def _build_sentiment_section(_data: object = None) -> dict:
+    """Sentiment / news lens block — cycle-1 stub.
+
+    Honest availability: GDELT 2.0 / Alpaca News source not yet connected.
+    Returns available=False with an informative reason.
+    """
+    return {
+        "lens": "sentiment",
+        "available": False,
+        "reason": "sentiment source not connected — cycle-1 scaffold",
+        "payload": None,
+        "sources": [],
+    }
+
+
+def _build_derivatives_section(_data: object = None) -> dict:
+    """Derivatives / options lens block — cycle-1 stub.
+
+    Honest availability: CBOE put/call + Alpaca IV source not yet connected.
+    Returns available=False with an informative reason.
+    """
+    return {
+        "lens": "derivatives",
+        "available": False,
+        "reason": "derivatives source not connected — cycle-1 scaffold",
+        "payload": None,
+        "sources": [],
+    }
+
+
+def _build_macro_section(_data: object = None) -> dict:
+    """Macro / economic lens block — cycle-1 stub.
+
+    Honest availability: FRED / US Treasury XML source not yet connected.
+    Returns available=False with an informative reason.
+    """
+    return {
+        "lens": "macro",
+        "available": False,
+        "reason": "macro source not connected — cycle-1 scaffold",
+        "payload": None,
+        "sources": [],
+    }
+
+
+def _build_fundamentals_section(_data: object = None) -> dict:
+    """Fundamentals lens block — cycle-1 stub.
+
+    Honest availability: SEC EDGAR companyfacts source not yet connected.
+    Returns available=False with an informative reason.
+    """
+    return {
+        "lens": "fundamentals",
+        "available": False,
+        "reason": "fundamentals source not connected — cycle-1 scaffold",
+        "payload": None,
+        "sources": [],
+    }
+
+
+def build_citation(citation: dict) -> dict | None:
+    """Validate and return a structured citation {title, url, published, lens}.
+
+    A well-formed citation requires all four fields and a valid http/https URL.
+    Returns the citation dict unchanged on success; returns None for any
+    malformed input.  Never raises — invalid input produces None.
+
+    A claim with no source (or a None return) must be suppressed by the caller
+    (CC-4: citation-missing = no claim).
+
+    Args:
+        citation: dict with keys title, url, published, lens.
+
+    Returns:
+        The citation dict if valid; None if any required field is missing or
+        the url is not a well-formed http/https URL.
+    """
+    if not isinstance(citation, dict):
+        return None
+
+    # All four fields are required and must be non-empty strings.
+    for field in ("title", "url", "published", "lens"):
+        value = citation.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return None
+
+    url = citation["url"].strip()
+
+    # Only http and https schemes are permitted for clickable news links.
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return None
+
+    # Reject bare scheme with no host (e.g. "http://").
+    scheme_end = url.index("://") + 3
+    if len(url) <= scheme_end or "/" not in url[scheme_end:] and len(url[scheme_end:]) == 0:
+        host_part = url[scheme_end:].split("/")[0]
+        if not host_part:
+            return None
+
+    return citation
+
+
+# Alias for tests that look up either name.
+validate_citation = build_citation
+
+
 def _build_optuna_section(autotune_run: dict | None) -> dict:
     """The Optuna OOS-vs-train evidence — element 3.
 
@@ -469,7 +600,7 @@ def assemble_advisor_context(
       8. Risk invariants as hard constraints.
       9. Operator-assist role + task framing.
 
-    Real-money-critical: the config surface is the 9-item curated ALLOWLIST.
+    Real-money-critical: the config surface is the 7-item curated ALLOWLIST.
     This function NEVER reads ``dict(os.environ)`` or dumps ``.env``. No
     credential, account id, safety flag, or methodology knob can enter the
     returned dict.
@@ -541,6 +672,15 @@ def assemble_advisor_context(
         "risk_invariants": _RISK_INVARIANTS,
         # P2 — condensed symphony logic / composition.
         "symphony_logic": condensed_logic,
+        # Cycle-1 multi-lens scaffold — 5 stub lens blocks.
+        # Each is available=False until the fast-follow producer connects its
+        # free-data source.  Honest degradation: never fabricates analytical
+        # context (CC-3 data-wall, GATE-1-AC §1).
+        "technicals": _build_technicals_section(),
+        "sentiment": _build_sentiment_section(),
+        "derivatives": _build_derivatives_section(),
+        "macro": _build_macro_section(),
+        "fundamentals": _build_fundamentals_section(),
     }
     return context
 

@@ -3566,6 +3566,8 @@ _ADVISOR_ROLES = [
     "OVERFITTING_CONSCIENCE",
     "SPEC_CRITIC",
     "NARRATOR",  # DEFERRED per Sprint 3 scope — producer not yet shipped
+    "MARKET_PRISM",   # Cycle-1 scaffold — always-on market overview (GATE-1-AC §8)
+    "ADD_CANDIDATE",  # Cycle-1 scaffold — backtest-agnostic add-candidate advisory (GATE-1-AC §3)
 ]
 
 # Hard limit on observations returned per request — prevents unbounded UI renders.
