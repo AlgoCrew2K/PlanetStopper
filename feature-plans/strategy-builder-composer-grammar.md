@@ -132,7 +132,7 @@ Notes:
 {
   "step": "filter",
   "select-fn": <"top" | "bottom">,
-  "select-n": <int>,
+  "select-n": <int-or-numeric-string>,   -- fixtures serialize as strings ("4", "2"); see Phase-1 corrections (handoff amendment 3)
   "sort-by-fn": <indicator-fn>,
   "sort-by-fn-params": {"window": <int>},
   "id": <uuid-string>,
@@ -245,18 +245,18 @@ The legacy EDN format used `:lhs-window-days` / `:rhs-window-days` / `:sort-by-w
 
 Weight is a rational fraction object:
 ```json
-"weight": {"num": <number-or-string>, "den": 100}
+"weight": {"num": <number-or-string>, "den": <100-or-"100">}
 ```
 
-`den` is always the integer `100` in every observed instance. `num` can be:
+`den` always represents `100`, but its JSON type is NOT always integer: the small fixture carries `den` as the string `"100"` as well as the integer `100`. `num` can be:
 - An integer: `{"num": 20, "den": 100}` (= 20%)
 - A numeric string: `{"num": "100", "den": 100}` or `{"num": "66.67", "den": 100}`
 
-VERIFIED-LOCAL (`sample_score_large.json` — both integer and string `num` forms observed in the same fixture).
+VERIFIED-LOCAL (`sample_score_large.json` — both integer and string `num`; `sample_score_small.json` — string `"100"` `den`). A validator must accept both `den` types; see Phase-1 corrections (handoff amendment 4).
 
 ### 5.2 Where Weight Appears
 
-`weight` is a field on nodes that are **direct children** of a `wt-cash-specified` node. It does not appear on children of `wt-cash-equal`, `wt-inverse-vol`, or other step types. VERIFIED-LOCAL.
+`weight` appears on nodes that are **direct children** of a `wt-cash-specified` node, and is also observed on `asset`/`if`/`group`/`filter` nodes outside that position (handoff amendment 4). It does not carry semantics on children of `wt-cash-equal`/`wt-inverse-vol`. VERIFIED-LOCAL.
 
 ### 5.3 Sum Constraint (OPEN)
 
