@@ -102,6 +102,12 @@ _WEIGHT_DEN: int = 100
 # grammar doc §5.3 / OQ-4 — a lint warning when violated, never a hard error.
 _EXPECTED_WEIGHT_SUM: int = 100
 
+# Float comparison epsilon for the weight-sum lint check. Weight numerators are
+# percentages (0–100 range) and may be numeric strings like "66.67", so the
+# summed total is a float; 1e-9 is far below any meaningful percentage precision
+# and avoids false "sum != 100" warnings from floating-point round-off.
+_WEIGHT_SUM_EPSILON: float = 1e-9
+
 # Indicator-fn-bearing keys scanned for lint (flat node-level form). Source:
 # grammar doc §3.4 (if-child) and §3.5 (filter sort-by-fn).
 _FLAT_FN_KEYS: tuple[str, ...] = ("lhs-fn", "rhs-fn", "sort-by-fn")
@@ -465,7 +471,7 @@ def _lint_weight_sum(node: dict) -> list[str]:
             f"wt-cash-specified node has no weighted children; allocation split "
             f"is undefined (id={node.get('id')!r})"
         ]
-    if saw_weight and abs(total - _EXPECTED_WEIGHT_SUM) > 1e-9:
+    if saw_weight and abs(total - _EXPECTED_WEIGHT_SUM) > _WEIGHT_SUM_EPSILON:
         return [
             f"wt-cash-specified weights sum to {total:g}, not "
             f"{_EXPECTED_WEIGHT_SUM} (id={node.get('id')!r})"
