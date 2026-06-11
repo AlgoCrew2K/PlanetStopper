@@ -68,7 +68,8 @@ python app.py          # run daemon
 ## Agent Team Composition (HARD REQUIREMENT)
 **All new codepaths — and bug fixes that introduce new codepaths — MUST be built via the Toxic Pair TDD composition of Agent Teams.** The PM may NOT approximate a team with sequential solo-agent RED → GREEN → review dispatches. Real Agent Teams only: shared worktree, one branch, `SendMessage` handoffs, autonomous Toxic Pair (test-writer ⇄ implementer) cycling with reviewers wrapped around it.
 
-Standing TDD team: **Quad** (test-writer + implementer + `quant-code-reviewer` + domain specialist matched to the surface touched).
+Standing TDD team: **Quint** (test-writer + implementer + `quant-code-reviewer` + domain specialist matched to the surface touched + **doc-writer**).
 Math-layer changes always add `quant-test-writer` as the adversarial test author.
+**doc-writer goes on EVERY team** (TDD and non-TDD): owns feature-plans/ docs for the cycle, audits docstrings/constant comments (files findings to the owning teammate — never edits their files), and drafts CLAUDE.md key-files updates for PM approval. Bad documentation is a shippable defect.
 
 **Exceptions — no TDD required (but often still a team):** config/doc-only edits, one-line fixes to existing codepaths, behavior-preserving refactors fully covered by existing tests, and pure research/diagnosis tasks (no code written). These skip the Toxic Pair because there is no code to drive RED→GREEN — but a multi-surface diagnosis or audit should still run as a **non-TDD Agent Team** (communicating auditors + a synthesizing lead), not a swarm of disconnected solo agents. Reserve solo background agents for genuinely independent single-surface tasks. See `~/.claude/CLAUDE.md` §"Agent Teams" for the composition catalogue.
