@@ -268,6 +268,10 @@ def _validate_node_fields(node: dict, step: str, node_id) -> list[str]:
     elif step == "filter":
         if "select-fn" not in node:
             errs.append(f"filter missing required field 'select-fn' (id={node_id!r})")
+        # select-n is required (grammar doc §3.5); it may be an int or a string
+        # ("4" appears in fixtures, amendment 3), but it must be present.
+        if "select-n" not in node:
+            errs.append(f"filter missing required field 'select-n' (id={node_id!r})")
         if "sort-by-fn" not in node:
             errs.append(f"filter missing required field 'sort-by-fn' (id={node_id!r})")
 
@@ -324,6 +328,15 @@ def _validate_if_child(node: dict, node_id) -> list[str]:
         errs.append(
             f"unknown comparator {node.get('comparator')!r} on if-child "
             f"(id={node_id!r}); allowed: {sorted(KNOWN_COMPARATORS)}"
+        )
+    # When rhs is a ticker comparison (rhs-fixed-value? explicitly False), rhs-fn
+    # names the indicator applied to the rhs ticker and is required (grammar doc
+    # §3.4). A fixed-value comparison (True, or the field absent) correctly omits
+    # rhs-fn, so only the explicit-False case is gated here.
+    if node.get("rhs-fixed-value?") is False and "rhs-fn" not in node:
+        errs.append(
+            f"true-branch if-child with rhs-fixed-value?=False missing required "
+            f"field 'rhs-fn' (id={node_id!r})"
         )
     return errs
 
@@ -431,19 +444,28 @@ def _scan_condition_fns(condition: dict) -> set[str]:
 
 
 def _lint_weight_sum(node: dict) -> list[str]:
-    """Warn if a wt-cash-specified node's child weight numerators != 100."""
+    """Warn about a wt-cash-specified node's weights.
+
+    Two warnings: an "undefined allocation" warning when no child carries a
+    weight (a specified-weight container with nothing to specify), and a
+    "weights do not sum to 100" warning otherwise (OQ-4). A node with no
+    children at all is handled by validate_tree's non-asset-leaf rule, so it is
+    not warned about here.
+    """
+    children = [c for c in _iter_children(node) if isinstance(c, dict)]
     total = 0.0
     saw_weight = False
-    for child in _iter_children(node):
-        if not isinstance(child, dict):
-            continue
+    for child in children:
         weight = child.get("weight")
         if isinstance(weight, dict) and _is_numeric_weight_value(weight.get("num")):
             saw_weight = True
             total += float(weight["num"])
-    if not saw_weight:
-        return []
-    if abs(total - _EXPECTED_WEIGHT_SUM) > 1e-9:
+    if children and not saw_weight:
+        return [
+            f"wt-cash-specified node has no weighted children; allocation split "
+            f"is undefined (id={node.get('id')!r})"
+        ]
+    if saw_weight and abs(total - _EXPECTED_WEIGHT_SUM) > 1e-9:
         return [
             f"wt-cash-specified weights sum to {total:g}, not "
             f"{_EXPECTED_WEIGHT_SUM} (id={node.get('id')!r})"
