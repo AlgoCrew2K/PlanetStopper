@@ -1748,6 +1748,406 @@ class TestPropertyStyleInvariants:
 
 
 # ===========================================================================
+# 9. ADVERSARIAL CYCLE 2 — gaps found by test-writer after first GREEN
+#    These tests target three specific implementation gaps identified by
+#    probing the first-pass implementation after cycle 1 passed.
+# ===========================================================================
+
+
+class TestAdversarialCycle2:
+    """Cycle-2 adversarial cases designed to break gaps in the first GREEN pass."""
+
+    # -----------------------------------------------------------------------
+    # Gap 1: filter missing select-n produces no error
+    # Grammar doc §3.5 lists select-n as a required field alongside select-fn
+    # and sort-by-fn. The cycle-1 implementation only checks select-fn and
+    # sort-by-fn, silently accepting a filter with no select-n.
+    # -----------------------------------------------------------------------
+
+    def test_filter_missing_select_n_produces_error(self):
+        """filter node without 'select-n' must produce a hard error.
+
+        Grammar doc §3.5: select-n is required on a filter node alongside
+        select-fn and sort-by-fn. A filter without select-n cannot be
+        submitted to Composer (it has no count to select).
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "filter",
+                    "select-fn": "top",
+                    # select-n deliberately omitted
+                    "sort-by-fn": "cumulative-return",
+                    "sort-by-fn-params": {"window": 20},
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "asset",
+                            "ticker": "SPY",
+                            "name": "",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "filter without 'select-n' must produce a hard error; "
+            "grammar §3.5 lists select-n as required"
+        )
+
+    def test_filter_with_all_required_fields_validates_clean(self):
+        """Sanity check: a complete filter node must produce no hard errors.
+
+        Ensures the select-n check does not accidentally reject valid filters.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "filter",
+                    "select-fn": "top",
+                    "select-n": 3,
+                    "sort-by-fn": "cumulative-return",
+                    "sort-by-fn-params": {"window": 20},
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "asset",
+                            "ticker": "SPY",
+                            "name": "",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"Complete filter node produced unexpected hard errors: {errors}"
+        )
+
+    # -----------------------------------------------------------------------
+    # Gap 2: if-child with rhs-fixed-value?=False and missing rhs-fn
+    # Grammar doc §3.4: when rhs-fixed-value? is False, rhs-fn and rhs-fn-params
+    # are required. The cycle-1 implementation does not check for rhs-fn presence
+    # on non-fixed-value true-branch if-children.
+    # -----------------------------------------------------------------------
+
+    def test_if_child_ticker_comparison_missing_rhs_fn_produces_error(self):
+        """True-branch if-child with rhs-fixed-value?=False and no rhs-fn must produce an error.
+
+        Grammar doc §3.4: when rhs-fixed-value? is False the rhs is a ticker
+        comparison; rhs-fn (the indicator applied to the rhs ticker) is required.
+        A missing rhs-fn produces a structurally incomplete condition that Composer
+        cannot evaluate.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "lhs-fn": "relative-strength-index",
+                                    "lhs-fn-params": {"window": 14},
+                                    "lhs-val": "SPY",
+                                    "comparator": "gt",
+                                    "rhs-fixed-value?": False,
+                                    "rhs-val": "QQQ",
+                                    # rhs-fn deliberately omitted — required when rhs-fixed-value?=False
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "SPY",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "true-branch if-child with rhs-fixed-value?=False and missing rhs-fn "
+            "must produce a hard error; grammar §3.4 requires rhs-fn when rhs is a ticker"
+        )
+
+    def test_if_child_ticker_comparison_with_rhs_fn_validates_clean(self):
+        """Sanity check: if-child with rhs-fixed-value?=False AND rhs-fn must validate clean."""
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "lhs-fn": "relative-strength-index",
+                                    "lhs-fn-params": {"window": 14},
+                                    "lhs-val": "SPY",
+                                    "comparator": "gt",
+                                    "rhs-fixed-value?": False,
+                                    "rhs-fn": "relative-strength-index",
+                                    "rhs-fn-params": {"window": 14},
+                                    "rhs-val": "QQQ",
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "SPY",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"Valid ticker-comparison if-child (rhs-fn present) produced unexpected errors: {errors}"
+        )
+
+    def test_if_child_fixed_value_without_rhs_fn_validates_clean(self):
+        """Sanity check: rhs-fixed-value?=True without rhs-fn must validate clean.
+
+        When rhs-fixed-value? is True, rhs-fn is correctly absent per grammar §3.4.
+        This ensures the rhs-fn check does not fire on fixed-value comparisons.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "lhs-fn": "cumulative-return",
+                                    "lhs-fn-params": {"window": 200},
+                                    "lhs-val": "TLT",
+                                    "comparator": "gt",
+                                    "rhs-fixed-value?": True,
+                                    "rhs-val": "0",
+                                    # rhs-fn intentionally absent (correct for fixed value)
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "TLT",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"Fixed-value if-child without rhs-fn produced unexpected errors: {errors}"
+        )
+
+    # -----------------------------------------------------------------------
+    # Gap 3: wt-cash-specified with unweighted children produces no lint warning
+    # The implementer flagged this: lint_tree's weight-sum check only fires when
+    # at least one child carries a weight field. A wt-cash-specified whose
+    # children have NO weight fields is structurally ambiguous (Composer cannot
+    # determine the allocation split) and should warn.
+    # -----------------------------------------------------------------------
+
+    def test_wt_cash_specified_with_no_weighted_children_produces_lint_warning(self):
+        """wt-cash-specified with children bearing no weight fields must produce a lint warning.
+
+        A wt-cash-specified container exists to carry explicit allocation percentages.
+        If none of its children have a weight field, the allocation is undefined —
+        this is almost certainly a construction error and warrants a lint warning.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-specified",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "asset",
+                            "ticker": "SPY",
+                            "name": "",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                            # weight field deliberately absent
+                        },
+                        {
+                            "step": "asset",
+                            "ticker": "AGG",
+                            "name": "",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                            # weight field deliberately absent
+                        },
+                    ],
+                }
+            ],
+        }
+        # Must NOT be a hard error (weight fields are optional per the amendment tolerances)
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"wt-cash-specified with unweighted children must not be a hard error; got: {errors}"
+        )
+        # Must be a lint warning (allocation is undefined)
+        warnings = m.lint_tree(tree)
+        assert isinstance(warnings, list)
+        assert len(warnings) >= 1, (
+            "wt-cash-specified with no weighted children must produce a lint warning "
+            "(allocation split is undefined for a specified-weight node)"
+        )
+
+    def test_wt_cash_specified_with_weighted_children_produces_no_spurious_lint(self):
+        """Sanity check: wt-cash-specified with all children weighted to 100 must not warn."""
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-specified",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "asset",
+                            "ticker": "SPY",
+                            "name": "",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                            "weight": {"num": 60, "den": 100},
+                        },
+                        {
+                            "step": "asset",
+                            "ticker": "AGG",
+                            "name": "",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                            "weight": {"num": 40, "den": 100},
+                        },
+                    ],
+                }
+            ],
+        }
+        warnings = m.lint_tree(tree)
+        # 60+40=100 exactly — weight sum warning must not fire
+        weight_sum_warnings = [w for w in warnings if "weight" in w.lower() and "sum" in w.lower()]
+        assert len(weight_sum_warnings) == 0, (
+            f"60+40 weight sum produced unexpected lint warning: {weight_sum_warnings}"
+        )
+
+
+# ===========================================================================
 # 7. CONSTANTS CONTRACT
 #    KNOWN_STEPS, KNOWN_INDICATOR_FNS, KNOWN_COMPARATORS, KNOWN_REBALANCE,
 #    MAX_TREE_DEPTH, MAX_TOTAL_NODES must exist and contain the verified values.
