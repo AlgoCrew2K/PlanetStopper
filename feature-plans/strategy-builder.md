@@ -54,7 +54,7 @@ these `feature-plans/strategy-builder-*.md` docs.
 
 | Module | Phase | Role |
 |--------|-------|------|
-| `advisors/symphony_schema.py` | 1 (in progress) | Build / validate / lint / describe Composer `raw_value` trees. Pure, never-raises validation. |
+| `advisors/symphony_schema.py` | 1 (complete) | Build / validate / lint / describe Composer `raw_value` trees. Pure stdlib; never-raises validation. |
 | `advisors/composer_backtest_client.py` | (existing) | POST /backtest transport; consumes trees the schema layer produces. |
 | `advisors/backtest_gate_engine.py` | (existing) | Overfitting acceptance gate around backtest results. |
 | `analytics.compute_quantstats_metrics()` | 2 (planned) | Metric engine for candidate-screening (quantstats lazily imported; NOT pinned in requirements.txt — Phase-2 team must resolve). |
@@ -63,25 +63,47 @@ these `feature-plans/strategy-builder-*.md` docs.
 
 ## 4. Phase 1 — `advisors/symphony_schema.py` API Reference
 
-> **PLACEHOLDER — finalized after Toxic Pair convergence.** The public surface
-> below is taken from the RED contract (`tests/advisors/test_symphony_schema.py`)
-> and the binding handoff amendments; arg/return semantics are verified against the
-> committed implementation before this section is marked final.
+The public surface below is verified against the committed implementation
+(`advisors/symphony_schema.py`) and its 99-test contract suite
+(`tests/advisors/test_symphony_schema.py`). The module is pure stdlib (`uuid`,
+`copy`) with no network or DB access.
 
-### Contract guarantees (from the RED suite)
+### Inspection functions (read-only, never raise, iterative traversal)
 
-- **`validate_tree(tree) -> list[str]`** never raises on any input (None, scalars,
-  lists, malformed dicts, depth/count bombs); returns a list of hard-error strings.
-- **`lint_tree(tree) -> list[str]`** returns soft-warning strings; read-only; never
-  conflates warnings with hard errors.
-- **`extract_tickers(tree) -> set[str]`** and **`render_rules_text(tree) -> str`**
-  are read-only and deterministic.
-- Constructors (`make_asset`, `make_indicator`, `make_condition`, `make_if`,
-  `make_weight_equal`, `make_weight_specified`, `make_inverse_vol`, `make_group`,
-  `make_filter`, `make_root`) emit fresh UUID-v4 ids per call, share no mutable
-  child lists, and produce trees that `validate_tree` accepts.
-- Constants: `KNOWN_STEPS`, `KNOWN_INDICATOR_FNS`, `KNOWN_COMPARATORS`,
-  `KNOWN_REBALANCE`, `MAX_TREE_DEPTH`, `MAX_TOTAL_NODES`.
+| Function | Returns | Contract |
+|----------|---------|----------|
+| `validate_tree(tree)` | `list[str]` | Hard structural errors only. Returns `[]` for a valid tree; a list of error strings (each naming the offending node id) otherwise. Never raises on any input — None, scalars, lists, malformed dicts, depth/count bombs all yield a list. Read-only. |
+| `lint_tree(tree)` | `list[str]` | Soft advisory warnings (never hard errors): node count > `MAX_TOTAL_NODES`, depth > `MAX_TREE_DEPTH`, indicator fns not in `KNOWN_INDICATOR_FNS` (e.g. `rsi`, `standard-deviation-price`), and `wt-cash-specified` weight numerators not summing to 100. Read-only; never raises. |
+| `extract_tickers(tree)` | `set[str]` | Set of every ticker string in the tree; empty set if none. Read-only; never raises. |
+| `render_rules_text(tree)` | `str` | Deterministic, operator-readable text — one indented line per node, left-to-right child order. Every ticker in the tree appears in the output. Read-only; never raises. |
+
+### Constructors (build-only; `validate_tree` is the validation gate)
+
+Each emits a plain dict with grammar-doc field shapes, a fresh `uuid.uuid4()` id,
+and **deep-copies its children** so no two parents ever share a mutable subtree.
+Constructors do not themselves validate.
+
+| Constructor | Signature | Builds |
+|-------------|-----------|--------|
+| `make_asset` | `(ticker, *, name="", exchange="")` | `asset` leaf (§3.9) |
+| `make_root` | `(name, rebalance, children)` | `root` (§3.1) |
+| `make_weight_equal` | `(children)` | `wt-cash-equal` (§3.6) |
+| `make_weight_specified` | `(children_with_weights)` — list of `(child, num)` tuples; each child gets `weight={"num": num, "den": 100}` | `wt-cash-specified` (§5.1) |
+| `make_inverse_vol` | `(children)` | `wt-inverse-vol` (§3.8) |
+| `make_group` | `(name, children)` | `group` (§3.2) |
+| `make_filter` | `(select_fn, select_n, sort_by_fn, children, *, window)` — emits nested `sort-by-fn-params: {"window": window}` | `filter` (§3.5) |
+| `make_indicator` | `(fn, ticker, *, window)` → `{"fn", "fn-params": {"window"}, "val"}` descriptor | condition operand (§7) |
+| `make_condition` | `(lhs_indicator, comparator, rhs)` — numeric `rhs` → `rhs-fixed-value? = True`, `rhs-val = str(rhs)`; string `rhs` → `rhs-fixed-value? = False`, `rhs-val = rhs` | condition descriptor consumed by `make_if` |
+| `make_if` | `(condition, *, then_children, else_children)` — true-branch if-child carries flat `lhs-fn`/`lhs-fn-params`/`lhs-val`/`comparator`/`rhs-*`; else-branch carries only `is-else-condition? = True` | `if` + two `if-child` nodes (§3.3/§3.4) |
+
+### Constants (grammar-pinned vocabulary; VERIFIED-LOCAL only)
+
+`KNOWN_STEPS` (9 step values), `KNOWN_INDICATOR_FNS` (7 fns; the abbreviation `rsi`
+is deliberately absent — the canonical token is `relative-strength-index`),
+`KNOWN_COMPARATORS` (`gt`/`lt`/`lte`; `gte`/`eq` excluded per OQ-2),
+`KNOWN_REBALANCE` (`daily`/`none`/`weekly`/`monthly`), `MAX_TOTAL_NODES` (500),
+`MAX_TREE_DEPTH` (100). The two size caps are **lint thresholds, not validation
+errors** (see below).
 
 ### Lint vs validate split (key design rule)
 
