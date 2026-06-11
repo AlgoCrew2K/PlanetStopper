@@ -695,30 +695,72 @@ def make_indicator(fn: str, ticker: str, *, window: int) -> dict:
     }
 
 
-def make_condition(lhs_indicator: dict, comparator: str, rhs) -> dict:
+def make_condition(
+    lhs_indicator: dict,
+    comparator: str,
+    rhs,
+    *,
+    rhs_indicator: dict | None = None,
+) -> dict:
     """Build a condition descriptor from an lhs indicator, comparator, and rhs.
 
-    ``rhs`` numeric (int/float, non-bool) → a fixed-value comparison
-    (``rhs-fixed-value? = True``, ``rhs-val = str(rhs)``); ``rhs`` string → a
-    ticker comparison (``rhs-fixed-value? = False``, ``rhs-val = rhs``). The
-    returned dict is consumed by make_if to populate an if-child node.
+    Two comparison shapes (grammar doc §3.4):
+
+      * Fixed-value: ``rhs`` is numeric (int/float, non-bool). The condition is a
+        fixed-value comparison — ``rhs-fixed-value? = True``, ``rhs-val`` is the
+        numeric string. ``rhs_indicator`` must be omitted (there is no rhs fn).
+      * Ticker comparison: ``rhs`` is a ticker string. The condition compares an
+        indicator on the lhs ticker against the same/another indicator on the
+        rhs ticker — ``rhs-fixed-value? = False``, and ``rhs_indicator`` (a
+        ``make_indicator(...)`` descriptor) is REQUIRED so make_if can emit the
+        mandatory ``rhs-fn`` / ``rhs-fn-params`` fields. Omitting it raises
+        ValueError rather than silently emitting a tree that validate_tree would
+        then reject.
+
+    Whole-number numeric rhs is stringified without a trailing ``.0`` (e.g. 0.0
+    -> ``"0"``, not ``"0.0"``) to match the fixture rhs-val form (grammar §3.4).
+
+    The returned dict is consumed by make_if to populate an if-child node.
     """
     cond: dict = {
         "lhs": copy.deepcopy(lhs_indicator),
         "comparator": comparator,
     }
+    # A bare bool is not a meaningful rhs; treat it as a fixed value so
+    # validate_tree can still reason about it deterministically. (Checked first
+    # because bool is a subclass of int.)
     if isinstance(rhs, bool):
-        # A bare bool is not a meaningful rhs; treat it as a fixed value string
-        # so validate_tree can still reason about it deterministically.
         cond["rhs-fixed-value?"] = True
         cond["rhs-val"] = str(rhs)
     elif isinstance(rhs, (int, float)):
         cond["rhs-fixed-value?"] = True
-        cond["rhs-val"] = str(rhs)
+        cond["rhs-val"] = _numeric_rhs_str(rhs)
+        if rhs_indicator is not None:
+            raise ValueError(
+                "rhs_indicator must not be supplied for a fixed-value comparison "
+                "(numeric rhs); it applies only to ticker comparisons."
+            )
     else:
+        # Ticker comparison: rhs-fn is mandatory (grammar §3.4), so the caller
+        # must supply the rhs indicator. Guard against the silent-then-reject
+        # footgun the domain review flagged.
+        if not isinstance(rhs_indicator, dict):
+            raise ValueError(
+                "Cannot construct a ticker-comparison if-child: supply "
+                "rhs_indicator=make_indicator(...) so rhs-fn / rhs-fn-params can "
+                f"be emitted for rhs ticker {rhs!r}."
+            )
         cond["rhs-fixed-value?"] = False
         cond["rhs-val"] = rhs
+        cond["rhs"] = copy.deepcopy(rhs_indicator)
     return cond
+
+
+def _numeric_rhs_str(rhs) -> str:
+    """Stringify a numeric rhs in fixture form (whole floats drop the .0)."""
+    if isinstance(rhs, float) and rhs == int(rhs):
+        return str(int(rhs))
+    return str(rhs)
 
 
 def make_if(condition: dict, *, then_children: list, else_children: list) -> dict:
@@ -743,6 +785,14 @@ def make_if(condition: dict, *, then_children: list, else_children: list) -> dic
         "id": _fresh_id(),
         "children": [copy.deepcopy(child) for child in then_children],
     }
+    # For a ticker comparison (rhs-fixed-value? False), rhs-fn / rhs-fn-params
+    # are required (grammar §3.4); pull them from the rhs indicator descriptor
+    # that make_condition attached. make_condition guarantees its presence in
+    # this branch, so a missing descriptor here is a programming error.
+    if condition.get("rhs-fixed-value?") is False:
+        rhs = condition.get("rhs") or {}
+        true_child["rhs-fn"] = rhs.get("fn")
+        true_child["rhs-fn-params"] = copy.deepcopy(rhs.get("fn-params") or {})
     else_child: dict = {
         "step": "if-child",
         "is-else-condition?": True,
