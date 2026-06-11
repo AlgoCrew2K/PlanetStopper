@@ -1,0 +1,66 @@
+{
+  "_provenance": "Schema-derived fixture — Cycle 2 RED. Represents the shape of a FRED API series/observations response (https://fred.stlouisfed.org/docs/api/fred/series_observations.html). A real captured fixture is produced by the opt-in live test (--include-live). The implementer must produce this shape from a live FRED fetch. Values here are test sentinels — NOT hardcoded producer outputs.",
+  "_api_url_pattern": "https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json&limit=10&sort_order=desc",
+  "_api_requirements": {
+    "key_env_var": "FRED_API_KEY",
+    "honest_availability": "If FRED_API_KEY absent from env, producer returns available=False + reason='FRED_API_KEY not configured'",
+    "rate_limit": "120 req/min",
+    "auth": "Free API key required — register at https://fred.stlouisfed.org/docs/api/api_key.html"
+  },
+  "_target_series": [
+    {"id": "DGS10", "label": "10-Year Treasury Constant Maturity Rate", "unit": "percent"},
+    {"id": "UNRATE", "label": "Unemployment Rate", "unit": "percent"},
+    {"id": "CPIAUCSL", "label": "Consumer Price Index for All Urban Consumers", "unit": "index"},
+    {"id": "FEDFUNDS", "label": "Federal Funds Effective Rate", "unit": "percent"}
+  ],
+  "series_observations_shape": {
+    "realtime_start": "2026-06-10",
+    "realtime_end": "2026-06-10",
+    "observation_start": "1776-07-04",
+    "observation_end": "9999-12-31",
+    "units": "lin",
+    "output_type": 1,
+    "file_type": "json",
+    "order_by": "observation_date",
+    "sort_order": "desc",
+    "count": 2,
+    "offset": 0,
+    "limit": 10,
+    "observations": [
+      {
+        "realtime_start": "2026-06-10",
+        "realtime_end": "2026-06-10",
+        "date": "2026-06-09",
+        "value": "4.25"
+      },
+      {
+        "realtime_start": "2026-06-10",
+        "realtime_end": "2026-06-10",
+        "date": "2026-06-06",
+        "value": "4.28"
+      }
+    ]
+  },
+  "expected_lens_block_shape": {
+    "lens": "macro",
+    "available": true,
+    "payload": {
+      "series": "__is_dict_with_at_least_one_key__"
+    },
+    "sources": [
+      {
+        "title": "__is_non_empty_string__",
+        "url": "__is_http_or_https_url__",
+        "published": "__is_non_empty_string__",
+        "lens": "macro"
+      }
+    ]
+  },
+  "expected_no_key_lens_block": {
+    "lens": "macro",
+    "available": false,
+    "reason": "__contains_FRED_or_key_or_configured__",
+    "payload": null,
+    "sources": []
+  }
+}

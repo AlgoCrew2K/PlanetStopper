@@ -1,0 +1,55 @@
+{
+  "_provenance": "Schema-derived fixture — Cycle 2 RED. Represents the shape of a GDELT 2.0 DOC API JSONFeed response (https://blog.gdeltproject.org/gdelt-doc-2-0-api-supports-jsonfeed/). A real captured fixture is produced by the opt-in live test (--include-live). The implementer must produce this shape from a live GDELT fetch. Values here are test sentinels — NOT hardcoded producer outputs.",
+  "_api_url_pattern": "https://api.gdeltproject.org/api/v2/doc/doc?query={query}&mode=artlist&format=json&maxrecords=10",
+  "_note": "GDELT JSONFeed 'articles' array; each article carries url (clickable), title, seendate (ISO-ish), language, domain, sourcecountry. Tone is a float in [-100, 100] range from a separate API mode (ContextualWeb/tone endpoint). The producer must surface tone in the payload and url+seendate per article in sources.",
+  "gdelt_artlist_shape": {
+    "articles": [
+      {
+        "url": "https://www.example-news-site.com/article-about-markets",
+        "title": "Markets Signal Risk Shift as Indicators Diverge",
+        "seendate": "20260610T120000Z",
+        "language": "English",
+        "domain": "example-news-site.com",
+        "sourcecountry": "United States"
+      },
+      {
+        "url": "https://www.another-financial-outlet.com/markets-rally",
+        "title": "Equity Rally Continues Amid Mixed Signals",
+        "seendate": "20260609T183000Z",
+        "language": "English",
+        "domain": "another-financial-outlet.com",
+        "sourcecountry": "United States"
+      }
+    ]
+  },
+  "expected_lens_block_shape": {
+    "lens": "sentiment",
+    "available": true,
+    "payload": {
+      "article_count": "__is_non_negative_int__",
+      "tone_summary": "__is_string_or_null__",
+      "tone_score": "__is_float_or_null__"
+    },
+    "sources": [
+      {
+        "title": "__is_non_empty_string__",
+        "url": "__is_http_or_https_url__",
+        "published": "__is_non_empty_string__",
+        "lens": "sentiment"
+      }
+    ]
+  },
+  "empty_artlist_shape": {
+    "articles": []
+  },
+  "expected_empty_lens_block_shape": {
+    "lens": "sentiment",
+    "available": true,
+    "payload": {
+      "article_count": 0,
+      "tone_summary": "__is_string_or_null__",
+      "tone_score": "__is_float_or_null__"
+    },
+    "sources": []
+  }
+}

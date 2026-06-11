@@ -1,0 +1,84 @@
+{
+  "_provenance": "Schema-derived fixture — Cycle 2 RED. Represents the shape of an SEC EDGAR companyfacts API response (https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json for AAPL). A real captured fixture is produced by the opt-in live test (--include-live). The implementer must produce this shape from a live SEC EDGAR fetch. Values here are test sentinels — NOT hardcoded producer outputs.",
+  "_api_url_pattern": "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik_padded10}.json",
+  "_api_requirements": {
+    "user_agent_header": "REQUIRED — e.g. 'AlphaBotPM research@example.com'. Missing UA is the primary cause of SEC 403s.",
+    "rate_limit": "<=10 req/sec (fair-access; IP throttle if exceeded)",
+    "auth": "None — no API key required"
+  },
+  "_note": "companyfacts JSON has: entityName, cik, facts.us-gaap.<ConceptName>.units.<unit>[{accn, cik, entityName, loc, end, val, form, filed, frame}]. The producer must extract key financial concepts (Revenues, NetIncomeLoss, Assets, Liabilities) and produce a fundamentals payload + sources = SEC filing links.",
+  "companyfacts_shape": {
+    "cik": 320193,
+    "entityName": "Apple Inc.",
+    "facts": {
+      "us-gaap": {
+        "Revenues": {
+          "label": "Revenue",
+          "description": "Amount of revenue recognized from goods sold, services rendered, insurance premiums, or other activities that constitute an earning process.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000320193-24-000123",
+                "end": "2024-09-28",
+                "val": 391035000000,
+                "form": "10-K",
+                "filed": "2024-11-01",
+                "frame": "CY2024"
+              }
+            ]
+          }
+        },
+        "Assets": {
+          "label": "Assets",
+          "description": "Sum of the carrying amounts as of the balance sheet date of all assets that are recognized.",
+          "units": {
+            "USD": [
+              {
+                "accn": "0000320193-24-000123",
+                "end": "2024-09-28",
+                "val": 364980000000,
+                "form": "10-K",
+                "filed": "2024-11-01"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "expected_lens_block_shape": {
+    "lens": "fundamentals",
+    "available": true,
+    "payload": {
+      "entity_name": "__is_non_empty_string__",
+      "cik": "__is_positive_int_or_string__",
+      "key_facts": "__is_dict__"
+    },
+    "sources": [
+      {
+        "title": "__is_non_empty_string__",
+        "url": "__is_http_or_https_url__",
+        "published": "__is_non_empty_string__",
+        "lens": "fundamentals"
+      }
+    ]
+  },
+  "companyconcept_shape": {
+    "_note": "Used by _build_fundamentals_section for targeted per-concept fetches",
+    "cik": 320193,
+    "entityName": "Apple Inc.",
+    "tag": "Revenues",
+    "description": "Amount of revenue recognized...",
+    "units": {
+      "USD": [
+        {
+          "accn": "0000320193-24-000123",
+          "end": "2024-09-28",
+          "val": 391035000000,
+          "form": "10-K",
+          "filed": "2024-11-01"
+        }
+      ]
+    }
+  }
+}
