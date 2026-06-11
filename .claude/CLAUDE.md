@@ -6,6 +6,7 @@
 - **Purpose:** Institutional-grade algorithmic risk engine; monitors live Composer.trade portfolios; executes intelligent trailing stops ("Guard Alpha")
 - **Stack:** Python 3 / Flask monolithic daemon; SQLite (state DB + optimization DB); Optuna; Composer.trade + Alpaca + Discord integrations
 - **Workflow:** Hard fork — never re-syncing upstream; full autonomy within global guidelines
+- **PM autonomy (operator directive 2026-06-11):** never pause to ask the operator mid-backlog — proceed phase to phase until the backlog is exhausted or blocked on an operator-only input (credentials, scope change). Document assumptions as `[PM-ASSUMED]` in contract docs instead of asking.
 - **Roadmap (in scope):** historical analysis, live-vs-Planet Stopper comparison stats, charts/graphs in Flask dashboard, pytest + GitHub Actions test harness
 
 ## Key Files (quick reference for workers)
