@@ -1,11 +1,16 @@
 # Strategy Builder — Phase 1 Team Handoff State
 
-**Purpose:** Durable team state so the Phase-1 Toxic Pair TDD team (quant-test-writer ⇄
-implementer + quant-code-reviewer + composer-alpaca-integration) can resume after the
-session restart that activates Agent Teams (`CLAUDE_CODE_ENABLE_AGENT_TEAMS=1` is now set
-in `~/.claude/settings.json`; takes effect on next session).
+> **PHASE 1 COMPLETE — 2026-06-11.** Delivered by Agent Team `strategy-builder-p1`
+> (test-writer ⇄ implementer Toxic Pair + quant-code-reviewer + composer domain
+> reviewer + doc-writer). Final state: `advisors/symphony_schema.py` shipped;
+> 108/108 tests; 3 adversarial cycles + domain round (2 findings fixed) + code
+> review (2 findings fixed, final APPROVE, zero outstanding); docs verified
+> behaviorally. PM verification-of-record: full default suite 5,795 passed,
+> 3 failures reproduce identically at the main fork point (pre-existing).
+> The contract amendments below were honored and are now codified in grammar-doc §16.
+> Next: Phase 2 (`advisors/strategy_builder_engine.py` — templates, screens, FDR gate).
 
-## Status at handoff
+## Status at original handoff (historical)
 
 - **Phase 0 complete**: grammar reference committed at
   `feature-plans/strategy-builder-composer-grammar.md`.
