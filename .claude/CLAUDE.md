@@ -19,6 +19,7 @@
 | `reporting.py` | Discord webhooks + QuickChart embeds |
 | `synthetic_history.py` | 250-day live Alpaca historical fetcher (parallel + file cache); feeds autotuner replay |
 | `acceptance_gate.py` | Reusable overfitting acceptance gate — used by autotuner and AI Advisor proposal suite |
+| `advisors/symphony_schema.py` | Phase-1 Strategy Builder schema layer: constructs synthetic Composer `raw_value` trees + inspects arbitrary ones (built or real `/score`). Pure stdlib. Never-raising read-only `validate_tree` (HARD errors) / `lint_tree` (soft warnings — size/depth caps and unknown indicator fns are lint-only per handoff amendments 1–7) / `extract_tickers` / deterministic `render_rules_text`; 10 constructors (`make_root`, `make_asset`, `make_weight_*`, `make_inverse_vol`, `make_group`, `make_filter`, `make_indicator`, `make_condition`, `make_if`) emitting fresh uuid4 ids + deep-copied children. Vocabulary pinned by `feature-plans/strategy-builder-composer-grammar.md`. Iterative traversal (depth-230 fixtures safe). |
 | `advisors/` | Phase-1 Advisor producers: `overfitting_conscience.py`, `spec_critic.py`, `divergence_explainer.py`. Narrator deferred. AI Advisor proposal suite: `correlation_diagnostic.py`, `composer_backtest_client.py`, `backtest_gate_engine.py`, `asset_swap_engine.py`, `logic_change_engine.py`, `advisor_chat.py`. All observations write to `advisor_observations` keyed by `symphony_id`. Called post-walk-forward from `autotuner.py`. |
 
 ## Build / Run
