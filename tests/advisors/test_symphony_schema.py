@@ -2148,6 +2148,173 @@ class TestAdversarialCycle2:
 
 
 # ===========================================================================
+# 10. TICKER-COMPARISON CONSTRUCTOR TESTS (domain review finding)
+#     make_condition with string rhs requires rhs_indicator keyword arg.
+#     Addressed after domain-reviewer found that string rhs silently produced
+#     an invalid if-child (rhs-fn missing) in the cycle-1/2 implementation.
+# ===========================================================================
+
+
+class TestTickerComparisonConstructor:
+    """make_condition ticker-comparison path: rhs_indicator required, raises without it."""
+
+    def test_make_condition_string_rhs_without_rhs_indicator_raises_value_error(self):
+        """make_condition with a string rhs and no rhs_indicator must raise ValueError.
+
+        Without this guard, make_condition silently produced rhs-fixed-value?=False
+        with no rhs-fn — a tree that validate_tree would then reject. The guard
+        ensures the constructor fails loudly at call time, not silently downstream.
+
+        This was the MAJOR finding from the domain review.
+        """
+        m = _import_schema()
+        lhs = m.make_indicator("relative-strength-index", "LQD", window=50)
+        with pytest.raises(ValueError):
+            m.make_condition(lhs, "gt", "XLV")  # string rhs, no rhs_indicator
+
+    def test_make_condition_string_rhs_various_tickers_all_raise(self):
+        """Any ticker string as rhs without rhs_indicator must raise ValueError.
+
+        Confirms the guard is not ticker-specific (not just 'XLV').
+        """
+        m = _import_schema()
+        lhs = m.make_indicator("cumulative-return", "SPY", window=200)
+        for ticker in ("QQQ", "TLT", "BIL", "AGG", "GLD"):
+            with pytest.raises(ValueError, match=r"rhs_indicator"):
+                m.make_condition(lhs, "gt", ticker)
+
+    def test_make_condition_ticker_comparison_with_rhs_indicator_validates_clean(self):
+        """make_condition with string rhs AND rhs_indicator must produce a tree that validates clean.
+
+        This is the constructor-side complement of the cycle-2 test
+        test_if_child_ticker_comparison_missing_rhs_fn_produces_error: the
+        constructor now correctly populates rhs-fn / rhs-fn-params so
+        validate_tree accepts the output.
+        """
+        m = _import_schema()
+        lhs = m.make_indicator("relative-strength-index", "LQD", window=50)
+        rhs_ind = m.make_indicator("relative-strength-index", "XLV", window=50)
+        cond = m.make_condition(lhs, "gt", "XLV", rhs_indicator=rhs_ind)
+        if_node = m.make_if(
+            cond,
+            then_children=[m.make_asset("LQD")],
+            else_children=[m.make_asset("BIL")],
+        )
+        root = m.make_root("Ticker Compare", "daily", [m.make_weight_equal([if_node])])
+        errors = m.validate_tree(root)
+        assert errors == [], (
+            f"Ticker-comparison constructor chain produced unexpected hard errors: {errors}"
+        )
+
+    def test_make_condition_ticker_comparison_emits_correct_if_child_fields(self):
+        """The if-child from make_if on a ticker-comparison condition must have
+        rhs-fixed-value?=False, rhs-fn, rhs-fn-params, and rhs-val set correctly.
+
+        All expected values are derived from the constructor arguments, not hardcoded.
+        """
+        m = _import_schema()
+        lhs = m.make_indicator("relative-strength-index", "LQD", window=50)
+        rhs_ind = m.make_indicator("relative-strength-index", "XLV", window=50)
+        cond = m.make_condition(lhs, "gt", "XLV", rhs_indicator=rhs_ind)
+        if_node = m.make_if(
+            cond,
+            then_children=[m.make_asset("LQD")],
+            else_children=[m.make_asset("BIL")],
+        )
+        true_branch = next(
+            c for c in if_node["children"] if not c.get("is-else-condition?")
+        )
+        # rhs-fixed-value? must be explicitly False (not absent, not True)
+        assert true_branch.get("rhs-fixed-value?") is False, (
+            f"rhs-fixed-value? must be False for ticker comparison; "
+            f"got {true_branch.get('rhs-fixed-value?')!r}"
+        )
+        # rhs-fn must match the fn string from rhs_indicator (derived from arg)
+        assert true_branch.get("rhs-fn") == "relative-strength-index", (
+            f"rhs-fn must match rhs_indicator fn; got {true_branch.get('rhs-fn')!r}"
+        )
+        # rhs-fn-params must carry the window from rhs_indicator (derived from arg)
+        assert true_branch.get("rhs-fn-params") == {"window": 50}, (
+            f"rhs-fn-params must carry rhs_indicator window; "
+            f"got {true_branch.get('rhs-fn-params')!r}"
+        )
+        # rhs-val must be the ticker string (derived from rhs arg)
+        assert true_branch.get("rhs-val") == "XLV", (
+            f"rhs-val must be the rhs ticker; got {true_branch.get('rhs-val')!r}"
+        )
+
+    def test_make_condition_numeric_rhs_with_rhs_indicator_raises_value_error(self):
+        """make_condition with numeric rhs AND rhs_indicator must raise ValueError.
+
+        rhs_indicator is for ticker comparisons only; supplying it for a
+        fixed-value (numeric) comparison is a programming error caught at call time.
+        """
+        m = _import_schema()
+        lhs = m.make_indicator("cumulative-return", "TLT", window=200)
+        rhs_ind = m.make_indicator("cumulative-return", "BIL", window=200)
+        with pytest.raises(ValueError):
+            m.make_condition(lhs, "gt", 0.0, rhs_indicator=rhs_ind)
+
+    def test_make_condition_numeric_rhs_without_rhs_indicator_does_not_raise(self):
+        """make_condition with numeric rhs and no rhs_indicator must NOT raise.
+
+        The fixed-value path is correct without rhs_indicator; the ValueError
+        guard must not fire on normal numeric usage.
+        """
+        m = _import_schema()
+        lhs = m.make_indicator("cumulative-return", "TLT", window=200)
+        try:
+            cond = m.make_condition(lhs, "gt", 0.0)
+        except ValueError as exc:
+            pytest.fail(
+                f"make_condition raised ValueError for valid numeric rhs: {exc}"
+            )
+        assert isinstance(cond, dict)
+
+    def test_make_condition_rhs_val_whole_float_stringifies_without_dot_zero(self):
+        """Whole-number float rhs (0.0, -5.0) must stringify without trailing .0.
+
+        Real fixtures use '0', not '0.0' (grammar §3.4 rhs-val form). Values
+        are asserted against the constructor arguments, not hardcoded outputs.
+        """
+        m = _import_schema()
+        lhs = m.make_indicator("cumulative-return", "TLT", window=200)
+        c_zero = m.make_condition(lhs, "gt", 0.0)
+        c_neg = m.make_condition(lhs, "gt", -5.0)
+        # 0.0 -> '0', not '0.0'
+        assert c_zero["rhs-val"] == str(int(0.0)), (
+            f"0.0 must stringify to '0'; got {c_zero['rhs-val']!r}"
+        )
+        # -5.0 -> '-5', not '-5.0'
+        assert c_neg["rhs-val"] == str(int(-5.0)), (
+            f"-5.0 must stringify to '-5'; got {c_neg['rhs-val']!r}"
+        )
+
+    def test_make_condition_rhs_val_fractional_float_keeps_decimal(self):
+        """Fractional float rhs (5.5, -0.15) must keep the decimal in rhs-val."""
+        m = _import_schema()
+        lhs = m.make_indicator("cumulative-return", "TLT", window=200)
+        c_frac = m.make_condition(lhs, "gt", 5.5)
+        c_neg_frac = m.make_condition(lhs, "gt", -0.15)
+        assert c_frac["rhs-val"] == str(5.5), (
+            f"5.5 must stringify to '5.5'; got {c_frac['rhs-val']!r}"
+        )
+        assert c_neg_frac["rhs-val"] == str(-0.15), (
+            f"-0.15 must stringify to '-0.15'; got {c_neg_frac['rhs-val']!r}"
+        )
+
+    def test_make_condition_rhs_val_integer_stringifies_without_dot(self):
+        """Integer rhs (85) must stringify without a decimal point."""
+        m = _import_schema()
+        lhs = m.make_indicator("relative-strength-index", "SPY", window=14)
+        c_int = m.make_condition(lhs, "gt", 85)
+        # 85 (int) -> '85', not '85.0'
+        assert c_int["rhs-val"] == str(85), (
+            f"Integer 85 must stringify to '85'; got {c_int['rhs-val']!r}"
+        )
+
+
+# ===========================================================================
 # 7. CONSTANTS CONTRACT
 #    KNOWN_STEPS, KNOWN_INDICATOR_FNS, KNOWN_COMPARATORS, KNOWN_REBALANCE,
 #    MAX_TREE_DEPTH, MAX_TOTAL_NODES must exist and contain the verified values.
