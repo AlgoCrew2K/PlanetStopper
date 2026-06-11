@@ -1,0 +1,54 @@
+{
+  "step": "root",
+  "name": "Bond Trend CFIT",
+  "rebalance": "daily",
+  "id": "11111111-1111-4111-a111-111111111111",
+  "children": [
+    {
+      "step": "wt-cash-equal",
+      "id": "22222222-2222-4222-a222-222222222222",
+      "children": [
+        {
+          "step": "if",
+          "id": "33333333-3333-4333-a333-333333333333",
+          "children": [
+            {
+              "step": "if-child",
+              "is-else-condition?": false,
+              "lhs-fn": "cumulative-return",
+              "lhs-fn-params": {"window": 200},
+              "lhs-val": "TLT",
+              "comparator": "gt",
+              "rhs-fixed-value?": true,
+              "rhs-val": "0",
+              "id": "44444444-4444-4444-a444-444444444444",
+              "children": [
+                {
+                  "step": "asset",
+                  "ticker": "TLT",
+                  "name": "iShares 20+ Year Treasury Bond ETF",
+                  "exchange": "XNAS",
+                  "id": "55555555-5555-4555-a555-555555555555"
+                }
+              ]
+            },
+            {
+              "step": "if-child",
+              "is-else-condition?": true,
+              "id": "66666666-6666-4666-a666-666666666666",
+              "children": [
+                {
+                  "step": "asset",
+                  "ticker": "BIL",
+                  "name": "SPDR Bloomberg 1-3 Month T-Bill ETF",
+                  "exchange": "ARCX",
+                  "id": "77777777-7777-4777-a777-777777777777"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
