@@ -513,9 +513,10 @@ direct children of `wt-cash-specified`. The large fixture carries `weight`
 objects on `asset` / `if` / `group` / `filter` nodes (not only
 `wt-cash-specified` children), and `num` as a numeric string (`"66.67"`) in 234
 positions alongside the int form. The string `den` form (`"100"`) is pinned by
-handoff amendment 4 as a read tolerance (this fixture happens to use int `den`
-throughout — 525 occurrences, 0 string — but the tolerance is contract per the
-amendment). `validate_tree` therefore validates a weight object's *shape*
+handoff amendment 4 as a read tolerance: the large fixture uses int `den`
+throughout (525 occurrences, 0 string), but the small fixture does carry one
+string `den` (1 string / 9 int), and the tolerance is contract per the amendment
+regardless. `validate_tree` therefore validates a weight object's *shape*
 wherever it appears (a hard error only when `den` is missing or either
 `num`/`den` is non-numeric — e.g. `num: "abc"`) and does not restrict weight to
 `wt-cash-specified` children. Numeric strings (`"66.67"`, `"100"`) are accepted.
