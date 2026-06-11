@@ -5,6 +5,7 @@ Module under test: advisors.symphony_schema
 These tests are RED by construction: the module does not exist yet.
 Every assertion is derived from:
   - the pinned grammar document (feature-plans/strategy-builder-composer-grammar.md)
+  - the handoff contract amendments (feature-plans/strategy-builder-phase1-handoff.md)
   - the two real captured fixture trees (tests/fixtures/symphony_logic/)
   - the hand-built minimal fixture (tests/fixtures/symphony_schema/)
 
@@ -14,10 +15,30 @@ ADVERSARIAL FOCUS:
     weird nesting, circular-ish depth bombs).
   - No producer-computed values are hardcoded — expected tickers are derived from
     the fixtures by the test's own independent reference walker.
-  - "rsi" must fail; "relative-strength-index" must pass (tests the exact grammar string).
+  - "rsi" must produce a lint warning (not a hard error); "relative-strength-index"
+    must pass with no errors (tests the exact grammar string).
   - "gte" must fail; "gt"/"lt"/"lte" must pass (OQ-2 stance).
   - Constructors must emit uuid4-parseable ids, correct field names, and produce
     trees that pass validate_tree with no errors.
+
+CONTRACT AMENDMENTS (from feature-plans/strategy-builder-phase1-handoff.md):
+  1. MAX_TOTAL_NODES / MAX_TREE_DEPTH are CONSTRUCTION-side constants and lint_tree
+     warnings, NOT validate_tree hard errors (both golden fixtures exceed any sane
+     construction cap: small=866 nodes/depth-19, large=8455 nodes/depth-230).
+  2. Unknown indicator fns are lint warnings, not hard errors ('standard-deviation-price'
+     occurs in the large fixture). Hard errors remain: unknown step, structurally
+     missing required fields, duplicate ids, malformed weight objects, if missing
+     branches, non-asset leaves, None/garbage input.
+  3. select-n may be string OR int ("4" appears in fixtures).
+  4. weight.den may be the string "100"; weight appears on asset/if/group/filter nodes,
+     not only children of wt-cash-specified.
+  5. Flat lhs-window-days/rhs-window-days keys DO appear in real if-child nodes
+     alongside the *-fn-params object form — both tolerated on read; constructors
+     emit the params-object form only.
+  6. condition blocks may carry condition-type, operator, tickers arrays, % placeholder
+     tickers, rhs: {"constant": N} — tolerated without hard error.
+  7. Cosmetic keys tolerated everywhere.
+  8. Traversal must be ITERATIVE (explicit stack) — no RecursionError at depth 230+.
 
 No live network calls.  No DB access.  The math engine is never mocked.
 """
@@ -52,28 +73,38 @@ def _load_fixture(path: pathlib.Path) -> dict:
 
 
 def _ref_collect_tickers(node: Any, out: set[str] | None = None) -> set[str]:
-    """Recursively gather all ticker strings from a raw tree node."""
+    """Iteratively gather all ticker strings from a raw tree node."""
     if out is None:
         out = set()
     if not isinstance(node, dict):
         return out
-    if node.get("ticker"):
-        out.add(node["ticker"])
-    for child in node.get("children") or []:
-        _ref_collect_tickers(child, out)
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, dict):
+            continue
+        if current.get("ticker"):
+            out.add(current["ticker"])
+        for child in current.get("children") or []:
+            stack.append(child)
     return out
 
 
 def _ref_collect_ids(node: Any, out: list[str] | None = None) -> list[str]:
-    """Recursively gather all id values from a raw tree node."""
+    """Iteratively gather all id values from a raw tree node."""
     if out is None:
         out = []
     if not isinstance(node, dict):
         return out
-    if node.get("id"):
-        out.append(node["id"])
-    for child in node.get("children") or []:
-        _ref_collect_ids(child, out)
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, dict):
+            continue
+        if current.get("id"):
+            out.append(current["id"])
+        for child in current.get("children") or []:
+            stack.append(child)
     return out
 
 
@@ -84,13 +115,13 @@ def _ref_collect_ids(node: Any, out: list[str] | None = None) -> list[str]:
 
 @pytest.fixture(scope="module")
 def raw_small() -> dict:
-    """Real /score response — 'Corporate Chaos 5 ways' (small golden fixture)."""
+    """Real /score response — 'Corporate Chaos 5 ways' (small golden fixture, 866 nodes)."""
     return _load_fixture(_GOLDEN_FIXTURE_DIR / "sample_score_small.json")
 
 
 @pytest.fixture(scope="module")
 def raw_large() -> dict:
-    """Real /score response — 'Planet of Hunted Cascades' (large golden fixture)."""
+    """Real /score response — 'Planet of Hunted Cascades' (large golden fixture, 8455 nodes, depth 230)."""
     return _load_fixture(_GOLDEN_FIXTURE_DIR / "sample_score_large.json")
 
 
@@ -128,7 +159,11 @@ class TestGoldenFixtureSmall:
     """validate_tree / extract_tickers / render_rules_text on the small fixture."""
 
     def test_small_fixture_validates_clean(self, raw_small):
-        """The real small fixture must produce zero hard errors."""
+        """The real small fixture (866 nodes) must produce zero hard errors.
+
+        Amendment 1 ground truth: MAX_TOTAL_NODES / MAX_TREE_DEPTH caps are
+        lint warnings only, so 866 nodes must not produce a validate_tree error.
+        """
         m = _import_schema()
         errors = m.validate_tree(raw_small)
         assert errors == [], (
@@ -189,7 +224,14 @@ class TestGoldenFixtureLarge:
     """validate_tree / extract_tickers / render_rules_text on the large fixture."""
 
     def test_large_fixture_validates_clean(self, raw_large):
-        """The real large fixture must produce zero hard errors."""
+        """The real large fixture (8455 nodes, depth 230) must produce zero hard errors.
+
+        Amendment 1 ground truth: both MAX_TOTAL_NODES and MAX_TREE_DEPTH are
+        construction-side lint warnings; they must NOT fire as hard errors on
+        pre-existing trees that exceed those construction bounds.
+        Amendment 2: 'standard-deviation-price' appears 3 times in this fixture
+        and must be tolerated as a lint warning, not a hard validate error.
+        """
         m = _import_schema()
         errors = m.validate_tree(raw_large)
         assert errors == [], (
@@ -229,6 +271,27 @@ class TestGoldenFixtureLarge:
         warnings = m.lint_tree(raw_large)
         assert isinstance(warnings, list)
 
+    def test_large_fixture_no_recursion_error_at_depth_230(self, raw_large):
+        """Traversal of the depth-230 large fixture must never raise RecursionError.
+
+        Amendment 8: traversal must be iterative (explicit stack). A recursive
+        implementation would hit Python's default recursion limit (~1000) on a
+        230-deep tree only if the path is consistently deep; this test confirms
+        the iterative contract holds for the real fixture.
+        """
+        m = _import_schema()
+        # Both validate_tree and extract_tickers traverse the full tree
+        try:
+            errors = m.validate_tree(raw_large)
+            tickers = m.extract_tickers(raw_large)
+        except RecursionError as exc:
+            pytest.fail(
+                f"RecursionError during traversal of depth-230 large fixture: {exc}. "
+                "Traversal must be iterative (explicit stack), not recursive."
+            )
+        assert isinstance(errors, list)
+        assert isinstance(tickers, set)
+
 
 # ===========================================================================
 # 2. CONSTRUCTOR ROUND-TRIP
@@ -241,9 +304,9 @@ class TestConstructorRoundTrip:
 
     def _build_bond_trend_tree(self, m) -> dict:
         """
-        Builds: root(daily) → wt-cash-equal → if → [
-          if-child(false): cumulative-return(TLT,200d) gt 0  → asset(TLT)
-          if-child(true):                                    → asset(BIL)
+        Builds: root(daily) -> wt-cash-equal -> if -> [
+          if-child(false): cumulative-return(TLT,200d) gt 0  -> asset(TLT)
+          if-child(true):                                    -> asset(BIL)
         ]
         """
         tlt_asset = m.make_asset("TLT")
@@ -299,19 +362,26 @@ class TestConstructorRoundTrip:
         assert isinstance(tree.get("children"), list)
 
     def test_constructor_tree_if_child_has_correct_fn_params_field(self):
-        """if-child must use 'lhs-fn-params': {'window': 200} — not flat lhs-window-days."""
+        """if-child must use 'lhs-fn-params': {'window': 200} — not flat lhs-window-days.
+
+        Amendment 5: constructors emit the params-object form only; flat
+        lhs-window-days is only tolerated on read (existing fixtures), not emitted.
+        """
         m = _import_schema()
         tree = self._build_bond_trend_tree(m)
 
         # Locate the true-branch if-child by walking the tree
         def _find_if_children(node):
             results = []
-            if not isinstance(node, dict):
-                return results
-            if node.get("step") == "if-child":
-                results.append(node)
-            for child in node.get("children") or []:
-                results.extend(_find_if_children(child))
+            stack = [node]
+            while stack:
+                current = stack.pop()
+                if not isinstance(current, dict):
+                    continue
+                if current.get("step") == "if-child":
+                    results.append(current)
+                for child in current.get("children") or []:
+                    stack.append(child)
             return results
 
         if_children = _find_if_children(tree)
@@ -341,12 +411,15 @@ class TestConstructorRoundTrip:
 
         def _find_if_children(node):
             results = []
-            if not isinstance(node, dict):
-                return results
-            if node.get("step") == "if-child":
-                results.append(node)
-            for child in node.get("children") or []:
-                results.extend(_find_if_children(child))
+            stack = [node]
+            while stack:
+                current = stack.pop()
+                if not isinstance(current, dict):
+                    continue
+                if current.get("step") == "if-child":
+                    results.append(current)
+                for child in current.get("children") or []:
+                    stack.append(child)
             return results
 
         if_children = _find_if_children(tree)
@@ -377,7 +450,11 @@ class TestConstructorRoundTrip:
         assert len(node["children"]) == 1
 
     def test_constructor_weight_specified_has_weight_fields_on_children(self):
-        """make_weight_specified children must carry weight={num: int, den: 100}."""
+        """make_weight_specified children must carry weight={num: int, den: 100}.
+
+        Constructors emit den as integer 100 (the standard form); the validator
+        also tolerates string '100' on read (Amendment 4).
+        """
         m = _import_schema()
         spy = m.make_asset("SPY")
         agg = m.make_asset("AGG")
@@ -390,8 +467,10 @@ class TestConstructorRoundTrip:
             assert "weight" in child, f"child missing 'weight' field: {child}"
             w = child["weight"]
             assert isinstance(w, dict), f"weight must be a dict; got {w!r}"
-            assert w.get("den") == 100, (
-                f"weight den must always be 100 per grammar; got {w.get('den')!r}"
+            # Constructors always emit integer 100; grammar also allows string "100" on read
+            den_val = w.get("den")
+            assert den_val == 100 or den_val == "100", (
+                f"weight den must be 100 or '100' per grammar; got {den_val!r}"
             )
             # num must be a numeric value (int or numeric string)
             assert "num" in w, f"weight missing 'num' key: {w}"
@@ -481,7 +560,7 @@ class TestAdversarialMutations:
         return copy.deepcopy(raw_minimal)
 
     def _first_node_of_step(self, tree: dict, step: str) -> dict | None:
-        """Find first node with a given step value via BFS."""
+        """Find first node with a given step value via iterative BFS."""
         queue = [tree]
         while queue:
             node = queue.pop(0)
@@ -511,35 +590,75 @@ class TestAdversarialMutations:
         assert len(errors) >= 1, "Expected error for unknown step 'wt-magic-sauce'"
 
     # -----------------------------------------------------------------------
-    # Unknown indicator function
+    # Unknown indicator function — lint warnings, NOT hard errors (Amendment 2)
     # -----------------------------------------------------------------------
 
-    def test_unknown_indicator_fn_rsi_abbreviation_produces_error(self, valid_tree):
-        """'rsi' must FAIL — the verified grammar string is 'relative-strength-index'.
+    def test_unknown_indicator_fn_rsi_abbreviation_produces_lint_warning_not_hard_error(self, valid_tree):
+        """'rsi' must produce a lint_tree warning, NOT a validate_tree hard error.
 
-        This is the most important adversarial case: an implementation that
-        accepts arbitrary strings would silently produce invalid trees.
+        Amendment 2: unknown indicator fns are lint warnings only. 'standard-deviation-price'
+        appears in the large golden fixture and must be tolerated at validation time.
+        The inverse adversarial test ensures 'rsi' (a common shorthand) does at least
+        surface as a lint warning so the user is informed.
         """
         m = _import_schema()
         if_child = self._first_node_of_step(valid_tree, "if-child")
         if if_child is None:
             pytest.skip("Minimal fixture has no if-child; rebuild needed")
-        if_child["lhs-fn"] = "rsi"  # abbreviated — NOT a valid grammar string
+        if_child["lhs-fn"] = "rsi"  # abbreviated — not a VERIFIED-LOCAL grammar string
+        # Must NOT be a hard error (amendment 2)
         errors = m.validate_tree(valid_tree)
-        assert len(errors) >= 1, (
-            "'rsi' is an invalid indicator fn (grammar requires 'relative-strength-index'); "
-            "validate_tree should reject it"
+        assert errors == [], (
+            "Amendment 2: 'rsi' (unknown indicator fn) must be a lint warning, "
+            f"not a validate_tree hard error; got errors: {errors}"
+        )
+        # Must surface as a lint warning so users are informed
+        warnings = m.lint_tree(valid_tree)
+        assert isinstance(warnings, list)
+        assert len(warnings) >= 1, (
+            "'rsi' is not a VERIFIED-LOCAL indicator fn; "
+            "lint_tree should warn about it but validate_tree must not error"
         )
 
-    def test_unknown_indicator_fn_arbitrary_string_produces_error(self, valid_tree):
-        """Completely made-up indicator fn must produce a hard error."""
+    def test_unknown_indicator_fn_arbitrary_string_produces_lint_warning_not_hard_error(self, valid_tree):
+        """Completely made-up indicator fn must produce a lint warning, not a hard error.
+
+        Amendment 2: unknown indicator fns (including 'standard-deviation-price' in the
+        large fixture) are lint warnings, not validate_tree hard errors.
+        """
         m = _import_schema()
         if_child = self._first_node_of_step(valid_tree, "if-child")
         if if_child is None:
             pytest.skip("Minimal fixture has no if-child; rebuild needed")
         if_child["lhs-fn"] = "momentum-oscillator-xyz"
+        # Must NOT be a hard error
         errors = m.validate_tree(valid_tree)
-        assert len(errors) >= 1
+        assert errors == [], (
+            "Amendment 2: unknown indicator fn must be a lint warning, "
+            f"not a validate_tree hard error; got errors: {errors}"
+        )
+        # Must surface as a lint warning
+        warnings = m.lint_tree(valid_tree)
+        assert len(warnings) >= 1, (
+            "lint_tree must warn about unknown indicator fn 'momentum-oscillator-xyz'"
+        )
+
+    def test_standard_deviation_price_in_large_fixture_is_tolerated(self, raw_large):
+        """'standard-deviation-price' appears in the real large fixture; validate_tree must accept it.
+
+        Amendment 2 specific case: this exact fn string occurs 3 times in
+        sample_score_large.json. It is NOT in KNOWN_INDICATOR_FNS but must not
+        cause a hard validation error.
+        """
+        m = _import_schema()
+        # The large fixture already contains standard-deviation-price; its validation
+        # is fully covered by test_large_fixture_validates_clean, but this test makes
+        # the Amendment 2 intent explicit.
+        errors = m.validate_tree(raw_large)
+        assert errors == [], (
+            "validate_tree errored on large fixture containing 'standard-deviation-price'; "
+            "Amendment 2 requires unknown indicator fns to be lint warnings only"
+        )
 
     # -----------------------------------------------------------------------
     # Unknown comparator
@@ -549,7 +668,7 @@ class TestAdversarialMutations:
         """'gte' is NOT in the confirmed grammar (OQ-2 stance: validate against gt/lt/lte only).
 
         This pins the OQ-2 decision: until 'gte' is confirmed in a local fixture,
-        it must be treated as an error.
+        it must be treated as a hard error.
         """
         m = _import_schema()
         if_child = self._first_node_of_step(valid_tree, "if-child")
@@ -628,7 +747,12 @@ class TestAdversarialMutations:
         assert len(errors) >= 1
 
     def test_if_child_missing_lhs_fn_produces_error(self, valid_tree):
-        """True-branch if-child without 'lhs-fn' must produce a hard error."""
+        """True-branch if-child without 'lhs-fn' must produce a hard error.
+
+        Note: this test checks that the *field* is present. The value of lhs-fn
+        may be unknown (lint warning per Amendment 2), but missing it entirely
+        is a structural hard error.
+        """
         m = _import_schema()
         if_child = self._first_node_of_step(valid_tree, "if-child")
         if if_child is None or if_child.get("is-else-condition?"):
@@ -807,18 +931,22 @@ class TestAdversarialMutations:
         assert len(errors) >= 1, f"Expected error for duplicate id {shared_id!r}"
 
     # -----------------------------------------------------------------------
-    # Depth bomb (> MAX_TREE_DEPTH)
+    # Depth bomb — must produce lint warning, NOT validate_tree hard error
+    # (Amendment 1: MAX_TREE_DEPTH is construction-side only)
     # -----------------------------------------------------------------------
 
-    def test_depth_bomb_beyond_max_depth_produces_error(self):
-        """A tree recursively deeper than MAX_TREE_DEPTH must produce a hard error.
+    def test_depth_bomb_beyond_max_depth_produces_lint_warning_not_hard_error(self):
+        """A tree deeper than MAX_TREE_DEPTH must produce a lint warning, not a hard error.
 
-        We build a chain of 200 nested wt-cash-equal nodes — far deeper than
-        any sane MAX_TREE_DEPTH ceiling (grammar doc conservatively sets <500 nodes
-        as OQ-7 bound; any MAX_TREE_DEPTH between 15-100 will catch this).
+        Amendment 1: MAX_TREE_DEPTH is a CONSTRUCTION-side constant; it gates
+        the constructors (and surfaces as a lint warning) but must NOT cause
+        validate_tree to error. The large golden fixture is depth 230 and must
+        validate clean.
+
+        This test uses 300 wrapping layers to ensure it exceeds any reasonable
+        MAX_TREE_DEPTH ceiling, then confirms the behaviour is lint-only.
         """
         m = _import_schema()
-        # Build from the inside out: leaf asset, then 200 wrapping wt-cash-equal nodes
         inner: dict = {
             "step": "asset",
             "ticker": "SPY",
@@ -827,7 +955,7 @@ class TestAdversarialMutations:
             "id": str(uuid.uuid4()),
         }
         current = inner
-        for _ in range(200):  # 200 wrapping layers >> any sane MAX_TREE_DEPTH
+        for _ in range(300):  # 300 wrapping layers >> any sane MAX_TREE_DEPTH
             wrapper = {
                 "step": "wt-cash-equal",
                 "id": str(uuid.uuid4()),
@@ -842,20 +970,73 @@ class TestAdversarialMutations:
             "id": str(uuid.uuid4()),
             "children": [current],
         }
+        # Must NOT be a hard validate error (Amendment 1)
         errors = m.validate_tree(root)
-        assert len(errors) >= 1, (
-            "Expected error for tree depth > MAX_TREE_DEPTH (200 layers deep)"
+        assert errors == [], (
+            "Amendment 1: MAX_TREE_DEPTH must be a lint warning, not a validate_tree hard error; "
+            f"got errors: {errors}"
+        )
+        # Must surface as a lint warning
+        warnings = m.lint_tree(root)
+        assert isinstance(warnings, list)
+        assert len(warnings) >= 1, (
+            "Expected lint warning for tree depth > MAX_TREE_DEPTH (300 layers), got none"
         )
 
+    def test_depth_bomb_no_recursion_error(self):
+        """A 300-layer deep tree must not raise RecursionError (iterative traversal required).
+
+        Amendment 8: traversal must use an explicit stack. This test confirms
+        the iterative contract holds for synthetic depth-bomb trees, not just
+        the large fixture.
+        """
+        m = _import_schema()
+        inner: dict = {
+            "step": "asset",
+            "ticker": "SPY",
+            "name": "",
+            "exchange": "NYSE",
+            "id": str(uuid.uuid4()),
+        }
+        current = inner
+        for _ in range(300):
+            wrapper = {
+                "step": "wt-cash-equal",
+                "id": str(uuid.uuid4()),
+                "children": [current],
+            }
+            current = wrapper
+        root = {
+            "step": "root",
+            "name": "Deep Tree",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [current],
+        }
+        try:
+            m.validate_tree(root)
+            m.extract_tickers(root)
+        except RecursionError as exc:
+            pytest.fail(
+                f"RecursionError on 300-layer tree: {exc}. "
+                "Traversal must be iterative (explicit stack), not recursive."
+            )
+
     # -----------------------------------------------------------------------
-    # Node count bomb (> MAX_TOTAL_NODES)
+    # Node count bomb — must produce lint warning, NOT validate_tree hard error
+    # (Amendment 1: MAX_TOTAL_NODES is construction-side only)
     # -----------------------------------------------------------------------
 
-    def test_node_count_bomb_beyond_max_nodes_produces_error(self):
-        """A tree with more nodes than MAX_TOTAL_NODES must produce a hard error.
+    def test_node_count_bomb_beyond_max_nodes_produces_lint_warning_not_hard_error(self):
+        """A tree with more nodes than MAX_TOTAL_NODES must produce a lint warning, not a hard error.
 
-        We add 600 asset children to a wt-cash-equal node.  OQ-7 cites 500 as
-        the conservative bound; MAX_TOTAL_NODES must be <= 600 to catch this.
+        Amendment 1: MAX_TOTAL_NODES is a CONSTRUCTION-side constant; it gates
+        the constructors (and surfaces as a lint warning) but must NOT cause
+        validate_tree to error. The small golden fixture has 866 nodes and must
+        validate clean.
+
+        This test uses 1000 asset children, exceeding any reasonable MAX_TOTAL_NODES,
+        then confirms the behaviour is lint-only.
         """
         m = _import_schema()
         many_assets = [
@@ -866,7 +1047,7 @@ class TestAdversarialMutations:
                 "exchange": "NYSE",
                 "id": str(uuid.uuid4()),
             }
-            for i in range(600)  # 600 nodes >> MAX_TOTAL_NODES (any value <= 600)
+            for i in range(1000)  # 1000 nodes >> any construction-side MAX_TOTAL_NODES
         ]
         root = {
             "step": "root",
@@ -881,9 +1062,17 @@ class TestAdversarialMutations:
                 }
             ],
         }
+        # Must NOT be a hard validate error (Amendment 1)
         errors = m.validate_tree(root)
-        assert len(errors) >= 1, (
-            "Expected error for tree with > MAX_TOTAL_NODES nodes (600 assets)"
+        assert errors == [], (
+            "Amendment 1: MAX_TOTAL_NODES must be a lint warning, not a validate_tree hard error; "
+            f"got errors: {errors}"
+        )
+        # Must surface as a lint warning
+        warnings = m.lint_tree(root)
+        assert isinstance(warnings, list)
+        assert len(warnings) >= 1, (
+            "Expected lint warning for tree with 1000 nodes > MAX_TOTAL_NODES, got none"
         )
 
     # -----------------------------------------------------------------------
@@ -997,8 +1186,9 @@ class TestAdversarialMutations:
 
 # ===========================================================================
 # 4. LINT TESTS
-#    Lint warnings: weights summing to 99 → warning not error.
+#    Lint warnings: weights summing to 99 -> warning not error.
 #    String nums ("66.67") accepted without error.
+#    Node/depth caps produce lint warnings not hard errors.
 # ===========================================================================
 
 
@@ -1006,7 +1196,7 @@ class TestLintTree:
     """lint_tree produces warnings for policy violations, not hard errors."""
 
     def test_weights_summing_to_99_produces_lint_warning_not_hard_error(self):
-        """wt-cash-specified with weights summing to 99 → lint warning, not validate error.
+        """wt-cash-specified with weights summing to 99 -> lint warning, not validate error.
 
         Per OQ-4 stance: sum constraint is WARN only; Composer may or may not
         enforce it at POST /backtest time.
@@ -1095,6 +1285,39 @@ class TestLintTree:
             f"String numeric weight ('66.67') must be accepted without hard error; got: {errors}"
         )
 
+    def test_weight_den_as_string_100_accepted_without_hard_error(self):
+        """weight.den as string '100' must not produce a hard error.
+
+        Amendment 4: weight.den may be the string '100' in real fixtures.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-specified",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "asset",
+                            "ticker": "SPY",
+                            "name": "",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                            "weight": {"num": 100, "den": "100"},  # den as string
+                        },
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"Amendment 4: weight.den as string '100' must be accepted; got errors: {errors}"
+        )
+
     def test_lint_tree_returns_list_of_strings(self):
         """lint_tree must return a list of strings (possibly empty)."""
         m = _import_schema()
@@ -1126,7 +1349,341 @@ class TestLintTree:
 
 
 # ===========================================================================
-# 5. PROPERTY-STYLE TESTS
+# 5. AMENDMENT TOLERANCE TESTS
+#    Tests verifying Amendment 3-7 tolerances: select-n string, flat window-days,
+#    compound conditions, cosmetic keys.
+# ===========================================================================
+
+
+class TestAmendmentTolerances:
+    """Contract amendments 3-7: tolerance cases that must validate clean."""
+
+    def test_select_n_as_string_accepted_without_hard_error(self):
+        """Amendment 3: select-n as string ('3') must be accepted by validate_tree.
+
+        VERIFIED-LOCAL: sample_score_large.json contains 'select-n': '3'.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "filter",
+                    "select-fn": "top",
+                    "select-n": "3",  # string, not int — Amendment 3
+                    "sort-by-fn": "cumulative-return",
+                    "sort-by-fn-params": {"window": 20},
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "asset",
+                            "ticker": "SPY",
+                            "name": "",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"Amendment 3: select-n as string '3' must be accepted; got errors: {errors}"
+        )
+
+    def test_flat_lhs_window_days_tolerated_alongside_fn_params(self):
+        """Amendment 5: flat lhs-window-days key alongside lhs-fn-params must not produce an error.
+
+        VERIFIED-LOCAL: sample_score_large.json has 186 occurrences of lhs-window-days
+        as a flat key co-existing with lhs-fn-params.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "lhs-fn": "cumulative-return",
+                                    "lhs-fn-params": {"window": 200},
+                                    "lhs-window-days": 200,  # flat key — Amendment 5 tolerance
+                                    "lhs-val": "TLT",
+                                    "comparator": "gt",
+                                    "rhs-fixed-value?": True,
+                                    "rhs-val": "0",
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "TLT",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"Amendment 5: flat lhs-window-days must be tolerated; got errors: {errors}"
+        )
+
+    def test_flat_rhs_window_days_tolerated(self):
+        """Amendment 5: flat rhs-window-days alongside rhs-fn-params must be tolerated.
+
+        VERIFIED-LOCAL: sample_score_large.json has 120 occurrences of rhs-window-days.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "lhs-fn": "relative-strength-index",
+                                    "lhs-fn-params": {"window": 14},
+                                    "lhs-val": "SPY",
+                                    "comparator": "gt",
+                                    "rhs-fixed-value?": False,
+                                    "rhs-fn": "relative-strength-index",
+                                    "rhs-fn-params": {"window": 14},
+                                    "rhs-window-days": 14,  # flat key — Amendment 5 tolerance
+                                    "rhs-val": "QQQ",
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "SPY",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"Amendment 5: flat rhs-window-days must be tolerated; got errors: {errors}"
+        )
+
+    def test_compound_condition_block_tolerated(self):
+        """Amendment 6: if-child with a nested 'condition' block must validate clean.
+
+        Compound conditions carry condition-type, operator, tickers arrays, and
+        rhs: {'constant': N}. These must be tolerated without error.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    # Compound condition block (Amendment 6)
+                                    "condition": {
+                                        "condition-type": "compound",
+                                        "operator": "any",
+                                        "conditions": [
+                                            {
+                                                "lhs": {
+                                                    "fn": "cumulative-return",
+                                                    "fn-params": {"window": 200},
+                                                    "val": "TLT",
+                                                },
+                                                "comparator": "gt",
+                                                "rhs": {"constant": 0},
+                                            }
+                                        ],
+                                    },
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "TLT",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"Amendment 6: compound condition block must be tolerated; got errors: {errors}"
+        )
+
+    def test_cosmetic_keys_tolerated_on_all_node_types(self):
+        """Amendment 7: cosmetic keys (collapsed?, description, window-days, etc.) must not error.
+
+        These keys appear throughout real fixtures and must be silently ignored
+        by the validator.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "description": "cosmetic description field",  # cosmetic
+            "collapsed?": True,                            # cosmetic
+            "suppress_incomplete_warnings": False,         # cosmetic
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "window-days": 20,  # cosmetic
+                    "children": [
+                        {
+                            "step": "asset",
+                            "ticker": "SPY",
+                            "name": "SPDR S&P 500",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                            "price": 500.0,            # cosmetic
+                            "dollar_volume": 1e9,      # cosmetic
+                            "has_marketcap": True,     # cosmetic
+                            "children-count": 0,       # cosmetic
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"Amendment 7: cosmetic keys must not produce hard errors; got: {errors}"
+        )
+
+    def test_weight_on_non_wt_cash_specified_child_tolerated(self):
+        """Amendment 4: weight field on asset/if/group/filter nodes must be tolerated.
+
+        The grammar notes that weight appears on nodes that are direct children of
+        wt-cash-specified. Amendment 4 clarifies it may also appear on other node
+        types in real fixtures; it must not cause a hard error.
+        """
+        m = _import_schema()
+        tree = {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",  # NOT wt-cash-specified
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "asset",
+                            "ticker": "SPY",
+                            "name": "",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                            "weight": {"num": 100, "den": 100},  # weight on non-wt-specified child
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"Amendment 4: weight on non-wt-cash-specified child must be tolerated; got: {errors}"
+        )
+
+
+# ===========================================================================
+# 6. PROPERTY-STYLE TESTS
 #    validate_tree is read-only (input unmutated).
 #    Constructors don't share mutable children references.
 # ===========================================================================
@@ -1191,7 +1748,7 @@ class TestPropertyStyleInvariants:
 
 
 # ===========================================================================
-# 6. CONSTANTS CONTRACT
+# 7. CONSTANTS CONTRACT
 #    KNOWN_STEPS, KNOWN_INDICATOR_FNS, KNOWN_COMPARATORS, KNOWN_REBALANCE,
 #    MAX_TREE_DEPTH, MAX_TOTAL_NODES must exist and contain the verified values.
 # ===========================================================================
@@ -1268,26 +1825,34 @@ class TestModuleConstants:
             assert val in m.KNOWN_REBALANCE, f"KNOWN_REBALANCE missing {val!r}"
 
     def test_max_tree_depth_is_positive_int(self):
-        """MAX_TREE_DEPTH must be a positive integer."""
+        """MAX_TREE_DEPTH must be a positive integer.
+
+        Amendment 1: this is a construction-side constant (lint warning threshold),
+        not a validate_tree hard error gate. Its value may be any positive integer
+        chosen by the implementer — no upper bound is tested here.
+        """
         m = _import_schema()
         assert hasattr(m, "MAX_TREE_DEPTH"), "MAX_TREE_DEPTH missing"
         assert isinstance(m.MAX_TREE_DEPTH, int) and not isinstance(m.MAX_TREE_DEPTH, bool)
         assert m.MAX_TREE_DEPTH > 0
 
-    def test_max_total_nodes_is_positive_int_and_at_most_500(self):
-        """MAX_TOTAL_NODES must be a positive integer <= 500 (OQ-7 conservative bound)."""
+    def test_max_total_nodes_is_positive_int(self):
+        """MAX_TOTAL_NODES must be a positive integer.
+
+        Amendment 1: this is a construction-side constant (lint warning threshold),
+        not a validate_tree hard error gate. The golden fixtures have 866 and 8455
+        nodes respectively, so no upper bound is imposed on this constant.
+        OQ-7 cites 500 as a conservative bound for CONSTRUCTING synthetic trees,
+        but that does not constrain validation of pre-existing trees.
+        """
         m = _import_schema()
         assert hasattr(m, "MAX_TOTAL_NODES"), "MAX_TOTAL_NODES missing"
         assert isinstance(m.MAX_TOTAL_NODES, int) and not isinstance(m.MAX_TOTAL_NODES, bool)
         assert m.MAX_TOTAL_NODES > 0
-        # OQ-7: keep synthetic trees < 500 nodes as a conservative bound
-        assert m.MAX_TOTAL_NODES <= 500, (
-            f"MAX_TOTAL_NODES={m.MAX_TOTAL_NODES} exceeds OQ-7 conservative 500-node bound"
-        )
 
 
 # ===========================================================================
-# 7. ADDITIONAL ADVERSARIAL CASES (Cycle 2 pre-emptive hardening)
+# 8. ADDITIONAL ADVERSARIAL CASES (Cycle 2 pre-emptive hardening)
 #    These cases are designed to break naive first-pass implementations.
 # ===========================================================================
 
@@ -1469,7 +2034,11 @@ class TestAdversarialCasesRound2:
         # The exact structure required by the if-child grammar
         assert isinstance(indicator, dict)
         # Must have the fn name
-        assert indicator.get("fn") == "cumulative-return" or indicator.get("lhs-fn") == "cumulative-return" or indicator.get("name") == "cumulative-return", (
+        assert (
+            indicator.get("fn") == "cumulative-return"
+            or indicator.get("lhs-fn") == "cumulative-return"
+            or indicator.get("name") == "cumulative-return"
+        ), (
             f"Indicator dict must encode the function name; got: {indicator}"
         )
 
