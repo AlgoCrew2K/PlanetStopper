@@ -121,7 +121,8 @@ def raw_small() -> dict:
 
 @pytest.fixture(scope="module")
 def raw_large() -> dict:
-    """Real /score response — 'Planet of Hunted Cascades' (large golden fixture, 8455 nodes, depth 230)."""
+    """Real /score response — 'Planet of Hunted Cascades' (large golden fixture, 8455 nodes,
+    depth 230)."""
     return _load_fixture(_GOLDEN_FIXTURE_DIR / "sample_score_large.json")
 
 
@@ -143,9 +144,7 @@ def _import_schema():
 
         return symphony_schema
     except ImportError as exc:
-        pytest.fail(
-            f"advisors/symphony_schema.py does not exist yet (RED suite): {exc}"
-        )
+        pytest.fail(f"advisors/symphony_schema.py does not exist yet (RED suite): {exc}")
 
 
 # ===========================================================================
@@ -166,9 +165,7 @@ class TestGoldenFixtureSmall:
         """
         m = _import_schema()
         errors = m.validate_tree(raw_small)
-        assert errors == [], (
-            f"Expected no hard errors on golden small fixture, got: {errors}"
-        )
+        assert errors == [], f"Expected no hard errors on golden small fixture, got: {errors}"
 
     def test_small_fixture_extract_tickers_matches_reference_walk(self, raw_small):
         """extract_tickers must agree with the independent reference walker.
@@ -191,9 +188,7 @@ class TestGoldenFixtureSmall:
         text = m.render_rules_text(raw_small)
         assert isinstance(text, str) and len(text) > 0
         for ticker in tickers:
-            assert ticker in text, (
-                f"render_rules_text omitted ticker {ticker!r} from small fixture"
-            )
+            assert ticker in text, f"render_rules_text omitted ticker {ticker!r} from small fixture"
 
     def test_small_fixture_render_rules_text_is_deterministic(self, raw_small):
         """Two calls to render_rules_text on the same tree must return identical output."""
@@ -202,9 +197,7 @@ class TestGoldenFixtureSmall:
         second = m.render_rules_text(raw_small)
         assert first == second, "render_rules_text is not deterministic"
 
-    def test_small_fixture_lint_tree_produces_no_false_positive_hard_errors(
-        self, raw_small
-    ):
+    def test_small_fixture_lint_tree_produces_no_false_positive_hard_errors(self, raw_small):
         """lint_tree must not mislabel real-fixture warnings as hard errors.
 
         This test guards against an implementation that conflates lint warnings
@@ -234,9 +227,7 @@ class TestGoldenFixtureLarge:
         """
         m = _import_schema()
         errors = m.validate_tree(raw_large)
-        assert errors == [], (
-            f"Expected no hard errors on golden large fixture, got: {errors}"
-        )
+        assert errors == [], f"Expected no hard errors on golden large fixture, got: {errors}"
 
     def test_large_fixture_extract_tickers_matches_reference_walk(self, raw_large):
         """extract_tickers on the large fixture must agree with the reference walker."""
@@ -254,9 +245,7 @@ class TestGoldenFixtureLarge:
         text = m.render_rules_text(raw_large)
         assert isinstance(text, str) and len(text) > 0
         for ticker in tickers:
-            assert ticker in text, (
-                f"render_rules_text omitted ticker {ticker!r} from large fixture"
-            )
+            assert ticker in text, f"render_rules_text omitted ticker {ticker!r} from large fixture"
 
     def test_large_fixture_render_rules_text_is_deterministic(self, raw_large):
         """Determinism check on the larger (more complex) fixture."""
@@ -347,8 +336,7 @@ class TestConstructorRoundTrip:
         tree = self._build_bond_trend_tree(m)
         ids = _ref_collect_ids(tree)
         assert len(ids) == len(set(ids)), (
-            f"Duplicate ids found in constructed tree: "
-            f"{[x for x in ids if ids.count(x) > 1]}"
+            f"Duplicate ids found in constructed tree: {[x for x in ids if ids.count(x) > 1]}"
         )
 
     def test_constructor_tree_root_has_correct_fields(self):
@@ -387,9 +375,7 @@ class TestConstructorRoundTrip:
         if_children = _find_if_children(tree)
         assert len(if_children) >= 1, "No if-child nodes found in constructed tree"
 
-        true_branch = next(
-            (n for n in if_children if not n.get("is-else-condition?")), None
-        )
+        true_branch = next((n for n in if_children if not n.get("is-else-condition?")), None)
         assert true_branch is not None, "No true-branch if-child found"
         # Per grammar: params nested as {"window": int}, NOT flat key "lhs-window-days"
         assert "lhs-fn-params" in true_branch, (
@@ -423,9 +409,7 @@ class TestConstructorRoundTrip:
             return results
 
         if_children = _find_if_children(tree)
-        true_branch = next(
-            (n for n in if_children if not n.get("is-else-condition?")), None
-        )
+        true_branch = next((n for n in if_children if not n.get("is-else-condition?")), None)
         assert true_branch is not None
         assert true_branch.get("lhs-fn") == "cumulative-return", (
             f"lhs-fn must be 'cumulative-return'; got {true_branch.get('lhs-fn')!r}"
@@ -574,9 +558,7 @@ class TestAdversarialMutations:
 
     def _assert_errors_with_node_reference(self, errors: list[str], node_id: str):
         """At least one error must reference the offending node id or contain useful info."""
-        assert len(errors) >= 1, (
-            f"Expected >= 1 error for node {node_id!r}, got none"
-        )
+        assert len(errors) >= 1, f"Expected >= 1 error for node {node_id!r}, got none"
 
     # -----------------------------------------------------------------------
     # Unknown step
@@ -593,7 +575,9 @@ class TestAdversarialMutations:
     # Unknown indicator function — lint warnings, NOT hard errors (Amendment 2)
     # -----------------------------------------------------------------------
 
-    def test_unknown_indicator_fn_rsi_abbreviation_produces_lint_warning_not_hard_error(self, valid_tree):
+    def test_unknown_indicator_fn_rsi_abbreviation_produces_lint_warning_not_hard_error(
+        self, valid_tree
+    ):
         """'rsi' must produce a lint_tree warning, NOT a validate_tree hard error.
 
         Amendment 2: unknown indicator fns are lint warnings only. 'standard-deviation-price'
@@ -620,7 +604,9 @@ class TestAdversarialMutations:
             "lint_tree should warn about it but validate_tree must not error"
         )
 
-    def test_unknown_indicator_fn_arbitrary_string_produces_lint_warning_not_hard_error(self, valid_tree):
+    def test_unknown_indicator_fn_arbitrary_string_produces_lint_warning_not_hard_error(
+        self, valid_tree
+    ):
         """Completely made-up indicator fn must produce a lint warning, not a hard error.
 
         Amendment 2: unknown indicator fns (including 'standard-deviation-price' in the
@@ -644,7 +630,8 @@ class TestAdversarialMutations:
         )
 
     def test_standard_deviation_price_in_large_fixture_is_tolerated(self, raw_large):
-        """'standard-deviation-price' appears in the real large fixture; validate_tree must accept it.
+        """'standard-deviation-price' appears in the real large fixture; validate_tree must accept
+        it.
 
         Amendment 2 specific case: this exact fn string occurs 3 times in
         sample_score_large.json. It is NOT in KNOWN_INDICATOR_FNS but must not
@@ -866,8 +853,7 @@ class TestAdversarialMutations:
         assert if_node is not None, "No if node found in minimal fixture"
         # Remove the else-branch child
         if_node["children"] = [
-            c for c in (if_node.get("children") or [])
-            if not c.get("is-else-condition?")
+            c for c in (if_node.get("children") or []) if not c.get("is-else-condition?")
         ]
         errors = m.validate_tree(valid_tree)
         assert len(errors) >= 1, "Expected error for if missing else branch"
@@ -1028,7 +1014,8 @@ class TestAdversarialMutations:
     # -----------------------------------------------------------------------
 
     def test_node_count_bomb_beyond_max_nodes_produces_lint_warning_not_hard_error(self):
-        """A tree with more nodes than MAX_TOTAL_NODES must produce a lint warning, not a hard error.
+        """A tree with more nodes than MAX_TOTAL_NODES must produce a lint warning, not a hard
+        error.
 
         Amendment 1: MAX_TOTAL_NODES is a CONSTRUCTION-side constant; it gates
         the constructors (and surfaces as a lint warning) but must NOT cause
@@ -1157,7 +1144,13 @@ class TestAdversarialMutations:
                 "root with all None fields",
             ),
             (
-                {"step": "root", "name": "T", "rebalance": "daily", "id": "x", "children": [None, None]},
+                {
+                    "step": "root",
+                    "name": "T",
+                    "rebalance": "daily",
+                    "id": "x",
+                    "children": [None, None],
+                },
                 "children containing None elements",
             ),
             (
@@ -1240,9 +1233,7 @@ class TestLintTree:
         # Must be a lint warning
         warnings = m.lint_tree(tree)
         assert isinstance(warnings, list)
-        assert len(warnings) >= 1, (
-            "Expected lint warning for weight sum = 99 (not 100), got none"
-        )
+        assert len(warnings) >= 1, "Expected lint warning for weight sum = 99 (not 100), got none"
 
     def test_weights_as_string_nums_accepted_without_hard_error(self):
         """weight.num as numeric string ('66.67') must not produce a hard error.
@@ -1618,8 +1609,8 @@ class TestAmendmentTolerances:
             "rebalance": "daily",
             "id": str(uuid.uuid4()),
             "description": "cosmetic description field",  # cosmetic
-            "collapsed?": True,                            # cosmetic
-            "suppress_incomplete_warnings": False,         # cosmetic
+            "collapsed?": True,  # cosmetic
+            "suppress_incomplete_warnings": False,  # cosmetic
             "children": [
                 {
                     "step": "wt-cash-equal",
@@ -1632,10 +1623,10 @@ class TestAmendmentTolerances:
                             "name": "SPDR S&P 500",
                             "exchange": "NYSE",
                             "id": str(uuid.uuid4()),
-                            "price": 500.0,            # cosmetic
-                            "dollar_volume": 1e9,      # cosmetic
-                            "has_marketcap": True,     # cosmetic
-                            "children-count": 0,       # cosmetic
+                            "price": 500.0,  # cosmetic
+                            "dollar_volume": 1e9,  # cosmetic
+                            "has_marketcap": True,  # cosmetic
+                            "children-count": 0,  # cosmetic
                         }
                     ],
                 }
@@ -1699,9 +1690,7 @@ class TestPropertyStyleInvariants:
         _before = json.dumps(original, sort_keys=True)
         m.validate_tree(original)
         _after = json.dumps(original, sort_keys=True)
-        assert _before == _after, (
-            "validate_tree mutated the input dict; it must be read-only"
-        )
+        assert _before == _after, "validate_tree mutated the input dict; it must be read-only"
 
     def test_validate_tree_does_not_mutate_input_on_invalid_tree(self):
         """validate_tree must not mutate inputs even when it finds errors."""
@@ -1835,9 +1824,7 @@ class TestAdversarialCycle2:
             ],
         }
         errors = m.validate_tree(tree)
-        assert errors == [], (
-            f"Complete filter node produced unexpected hard errors: {errors}"
-        )
+        assert errors == [], f"Complete filter node produced unexpected hard errors: {errors}"
 
     # -----------------------------------------------------------------------
     # Gap 2: if-child with rhs-fixed-value?=False and missing rhs-fn
@@ -1878,7 +1865,8 @@ class TestAdversarialCycle2:
                                     "comparator": "gt",
                                     "rhs-fixed-value?": False,
                                     "rhs-val": "QQQ",
-                                    # rhs-fn deliberately omitted — required when rhs-fixed-value?=False
+                                    # rhs-fn deliberately omitted — required when
+                                    # rhs-fixed-value?=False
                                     "id": str(uuid.uuid4()),
                                     "children": [
                                         {
@@ -1977,7 +1965,8 @@ class TestAdversarialCycle2:
         }
         errors = m.validate_tree(tree)
         assert errors == [], (
-            f"Valid ticker-comparison if-child (rhs-fn present) produced unexpected errors: {errors}"
+            f"Valid ticker-comparison if-child (rhs-fn present) produced unexpected"
+            f" errors: {errors}"
         )
 
     def test_if_child_fixed_value_without_rhs_fn_validates_clean(self):
@@ -2184,7 +2173,8 @@ class TestTickerComparisonConstructor:
                 m.make_condition(lhs, "gt", ticker)
 
     def test_make_condition_ticker_comparison_with_rhs_indicator_validates_clean(self):
-        """make_condition with string rhs AND rhs_indicator must produce a tree that validates clean.
+        """make_condition with string rhs AND rhs_indicator must produce a tree that validates
+        clean.
 
         This is the constructor-side complement of the cycle-2 test
         test_if_child_ticker_comparison_missing_rhs_fn_produces_error: the
@@ -2221,9 +2211,7 @@ class TestTickerComparisonConstructor:
             then_children=[m.make_asset("LQD")],
             else_children=[m.make_asset("BIL")],
         )
-        true_branch = next(
-            c for c in if_node["children"] if not c.get("is-else-condition?")
-        )
+        true_branch = next(c for c in if_node["children"] if not c.get("is-else-condition?"))
         # rhs-fixed-value? must be explicitly False (not absent, not True)
         assert true_branch.get("rhs-fixed-value?") is False, (
             f"rhs-fixed-value? must be False for ticker comparison; "
@@ -2266,9 +2254,7 @@ class TestTickerComparisonConstructor:
         try:
             cond = m.make_condition(lhs, "gt", 0.0)
         except ValueError as exc:
-            pytest.fail(
-                f"make_condition raised ValueError for valid numeric rhs: {exc}"
-            )
+            pytest.fail(f"make_condition raised ValueError for valid numeric rhs: {exc}")
         assert isinstance(cond, dict)
 
     def test_make_condition_rhs_val_whole_float_stringifies_without_dot_zero(self):
@@ -2340,9 +2326,7 @@ class TestModuleConstants:
             "asset",
         }
         missing = verified_steps - set(m.KNOWN_STEPS)
-        assert not missing, (
-            f"KNOWN_STEPS is missing VERIFIED-LOCAL step values: {missing}"
-        )
+        assert not missing, f"KNOWN_STEPS is missing VERIFIED-LOCAL step values: {missing}"
 
     def test_known_indicator_fns_contains_all_verified_local_fns(self):
         """KNOWN_INDICATOR_FNS must include all 7 VERIFIED-LOCAL indicator strings."""
@@ -2358,9 +2342,7 @@ class TestModuleConstants:
             "moving-average-return",
         }
         missing = verified_fns - set(m.KNOWN_INDICATOR_FNS)
-        assert not missing, (
-            f"KNOWN_INDICATOR_FNS is missing VERIFIED-LOCAL fn strings: {missing}"
-        )
+        assert not missing, f"KNOWN_INDICATOR_FNS is missing VERIFIED-LOCAL fn strings: {missing}"
 
     def test_known_indicator_fns_does_not_contain_rsi_abbreviation(self):
         """KNOWN_INDICATOR_FNS must NOT contain 'rsi' — the valid string is longer."""
@@ -2605,9 +2587,7 @@ class TestAdversarialCasesRound2:
             indicator.get("fn") == "cumulative-return"
             or indicator.get("lhs-fn") == "cumulative-return"
             or indicator.get("name") == "cumulative-return"
-        ), (
-            f"Indicator dict must encode the function name; got: {indicator}"
-        )
+        ), f"Indicator dict must encode the function name; got: {indicator}"
 
     def test_make_condition_with_float_rhs_produces_rhs_fixed_value_true(self):
         """make_condition(lhs, 'gt', 0.0) with float rhs must set rhs-fixed-value? = True."""
@@ -2638,9 +2618,7 @@ class TestAdversarialCasesRound2:
         errors = m.validate_tree(bad_tree)
         assert isinstance(errors, list)
         for err in errors:
-            assert isinstance(err, str), (
-                f"validate_tree returned non-string error item: {err!r}"
-            )
+            assert isinstance(err, str), f"validate_tree returned non-string error item: {err!r}"
 
     def test_extract_tickers_returns_empty_set_for_tree_with_no_assets(self):
         """A tree with no asset nodes must yield an empty set from extract_tickers."""
