@@ -448,3 +448,126 @@ A minimal tree that should backtest successfully, based on VERIFIED-LOCAL patter
 | `/home/user/PlanetStopper/feature-plans/ai-advisor-composer-api-research.md` | 1 (prior research) | 2026-05-31 (produced) | VERIFIED-COMMUNITY | Composer swagger.json scrape; empirically validated if-child shape; broker enums; rate limits |
 | `/home/user/PlanetStopper/tests/symphony_logic/test_symphony_logic.py` | 1 (test code) | 2026-06-11 (read) | VERIFIED-LOCAL | Confirms step vocabulary in Hypothesis strategy; compound condition structure |
 | `https://github.com/androslee/compose_symphony_parser` | 3 (community) | ~2023 (repo age) | VERIFIED-COMMUNITY | EDN parser; confirms `lte` comparator; `:sort-by-window-days` EDN key (serialized differently in JSON) |
+
+---
+
+## 16. Phase-1 fixture-verification corrections
+
+This section records the corrections that the Phase-1 `advisors/symphony_schema.py`
+implementation made to Sections 1–15 after the module was driven against the two
+real `/score` fixtures (`sample_score_small.json` — 866 nodes, depth 19;
+`sample_score_large.json` — 8455 nodes, depth 230). Both fixtures must
+`validate_tree() == []`; where a Section 1–15 claim or the original Phase-1 brief
+would have rejected a real fixture, the rule was relaxed to a **lint warning** or
+a **read tolerance** rather than a hard validation error.
+
+These corrections correspond to amendments 1–7 of
+`feature-plans/strategy-builder-phase1-handoff.md`. They are the stable in-doc
+anchor for the §3.5 and §5.1/§5.2 forward-references. Each correction states what
+the grammar/brief originally implied, what the fixtures revealed, and how
+`symphony_schema.py` actually behaves.
+
+The split is deliberate and load-bearing:
+
+- **`validate_tree`** returns HARD errors only and never raises — reserved for
+  structural defects that make a tree unsubmittable (unknown step, missing
+  required field, malformed weight, duplicate id, `if` missing a branch,
+  non-asset leaf, unknown comparator/rebalance).
+- **`lint_tree`** returns advisory warnings — vocabulary drift and policy/size
+  concerns that real, working symphonies legitimately exhibit.
+
+### 16.1 Size and depth caps are lint-only (amendment 1)
+
+`MAX_TOTAL_NODES` (500) and `MAX_TREE_DEPTH` (100) are **construction-side
+constants and `lint_tree` warning thresholds, not `validate_tree` hard errors.**
+Both golden fixtures exceed any sane construction cap (866 nodes / 8455 nodes;
+depth 19 / depth 230), so gating validation on these would reject real trees.
+A tree over either cap validates clean and only earns a lint warning. The OQ-7
+"< 500 node" bound in §13 governs trees we CONSTRUCT, not trees we VALIDATE.
+
+### 16.2 Unknown indicator fns are lint-only (amendment 2)
+
+An indicator-fn string outside `KNOWN_INDICATOR_FNS` (the 7 VERIFIED-LOCAL fns in
+§4.1) is a **lint warning, not a hard error.** `standard-deviation-price` appears
+3 times in the large fixture (it is the §4.3 UNVERIFIED candidate, observed live
+but not on the confirmed list); rejecting it would fail a real tree. So
+`validate_tree` ignores indicator-fn *values* entirely, and `lint_tree` surfaces
+any unverified fn (including the `rsi` abbreviation, whose canonical form is
+`relative-strength-index`). Hard errors that REMAIN per amendment 2: unknown
+step, structurally missing required fields, duplicate ids, malformed weight
+objects, `if` missing branches, non-asset leaves, and None/garbage input.
+
+### 16.3 `select-n` may be string or int (amendment 3)
+
+§3.5 typed `select-n` as `<int>`. The large fixture carries `select-n` as a
+string (e.g. `"3"`) in 183 positions. `validate_tree` requires the `select-n`
+*field to be present* on a
+`filter` node (its absence is a hard error — Composer has no count to select) but
+tolerates either an int or a numeric string as the value. Constructors
+(`make_filter`) emit the int form.
+
+### 16.4 Weight `den` may be string `"100"`; weight appears on many node types (amendment 4)
+
+§5.1 typed `den` as the integer `100`, and §5.2 stated weight appears only on
+direct children of `wt-cash-specified`. The large fixture carries `weight`
+objects on `asset` / `if` / `group` / `filter` nodes (not only
+`wt-cash-specified` children), and `num` as a numeric string (`"66.67"`) in 234
+positions alongside the int form. The string `den` form (`"100"`) is pinned by
+handoff amendment 4 as a read tolerance (this fixture happens to use int `den`
+throughout — 525 occurrences, 0 string — but the tolerance is contract per the
+amendment). `validate_tree` therefore validates a weight object's *shape*
+wherever it appears (a hard error only when `den` is missing or either
+`num`/`den` is non-numeric — e.g. `num: "abc"`) and does not restrict weight to
+`wt-cash-specified` children. Numeric strings (`"66.67"`, `"100"`) are accepted.
+Constructors (`make_weight_specified`) emit the int `den: 100` form.
+
+### 16.5 Flat `lhs-window-days` / `rhs-window-days` tolerated on read (amendment 5)
+
+§4.4 stated the JSON API uses only the nested `{...-fn-params: {"window": N}}`
+form. The large fixture in fact carries the legacy flat keys `lhs-window-days`
+(186 occurrences) and `rhs-window-days` (120 occurrences) *alongside* the
+params-object form on real `if-child` nodes. `validate_tree` tolerates the flat
+keys without error. Constructors emit the params-object form ONLY — they never
+write the flat keys.
+
+### 16.6 Compound `condition` blocks tolerated (amendment 6)
+
+§7 documents the nested `condition` block. Real blocks additionally carry
+`condition-type` (`compound`/`binary`/`binary-compound`), `operator` (`any`),
+`tickers` arrays, `%` placeholder tickers, and `rhs: {"constant": N}`.
+`validate_tree` tolerates all of these without a hard error. Critically, a
+true-branch `if-child` that carries a `condition` block is **exempt** from the
+flat-field requirement: it is NOT required to also supply `lhs-fn`/`comparator`
+(those live inside the block), so the compound case validates clean.
+
+### 16.7 Cosmetic keys tolerated everywhere (amendment 7)
+
+Real fixtures carry presentation/metadata keys that carry no grammar meaning:
+`collapsed?`, `suppress_incomplete_warnings`, `window-days`, `description`,
+`name` on non-`group` nodes, and `children-count` / `price` / `dollar_volume` /
+`has_marketcap` on assets. `validate_tree` ignores any unrecognized key — it
+checks for the presence/shape of *required* fields and never errors on extras.
+
+### 16.8 Constructor note — ticker-comparison conditions (NOT one of amendments 1–7)
+
+This subsection documents a constructor capability surfaced by the Phase-1 domain
+review; it is amendment-9-adjacent, **not** one of the fixture-verification
+corrections 1–7, and is kept separate so it is not cross-checked against the
+handoff amendment list.
+
+Per §3.4, when `rhs-fixed-value?` is `false` the comparison is a ticker-vs-ticker
+predicate and `rhs-fn` / `rhs-fn-params` are required. To let `make_condition` /
+`make_if` construct such conditions (the most common real pattern, e.g.
+`RSI(LQD) gt RSI(XLV)`), `make_condition` accepts an optional keyword
+`rhs_indicator=make_indicator(...)`:
+
+- numeric `rhs` → fixed-value comparison (`rhs-fixed-value? = True`); supplying
+  `rhs_indicator` here raises `ValueError`.
+- string `rhs` (ticker) → ticker comparison (`rhs-fixed-value? = False`);
+  `rhs_indicator` is REQUIRED. Omitting it raises `ValueError` rather than
+  silently emitting an if-child that `validate_tree` would then reject.
+
+`make_if` writes `rhs-fn` / `rhs-fn-params` onto the true-branch `if-child` from
+that descriptor. Additionally, a whole-number numeric `rhs` is stringified
+without a trailing `.0` (`0.0` → `"0"`, matching the fixture `rhs-val` form;
+fractional floats keep their decimals, e.g. `5.5` → `"5.5"`).
