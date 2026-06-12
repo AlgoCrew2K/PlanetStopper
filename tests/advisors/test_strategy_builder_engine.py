@@ -1817,3 +1817,277 @@ class TestAdversarialCycle3:
         assert select_n_found == n, (
             f"T7 select-n must equal the passed n={n}; got {select_n_found}"
         )
+
+
+# ===========================================================================
+# SECTION 14 — Adversarial cycle 4 (post-cycle-3-GREEN)
+# ADVERSARIAL CYCLE 4 — added by test-writer
+# ===========================================================================
+
+
+class TestAdversarialCycle4:
+    """Adversarial tests targeting invariants not covered by cycles 1–3:
+    (1) _passes_screens skips blended/correlation when live_returns is empty
+    (2) ProposalRun.candidates contains ONLY successfully-backtested candidates
+    (3) propose_strategies with live_returns=[] never raises
+    (4) incumbent_oos_alpha / default_oos_alpha are forwarded to evaluate_candidate_batch
+    (5) MAX_CANDIDATES_PER_RUN upper-bound enforced for very large universes
+    """
+
+    # -----------------------------------------------------------------------
+    # Attack 1 — _passes_screens skips blended/correlation on empty live_returns
+    # -----------------------------------------------------------------------
+
+    def test_passes_screens_empty_live_returns_skips_blended_and_correlation(self, sbe):
+        """Contract §4: blended drawdown and correlation sub-checks require live
+        portfolio returns to be non-empty. When live_returns=[], those two screens
+        cannot be evaluated and must be SKIPPED — the candidate must still pass the
+        other (individual-metric) screens if they are satisfied.
+
+        This probes the guard: `if live_returns and returns_pct:` — empty live_returns
+        must cause both the blended MDD and correlation checks to be bypassed, so a
+        candidate that passes all individual-metric thresholds returns True even when
+        a tight max_blended_abs_drawdown or max_correlation would otherwise reject it.
+        """
+        from advisors.strategy_builder_engine import (  # noqa: PLC0415
+            ScreenConfig,
+            _passes_screens,
+        )
+
+        # Metrics that pass all individual screens with the default ScreenConfig
+        # (SCREEN_MIN_CAGR_DEFAULT=0.0, SCREEN_MIN_SHARPE_DEFAULT=0.0,
+        #  SCREEN_MIN_CALMAR_DEFAULT=0.0, SCREEN_MAX_ABS_DRAWDOWN_DEFAULT=0.50)
+        good_metrics = {
+            "annualized_return": 0.12,
+            "sharpe": 0.8,
+            "calmar": 0.4,
+            "max_drawdown": -0.15,
+        }
+
+        # Use pathologically tight blended/correlation thresholds that WOULD reject
+        # the candidate if the screens ran. Since live_returns=[], they must be skipped.
+        tight_config = ScreenConfig(
+            max_blended_abs_drawdown=0.001,  # essentially impossible to pass
+            max_correlation=0.001,           # essentially impossible to pass
+        )
+
+        result = _passes_screens(
+            good_metrics,
+            live_returns=[],          # empty — must cause skip of both sub-checks
+            screen_config=tight_config,
+            returns_pct=[0.01] * 50,
+        )
+
+        assert result is True, (
+            "_passes_screens must return True when live_returns=[] and all individual "
+            "metric screens pass: blended-drawdown and correlation checks must be "
+            "SKIPPED (not applied) when there are no live portfolio returns to blend with. "
+            f"Got False with tight_config={tight_config!r}"
+        )
+
+    # -----------------------------------------------------------------------
+    # Attack 2 — ProposalRun.candidates only contains backtest-error-free candidates
+    # -----------------------------------------------------------------------
+
+    def test_candidates_list_excludes_failed_backtests(self, sbe):
+        """FDR invariant: ProposalRun.candidates must contain ONLY candidates where
+        backtest_error is None. Candidates whose backtest raised or returned an error
+        result must be excluded from result.candidates even though they are tracked
+        internally for the gate's n_candidates accounting.
+
+        Uses a side_effect that returns success for the first 2 calls and a backtest
+        error for subsequent calls, ensuring the universe generates a mix of
+        success and failure candidates.
+        """
+        fake_success = _make_fake_result(n_days=100, base_return=0.001)
+        fake_error = _make_error_result()
+
+        call_counter = {"n": 0}
+
+        def _side_effect(*args, **kwargs):
+            call_counter["n"] += 1
+            # First 2 calls succeed; everything else fails
+            return fake_success if call_counter["n"] <= 2 else fake_error
+
+        with (
+            patch("advisors.strategy_builder_engine.run_backtest",
+                  side_effect=_side_effect),
+            patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
+            patch("advisors.strategy_builder_engine.database") as mock_db,
+        ):
+            mock_db.insert_advisor_observation.return_value = 1
+            result = sbe.propose_strategies(
+                objective=sbe.Objective.diversify,
+                universe=["SPY", "AGG", "GLD", "TLT", "QQQ"],
+                screen_config=sbe.ScreenConfig(),
+                live_returns=[0.001] * 100,
+                symphony_id="test-adv4-candidates",
+            )
+
+        assert result.error is None, f"Unexpected error: {result.error}"
+
+        # Every CandidateInfo in result.candidates must have backtest_error is None
+        for cand in result.candidates:
+            assert cand.backtest_error is None, (
+                f"result.candidates must only contain successfully-backtested candidates "
+                f"(backtest_error is None); found candidate {cand.candidate_id!r} with "
+                f"backtest_error={cand.backtest_error!r}"
+            )
+
+    # -----------------------------------------------------------------------
+    # Attack 3 — propose_strategies with live_returns=[] never raises
+    # -----------------------------------------------------------------------
+
+    def test_propose_strategies_empty_live_returns_does_not_raise(self, sbe):
+        """Contract §2.6 + §4: live_returns=[] is a valid degenerate input.
+        The function must return a ProposalRun without raising, even though the
+        blended-drawdown and correlation sub-checks cannot be evaluated.
+
+        This is an end-to-end complement to attack 1: confirms that the empty
+        live_returns guard in _passes_screens propagates cleanly through the full
+        propose_strategies call path.
+        """
+        fake = _make_fake_result(n_days=100, base_return=0.001)
+
+        with (
+            patch("advisors.strategy_builder_engine.run_backtest", return_value=fake),
+            patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
+            patch("advisors.strategy_builder_engine.database") as mock_db,
+        ):
+            mock_db.insert_advisor_observation.return_value = 1
+            result = sbe.propose_strategies(
+                objective=sbe.Objective.diversify,
+                universe=["SPY", "AGG", "GLD"],
+                screen_config=sbe.ScreenConfig(),
+                live_returns=[],          # empty — the key edge case
+                symphony_id="test-adv4-empty-live",
+            )
+
+        assert isinstance(result, sbe.ProposalRun), (
+            "propose_strategies must return ProposalRun when live_returns=[]"
+        )
+        assert result.error is None, (
+            f"propose_strategies must not set error when live_returns=[]; "
+            f"got error={result.error!r}"
+        )
+
+    # -----------------------------------------------------------------------
+    # Attack 4 — incumbent_oos_alpha / default_oos_alpha forwarded to gate
+    # -----------------------------------------------------------------------
+
+    def test_oos_alpha_params_forwarded_to_gate(self, sbe):
+        """Contract §2: incumbent_oos_alpha and default_oos_alpha accepted by
+        propose_strategies must be forwarded unchanged to evaluate_candidate_batch.
+
+        Patches evaluate_candidate_batch with a MagicMock so the kwargs can be
+        inspected. The mock returns an empty GatedBatch so the rest of the pipeline
+        completes without error.
+        """
+        from unittest.mock import MagicMock  # noqa: PLC0415
+
+        from advisors.backtest_gate_engine import GatedBatch  # noqa: PLC0415
+
+        fake = _make_fake_result(n_days=100, base_return=0.001)
+
+        # Build a minimal GatedBatch that the downstream pipeline can consume
+        fake_gate_batch = GatedBatch(
+            results=[],
+            survivors=[],
+            n_candidates=0,
+            fdr_q=0.05,
+        )
+        mock_gate = MagicMock(return_value=fake_gate_batch)
+
+        with (
+            patch("advisors.strategy_builder_engine.run_backtest", return_value=fake),
+            patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
+            patch("advisors.strategy_builder_engine.database"),
+            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", mock_gate),
+        ):
+            sbe.propose_strategies(
+                objective=sbe.Objective.diversify,
+                universe=["SPY", "AGG"],
+                screen_config=sbe.ScreenConfig(),
+                live_returns=[0.001] * 100,
+                symphony_id="test-adv4-alpha-forwarding",
+                incumbent_oos_alpha=0.05,
+                default_oos_alpha=0.02,
+            )
+
+        assert mock_gate.called, (
+            "evaluate_candidate_batch must be called by propose_strategies"
+        )
+        _, call_kwargs = mock_gate.call_args
+        assert "incumbent_oos_alpha" in call_kwargs, (
+            "evaluate_candidate_batch must be called with incumbent_oos_alpha kwarg"
+        )
+        assert "default_oos_alpha" in call_kwargs, (
+            "evaluate_candidate_batch must be called with default_oos_alpha kwarg"
+        )
+        # Tolerance: exact equality — these are pass-through values, not computed floats.
+        assert call_kwargs["incumbent_oos_alpha"] == pytest.approx(0.05, rel=1e-9), (
+            # Tolerance 1e-9: pass-through of a literal float; any deviation indicates
+            # the value was transformed or defaulted rather than forwarded.
+            f"incumbent_oos_alpha must be forwarded as 0.05; "
+            f"got {call_kwargs['incumbent_oos_alpha']!r}"
+        )
+        assert call_kwargs["default_oos_alpha"] == pytest.approx(0.02, rel=1e-9), (
+            # Tolerance 1e-9: same reasoning as above.
+            f"default_oos_alpha must be forwarded as 0.02; "
+            f"got {call_kwargs['default_oos_alpha']!r}"
+        )
+
+    # -----------------------------------------------------------------------
+    # Attack 5 — MAX_CANDIDATES_PER_RUN upper-bound for very large universes
+    # -----------------------------------------------------------------------
+
+    def test_universe_large_generates_at_most_max_candidates(self, sbe):
+        """Contract §2.3: candidate generation is bounded by MAX_CANDIDATES_PER_RUN.
+        A universe of 30 tickers (3× the internal 10-ticker cap) must produce
+        at most MAX_CANDIDATES_PER_RUN candidates in result.candidates.
+
+        This is distinct from the >10-ticker test in cycle 3 (which used 15 tickers
+        and focused on the 10-ticker internal cap). Here we use 30 tickers and focus
+        on the MAX_CANDIDATES_PER_RUN = 30 outer bound, asserting the implementation
+        never exceeds it regardless of how many template × parameter combinations are
+        generated internally.
+        """
+        fake = _make_fake_result(n_days=100, base_return=0.001)
+
+        # 30 tickers — 3× the internal 10-ticker slice ceiling
+        large_universe = [
+            "SPY", "AGG", "GLD", "TLT", "QQQ",
+            "IWM", "EFA", "EEM", "LQD", "HYG",
+            "VNQ", "TIP", "SHY", "BIL", "BNDX",
+            "XLK", "XLF", "XLE", "XLV", "XLI",
+            "XLU", "XLP", "XLB", "XLRE", "XLC",
+            "IEMG", "VEA", "VWO", "BND", "VCIT",
+        ]
+        assert len(large_universe) == 30
+
+        with (
+            patch("advisors.strategy_builder_engine.run_backtest", return_value=fake),
+            patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
+            patch("advisors.strategy_builder_engine.database") as mock_db,
+        ):
+            mock_db.insert_advisor_observation.return_value = 1
+            result = sbe.propose_strategies(
+                objective=sbe.Objective.diversify,
+                universe=large_universe,
+                screen_config=sbe.ScreenConfig(),
+                live_returns=[0.001] * 100,
+                symphony_id="test-adv4-large-universe",
+            )
+
+        assert isinstance(result, sbe.ProposalRun), (
+            "propose_strategies must return ProposalRun for a 30-ticker universe"
+        )
+        assert result.error is None, (
+            f"propose_strategies must not error on a 30-ticker universe; "
+            f"got error={result.error!r}"
+        )
+        assert len(result.candidates) <= sbe.MAX_CANDIDATES_PER_RUN, (
+            f"result.candidates length must be <= MAX_CANDIDATES_PER_RUN "
+            f"({sbe.MAX_CANDIDATES_PER_RUN}) for a 30-ticker universe; "
+            f"got {len(result.candidates)}"
+        )
