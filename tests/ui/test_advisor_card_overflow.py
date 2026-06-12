@@ -19,7 +19,11 @@ import re
 
 import pytest
 import requests
-from playwright.sync_api import Page, sync_playwright
+
+# Optional dependency: an unguarded import aborts the ENTIRE default suite's
+# collection (not just this module) when playwright isn't installed.
+_pw = pytest.importorskip("playwright.sync_api", reason="playwright not installed")
+Page, sync_playwright = _pw.Page, _pw.sync_playwright
 
 BASE_URL = "http://localhost:5000"
 

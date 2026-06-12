@@ -363,10 +363,21 @@ class TestRequestBodyConstruction:
             "All must be present for Composer to accept the request (else 422)."
         )
 
-    def test_request_uses_composer_auth_headers(self, minimal_raw_value, response_body):
-        """The POST must include x-api-key-id and authorization headers."""
+    def test_request_uses_composer_auth_headers(self, minimal_raw_value, response_body, monkeypatch):
+        """The POST must include x-api-key-id and authorization headers.
+
+        Credentials are monkeypatched: get_composer_headers reads module globals
+        at call time, and in a clean checkout (no .env) COMPOSER_KEY_ID is None —
+        requests silently DROPS None-valued headers from the prepared request,
+        which is exactly the misconfiguration this test would otherwise mistake
+        for a client bug.
+        """
         _ensure_repo_on_path()
+        import alpha_bot_execution
         import composer_backtest
+
+        monkeypatch.setattr(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key-id")
+        monkeypatch.setattr(alpha_bot_execution, "COMPOSER_SECRET", "test-secret")
 
         captured_headers = []
 
