@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Advisor — Strategy Builder — Planet Stopper Dashboard v3</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: var(--studio-scroll-thumb, var(--studio-ink-faint));
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--studio-scroll-thumb-hover, var(--studio-ink-dim));
+        }
+
+        body {
+            background: var(--studio-bg);
+            color: var(--studio-ink);
+            min-height: 100vh;
+            font-family: var(--studio-sans, sans-serif);
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Page header (shared style with other advisor tabs)                  */
+        /* ------------------------------------------------------------------ */
+
+        .adv-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            background: var(--studio-surface);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            border: 1px solid var(--studio-border);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .adv-header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 3px;
+            background: linear-gradient(to right, var(--studio-accent), var(--studio-ink-dim));
+        }
+
+        .adv-title {
+            font-size: 2.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--studio-ink);
+        }
+
+        .adv-subtitle {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            margin-top: 0.375rem;
+        }
+
+        .back-link {
+            font-size: 0.625rem;
+            color: var(--studio-ink-dim);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            text-decoration: none;
+        }
+
+        .back-link:hover { color: var(--studio-ink); }
+
+        /* ------------------------------------------------------------------ */
+        /* Capability tab nav (shared with other advisor tabs)                 */
+        /* ------------------------------------------------------------------ */
+
+        .cap-nav {
+            display: flex;
+            gap: 0.25rem;
+            margin-bottom: 1.25rem;
+            border-bottom: 1px solid var(--studio-border);
+            padding-bottom: 0;
+        }
+
+        .cap-tab {
+            padding: 0.5rem 1rem;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: var(--studio-ink-dim);
+            text-decoration: none;
+            border-radius: 0.375rem 0.375rem 0 0;
+            border: 1px solid transparent;
+            border-bottom: none;
+            position: relative;
+            bottom: -1px;
+        }
+
+        .cap-tab:hover { color: var(--studio-ink); }
+
+        .cap-tab[aria-current="page"] {
+            color: var(--studio-ink);
+            background: var(--studio-surface);
+            border-color: var(--studio-border);
+            border-bottom-color: var(--studio-surface);
+        }
+
+        .cap-tab-badge {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-left: 0.25rem;
+            vertical-align: middle;
+            background: var(--studio-pos);
+        }
+
+        .cap-tab-badge--yellow { background: var(--studio-warn); }
+
+        /* ------------------------------------------------------------------ */
+        /* Persistent risk warning banner (non-dismissible — AC-3.3).         */
+        /* Strategy Builder carries the highest overfitting risk tier:         */
+        /* proposals are built entirely from scratch via backtest-and-select.  */
+        /* This banner MUST be visible at all times — it is NOT dismissible.   */
+        /* ------------------------------------------------------------------ */
+
+        .fdr-warning-banner {
+            background: var(--studio-warn-tint);
+            border: 1px solid var(--studio-warn-border);
+            border-radius: 0.625rem;
+            padding: 0.875rem 1rem;
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.625rem;
+        }
+
+        .fdr-warning-banner-icon {
+            flex-shrink: 0;
+            color: var(--studio-warn);
+            font-size: 1rem;
+            line-height: 1.5;
+        }
+
+        .fdr-warning-banner-text {
+            font-size: 0.8125rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.6;
+        }
+
+        .fdr-warning-banner-text strong {
+            color: var(--studio-ink);
+            font-weight: 700;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* No-API-key state (AC-X4)                                            */
+        /* ------------------------------------------------------------------ */
+
+        .no-api-key-state {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 3rem 2rem;
+            text-align: center;
+        }
+
+        .no-api-key-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--studio-ink);
+            margin-bottom: 0.5rem;
+        }
+
+        .no-api-key-body {
+            font-size: 0.875rem;
+            color: var(--studio-ink-dim);
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Run controls panel — objective, universe, symphony, trigger.        */
+        /* No HTML form element: the trigger uses JS fetch + X-CSRF-Token.    */
+        /* ------------------------------------------------------------------ */
+
+        .run-controls-panel {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .run-controls-header {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+            margin-bottom: 1rem;
+        }
+
+        .run-controls-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .form-label {
+            font-size: 0.625rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-muted);
+            font-weight: 700;
+        }
+
+        .form-select {
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.4rem 0.75rem;
+            font-size: 0.875rem;
+            color: var(--studio-ink);
+            min-width: 14rem;
+        }
+
+        .form-select:focus { outline: none; border-color: var(--studio-accent); }
+
+        .form-input {
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.4rem 0.75rem;
+            font-size: 0.875rem;
+            color: var(--studio-ink);
+            min-width: 20rem;
+        }
+
+        .form-input:focus { outline: none; border-color: var(--studio-accent); }
+        .form-input::placeholder { color: var(--studio-ink-muted); }
+
+        /* Run trigger — type="button" only (never type="submit") */
+        .run-trigger-btn {
+            padding: 0.5rem 1.25rem;
+            background: var(--studio-accent);
+            color: var(--studio-white);
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 700;
+            cursor: pointer;
+            flex-shrink: 0;
+            white-space: nowrap;
+            align-self: flex-end;
+        }
+
+        .run-trigger-btn:hover:not(:disabled) { opacity: 0.9; }
+        .run-trigger-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .run-controls-note {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            margin-top: 0.75rem;
+        }
+
+        .run-error {
+            font-size: 0.8125rem;
+            color: var(--studio-neg);
+            margin-top: 0.5rem;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Section header                                                       */
+        /* ------------------------------------------------------------------ */
+
+        .section-header {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+            margin-bottom: 0.875rem;
+            margin-top: 1.5rem;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Proposal card grid                                                  */
+        /* ------------------------------------------------------------------ */
+
+        .proposal-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(28rem, 1fr));
+            gap: 0.875rem;
+        }
+
+        .proposal-card {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 1.25rem 1.5rem;
+        }
+
+        .proposal-card--survivor {
+            border-color: var(--studio-pos);
+        }
+
+        .proposal-card--rejected {
+            opacity: 0.75;
+        }
+
+        .proposal-card--backtest-failed {
+            background: var(--studio-warn-tint);
+            border-color: var(--studio-warn-border);
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Card anatomy elements (AC-3.3)                                     */
+        /* ------------------------------------------------------------------ */
+
+        /* Advisory-only badge — present on every card, no action affordance */
+        .advisory-only-badge {
+            display: inline-block;
+            padding: 0.125rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.5rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid var(--studio-border);
+            color: var(--studio-ink-dim);
+        }
+
+        /* Card header row */
+        .card-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.75rem;
+        }
+
+        .card-candidate-id {
+            font-size: 0.875rem;
+            font-weight: 700;
+            color: var(--studio-ink);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+
+        /* Objective strip — mandatory (AC-3.3) */
+        .objective-strip {
+            background: var(--studio-accent-tint, rgba(46, 165, 102, 0.06));
+            border: 1px solid var(--studio-accent-border, rgba(46, 165, 102, 0.2));
+            border-left: 3px solid var(--studio-accent);
+            border-radius: 0 0.375rem 0.375rem 0;
+            padding: 0.375rem 0.625rem;
+            margin-bottom: 0.875rem;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: var(--studio-ink-dim);
+        }
+
+        /* Stats table (Sharpe, Sortino, Max drawdown [inverted], Annual return) */
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 0.875rem;
+            font-size: 0.8125rem;
+        }
+
+        .stats-table th {
+            font-size: 0.5625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-muted);
+            padding: 0.25rem 0.5rem 0.25rem 0;
+            border-bottom: 1px solid var(--studio-border);
+            text-align: left;
+        }
+
+        .stats-table td {
+            padding: 0.25rem 0.5rem 0.25rem 0;
+            border-bottom: 1px solid var(--studio-border);
+            color: var(--studio-ink);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .stats-table td:first-child {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .stat-pos { color: var(--studio-pos); }
+        .stat-neg { color: var(--studio-neg); }
+        .stat-nil { color: var(--studio-ink-muted); }
+
+        /* Gate verdict row */
+        .gate-verdict-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.5rem;
+            background: var(--studio-bg);
+            flex-wrap: wrap;
+        }
+
+        .gate-pill {
+            display: inline-block;
+            padding: 0.15rem 0.55rem;
+            border-radius: 999px;
+            font-size: 0.5625rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid;
+        }
+
+        .gate-pill--passed {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+            background: rgba(31,122,77,0.07);
+        }
+
+        .gate-pill--withheld {
+            color: var(--studio-warn);
+            border-color: var(--studio-warn);
+            background: var(--studio-warn-tint);
+        }
+
+        .gate-pill--failed {
+            color: var(--studio-neg);
+            border-color: var(--studio-neg);
+            background: var(--studio-neg-tint);
+        }
+
+        /* FDR metadata — operator audit trail (AC-3.2) */
+        .fdr-metadata {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-muted);
+            font-variant-numeric: tabular-nums;
+            margin-top: 0.25rem;
+            flex-basis: 100%;
+        }
+
+        .fdr-metadata strong {
+            color: var(--studio-ink-dim);
+        }
+
+        /* Honest overfitting caveat — mandatory for survivors (AC-3.3) */
+        .caveat-text {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.5;
+            border-left: 2px solid var(--studio-warn);
+            padding-left: 0.625rem;
+            margin-bottom: 0.375rem;
+        }
+
+        .caveats-block { margin-bottom: 0.75rem; }
+
+        /* Apply guidance — plain text, no button (AC-X1 / AC-3.4) */
+        .apply-guidance {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            line-height: 1.5;
+            margin-bottom: 0.75rem;
+        }
+
+        .apply-guidance strong {
+            color: var(--studio-ink);
+            font-weight: 700;
+        }
+
+        /* Rules collapsible */
+        .rules-collapsible summary {
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--studio-ink-dim);
+            margin-bottom: 0.375rem;
+        }
+
+        .rules-collapsible pre {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.75rem;
+            color: var(--studio-ink);
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.375rem;
+            padding: 0.625rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin: 0;
+        }
+
+        /* Backtest error */
+        .backtest-error {
+            font-size: 0.8125rem;
+            color: var(--studio-neg);
+            margin-top: 0.5rem;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Empty state (no observations — valid outcome, not an error)        */
+        /* ------------------------------------------------------------------ */
+
+        .empty-state {
+            background: var(--studio-neg-tint, rgba(180, 58, 42, 0.06));
+            border: 1px solid var(--studio-neg-border, rgba(180, 58, 42, 0.25));
+            border-left: 3px solid var(--studio-neg);
+            border-radius: 1rem;
+            padding: 2rem 1.5rem;
+        }
+
+        .empty-state-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--studio-ink);
+            margin-bottom: 0.5rem;
+        }
+
+        .empty-state-body {
+            font-size: 0.875rem;
+            color: var(--studio-ink-dim);
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Rejected candidates section (de-emphasised, collapsible — AC-3.1)  */
+        /* ------------------------------------------------------------------ */
+
+        .rejected-section { margin-top: 1.5rem; }
+
+        .rejected-collapsible summary {
+            cursor: pointer;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-faint, var(--studio-ink-dim));
+            margin-bottom: 0.875rem;
+            user-select: none;
+        }
+
+        .rejected-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(28rem, 1fr));
+            gap: 0.875rem;
+            margin-top: 0.875rem;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Live run results area (populated by JS)                            */
+        /* ------------------------------------------------------------------ */
+
+        #sb-run-results { min-height: 4rem; margin-top: 1rem; }
+
+        .loading-state {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            color: var(--studio-ink-dim);
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+
+<body>
+    <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
+    {% include '_chrome.html' %}
+
+    <div class="page-wrap" data-testid="strategy-builder-tab">
+
+        <!-- Page header -->
+        <header data-testid="advisor-header" class="adv-header">
+            <div>
+                <h1 class="adv-title">AI Advisor</h1>
+                <p class="adv-subtitle">
+                    Read-only diagnostic assistant — every recommendation is applied manually
+                    by you in Composer. No trades are ever placed from this screen.
+                </p>
+            </div>
+            <a href="/" class="back-link">&larr; Dashboard</a>
+        </header>
+
+        <!-- Capability tab nav: Correlations, Asset Swaps, Logic Changes, Strategy Builder, Chat -->
+        <nav class="cap-nav" aria-label="Advisor capabilities">
+            <a href="{{ url_for('ai_advisor_correlations') }}"
+               class="cap-tab"
+               data-testid="tab-correlations">
+                Correlations
+                <span class="cap-tab-badge" title="Low risk — pure measurement"></span>
+            </a>
+            <a href="{{ url_for('ai_advisor_asset_swaps') }}"
+               class="cap-tab"
+               data-testid="tab-asset-swaps">
+                Asset Swaps
+                <span class="cap-tab-badge" title="Low risk when gated"></span>
+            </a>
+            <a href="{{ url_for('ai_advisor_logic_changes') }}"
+               class="cap-tab"
+               data-testid="tab-logic-changes">
+                Logic Changes
+                <span class="cap-tab-badge cap-tab-badge--yellow"
+                      title="Higher overfitting risk"></span>
+            </a>
+            <a href="{{ url_for('ai_advisor_strategy_builder') }}"
+               aria-current="page"
+               class="cap-tab"
+               data-testid="tab-strategy-builder">
+                Strategy Builder
+                <span class="cap-tab-badge cap-tab-badge--yellow"
+                      title="Highest overfitting risk — building from scratch"></span>
+            </a>
+            <a href="{{ url_for('ai_advisor_chat') }}"
+               class="cap-tab"
+               data-testid="tab-chat">
+                Chat
+                <span class="cap-tab-badge cap-tab-badge--yellow"
+                      title="Explain-only"></span>
+            </a>
+        </nav>
+
+        <!--
+            Persistent non-dismissible risk warning (AC-3.2 + AC-3.3).
+            Strategy Builder carries the highest overfitting risk tier — proposals
+            are built entirely from scratch via backtest-and-select, which is
+            maximally exposed to the selection-bias trap.  This banner MUST remain
+            visible whenever the Strategy Builder tab is active and is NOT
+            dismissible by any JS or user interaction.
+        -->
+        <div class="fdr-warning-banner"
+             data-testid="strategy-builder-risk-banner"
+             role="note"
+             aria-live="polite">
+            <span class="fdr-warning-banner-icon" aria-hidden="true">&#x26A0;</span>
+            <p class="fdr-warning-banner-text">
+                <strong>Logic-change proposals carry the highest overfitting risk.</strong>
+                A multiple-testing correction (FDR/Yekutieli) is applied across ALL
+                backtested candidates — raising the number of candidates raises the bar
+                each must clear. Survivors are <strong>sound-but-unprovable</strong>:
+                a clean gate pass is not proof of a live edge. Strategy Builder proposals
+                are built entirely from scratch, maximising selection-bias exposure.
+            </p>
+        </div>
+
+        {% if no_api_key %}
+
+        <!-- AC-X4: no API key configured — run controls are unavailable.
+             Stored observations from previous runs are still shown below. -->
+        <div class="no-api-key-state" data-testid="no-api-key-state">
+            <div class="no-api-key-title">Advisor Unavailable</div>
+            <div class="no-api-key-body">
+                Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
+                <code>COMPOSER_SECRET</code> environment variables to enable
+                strategy-builder proposals.
+            </div>
+        </div>
+
+        {% else %}
+
+        <!-- Run controls — no HTML form element; trigger uses JS fetch + X-CSRF-Token header -->
+        <div class="run-controls-panel" data-testid="strategy-builder-controls">
+            <div class="run-controls-header">Propose New Strategies</div>
+            <div class="run-controls-row">
+                <div class="form-group">
+                    <label class="form-label" for="sb-objective-select">Objective</label>
+                    <select id="sb-objective-select"
+                            class="form-select"
+                            data-testid="sb-objective-select"
+                            aria-label="Objective">
+                        <option value="diversify">Diversify</option>
+                        <option value="cut_drawdown">Cut drawdown</option>
+                        <option value="lift_risk_adjusted">Lift risk-adjusted return</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="sb-universe-input">Universe (tickers)</label>
+                    <input type="text"
+                           id="sb-universe-input"
+                           class="form-input"
+                           data-testid="sb-universe-input"
+                           placeholder="e.g. SPY, AGG, GLD, TLT"
+                           aria-label="Ticker universe, comma-separated"
+                           autocomplete="off"
+                           spellcheck="false">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="sb-symphony-select">Symphony (optional)</label>
+                    <select id="sb-symphony-select"
+                            class="form-select"
+                            data-testid="sb-symphony-select"
+                            aria-label="Symphony">
+                        <option value="">All symphonies (advisory)</option>
+                        {% for sym in symphonies %}
+                        <option value="{{ sym | e }}"
+                            {% if sym == symphony_id %}selected{% endif %}>
+                            {{ sym | e }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button id="sb-run-btn"
+                        type="button"
+                        class="run-trigger-btn"
+                        data-testid="sb-run-btn"
+                        onclick="sbRunAnalysis()">
+                    Run analysis
+                </button>
+            </div>
+            <p class="run-controls-note">
+                The advisor generates candidate symphonies from templates, backtests
+                each one, and applies FDR/Yekutieli multiple-testing correction. Only
+                candidates that clear the gate are surfaced as proposals.
+            </p>
+            <div id="sb-run-error"
+                 class="run-error"
+                 data-testid="sb-run-error"
+                 style="display:none;"
+                 role="alert"></div>
+        </div>
+
+        <!-- Live run results area — populated by JS after POST /run -->
+        <div id="sb-run-results"></div>
+
+        {% endif %}{# no_api_key #}
+
+        <!-- ================================================================ -->
+        <!-- Stored observations rendered server-side (read-only SQLite path) -->
+        <!-- Always rendered regardless of no_api_key — past runs are visible  -->
+        <!-- even when the run controls are unavailable (AC-5 read-only path). -->
+        <!-- ================================================================ -->
+
+        {% if not observations %}
+
+        <!-- Empty state: no proposals yet, or gate rejected all — valid, not an error -->
+        <div class="empty-state" data-testid="strategy-builder-empty-state">
+            <div class="empty-state-title">No candidate cleared the gate this run.</div>
+            <div class="empty-state-body">
+                This is a valid outcome — the gate rejected all candidates to protect
+                against overfitting. Use the controls above to run a new analysis.
+            </div>
+        </div>
+
+        {% else %}
+
+        {#
+           Classify observations into three buckets:
+             - survivors    : verdict == ADOPT_CANDIDATE
+             - bt_failed    : verdict != ADOPT_CANDIDATE AND raw_response.backtest_error is set
+             - withheld     : verdict != ADOPT_CANDIDATE AND no backtest_error
+
+           Jinja2 does not support dotted-path selectattr on nested dicts, so we
+           use explicit for-loops with conditionals to classify.
+        #}
+
+        {% set survivors = [] %}
+        {% set bt_failed = [] %}
+        {% set withheld = [] %}
+        {% for obs in observations %}
+            {% if obs.verdict == 'ADOPT_CANDIDATE' %}
+                {% if survivors.append(obs) %}{% endif %}
+            {% elif obs.raw_response and obs.raw_response.get('backtest_error') %}
+                {% if bt_failed.append(obs) %}{% endif %}
+            {% else %}
+                {% if withheld.append(obs) %}{% endif %}
+            {% endif %}
+        {% endfor %}
+
+        <!-- ============================================================== -->
+        <!-- Survivor cards (ADOPT_CANDIDATE) — ZERO action affordances.     -->
+        <!-- No HTML forms, no submit buttons, no action hrefs (AC-X1).      -->
+        <!-- ============================================================== -->
+
+        {% if survivors %}
+        <div class="section-header">Strategy Proposals — Gate Passed</div>
+        <div class="proposal-cards" data-testid="survivor-cards">
+            {% for obs in survivors %}
+            {% set rr = obs.raw_response %}
+            {% set metrics = rr.get('metrics') or {} %}
+            {% set n_cand = rr.get('n_candidates') or 1 %}
+            {% set fdr_q_val = rr.get('fdr_q') or 0.05 %}
+            {% set p_adj = rr.get('winner_p_adj') %}
+            <div class="proposal-card proposal-card--survivor">
+
+                <!-- Card header row: candidate ID left, advisory-only badge right -->
+                <div class="card-header-row">
+                    <span class="card-candidate-id">
+                        {{ rr.get('candidate_id') or obs.subject_id | e }}
+                    </span>
+                    <span class="advisory-only-badge"
+                          data-testid="advisory-only-badge">
+                        Advisory Only
+                    </span>
+                </div>
+
+                <!-- Objective strip — mandatory on every card (AC-3.3) -->
+                <div class="objective-strip" data-testid="objective-strip">
+                    {% set obj = rr.get('objective', '') %}
+                    Objective:
+                    {% if obj == 'diversify' %}Diversify portfolio
+                    {% elif obj == 'cut_drawdown' %}Cut drawdown
+                    {% elif obj == 'lift_risk_adjusted' %}Lift risk-adjusted return
+                    {% else %}{{ obj | e }}{% endif %}
+                    &nbsp;&middot;&nbsp;
+                    Template: {{ rr.get('template_id', '—') | e }}
+                </div>
+
+                <!-- Stats table: candidate metrics (baseline = live portfolio, shown
+                     as placeholder where not available from stored observation) -->
+                <table class="stats-table" data-testid="stats-table">
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Candidate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set sharpe = metrics.get('sharpe_ratio') %}
+                        <tr>
+                            <td>Sharpe</td>
+                            <td class="{% if sharpe is not none %}{% if sharpe >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
+                                {% if sharpe is not none %}{{ "%.3f" | format(sharpe) }}{% else %}—{% endif %}
+                            </td>
+                        </tr>
+                        {% set sortino = metrics.get('sortino_ratio') %}
+                        <tr>
+                            <td>Sortino</td>
+                            <td class="{% if sortino is not none %}{% if sortino >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
+                                {% if sortino is not none %}{{ "%.3f" | format(sortino) }}{% else %}—{% endif %}
+                            </td>
+                        </tr>
+                        {% set mdd = metrics.get('max_drawdown') %}
+                        <tr>
+                            <td>Max Drawdown</td>
+                            <!-- Inverted coloring: smaller magnitude is better -->
+                            <td class="{% if mdd is not none %}{% if (mdd | abs) <= 0.20 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
+                                {% if mdd is not none %}{{ "%.2f%%" | format(mdd * 100) }}{% else %}—{% endif %}
+                            </td>
+                        </tr>
+                        {% set ann_ret = metrics.get('annualized_return') %}
+                        <tr>
+                            <td>Annual Return</td>
+                            <td class="{% if ann_ret is not none %}{% if ann_ret >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
+                                {% if ann_ret is not none %}{{ "%.2f%%" | format(ann_ret * 100) }}{% else %}—{% endif %}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Gate verdict row + FDR metadata (operator audit trail — AC-3.2) -->
+                <div class="gate-verdict-row">
+                    <span class="gate-pill gate-pill--passed"
+                          data-testid="gate-verdict-pill">
+                        PASSED
+                    </span>
+                    <span style="font-size:0.75rem;color:var(--studio-ink-dim);">
+                        Cleared BHY/Yekutieli FDR gate
+                    </span>
+                    <span class="fdr-metadata" data-testid="fdr-metadata">
+                        <strong>N={{ n_cand }}</strong> candidates tested
+                        &middot; adjusted threshold &alpha; (Yekutieli c(n) correction applied)
+                        {% if p_adj is not none %}
+                        &middot; this candidate p={{ "%.4f" | format(p_adj) }} (PASSED)
+                        {% endif %}
+                    </span>
+                </div>
+
+                <!-- Honest overfitting caveat — mandatory for survivors (AC-3.3) -->
+                <div class="caveats-block">
+                    <p class="caveat-text" data-testid="caveat-text">
+                        Selected on backtest: the gate screens for statistical
+                        significance but selection bias remains. Treat as hypothesis,
+                        not proof of a live edge.
+                    </p>
+                    {% for caveat in rr.get('caveats') or [] %}
+                    {% if caveat and 'Selected on backtest' not in caveat %}
+                    <p class="caveat-text">{{ caveat | e }}</p>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+
+                <!-- Apply guidance — plain text only, NO button, NO link (AC-X1 / AC-3.4) -->
+                <div class="apply-guidance" data-testid="apply-guidance">
+                    <strong>To adopt:</strong> create this symphony in Composer manually
+                    — rules below.
+                    {% if rr.get('apply_guidance') %}
+                    {{ rr['apply_guidance'] | e }}
+                    {% endif %}
+                </div>
+
+                <!-- Rules collapsible — monospace block, collapsed by default -->
+                <details class="rules-collapsible" data-testid="rules-collapsible">
+                    <summary>Show rules</summary>
+                    <pre>{{ rr.get('rules_text') or '(no rules text available)' | e }}</pre>
+                </details>
+
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}{# survivors #}
+
+        <!-- Backtest-failed cards — warn-tint background, distinct from WITHHELD -->
+        {% if bt_failed %}
+        <div class="section-header" style="margin-top:1.25rem;">Backtest Failures</div>
+        <div class="proposal-cards">
+            {% for obs in bt_failed %}
+            {% set rr = obs.raw_response %}
+            <div class="proposal-card proposal-card--backtest-failed"
+                 data-testid="backtest-failed-card">
+                <div class="card-header-row">
+                    <span class="card-candidate-id">
+                        {{ rr.get('candidate_id') or obs.subject_id | e }}
+                    </span>
+                    <span class="gate-pill gate-pill--failed">BACKTEST FAILED</span>
+                </div>
+                <div class="objective-strip" data-testid="objective-strip">
+                    Objective: {{ rr.get('objective', '—') | e }}
+                    &nbsp;&middot;&nbsp;
+                    Template: {{ rr.get('template_id', '—') | e }}
+                </div>
+                <p class="backtest-error">
+                    Composer API returned:
+                    {{ rr.get('backtest_error', 'unknown error') | e }}
+                </p>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}{# bt_failed #}
+
+        <!-- Rejected candidates — collapsible, de-emphasised (AC-3.1) -->
+        {% if withheld %}
+        <div class="rejected-section" data-testid="rejected-candidates-section">
+            <details class="rejected-collapsible">
+                <summary>
+                    Candidates that did not clear the gate ({{ withheld | length }})
+                </summary>
+                <div class="rejected-cards">
+                    {% for obs in withheld %}
+                    {% set rr = obs.raw_response %}
+                    {% set metrics = rr.get('metrics') or {} %}
+                    {% set n_cand = rr.get('n_candidates') or 1 %}
+                    <div class="proposal-card proposal-card--rejected">
+                        <div class="card-header-row">
+                            <span class="card-candidate-id">
+                                {{ rr.get('candidate_id') or obs.subject_id | e }}
+                            </span>
+                            <span class="advisory-only-badge"
+                                  data-testid="advisory-only-badge">
+                                Advisory Only
+                            </span>
+                        </div>
+                        <div class="objective-strip" data-testid="objective-strip">
+                            Objective: {{ rr.get('objective', '—') | e }}
+                            &nbsp;&middot;&nbsp;
+                            Template: {{ rr.get('template_id', '—') | e }}
+                        </div>
+                        <table class="stats-table" data-testid="stats-table">
+                            <thead>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th>Candidate</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% set sharpe = metrics.get('sharpe_ratio') %}
+                                <tr>
+                                    <td>Sharpe</td>
+                                    <td class="stat-nil">
+                                        {% if sharpe is not none %}{{ "%.3f" | format(sharpe) }}{% else %}—{% endif %}
+                                    </td>
+                                </tr>
+                                {% set sortino = metrics.get('sortino_ratio') %}
+                                <tr>
+                                    <td>Sortino</td>
+                                    <td class="stat-nil">
+                                        {% if sortino is not none %}{{ "%.3f" | format(sortino) }}{% else %}—{% endif %}
+                                    </td>
+                                </tr>
+                                {% set mdd = metrics.get('max_drawdown') %}
+                                <tr>
+                                    <td>Max Drawdown</td>
+                                    <td class="stat-nil">
+                                        {% if mdd is not none %}{{ "%.2f%%" | format(mdd * 100) }}{% else %}—{% endif %}
+                                    </td>
+                                </tr>
+                                {% set ann_ret = metrics.get('annualized_return') %}
+                                <tr>
+                                    <td>Annual Return</td>
+                                    <td class="stat-nil">
+                                        {% if ann_ret is not none %}{{ "%.2f%%" | format(ann_ret * 100) }}{% else %}—{% endif %}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div class="gate-verdict-row">
+                            <span class="gate-pill gate-pill--withheld"
+                                  data-testid="gate-verdict-pill">
+                                WITHHELD
+                            </span>
+                            <span class="fdr-metadata" data-testid="fdr-metadata">
+                                <strong>N={{ n_cand }}</strong> candidates tested
+                            </span>
+                        </div>
+                        <div class="apply-guidance" data-testid="apply-guidance">
+                            <strong>Gate withheld:</strong>
+                            this candidate did not clear the FDR correction threshold.
+                        </div>
+                        <details class="rules-collapsible" data-testid="rules-collapsible">
+                            <summary>Show rules</summary>
+                            <pre>{{ rr.get('rules_text') or '(no rules text available)' | e }}</pre>
+                        </details>
+                        <p class="caveat-text" data-testid="caveat-text">
+                            Selected on backtest: gate withheld this candidate —
+                            selection-bias risk exceeds the FDR correction threshold.
+                        </p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+        </div>
+        {% endif %}{# withheld #}
+
+        {% endif %}{# observations #}
+
+    </div>{# .page-wrap #}
+
+    <script>
+        /**
+         * Strategy Builder run trigger.
+         *
+         * Reads objective/universe/symphony from the controls panel, obtains the
+         * CSRF token from GET /api/csrf-token, then POSTs to
+         * /ai-advisor/strategy-builder/run with X-CSRF-Token header.
+         *
+         * No HTML form submission — CSRF is passed via XHR header per the existing
+         * advisor tab pattern (mirrors ai_advisor_logic_changes.js).
+         *
+         * On success: the page reloads so newly-persisted observations are rendered
+         * server-side from the read-only SQLite accessor.
+         *
+         * On error: the run-error div is shown inline.
+         */
+        async function sbRunAnalysis() {
+            const btn = document.getElementById('sb-run-btn');
+            const errDiv = document.getElementById('sb-run-error');
+            const resultsDiv = document.getElementById('sb-run-results');
+            if (!btn) return;
+
+            btn.disabled = true;
+            btn.textContent = 'Running…';
+            if (errDiv) { errDiv.style.display = 'none'; errDiv.textContent = ''; }
+            if (resultsDiv) {
+                resultsDiv.innerHTML = '<div class="loading-state">Running analysis…</div>';
+            }
+
+            try {
+                // Step 1: obtain CSRF token (same flow as other advisor POSTs)
+                const tokenResp = await fetch('/api/csrf-token');
+                if (!tokenResp.ok) throw new Error('Could not obtain CSRF token');
+                const tokenData = await tokenResp.json();
+                const csrfToken = tokenData.csrf_token;
+
+                // Step 2: build payload
+                const objective = document.getElementById('sb-objective-select').value;
+                const universeRaw = (document.getElementById('sb-universe-input').value || '');
+                const universe = universeRaw.split(',')
+                    .map(function(s) { return s.trim().toUpperCase(); })
+                    .filter(Boolean);
+                const symphonyId = document.getElementById('sb-symphony-select').value;
+
+                // Step 3: POST to run endpoint
+                const resp = await fetch('/ai-advisor/strategy-builder/run', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken,
+                    },
+                    body: JSON.stringify({ objective: objective, universe: universe, symphony_id: symphonyId }),
+                });
+
+                const data = await resp.json();
+                if (data.error) {
+                    if (errDiv) { errDiv.textContent = data.error; errDiv.style.display = 'block'; }
+                    if (resultsDiv) { resultsDiv.innerHTML = ''; }
+                } else {
+                    // Reload to render newly-persisted observations server-side
+                    var qs = symphonyId ? '?symphony_id=' + encodeURIComponent(symphonyId) : '';
+                    window.location.href = '/ai-advisor/strategy-builder' + qs;
+                }
+            } catch (err) {
+                if (errDiv) { errDiv.textContent = 'Request failed: ' + err.message; errDiv.style.display = 'block'; }
+                if (resultsDiv) { resultsDiv.innerHTML = ''; }
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Run analysis'; }
+            }
+        }
+    </script>
+</body>
+</html>
