@@ -21,7 +21,7 @@ ADVERSARIAL FOCUS:
     never an exception
   - Template validity: all 7 templates must produce validate_tree == [] trees
   - Template vocabulary: T4 uses "if", T5 uses "relative-strength-index",
-    T6 uses "select-top" + "cumulative-return", T7 uses "select-bottom" +
+    T6 uses "top" + "cumulative-return", T7 uses "bottom" +
     "standard-deviation-return"
 
 Adversarial cycles (added after implementer goes GREEN):
@@ -676,7 +676,7 @@ class TestTemplateT5RsiRotation:
 
 
 class TestTemplateT6MomentumTopN:
-    """T6: momentum_top_n — validate_tree == [], uses 'select-top' + 'cumulative-return'."""
+    """T6: momentum_top_n — validate_tree == [], uses 'top' + 'cumulative-return'."""
 
     def test_builds_valid_tree(self, sbe):
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
@@ -699,9 +699,20 @@ class TestTemplateT6MomentumTopN:
 
     def test_uses_select_top(self, sbe):
         tree = sbe.momentum_top_n(["SPY", "QQQ", "IWM"], 2, 63)
-        serialized = json.dumps(tree)
-        assert "select-top" in serialized, (
-            "momentum_top_n must use 'select-top' as the select-fn"
+        stack = [tree]
+        found_fn = None
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            if node.get("step") == "filter":
+                found_fn = node.get("select-fn")
+                break
+            for child in node.get("children", []) or []:
+                stack.append(child)
+        assert found_fn == "top", (
+            f"momentum_top_n must use 'top' as the select-fn per grammar §3.5 VERIFIED-LOCAL; "
+            f"got {found_fn!r}"
         )
 
     def test_uses_cumulative_return(self, sbe):
@@ -713,8 +724,7 @@ class TestTemplateT6MomentumTopN:
 
 
 class TestTemplateT7LowVolFloor:
-    """T7: low_vol_floor — validate_tree == [], uses 'select-bottom' + 'standard-deviation-return'.
-    """
+    """T7: low_vol_floor — validate_tree == [], uses 'bottom' + 'standard-deviation-return'."""
 
     def test_builds_valid_tree(self, sbe):
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
@@ -737,9 +747,20 @@ class TestTemplateT7LowVolFloor:
 
     def test_uses_select_bottom(self, sbe):
         tree = sbe.low_vol_floor(["SPY", "TLT", "GLD"], 2, 21)
-        serialized = json.dumps(tree)
-        assert "select-bottom" in serialized, (
-            "low_vol_floor must use 'select-bottom' as the select-fn"
+        stack = [tree]
+        found_fn = None
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            if node.get("step") == "filter":
+                found_fn = node.get("select-fn")
+                break
+            for child in node.get("children", []) or []:
+                stack.append(child)
+        assert found_fn == "bottom", (
+            f"low_vol_floor must use 'bottom' as the select-fn per grammar §3.5 VERIFIED-LOCAL; "
+            f"got {found_fn!r}"
         )
 
     def test_uses_standard_deviation_return(self, sbe):
@@ -1772,15 +1793,35 @@ class TestAdversarialCycle3:
         )
 
     def test_t7_select_bottom_and_standard_deviation_return_present(self, sbe):
-        """Contract §2.1: T7 (low_vol_floor) must use 'select-bottom' AND
-        'standard-deviation-return' as the select-fn and sort-by-fn respectively.
-        Both must appear in the serialized JSON.
+        """Contract §2.1: T7 (low_vol_floor) must use 'bottom' (VERIFIED-LOCAL per
+        grammar §3.5) as the select-fn and 'standard-deviation-return' as the sort-by-fn.
+
+        select-fn is checked via tree traversal to the filter node (not a raw JSON
+        substring match) so the assertion targets the exact field value.
+        standard-deviation-return is checked via raw JSON substring — it is a sort-by-fn
+        value that does not appear elsewhere in the tree, so the substring match is exact.
         """
         tree = sbe.low_vol_floor(["SPY", "TLT", "GLD", "IWM"], n=2, window=21)
-        serialized = json.dumps(tree)
-        assert "select-bottom" in serialized, (
-            "T7 (low_vol_floor) must use 'select-bottom' as select-fn"
+
+        # Check select-fn via traversal — raw substring would pass on "select-bottom" too
+        stack = [tree]
+        found_fn = None
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            if node.get("step") == "filter":
+                found_fn = node.get("select-fn")
+                break
+            for child in node.get("children", []) or []:
+                stack.append(child)
+        assert found_fn == "bottom", (
+            f"T7 (low_vol_floor) must use 'bottom' as select-fn per grammar §3.5 "
+            f"VERIFIED-LOCAL; got {found_fn!r}"
         )
+
+        # sort-by-fn: substring check is safe — value does not appear elsewhere in the tree
+        serialized = json.dumps(tree)
         assert "standard-deviation-return" in serialized, (
             "T7 (low_vol_floor) must use 'standard-deviation-return' as sort-by-fn"
         )
