@@ -1,0 +1,105 @@
+{
+  "_fixture_provenance": "schema-derived from advisor_observations table; values are structural sentinels, not producer-computed quant outputs",
+  "_layer": "strategy_builder_phase3_routes",
+  "_binding_spec": "Phase 3 Strategy Builder dashboard feature brief",
+  "_note": "Never hardcode producer-computed metric values. Sharpe/sortino/drawdown/returns are test sentinels whose signs and types match the contract only.",
+
+  "observation_survivor": {
+    "id": 101,
+    "created_at": "2026-06-10T14:00:00",
+    "advisor_role": "STRATEGY_BUILDER",
+    "subject_type": "strategy_proposal",
+    "subject_id": "sym-test-001",
+    "verdict": "ADOPT_CANDIDATE",
+    "raw_response": {
+      "objective": "diversify",
+      "template_id": "T1",
+      "candidate_id": "sym-test-001:T1:0",
+      "metrics": {
+        "sharpe_ratio": null,
+        "sortino_ratio": null,
+        "max_drawdown": null,
+        "annualized_return": null
+      },
+      "_metrics_note": "null sentinel values — tests assert shape and keys only, never hardcoded producer floats",
+      "gate_decision": "ADOPT_CANDIDATE",
+      "winner_p_adj": null,
+      "n_candidates": 3,
+      "fdr_q": 0.05,
+      "caveats": [
+        "Selected on backtest: the gate screens for statistical significance but selection bias remains. Treat as hypothesis."
+      ],
+      "rules_text": "Equal weight: SPY, AGG, GLD",
+      "apply_guidance": "To apply: open your symphony in Composer and manually replicate this structure.",
+      "tickers": ["SPY", "AGG", "GLD"]
+    },
+    "is_advisory_only": 1,
+    "spec_bundle_id": null
+  },
+
+  "observation_rejected": {
+    "id": 102,
+    "created_at": "2026-06-10T14:00:01",
+    "advisor_role": "STRATEGY_BUILDER",
+    "subject_type": "strategy_proposal",
+    "subject_id": "sym-test-001",
+    "verdict": "WITHHELD",
+    "raw_response": {
+      "objective": "diversify",
+      "template_id": "T2",
+      "candidate_id": "sym-test-001:T2:0",
+      "metrics": {
+        "sharpe_ratio": null,
+        "sortino_ratio": null,
+        "max_drawdown": null,
+        "annualized_return": null
+      },
+      "gate_decision": "WITHHELD",
+      "winner_p_adj": null,
+      "n_candidates": 3,
+      "fdr_q": 0.05,
+      "caveats": [],
+      "rules_text": "Specified weight: SPY 60%, AGG 40%",
+      "apply_guidance": null,
+      "tickers": ["SPY", "AGG"]
+    },
+    "is_advisory_only": 1,
+    "spec_bundle_id": null
+  },
+
+  "observation_backtest_failed": {
+    "id": 103,
+    "created_at": "2026-06-10T14:00:02",
+    "advisor_role": "STRATEGY_BUILDER",
+    "subject_type": "strategy_proposal",
+    "subject_id": "sym-test-001",
+    "verdict": "WITHHELD",
+    "raw_response": {
+      "objective": "diversify",
+      "template_id": "T3",
+      "candidate_id": "sym-test-001:T3:0",
+      "metrics": {},
+      "gate_decision": "WITHHELD",
+      "winner_p_adj": null,
+      "n_candidates": 3,
+      "fdr_q": 0.05,
+      "caveats": [],
+      "rules_text": "Inverse vol: GLD, TLT",
+      "apply_guidance": null,
+      "tickers": ["GLD", "TLT"],
+      "backtest_error": "Backtest request timed out after 30s"
+    },
+    "is_advisory_only": 1,
+    "spec_bundle_id": null
+  },
+
+  "valid_verdict_values": ["ADOPT_CANDIDATE", "WITHHELD"],
+  "valid_objective_values": ["diversify", "cut_drawdown", "lift_risk_adjusted"],
+  "required_raw_response_keys": [
+    "objective", "template_id", "candidate_id", "metrics",
+    "gate_decision", "winner_p_adj", "n_candidates", "fdr_q",
+    "caveats", "rules_text", "apply_guidance", "tickers"
+  ],
+  "required_metrics_keys": ["sharpe_ratio", "sortino_ratio", "max_drawdown", "annualized_return"],
+  "is_advisory_only_contract": "always 1 — the Advisor never moves money"
+}
