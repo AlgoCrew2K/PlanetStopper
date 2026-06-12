@@ -886,3 +886,492 @@ def test_settings_write_allowlist_does_not_contain_strategy_builder_or_live_exec
         "trading and must never be writable through the unauthenticated dashboard. "
         "The allowlist must never include LIVE_EXECUTION."
     )
+
+
+# ===========================================================================
+# Adversarial Cycle 2 tests
+# Added after GREEN was confirmed. These tests cover gaps not caught by the
+# initial 18 tests — identified by direct inspection of the implementation.
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# H: AC-X2 lazy import — strategy_builder_engine must NOT appear at top level
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_builder_engine_not_imported_at_module_scope():
+    """H-19: app.py must NOT import strategy_builder_engine at module scope.
+
+    AC-X2: a module-scope import couples the 1-minute execution path (spawned
+    by app.py) to the advisor engine — every app.py load pulls the advisor into
+    memory. strategy_builder_engine must be imported lazily inside each route
+    handler.
+
+    This is a static-analysis test — it parses the app.py AST and verifies
+    that no top-level Import or ImportFrom node references strategy_builder_engine.
+    """
+    import ast as _ast
+
+    source = (_REPO_ROOT / "app.py").read_text(encoding="utf-8")
+    tree = _ast.parse(source)
+
+    for node in tree.body:
+        if isinstance(node, _ast.ImportFrom):
+            module = node.module or ""
+            assert "strategy_builder_engine" not in module, (
+                f"app.py imports from '{module}' at module scope — "
+                "strategy_builder_engine must be imported LAZILY inside the route "
+                "handler function body, not at the top level (AC-X2). "
+                "A module-scope import of strategy_builder_engine couples the "
+                "1-minute live execution path to the advisor."
+            )
+        if isinstance(node, _ast.Import):
+            for alias in node.names:
+                assert "strategy_builder_engine" not in alias.name, (
+                    f"app.py imports '{alias.name}' at module scope — AC-X2 violation."
+                )
+
+
+def test_strategy_builder_run_route_imports_propose_strategies_inside_function():
+    """H-20: The POST /run route handler must import propose_strategies inside its body.
+
+    This is the AC-X2 lazy-import contract for the run route specifically.
+    The function body must contain a lazy import from advisors.strategy_builder_engine.
+    """
+    import ast as _ast
+
+    source = (_REPO_ROOT / "app.py").read_text(encoding="utf-8")
+    tree = _ast.parse(source)
+
+    fn_body = None
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.FunctionDef) and node.name == "ai_advisor_strategy_builder_run":
+            fn_body = _ast.unparse(node)
+            break
+
+    assert fn_body is not None, (
+        "ai_advisor_strategy_builder_run not found in app.py. "
+        "The POST /run route handler must be defined."
+    )
+
+    assert "strategy_builder_engine" in fn_body, (
+        "ai_advisor_strategy_builder_run does not import from strategy_builder_engine "
+        "inside its function body. "
+        "AC-X2: the lazy import must appear inside the route handler, not at the top "
+        "level of app.py. "
+        "Missing lazy import means the live path guard is bypassed."
+    )
+
+    assert "propose_strategies" in fn_body, (
+        "ai_advisor_strategy_builder_run does not call or import propose_strategies. "
+        "The route must delegate to propose_strategies from strategy_builder_engine "
+        "(not implement the proposal logic inline)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# I: Advisor role isolation — non-STRATEGY_BUILDER observations must not bleed
+# ---------------------------------------------------------------------------
+
+
+def test_get_route_filters_out_non_strategy_builder_observations(client):
+    """I-21: GET route must filter observations to STRATEGY_BUILDER role only.
+
+    The database accessor get_advisor_observations_for_symphony returns ALL
+    advisor observations for a given symphony_id — it is not role-scoped.
+    The route must apply a role filter so OVERFITTING_CONSCIENCE,
+    SPEC_CRITIC, DIVERGENCE_EXPLAINER, and ASSET_SWAP observations for the
+    same symphony_id do not leak into the Strategy Builder template.
+
+    This is a role-bleed safety test: rendering a SPEC_CRITIC verdict as a
+    strategy proposal card would produce misleading UI for the operator.
+    """
+    # Build a mixed list: one STRATEGY_BUILDER observation + two from other roles
+    fixture = _load_fixture()
+    sb_obs = fixture["observation_survivor"]
+
+    other_role_obs_1 = {
+        "id": 301,
+        "created_at": "2026-06-10T14:00:00",
+        "advisor_role": "OVERFITTING_CONSCIENCE",
+        "subject_type": "autotune_run",
+        "subject_id": "sym-test-001",
+        "verdict": "CLEAR",
+        "raw_response": {"indicators": {"I1": False}},
+        "is_advisory_only": 1,
+        "spec_bundle_id": None,
+    }
+    other_role_obs_2 = {
+        "id": 302,
+        "created_at": "2026-06-10T14:00:01",
+        "advisor_role": "SPEC_CRITIC",
+        "subject_type": "spec_bundle",
+        "subject_id": "sym-test-001",
+        "verdict": "WATCH",
+        "raw_response": {"flags": ["param_count_high"]},
+        "is_advisory_only": 1,
+        "spec_bundle_id": None,
+    }
+
+    mixed_observations = [other_role_obs_1, other_role_obs_2, sb_obs]
+
+    captured_render: dict = {}
+
+    def _capture(*args, **kwargs):
+        captured_render.update(kwargs)
+        # Return minimal HTML that includes the testids we need so downstream
+        # DOM tests don't fail — actual template rendering tested elsewhere.
+        return "<html><body>stub</body></html>"
+
+    with (
+        patch("database.get_advisor_observations_for_symphony", return_value=mixed_observations),
+        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module, "render_template", side_effect=_capture),
+    ):
+        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+
+    assert resp.status_code == 200
+    observations_passed = captured_render.get("observations", [])
+
+    # Only the STRATEGY_BUILDER observation must reach the template
+    roles_in_template = {o.get("advisor_role") for o in observations_passed}
+    assert roles_in_template <= {"STRATEGY_BUILDER"}, (
+        f"GET /ai-advisor/strategy-builder passed non-STRATEGY_BUILDER observations "
+        f"to render_template. "
+        f"Roles found: {roles_in_template}. "
+        "The route must filter observations to advisor_role=='STRATEGY_BUILDER' only — "
+        "OVERFITTING_CONSCIENCE, SPEC_CRITIC, and other advisor roles for the same "
+        "symphony_id must not leak into the Strategy Builder template."
+    )
+
+    # The one STRATEGY_BUILDER observation must still be present (filter is selective,
+    # not a blanket drop)
+    sb_obs_in_template = [
+        o for o in observations_passed if o.get("advisor_role") == "STRATEGY_BUILDER"
+    ]
+    assert len(sb_obs_in_template) == 1, (
+        f"Expected exactly 1 STRATEGY_BUILDER observation to pass through to the template; "
+        f"got {len(sb_obs_in_template)}. "
+        "The role filter must preserve STRATEGY_BUILDER observations, not drop all of them."
+    )
+
+
+# ---------------------------------------------------------------------------
+# J: POST /run — unknown objective defaults to diversify (no 400/500)
+# ---------------------------------------------------------------------------
+
+
+def test_post_run_unknown_objective_string_does_not_crash(client):
+    """J-22: POST /run with an unrecognised objective string must return 200, not 400/500.
+
+    The route parses `objective` from the JSON body and must gracefully default
+    to `diversify` for any unknown value — a typo or future enum value must not
+    crash the route or return a user-hostile 4xx error.
+
+    This is a robustness test for the enum-parsing branch.
+    """
+    mock_run = _make_proposal_run(survivors=False, error=None)
+
+    with patch(
+        "advisors.strategy_builder_engine.propose_strategies",
+        return_value=mock_run,
+    ):
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run",
+            json={
+                "objective": "COMPLETELY_UNKNOWN_OBJECTIVE_VALUE_XYZ",
+                "universe": ["SPY", "AGG"],
+                "symphony_id": "sym-test",
+            },
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 200, (
+        f"POST /run with unknown objective returned {resp.status_code}, expected 200. "
+        "The route must default to 'diversify' for unrecognised objective values — "
+        "not crash, not return 4xx."
+    )
+    data = resp.get_json()
+    assert data is not None, "Response must be valid JSON even for unknown objective."
+    # Must not have an error triggered purely by the unrecognised string
+    # (errors from the mock engine are fine; errors from JSON parsing are not)
+    # The mock returns no error, so the response error must also be None
+    assert data.get("error") is None, (
+        f"Unknown objective string must not produce an error when the engine succeeds. "
+        f"Got error: {data.get('error')!r}. "
+        "The route must parse the objective and default to diversify without raising."
+    )
+
+
+# ---------------------------------------------------------------------------
+# K: POST /run — missing JSON body is handled gracefully (no 500)
+# ---------------------------------------------------------------------------
+
+
+def test_post_run_missing_json_body_does_not_500(client):
+    """K-23: POST /run with no JSON body must return 200 or 4xx — never a 500.
+
+    The route calls `request.get_json(silent=True) or {}` to handle missing bodies.
+    A missing body must default gracefully (empty universe, default objective) rather
+    than crash with an AttributeError or KeyError from None.
+    """
+    mock_run = _make_proposal_run(survivors=False, error=None)
+
+    with patch(
+        "advisors.strategy_builder_engine.propose_strategies",
+        return_value=mock_run,
+    ):
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run",
+            data="",  # no JSON body
+            content_type="application/json",
+        )
+
+    assert resp.status_code != 500, (
+        f"POST /run with missing JSON body returned 500. "
+        "The route must handle a missing body gracefully — "
+        "`request.get_json(silent=True) or {{}}` must default all fields rather than crash."
+    )
+
+
+# ---------------------------------------------------------------------------
+# L: GET route does NOT write to the database (read-only contract)
+# ---------------------------------------------------------------------------
+
+
+def test_get_route_does_not_call_insert_advisor_observation(client):
+    """L-24: GET /ai-advisor/strategy-builder must NOT call insert_advisor_observation.
+
+    The GET route is purely a display route — it reads from the database via
+    get_advisor_observations_for_symphony and renders. It must never write.
+    A write on the GET path would violate the read-only display constraint
+    and could interfere with observation history on every page load.
+    """
+    with (
+        patch("database.get_advisor_observations_for_symphony", return_value=[]),
+        patch("analytics.list_available_symphonies", return_value=[]),
+        patch("database.insert_advisor_observation") as mock_insert,
+    ):
+        client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+
+    assert mock_insert.call_count == 0, (
+        f"GET /ai-advisor/strategy-builder called database.insert_advisor_observation "
+        f"{mock_insert.call_count} time(s). "
+        "The GET route must be read-only — no writes on the display path."
+    )
+
+
+# ---------------------------------------------------------------------------
+# M: POST /run — fdr_adjusted_threshold is a float (not None) when n_candidates > 0
+# ---------------------------------------------------------------------------
+
+
+def test_post_run_fdr_adjusted_threshold_is_float_when_candidates_exist(client):
+    """M-25: When n_candidates > 0, fdr_adjusted_threshold must be a positive float.
+
+    The route computes fdr_adjusted_threshold = fdr_q / c_n (Yekutieli correction).
+    When n_candidates is non-zero, this must produce a non-None positive float —
+    None would mean the route failed to compute the threshold and the operator
+    has no FDR audit trail (AC-3.2 violation).
+
+    Tolerance: we assert it is a positive float — the exact value is
+    producer-computed (fdr_q / harmonic-n) and must not be hardcoded.
+    """
+    from types import SimpleNamespace
+
+    # Build a mock ProposalRun with a non-empty gated_batch (n_candidates=5)
+    gate_batch = SimpleNamespace(
+        results=[],
+        survivors=[],
+        n_candidates=5,
+        fdr_q=0.05,
+    )
+    mock_run = SimpleNamespace(
+        candidates=[],
+        gated_batch=gate_batch,
+        screened_survivors=[],
+        observations_written=0,
+        error=None,
+    )
+
+    with patch(
+        "advisors.strategy_builder_engine.propose_strategies",
+        return_value=mock_run,
+    ):
+        resp = client.post(
+            "/ai-advisor/strategy-builder/run",
+            json={"objective": "diversify", "universe": ["SPY", "AGG"], "symphony_id": "sym-test"},
+            content_type="application/json",
+        )
+
+    data = resp.get_json()
+    assert data is not None
+    assert data.get("error") is None, f"Unexpected error: {data.get('error')}"
+
+    threshold = data.get("fdr_adjusted_threshold")
+    assert threshold is not None, (
+        "fdr_adjusted_threshold must not be None when n_candidates=5. "
+        "The route must compute Yekutieli c(n) correction and return a float. "
+        "None means the AC-3.2 FDR audit trail is absent."
+    )
+    assert isinstance(threshold, float), (
+        f"fdr_adjusted_threshold must be a float, got {type(threshold).__name__}: {threshold!r}. "
+        "The Yekutieli-corrected threshold is always a positive float when fdr_q > 0."
+    )
+    assert threshold > 0, (
+        f"fdr_adjusted_threshold must be positive (fdr_q / c_n > 0). Got: {threshold}. "
+        "A zero or negative threshold would incorrectly gate all candidates."
+    )
+
+
+# ---------------------------------------------------------------------------
+# N: Template — run trigger button must be type="button" not type="submit"
+# ---------------------------------------------------------------------------
+
+
+def test_template_run_trigger_button_is_not_type_submit():
+    """N-26: The run trigger button in the template must be type="button", not type="submit".
+
+    A type="submit" run trigger would submit the containing form (or the page
+    body as an implicit form in some browsers), bypassing the JS fetch + CSRF
+    token flow. The button must be type="button" to ensure only the JS onclick
+    handler fires — never an HTML form submission.
+
+    This is a static analysis test on the template source.
+    """
+    template_path = _REPO_ROOT / "templates" / "ai_advisor_strategy_builder.html"
+    if not template_path.exists():
+        pytest.skip("Template not yet created — skipping static analysis.")
+
+    source = template_path.read_text(encoding="utf-8")
+
+    # Find all <button> elements and check none of the run-related ones are type="submit"
+    run_button_pattern = re.compile(
+        r'<button[^>]+(?:sb-run-btn|sbRunAnalysis|run-trigger-btn)[^>]*>', re.IGNORECASE
+    )
+    run_buttons = run_button_pattern.findall(source)
+
+    assert run_buttons, (
+        "No run trigger button found in the template. "
+        "Expected a <button> with id='sb-run-btn' or class='run-trigger-btn'. "
+        "The run trigger must exist as a type='button' element."
+    )
+
+    for btn_tag in run_buttons:
+        assert 'type="submit"' not in btn_tag.lower() and "type='submit'" not in btn_tag.lower(), (
+            f"Run trigger button is type='submit': {btn_tag!r}. "
+            "The run trigger must be type='button' to prevent HTML form submission — "
+            "the CSRF token is injected via JS fetch, not via an HTML form action."
+        )
+        # Verify it is explicitly type="button"
+        has_type_button = 'type="button"' in btn_tag.lower() or "type='button'" in btn_tag.lower()
+        assert has_type_button, (
+            f"Run trigger button does not have explicit type='button': {btn_tag!r}. "
+            "The button must have type='button' explicitly set — an implicit button "
+            "type defaults to 'submit' inside a form element in HTML5."
+        )
+
+
+# ---------------------------------------------------------------------------
+# O: FDR metadata content — α= numeric value must appear (domain-reviewer blocker)
+# ---------------------------------------------------------------------------
+
+
+def test_survivor_card_fdr_metadata_contains_numeric_alpha_value(client):
+    """O-27: The fdr-metadata element must render a numeric α value, not just the label.
+
+    The contract requires `α=0.0500` (or equivalent formatted fdr_q) to appear
+    in the data-testid="fdr-metadata" element — not just the boilerplate text
+    "Yekutieli c(n) correction applied" with no number.
+
+    Without the numeric value the operator cannot independently verify the
+    correction threshold used. AC-3.2 requires the full FDR metadata line.
+
+    This tests content precision, not just testid presence.
+    """
+    fixture = _load_fixture()
+    obs = fixture["observation_survivor"]
+
+    with (
+        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+        patch("analytics.list_available_symphonies", return_value=[]),
+    ):
+        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+
+    _assert_route_exists(resp, "GET /ai-advisor/strategy-builder (fdr-metadata content)")
+    if resp.status_code != 200:
+        pytest.skip(f"Route returned {resp.status_code} — skipping content check.")
+
+    html = resp.get_data(as_text=True)
+
+    # The fdr-metadata element must contain a numeric α value.
+    # Accept either α= or alpha= (HTML entity vs literal) followed by digits.
+    # Pattern matches: α=0.0500, α=0.05, alpha=0.0500, ɑ=0.05, etc.
+    has_numeric_alpha = bool(
+        re.search(r'(?:α|&alpha;|&#x3b1;|alpha)\s*=\s*\d', html, re.IGNORECASE)
+    )
+    assert has_numeric_alpha, (
+        "data-testid=\"fdr-metadata\" must render a numeric α= value "
+        "(e.g. 'α=0.0500') in the rendered HTML. "
+        "The template must interpolate the fdr_q value from the observation, "
+        "not just print 'Yekutieli c(n) correction applied' without a number. "
+        "AC-3.2: FDR metadata must include the adjusted threshold value for "
+        "the operator audit trail."
+    )
+
+
+# ---------------------------------------------------------------------------
+# P: Caveat text content — exact contract wording (domain-reviewer blocker)
+# ---------------------------------------------------------------------------
+
+
+def test_survivor_card_caveat_text_contains_overfitting_risk_wording(client):
+    """P-28: The caveat-text element must contain the exact contract wording about
+    overfitting risk being impossible to eliminate.
+
+    The domain-reviewer contract specifies: the caveat text must contain
+    "Overfitting risk cannot be eliminated" (or equivalent) — not only
+    "Selected on backtest" (which is too loose and can be satisfied by
+    paraphrases that miss the core message).
+
+    The SURVIVOR_OVERFITTING_CAVEAT from backtest_gate_engine reads:
+    "...selecting the best backtest from N candidates still concentrates
+    selection bias even after correction. A gate pass is resistance to noise,
+    not proof of live edge. Treat survivors as hypotheses, not guarantees."
+
+    The contract wording per the domain-reviewer is:
+    "Overfitting risk cannot be eliminated — only resisted."
+
+    This test verifies the template renders this exact message and does NOT
+    merely paraphrase it.
+    """
+    fixture = _load_fixture()
+    obs = fixture["observation_survivor"]
+
+    with (
+        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+        patch("analytics.list_available_symphonies", return_value=[]),
+    ):
+        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+
+    _assert_route_exists(resp, "GET /ai-advisor/strategy-builder (caveat content)")
+    if resp.status_code != 200:
+        pytest.skip(f"Route returned {resp.status_code} — skipping content check.")
+
+    html = resp.get_data(as_text=True)
+
+    # The exact contract wording from the domain-reviewer.
+    # "Overfitting risk cannot be eliminated — only resisted."
+    has_exact_wording = (
+        "Overfitting risk cannot be eliminated" in html
+        and "only resisted" in html
+    )
+    assert has_exact_wording, (
+        "Survivor card caveat text must contain the exact contract wording: "
+        "\"Overfitting risk cannot be eliminated — only resisted.\" "
+        "The template currently uses a paraphrase ('Selected on backtest: the gate screens...') "
+        "that does not satisfy the domain contract. "
+        "The caveat-text element must be updated to include: "
+        "\"Overfitting risk cannot be eliminated — only resisted.\""
+    )
