@@ -1,0 +1,31 @@
+{
+  "_fixture_provenance": "schema-derived",
+  "_layer": "strategy_builder_engine_m3",
+  "_note": "Sign-convention golden fixture for the log-return → pct conversion and max_drawdown output polarity. No producer-computed values. Every value is derived from the explicit contract in the module specification.",
+  "_binding_spec": "advisors/strategy_builder_engine.py (Phase-2 Strategy Builder, M3)",
+
+  "sign_convention": {
+    "_description": "BacktestResult.daily_returns contains LOG RETURNS in fraction scale. Conversion to pct is r * 100.0 (copy-exact from asset_swap_engine.py:577). compute_quantstats_metrics output max_drawdown is <= 0 (fraction scale).",
+    "input_daily_returns": {
+      "2024-01-01": 0.001,
+      "2024-01-02": -0.002
+    },
+    "expected_returns_pct": [0.1, -0.2],
+    "_expected_returns_pct_note": "Each value is input * 100.0 exactly — no rounding, no re-derivation.",
+    "max_drawdown_sign": "non_positive",
+    "_max_drawdown_sign_note": "compute_quantstats_metrics returns max_drawdown <= 0 in fraction scale (drawdown convention). Never assert an exact float — assert <= 0."
+  },
+
+  "fdr_integrity": {
+    "_description": "AC-3.2: evaluate_candidate_batch receives the FULL successfully-backtested batch. Screens (ScreenConfig) are applied only to gate survivors, never to shrink the gate's input.",
+    "invariant": "gated_batch.n_candidates == len(successfully_backtested_candidates)",
+    "_note": "A backtest that returns an error (BacktestResult.error is not None) does NOT produce a BacktestCandidate and is NOT counted in n_candidates."
+  },
+
+  "named_constants": {
+    "MAX_CANDIDATES_PER_RUN": 30,
+    "_MAX_CANDIDATES_PER_RUN_note": "Named constant — integer 30. Tests assert equality to this value, not a magic 30.",
+    "SCREEN_MAX_ABS_DRAWDOWN_DEFAULT_range": "0 < value <= 1.0",
+    "SCREEN_MAX_CORRELATION_DEFAULT_range": "0.0 <= value <= 1.0"
+  }
+}
