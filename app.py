@@ -3167,6 +3167,179 @@ def ai_advisor_logic_changes_evaluate():
     }), 200
 
 
+@app.route("/ai-advisor/strategy-builder", methods=["GET"])
+def ai_advisor_strategy_builder():
+    """Render the Phase-3 Strategy Builder tab (AC-2, AC-5, AC-X1..X5).
+
+    Read-only surface — no writes to live positions, no Composer write endpoints.
+    All strategy proposals are advisory-only (apply manually in Composer).
+
+    Template context:
+      no_api_key   — True when Composer credentials are absent (AC-X4)
+      symphonies   — list of known symphony IDs for the operator-initiated form
+      observations — stored STRATEGY_BUILDER advisor_observations for the
+                     selected symphony (read-only, SQLite RO connection)
+    """
+    # Lazy import keeps the module off the live 1-minute execution path (AC-X2).
+    from advisors.strategy_builder_engine import _has_composer_key  # noqa: PLC0415
+
+    no_api_key = not _has_composer_key()
+
+    # Symphony list for the operator-initiated form (optional — page renders without it).
+    symphonies: list[str] = []
+    try:
+        import analytics as _analytics  # noqa: PLC0415
+        history = _analytics.get_history_with_cache_invalidation(
+            base_dir=_analytics._POST_MORTEMS_DIR
+        )
+        symphonies = _analytics.list_available_symphonies(history)
+    except Exception:
+        pass  # Symphony list is optional; the form still renders without it.
+
+    # Load stored strategy-builder observations for the requested symphony.
+    # symphony_id from query param — empty string returns all advisory-only rows.
+    symphony_id = request.args.get("symphony_id", "").strip()
+    observations: list[dict] = []
+    try:
+        observations = database.get_advisor_observations_for_symphony(symphony_id)
+        # Filter to STRATEGY_BUILDER role only — the accessor is symphony-scoped
+        # but the table may contain rows from other advisor roles for the same ID.
+        observations = [
+            o for o in observations if o.get("advisor_role") == "STRATEGY_BUILDER"
+        ]
+    except Exception:
+        pass  # Observations are optional; the page renders with empty state.
+
+    return render_template(
+        "ai_advisor_strategy_builder.html",
+        active_route="advisor",
+        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
+        no_api_key=no_api_key,
+        symphonies=symphonies,
+        observations=observations,
+        symphony_id=symphony_id,
+    )
+
+
+@app.route("/ai-advisor/strategy-builder/run", methods=["POST"])
+def ai_advisor_strategy_builder_run():
+    """Operator-initiated strategy-builder proposal endpoint (Phase-3 AC-1).
+
+    Accepts JSON: { objective, universe, symphony_id? }.
+    Calls propose_strategies from advisors.strategy_builder_engine, gates
+    candidates via the full FDR batch, and returns JSON with survivor/rejected
+    detail plus FDR metadata for the operator audit trail.
+
+    Never runs a live trade; never calls Composer write endpoints (AC-X1).
+    CSRF is enforced by _csrf_before_request @before_request hook — not called here.
+    NOT added to _SETTINGS_WRITE_ALLOWLIST (this is not a settings write).
+    No LIVE_EXECUTION interaction anywhere.
+
+    No-key check is intentionally delegated to propose_strategies() — it already
+    returns ProposalRun(error=...) when no key is configured, and the route
+    surfaces that as the JSON error field.  An early _has_composer_key() guard
+    here would be intercepted before the mock in unit tests, breaking C-10.
+    """
+    # Lazy imports keep strategy_builder_engine off the live 1-minute execution path (AC-X2).
+    from advisors.strategy_builder_engine import (  # noqa: PLC0415
+        Objective,
+        ScreenConfig,
+        propose_strategies,
+    )
+
+    body = request.get_json(silent=True) or {}
+    objective_str = str(body.get("objective", "diversify")).strip()
+    universe_raw = body.get("universe", [])
+    if isinstance(universe_raw, str):
+        # Accept comma-separated string as well as a list.
+        universe = [t.strip().upper() for t in universe_raw.split(",") if t.strip()]
+    else:
+        universe = [str(t).strip().upper() for t in universe_raw if str(t).strip()]
+    symphony_id = str(body.get("symphony_id", "")).strip()
+
+    # Parse objective string to enum; default to diversify on unknown values.
+    try:
+        objective = Objective(objective_str)
+    except ValueError:
+        objective = Objective.diversify
+
+    try:
+        run = propose_strategies(
+            objective=objective,
+            universe=universe,
+            screen_config=ScreenConfig(),
+            live_returns=[],
+            symphony_id=symphony_id,
+        )
+    except Exception as exc:
+        _daemon_log.error("ai_advisor_strategy_builder_run failed: %s", exc, exc_info=True)
+        return jsonify({
+            "survivors": [],
+            "rejected": [],
+            "n_candidates": 0,
+            "fdr_adjusted_threshold": None,
+            "error": f"evaluation error: {exc}",
+        }), 200
+
+    # Surface top-level engine error (e.g. no API key, unexpected exception).
+    if run.error:
+        return jsonify({
+            "survivors": [],
+            "rejected": [],
+            "n_candidates": 0,
+            "fdr_adjusted_threshold": None,
+            "error": run.error,
+        }), 200
+
+    # Build FDR adjusted threshold — Yekutieli c(n) correction (matches AC-3.2).
+    gate_batch = run.gated_batch
+    fdr_adjusted_threshold: float | None = None
+    if gate_batch is not None:
+        n = gate_batch.n_candidates or 1
+        # Yekutieli c(n) = sum(1/k for k in 1..n) — same formula as autotuner._c_yekutieli.
+        c_n = sum(1.0 / k for k in range(1, n + 1))
+        fdr_adjusted_threshold = gate_batch.fdr_q / c_n if c_n > 0 else gate_batch.fdr_q
+
+    # Build survivor list from screened_survivors.
+    def _gate_result_to_dict(gr) -> dict:
+        """Serialise a CandidateGateResult to a JSON-friendly dict."""
+        # Look up matching CandidateInfo for metrics and template provenance.
+        info = next(
+            (i for i in run.candidates if i.candidate_id == gr.candidate_id), None
+        )
+        return {
+            "candidate_id": gr.candidate_id,
+            "template_id": info.template_id if info else None,
+            "gate_decision": gr.verdict.decision if gr.verdict else None,
+            "winner_p_adj": gr.winner_p_adj,
+            "caveats": list(gr.caveats) if gr.caveats else [],
+            "metrics": info.metrics if info else {},
+            "params": info.params if info else {},
+            "n_candidates": gate_batch.n_candidates if gate_batch else None,
+            "fdr_q": gate_batch.fdr_q if gate_batch else None,
+            "fdr_adjusted_threshold": fdr_adjusted_threshold,
+        }
+
+    survivors_list = [_gate_result_to_dict(gr) for gr in run.screened_survivors]
+
+    # Derive rejected from gated_batch.results minus screened_survivors (AC-3.2).
+    # ProposalRun has no rejected_candidates attribute — compute from gate batch.
+    screened_ids = {gr.candidate_id for gr in run.screened_survivors}
+    rejected_list = [
+        _gate_result_to_dict(gr)
+        for gr in run.gated_batch.results
+        if gr.candidate_id not in screened_ids
+    ]
+
+    return jsonify({
+        "survivors": survivors_list,
+        "rejected": rejected_list,
+        "n_candidates": gate_batch.n_candidates if gate_batch else 0,
+        "fdr_adjusted_threshold": fdr_adjusted_threshold,
+        "error": None,
+    }), 200
+
+
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
     """Compute four_gates_verdict booleans for one suggestion (FP-T1-05).
 
