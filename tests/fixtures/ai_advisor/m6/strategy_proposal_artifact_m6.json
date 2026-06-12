@@ -1,0 +1,31 @@
+{
+  "_fixture_provenance": "schema-derived from Phase-4 contract §2 M6 field list; values are structural sentinels, not producer-computed quant outputs",
+  "_layer": "strategy_builder_phase4_chat_anchoring",
+  "_binding_spec": "feature-plans/strategy-builder-phase4-contract.md §2 M6 artifact type",
+  "_note": "Never hardcode producer-computed metric values. Numeric fields (cagr, sharpe, etc.) are null sentinels — tests assert shape/key presence, never exact producer floats. fdr_adjusted_threshold is a sentinel confirming field presence in allowlist.",
+  "_pm_assumed": "Fields derived from stored observation row. If the stored row lacks a listed field, drop it per [PM-ASSUMED] in phase4 contract header.",
+
+  "artifact_type": "strategy_proposal",
+  "artifact_id": "m6-test-001",
+  "symphony_id": "sym-test-001",
+  "template_id": "T1",
+  "template_params": {"style": "equal_weight"},
+  "tickers": ["SPY", "AGG", "GLD"],
+  "rules_text": "Equal weight: SPY 33%, AGG 33%, GLD 34%",
+  "gate_verdict": "ADOPT_CANDIDATE",
+  "n_candidates": 3,
+  "n_survivors": 1,
+  "fdr_adjusted_threshold": 0.0170,
+  "score": 0.0023,
+  "threshold": 0.0170,
+  "screen_verdict": "PASSED",
+  "rejected_reason": null,
+
+  "_note_null_fields": "Fields below are present in the M6 allowlist but not stored in observation row — included as null to verify validate_artifact passes them through when null (allowlist presence, not value, is what matters)",
+  "cagr": null,
+  "sharpe": null,
+  "calmar": null,
+  "max_drawdown": null,
+  "correlation_vs_live": null,
+  "blended_drawdown": null
+}
