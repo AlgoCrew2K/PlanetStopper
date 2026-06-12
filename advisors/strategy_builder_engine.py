@@ -498,8 +498,63 @@ def _passes_screens(
 
 
 # ---------------------------------------------------------------------------
-# Persistence helper
+# Persistence helpers
 # ---------------------------------------------------------------------------
+
+
+def _build_live_baseline(
+    live_returns: list[float],
+    returns_pct: list[float],
+) -> dict | None:
+    """Compute live-baseline metrics over the tail-aligned window used by the
+    correlation / blended-drawdown screens (HR-5).
+
+    When both series are non-empty, the window is tail-aligned:
+        n = min(len(live_returns), len(returns_pct))
+        live_tail = live_returns[-n:]
+    When only live_returns is non-empty (no candidate series), use all of live_returns.
+
+    Returns a dict of metric keys mirroring the candidate raw_response fields,
+    or None when live_returns is empty (so the template can omit the baseline
+    column entirely for old rows — PA-3 / contract §2 'omitted when not provided').
+    """
+    if not live_returns:
+        return None
+    if returns_pct:
+        n = min(len(live_returns), len(returns_pct))
+        live_tail = live_returns[-n:]
+    else:
+        live_tail = live_returns
+    live_m = compute_quantstats_metrics(live_tail)
+    return {
+        "cagr": live_m.get("annualized_return"),
+        "sharpe": live_m.get("sharpe"),
+        "calmar": live_m.get("calmar"),
+        "max_drawdown": live_m.get("max_drawdown"),
+        # correlation_vs_live and blended_drawdown are N/A for the baseline itself
+        "correlation_vs_live": None,
+        "blended_drawdown": None,
+    }
+
+
+def _build_screen_metrics(
+    live_returns: list[float],
+    returns_pct: list[float],
+) -> tuple[float | None, float | None]:
+    """Compute correlation_vs_live and blended_drawdown using the SAME tail-aligned
+    window as _passes_screens (HR-5).
+
+    Returns (correlation_vs_live, blended_drawdown). Both are None when either
+    series is empty (screens that require live_returns are skipped in those cases).
+    """
+    if not live_returns or not returns_pct:
+        return None, None
+    n = min(len(live_returns), len(returns_pct))
+    corr = abs(_pearson_corr(returns_pct[-n:], live_returns[-n:]))
+    blended = [(r + lv) * 0.5 for r, lv in zip(returns_pct[-n:], live_returns[-n:], strict=True)]
+    blended_metrics = compute_quantstats_metrics(blended)
+    blended_mdd = blended_metrics.get("max_drawdown")
+    return corr, blended_mdd
 
 
 def _persist_survivor(
@@ -508,38 +563,132 @@ def _persist_survivor(
     gate_result: CandidateGateResult,
     n_candidates: int,
     fdr_q: float = HARVEY_LIU_FDR_Q,
+    *,
+    live_returns: list[float] | None = None,
+    returns_pct: list[float] | None = None,
+    n_survivors: int = 0,
+    is_rejected: bool = False,
 ) -> None:
-    """Persist an ADOPT_CANDIDATE survivor as an advisory observation.
+    """Persist an ADOPT_CANDIDATE survivor (or rejected candidate) as an advisory observation.
 
     fdr_q and fdr_adjusted_threshold are stored so the dashboard template can
     render the numeric adjusted threshold (phase3-contract.md line 39).
     fdr_adjusted_threshold = fdr_q / c(n) where c(n) is the Yekutieli harmonic
     sum — same formula as autotuner._c_yekutieli and the /run route.
+
+    Phase-3.5: also persists candidate quantstats metrics (cagr, sharpe, calmar,
+    max_drawdown), screen metadata (correlation_vs_live, blended_drawdown,
+    n_survivors), and live_baseline sub-dict so downstream surfaces can render
+    without recomputation (HR-2).
+
+    Args:
+        is_rejected: When True, write the gate_result verdict string as the DB verdict
+            (not 'ADOPT_CANDIDATE'). Used for the rejected-candidate persist path.
+            HR-3: gate semantics untouched — metrics are recorded, never re-gated.
+        returns_pct: Candidate daily returns in percent scale. When not provided,
+            falls back to info._returns_pct if set (allows test helpers to inject
+            candidate returns without modifying the call site).
     """
+    _live_returns = live_returns or []
+    # returns_pct kwarg takes priority; info._returns_pct is a test/fallback seam
+    _returns_pct = (
+        returns_pct if returns_pct is not None else getattr(info, "_returns_pct", None) or []
+    )
+
+    # Verdict: rejected path uses gate decision string; survivor always ADOPT_CANDIDATE
+    verdict_str = gate_result.verdict.decision if is_rejected else "ADOPT_CANDIDATE"
+
     # Yekutieli c(n) = sum(1/k for k in 1..n_candidates)
     c_n = sum(1.0 / k for k in range(1, n_candidates + 1)) if n_candidates > 0 else 1.0
     fdr_adjusted_threshold = fdr_q / c_n if c_n > 0 else fdr_q
+
+    # Phase-3.5: extract flat metric fields from info.metrics (already computed — HR-2)
+    cagr = info.metrics.get("annualized_return")
+    sharpe = info.metrics.get("sharpe")
+    calmar = info.metrics.get("calmar")
+    max_drawdown = info.metrics.get("max_drawdown")
+
+    # Phase-3.5: compute screen metadata using the same tail-aligned window as
+    # _passes_screens (HR-5) — no new I/O, purely CPU dict assembly
+    correlation_vs_live, blended_drawdown = _build_screen_metrics(_live_returns, _returns_pct)
+
+    # Phase-3.5: compute live_baseline metrics over the same tail-aligned window.
+    # live_baseline is ABSENT (not None) when live_returns is empty (PA-3: contract §2
+    # 'omitted when not provided' means the key must not exist, not be set to None).
+    live_baseline = _build_live_baseline(_live_returns, _returns_pct)
+
+    caveats = list(gate_result.caveats)
+    if not is_rejected:
+        caveats = caveats + [SURVIVOR_OVERFITTING_CAVEAT]
+
+    raw_response: dict = {
+        "objective": info.params.get("objective", ""),
+        "template_id": info.template_id,
+        "params": info.params,
+        "rules_text": symphony_schema.render_rules_text(info.tree),
+        "metrics": info.metrics,
+        # Phase-3.5: flat metric fields (CHAT_ARTIFACT_ALLOWED_FIELDS — FROZEN)
+        "cagr": cagr,
+        "sharpe": sharpe,
+        "calmar": calmar,
+        "max_drawdown": max_drawdown,
+        "correlation_vs_live": correlation_vs_live,
+        "blended_drawdown": blended_drawdown,
+        # Phase-3.5: batch metadata
+        "n_survivors": n_survivors,
+        "gate_decision": gate_result.verdict.decision,
+        "winner_p_adj": gate_result.winner_p_adj,
+        "n_candidates": n_candidates,
+        "fdr_q": fdr_q,
+        "fdr_adjusted_threshold": fdr_adjusted_threshold,
+        "caveats": caveats,
+    }
+
+    # PA-3: live_baseline key is ABSENT (not None, not present) when live_returns empty.
+    # Contract §2: 'omitted when not provided'. Only include when _build_live_baseline
+    # returns a dict (which requires both live_returns and returns_pct to be non-empty).
+    if live_baseline is not None:
+        raw_response["live_baseline"] = live_baseline
 
     database.insert_advisor_observation(
         advisor_role="STRATEGY_BUILDER",
         symphony_id=symphony_id,
         subject_type="strategy_proposal",
         subject_id=info.candidate_id,
-        verdict="ADOPT_CANDIDATE",
+        verdict=verdict_str,
         is_advisory_only=1,
-        raw_response={
-            "objective": info.params.get("objective", ""),
-            "template_id": info.template_id,
-            "params": info.params,
-            "rules_text": symphony_schema.render_rules_text(info.tree),
-            "metrics": info.metrics,
-            "gate_decision": gate_result.verdict.decision,
-            "winner_p_adj": gate_result.winner_p_adj,
-            "n_candidates": n_candidates,
-            "fdr_q": fdr_q,
-            "fdr_adjusted_threshold": fdr_adjusted_threshold,
-            "caveats": list(gate_result.caveats) + [SURVIVOR_OVERFITTING_CAVEAT],
-        },
+        raw_response=raw_response,
+    )
+
+
+def _persist_rejected(
+    symphony_id: str,
+    info: CandidateInfo,
+    gate_result: CandidateGateResult,
+    n_candidates: int,
+    fdr_q: float = HARVEY_LIU_FDR_Q,
+    *,
+    live_returns: list[float] | None = None,
+    returns_pct: list[float] | None = None,
+    n_survivors: int = 0,
+) -> None:
+    """Persist a gate-rejected or screen-rejected candidate as an advisory observation.
+
+    Delegates to _persist_survivor with is_rejected=True so the verdict reflects
+    the gate decision (e.g. 'WITHHELD_FDR') rather than 'ADOPT_CANDIDATE'.
+    Phase-3.5 [PM-ASSUMED]: rejected candidates persist metrics too so their cards
+    and M6 artifacts benefit equally from the same baseline column rendering.
+    """
+    _persist_survivor(
+        symphony_id,
+        info,
+        gate_result,
+        n_candidates,
+        fdr_q,
+        live_returns=live_returns,
+        returns_pct=returns_pct,
+        n_survivors=n_survivors,
+        is_rejected=True,
     )
 
 
@@ -663,19 +812,57 @@ def propose_strategies(
 
         # Step 5: Persist survivors (is_advisory_only=1)
         obs_written = 0
+        n_survivors = len(screened_survivors)
         for gate_result in screened_survivors:
             cid = gate_result.candidate_id
             info = next((i for i in candidate_infos if i.candidate_id == cid), None)
             if info is None:
                 continue
+            returns_pct = returns_by_id.get(cid, [])
             try:
                 _persist_survivor(
-                    symphony_id, info, gate_result, len(bt_candidates), fdr_q=gate_batch.fdr_q
+                    symphony_id,
+                    info,
+                    gate_result,
+                    len(bt_candidates),
+                    fdr_q=gate_batch.fdr_q,
+                    live_returns=live_returns,
+                    returns_pct=returns_pct,
+                    n_survivors=n_survivors,
                 )
                 obs_written += 1
             except Exception:
                 logger.warning(
                     "propose_strategies: failed to persist survivor %s",
+                    cid,
+                    exc_info=True,
+                )
+
+        # Step 5b: Persist rejected candidates (gate-rejected or screen-rejected)
+        # with verdict=WITHHELD_FDR — [PM-ASSUMED] per phase35 contract.
+        screened_survivor_ids = {gr.candidate_id for gr in screened_survivors}
+        for gate_result in gate_batch.results:
+            cid = gate_result.candidate_id
+            if cid in screened_survivor_ids:
+                continue  # already persisted as survivor above
+            info = next((i for i in candidate_infos if i.candidate_id == cid), None)
+            if info is None:
+                continue
+            returns_pct = returns_by_id.get(cid, [])
+            try:
+                _persist_rejected(
+                    symphony_id,
+                    info,
+                    gate_result,
+                    len(bt_candidates),
+                    fdr_q=gate_batch.fdr_q,
+                    live_returns=live_returns,
+                    returns_pct=returns_pct,
+                    n_survivors=n_survivors,
+                )
+            except Exception:
+                logger.warning(
+                    "propose_strategies: failed to persist rejected candidate %s",
                     cid,
                     exc_info=True,
                 )

@@ -3333,6 +3333,12 @@ def ai_advisor_strategy_builder():
             "fdr_adjusted_threshold": rr.get("fdr_adjusted_threshold") or rr.get("fdr_q"),
             "screen_verdict": rr.get("screen_verdict"),
             "rejected_reason": rr.get("rejected_reason"),
+            # Phase-3.5: flat metric fields (already in CHAT_ARTIFACT_ALLOWED_FIELDS — FROZEN)
+            "cagr": rr.get("cagr"),
+            "sharpe": rr.get("sharpe"),
+            "calmar": rr.get("calmar"),
+            "correlation_vs_live": rr.get("correlation_vs_live"),
+            "blended_drawdown": rr.get("blended_drawdown"),
         }
 
     return render_template(

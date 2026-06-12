@@ -842,23 +842,31 @@
                     Template: {{ rr.get('template_id', '—') | e }}
                 </div>
 
-                <!-- Stats table: candidate metrics only — live-portfolio baseline
-                     deferred (no baseline series stored in advisor_observations;
-                     see Phase-3 Deviation 1 in contract). -->
+                <!-- Stats table: candidate metrics + optional live-baseline column.
+                     Phase-3.5: live_baseline is present on new rows only; old rows
+                     render single-column (HR-1 backward compat). -->
+                {% set live_baseline = rr.get('live_baseline') %}
                 <table class="stats-table" data-testid="stats-table">
                     <thead>
                         <tr>
                             <th>Metric</th>
                             <th>Candidate</th>
+                            {% if live_baseline %}<th data-testid="baseline-col-header">Live Baseline</th>{% endif %}
                         </tr>
                     </thead>
                     <tbody>
-                        {% set sharpe = metrics.get('sharpe_ratio') %}
+                        {% set sharpe = rr.get('sharpe') if rr.get('sharpe') is not none else metrics.get('sharpe_ratio') %}
                         <tr>
                             <td>Sharpe</td>
                             <td class="{% if sharpe is not none %}{% if sharpe >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
                                 {% if sharpe is not none %}{{ "%.3f" | format(sharpe) }}{% else %}—{% endif %}
                             </td>
+                            {% if live_baseline %}
+                            {% set bl_val = live_baseline.get('sharpe') %}
+                            <td class="{% if bl_val is not none %}{% if bl_val >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-sharpe">
+                                {% if bl_val is not none %}{{ "%.3f" | format(bl_val) }}{% else %}—{% endif %}
+                            </td>
+                            {% endif %}
                         </tr>
                         {% set sortino = metrics.get('sortino_ratio') %}
                         <tr>
@@ -866,22 +874,70 @@
                             <td class="{% if sortino is not none %}{% if sortino >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
                                 {% if sortino is not none %}{{ "%.3f" | format(sortino) }}{% else %}—{% endif %}
                             </td>
+                            {% if live_baseline %}<td class="stat-nil" data-testid="baseline-sortino">—</td>{% endif %}
                         </tr>
-                        {% set mdd = metrics.get('max_drawdown') %}
+                        {% set mdd = rr.get('max_drawdown') if rr.get('max_drawdown') is not none else metrics.get('max_drawdown') %}
                         <tr>
                             <td>Max Drawdown</td>
                             <!-- Inverted coloring: smaller magnitude is better -->
                             <td class="{% if mdd is not none %}{% if (mdd | abs) <= 0.20 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
                                 {% if mdd is not none %}{{ "%.2f%%" | format(mdd * 100) }}{% else %}—{% endif %}
                             </td>
+                            {% if live_baseline %}
+                            {% set bl_mdd = live_baseline.get('max_drawdown') %}
+                            <td class="{% if bl_mdd is not none %}{% if (bl_mdd | abs) <= 0.20 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-max-drawdown">
+                                {% if bl_mdd is not none %}{{ "%.2f%%" | format(bl_mdd * 100) }}{% else %}—{% endif %}
+                            </td>
+                            {% endif %}
                         </tr>
-                        {% set ann_ret = metrics.get('annualized_return') %}
+                        {% set ann_ret = rr.get('cagr') if rr.get('cagr') is not none else metrics.get('annualized_return') %}
                         <tr>
                             <td>Annual Return</td>
                             <td class="{% if ann_ret is not none %}{% if ann_ret >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
                                 {% if ann_ret is not none %}{{ "%.2f%%" | format(ann_ret * 100) }}{% else %}—{% endif %}
                             </td>
+                            {% if live_baseline %}
+                            {% set bl_cagr = live_baseline.get('cagr') %}
+                            <td class="{% if bl_cagr is not none %}{% if bl_cagr >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-cagr">
+                                {% if bl_cagr is not none %}{{ "%.2f%%" | format(bl_cagr * 100) }}{% else %}—{% endif %}
+                            </td>
+                            {% endif %}
                         </tr>
+                        {% set calmar = rr.get('calmar') %}
+                        {% if calmar is not none %}
+                        <tr>
+                            <td>Calmar</td>
+                            <td class="{% if calmar >= 0 %}stat-pos{% else %}stat-neg{% endif %}">
+                                {{ "%.3f" | format(calmar) }}
+                            </td>
+                            {% if live_baseline %}
+                            {% set bl_calmar = live_baseline.get('calmar') %}
+                            <td class="{% if bl_calmar is not none %}{% if bl_calmar >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-calmar">
+                                {% if bl_calmar is not none %}{{ "%.3f" | format(bl_calmar) }}{% else %}—{% endif %}
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% endif %}
+                        {% set corr = rr.get('correlation_vs_live') %}
+                        {% if corr is not none %}
+                        <tr>
+                            <td>Corr vs Live</td>
+                            <td class="{% if corr <= 0.5 %}stat-pos{% else %}stat-neg{% endif %}">
+                                {{ "%.3f" | format(corr) }}
+                            </td>
+                            {% if live_baseline %}<td class="stat-nil" data-testid="baseline-correlation">—</td>{% endif %}
+                        </tr>
+                        {% endif %}
+                        {% set bd = rr.get('blended_drawdown') %}
+                        {% if bd is not none %}
+                        <tr>
+                            <td>Blended MDD</td>
+                            <td class="{% if (bd | abs) <= 0.20 %}stat-pos{% else %}stat-neg{% endif %}">
+                                {{ "%.2f%%" | format(bd * 100) }}
+                            </td>
+                            {% if live_baseline %}<td class="stat-nil" data-testid="baseline-blended-drawdown">—</td>{% endif %}
+                        </tr>
+                        {% endif %}
                     </tbody>
                 </table>
 
@@ -1003,20 +1059,30 @@
                             &nbsp;&middot;&nbsp;
                             Template: {{ rr.get('template_id', '—') | e }}
                         </div>
+                        <!-- Stats table: candidate metrics + optional live-baseline column.
+                             Phase-3.5: live_baseline present on new rows only (HR-1). -->
+                        {% set live_baseline = rr.get('live_baseline') %}
                         <table class="stats-table" data-testid="stats-table">
                             <thead>
                                 <tr>
                                     <th>Metric</th>
                                     <th>Candidate</th>
+                                    {% if live_baseline %}<th data-testid="baseline-col-header">Live Baseline</th>{% endif %}
                                 </tr>
                             </thead>
                             <tbody>
-                                {% set sharpe = metrics.get('sharpe_ratio') %}
+                                {% set sharpe = rr.get('sharpe') if rr.get('sharpe') is not none else metrics.get('sharpe_ratio') %}
                                 <tr>
                                     <td>Sharpe</td>
                                     <td class="stat-nil">
                                         {% if sharpe is not none %}{{ "%.3f" | format(sharpe) }}{% else %}—{% endif %}
                                     </td>
+                                    {% if live_baseline %}
+                                    {% set bl_val = live_baseline.get('sharpe') %}
+                                    <td class="{% if bl_val is not none %}{% if bl_val >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-sharpe">
+                                        {% if bl_val is not none %}{{ "%.3f" | format(bl_val) }}{% else %}—{% endif %}
+                                    </td>
+                                    {% endif %}
                                 </tr>
                                 {% set sortino = metrics.get('sortino_ratio') %}
                                 <tr>
@@ -1024,21 +1090,49 @@
                                     <td class="stat-nil">
                                         {% if sortino is not none %}{{ "%.3f" | format(sortino) }}{% else %}—{% endif %}
                                     </td>
+                                    {% if live_baseline %}<td class="stat-nil" data-testid="baseline-sortino">—</td>{% endif %}
                                 </tr>
-                                {% set mdd = metrics.get('max_drawdown') %}
+                                {% set mdd = rr.get('max_drawdown') if rr.get('max_drawdown') is not none else metrics.get('max_drawdown') %}
                                 <tr>
                                     <td>Max Drawdown</td>
                                     <td class="stat-nil">
                                         {% if mdd is not none %}{{ "%.2f%%" | format(mdd * 100) }}{% else %}—{% endif %}
                                     </td>
+                                    {% if live_baseline %}
+                                    {% set bl_mdd = live_baseline.get('max_drawdown') %}
+                                    <td class="{% if bl_mdd is not none %}{% if (bl_mdd | abs) <= 0.20 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-max-drawdown">
+                                        {% if bl_mdd is not none %}{{ "%.2f%%" | format(bl_mdd * 100) }}{% else %}—{% endif %}
+                                    </td>
+                                    {% endif %}
                                 </tr>
-                                {% set ann_ret = metrics.get('annualized_return') %}
+                                {% set ann_ret = rr.get('cagr') if rr.get('cagr') is not none else metrics.get('annualized_return') %}
                                 <tr>
                                     <td>Annual Return</td>
                                     <td class="stat-nil">
                                         {% if ann_ret is not none %}{{ "%.2f%%" | format(ann_ret * 100) }}{% else %}—{% endif %}
                                     </td>
+                                    {% if live_baseline %}
+                                    {% set bl_cagr = live_baseline.get('cagr') %}
+                                    <td class="{% if bl_cagr is not none %}{% if bl_cagr >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-cagr">
+                                        {% if bl_cagr is not none %}{{ "%.2f%%" | format(bl_cagr * 100) }}{% else %}—{% endif %}
+                                    </td>
+                                    {% endif %}
                                 </tr>
+                                {% set calmar = rr.get('calmar') %}
+                                {% if calmar is not none %}
+                                <tr>
+                                    <td>Calmar</td>
+                                    <td class="{% if calmar >= 0 %}stat-pos{% else %}stat-neg{% endif %}">
+                                        {{ "%.3f" | format(calmar) }}
+                                    </td>
+                                    {% if live_baseline %}
+                                    {% set bl_calmar = live_baseline.get('calmar') %}
+                                    <td class="{% if bl_calmar is not none %}{% if bl_calmar >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-calmar">
+                                        {% if bl_calmar is not none %}{{ "%.3f" | format(bl_calmar) }}{% else %}—{% endif %}
+                                    </td>
+                                    {% endif %}
+                                </tr>
+                                {% endif %}
                             </tbody>
                         </table>
                         <div class="gate-verdict-row">
