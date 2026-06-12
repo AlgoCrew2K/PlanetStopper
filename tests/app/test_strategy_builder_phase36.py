@@ -870,7 +870,7 @@ class TestAdversarialCycle2Phase36:
     # ADV-1: Single-point sparkline (n=1 → x=w/2 degenerate polyline)
     # -----------------------------------------------------------------------
 
-    def test_adv36_1_single_point_series_no_svg(self, client):
+    def test_adv36_1_single_point_series_no_crash(self, client):
         """ADV-1: equity_curve_downsampled=[5.0] (1 point) — route returns 200, no crash.
 
         With n=1 the Jinja macro uses x=w/2 to avoid division by zero (``n-1``
