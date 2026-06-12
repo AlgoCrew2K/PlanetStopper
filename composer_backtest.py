@@ -140,7 +140,9 @@ def _day_int_to_iso(day_int: int | str) -> str:
     return (_COMPOSER_DAY_EPOCH + timedelta(days=int(day_int))).isoformat()
 
 
-def _extract_daily_returns(dvm_capital: dict, symphony_id: str) -> tuple[dict[str, float], dict[str, float]]:
+def _extract_daily_returns(
+    dvm_capital: dict, symphony_id: str
+) -> tuple[dict[str, float], dict[str, float]]:
     """Extract date-keyed portfolio values and derived log returns from ``dvm_capital``.
 
     ``dvm_capital`` shape (observed from live capture 2026-05-31):
@@ -156,6 +158,20 @@ def _extract_daily_returns(dvm_capital: dict, symphony_id: str) -> tuple[dict[st
     An empty or missing inner dict returns two empty dicts.
     """
     inner = dvm_capital.get(symphony_id, {})
+    if not inner and len(dvm_capital) == 1:
+        # Inline backtests of modified/synthetic trees: the dvm_capital response
+        # key is unattested (only real-symphony captures exist, where request id
+        # == response key). A single returned series is structurally the answer
+        # to the single posted tree — use it and log for fixture capture.
+        # Mirrors advisors/composer_backtest_client._extract_returns (live-daemon
+        # E2E 2026-06-12: exact-match-only lookup degraded silently to empty).
+        ((only_key, inner),) = dvm_capital.items()
+        logger.warning(
+            "_extract_returns: dvm_capital key %r != requested symphony_id %r; "
+            "using the single returned series",
+            only_key,
+            symphony_id,
+        )
     if not inner:
         return {}, {}
 
@@ -341,12 +357,8 @@ def submit_backtest(
 
             if response.status_code == 429:
                 # Respect Retry-After header; fall back to first backoff interval.
-                retry_after = float(
-                    response.headers.get("Retry-After", _BACKOFF_INTERVALS[0])
-                )
-                logger.info(
-                    "submit_backtest: rate-limited (429), sleeping %.1f s", retry_after
-                )
+                retry_after = float(response.headers.get("Retry-After", _BACKOFF_INTERVALS[0]))
+                logger.info("submit_backtest: rate-limited (429), sleeping %.1f s", retry_after)
                 if backoff is not None:
                     time.sleep(retry_after)
                     continue
@@ -384,6 +396,4 @@ def submit_backtest(
             ) from exc
 
     # Should be unreachable, but satisfies type checkers.
-    raise requests.RequestException(
-        f"submit_backtest: exhausted retries — last error: {last_exc}"
-    )
+    raise requests.RequestException(f"submit_backtest: exhausted retries — last error: {last_exc}")

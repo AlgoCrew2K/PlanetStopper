@@ -32,7 +32,7 @@ import json
 import pathlib
 import sys
 from io import BytesIO
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import requests
@@ -65,6 +65,7 @@ def _ensure_repo_on_path() -> None:
 # ---------------------------------------------------------------------------
 # Fixture loading
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def captured_fixture() -> dict:
@@ -160,6 +161,7 @@ def minimal_raw_value() -> dict:
 # Section 1 — Module exists and exposes the required public interface
 # ---------------------------------------------------------------------------
 
+
 class TestModuleExists:
     """composer_backtest.py must exist at repo root and expose its contract."""
 
@@ -167,6 +169,7 @@ class TestModuleExists:
         """composer_backtest must be importable. RED if module missing."""
         _ensure_repo_on_path()
         import importlib
+
         mod = importlib.import_module("composer_backtest")
         assert mod is not None
 
@@ -174,6 +177,7 @@ class TestModuleExists:
         """composer_backtest must expose submit_backtest as a callable."""
         _ensure_repo_on_path()
         import composer_backtest
+
         assert callable(getattr(composer_backtest, "submit_backtest", None)), (
             "composer_backtest must expose submit_backtest as the single entry point "
             "for POST /api/v0.1/backtest."
@@ -183,6 +187,7 @@ class TestModuleExists:
         """composer_backtest must expose BacktestStats as the return type."""
         _ensure_repo_on_path()
         import composer_backtest
+
         assert hasattr(composer_backtest, "BacktestStats"), (
             "composer_backtest must expose BacktestStats — the structured return type "
             "carrying sharpe_ratio, daily_returns, data_warnings, etc."
@@ -192,6 +197,7 @@ class TestModuleExists:
 # ---------------------------------------------------------------------------
 # Section 2 — Hard live-guard: is_live=False + no _session raises immediately
 # ---------------------------------------------------------------------------
+
 
 class TestLiveGuard:
     """Calling submit_backtest with is_live=False and no _session must raise RuntimeError."""
@@ -204,6 +210,7 @@ class TestLiveGuard:
         """
         _ensure_repo_on_path()
         import composer_backtest
+
         with pytest.raises(RuntimeError, match="is_live=False"):
             composer_backtest.submit_backtest(
                 raw_value=minimal_raw_value,
@@ -215,6 +222,7 @@ class TestLiveGuard:
         """RuntimeError message must mention _session injection to guide test authors."""
         _ensure_repo_on_path()
         import composer_backtest
+
         with pytest.raises(RuntimeError) as exc_info:
             composer_backtest.submit_backtest(
                 raw_value=minimal_raw_value,
@@ -232,19 +240,17 @@ class TestLiveGuard:
 # Section 3 — Request body construction (verified via fixture session capture)
 # ---------------------------------------------------------------------------
 
+
 class TestRequestBodyConstruction:
     """The client must build a valid POST /api/v0.1/backtest request body."""
 
-    def test_submit_backtest_posts_to_backtest_endpoint(
-        self, minimal_raw_value, response_body
-    ):
+    def test_submit_backtest_posts_to_backtest_endpoint(self, minimal_raw_value, response_body):
         """The POST must target /api/v0.1/backtest (inline definition endpoint).
 
         NOT /api/v0.1/symphonies/{id}/backtest — that requires a pre-saved symphony.
         """
         _ensure_repo_on_path()
         import composer_backtest
-        from alpha_bot_execution import COMPOSER_BASE_URL
 
         captured_requests = []
 
@@ -258,7 +264,9 @@ class TestRequestBodyConstruction:
                 resp.encoding = "utf-8"
                 resp.headers = requests.structures.CaseInsensitiveDict({})
                 return resp
-            def close(self): pass
+
+            def close(self):
+                pass
 
         session = requests.Session()
         session.mount("https://", CapturingAdapter())
@@ -275,7 +283,9 @@ class TestRequestBodyConstruction:
             f"Expected URL to end with '/backtest' or contain '/api/v0.1/backtest', got: {url!r}."
         )
         # Guard: must not use the symphony-ID endpoint
-        assert "/symphonies/" not in url.split("/backtest")[0].rstrip("/") or url.endswith("/backtest"), (
+        assert "/symphonies/" not in url.split("/backtest")[0].rstrip("/") or url.endswith(
+            "/backtest"
+        ), (
             "Must not POST to /symphonies/{id}/backtest — use POST /api/v0.1/backtest for inline defs."
         )
 
@@ -301,7 +311,9 @@ class TestRequestBodyConstruction:
                 resp.encoding = "utf-8"
                 resp.headers = requests.structures.CaseInsensitiveDict({})
                 return resp
-            def close(self): pass
+
+            def close(self):
+                pass
 
         session = requests.Session()
         session.mount("https://", CapturingAdapter())
@@ -315,8 +327,7 @@ class TestRequestBodyConstruction:
         assert len(captured_bodies) == 1
         body = captured_bodies[0]
         assert "symphony" in body, (
-            "Request body must have top-level 'symphony' key. "
-            f"Got keys: {list(body.keys())}."
+            f"Request body must have top-level 'symphony' key. Got keys: {list(body.keys())}."
         )
         assert "raw_value" in body["symphony"], (
             "body['symphony'] must have a 'raw_value' key containing the logic tree."
@@ -325,9 +336,7 @@ class TestRequestBodyConstruction:
             "The tree passed as raw_value must appear verbatim in body['symphony']['raw_value']."
         )
 
-    def test_request_body_has_required_scalar_fields(
-        self, minimal_raw_value, response_body
-    ):
+    def test_request_body_has_required_scalar_fields(self, minimal_raw_value, response_body):
         """The POSTed body must include all required scalar fields per the API schema."""
         _ensure_repo_on_path()
         import composer_backtest
@@ -344,7 +353,9 @@ class TestRequestBodyConstruction:
                 resp.encoding = "utf-8"
                 resp.headers = requests.structures.CaseInsensitiveDict({})
                 return resp
-            def close(self): pass
+
+            def close(self):
+                pass
 
         session = requests.Session()
         session.mount("https://", CapturingAdapter())
@@ -363,7 +374,9 @@ class TestRequestBodyConstruction:
             "All must be present for Composer to accept the request (else 422)."
         )
 
-    def test_request_uses_composer_auth_headers(self, minimal_raw_value, response_body, monkeypatch):
+    def test_request_uses_composer_auth_headers(
+        self, minimal_raw_value, response_body, monkeypatch
+    ):
         """The POST must include x-api-key-id and authorization headers.
 
         Credentials are monkeypatched: get_composer_headers reads module globals
@@ -391,7 +404,9 @@ class TestRequestBodyConstruction:
                 resp.encoding = "utf-8"
                 resp.headers = requests.structures.CaseInsensitiveDict({})
                 return resp
-            def close(self): pass
+
+            def close(self):
+                pass
 
         session = requests.Session()
         session.mount("https://", CapturingAdapter())
@@ -415,6 +430,7 @@ class TestRequestBodyConstruction:
 # ---------------------------------------------------------------------------
 # Section 4 — Response parsing against the real captured fixture
 # ---------------------------------------------------------------------------
+
 
 class TestResponseParsing:
     """The client must parse the real captured fixture into a BacktestStats correctly.
@@ -493,6 +509,7 @@ class TestResponseParsing:
         the BHY t-stat and gate decision.
         """
         import math as _math
+
         _ensure_repo_on_path()
         import composer_backtest
 
@@ -530,6 +547,7 @@ class TestResponseParsing:
         Non-ISO keys would break fold slicing.
         """
         import re
+
         _ensure_repo_on_path()
         import composer_backtest
 
@@ -548,6 +566,7 @@ class TestResponseParsing:
 # ---------------------------------------------------------------------------
 # Section 5 — Error handling
 # ---------------------------------------------------------------------------
+
 
 class TestErrorHandling:
     """Errors must propagate as exceptions, not be silently swallowed."""
@@ -568,7 +587,9 @@ class TestErrorHandling:
                 resp.headers = requests.structures.CaseInsensitiveDict({"Retry-After": "0"})
                 resp._content = b"{}"
                 return resp
-            def close(self): pass
+
+            def close(self):
+                pass
 
         session = requests.Session()
         session.mount("https://", Always429Adapter())
@@ -600,7 +621,9 @@ class TestErrorHandling:
                 resp.headers = requests.structures.CaseInsensitiveDict({})
                 resp._content = b"Internal Server Error"
                 return resp
-            def close(self): pass
+
+            def close(self):
+                pass
 
         session = requests.Session()
         session.mount("https://", Always500Adapter())
@@ -639,7 +662,9 @@ class TestErrorHandling:
                     resp.encoding = "utf-8"
                     resp.headers = requests.structures.CaseInsensitiveDict({})
                 return resp
-            def close(self): pass
+
+            def close(self):
+                pass
 
         session = requests.Session()
         session.mount("https://", SequencedAdapter())
@@ -664,6 +689,7 @@ class TestErrorHandling:
 # ---------------------------------------------------------------------------
 # Section 6 — Architecture: offline isolation and no live calls in default suite
 # ---------------------------------------------------------------------------
+
 
 class TestArchitectureSeparation:
     """Hard architecture contracts: AC-X2 + live/test separation."""
@@ -713,12 +739,59 @@ class TestArchitectureSeparation:
 
         _sys.modules.pop("composer_backtest", None)
 
-        with patch("requests.post", side_effect=counting_post), \
-             patch("requests.get", side_effect=counting_get):
+        with (
+            patch("requests.post", side_effect=counting_post),
+            patch("requests.get", side_effect=counting_get),
+        ):
             _ensure_repo_on_path()
             importlib.import_module("composer_backtest")
 
         assert call_count["n"] == 0, (
             f"Importing composer_backtest triggered {call_count['n']} network call(s). "
             "No top-level requests calls at module load are allowed."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Live-daemon E2E regression (2026-06-12) — inline-backtest key mismatch
+# ---------------------------------------------------------------------------
+
+
+class TestDvmCapitalKeyMismatchFallback:
+    """dvm_capital key semantics for INLINE synthetic-tree backtests are
+    unattested. The exact-match-only lookup silently produced empty returns
+    (all candidates withheld, None metrics) whenever the response key differed
+    from the requested symphony_id. With exactly one returned series, that
+    series is structurally the answer to the one posted tree.
+    """
+
+    def test_single_series_used_despite_key_mismatch(self):
+        _ensure_repo_on_path()
+        from advisors.composer_backtest_client import _extract_returns
+
+        dvm = {"SOME-OPAQUE-COMPOSER-ID": {"19000": 100.0, "19001": 101.0, "19004": 102.0}}
+        values, returns = _extract_returns(dvm, symphony_id="my-requested-id")
+        assert len(values) == 3, "single returned series must be used on key mismatch"
+        assert len(returns) == 2
+
+    def test_exact_match_still_preferred_with_multiple_series(self):
+        _ensure_repo_on_path()
+        from advisors.composer_backtest_client import _extract_returns
+
+        dvm = {
+            "other": {"19000": 1.0, "19001": 2.0},
+            "mine": {"19000": 100.0, "19001": 110.0},
+        }
+        values, _ = _extract_returns(dvm, symphony_id="mine")
+        assert list(values.values()) == [100.0, 110.0]
+
+    def test_multiple_series_no_match_returns_empty(self):
+        _ensure_repo_on_path()
+        from advisors.composer_backtest_client import _extract_returns
+
+        dvm = {"a": {"19000": 1.0}, "b": {"19000": 2.0}}
+        values, returns = _extract_returns(dvm, symphony_id="zzz")
+        assert values == {} and returns == {}, (
+            "ambiguous multi-series mismatch must stay empty — guessing would "
+            "attribute another symphony's returns to the candidate"
         )

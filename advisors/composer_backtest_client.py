@@ -145,6 +145,23 @@ def _extract_returns(
     Empty or missing inner dict → two empty dicts.
     """
     inner = dvm_capital.get(symphony_id, {})
+    if (not isinstance(inner, dict) or not inner) and len(dvm_capital) == 1:
+        # Inline synthetic-tree backtests: the response key Composer uses for
+        # dvm_capital is unattested (the only captured fixture is a real-symphony
+        # backtest where request id == response key). When exactly one series
+        # came back, it is structurally the answer to the one tree we posted —
+        # use it regardless of its key, and log the mismatch for fixture capture.
+        # Live-daemon E2E 2026-06-12: the exact-match-only lookup made the whole
+        # proposal pipeline degrade SILENTLY (empty returns → all candidates
+        # withheld with None metrics) whenever the key didn't match.
+        ((only_key, inner),) = dvm_capital.items()
+        logger.warning(
+            "_extract_returns: dvm_capital key %r != requested symphony_id %r; "
+            "using the single returned series (capture a fixture via /api-fixture "
+            "to attest inline-backtest key semantics)",
+            only_key,
+            symphony_id,
+        )
     if not isinstance(inner, dict) or not inner:
         return {}, {}
 
@@ -190,9 +207,7 @@ def _parse_response(body: dict, symphony_id: str) -> BacktestResult:
     Missing keys yield safe defaults — never an exception.
     ``symphony_id`` is required to extract per-day values from ``dvm_capital``.
     """
-    portfolio_values, daily_returns = _extract_returns(
-        body.get("dvm_capital", {}), symphony_id
-    )
+    portfolio_values, daily_returns = _extract_returns(body.get("dvm_capital", {}), symphony_id)
 
     first_day_raw = body.get("first_day")
     last_day_raw = body.get("last_market_day")
@@ -313,12 +328,8 @@ def run_backtest(
                 return _parse_response(data, sid)
 
             if response.status_code == 429:
-                retry_after = float(
-                    response.headers.get("Retry-After", _BACKOFF_INTERVALS[0])
-                )
-                last_reason = (
-                    f"HTTP 429 rate limit exceeded; Retry-After={retry_after:.0f}s"
-                )
+                retry_after = float(response.headers.get("Retry-After", _BACKOFF_INTERVALS[0]))
+                last_reason = f"HTTP 429 rate limit exceeded; Retry-After={retry_after:.0f}s"
                 if attempt < max_retries:
                     logger.info(
                         "run_backtest: rate-limited (429), sleeping %.1f s (attempt %d)",
@@ -330,7 +341,11 @@ def run_backtest(
                 return _error_result(last_reason)
 
             if response.status_code in _RETRYABLE_HTTP_STATUSES and attempt < max_retries:
-                delay = backoff_schedule[attempt] if attempt < len(backoff_schedule) else _BACKOFF_INTERVALS[-1]
+                delay = (
+                    backoff_schedule[attempt]
+                    if attempt < len(backoff_schedule)
+                    else _BACKOFF_INTERVALS[-1]
+                )
                 last_reason = f"HTTP {response.status_code} (transient)"
                 logger.info(
                     "run_backtest: transient HTTP %d, retrying in %.1f s (attempt %d)",
@@ -360,7 +375,11 @@ def run_backtest(
                 type(exc).__name__,
             )
             if attempt < max_retries:
-                delay = backoff_schedule[attempt] if attempt < len(backoff_schedule) else _BACKOFF_INTERVALS[-1]
+                delay = (
+                    backoff_schedule[attempt]
+                    if attempt < len(backoff_schedule)
+                    else _BACKOFF_INTERVALS[-1]
+                )
                 time.sleep(delay)
                 continue
             return _error_result(last_reason)
