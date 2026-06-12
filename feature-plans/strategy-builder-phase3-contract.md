@@ -65,3 +65,78 @@ Quint via Agent Teams: test-writer (`quant-test-writer`) ⇄ implementer +
 doc-writer. Minimum 2 adversarial cycles; full-suite collateral at close; exit
 report lists every `[PM-ASSUMED]` with the value implemented and the doc-writer's
 CLAUDE.md row draft.
+
+---
+
+## Phase 3 — Completion Record
+
+**Status:** COMPLETE
+**Completed:** 2026-06-12
+**Branch:** claude/strategy-builder-ai-advisor-m3jlyw
+
+### Routes delivered
+
+- `GET /ai-advisor/strategy-builder` (`app.py:3170`) — lazy-imports
+  `_has_composer_key`, loads `STRATEGY_BUILDER`-role observations via
+  `database.get_advisor_observations_for_symphony`, renders
+  `templates/ai_advisor_strategy_builder.html` with three observation buckets
+  (survivors / backtest-failed / withheld) classified in Jinja2.
+- `POST /ai-advisor/strategy-builder/run` (`app.py:3224`) — CSRF-protected
+  via the global `_csrf_before_request` `@before_request` hook (no explicit
+  call in the route handler). Lazy-imports
+  `advisors.strategy_builder_engine.{Objective,ScreenConfig,propose_strategies}`.
+  Derives rejected from `gated_batch.results` minus `screened_survivors`.
+  Returns JSON keys: `survivors`, `rejected`, `n_candidates`,
+  `fdr_adjusted_threshold`, `error`.
+
+### PM-ASSUMED items and implemented values
+
+| Contract marker | Implemented value |
+|---|---|
+| `[PM-ASSUMED route name]` POST endpoint | `POST /ai-advisor/strategy-builder/run` — confirmed as implemented |
+| `[PM-ASSUMED]` dispatch pattern (mirror `/ai-advisor/suggest` threading) | Synchronous HTTP endpoint with lazy imports to keep `strategy_builder_engine` off the 1-minute execution path (AC-X2). No background thread or subprocess — `propose_strategies` is called inline. This differs from the pattern of `/ai-advisor/suggest` (which is also synchronous), so the "threading/subprocess pattern" language in the contract was imprecise. The lazy-import isolation approach is consistent with all other advisor POST routes. |
+| `[PM-ASSUMED]` baseline for stats table = live portfolio | **Deviation:** stats table shows candidate metrics only (single "Candidate" column). No live portfolio baseline is stored in `advisor_observations` rows, so the baseline column was not implementable from stored data. Template comment at line 829 documents this. See Deviations section. |
+
+### Test coverage
+
+**File:** `tests/app/test_strategy_builder_route.py`
+**Fixture:** `tests/fixtures/ai_advisor/m6/strategy_builder_observations_basic.json`
+**Count:** 18 tests
+
+Key scenarios:
+- A1–A4: GET 200, tab testid present, risk banner present, no run-form testid in GET response
+- B5–B7: CSRF enforcement (no token → 403, wrong token → 403, valid token → 200)
+- C8–C11: POST response shape (required keys, engine error path, zero-survivors valid outcome, no LIVE_EXECUTION key)
+- D12–D13: Survivor card anatomy (7 required data-testid landmarks + SURVIVOR_OVERFITTING_CAVEAT text; zero forms/submit buttons/action hrefs)
+- E14–E16: Empty state, rejected section, backtest-failed card
+- F17: Adversarial no-action-affordances (2 survivors + 1 rejected, full page sweep for forms/buttons/action links)
+- G18: `_SETTINGS_WRITE_ALLOWLIST` not expanded
+
+### Reviewer verdicts
+
+- code-reviewer: PENDING (awaiting signal)
+- domain-reviewer: PENDING (awaiting signal)
+
+### Deviations from contract
+
+1. **Stats table: single-column (candidate only), no live-portfolio baseline.**
+   Contract §2.3 specified `[PM-ASSUMED]` baseline = live portfolio. The
+   `advisor_observations` schema stores only the candidate's metrics dict
+   (computed at run time by `propose_strategies`); no parallel live-portfolio
+   series is persisted alongside each observation. Rendering a baseline column
+   would require either (a) re-fetching live returns at render time (AC-5
+   violation — template would rerun engine-adjacent logic on page load) or
+   (b) storing live returns in `raw_response` at write time (a schema change
+   beyond Phase 3 blast radius). The implementation defers baseline comparison
+   to a future phase. Template comment at line 829 documents the deferral.
+
+2. **Sparkline omitted.** Contract §2.3 listed a sparkline (existing
+   QuickChart/sparkline pattern). No return-series data is stored in
+   `advisor_observations.raw_response` at Phase 2 engine write time, so no
+   sparkline can be rendered. Deferred for the same reason as the baseline column.
+
+3. **AC reference in POST route docstring.** The POST route opens with
+   `(Phase-3 AC-1)` where AC-1 is the engine's off-execution-path requirement.
+   The correct surface contracts are `(AC-2, AC-5, AC-X1)` matching the GET
+   route. Filed as DOC-AUDIT finding 1 to implementer; see doc-writer audit
+   section in exit report.
