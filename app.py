@@ -162,6 +162,7 @@ CHAT_RATE_LIMITER_MAX_TRACKED_IPS: int = 1000
 # Maps remote_addr -> collections.deque of float timestamps (time.time()).
 # Module-level so state persists across requests within a process lifetime.
 import collections as _collections  # noqa: E402 — stdlib, late import for locality
+
 _CHAT_RATE_LIMITER: dict = {}
 
 _daemon_log = logging.getLogger("alphabot")
@@ -455,6 +456,7 @@ def dashboard():
             "max_drawdown": _s.get("max_drawdown"),
             "trading_day": _dash_today,
         }
+
         def _safe_analytics(fn, *args, **kwargs):
             try:
                 result = fn(*args, **kwargs)
@@ -465,14 +467,28 @@ def dashboard():
                 return {"if_held": 0.0, "dry_run": 0.0}
 
         if "_cr" not in _s:
-            _s["_cr"] = _safe_analytics(analytics.get_symphony_cumulative_return, _sym_dict, _s, trading_day=_dash_today)
+            _s["_cr"] = _safe_analytics(
+                analytics.get_symphony_cumulative_return, _sym_dict, _s, trading_day=_dash_today
+            )
         if "_tc" not in _s:
-            _s["_tc"] = _safe_analytics(analytics.get_symphony_today_change, _sym_dict, _s, trading_day=_dash_today)
+            _s["_tc"] = _safe_analytics(
+                analytics.get_symphony_today_change, _sym_dict, _s, trading_day=_dash_today
+            )
         if "_mdd" not in _s:
-            _s["_mdd"] = _safe_analytics(analytics.get_symphony_max_drawdown, _sym_dict, _s, trading_day=_dash_today)
+            _s["_mdd"] = _safe_analytics(
+                analytics.get_symphony_max_drawdown, _sym_dict, _s, trading_day=_dash_today
+            )
 
-    active_syms = [s for s in symphonies if s.get("armed") or s.get("tp_armed") or s.get("para_armed") or s.get("triggered")]
-    standby_syms = [s for s in symphonies if not (s.get("armed") or s.get("tp_armed") or s.get("para_armed") or s.get("triggered"))]
+    active_syms = [
+        s
+        for s in symphonies
+        if s.get("armed") or s.get("tp_armed") or s.get("para_armed") or s.get("triggered")
+    ]
+    standby_syms = [
+        s
+        for s in symphonies
+        if not (s.get("armed") or s.get("tp_armed") or s.get("para_armed") or s.get("triggered"))
+    ]
 
     # Build accounts_map for panic modal (account_id → label).
     _env = _dotenv_module.dotenv_values(ENV_FILE_PATH)
@@ -502,9 +518,7 @@ def dashboard():
             None,
         )
         if _first_sym_id:
-            cvar_diagnostic = database.read_cvar_diagnostic_for_symphony(
-                _first_sym_id
-            )
+            cvar_diagnostic = database.read_cvar_diagnostic_for_symphony(_first_sym_id)
     except Exception:
         pass  # non-blocking: dashboard renders without CVaR if the read fails
 
@@ -549,8 +563,7 @@ def _build_meta(
     armed = sum(
         1
         for s in symphony_entries
-        if (s.get("armed") or s.get("tp_armed") or s.get("para_armed"))
-        and not s.get("triggered")
+        if (s.get("armed") or s.get("tp_armed") or s.get("para_armed")) and not s.get("triggered")
     )
     triggered = sum(1 for s in symphony_entries if s.get("triggered"))
 
@@ -699,9 +712,7 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
         account_value = _account_totals_cache["portfolio_value"]
     else:
         account_value = sum(
-            v.get("current_value") or 0.0
-            for v in bot_state.values()
-            if isinstance(v, dict)
+            v.get("current_value") or 0.0 for v in bot_state.values() if isinstance(v, dict)
         )
 
     try:
@@ -716,11 +727,13 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
                 symphonies_list, bot_state, trading_day=trading_day
             )
             _symphony_value_sum = sum(s.get("value") or 0.0 for s in symphonies_list)
-            cumulative_return: dict | None = analytics.get_portfolio_cumulative_return_account_basis(
-                _vw_cr,
-                _account_totals_cache["portfolio_cr"],
-                account_value,
-                _symphony_value_sum,
+            cumulative_return: dict | None = (
+                analytics.get_portfolio_cumulative_return_account_basis(
+                    _vw_cr,
+                    _account_totals_cache["portfolio_cr"],
+                    account_value,
+                    _symphony_value_sum,
+                )
             )
         else:
             cumulative_return = analytics.get_portfolio_cumulative_return(
@@ -856,14 +869,14 @@ def _compute_portfolio_strip(bot_state: dict, trading_day: str | None = None) ->
                 if isinstance(_wcr, dict):
                     _strip["windowed_cumulative_return"] = _wcr
         except Exception:
-            _daemon_log.error(
-                "_compute_portfolio_strip default-window strip failed", exc_info=True
-            )
+            _daemon_log.error("_compute_portfolio_strip default-window strip failed", exc_info=True)
 
         return _strip
     except Exception as _exc:
         _daemon_log.error(
-            "_compute_portfolio_strip failed — portfolio strip will be null: %s", _exc, exc_info=True
+            "_compute_portfolio_strip failed — portfolio strip will be null: %s",
+            _exc,
+            exc_info=True,
         )
         return {
             "today_change": None,
@@ -939,7 +952,11 @@ def get_state():
         # AC-P2.12.2: additive fields — computed once, merged into every response branch.
         _api_state = get_api_state_dict()
         _additive_env = _dotenv_module.dotenv_values(ENV_FILE_PATH)
-        _additive_live_mode = _additive_env.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
+        _additive_live_mode = _additive_env.get("LIVE_EXECUTION", "False").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
         _additive = {
             "port_state": _api_state.get("port_state", {}),
             "exit_authority": _api_state.get("exit_authority", {}),
@@ -971,7 +988,7 @@ def get_state():
                     _hist_series: list[float] = []
                     _running = 1.0
                     for _d in _shadow_daily:
-                        _running *= (1.0 + _d / 100.0)
+                        _running *= 1.0 + _d / 100.0
                         _hist_series.append((_running - 1.0) * 100.0)
                     _shadow_strip = {
                         "hist_dates": _shadow_dates,
@@ -1007,8 +1024,8 @@ def get_state():
                         _running_bot = 1.0
                         _running_held = 1.0
                         for _bot_d, _held_d in zip(_agg_bot_daily, _agg_held_daily):
-                            _running_bot *= (1.0 + _bot_d / 100.0)
-                            _running_held *= (1.0 + _held_d / 100.0)
+                            _running_bot *= 1.0 + _bot_d / 100.0
+                            _running_held *= 1.0 + _held_d / 100.0
                             _hist_bot.append((_running_bot - 1.0) * 100.0)
                             _hist_held.append((_running_held - 1.0) * 100.0)
                         _pm_strip = {
@@ -1307,7 +1324,11 @@ def get_state():
                     _frozen_html = "<table><tbody></tbody></table>"
 
                 _frozen_env = _dotenv_module.dotenv_values(ENV_FILE_PATH)
-                _frozen_live_mode = _frozen_env.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
+                _frozen_live_mode = _frozen_env.get("LIVE_EXECUTION", "False").lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                )
                 return jsonify(
                     {
                         "status": "active",
@@ -1364,13 +1385,20 @@ def get_state():
             # Only pass hist arrays to _build_meta — skip today_change/cumulative_return etc
             # which may be raw floats (not dicts) in the test stub or during warmup.
             _wait_strip = None
-            if isinstance(_injected_portfolio_strip, dict) and _injected_portfolio_strip.get("hist_dates"):
+            if isinstance(_injected_portfolio_strip, dict) and _injected_portfolio_strip.get(
+                "hist_dates"
+            ):
                 _wait_strip = {
                     "hist_dates": _injected_portfolio_strip.get("hist_dates", []),
                     "hist_bot": _injected_portfolio_strip.get("hist_bot", []),
                     "hist_held": _injected_portfolio_strip.get("hist_held", []),
                 }
-            _waiting_body = {**waiting_resp, "bot_state": _api_state.get("bot_state", {}), "meta": _build_meta({}, market_state=market_state, portfolio_strip=_wait_strip), **_additive}
+            _waiting_body = {
+                **waiting_resp,
+                "bot_state": _api_state.get("bot_state", {}),
+                "meta": _build_meta({}, market_state=market_state, portfolio_strip=_wait_strip),
+                **_additive,
+            }
             if _api_state_has_strip:
                 _waiting_body["portfolio_strip"] = _injected_portfolio_strip
             return jsonify(_waiting_body)
@@ -1379,7 +1407,8 @@ def get_state():
         _account_filter = request.args.get("account")
         if _account_filter:
             state_data = {
-                k: v for k, v in state_data.items()
+                k: v
+                for k, v in state_data.items()
                 if not isinstance(v, dict) or v.get("account") == _account_filter
             }
 
@@ -1399,7 +1428,8 @@ def get_state():
         # last_market_close_snapshot) cannot leak into the cards/standby list.
         # Matches the SSR/meta paths (app.py:433/544) which already require "name".
         symphony_keys = [
-            k for k in state_data.keys()
+            k
+            for k in state_data.keys()
             if isinstance(state_data[k], dict) and "name" in state_data[k]
         ]
         accounts_map = {}
@@ -1587,15 +1617,16 @@ def get_state():
         # Inject guard_alpha into triggered symphony entries for dashboard card verdicts.
         try:
             _triggered_ids = [
-                k for k, v in state_data.items()
-                if isinstance(v, dict) and v.get("triggered")
+                k for k, v in state_data.items() if isinstance(v, dict) and v.get("triggered")
             ]
             if _triggered_ids:
                 _ga_map = database.get_guard_alpha_by_symphony(_triggered_ids)
                 for _sid, _ga in _ga_map.items():
                     if _sid in state_data and isinstance(state_data[_sid], dict):
                         _cr = state_data[_sid].get("current_return") or 0.0
-                        state_data[_sid].setdefault("guard_alpha", round(float(_ga) - float(_cr), 6))
+                        state_data[_sid].setdefault(
+                            "guard_alpha", round(float(_ga) - float(_cr), 6)
+                        )
         except Exception:
             pass
 
@@ -1617,11 +1648,11 @@ def get_state():
             tc = s.get("_tc") or {}
             cr = s.get("_cr") or {}
             mdd = s.get("_mdd") or {}
-            tc_bot  = (tc.get("dry_run")  if isinstance(tc,  dict) else tc)  or None
-            tc_held = (tc.get("if_held")  if isinstance(tc,  dict) else None) or None
-            cr_bot  = (cr.get("dry_run")  if isinstance(cr,  dict) else cr)  or None
-            cr_held = (cr.get("if_held")  if isinstance(cr,  dict) else None) or None
-            mdd_bot  = (mdd.get("dry_run") if isinstance(mdd, dict) else mdd) or None
+            tc_bot = (tc.get("dry_run") if isinstance(tc, dict) else tc) or None
+            tc_held = (tc.get("if_held") if isinstance(tc, dict) else None) or None
+            cr_bot = (cr.get("dry_run") if isinstance(cr, dict) else cr) or None
+            cr_held = (cr.get("if_held") if isinstance(cr, dict) else None) or None
+            mdd_bot = (mdd.get("dry_run") if isinstance(mdd, dict) else mdd) or None
             mdd_held = (mdd.get("if_held") if isinstance(mdd, dict) else None) or None
             return tc_bot, tc_held, cr_bot, cr_held, mdd_bot, mdd_held
 
@@ -1629,29 +1660,31 @@ def get_state():
         for _k in symphony_keys:
             _s = state_data[_k]
             _tc_b, _tc_h, _cr_b, _cr_h, _mdd_b, _mdd_h = _tc_cr_mdd_floats(_s)
-            _symphonies_for_cards.append({
-                "id": _k,
-                "status": _sym_status(_s),
-                # Raw bot_state fields needed for card status pill + MC dial refresh.
-                "current_return": _s.get("current_return"),
-                "stop_trigger": _s.get("stop_trigger"),
-                "mc_prob": _s.get("mc_prob"),
-                "armed": bool(_s.get("armed")),
-                "tp_armed": bool(_s.get("tp_armed")),
-                "para_armed": bool(_s.get("para_armed")),
-                "triggered": bool(_s.get("triggered")),
-                "triggered_reason": _s.get("triggered_reason"),
-                # guard_alpha for the outcome banner on triggered cards.
-                # Injected above from database.get_guard_alpha_by_symphony().
-                "guard_alpha": _s.get("guard_alpha"),
-                # Analytics-derived display values.
-                "tc_bot":  _tc_b,
-                "tc_held": _tc_h,
-                "cr_bot":  _cr_b,
-                "cr_held": _cr_h,
-                "mdd_bot":  _mdd_b,
-                "mdd_held": _mdd_h,
-            })
+            _symphonies_for_cards.append(
+                {
+                    "id": _k,
+                    "status": _sym_status(_s),
+                    # Raw bot_state fields needed for card status pill + MC dial refresh.
+                    "current_return": _s.get("current_return"),
+                    "stop_trigger": _s.get("stop_trigger"),
+                    "mc_prob": _s.get("mc_prob"),
+                    "armed": bool(_s.get("armed")),
+                    "tp_armed": bool(_s.get("tp_armed")),
+                    "para_armed": bool(_s.get("para_armed")),
+                    "triggered": bool(_s.get("triggered")),
+                    "triggered_reason": _s.get("triggered_reason"),
+                    # guard_alpha for the outcome banner on triggered cards.
+                    # Injected above from database.get_guard_alpha_by_symphony().
+                    "guard_alpha": _s.get("guard_alpha"),
+                    # Analytics-derived display values.
+                    "tc_bot": _tc_b,
+                    "tc_held": _tc_h,
+                    "cr_bot": _cr_b,
+                    "cr_held": _cr_h,
+                    "mdd_bot": _mdd_b,
+                    "mdd_held": _mdd_h,
+                }
+            )
 
         return jsonify(
             {
@@ -1766,24 +1799,30 @@ def get_hero_chart(window):
             held_series = _compound(held_daily)
             dates, bot_series, held_series = _trim_ytd(dates, bot_series, held_series)
             insufficient = len(dates) < required
-            return jsonify({
-                "hist_dates": dates,
-                "hist_bot": bot_series,
-                "hist_held": held_series,
-                "window": window,
-                "source": "shadow_history",
-                "insufficient_history": insufficient,
-                "available_days": len(dates),
-            })
+            return jsonify(
+                {
+                    "hist_dates": dates,
+                    "hist_bot": bot_series,
+                    "hist_held": held_series,
+                    "window": window,
+                    "source": "shadow_history",
+                    "insufficient_history": insufficient,
+                    "available_days": len(dates),
+                }
+            )
     except Exception:
         _daemon_log.error("get_hero_chart bot/held series failed", exc_info=True)
 
-    return jsonify({
-        "hist_dates": [], "hist_bot": [], "hist_held": [],
-        "window": window,
-        "insufficient_history": True,
-        "available_days": 0,
-    })
+    return jsonify(
+        {
+            "hist_dates": [],
+            "hist_bot": [],
+            "hist_held": [],
+            "window": window,
+            "insufficient_history": True,
+            "available_days": 0,
+        }
+    )
 
 
 # Window tokens accepted by the picker + the windowed-strip route. Lowercase URL
@@ -1830,9 +1869,7 @@ def get_windowed_strip(window):
         )
 
     try:
-        strip = analytics.compute_windowed_portfolio_strip(
-            symphonies_list, bot_state, window=token
-        )
+        strip = analytics.compute_windowed_portfolio_strip(symphonies_list, bot_state, window=token)
         return jsonify(strip)
     except Exception:
         _daemon_log.error("get_windowed_strip failed for window=%s", token, exc_info=True)
@@ -1855,16 +1892,15 @@ def get_chart_data(symphony_id):
                 (symphony_id, today_str),
             ).fetchall()
             held_by_time = {r[0]: r[1] for r in rows}
-            ret_by_time  = {r[0]: r[2] for r in rows}
+            ret_by_time = {r[0]: r[2] for r in rows}
         except Exception:
             held_by_time = {}
-            ret_by_time  = {}
+            ret_by_time = {}
 
         if symphony_data:
             if held_by_time:
                 symphony_data = [
-                    {**pt, "held": held_by_time.get(pt.get("time"))}
-                    for pt in symphony_data
+                    {**pt, "held": held_by_time.get(pt.get("time"))} for pt in symphony_data
                 ]
         else:
             # chart_history empty — build intraday tape from shadow_history (B-03)
@@ -1941,11 +1977,7 @@ def list_accounts():
         (env_vars.get("ACCOUNT_ROTH", "").strip(), "Roth IRA"),
         (env_vars.get("ACCOUNT_TRAD", "").strip(), "Trad. IRA"),
     ]
-    accounts = [
-        {"uuid": uuid, "label": label}
-        for uuid, label in pairs
-        if uuid
-    ]
+    accounts = [{"uuid": uuid, "label": label} for uuid, label in pairs if uuid]
     return jsonify({"accounts": accounts})
 
 
@@ -1987,7 +2019,10 @@ def force_eod():
                 discord_webhook_url=discord_webhook,
             )
             autotuner_changes = autotuner.run_autotuner(
-                bot_state, prev_date_str, account_uuids, is_forced=True,
+                bot_state,
+                prev_date_str,
+                account_uuids,
+                is_forced=True,
                 spec_bundle_id=database.get_or_create_phase1_theory_bundle_id(),
             )
             reporting.send_eod_discord_post(
@@ -2052,7 +2087,11 @@ def get_history(days):
 @app.route("/history")
 def history_page():
     """Render the Guard Alpha History tab (read-only operator surface)."""
-    return render_template("history.html", active_route="history", meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))))
+    return render_template(
+        "history.html",
+        active_route="history",
+        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
+    )
 
 
 # --- 2c. Performance Tab (DV2) ---
@@ -2173,9 +2212,7 @@ def api_performance():
 @app.route("/api/performance/symphonies")
 def api_performance_symphonies():
     """Sorted list of symphony_ids present in the post-mortem history."""
-    history = analytics.get_history_with_cache_invalidation(
-        base_dir=analytics._POST_MORTEMS_DIR
-    )
+    history = analytics.get_history_with_cache_invalidation(base_dir=analytics._POST_MORTEMS_DIR)
     symphonies = analytics.list_available_symphonies(history)
     return jsonify({"symphonies": list(symphonies)})
 
@@ -2289,7 +2326,11 @@ def sell_account():
 @app.route("/settings")
 def settings_page():
     """Render the Settings page (read-only template; mutations via /api/settings)."""
-    return render_template("settings.html", active_route="settings", meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))))
+    return render_template(
+        "settings.html",
+        active_route="settings",
+        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
+    )
 
 
 # --- 4. Tabbed Settings / Control Panel Routes ---
@@ -2401,20 +2442,21 @@ def get_settings():
 
     # Build symphonies_list for the Settings UI (id + display name).
     symphonies_list = [
-        {"id": norm, "name": raw_names.get(norm, norm)}
-        for norm in sorted(symphony_names)
+        {"id": norm, "name": raw_names.get(norm, norm)} for norm in sorted(symphony_names)
     ]
 
     # symphony_overrides mirrors symphonies_data but is the canonical field name
     # expected by settings.js for the override editor pane.
-    return jsonify({
-        "globals": globals_data,
-        "secrets": secrets_data,
-        "symphonies": symphonies_data,
-        "symphony_overrides": symphonies_data,
-        "symphonies_list": symphonies_list,
-        "param_meta": _ALGO_PARAM_META,
-    })
+    return jsonify(
+        {
+            "globals": globals_data,
+            "secrets": secrets_data,
+            "symphonies": symphonies_data,
+            "symphony_overrides": symphonies_data,
+            "symphonies_list": symphonies_list,
+            "param_meta": _ALGO_PARAM_META,
+        }
+    )
 
 
 # Allowlist of global keys that the operator dashboard may write to .env (A-1).
@@ -2446,10 +2488,12 @@ def save_settings():
         globals_payload = payload.get("globals", {})
         rejected = [k for k in globals_payload if k not in _SETTINGS_WRITE_ALLOWLIST]
         if rejected:
-            return jsonify({
-                "status": "error",
-                "message": f"Rejected keys not in settings allowlist: {sorted(rejected)}",
-            }), 400
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"Rejected keys not in settings allowlist: {sorted(rejected)}",
+                }
+            ), 400
 
         for key, val in globals_payload.items():
             set_key(ENV_FILE_PATH, key, str(val))
@@ -2502,18 +2546,23 @@ def get_symphony_settings(symphony_name: str):
         normalized_sym_name = database.normalize_name(sym_data["name"])
         # Match on normalized Composer hash (the URL param) OR on the normalized name
         # (handles the rare case where the name is passed directly instead of the hash).
-        if database.normalize_name(sym_key) == symphony_name or normalized_sym_name == symphony_name:
+        if (
+            database.normalize_name(sym_key) == symphony_name
+            or normalized_sym_name == symphony_name
+        ):
             obs_symphony_id = normalized_sym_name
             break
     advisor_observations = database.get_advisor_observations_for_symphony(obs_symphony_id)
 
-    return jsonify({
-        "live_mode": live_mode,
-        "global_live": global_live,
-        "parameters": strategy.get("params", {}),
-        "locked_vars": strategy.get("locked_vars", []),
-        "advisor_observations": advisor_observations,
-    })
+    return jsonify(
+        {
+            "live_mode": live_mode,
+            "global_live": global_live,
+            "parameters": strategy.get("params", {}),
+            "locked_vars": strategy.get("locked_vars", []),
+            "advisor_observations": advisor_observations,
+        }
+    )
 
 
 @app.route("/api/symphony-settings/<symphony_name>", methods=["POST"])
@@ -2538,27 +2587,33 @@ def save_symphony_settings(symphony_name: str):
         live_mode_raw = payload.get("live_mode")
         if live_mode_raw is not None:
             if not isinstance(live_mode_raw, (bool, int)):
-                return jsonify({
-                    "status": "error",
-                    "message": "live_mode must be a boolean (true/false), not a string or other type.",
-                }), 400
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": "live_mode must be a boolean (true/false), not a string or other type.",
+                    }
+                ), 400
             # isinstance(True, int) is True in Python so bool is already covered above;
             # for bare ints, only 0 and 1 are valid — reject out-of-range values.
             if not isinstance(live_mode_raw, bool) and live_mode_raw not in (0, 1):
-                return jsonify({
-                    "status": "error",
-                    "message": "live_mode integer must be 0 or 1.",
-                }), 400
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": "live_mode integer must be 0 or 1.",
+                    }
+                ), 400
 
         if live_mode_raw is True or live_mode_raw == 1:
             if not payload.get("confirm"):
-                return jsonify({
-                    "status": "error",
-                    "message": (
-                        "confirm=true is required to enable live trading. "
-                        "A bare toggle click must never persist live mode."
-                    ),
-                }), 400
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": (
+                            "confirm=true is required to enable live trading. "
+                            "A bare toggle click must never persist live mode."
+                        ),
+                    }
+                ), 400
             database.set_symphony_live_mode(symphony_name, 1, "dashboard")
         elif live_mode_raw is False or live_mode_raw == 0:
             # OFF toggle is immediate — no confirm required (AC-3).
@@ -2582,12 +2637,21 @@ def save_symphony_settings(symphony_name: str):
 # The 11 real post_mortem dates produced by the live engine.
 # Everything else in post_mortems/ is synthetic backfill and must be flushed.
 # Verified 2026-05-21 against seed agent report + filesystem audit.
-_REAL_POST_MORTEM_DATES = frozenset({
-    "2025-05-12", "2025-05-14", "2025-05-16",
-    "2026-05-11",
-    "2026-05-14", "2026-05-15", "2026-05-16",
-    "2026-05-17", "2026-05-18", "2026-05-19", "2026-05-20",
-})
+_REAL_POST_MORTEM_DATES = frozenset(
+    {
+        "2025-05-12",
+        "2025-05-14",
+        "2025-05-16",
+        "2026-05-11",
+        "2026-05-14",
+        "2026-05-15",
+        "2026-05-16",
+        "2026-05-17",
+        "2026-05-18",
+        "2026-05-19",
+        "2026-05-20",
+    }
+)
 
 
 @app.route("/api/settings/flush-resync", methods=["POST"])
@@ -2607,6 +2671,7 @@ def flush_resync():
     runtime tracking fields (stop levels, returns, trigger flags) — identity keys are kept.
     """
     import re as _re
+
     _pm_date_re = _re.compile(r"post_mortem_(\d{4}-\d{2}-\d{2})\.json$")
 
     deleted: list[str] = []
@@ -2648,7 +2713,9 @@ def flush_resync():
             if not (isinstance(_sym_val, dict) and "name" in _sym_val):
                 continue
             symphonies_reset.append(_sym_val.get("name", _sym_id))
-        _daemon_log.info("flush_resync: identified %d symphony state entries for reset", len(symphonies_reset))
+        _daemon_log.info(
+            "flush_resync: identified %d symphony state entries for reset", len(symphonies_reset)
+        )
     except Exception as exc:
         _daemon_log.error("flush_resync: symphony state read failed: %s", exc)
         errors.append(f"state_read: {exc}")
@@ -2671,7 +2738,9 @@ def flush_resync():
                         state[sym_id]["account"] = account
                     _reset_count += 1
                 database.save_state(state)
-            _daemon_log.info("flush_resync: background reset wrote %d symphony state entries", _reset_count)
+            _daemon_log.info(
+                "flush_resync: background reset wrote %d symphony state entries", _reset_count
+            )
         except Exception:
             logging.error("flush_resync: background state reset failed", exc_info=True)
 
@@ -2690,20 +2759,26 @@ def flush_resync():
 
     _daemon_log.info(
         "flush_resync: deleted %d synthetic files, kept %d real, reset %d symphonies, resync_ok=%s, errors=%d",
-        len(deleted), len(kept), len(symphonies_reset), resync_ok, len(errors),
+        len(deleted),
+        len(kept),
+        len(symphonies_reset),
+        resync_ok,
+        len(errors),
     )
 
-    return jsonify({
-        "status": "ok" if not errors else "partial",
-        "deleted_count": len(deleted),
-        "kept_count": len(kept),
-        "deleted": deleted,
-        "kept": kept,
-        "symphonies_reset": symphonies_reset,
-        "symphonies_reset_count": len(symphonies_reset),
-        "composer_resync": resync_ok,
-        "errors": errors,
-    })
+    return jsonify(
+        {
+            "status": "ok" if not errors else "partial",
+            "deleted_count": len(deleted),
+            "kept_count": len(kept),
+            "deleted": deleted,
+            "kept": kept,
+            "symphonies_reset": symphonies_reset,
+            "symphonies_reset_count": len(symphonies_reset),
+            "composer_resync": resync_ok,
+            "errors": errors,
+        }
+    )
 
 
 # --- 5. AI Advisor Routes ---
@@ -2743,9 +2818,7 @@ def ai_advisor_tab():
     observations: list[dict] = []
     for role in _ADVISOR_ROLES:
         observations.extend(
-            database.get_advisor_observations_for_role(
-                role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
-            )
+            database.get_advisor_observations_for_role(role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT)
         )
     # Deduplicate by id and apply page limit
     seen: set = set()
@@ -2760,14 +2833,15 @@ def ai_advisor_tab():
     # The Divergence Explainer writes these when §B is disabled (the current
     # default — CVaR divergence detection is deferred per council verdict).
     deduped_obs = [
-        obs for obs in deduped_obs
+        obs
+        for obs in deduped_obs
         if not (
             obs.get("verdict") == "NOT_APPLICABLE"
             and isinstance(obs.get("raw_response"), dict)
             and obs["raw_response"].get("feature_flag") == "off"
         )
     ]
-    observations = deduped_obs[: _ADVISOR_OBSERVATIONS_PAGE_LIMIT]
+    observations = deduped_obs[:_ADVISOR_OBSERVATIONS_PAGE_LIMIT]
 
     return render_template(
         "ai_advisor.html",
@@ -2796,9 +2870,7 @@ def ai_advisor_correlations():
     from advisors import correlation_diagnostic  # noqa: PLC0415
 
     # Build per-symphony return series from post-mortem history (read-only).
-    history = analytics.get_history_with_cache_invalidation(
-        base_dir=analytics._POST_MORTEMS_DIR
-    )
+    history = analytics.get_history_with_cache_invalidation(base_dir=analytics._POST_MORTEMS_DIR)
     sym_ids = analytics.list_available_symphonies(history)
     series_dict: dict[str, list[float]] = {}
     for sym_id in sym_ids:
@@ -2845,6 +2917,7 @@ def ai_advisor_asset_swaps():
     symphonies: list[str] = []
     try:
         import analytics as _analytics  # noqa: PLC0415
+
         history = _analytics.get_history_with_cache_invalidation(
             base_dir=_analytics._POST_MORTEMS_DIR
         )
@@ -2941,35 +3014,41 @@ def ai_advisor_asset_swaps_evaluate():
     proposal = run_result.proposals[0] if run_result.proposals else None
     gate_result = proposal.gate_result if proposal else None
 
-    return jsonify({
-        # Run-level fields (AC-2.5: always expose the message so zero-survivors is explicit)
-        "message": run_result.message,
-        "survivors": len(run_result.survivors),
-        "no_api_key": run_result.no_api_key,
-        # Proposal-level fields (AC-2.3: stats + verdict + rationale + guidance)
-        "candidate_id": proposal.candidate_id if proposal else None,
-        "symphony_id": symphony_id,
-        "from_ticker": from_ticker,
-        "to_ticker": to_ticker,
-        "objective_rationale": proposal.objective_rationale if proposal else "",
-        "baseline_stats": proposal.baseline_stats if proposal else None,
-        "variant_stats": proposal.variant_stats if proposal else None,
-        # Gate verdict — AC-2.3: operator sees decision + reason
-        "gate_decision": gate_result.verdict.decision if gate_result else None,
-        "gate_result": {
-            "decision": gate_result.verdict.decision,
-            "validation_days": gate_result.validation_days,
-            "oos_alpha": gate_result.oos_alpha,
-            "winner_p_adj": gate_result.winner_p_adj,
-        } if gate_result else None,
-        # Caveats (mandatory for survivors — SURVIVOR_OVERFITTING_CAVEAT)
-        "caveats": proposal.caveats if proposal else [],
-        # Apply guidance — plain text, no button (AC-X1)
-        "apply_guidance": proposal.apply_guidance if proposal else "",
-        # AC-9c: translate raw nginx 413 HTML to a clean operator message.
-        "backtest_error": _translate_backtest_error(proposal.backtest_error) if proposal else None,
-        "data_warnings": proposal.data_warnings if proposal else [],
-    }), 200
+    return jsonify(
+        {
+            # Run-level fields (AC-2.5: always expose the message so zero-survivors is explicit)
+            "message": run_result.message,
+            "survivors": len(run_result.survivors),
+            "no_api_key": run_result.no_api_key,
+            # Proposal-level fields (AC-2.3: stats + verdict + rationale + guidance)
+            "candidate_id": proposal.candidate_id if proposal else None,
+            "symphony_id": symphony_id,
+            "from_ticker": from_ticker,
+            "to_ticker": to_ticker,
+            "objective_rationale": proposal.objective_rationale if proposal else "",
+            "baseline_stats": proposal.baseline_stats if proposal else None,
+            "variant_stats": proposal.variant_stats if proposal else None,
+            # Gate verdict — AC-2.3: operator sees decision + reason
+            "gate_decision": gate_result.verdict.decision if gate_result else None,
+            "gate_result": {
+                "decision": gate_result.verdict.decision,
+                "validation_days": gate_result.validation_days,
+                "oos_alpha": gate_result.oos_alpha,
+                "winner_p_adj": gate_result.winner_p_adj,
+            }
+            if gate_result
+            else None,
+            # Caveats (mandatory for survivors — SURVIVOR_OVERFITTING_CAVEAT)
+            "caveats": proposal.caveats if proposal else [],
+            # Apply guidance — plain text, no button (AC-X1)
+            "apply_guidance": proposal.apply_guidance if proposal else "",
+            # AC-9c: translate raw nginx 413 HTML to a clean operator message.
+            "backtest_error": _translate_backtest_error(proposal.backtest_error)
+            if proposal
+            else None,
+            "data_warnings": proposal.data_warnings if proposal else [],
+        }
+    ), 200
 
 
 @app.route("/ai-advisor/logic-changes", methods=["GET"])
@@ -2992,6 +3071,7 @@ def ai_advisor_logic_changes():
     symphonies: list[str] = []
     try:
         import analytics as _analytics  # noqa: PLC0415
+
         history = _analytics.get_history_with_cache_invalidation(
             base_dir=_analytics._POST_MORTEMS_DIR
         )
@@ -3101,6 +3181,7 @@ def ai_advisor_logic_changes_evaluate():
     fdr_adjusted_threshold: float | None = None
     if gate_batch is not None:
         import math as _math  # noqa: PLC0415
+
         n = gate_batch.n_candidates or 1
         # Yekutieli c(n) = sum(1/k for k in 1..n) — same formula as autotuner._c_yekutieli.
         c_n = sum(1.0 / k for k in range(1, n + 1))
@@ -3139,32 +3220,38 @@ def ai_advisor_logic_changes_evaluate():
             "data_warnings": p.data_warnings,
         }
 
-    return jsonify({
-        # Run-level fields (AC-3.1: zero survivors is valid, not silent)
-        "message": run_result.message,
-        "survivors": len(run_result.survivors),
-        "no_api_key": run_result.no_api_key,
-        # Proposal detail for rendering
-        "survivors_detail": [_proposal_to_dict(p) for p in run_result.survivors],
-        "rejected_detail": [_proposal_to_dict(p) for p in run_result.rejected_candidates],
-        # Gate verdict shortcut (for tests that check flat gate_decision key)
-        "gate_decision": gate_result.verdict.decision if gate_result else None,
-        "gate_result": {
-            "decision": gate_result.verdict.decision,
-            "validation_days": gate_result.validation_days,
-            "oos_alpha": gate_result.oos_alpha,
-            "winner_p_adj": gate_result.winner_p_adj,
-        } if gate_result else None,
-        # FDR metadata at run level (AC-3.2)
-        "n_candidates": gate_batch.n_candidates if gate_batch else None,
-        "fdr_q": gate_batch.fdr_q if gate_batch else None,
-        "fdr_adjusted_threshold": fdr_adjusted_threshold,
-        # Caveats + guidance from the primary proposal (operator-initiated = single candidate)
-        "caveats": proposal.caveats if proposal else [],
-        "apply_guidance": proposal.apply_guidance if proposal else "",
-        "backtest_error": _translate_backtest_error(proposal.backtest_error) if proposal else None,
-        "objective_rationale": proposal.objective_rationale if proposal else "",
-    }), 200
+    return jsonify(
+        {
+            # Run-level fields (AC-3.1: zero survivors is valid, not silent)
+            "message": run_result.message,
+            "survivors": len(run_result.survivors),
+            "no_api_key": run_result.no_api_key,
+            # Proposal detail for rendering
+            "survivors_detail": [_proposal_to_dict(p) for p in run_result.survivors],
+            "rejected_detail": [_proposal_to_dict(p) for p in run_result.rejected_candidates],
+            # Gate verdict shortcut (for tests that check flat gate_decision key)
+            "gate_decision": gate_result.verdict.decision if gate_result else None,
+            "gate_result": {
+                "decision": gate_result.verdict.decision,
+                "validation_days": gate_result.validation_days,
+                "oos_alpha": gate_result.oos_alpha,
+                "winner_p_adj": gate_result.winner_p_adj,
+            }
+            if gate_result
+            else None,
+            # FDR metadata at run level (AC-3.2)
+            "n_candidates": gate_batch.n_candidates if gate_batch else None,
+            "fdr_q": gate_batch.fdr_q if gate_batch else None,
+            "fdr_adjusted_threshold": fdr_adjusted_threshold,
+            # Caveats + guidance from the primary proposal (operator-initiated = single candidate)
+            "caveats": proposal.caveats if proposal else [],
+            "apply_guidance": proposal.apply_guidance if proposal else "",
+            "backtest_error": _translate_backtest_error(proposal.backtest_error)
+            if proposal
+            else None,
+            "objective_rationale": proposal.objective_rationale if proposal else "",
+        }
+    ), 200
 
 
 @app.route("/ai-advisor/strategy-builder", methods=["GET"])
@@ -3195,6 +3282,7 @@ def ai_advisor_strategy_builder():
     symphonies: list[str] = []
     try:
         import analytics as _analytics  # noqa: PLC0415
+
         history = _analytics.get_history_with_cache_invalidation(
             base_dir=_analytics._POST_MORTEMS_DIR
         )
@@ -3210,9 +3298,7 @@ def ai_advisor_strategy_builder():
         observations = database.get_advisor_observations_for_symphony(symphony_id)
         # Filter to STRATEGY_BUILDER role only — the accessor is symphony-scoped
         # but the table may contain rows from other advisor roles for the same ID.
-        observations = [
-            o for o in observations if o.get("advisor_role") == "STRATEGY_BUILDER"
-        ]
+        observations = [o for o in observations if o.get("advisor_role") == "STRATEGY_BUILDER"]
     except Exception:
         pass  # Observations are optional; the page renders with empty state.
 
@@ -3221,11 +3307,20 @@ def ai_advisor_strategy_builder():
     # rules_text is truncated to CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS here.
     card_artifacts: dict = {}
     for obs in observations:
-        rr = obs.get("raw_response") or {}
+        rr = obs.get("raw_response")
+        # Truthy non-dict raw_response (e.g. an unparsed JSON string from a
+        # corrupted row) would pass an `or {}` guard and crash on .get().
+        if not isinstance(rr, dict):
+            rr = {}
         rules_text = rr.get("rules_text") or ""
         if isinstance(rules_text, str) and len(rules_text) > _CHAT_MAX_CHARS:
             rules_text = rules_text[:_CHAT_MAX_CHARS]
-        card_artifacts[obs["id"]] = {
+        obs_id = obs.get("id")
+        if obs_id is None:
+            # Row without a primary key (migration edge / NULL id): skip the
+            # artifact rather than crash the whole page render.
+            continue
+        card_artifacts[obs_id] = {
             "artifact_type": "strategy_proposal",
             "artifact_id": rr.get("candidate_id") or obs.get("subject_id", ""),
             "symphony_id": obs.get("subject_id", ""),
@@ -3304,23 +3399,27 @@ def ai_advisor_strategy_builder_run():
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_strategy_builder_run failed: %s", exc, exc_info=True)
-        return jsonify({
-            "survivors": [],
-            "rejected": [],
-            "n_candidates": 0,
-            "fdr_adjusted_threshold": None,
-            "error": f"evaluation error: {exc}",
-        }), 200
+        return jsonify(
+            {
+                "survivors": [],
+                "rejected": [],
+                "n_candidates": 0,
+                "fdr_adjusted_threshold": None,
+                "error": f"evaluation error: {exc}",
+            }
+        ), 200
 
     # Surface top-level engine error (e.g. no API key, unexpected exception).
     if run.error:
-        return jsonify({
-            "survivors": [],
-            "rejected": [],
-            "n_candidates": 0,
-            "fdr_adjusted_threshold": None,
-            "error": run.error,
-        }), 200
+        return jsonify(
+            {
+                "survivors": [],
+                "rejected": [],
+                "n_candidates": 0,
+                "fdr_adjusted_threshold": None,
+                "error": run.error,
+            }
+        ), 200
 
     # Build FDR adjusted threshold — Yekutieli c(n) correction (matches AC-3.2).
     gate_batch = run.gated_batch
@@ -3335,9 +3434,7 @@ def ai_advisor_strategy_builder_run():
     def _gate_result_to_dict(gr) -> dict:
         """Serialise a CandidateGateResult to a JSON-friendly dict."""
         # Look up matching CandidateInfo for metrics and template provenance.
-        info = next(
-            (i for i in run.candidates if i.candidate_id == gr.candidate_id), None
-        )
+        info = next((i for i in run.candidates if i.candidate_id == gr.candidate_id), None)
         return {
             "candidate_id": gr.candidate_id,
             "template_id": info.template_id if info else None,
@@ -3362,13 +3459,15 @@ def ai_advisor_strategy_builder_run():
         if gr.candidate_id not in screened_ids
     ]
 
-    return jsonify({
-        "survivors": survivors_list,
-        "rejected": rejected_list,
-        "n_candidates": gate_batch.n_candidates if gate_batch else 0,
-        "fdr_adjusted_threshold": fdr_adjusted_threshold,
-        "error": None,
-    }), 200
+    return jsonify(
+        {
+            "survivors": survivors_list,
+            "rejected": rejected_list,
+            "n_candidates": gate_batch.n_candidates if gate_batch else 0,
+            "fdr_adjusted_threshold": fdr_adjusted_threshold,
+            "error": None,
+        }
+    ), 200
 
 
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
@@ -3633,6 +3732,7 @@ def ai_advisor_chat():
     symphonies: list[str] = []
     try:
         import analytics as _analytics  # noqa: PLC0415
+
         history = _analytics.get_history_with_cache_invalidation(
             base_dir=_analytics._POST_MORTEMS_DIR
         )
@@ -3684,14 +3784,19 @@ def ai_advisor_chat_send():
     # --- AC-2b: message length cap ---
     # Reject oversized messages before they reach the paid LLM call.
     if len(message) > CHAT_MAX_MESSAGE_CHARS:
-        return jsonify({"error": f"message exceeds maximum length of {CHAT_MAX_MESSAGE_CHARS} characters"}), 400
+        return jsonify(
+            {"error": f"message exceeds maximum length of {CHAT_MAX_MESSAGE_CHARS} characters"}
+        ), 400
 
     # --- AC-2c: artifact size cap ---
     # Measure the artifact's JSON footprint before passing it to the LLM.
     import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+
     artifact_json_size = len(_json.dumps(artifact))
     if artifact_json_size > CHAT_MAX_ARTIFACT_BYTES:
-        return jsonify({"error": f"artifact exceeds maximum size of {CHAT_MAX_ARTIFACT_BYTES} bytes"}), 400
+        return jsonify(
+            {"error": f"artifact exceeds maximum size of {CHAT_MAX_ARTIFACT_BYTES} bytes"}
+        ), 400
 
     # --- AC-2d: per-client sliding-window rate limit ---
     # Track requests per remote IP using a deque of timestamps.  No external
@@ -3779,7 +3884,7 @@ def api_advisor_observations():
                 )
             )
 
-    rows = rows[: _ADVISOR_OBSERVATIONS_PAGE_LIMIT]
+    rows = rows[:_ADVISOR_OBSERVATIONS_PAGE_LIMIT]
     return jsonify(rows)
 
 
@@ -3804,7 +3909,9 @@ def _normalize_autotune_row(row: dict) -> dict:
         row["baseline_decision"] = _BASELINE_DECISION_TOKENS.get(raw_decision, raw_decision)
     frozen_sharpe = row.get("frozen_eval_sharpe")
     if frozen_sharpe is not None:
-        row["frozen_eval_verdict"] = "passed" if frozen_sharpe >= _FROZEN_EVAL_SHARPE_THRESHOLD else "failed"
+        row["frozen_eval_verdict"] = (
+            "passed" if frozen_sharpe >= _FROZEN_EVAL_SHARPE_THRESHOLD else "failed"
+        )
     else:
         row["frozen_eval_verdict"] = None
     return row

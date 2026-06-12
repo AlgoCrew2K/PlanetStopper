@@ -1707,19 +1707,6 @@ class TestAdversarialCycle2:
             "no strategy other than [:cap] slicing is permitted."
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "CYCLE2-BUG: explain_artifact does NOT call validate_artifact before building "
-            "the LLM prompt.  A caller-supplied artifact with 100 000-char rules_text is "
-            "passed verbatim to _build_chat_messages and then to client.messages.create. "
-            "The 500-char cap enforced by validate_artifact on the Flask route path is NOT "
-            "applied when explain_artifact is called directly (e.g. from a test or a future "
-            "non-route caller).  Fix: explain_artifact should call validate_artifact(artifact) "
-            "before passing the dict to _build_chat_messages, or _build_chat_messages should "
-            "enforce the cap itself."
-        ),
-    )
     def test_c2_1b_explain_artifact_100k_rules_text_prompt_bounded(self):
         """C2-1b: explain_artifact with 100k-char rules_text passes a bounded prompt to the LLM.
 
@@ -2157,17 +2144,6 @@ class TestAdversarialCycle2:
     # C2-5: Malformed raw_response in GET route — must not 500
     # -----------------------------------------------------------------------
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "CYCLE2-BUG: GET route crashes with AttributeError when raw_response is a "
-            "non-empty string (truthy non-dict).  app.py card_artifacts loop uses "
-            "`rr = obs.get('raw_response') or {}` which assigns a non-empty string "
-            "directly to rr.  Subsequent `rr.get('rules_text')` raises AttributeError "
-            "because str has no .get() method.  Fix: add isinstance(rr, dict) guard "
-            "after the `or {}` fallback, e.g. `rr = rr if isinstance(rr, dict) else {}`."
-        ),
-    )
     def test_c2_5a_get_route_raw_response_is_string_not_dict_does_not_500(self, client):
         """C2-5a: GET route with raw_response as a non-empty string must return 200, not crash.
 
@@ -2210,18 +2186,6 @@ class TestAdversarialCycle2:
             "CYCLE2-BUG: isinstance(rr, dict) guard missing in card_artifacts loop."
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "CYCLE2-BUG: app.py card_artifacts loop uses "
-            "`rr = obs.get('raw_response') or {}` "
-            "which does not guard against a truthy non-dict raw_response "
-            "(e.g. a non-empty string). "
-            "A str has no .get() method, so rr.get('rules_text') raises AttributeError, "
-            "causing a 500 response. "
-            "Fix: replace `or {}` with an isinstance(rr, dict) guard."
-        ),
-    )
     def test_c2_5b_get_route_raw_response_string_is_truthy_bug_documented(self, client):
         """C2-5b: Documents CYCLE2-BUG — string raw_response bypasses the 'or {}' guard.
 
@@ -2296,16 +2260,6 @@ class TestAdversarialCycle2:
             f"Got {resp.status_code}."
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "CYCLE2-BUG: GET route crashes with KeyError when an observation row has no "
-            "'id' key.  app.py card_artifacts loop uses `card_artifacts[obs['id']] = ...` "
-            "without a .get() or key-existence guard.  A row with id=None or a missing "
-            "'id' key (e.g. from a schema migration edge-case) raises KeyError, crashing "
-            "the page.  Fix: use obs.get('id') and skip or use a fallback key when id is None."
-        ),
-    )
     def test_c2_5d_get_route_obs_missing_id_key_does_not_500(self, client):
         """C2-5d: GET route with observation row missing 'id' key must return 200, not crash.
 

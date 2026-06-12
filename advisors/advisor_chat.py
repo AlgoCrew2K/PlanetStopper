@@ -71,74 +71,76 @@ import ai_advisor
 #   Shared advisor observation fields: advisor_role, observation_id, created_at,
 #                                      subject_type, subject_id, raw_response,
 #                                      verdict, weight, symbol
-CHAT_ARTIFACT_ALLOWED_FIELDS: frozenset = frozenset({
-    # Identity — present on every artifact type
-    "artifact_type",
-    "artifact_id",
-    "symphony_id",
-    # M1 — diagnostic
-    "diagnostic_type",
-    "regime_context",
-    "correlation_score",
-    "pair_results",
-    "summary",
-    "timestamp",
-    "run_id",
-    "asset_a",
-    "asset_b",
-    "p_value",
-    "fdr_threshold",
-    # M2 — gate verdict (some fields reused by M6)
-    "gate_verdict",
-    "score",
-    "threshold",
-    "bhy_adjusted",
-    "n_candidates",
-    "n_survivors",
-    "fold_count",
-    "haircut_rate",
-    # M3 — swap proposal
-    "incumbent",
-    "candidate",
-    "swap_type",
-    "reason",
-    "approved",
-    "vetoed",
-    "veto_reason",
-    "objective",
-    "context",
-    # M4 — logic change
-    "logic_change_type",
-    "description",
-    "before_value",
-    "after_value",
-    "impact_estimate",
-    "approval_status",
-    # M6 — strategy_proposal (Phase 4 additions — additive only)
-    "template_id",
-    "template_params",
-    "tickers",
-    "rules_text",
-    "cagr",
-    "sharpe",
-    "calmar",
-    "max_drawdown",
-    "correlation_vs_live",
-    "blended_drawdown",
-    "fdr_adjusted_threshold",
-    "screen_verdict",
-    "rejected_reason",
-    # Shared advisor observation fields
-    "advisor_role",
-    "observation_id",
-    "created_at",
-    "subject_type",
-    "subject_id",
-    "raw_response",
-    "verdict",
-    "weight",
-    "symbol",
-})
+CHAT_ARTIFACT_ALLOWED_FIELDS: frozenset = frozenset(
+    {
+        # Identity — present on every artifact type
+        "artifact_type",
+        "artifact_id",
+        "symphony_id",
+        # M1 — diagnostic
+        "diagnostic_type",
+        "regime_context",
+        "correlation_score",
+        "pair_results",
+        "summary",
+        "timestamp",
+        "run_id",
+        "asset_a",
+        "asset_b",
+        "p_value",
+        "fdr_threshold",
+        # M2 — gate verdict (some fields reused by M6)
+        "gate_verdict",
+        "score",
+        "threshold",
+        "bhy_adjusted",
+        "n_candidates",
+        "n_survivors",
+        "fold_count",
+        "haircut_rate",
+        # M3 — swap proposal
+        "incumbent",
+        "candidate",
+        "swap_type",
+        "reason",
+        "approved",
+        "vetoed",
+        "veto_reason",
+        "objective",
+        "context",
+        # M4 — logic change
+        "logic_change_type",
+        "description",
+        "before_value",
+        "after_value",
+        "impact_estimate",
+        "approval_status",
+        # M6 — strategy_proposal (Phase 4 additions — additive only)
+        "template_id",
+        "template_params",
+        "tickers",
+        "rules_text",
+        "cagr",
+        "sharpe",
+        "calmar",
+        "max_drawdown",
+        "correlation_vs_live",
+        "blended_drawdown",
+        "fdr_adjusted_threshold",
+        "screen_verdict",
+        "rejected_reason",
+        # Shared advisor observation fields
+        "advisor_role",
+        "observation_id",
+        "created_at",
+        "subject_type",
+        "subject_id",
+        "raw_response",
+        "verdict",
+        "weight",
+        "symbol",
+    }
+)
 
 # Maximum nesting depth for artifact field values.  We strip rather than
 # recurse into nested structures — the outer allowlist is the boundary.
@@ -187,6 +189,7 @@ def validate_artifact(artifact: dict) -> dict:
 
     return scoped
 
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -214,8 +217,7 @@ CHAT_UNAVAILABLE_PREFIX = "chat unavailable"
 
 # Full message returned when no API key is configured (AC-4.3 / AC-X4).
 CHAT_UNAVAILABLE_MSG = (
-    "chat unavailable: no LLM API key is configured "
-    "— set ANTHROPIC_API_KEY to enable chat"
+    "chat unavailable: no LLM API key is configured — set ANTHROPIC_API_KEY to enable chat"
 )
 
 # Message returned on any LLM or parsing error (AC-4.3).
@@ -353,6 +355,13 @@ def explain_artifact(
         ``ChatResponse(answer=<explanation>, error=None)`` on success.
         ``ChatResponse(answer=None, error=<description>)`` on any failure.
     """
+    # Layer 0 — defense-in-depth: re-validate the artifact HERE, not only at
+    # the route boundary. explain_artifact is a public seam; any future
+    # non-route caller must get the same allowlist + char-cap guarantees
+    # (adversarial cycle 2, BUG 1: a 100k-char rules_text would otherwise
+    # reach the LLM prompt verbatim).
+    artifact = validate_artifact(artifact)
+
     # Layer 1 — build the client via the shared factory seam.
     # Tests patch ``ai_advisor._build_client``; we never fork the client.
     try:
@@ -378,7 +387,9 @@ def explain_artifact(
         logger.warning("advisor_chat: messages.create failed: %s", reason)
         return ChatResponse(
             answer=None,
-            error=CHAT_ERROR_MSG_TEMPLATE.format(reason=f"LLM request failed ({type(exc).__name__})"),
+            error=CHAT_ERROR_MSG_TEMPLATE.format(
+                reason=f"LLM request failed ({type(exc).__name__})"
+            ),
         )
 
     # Layer 3 — extract the text response.
