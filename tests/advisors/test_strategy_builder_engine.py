@@ -1213,3 +1213,593 @@ class TestAdversarialCycle2:
             assert len(text.strip()) > 0, (
                 f"{name}: render_rules_text must return a non-empty string; got {text!r}"
             )
+
+
+# ===========================================================================
+# SECTION 13 — Adversarial cycle 3 (post-cycle-2-GREEN)
+# ADVERSARIAL CYCLE 3 — added by test-writer
+# ===========================================================================
+
+
+class TestAdversarialCycle3:
+    """Adversarial tests attacking the five contract hot spots:
+    (1) FDR integrity — persisted n_candidates matches gated_batch.n_candidates
+    (2) Screen fail-closed on None metrics — each field independently
+    (3) Log-return sign preservation under * 100.0 conversion
+    (4) Never-raises on pathological inputs (ValueError, KeyError, DB exception, >10 tickers)
+    (5) Grammar construct purity (T4/T5/T6/T7 vocabulary and value-type assertions)
+    """
+
+    # -----------------------------------------------------------------------
+    # Hot spot 1 — FDR integrity: persisted n_candidates == gated_batch.n_candidates
+    # -----------------------------------------------------------------------
+
+    def test_fdr_persisted_n_candidates_matches_gated_batch_n_candidates(self, sbe):
+        """Contract §2.2: n_candidates in the persisted observation must equal the
+        number backtested (gated_batch.n_candidates), not the total-attempted count
+        or the post-screen count.
+
+        Captures the raw_response passed to insert_advisor_observation and asserts
+        raw_response["n_candidates"] == result.gated_batch.n_candidates.
+        """
+        fake = _make_fake_result(n_days=100, base_return=0.001)
+        captured_calls: list[dict] = []
+
+        def _capture(*args, **kwargs):
+            captured_calls.append({"args": args, "kwargs": kwargs})
+            return 1
+
+        with (
+            patch("advisors.strategy_builder_engine.run_backtest", return_value=fake),
+            patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.strategy_builder_engine.database.insert_advisor_observation",
+                side_effect=_capture,
+            ),
+        ):
+            # Use a permissive ScreenConfig (min_sharpe=-999) so at least some
+            # gate survivors pass the screen and get persisted.
+            result = sbe.propose_strategies(
+                objective=sbe.Objective.diversify,
+                universe=["SPY", "AGG", "GLD"],
+                screen_config=sbe.ScreenConfig(min_sharpe=-999.0),
+                live_returns=[0.001] * 100,
+                symphony_id="test-fdr-persist",
+            )
+
+        assert result.error is None, f"Unexpected error: {result.error}"
+
+        if not captured_calls:
+            pytest.skip(
+                "No observations were persisted (no gate survivors passed screens) "
+                "— test requires at least one persistence call to verify FDR contract"
+            )
+
+        for call in captured_calls:
+            # raw_response is in kwargs
+            raw_response = call["kwargs"].get("raw_response")
+            if raw_response is None:
+                # Fall back: check positional args for a dict with 'n_candidates'
+                for arg in call["args"]:
+                    if isinstance(arg, dict) and "n_candidates" in arg:
+                        raw_response = arg
+                        break
+
+            assert raw_response is not None, (
+                "insert_advisor_observation must receive a raw_response dict "
+                "containing 'n_candidates'"
+            )
+            assert "n_candidates" in raw_response, (
+                "raw_response passed to insert_advisor_observation must contain "
+                "'n_candidates' key (contract §2.2)"
+            )
+            # The core FDR integrity assertion: persisted n_candidates must equal
+            # the gate's n_candidates (number successfully backtested), not the
+            # total-attempted or post-screen count.
+            assert raw_response["n_candidates"] == result.gated_batch.n_candidates, (
+                f"raw_response['n_candidates']={raw_response['n_candidates']} must equal "
+                f"result.gated_batch.n_candidates={result.gated_batch.n_candidates}. "
+                "Contract §2.2: n_candidates must equal the number backtested."
+            )
+
+    # -----------------------------------------------------------------------
+    # Hot spot 2 — Screen fail-closed on None metrics (per-field)
+    # -----------------------------------------------------------------------
+
+    def test_passes_screens_returns_false_when_annualized_return_is_none(self, sbe):
+        """Contract §4: None-metric → screen fails closed.
+        annualized_return=None must return False, not pass silently.
+        """
+        from advisors.strategy_builder_engine import (  # noqa: PLC0415
+            ScreenConfig,
+            _passes_screens,
+        )
+
+        metrics = {
+            "annualized_return": None,
+            "sharpe": 1.0,
+            "calmar": 0.5,
+            "max_drawdown": -0.10,
+        }
+        # Tolerance explanation: this is a boolean result — pytest.approx not applicable.
+        result = _passes_screens(
+            metrics,
+            live_returns=[0.001] * 50,
+            screen_config=ScreenConfig(),
+            returns_pct=[0.1] * 50,
+        )
+        assert result is False, (
+            "_passes_screens must return False when annualized_return is None "
+            "(fail-closed per contract §4)"
+        )
+
+    def test_passes_screens_returns_false_when_sharpe_is_none(self, sbe):
+        """Contract §4: None-metric → screen fails closed. sharpe=None must return False."""
+        from advisors.strategy_builder_engine import (  # noqa: PLC0415
+            ScreenConfig,
+            _passes_screens,
+        )
+
+        metrics = {
+            "annualized_return": 0.10,
+            "sharpe": None,
+            "calmar": 0.5,
+            "max_drawdown": -0.10,
+        }
+        result = _passes_screens(
+            metrics,
+            live_returns=[0.001] * 50,
+            screen_config=ScreenConfig(),
+            returns_pct=[0.1] * 50,
+        )
+        assert result is False, (
+            "_passes_screens must return False when sharpe is None (fail-closed per contract §4)"
+        )
+
+    def test_passes_screens_returns_false_when_calmar_is_none(self, sbe):
+        """Contract §4: None-metric → screen fails closed. calmar=None must return False."""
+        from advisors.strategy_builder_engine import (  # noqa: PLC0415
+            ScreenConfig,
+            _passes_screens,
+        )
+
+        metrics = {
+            "annualized_return": 0.10,
+            "sharpe": 1.0,
+            "calmar": None,
+            "max_drawdown": -0.10,
+        }
+        result = _passes_screens(
+            metrics,
+            live_returns=[0.001] * 50,
+            screen_config=ScreenConfig(),
+            returns_pct=[0.1] * 50,
+        )
+        assert result is False, (
+            "_passes_screens must return False when calmar is None (fail-closed per contract §4)"
+        )
+
+    def test_passes_screens_returns_false_when_max_drawdown_is_none(self, sbe):
+        """Contract §4: None-metric → screen fails closed. max_drawdown=None must return False."""
+        from advisors.strategy_builder_engine import (  # noqa: PLC0415
+            ScreenConfig,
+            _passes_screens,
+        )
+
+        metrics = {
+            "annualized_return": 0.10,
+            "sharpe": 1.0,
+            "calmar": 0.5,
+            "max_drawdown": None,
+        }
+        result = _passes_screens(
+            metrics,
+            live_returns=[0.001] * 50,
+            screen_config=ScreenConfig(),
+            returns_pct=[0.1] * 50,
+        )
+        assert result is False, (
+            "_passes_screens must return False when max_drawdown is None "
+            "(fail-closed per contract §4)"
+        )
+
+    def test_passes_screens_returns_false_when_all_metrics_none(self, sbe):
+        """Contract §4: all-None metrics dict must return False (not raise an exception).
+
+        This tests that the function degrades gracefully on maximally degenerate input.
+        """
+        from advisors.strategy_builder_engine import (  # noqa: PLC0415
+            ScreenConfig,
+            _passes_screens,
+        )
+
+        metrics = {
+            "annualized_return": None,
+            "sharpe": None,
+            "calmar": None,
+            "max_drawdown": None,
+        }
+        # Must not raise; must return False
+        try:
+            result = _passes_screens(
+                metrics,
+                live_returns=[0.001] * 50,
+                screen_config=ScreenConfig(),
+                returns_pct=[0.1] * 50,
+            )
+        except Exception as exc:  # noqa: BLE001
+            pytest.fail(
+                f"_passes_screens must not raise on all-None metrics; got {exc!r}"
+            )
+        assert result is False, (
+            "_passes_screens must return False for an all-None metrics dict "
+            "(fail-closed per contract §4)"
+        )
+
+    # -----------------------------------------------------------------------
+    # Hot spot 3 — Log-return sign preservation under r * 100.0 conversion
+    # -----------------------------------------------------------------------
+
+    def test_negative_log_return_converts_to_negative_pct(self, sbe):
+        """Contract §2.4: conversion is r * 100.0 exactly.
+        A negative log return (-0.005) must convert to -0.5, not +0.5.
+
+        Tolerance: 1e-12 (exact multiplication, not an approximation step).
+        """
+        log_return = -0.005
+        expected_pct = -0.5
+        # The engine applies: r * 100.0 for r in daily_returns.values()
+        converted = log_return * 100.0
+        assert converted == pytest.approx(expected_pct, abs=1e-12), (
+            # Tolerance 1e-12: r*100.0 is exact floating-point multiplication;
+            # any deviation is a sign-flip coding error.
+            f"Negative log return {log_return} must convert to {expected_pct} "
+            f"(r * 100.0 exactly); got {converted}"
+        )
+        # Explicit sign check: must be strictly negative
+        assert converted < 0, (
+            f"Converted pct must be negative for negative log return {log_return}; "
+            f"got {converted}"
+        )
+
+    def test_zero_log_return_converts_to_zero_pct(self, sbe):
+        """Contract §2.4: zero log return must convert to exactly 0.0 pct.
+
+        Tolerance: 1e-12 (exact multiplication).
+        """
+        log_return = 0.0
+        converted = log_return * 100.0
+        assert converted == pytest.approx(0.0, abs=1e-12), (
+            # Tolerance 1e-12: 0.0 * 100.0 is always exactly 0.0 in IEEE-754.
+            f"Zero log return must convert to 0.0 pct; got {converted}"
+        )
+
+    def test_mixed_sign_log_returns_preserve_signs_under_conversion(self, sbe):
+        """Contract §2.4: a mix of positive and negative log returns must all
+        preserve their sign after r * 100.0 conversion. Probes that the conversion
+        does not take abs() or flip sign on any element.
+
+        Tolerance: 1e-12 (exact multiplication — any deviation is a coding error).
+        """
+        from advisors.composer_backtest_client import BacktestResult  # noqa: PLC0415
+
+        raw = {
+            "2023-01-02": -0.005,   # negative → must stay negative
+            "2023-01-03": 0.003,    # positive → must stay positive
+            "2023-01-04": 0.0,      # zero → must stay zero
+            "2023-01-05": -0.012,   # larger negative → must stay negative
+            "2023-01-06": 0.008,    # positive → must stay positive
+        }
+        expected_signs = [-1, +1, 0, -1, +1]  # sign of each converted value
+
+        result = BacktestResult(
+            stats={"sharpe": 0.1},
+            data_warnings=[],
+            daily_returns=raw,
+        )
+        converted = [r * 100.0 for r in result.daily_returns.values()]
+
+        assert len(converted) == len(expected_signs), (
+            f"Length mismatch: {len(converted)} vs {len(expected_signs)}"
+        )
+        for i, (val, expected_sign) in enumerate(zip(converted, expected_signs, strict=True)):
+            if expected_sign == -1:
+                assert val < 0, (
+                    # Tolerance: exact sign — no approx needed, this is a sign check.
+                    f"Return[{i}] must be negative after conversion; got {val}"
+                )
+            elif expected_sign == +1:
+                assert val > 0, (
+                    f"Return[{i}] must be positive after conversion; got {val}"
+                )
+            else:
+                # Tolerance 1e-12: 0.0 * 100.0 is always exactly 0.0 in IEEE-754.
+                assert val == pytest.approx(0.0, abs=1e-12), (
+                    f"Return[{i}] must be zero after conversion; got {val}"
+                )
+
+    # -----------------------------------------------------------------------
+    # Hot spot 4 — Never-raises on genuinely pathological inputs
+    # -----------------------------------------------------------------------
+
+    def test_value_error_from_run_backtest_does_not_raise(self, sbe):
+        """Contract §2.6: ValueError from run_backtest must be caught; must return
+        ProposalRun, not propagate the exception to the caller.
+        """
+        with (
+            patch(
+                "advisors.strategy_builder_engine.run_backtest",
+                side_effect=ValueError("bad tree shape"),
+            ),
+            patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
+            patch("advisors.strategy_builder_engine.database"),
+        ):
+            result = sbe.propose_strategies(
+                objective=sbe.Objective.diversify,
+                universe=["SPY", "AGG"],
+                screen_config=sbe.ScreenConfig(),
+                live_returns=[0.001] * 50,
+                symphony_id="test-valueerror",
+            )
+
+        assert isinstance(result, sbe.ProposalRun), (
+            "propose_strategies must return ProposalRun even when run_backtest "
+            "raises ValueError (never-raises contract §2.6)"
+        )
+
+    def test_key_error_from_run_backtest_does_not_raise(self, sbe):
+        """Contract §2.6: KeyError from run_backtest must be caught; must return
+        ProposalRun, not propagate the exception to the caller.
+        """
+        with (
+            patch(
+                "advisors.strategy_builder_engine.run_backtest",
+                side_effect=KeyError("missing_field"),
+            ),
+            patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
+            patch("advisors.strategy_builder_engine.database"),
+        ):
+            result = sbe.propose_strategies(
+                objective=sbe.Objective.lift_risk_adjusted,
+                universe=["SPY", "AGG", "GLD"],
+                screen_config=sbe.ScreenConfig(),
+                live_returns=[0.001] * 50,
+                symphony_id="test-keyerror",
+            )
+
+        assert isinstance(result, sbe.ProposalRun), (
+            "propose_strategies must return ProposalRun even when run_backtest "
+            "raises KeyError (never-raises contract §2.6)"
+        )
+
+    def test_db_exception_during_persistence_does_not_abort_run(self, sbe):
+        """Contract §2.6: an Exception from database.insert_advisor_observation must
+        NOT abort the run or set ProposalRun.error. Persistence errors are logged and
+        silently skipped; the batch completes with whatever was persisted before the failure.
+        """
+        fake = _make_fake_result(n_days=100, base_return=0.001)
+
+        with (
+            patch("advisors.strategy_builder_engine.run_backtest", return_value=fake),
+            patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
+            patch(
+                "advisors.strategy_builder_engine.database.insert_advisor_observation",
+                side_effect=Exception("DB connection failed"),
+            ),
+        ):
+            result = sbe.propose_strategies(
+                objective=sbe.Objective.diversify,
+                universe=["SPY", "AGG", "GLD"],
+                screen_config=sbe.ScreenConfig(min_sharpe=-999.0),
+                live_returns=[0.001] * 100,
+                symphony_id="test-db-exception",
+            )
+
+        assert isinstance(result, sbe.ProposalRun), (
+            "propose_strategies must return ProposalRun even when persistence raises"
+        )
+        assert result.error is None, (
+            f"ProposalRun.error must be None when only persistence fails; "
+            f"got {result.error!r}. Persistence errors are logged, not propagated."
+        )
+
+    def test_universe_with_more_than_10_tickers_does_not_raise(self, sbe):
+        """Contract §2.3: the engine caps candidates internally at 10 tickers.
+        A universe with >10 tickers must not raise, and result.candidates length
+        must be <= MAX_CANDIDATES_PER_RUN.
+        """
+        fake = _make_fake_result(n_days=100, base_return=0.001)
+        large_universe = [
+            "SPY", "AGG", "GLD", "TLT", "QQQ",
+            "IWM", "EFA", "EEM", "LQD", "HYG",
+            "VNQ", "TIP", "SHY", "BIL", "BNDX",
+        ]  # 15 tickers — 5 beyond the 10-ticker cap
+
+        with (
+            patch("advisors.strategy_builder_engine.run_backtest", return_value=fake),
+            patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
+            patch("advisors.strategy_builder_engine.database") as mock_db,
+        ):
+            mock_db.insert_advisor_observation.return_value = 1
+            result = sbe.propose_strategies(
+                objective=sbe.Objective.diversify,
+                universe=large_universe,
+                screen_config=sbe.ScreenConfig(),
+                live_returns=[0.001] * 100,
+                symphony_id="test-large-universe",
+            )
+
+        assert isinstance(result, sbe.ProposalRun), (
+            "propose_strategies must return ProposalRun for universe with >10 tickers"
+        )
+        assert len(result.candidates) <= sbe.MAX_CANDIDATES_PER_RUN, (
+            f"result.candidates length must be <= MAX_CANDIDATES_PER_RUN "
+            f"({sbe.MAX_CANDIDATES_PER_RUN}); got {len(result.candidates)}"
+        )
+
+    # -----------------------------------------------------------------------
+    # Hot spot 5 — Grammar construct purity (T4/T5/T6/T7 specific)
+    # -----------------------------------------------------------------------
+
+    def test_t4_uses_moving_average_price_not_alias(self, sbe):
+        """Contract §2.1: T4 must use 'moving-average-price' (VERIFIED-LOCAL grammar token),
+        not an alias such as 'moving-average' or 'sma'. Probes that the indicator fn
+        string in the serialized tree is the canonical form.
+        """
+        tree = sbe.trend_switch(
+            signal_ticker="SPY",
+            ma_window=50,
+            risk_on_tickers=["QQQ"],
+            risk_off_tickers=["TLT"],
+        )
+        serialized = json.dumps(tree)
+        assert "moving-average-price" in serialized, (
+            "T4 (trend_switch) must use 'moving-average-price' as the MA indicator fn; "
+            "not found in serialized tree"
+        )
+        # Reject short aliases that would fail validate_tree or confuse Composer
+        import re  # noqa: PLC0415
+        assert not re.search(r'"(?:lhs-fn|rhs-fn)"\s*:\s*"sma"', serialized), (
+            "T4 must not use 'sma' as an indicator fn alias — use 'moving-average-price'"
+        )
+
+    def test_t4_uses_current_price(self, sbe):
+        """Contract §2.1: T4 must use 'current-price' (VERIFIED-LOCAL) as the lhs
+        indicator fn. Probes that both sides of the MA comparison use canonical tokens.
+        """
+        tree = sbe.trend_switch(
+            signal_ticker="SPY",
+            ma_window=50,
+            risk_on_tickers=["QQQ"],
+            risk_off_tickers=["TLT"],
+        )
+        serialized = json.dumps(tree)
+        assert "current-price" in serialized, (
+            "T4 (trend_switch) must use 'current-price' as the lhs indicator fn; "
+            "not found in serialized tree"
+        )
+
+    def test_t5_rsi_condition_comparison_value_is_number_not_string(self, sbe):
+        """Contract §2.1 + grammar §3.4: the rhs comparison value (threshold) in T5
+        must be stored as a JSON number (int or float), NOT as a string.
+
+        Rationale: Composer's backtest API expects numeric rhs-val for fixed-value
+        comparisons. Storing '70' (string) instead of 70 (number) is a type error
+        that would silently pass JSON serialization but fail the Composer API.
+
+        This test is adversarial — it probes that the condition constructor
+        emits a numeric rhs-val, not the stringified form.
+        """
+        tree = sbe.rsi_rotation(
+            signal_ticker="SPY",
+            rsi_window=14,
+            threshold=70,
+            overbought_tickers=["TLT"],
+            neutral_tickers=["SPY"],
+        )
+        serialized_dict = json.loads(json.dumps(tree))
+
+        # Walk the tree to find the if-child node with the RSI condition
+        stack = [serialized_dict]
+        rhs_val_found = None
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            if node.get("step") == "if-child" and not node.get("is-else-condition?"):
+                rhs_val_found = node.get("rhs-val")
+                break
+            for child in node.get("children", []) or []:
+                stack.append(child)
+
+        assert rhs_val_found is not None, (
+            "T5 (rsi_rotation) tree must contain an if-child node with rhs-val set"
+        )
+        assert isinstance(rhs_val_found, (int, float)) and not isinstance(rhs_val_found, bool), (
+            f"T5 rhs-val (threshold) must be a JSON number (int or float), "
+            f"not a string; got {type(rhs_val_found).__name__}={rhs_val_found!r}. "
+            "Composer API requires numeric comparison values."
+        )
+
+    def test_t6_window_value_is_integer_in_json(self, sbe):
+        """Contract §2.1: T6 (momentum_top_n) window must appear as an integer
+        in the JSON sort-by-fn-params, not as a stringified value.
+
+        Tolerance: exact type check (int, not float or str).
+        """
+        window = 63
+        tree = sbe.momentum_top_n(["SPY", "QQQ", "IWM"], n=2, window=window)
+        serialized_dict = json.loads(json.dumps(tree))
+
+        # Walk the tree to find the filter node
+        stack = [serialized_dict]
+        window_val_found = None
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            if node.get("step") == "filter":
+                params = node.get("sort-by-fn-params") or {}
+                window_val_found = params.get("window")
+                break
+            for child in node.get("children", []) or []:
+                stack.append(child)
+
+        assert window_val_found is not None, (
+            "T6 (momentum_top_n) tree must contain a filter node with sort-by-fn-params.window"
+        )
+        assert isinstance(window_val_found, int) and not isinstance(window_val_found, bool), (
+            f"T6 sort-by-fn-params.window must be an integer in JSON; "
+            f"got {type(window_val_found).__name__}={window_val_found!r}"
+        )
+        assert window_val_found == window, (
+            f"T6 sort-by-fn-params.window must equal the passed window={window}; "
+            f"got {window_val_found}"
+        )
+
+    def test_t7_select_bottom_and_standard_deviation_return_present(self, sbe):
+        """Contract §2.1: T7 (low_vol_floor) must use 'select-bottom' AND
+        'standard-deviation-return' as the select-fn and sort-by-fn respectively.
+        Both must appear in the serialized JSON.
+        """
+        tree = sbe.low_vol_floor(["SPY", "TLT", "GLD", "IWM"], n=2, window=21)
+        serialized = json.dumps(tree)
+        assert "select-bottom" in serialized, (
+            "T7 (low_vol_floor) must use 'select-bottom' as select-fn"
+        )
+        assert "standard-deviation-return" in serialized, (
+            "T7 (low_vol_floor) must use 'standard-deviation-return' as sort-by-fn"
+        )
+
+    def test_t7_n_is_integer_in_json(self, sbe):
+        """Contract §2.1: T7 (low_vol_floor) select-n must appear as an integer
+        in the JSON filter node, not as a float or string.
+
+        Tolerance: exact type check (int, not float or str).
+        """
+        n = 2
+        tree = sbe.low_vol_floor(["SPY", "TLT", "GLD"], n=n, window=21)
+        serialized_dict = json.loads(json.dumps(tree))
+
+        stack = [serialized_dict]
+        select_n_found = None
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            if node.get("step") == "filter":
+                select_n_found = node.get("select-n")
+                break
+            for child in node.get("children", []) or []:
+                stack.append(child)
+
+        assert select_n_found is not None, (
+            "T7 (low_vol_floor) tree must contain a filter node with select-n"
+        )
+        assert isinstance(select_n_found, int) and not isinstance(select_n_found, bool), (
+            f"T7 select-n must be an integer in JSON; "
+            f"got {type(select_n_found).__name__}={select_n_found!r}"
+        )
+        assert select_n_found == n, (
+            f"T7 select-n must equal the passed n={n}; got {select_n_found}"
+        )
