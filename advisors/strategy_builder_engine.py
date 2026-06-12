@@ -62,6 +62,8 @@ SCREEN_MAX_CORRELATION_DEFAULT: float = 0.85
 
 
 class Objective(enum.Enum):
+    """Objective enum steering template selection and parameter ranges for a proposal run."""
+
     diversify = "diversify"
     cut_drawdown = "cut_drawdown"
     lift_risk_adjusted = "lift_risk_adjusted"
@@ -81,6 +83,8 @@ class ScreenConfig:
 
 @dataclass
 class CandidateInfo:
+    """Per-candidate state: tree, template provenance, backtest metrics, and error if backtest failed."""  # noqa: E501
+
     candidate_id: str
     tree: dict
     template_id: str
@@ -92,9 +96,11 @@ class CandidateInfo:
 
 @dataclass
 class ProposalRun:
-    candidates: list  # list[CandidateInfo]
+    """Result of a propose_strategies call. Never raises — check error field on failure."""
+
+    candidates: list[CandidateInfo]
     gated_batch: GatedBatch
-    screened_survivors: list  # list[CandidateGateResult] that passed screens
+    screened_survivors: list[CandidateGateResult]
     observations_written: int
     error: str | None = None
 
@@ -131,9 +137,7 @@ def specified_weight_basket(
     name: str = "Specified Weight Basket",
 ) -> dict:
     """T2: specified-weight allocation over the given (ticker, weight) pairs."""
-    children_with_weights = [
-        (symphony_schema.make_asset(t), w) for t, w in weighted_tickers
-    ]
+    children_with_weights = [(symphony_schema.make_asset(t), w) for t, w in weighted_tickers]
     wt = symphony_schema.make_weight_specified(children_with_weights)
     return symphony_schema.make_root(name, "daily", [wt])
 
@@ -158,9 +162,7 @@ def trend_switch(
     rhs_ind = symphony_schema.make_indicator(
         "moving-average-price", signal_ticker, window=ma_window
     )
-    cond = symphony_schema.make_condition(
-        lhs, "gt", signal_ticker, rhs_indicator=rhs_ind
-    )
+    cond = symphony_schema.make_condition(lhs, "gt", signal_ticker, rhs_indicator=rhs_ind)
 
     # Risk-on: equal-weight over risk_on_tickers
     risk_on_assets = [symphony_schema.make_asset(t) for t in risk_on_tickers]
@@ -170,9 +172,7 @@ def trend_switch(
     risk_off_assets = [symphony_schema.make_asset(t) for t in risk_off_tickers]
     risk_off_wt = symphony_schema.make_weight_equal(risk_off_assets)
 
-    if_node = symphony_schema.make_if(
-        cond, then_children=[risk_on_wt], else_children=[risk_off_wt]
-    )
+    if_node = symphony_schema.make_if(cond, then_children=[risk_on_wt], else_children=[risk_off_wt])
     return symphony_schema.make_root(name, "daily", [if_node])
 
 
@@ -203,9 +203,7 @@ def rsi_rotation(
     return symphony_schema.make_root(name, "daily", [if_node])
 
 
-def momentum_top_n(
-    universe: list[str], n: int, window: int, name: str = "Momentum Top N"
-) -> dict:
+def momentum_top_n(universe: list[str], n: int, window: int, name: str = "Momentum Top N") -> dict:
     """T6: select top-N assets by cumulative return over the given window."""
     assets = [symphony_schema.make_asset(t) for t in universe]
     flt = symphony_schema.make_filter(
@@ -218,9 +216,7 @@ def momentum_top_n(
     return symphony_schema.make_root(name, "daily", [flt])
 
 
-def low_vol_floor(
-    universe: list[str], n: int, window: int, name: str = "Low Vol Floor"
-) -> dict:
+def low_vol_floor(universe: list[str], n: int, window: int, name: str = "Low Vol Floor") -> dict:
     """T7: select bottom-N assets by standard-deviation-return over the given window."""
     assets = [symphony_schema.make_asset(t) for t in universe]
     flt = symphony_schema.make_filter(
@@ -383,9 +379,7 @@ def _generate_candidate_trees(
             candidates.append(
                 CandidateInfo(
                     candidate_id="lift_ra:T2:specified_weight",
-                    tree=specified_weight_basket(
-                        weighted, name="Lift RA Specified Weight"
-                    ),
+                    tree=specified_weight_basket(weighted, name="Lift RA Specified Weight"),
                     template_id="T2",
                     params={"tickers": tickers, "weights": [w_each] * n},
                 )
@@ -612,9 +606,7 @@ def propose_strategies(
         # the number of successfully-backtested candidates.
         # But the test asserts result.candidates == gated_batch.n_candidates,
         # so result.candidates must only contain successful ones.
-        successful_candidates = [
-            info for info in candidate_infos if info.backtest_error is None
-        ]
+        successful_candidates = [info for info in candidate_infos if info.backtest_error is None]
 
         return ProposalRun(
             candidates=successful_candidates,
