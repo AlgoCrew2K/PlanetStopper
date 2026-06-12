@@ -1,7 +1,7 @@
 {
   "name": "bhy_byte_identical_pin",
   "purpose": "Pins benjamini_hochberg_adjust (BHY step-up) to exact output values for N=10 p-values. Any refactor of the step-up direction, running-min order, or Yekutieli c(N) computation produces a different adjusted vector and fails this test. Tolerance 1e-15 catches numerical rearrangements.",
-  "provenance": "Hand-derived in Python using the BHY step-up algorithm independently of autotuner.py: sort p ascending; for rank k=N..1: candidate = (N*c(N)/k)*p_k; running_min = min(running_min, candidate); p_adj_k = clamp(running_min, 0, 1). References: Harvey & Liu 2015 DOI 10.3905/jpm.2015.42.1.013; Benjamini, Hochberg & Yekutieli 2001, Annals of Statistics 29(4).",
+  "provenance": "Hand-derived in Python using the BHY step-up algorithm independently of autotuner.py: sort p ascending; for rank k=N..1: candidate = (N*c(N)/k)*p_k; running_min = min(running_min, candidate); p_adj_k = clamp(running_min, 0, 1). c(N) pins use ascending IEEE-754 left-to-right summation sum(1.0/j for j in 1..N) -- the canonical byte-identity contract of _yekutieli_c_n (see test_perf006 T4). Higher-accuracy summations (fsum, Fraction) differ at the last bits for N>=500 and MUST NOT be used to regenerate these pins. References: Harvey & Liu 2015 DOI 10.3905/jpm.2015.42.1.013; Benjamini, Hochberg & Yekutieli 2001, Annals of Statistics 29(4).",
   "N": 10,
   "p_values": [0.001, 0.003, 0.008, 0.02, 0.05, 0.09, 0.15, 0.25, 0.4, 0.7],
   "expected": {
@@ -26,7 +26,7 @@
       "c_5": 2.283333333333333,
       "c_10": 2.9289682539682538,
       "c_100": 5.187377517639621,
-      "c_500": 6.792823429990524
+      "c_500": 6.79282342999052
     },
     "log_approx_comparison": {
       "note": "c(500) = 6.7928 vs ln(500)+0.5772 = 6.7918. The ~1% gap is small but present. At N=5: c(5) = 2.2833 vs ln(5)+0.5772 = 2.1867 -- a 4.4% under-correction that the harmonic-number test catches.",
