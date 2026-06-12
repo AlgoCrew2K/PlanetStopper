@@ -142,7 +142,7 @@ Notes:
 
 Notes:
 - `sort-by-fn-params` uses `{"window": <int>}` — exact key name confirmed VERIFIED-LOCAL (`sample_score_small.json`). The EDN source uses `:sort-by-window-days` but the JSON API serializes it as the nested `sort-by-fn-params.window` object. The flat `sort-by-window-days` key does NOT appear in local JSON fixtures (0 matches).
-- `sort-by-fn` values observed: `"moving-average-return"`, `"max-drawdown"`. VERIFIED-LOCAL (`sample_score_large.json`).
+- `sort-by-fn` values observed in fixtures: `"moving-average-return"`, `"max-drawdown"`. VERIFIED-LOCAL (`sample_score_large.json`). Phase-2 templates T6/T7 additionally use `"cumulative-return"` and `"standard-deviation-return"` as `sort-by-fn` values per contract mandate — these appear in §4.1 as VERIFIED-LOCAL indicator fns but are **NOT confirmed as `sort-by-fn` values** in any local fixture (see §4.2 and OQ-12).
 - `select-fn` values observed: `"top"`, `"bottom"`. VERIFIED-LOCAL (`sample_score_small.json`).
 
 ### 3.6 `wt-cash-equal`
@@ -217,6 +217,8 @@ No `children` field. VERIFIED-LOCAL.
 |----------------|----------|
 | `"moving-average-return"` | VERIFIED-LOCAL (`sample_score_small.json`, `sample_score_large.json`) |
 | `"max-drawdown"` | VERIFIED-LOCAL (`sample_score_large.json`) |
+| `"cumulative-return"` | UNVERIFIED as sort-by-fn. Confirmed VERIFIED-LOCAL as `lhs-fn` in §4.1. Used in Phase-2 T6 (`momentum_top_n`) per contract mandate (§3 T6 table). Not observed as `sort-by-fn` in any local fixture. Requires `composer-api-researcher` confirmation before production use. See OQ-12. |
+| `"standard-deviation-return"` | UNVERIFIED as sort-by-fn. Confirmed VERIFIED-LOCAL as `rhs-fn` in §4.1. Used in Phase-2 T7 (`low_vol_floor`) per contract mandate (§3 T7 table). Not observed as `sort-by-fn` in any local fixture. Requires `composer-api-researcher` confirmation before production use. See OQ-12. |
 
 ### 4.3 Possible Additional Indicators (OPEN)
 
@@ -401,6 +403,7 @@ Whether `GET /symphonies/{id}/score` works for symphonies NOT owned by the calle
 | OQ-9 | Does `"exponential-moving-average-price"` work as an indicator string? | UNVERIFIED; do not generate until confirmed |
 | OQ-10 | What does `rebalance-corridor-width` control? | UNVERIFIED; omit from constructed trees |
 | OQ-11 | Does GET /score work for non-owned public symphonies? | Assume user-owned only |
+| OQ-12 | Are `"cumulative-return"` and `"standard-deviation-return"` valid `sort-by-fn` values for the `filter` step? Both are VERIFIED-LOCAL as indicator fns (`lhs-fn`/`rhs-fn`) but are NOT observed as `sort-by-fn` in any fixture. Phase-2 T6/T7 templates use them per contract mandate; `composer-api-researcher` confirmation needed before production use. | Use per Phase-2 contract but flag as UNVERIFIED in §4.2; obtain fixture confirmation |
 
 ---
 

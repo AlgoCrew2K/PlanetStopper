@@ -193,12 +193,20 @@ and round-trip `json.dumps`.
 | T3 | `inverse_vol_basket(tickers, *, name="Inverse Vol Basket")` | root → wt-inverse-vol → assets |
 | T4 | `trend_switch(signal_ticker, ma_window, risk_on_tickers, risk_off_tickers, *, name="Trend Switch")` | if current-price > moving-average-price(window) → equal-weight risk-on basket else equal-weight risk-off basket |
 | T5 | `rsi_rotation(signal_ticker, rsi_window, threshold, overbought_tickers, neutral_tickers, *, name="RSI Rotation")` | if relative-strength-index > threshold → equal-weight overbought branch else equal-weight neutral branch |
-| T6 | `momentum_top_n(universe, n, window, *, name="Momentum Top N")` | filter select-top n by cumulative-return(window) |
-| T7 | `low_vol_floor(universe, n, window, *, name="Low Vol Floor")` | filter select-bottom n by standard-deviation-return(window) |
+| T6 | `momentum_top_n(universe, n, window, *, name="Momentum Top N")` | filter select-top n by cumulative-return(window) `†` |
+| T7 | `low_vol_floor(universe, n, window, *, name="Low Vol Floor")` | filter select-bottom n by standard-deviation-return(window) `†` |
 
 All templates accept an optional `name` kwarg that sets the Composer symphony name.
 Composability (e.g. T4 whose risk-on child is a T6 filter) is allowed but not
 required for Phase 2.
+
+`†` **T6/T7 sort-by-fn caveat (reviewer Finding 13 — grammar doc OQ-12):**
+`"cumulative-return"` (T6) and `"standard-deviation-return"` (T7) are used as
+`sort-by-fn` values on the Composer `filter` step per Phase-2 contract mandate.
+Both strings are VERIFIED-LOCAL as indicator fns (`lhs-fn`/`rhs-fn` in fixtures)
+but are **NOT confirmed as `sort-by-fn` values** in any local fixture. Grammar doc
+§4.2 documents this gap; OQ-12 tracks the open question. A `composer-api-researcher`
+fixture-capture is required before these templates are used in production backtesting.
 
 ### 6.3 Objective enum (implemented — values verified against source)
 
