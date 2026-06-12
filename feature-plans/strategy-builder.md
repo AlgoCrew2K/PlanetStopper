@@ -59,8 +59,8 @@ these `feature-plans/strategy-builder-*.md` docs.
 | `advisors/symphony_schema.py` | 1 (complete) | Build / validate / lint / describe Composer `raw_value` trees. Pure stdlib; never-raises validation. |
 | `advisors/composer_backtest_client.py` | (existing) | POST /backtest transport; consumes trees the schema layer produces. |
 | `advisors/backtest_gate_engine.py` | (existing) | Overfitting acceptance gate around backtest results. |
-| `analytics.compute_quantstats_metrics()` | 2 (in progress) | Metric engine for candidate-screening (quantstats pinned in requirements.txt by Phase-2 team). |
-| `advisors/strategy_builder_engine.py` | 2 (in progress) | Propose candidate symphonies from templates T1-T7 → backtest → FDR-gate → persist survivors as advisor observations. |
+| `analytics.compute_quantstats_metrics()` | 2 (in progress) | Metric engine for candidate-screening. `quantstats` dependency not yet in `requirements.txt` — Phase-2 team adds the pin (contract §2.9). |
+| `advisors/strategy_builder_engine.py` | 2 (in progress) | Phase 2 proposal engine: builds candidate trees from templates T1-T7 via `symphony_schema` constructors → backtests via `composer_backtest_client` (1 req/s) → applies single-batch FDR gate via `backtest_gate_engine.evaluate_candidate_batch` → applies `ScreenConfig` screens to survivors → persists via `database.insert_advisor_observation`. Public surface: `propose_strategies(objective, universe, screen_config, live_returns) -> ProposalRun`. Never-raises (failures surface via `ProposalRun.error`). |
 
 ---
 
@@ -242,6 +242,13 @@ id, params, `render_rules_text` output, metric dict, gate verdict + `winner_p_ad
 `compute_quantstats_metrics` wants %-scale in, returns fraction-scale out with
 `max_drawdown <= 0`. The conversion follows `asset_swap_engine.py` exactly — do
 not re-derive. Sign conventions have dedicated golden tests.
+
+### 6.8 Dependency: quantstats
+
+`quantstats` is not yet in `requirements.txt` (verified 2026-06-11). Phase-2
+contract §2.9 requires the team to pin it there (additive). Until the pin lands,
+`analytics.compute_quantstats_metrics` is unavailable at runtime — the engine must
+not be imported or called in the default test suite before the pin is in place.
 
 ---
 
