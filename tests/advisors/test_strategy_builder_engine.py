@@ -21,8 +21,8 @@ ADVERSARIAL FOCUS:
     never an exception
   - Template validity: all 7 templates must produce validate_tree == [] trees
   - Template vocabulary: T4 uses "if", T5 uses "relative-strength-index",
-    T6 uses "top" + "cumulative-return", T7 uses "bottom" +
-    "standard-deviation-return"
+    T6 uses "top" + "cumulative-return", T7 uses "bottom" + "max-drawdown"
+
 
 Adversarial cycles (added after implementer goes GREEN):
   - Cycle 1: specified_weight_basket with non-100-sum weights validates clean;
@@ -51,8 +51,7 @@ import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FIXTURE_PATH = (
-    _REPO_ROOT / "tests" / "fixtures" / "math"
-    / "strategy_builder_engine_sign_convention.json"
+    _REPO_ROOT / "tests" / "fixtures" / "math" / "strategy_builder_engine_sign_convention.json"
 )
 
 
@@ -67,6 +66,7 @@ def _load_fixture() -> dict:
 # ---------------------------------------------------------------------------
 # Shared backtest mock helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_fake_result(n_days: int = 100, base_return: float = 0.001):
     """Create a BacktestResult with a synthetic log-return series of n_days.
@@ -109,6 +109,7 @@ def _make_error_result():
 # The ImportError is the first RED signal during the initial run.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def sbe():
     """Import and return the strategy_builder_engine module.
@@ -119,6 +120,7 @@ def sbe():
     expected RED failure.
     """
     import advisors.strategy_builder_engine as _sbe  # noqa: PLC0415
+
     return _sbe
 
 
@@ -177,9 +179,7 @@ class TestNamedConstants:
         )
         v = sbe.SCREEN_MAX_CORRELATION_DEFAULT
         assert isinstance(v, float), "SCREEN_MAX_CORRELATION_DEFAULT must be a float"
-        assert 0.0 <= v <= 1.0, (
-            f"SCREEN_MAX_CORRELATION_DEFAULT must be in [0, 1]; got {v}"
-        )
+        assert 0.0 <= v <= 1.0, f"SCREEN_MAX_CORRELATION_DEFAULT must be in [0, 1]; got {v}"
 
 
 # ===========================================================================
@@ -273,8 +273,13 @@ class TestDataclassShapes:
         )
 
     def test_proposal_run_has_required_fields(self, sbe):
-        required = {"candidates", "gated_batch", "screened_survivors",
-                    "observations_written", "error"}
+        required = {
+            "candidates",
+            "gated_batch",
+            "screened_survivors",
+            "observations_written",
+            "error",
+        }
         if hasattr(sbe.ProposalRun, "_fields"):
             actual = set(sbe.ProposalRun._fields)
         else:
@@ -456,8 +461,7 @@ class TestFdrIntegrity:
             return fake_error
 
         with (
-            patch("advisors.strategy_builder_engine.run_backtest",
-                  side_effect=_side_effect),
+            patch("advisors.strategy_builder_engine.run_backtest", side_effect=_side_effect),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database") as mock_db,
         ):
@@ -491,6 +495,7 @@ class TestTemplateT1EqualWeightBasket:
 
     def test_builds_valid_tree(self, sbe):
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
+
         tree = sbe.equal_weight_basket(["SPY", "AGG", "GLD"])
         errors = validate_tree(tree)
         assert errors == [], f"validate_tree must return [] for T1; got {errors}"
@@ -503,12 +508,14 @@ class TestTemplateT1EqualWeightBasket:
 
     def test_extract_tickers_non_empty(self, sbe):
         from advisors.symphony_schema import extract_tickers  # noqa: PLC0415
+
         tree = sbe.equal_weight_basket(["SPY", "AGG", "TLT"])
         tickers = extract_tickers(tree)
         assert len(tickers) > 0, "equal_weight_basket must produce a tree with at least one ticker"
 
     def test_tickers_present_in_extract(self, sbe):
         from advisors.symphony_schema import extract_tickers  # noqa: PLC0415
+
         tickers_in = ["SPY", "AGG"]
         tree = sbe.equal_weight_basket(tickers_in)
         tickers_out = extract_tickers(tree)
@@ -517,6 +524,7 @@ class TestTemplateT1EqualWeightBasket:
 
     def test_name_parameter_accepted(self, sbe):
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
+
         tree = sbe.equal_weight_basket(["SPY"], name="My Equal Basket")
         assert validate_tree(tree) == []
 
@@ -526,6 +534,7 @@ class TestTemplateT2SpecifiedWeightBasket:
 
     def test_builds_valid_tree(self, sbe):
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
+
         tree = sbe.specified_weight_basket([("SPY", 60.0), ("AGG", 40.0)])
         errors = validate_tree(tree)
         assert errors == [], f"validate_tree must return [] for T2; got {errors}"
@@ -536,6 +545,7 @@ class TestTemplateT2SpecifiedWeightBasket:
 
     def test_extract_tickers_non_empty(self, sbe):
         from advisors.symphony_schema import extract_tickers  # noqa: PLC0415
+
         tree = sbe.specified_weight_basket([("SPY", 70.0), ("AGG", 30.0)])
         assert len(extract_tickers(tree)) > 0
 
@@ -545,6 +555,7 @@ class TestTemplateT3InverseVolBasket:
 
     def test_builds_valid_tree(self, sbe):
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
+
         tree = sbe.inverse_vol_basket(["SPY", "AGG", "GLD"])
         errors = validate_tree(tree)
         assert errors == [], f"validate_tree must return [] for T3; got {errors}"
@@ -555,6 +566,7 @@ class TestTemplateT3InverseVolBasket:
 
     def test_extract_tickers_non_empty(self, sbe):
         from advisors.symphony_schema import extract_tickers  # noqa: PLC0415
+
         tree = sbe.inverse_vol_basket(["SPY", "AGG"])
         assert len(extract_tickers(tree)) > 0
 
@@ -564,6 +576,7 @@ class TestTemplateT4TrendSwitch:
 
     def test_builds_valid_tree(self, sbe):
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
+
         tree = sbe.trend_switch(
             signal_ticker="SPY",
             ma_window=200,
@@ -579,6 +592,7 @@ class TestTemplateT4TrendSwitch:
 
     def test_extract_tickers_non_empty(self, sbe):
         from advisors.symphony_schema import extract_tickers  # noqa: PLC0415
+
         tree = sbe.trend_switch("SPY", 200, ["QQQ"], ["TLT"])
         assert len(extract_tickers(tree)) > 0
 
@@ -631,6 +645,7 @@ class TestTemplateT5RsiRotation:
 
     def test_builds_valid_tree(self, sbe):
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
+
         tree = sbe.rsi_rotation(
             signal_ticker="SPY",
             rsi_window=14,
@@ -647,6 +662,7 @@ class TestTemplateT5RsiRotation:
 
     def test_extract_tickers_non_empty(self, sbe):
         from advisors.symphony_schema import extract_tickers  # noqa: PLC0415
+
         tree = sbe.rsi_rotation("SPY", 14, 70, ["TLT"], ["SPY"])
         assert len(extract_tickers(tree)) > 0
 
@@ -668,6 +684,7 @@ class TestTemplateT5RsiRotation:
         # A simple substring check is sufficient because the only place 'rsi'
         # as a standalone token would appear is in fn fields.
         import re  # noqa: PLC0415
+
         # Match "rsi" not preceded or followed by a hyphen (i.e., standalone)
         standalone_rsi = re.search(r'"(?:lhs-fn|rhs-fn|sort-by-fn)"\s*:\s*"rsi"', serialized)
         assert standalone_rsi is None, (
@@ -680,6 +697,7 @@ class TestTemplateT6MomentumTopN:
 
     def test_builds_valid_tree(self, sbe):
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
+
         tree = sbe.momentum_top_n(
             universe=["SPY", "QQQ", "IWM", "EFA"],
             n=2,
@@ -694,6 +712,7 @@ class TestTemplateT6MomentumTopN:
 
     def test_extract_tickers_non_empty(self, sbe):
         from advisors.symphony_schema import extract_tickers  # noqa: PLC0415
+
         tree = sbe.momentum_top_n(["SPY", "QQQ", "IWM"], 2, 63)
         assert len(extract_tickers(tree)) > 0
 
@@ -724,10 +743,16 @@ class TestTemplateT6MomentumTopN:
 
 
 class TestTemplateT7LowVolFloor:
-    """T7: low_vol_floor — validate_tree == [], uses 'bottom' + 'standard-deviation-return'."""
+    """T7: low_vol_floor — validate_tree == [], uses 'bottom' + 'max-drawdown'.
+
+    max-drawdown replaced standard-deviation-return after the vocabulary
+    deep-research refuted the latter in sort-by position (it is verified as an
+    indicator fn only); max-drawdown is VERIFIED-LOCAL in sort position.
+    """
 
     def test_builds_valid_tree(self, sbe):
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
+
         tree = sbe.low_vol_floor(
             universe=["SPY", "TLT", "GLD", "IWM"],
             n=2,
@@ -742,6 +767,7 @@ class TestTemplateT7LowVolFloor:
 
     def test_extract_tickers_non_empty(self, sbe):
         from advisors.symphony_schema import extract_tickers  # noqa: PLC0415
+
         tree = sbe.low_vol_floor(["SPY", "TLT", "GLD"], 2, 21)
         assert len(extract_tickers(tree)) > 0
 
@@ -763,11 +789,17 @@ class TestTemplateT7LowVolFloor:
             f"got {found_fn!r}"
         )
 
-    def test_uses_standard_deviation_return(self, sbe):
+    def test_uses_max_drawdown_sort(self, sbe):
         tree = sbe.low_vol_floor(["SPY", "TLT", "GLD"], 2, 21)
         serialized = json.dumps(tree)
-        assert "standard-deviation-return" in serialized, (
-            "low_vol_floor must use 'standard-deviation-return' as the sort-by-fn"
+        assert "max-drawdown" in serialized, (
+            "low_vol_floor must use 'max-drawdown' as the sort-by-fn (the "
+            "VERIFIED-LOCAL defensive proxy; standard-deviation-return is "
+            "refuted in sort position per vocabulary research)"
+        )
+        assert "standard-deviation-return" not in serialized, (
+            "standard-deviation-return must NOT appear: unattested in sort-by "
+            "position (vocabulary research) — emitting it risks API rejection"
         )
 
 
@@ -784,8 +816,10 @@ class TestNeverRaises:
         ProposalRun.error — never propagated to the caller.
         """
         with (
-            patch("advisors.strategy_builder_engine.run_backtest",
-                  side_effect=RuntimeError("network down")),
+            patch(
+                "advisors.strategy_builder_engine.run_backtest",
+                side_effect=RuntimeError("network down"),
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database"),
         ):
@@ -805,8 +839,9 @@ class TestNeverRaises:
     def test_empty_universe_returns_proposal_run_without_raising(self, sbe):
         """universe=[] is an edge case. Must return ProposalRun, not raise."""
         with (
-            patch("advisors.strategy_builder_engine.run_backtest",
-                  return_value=_make_fake_result()),
+            patch(
+                "advisors.strategy_builder_engine.run_backtest", return_value=_make_fake_result()
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database"),
         ):
@@ -1065,6 +1100,7 @@ class TestAdversarialCycle1:
         The tree must still pass validate_tree even when weights sum to 70.
         """
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
+
         # Weights sum to 70 (not 100)
         tree = sbe.specified_weight_basket([("SPY", 40.0), ("AGG", 30.0)])
         errors = validate_tree(tree)
@@ -1080,6 +1116,7 @@ class TestAdversarialCycle1:
         being truncated, clamped, or rejected.
         """
         from advisors.symphony_schema import validate_tree  # noqa: PLC0415
+
         tree = sbe.trend_switch(
             signal_ticker="SPY",
             ma_window=200,
@@ -1112,8 +1149,7 @@ class TestAdversarialCycle1:
                 return fake_success  # fallback for any extra calls
 
         with (
-            patch("advisors.strategy_builder_engine.run_backtest",
-                  side_effect=_side_effect),
+            patch("advisors.strategy_builder_engine.run_backtest", side_effect=_side_effect),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database") as mock_db,
         ):
@@ -1210,20 +1246,16 @@ class TestAdversarialCycle2:
         from advisors.symphony_schema import render_rules_text  # noqa: PLC0415
 
         templates_and_trees = [
-            ("T1_equal_weight_basket",
-             sbe.equal_weight_basket(["SPY", "AGG"])),
-            ("T2_specified_weight_basket",
-             sbe.specified_weight_basket([("SPY", 60.0), ("AGG", 40.0)])),
-            ("T3_inverse_vol_basket",
-             sbe.inverse_vol_basket(["SPY", "TLT"])),
-            ("T4_trend_switch",
-             sbe.trend_switch("SPY", 50, ["QQQ"], ["TLT"])),
-            ("T5_rsi_rotation",
-             sbe.rsi_rotation("SPY", 14, 70, ["TLT"], ["SPY"])),
-            ("T6_momentum_top_n",
-             sbe.momentum_top_n(["SPY", "QQQ", "IWM"], 2, 63)),
-            ("T7_low_vol_floor",
-             sbe.low_vol_floor(["SPY", "TLT", "GLD"], 2, 21)),
+            ("T1_equal_weight_basket", sbe.equal_weight_basket(["SPY", "AGG"])),
+            (
+                "T2_specified_weight_basket",
+                sbe.specified_weight_basket([("SPY", 60.0), ("AGG", 40.0)]),
+            ),
+            ("T3_inverse_vol_basket", sbe.inverse_vol_basket(["SPY", "TLT"])),
+            ("T4_trend_switch", sbe.trend_switch("SPY", 50, ["QQQ"], ["TLT"])),
+            ("T5_rsi_rotation", sbe.rsi_rotation("SPY", 14, 70, ["TLT"], ["SPY"])),
+            ("T6_momentum_top_n", sbe.momentum_top_n(["SPY", "QQQ", "IWM"], 2, 63)),
+            ("T7_low_vol_floor", sbe.low_vol_floor(["SPY", "TLT", "GLD"], 2, 21)),
         ]
 
         for name, tree in templates_and_trees:
@@ -1449,9 +1481,7 @@ class TestAdversarialCycle3:
                 returns_pct=[0.1] * 50,
             )
         except Exception as exc:  # noqa: BLE001
-            pytest.fail(
-                f"_passes_screens must not raise on all-None metrics; got {exc!r}"
-            )
+            pytest.fail(f"_passes_screens must not raise on all-None metrics; got {exc!r}")
         assert result is False, (
             "_passes_screens must return False for an all-None metrics dict "
             "(fail-closed per contract §4)"
@@ -1479,8 +1509,7 @@ class TestAdversarialCycle3:
         )
         # Explicit sign check: must be strictly negative
         assert converted < 0, (
-            f"Converted pct must be negative for negative log return {log_return}; "
-            f"got {converted}"
+            f"Converted pct must be negative for negative log return {log_return}; got {converted}"
         )
 
     def test_zero_log_return_converts_to_zero_pct(self, sbe):
@@ -1505,11 +1534,11 @@ class TestAdversarialCycle3:
         from advisors.composer_backtest_client import BacktestResult  # noqa: PLC0415
 
         raw = {
-            "2023-01-02": -0.005,   # negative → must stay negative
-            "2023-01-03": 0.003,    # positive → must stay positive
-            "2023-01-04": 0.0,      # zero → must stay zero
-            "2023-01-05": -0.012,   # larger negative → must stay negative
-            "2023-01-06": 0.008,    # positive → must stay positive
+            "2023-01-02": -0.005,  # negative → must stay negative
+            "2023-01-03": 0.003,  # positive → must stay positive
+            "2023-01-04": 0.0,  # zero → must stay zero
+            "2023-01-05": -0.012,  # larger negative → must stay negative
+            "2023-01-06": 0.008,  # positive → must stay positive
         }
         expected_signs = [-1, +1, 0, -1, +1]  # sign of each converted value
 
@@ -1530,9 +1559,7 @@ class TestAdversarialCycle3:
                     f"Return[{i}] must be negative after conversion; got {val}"
                 )
             elif expected_sign == +1:
-                assert val > 0, (
-                    f"Return[{i}] must be positive after conversion; got {val}"
-                )
+                assert val > 0, f"Return[{i}] must be positive after conversion; got {val}"
             else:
                 # Tolerance 1e-12: 0.0 * 100.0 is always exactly 0.0 in IEEE-754.
                 assert val == pytest.approx(0.0, abs=1e-12), (
@@ -1631,9 +1658,21 @@ class TestAdversarialCycle3:
         """
         fake = _make_fake_result(n_days=100, base_return=0.001)
         large_universe = [
-            "SPY", "AGG", "GLD", "TLT", "QQQ",
-            "IWM", "EFA", "EEM", "LQD", "HYG",
-            "VNQ", "TIP", "SHY", "BIL", "BNDX",
+            "SPY",
+            "AGG",
+            "GLD",
+            "TLT",
+            "QQQ",
+            "IWM",
+            "EFA",
+            "EEM",
+            "LQD",
+            "HYG",
+            "VNQ",
+            "TIP",
+            "SHY",
+            "BIL",
+            "BNDX",
         ]  # 15 tickers — 5 beyond the 10-ticker cap
 
         with (
@@ -1680,6 +1719,7 @@ class TestAdversarialCycle3:
         )
         # Reject short aliases that would fail validate_tree or confuse Composer
         import re  # noqa: PLC0415
+
         assert not re.search(r'"(?:lhs-fn|rhs-fn)"\s*:\s*"sma"', serialized), (
             "T4 must not use 'sma' as an indicator fn alias — use 'moving-average-price'"
         )
@@ -1745,9 +1785,7 @@ class TestAdversarialCycle3:
         try:
             parsed = float(rhs_val_found)
         except (ValueError, TypeError) as exc:
-            pytest.fail(
-                f"T5 rhs-val {rhs_val_found!r} must be parseable as a float; got {exc!r}"
-            )
+            pytest.fail(f"T5 rhs-val {rhs_val_found!r} must be parseable as a float; got {exc!r}")
         # Assertion 3: the numeric value must equal the threshold passed in (70)
         # Tolerance: 1e-9 — threshold=70 is an exact integer; any deviation
         # would indicate a mangled stringification (e.g. rounding or sign flip).
@@ -1792,13 +1830,15 @@ class TestAdversarialCycle3:
             f"got {window_val_found}"
         )
 
-    def test_t7_select_bottom_and_standard_deviation_return_present(self, sbe):
+    def test_t7_select_bottom_and_max_drawdown_present(self, sbe):
         """Contract §2.1: T7 (low_vol_floor) must use 'bottom' (VERIFIED-LOCAL per
-        grammar §3.5) as the select-fn and 'standard-deviation-return' as the sort-by-fn.
+        grammar §3.5) as the select-fn and 'max-drawdown' as the sort-by-fn
+        (VERIFIED-LOCAL in sort position per vocabulary research; it replaced
+        standard-deviation-return, which is refuted in sort position).
 
         select-fn is checked via tree traversal to the filter node (not a raw JSON
         substring match) so the assertion targets the exact field value.
-        standard-deviation-return is checked via raw JSON substring — it is a sort-by-fn
+        max-drawdown is checked via raw JSON substring — it is a sort-by-fn
         value that does not appear elsewhere in the tree, so the substring match is exact.
         """
         tree = sbe.low_vol_floor(["SPY", "TLT", "GLD", "IWM"], n=2, window=21)
@@ -1822,8 +1862,8 @@ class TestAdversarialCycle3:
 
         # sort-by-fn: substring check is safe — value does not appear elsewhere in the tree
         serialized = json.dumps(tree)
-        assert "standard-deviation-return" in serialized, (
-            "T7 (low_vol_floor) must use 'standard-deviation-return' as sort-by-fn"
+        assert "max-drawdown" in serialized, (
+            "T7 (low_vol_floor) must use 'max-drawdown' as sort-by-fn"
         )
 
     def test_t7_n_is_integer_in_json(self, sbe):
@@ -1855,9 +1895,7 @@ class TestAdversarialCycle3:
             f"T7 select-n must be an integer in JSON; "
             f"got {type(select_n_found).__name__}={select_n_found!r}"
         )
-        assert select_n_found == n, (
-            f"T7 select-n must equal the passed n={n}; got {select_n_found}"
-        )
+        assert select_n_found == n, f"T7 select-n must equal the passed n={n}; got {select_n_found}"
 
 
 # ===========================================================================
@@ -1909,12 +1947,12 @@ class TestAdversarialCycle4:
         # the candidate if the screens ran. Since live_returns=[], they must be skipped.
         tight_config = ScreenConfig(
             max_blended_abs_drawdown=0.001,  # essentially impossible to pass
-            max_correlation=0.001,           # essentially impossible to pass
+            max_correlation=0.001,  # essentially impossible to pass
         )
 
         result = _passes_screens(
             good_metrics,
-            live_returns=[],          # empty — must cause skip of both sub-checks
+            live_returns=[],  # empty — must cause skip of both sub-checks
             screen_config=tight_config,
             returns_pct=[0.01] * 50,
         )
@@ -1951,8 +1989,7 @@ class TestAdversarialCycle4:
             return fake_success if call_counter["n"] <= 2 else fake_error
 
         with (
-            patch("advisors.strategy_builder_engine.run_backtest",
-                  side_effect=_side_effect),
+            patch("advisors.strategy_builder_engine.run_backtest", side_effect=_side_effect),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database") as mock_db,
         ):
@@ -2000,7 +2037,7 @@ class TestAdversarialCycle4:
                 objective=sbe.Objective.diversify,
                 universe=["SPY", "AGG", "GLD"],
                 screen_config=sbe.ScreenConfig(),
-                live_returns=[],          # empty — the key edge case
+                live_returns=[],  # empty — the key edge case
                 symphony_id="test-adv4-empty-live",
             )
 
@@ -2055,9 +2092,7 @@ class TestAdversarialCycle4:
                 default_oos_alpha=0.02,
             )
 
-        assert mock_gate.called, (
-            "evaluate_candidate_batch must be called by propose_strategies"
-        )
+        assert mock_gate.called, "evaluate_candidate_batch must be called by propose_strategies"
         _, call_kwargs = mock_gate.call_args
         assert "incumbent_oos_alpha" in call_kwargs, (
             "evaluate_candidate_batch must be called with incumbent_oos_alpha kwarg"
@@ -2074,8 +2109,7 @@ class TestAdversarialCycle4:
         )
         assert call_kwargs["default_oos_alpha"] == pytest.approx(0.02, rel=1e-9), (
             # Tolerance 1e-9: same reasoning as above.
-            f"default_oos_alpha must be forwarded as 0.02; "
-            f"got {call_kwargs['default_oos_alpha']!r}"
+            f"default_oos_alpha must be forwarded as 0.02; got {call_kwargs['default_oos_alpha']!r}"
         )
 
     # -----------------------------------------------------------------------
@@ -2097,12 +2131,36 @@ class TestAdversarialCycle4:
 
         # 30 tickers — 3× the internal 10-ticker slice ceiling
         large_universe = [
-            "SPY", "AGG", "GLD", "TLT", "QQQ",
-            "IWM", "EFA", "EEM", "LQD", "HYG",
-            "VNQ", "TIP", "SHY", "BIL", "BNDX",
-            "XLK", "XLF", "XLE", "XLV", "XLI",
-            "XLU", "XLP", "XLB", "XLRE", "XLC",
-            "IEMG", "VEA", "VWO", "BND", "VCIT",
+            "SPY",
+            "AGG",
+            "GLD",
+            "TLT",
+            "QQQ",
+            "IWM",
+            "EFA",
+            "EEM",
+            "LQD",
+            "HYG",
+            "VNQ",
+            "TIP",
+            "SHY",
+            "BIL",
+            "BNDX",
+            "XLK",
+            "XLF",
+            "XLE",
+            "XLV",
+            "XLI",
+            "XLU",
+            "XLP",
+            "XLB",
+            "XLRE",
+            "XLC",
+            "IEMG",
+            "VEA",
+            "VWO",
+            "BND",
+            "VCIT",
         ]
         assert len(large_universe) == 30
 
@@ -2124,8 +2182,7 @@ class TestAdversarialCycle4:
             "propose_strategies must return ProposalRun for a 30-ticker universe"
         )
         assert result.error is None, (
-            f"propose_strategies must not error on a 30-ticker universe; "
-            f"got error={result.error!r}"
+            f"propose_strategies must not error on a 30-ticker universe; got error={result.error!r}"
         )
         assert len(result.candidates) <= sbe.MAX_CANDIDATES_PER_RUN, (
             f"result.candidates length must be <= MAX_CANDIDATES_PER_RUN "

@@ -200,13 +200,13 @@ All templates accept an optional `name` kwarg that sets the Composer symphony na
 Composability (e.g. T4 whose risk-on child is a T6 filter) is allowed but not
 required for Phase 2.
 
-`†` **T6/T7 sort-by-fn caveat (reviewer Finding 13 — grammar doc OQ-12):**
-`"cumulative-return"` (T6) and `"standard-deviation-return"` (T7) are used as
-`sort-by-fn` values on the Composer `filter` step per Phase-2 contract mandate.
-Both strings are VERIFIED-LOCAL as indicator fns (`lhs-fn`/`rhs-fn` in fixtures)
-but are **NOT confirmed as `sort-by-fn` values** in any local fixture. Grammar doc
-§4.2 documents this gap; OQ-12 tracks the open question. A `composer-api-researcher`
-fixture-capture is required before these templates are used in production backtesting.
+`†` **T6/T7 sort-by-fn resolution (reviewer Finding 13 — grammar doc OQ-12, CLOSED 2026-06-12):**
+The vocabulary deep-research (`strategy-builder-vocabulary-research.md`) confirmed
+`"cumulative-return"` (T6) as VERIFIED-LOCAL in sort-by position and REFUTED
+`"standard-deviation-return"` in sort-by position. T7 (`low_vol_floor`) now sorts
+by `"max-drawdown"` (VERIFIED-LOCAL) — the quant-sound defensive proxy
+(`standard-deviation-price`, though verified, is price-scale-biased). Both
+templates now emit only attested sort-by tokens.
 
 ### 6.3 Objective enum (implemented — values verified against source)
 

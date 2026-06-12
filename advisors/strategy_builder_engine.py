@@ -223,9 +223,8 @@ def momentum_top_n(universe: list[str], n: int, window: int, name: str = "Moment
     """T6: select top-N assets by cumulative return over the given window."""
     assets = [symphony_schema.make_asset(t) for t in universe]
     # select-fn "top" is the VERIFIED-LOCAL Composer API value (grammar §3.5).
-    # sort-by-fn "cumulative-return" is used per Phase-2 contract mandate (T6).
-    # UNVERIFIED as sort-by-fn in grammar fixtures (verified as indicator fn only).
-    # If Composer API rejects, consult grammar doc §4.2 and composer-api-researcher.
+    # sort-by-fn "cumulative-return" is VERIFIED-LOCAL in sort position
+    # (vocabulary research: ~5 occurrences in sample_score_large.json).
     flt = symphony_schema.make_filter(
         select_fn="top",
         select_n=n,
@@ -237,16 +236,23 @@ def momentum_top_n(universe: list[str], n: int, window: int, name: str = "Moment
 
 
 def low_vol_floor(universe: list[str], n: int, window: int, name: str = "Low Vol Floor") -> dict:
-    """T7: select bottom-N assets by standard-deviation-return over the given window."""
+    """T7: select bottom-N (least-drawdown) assets by max-drawdown over the window.
+
+    Defensive-floor template. max-drawdown ranking is the VERIFIED-LOCAL proxy
+    for low volatility: the contract's original sort key
+    (standard-deviation-return) was refuted in sort-by position by the
+    vocabulary deep-research (strategy-builder-vocabulary-research.md), and
+    standard-deviation-price — though verified — is price-scale-biased
+    (cheap tickers rank as 'calm' regardless of return volatility).
+    """
     assets = [symphony_schema.make_asset(t) for t in universe]
     # select-fn "bottom" is the VERIFIED-LOCAL Composer API value (grammar §3.5).
-    # sort-by-fn "standard-deviation-return" is used per Phase-2 contract mandate (T7).
-    # UNVERIFIED as sort-by-fn in grammar fixtures (verified as indicator fn only).
-    # If Composer API rejects, consult grammar doc §4.2 and composer-api-researcher.
+    # sort-by-fn "max-drawdown" is VERIFIED-LOCAL in sort position (vocabulary
+    # research: full verified sort-by-fn set). Bottom-N = smallest drawdown.
     flt = symphony_schema.make_filter(
         select_fn="bottom",
         select_n=n,
-        sort_by_fn="standard-deviation-return",
+        sort_by_fn="max-drawdown",
         children=assets,
         window=window,
     )
@@ -475,8 +481,7 @@ def _passes_screens(
     if live_returns and returns_pct:
         n = min(len(live_returns), len(returns_pct))
         blended = [
-            (r + lv) * 0.5
-            for r, lv in zip(returns_pct[-n:], live_returns[-n:], strict=True)
+            (r + lv) * 0.5 for r, lv in zip(returns_pct[-n:], live_returns[-n:], strict=True)
         ]
         blended_metrics = compute_quantstats_metrics(blended)
         blended_mdd = blended_metrics.get("max_drawdown")

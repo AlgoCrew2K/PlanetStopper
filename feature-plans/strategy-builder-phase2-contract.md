@@ -6,11 +6,12 @@
 > baseline. Reviewer round 1 found 1 BLOCKER (`select-fn` values must be
 > `top`/`bottom` per grammar §3.5) + 2 MAJOR (head→tail alignment in
 > correlation/blended-DD screens; T6/T7 `sort-by-fn` unverified) — all fixed,
-> round 2 dual APPROVE. **PM-ACCEPTED deviation:** T6/T7 emit
-> `cumulative-return`/`standard-deviation-return` in sort-by position where
-> they are verified only as indicator fns — documented in code + grammar doc;
-> runtime degradation is graceful (failed backtest → candidate excluded and
-> marked). First live backtest run will attest or refute; revisit then.
+> round 2 dual APPROVE. **T6/T7 sort-by deviation RESOLVED 2026-06-12** by the
+> vocabulary deep-research (`strategy-builder-vocabulary-research.md`): T6's
+> `cumulative-return` CONFIRMED VERIFIED-LOCAL in sort position; T7's
+> `standard-deviation-return` REFUTED — T7 switched to `max-drawdown`
+> (VERIFIED-LOCAL; quant-sound defensive proxy, avoids the price-scale bias of
+> `standard-deviation-price`). Both templates now emit only attested tokens.
 > [PM-ASSUMED] values implemented as ledgered in the team exit report
 > (MAX_CANDIDATES_PER_RUN=30, screen defaults, objective→template mapping).
 
