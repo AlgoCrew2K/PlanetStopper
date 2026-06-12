@@ -3186,6 +3186,7 @@ def ai_advisor_strategy_builder():
                        Empty dict ({}) when observations is empty.
     """
     # Lazy import keeps the module off the live 1-minute execution path (AC-X2).
+    from advisors.advisor_chat import CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS as _CHAT_MAX_CHARS  # noqa: PLC0415
     from advisors.strategy_builder_engine import _has_composer_key  # noqa: PLC0415
 
     no_api_key = not _has_composer_key()
@@ -3222,8 +3223,8 @@ def ai_advisor_strategy_builder():
     for obs in observations:
         rr = obs.get("raw_response") or {}
         rules_text = rr.get("rules_text") or ""
-        if isinstance(rules_text, str) and len(rules_text) > 500:
-            rules_text = rules_text[:500]
+        if isinstance(rules_text, str) and len(rules_text) > _CHAT_MAX_CHARS:
+            rules_text = rules_text[:_CHAT_MAX_CHARS]
         card_artifacts[obs["id"]] = {
             "artifact_type": "strategy_proposal",
             "artifact_id": rr.get("candidate_id") or obs.get("subject_id", ""),
