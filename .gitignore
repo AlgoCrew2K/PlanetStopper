@@ -52,3 +52,4 @@ ux-*.png
 
 # Playwright MCP cache
 .playwright-mcp/
+.claude/settings.local.json
