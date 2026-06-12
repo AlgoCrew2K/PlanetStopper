@@ -880,7 +880,7 @@
                     </span>
                     <span class="fdr-metadata" data-testid="fdr-metadata">
                         <strong>N={{ n_cand }}</strong> candidates tested
-                        &middot; adjusted threshold &alpha; (Yekutieli c(n) correction applied)
+                        &middot; adjusted threshold &alpha;={{ "%.4f" | format(fdr_q_val) }} (Yekutieli-adjusted)
                         {% if p_adj is not none %}
                         &middot; this candidate p={{ "%.4f" | format(p_adj) }} (PASSED)
                         {% endif %}
@@ -890,9 +890,9 @@
                 <!-- Honest overfitting caveat — mandatory for survivors (AC-3.3) -->
                 <div class="caveats-block">
                     <p class="caveat-text" data-testid="caveat-text">
-                        Selected on backtest: the gate screens for statistical
-                        significance but selection bias remains. Treat as hypothesis,
-                        not proof of a live edge.
+                        Selected on backtest across {{ n_cand }} candidates. FDR correction applied
+                        ({{ n_cand }} tested, threshold Yekutieli-adjusted). Overfitting risk cannot
+                        be eliminated — only resisted.
                     </p>
                     {% for caveat in rr.get('caveats') or [] %}
                     {% if caveat and 'Selected on backtest' not in caveat %}
