@@ -55,6 +55,10 @@ SCREEN_MAX_ABS_DRAWDOWN_DEFAULT: float = 0.50
 SCREEN_MAX_BLENDED_ABS_DRAWDOWN_DEFAULT: float = 0.40
 # Maximum Pearson correlation with live portfolio daily returns [0, 1].
 SCREEN_MAX_CORRELATION_DEFAULT: float = 0.85
+# Phase-3.6: target sparkline resolution. 60 pts ≈ 2.5 years of daily data at 5px/pt
+# on a 280px card — sufficient visual fidelity for direction/shape; see research spec §3.
+# Uniform stride was chosen over LTTB to avoid a third-party dependency on the persist path.
+SPARKLINE_TARGET_POINTS: int = 60
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +145,7 @@ def _cumulative_returns(returns_pct: list[float]) -> list[float]:
     return result
 
 
-def _downsample(series: list[float], target: int = 60) -> list[float]:
+def _downsample(series: list[float], target: int = SPARKLINE_TARGET_POINTS) -> list[float]:
     """Deterministically reduce ``series`` to at most ``target`` points.
 
     Guarantees:
