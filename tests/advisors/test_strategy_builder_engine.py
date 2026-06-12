@@ -1679,16 +1679,16 @@ class TestAdversarialCycle3:
             "not found in serialized tree"
         )
 
-    def test_t5_rsi_condition_comparison_value_is_number_not_string(self, sbe):
-        """Contract §2.1 + grammar §3.4: the rhs comparison value (threshold) in T5
-        must be stored as a JSON number (int or float), NOT as a string.
+    def test_t5_rsi_condition_comparison_value_is_numeric_string(self, sbe):
+        """Grammar §3.4 + §16.8: when rhs-fixed-value? is true, rhs-val must be a
+        numeric STRING (e.g. "70", not the integer 70). VERIFIED-LOCAL — empirically
+        validated 2026-05-14. The stringification rule is documented in §16.8:
+        whole-number numeric rhs is stringified without a trailing .0.
 
-        Rationale: Composer's backtest API expects numeric rhs-val for fixed-value
-        comparisons. Storing '70' (string) instead of 70 (number) is a type error
-        that would silently pass JSON serialization but fail the Composer API.
-
-        This test is adversarial — it probes that the condition constructor
-        emits a numeric rhs-val, not the stringified form.
+        Three assertions:
+        1. rhs_val_found is a str (not int or float)
+        2. float(rhs_val_found) does not raise — the string is parseable as a number
+        3. float(rhs_val_found) == 70.0 — the string represents the correct threshold
         """
         tree = sbe.rsi_rotation(
             signal_ticker="SPY",
@@ -1715,10 +1715,24 @@ class TestAdversarialCycle3:
         assert rhs_val_found is not None, (
             "T5 (rsi_rotation) tree must contain an if-child node with rhs-val set"
         )
-        assert isinstance(rhs_val_found, (int, float)) and not isinstance(rhs_val_found, bool), (
-            f"T5 rhs-val (threshold) must be a JSON number (int or float), "
-            f"not a string; got {type(rhs_val_found).__name__}={rhs_val_found!r}. "
-            "Composer API requires numeric comparison values."
+        # Assertion 1: must be a str, not int or float (grammar §3.4 VERIFIED-LOCAL)
+        assert isinstance(rhs_val_found, str), (
+            f"T5 rhs-val (threshold) must be a numeric STRING per grammar §3.4; "
+            f"got {type(rhs_val_found).__name__}={rhs_val_found!r}"
+        )
+        # Assertion 2: the string must be parseable as a number
+        try:
+            parsed = float(rhs_val_found)
+        except (ValueError, TypeError) as exc:
+            pytest.fail(
+                f"T5 rhs-val {rhs_val_found!r} must be parseable as a float; got {exc!r}"
+            )
+        # Assertion 3: the numeric value must equal the threshold passed in (70)
+        # Tolerance: 1e-9 — threshold=70 is an exact integer; any deviation
+        # would indicate a mangled stringification (e.g. rounding or sign flip).
+        assert parsed == pytest.approx(70.0, rel=1e-9), (
+            f"T5 rhs-val string must represent the threshold value 70.0; "
+            f"got {rhs_val_found!r} (parsed={parsed})"
         )
 
     def test_t6_window_value_is_integer_in_json(self, sbe):
