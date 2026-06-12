@@ -1,8 +1,9 @@
-"""Explain-only chat backend for the AI Advisor (M5).
+"""Explain-only chat backend for the AI Advisor (M5, M6).
 
 This module implements the chat capability (AC-4.*) for the AI Advisor.  It
 explains a SPECIFIC surfaced advisor artifact — a recommendation, gate verdict,
-correlation diagnostic, or swap/logic-change result — in plain language.
+correlation diagnostic, swap/logic-change result, or strategy proposal — in
+plain language.
 
 HARD BOUNDARY (AC-4.1 — non-negotiable):
     Chat MUST NOT issue trade directives.
@@ -15,10 +16,11 @@ HARD BOUNDARY (AC-4.1 — non-negotiable):
          path, or config-mutation surface.  Imports are read-only.
 
 Grounding (AC-4.2):
-    The caller supplies a specific ``artifact`` dict produced by M1–M4 (a
-    gate verdict, correlation diagnostic, swap result, logic-change result, or
-    advisor observation row).  The prompt is constructed around that artifact.
-    Chat explains existing data; it does not generate new analysis.
+    The caller supplies a specific ``artifact`` dict produced by M1–M6 (a
+    gate verdict, correlation diagnostic, swap result, logic-change result,
+    strategy_proposal, or advisor observation row).  The prompt is constructed
+    around that artifact.  Chat explains existing data; it does not generate
+    new analysis.
 
 Graceful degradation (AC-4.3):
     ``explain_artifact`` NEVER raises.  No LLM key / any LLM error →
@@ -52,7 +54,7 @@ import ai_advisor
 # ---------------------------------------------------------------------------
 
 # Allowlist of top-level field names permitted in a client-supplied artifact.
-# Derived from the known M1–M4 artifact schemas:
+# Derived from the known M1–M6 artifact schemas:
 #   M1 (diagnostic):  artifact_type, artifact_id, symphony_id, diagnostic_type,
 #                     regime_context, correlation_score, pair_results, summary,
 #                     timestamp, run_id, asset_a, asset_b, p_value, fdr_threshold
@@ -62,6 +64,10 @@ import ai_advisor
 #                     veto_reason, objective, context
 #   M4 (logic):       logic_change_type, description, before_value, after_value,
 #                     impact_estimate, approval_status
+#   M6 (strategy_proposal): template_id, template_params, tickers, rules_text,
+#                     cagr, sharpe, calmar, max_drawdown, correlation_vs_live,
+#                     blended_drawdown, fdr_adjusted_threshold, screen_verdict,
+#                     rejected_reason
 #   Shared advisor observation fields: advisor_role, observation_id, created_at,
 #                                      subject_type, subject_id, raw_response,
 #                                      verdict, weight, symbol
@@ -82,7 +88,7 @@ CHAT_ARTIFACT_ALLOWED_FIELDS: frozenset = frozenset({
     "asset_b",
     "p_value",
     "fdr_threshold",
-    # M2 — gate verdict
+    # M2 — gate verdict (some fields reused by M6)
     "gate_verdict",
     "score",
     "threshold",
@@ -108,6 +114,20 @@ CHAT_ARTIFACT_ALLOWED_FIELDS: frozenset = frozenset({
     "after_value",
     "impact_estimate",
     "approval_status",
+    # M6 — strategy_proposal (Phase 4 additions — additive only)
+    "template_id",
+    "template_params",
+    "tickers",
+    "rules_text",
+    "cagr",
+    "sharpe",
+    "calmar",
+    "max_drawdown",
+    "correlation_vs_live",
+    "blended_drawdown",
+    "fdr_adjusted_threshold",
+    "screen_verdict",
+    "rejected_reason",
     # Shared advisor observation fields
     "advisor_role",
     "observation_id",
@@ -133,12 +153,18 @@ CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS: int = 500
 
 
 def validate_artifact(artifact: dict) -> dict:
-    """Scope a client-supplied artifact to the known M1–M4 field allowlist.
+    """Scope a client-supplied artifact to the known M1–M6 field allowlist.
 
     Strips any top-level field not in CHAT_ARTIFACT_ALLOWED_FIELDS and
     truncates string values to CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS.  Returns
     a new dict; never mutates the input.  Never raises — returns {} on
     empty or all-unknown input.
+
+    Supports M1–M6 artifact types including the Phase 4 ``strategy_proposal``
+    (M6) artifact type with its 13 new fields (template_id, template_params,
+    tickers, rules_text, cagr, sharpe, calmar, max_drawdown,
+    correlation_vs_live, blended_drawdown, fdr_adjusted_threshold,
+    screen_verdict, rejected_reason).
 
     Args:
         artifact: raw dict from the client POST body.
@@ -248,6 +274,11 @@ WHAT YOU SHOULD DO:
 - Describe what the correlation numbers or regime context means conceptually.
 - Point out the caveats already included in the artifact (e.g. overfitting caveats).
 - Answer follow-up questions about the artifact's data, methods, or limitations.
+- For strategy_proposal artifacts: explain what template generated the candidate
+  (template_id), whether it cleared the FDR gate (gate_verdict), what
+  fdr_adjusted_threshold means (the Yekutieli-adjusted significance bar that
+  each candidate must beat), which tickers are in the universe (tickers), and
+  what the logic looks like (rules_text). Never suggest applying the proposal.
 
 If you cannot answer a question solely by explaining the supplied artifact, say so
 plainly and do NOT fabricate analysis.  An honest "I cannot determine that from the
@@ -270,9 +301,9 @@ def _build_chat_messages(question: str, artifact: dict) -> list[dict]:
 
     Args:
         question: the operator's natural-language question.
-        artifact: the specific M1–M4 artifact to explain — a plain dict
+        artifact: the specific M1–M6 artifact to explain — a plain dict
                   (gate verdict, PairResult, swap result, observation row,
-                  or similar).  Must be JSON-serialisable.
+                  strategy_proposal, or similar).  Must be JSON-serialisable.
 
     Returns:
         A ``messages`` list ready to pass to ``client.messages.create``.
@@ -298,7 +329,7 @@ def explain_artifact(
     """Explain a specific advisor artifact in response to an operator question.
 
     EXPLAIN-ONLY: this function has no write path.  It takes a question and
-    an M1–M4 artifact dict, builds a grounded prompt, calls Claude (reusing
+    an M1–M6 artifact dict, builds a grounded prompt, calls Claude (reusing
     ``ai_advisor._build_client()``), and returns a plain-text explanation.
 
     Graceful degradation (AC-4.3): NEVER raises.  Any failure — missing API
@@ -307,11 +338,14 @@ def explain_artifact(
 
     Args:
         question: the operator's natural-language question about the artifact.
-        artifact: a specific M1–M4 advisor artifact as a plain dict.  Examples:
+        artifact: a specific M1–M6 advisor artifact as a plain dict.  Examples:
                   - a ``PairResult``-like dict from correlation_diagnostic
                   - a ``CandidateGateResult``-like dict from backtest_gate_engine
                   - a swap or logic-change run-result dict
                   - an ``advisor_observations`` DB row dict
+                  - a ``strategy_proposal`` (M6) artifact dict from the
+                    Strategy Builder — contains template_id, gate_verdict,
+                    fdr_adjusted_threshold, tickers, rules_text, etc.
                   Must be JSON-serialisable; non-serialisable values are
                   coerced to strings via ``json.dumps(default=str)``.
 

@@ -3169,16 +3169,21 @@ def ai_advisor_logic_changes_evaluate():
 
 @app.route("/ai-advisor/strategy-builder", methods=["GET"])
 def ai_advisor_strategy_builder():
-    """Render the Phase-3 Strategy Builder tab (AC-2, AC-5, AC-X1..X5).
+    """Render the Phase-3/4 Strategy Builder tab (AC-2, AC-5, AC-X1..X5).
 
     Read-only surface — no writes to live positions, no Composer write endpoints.
     All strategy proposals are advisory-only (apply manually in Composer).
 
     Template context:
-      no_api_key   — True when Composer credentials are absent (AC-X4)
-      symphonies   — list of known symphony IDs for the operator-initiated form
-      observations — stored STRATEGY_BUILDER advisor_observations for the
-                     selected symphony (read-only, SQLite RO connection)
+      no_api_key     — True when Composer credentials are absent (AC-X4)
+      symphonies     — list of known symphony IDs for the operator-initiated form
+      observations   — stored STRATEGY_BUILDER advisor_observations for the
+                       selected symphony (read-only, SQLite RO connection)
+      card_artifacts — dict keyed by obs["id"] (int); each value is an M6
+                       strategy_proposal artifact dict built server-side from
+                       the stored observation row (Phase 4 Discuss affordance).
+                       rules_text is pre-truncated to 500 chars server-side.
+                       Empty dict ({}) when observations is empty.
     """
     # Lazy import keeps the module off the live 1-minute execution path (AC-X2).
     from advisors.strategy_builder_engine import _has_composer_key  # noqa: PLC0415
@@ -3210,6 +3215,30 @@ def ai_advisor_strategy_builder():
     except Exception:
         pass  # Observations are optional; the page renders with empty state.
 
+    # Build per-card M6 artifact dicts for the Discuss affordance (Phase 4).
+    # Server-side construction ensures only allowlisted fields reach the template.
+    # rules_text is truncated to CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS here.
+    card_artifacts: dict = {}
+    for obs in observations:
+        rr = obs.get("raw_response") or {}
+        rules_text = rr.get("rules_text") or ""
+        if isinstance(rules_text, str) and len(rules_text) > 500:
+            rules_text = rules_text[:500]
+        card_artifacts[obs["id"]] = {
+            "artifact_type": "strategy_proposal",
+            "artifact_id": rr.get("candidate_id") or obs.get("subject_id", ""),
+            "symphony_id": obs.get("subject_id", ""),
+            "template_id": rr.get("template_id"),
+            "tickers": rr.get("tickers"),
+            "rules_text": rules_text,
+            "gate_verdict": rr.get("gate_decision") or obs.get("verdict"),
+            "n_candidates": rr.get("n_candidates"),
+            "n_survivors": rr.get("n_survivors"),
+            "fdr_adjusted_threshold": rr.get("fdr_adjusted_threshold") or rr.get("fdr_q"),
+            "screen_verdict": rr.get("screen_verdict"),
+            "rejected_reason": rr.get("rejected_reason"),
+        }
+
     return render_template(
         "ai_advisor_strategy_builder.html",
         active_route="advisor",
@@ -3218,6 +3247,7 @@ def ai_advisor_strategy_builder():
         symphonies=symphonies,
         observations=observations,
         symphony_id=symphony_id,
+        card_artifacts=card_artifacts,
     )
 
 

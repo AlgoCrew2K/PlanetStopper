@@ -520,6 +520,22 @@
         }
 
         /* ------------------------------------------------------------------ */
+        /* Phase 4: Discuss this proposal button (advisory-styled, low weight) */
+        /* ------------------------------------------------------------------ */
+
+        .discuss-btn {
+            margin-top: 0.5rem;
+            padding: 0.25rem 0.75rem;
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            background: transparent;
+            border: 1px solid var(--studio-border);
+            border-radius: 0.375rem;
+            cursor: pointer;
+        }
+        .discuss-btn:hover { border-color: var(--studio-accent); color: var(--studio-ink); }
+
+        /* ------------------------------------------------------------------ */
         /* Empty state (no observations — valid outcome, not an error)        */
         /* ------------------------------------------------------------------ */
 
@@ -915,6 +931,18 @@
                     <pre>{{ rr.get('rules_text') or '(no rules text available)' | e }}</pre>
                 </details>
 
+                {# Phase 4: Discuss this proposal button — chat-open only, no form/POST semantics #}
+                {% set _art = card_artifacts.get(obs.id) %}
+                {% if _art %}
+                <button type="button"
+                        class="discuss-btn"
+                        data-testid="discuss-proposal-btn"
+                        data-artifact='{{ _art | tojson | e }}'
+                        onclick="openChatWithArtifact(this.dataset.artifact)">
+                    Discuss this proposal
+                </button>
+                {% endif %}
+
             </div>
             {% endfor %}
         </div>
@@ -1034,6 +1062,19 @@
                             Selected on backtest: gate withheld this candidate —
                             selection-bias risk exceeds the FDR correction threshold.
                         </p>
+
+                        {# Phase 4: Discuss this proposal button — chat-open only, no form/POST semantics #}
+                        {% set _art = card_artifacts.get(obs.id) %}
+                        {% if _art %}
+                        <button type="button"
+                                class="discuss-btn"
+                                data-testid="discuss-proposal-btn"
+                                data-artifact='{{ _art | tojson | e }}'
+                                onclick="openChatWithArtifact(this.dataset.artifact)">
+                            Discuss this proposal
+                        </button>
+                        {% endif %}
+
                     </div>
                     {% endfor %}
                 </div>
@@ -1061,6 +1102,29 @@
          *
          * On error: the run-error div is shown inline.
          */
+        /**
+         * Phase 4: Open chat tab pre-loaded with the given M6 artifact.
+         *
+         * Stores the artifact in sessionStorage so the Chat tab can pick it up
+         * on load, then navigates to /ai-advisor/chat with a from_strategy_builder
+         * query param so the Chat tab knows to pre-populate the input.
+         *
+         * This is a pure JS navigation function — no form submission, no POST.
+         * The button calling this must be type="button" (never type="submit").
+         */
+        function openChatWithArtifact(artifactJson) {
+            try {
+                var artifact = JSON.parse(artifactJson);
+                sessionStorage.setItem('sb_pending_chat_artifact', JSON.stringify(artifact));
+            } catch(e) {
+                // Ignore parse errors — navigate anyway
+            }
+            var sym = document.getElementById('sb-symphony-select') ? document.getElementById('sb-symphony-select').value : '';
+            var url = '/ai-advisor/chat';
+            if (sym) { url += '?from_strategy_builder=1&symphony_id=' + encodeURIComponent(sym); }
+            window.location.href = url;
+        }
+
         async function sbRunAnalysis() {
             const btn = document.getElementById('sb-run-btn');
             const errDiv = document.getElementById('sb-run-error');
