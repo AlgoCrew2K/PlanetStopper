@@ -507,8 +507,19 @@ def _persist_survivor(
     info: CandidateInfo,
     gate_result: CandidateGateResult,
     n_candidates: int,
+    fdr_q: float = HARVEY_LIU_FDR_Q,
 ) -> None:
-    """Persist an ADOPT_CANDIDATE survivor as an advisory observation."""
+    """Persist an ADOPT_CANDIDATE survivor as an advisory observation.
+
+    fdr_q and fdr_adjusted_threshold are stored so the dashboard template can
+    render the numeric adjusted threshold (phase3-contract.md line 39).
+    fdr_adjusted_threshold = fdr_q / c(n) where c(n) is the Yekutieli harmonic
+    sum — same formula as autotuner._c_yekutieli and the /run route.
+    """
+    # Yekutieli c(n) = sum(1/k for k in 1..n_candidates)
+    c_n = sum(1.0 / k for k in range(1, n_candidates + 1)) if n_candidates > 0 else 1.0
+    fdr_adjusted_threshold = fdr_q / c_n if c_n > 0 else fdr_q
+
     database.insert_advisor_observation(
         advisor_role="STRATEGY_BUILDER",
         symphony_id=symphony_id,
@@ -525,6 +536,8 @@ def _persist_survivor(
             "gate_decision": gate_result.verdict.decision,
             "winner_p_adj": gate_result.winner_p_adj,
             "n_candidates": n_candidates,
+            "fdr_q": fdr_q,
+            "fdr_adjusted_threshold": fdr_adjusted_threshold,
             "caveats": list(gate_result.caveats) + [SURVIVOR_OVERFITTING_CAVEAT],
         },
     )
@@ -656,7 +669,9 @@ def propose_strategies(
             if info is None:
                 continue
             try:
-                _persist_survivor(symphony_id, info, gate_result, len(bt_candidates))
+                _persist_survivor(
+                    symphony_id, info, gate_result, len(bt_candidates), fdr_q=gate_batch.fdr_q
+                )
                 obs_written += 1
             except Exception:
                 logger.warning(

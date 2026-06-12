@@ -878,22 +878,21 @@
                     <span style="font-size:0.75rem;color:var(--studio-ink-dim);">
                         Cleared BHY/Yekutieli FDR gate
                     </span>
+                    {% set fdr_display = rr.get('fdr_adjusted_threshold') or rr.get('fdr_q') or 0.05 %}
                     <span class="fdr-metadata" data-testid="fdr-metadata">
                         <strong>N={{ n_cand }}</strong> candidates tested
-                        &middot; adjusted threshold &alpha;={{ "%.4f" | format(fdr_q_val) }} (Yekutieli-adjusted)
+                        &middot; adjusted threshold &alpha;={{ "%.4f" | format(fdr_display) }} (Yekutieli-adjusted)
                         {% if p_adj is not none %}
                         &middot; this candidate p={{ "%.4f" | format(p_adj) }} (PASSED)
                         {% endif %}
                     </span>
                 </div>
 
-                <!-- Honest overfitting caveat — mandatory for survivors (AC-3.3) -->
+                <!-- Honest overfitting caveat — mandatory for survivors (AC-3.3).
+                     Single-line paragraph so "Overfitting risk cannot be eliminated"
+                     is contiguous in rendered HTML (P-28 check). -->
                 <div class="caveats-block">
-                    <p class="caveat-text" data-testid="caveat-text">
-                        Selected on backtest across {{ n_cand }} candidates. FDR correction applied
-                        ({{ n_cand }} tested, threshold Yekutieli-adjusted). Overfitting risk cannot
-                        be eliminated — only resisted.
-                    </p>
+                    <p class="caveat-text" data-testid="caveat-text">Selected on backtest across {{ n_cand }} candidates. FDR correction applied ({{ n_cand }} tested, threshold Yekutieli-adjusted). Overfitting risk cannot be eliminated — only resisted.</p>
                     {% for caveat in rr.get('caveats') or [] %}
                     {% if caveat and 'Selected on backtest' not in caveat %}
                     <p class="caveat-text">{{ caveat | e }}</p>
