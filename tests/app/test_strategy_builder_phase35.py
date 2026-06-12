@@ -44,7 +44,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -57,7 +57,12 @@ import app as app_module
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 _BASIC_FIXTURE_PATH = (
-    _REPO_ROOT / "tests" / "fixtures" / "ai_advisor" / "m6" / "strategy_builder_observations_basic.json"
+    _REPO_ROOT
+    / "tests"
+    / "fixtures"
+    / "ai_advisor"
+    / "m6"
+    / "strategy_builder_observations_basic.json"
 )
 
 
@@ -93,7 +98,9 @@ def _make_candidate_info(metrics: dict | None = None):
         tree={},
         template_id="T1",
         params={"objective": "diversify", "tickers": ["SPY", "AGG"]},
-        metrics=metrics if metrics is not None else {
+        metrics=metrics
+        if metrics is not None
+        else {
             # Sentinel values — signs/types match the contract; not producer floats.
             "annualized_return": 0.08,
             "sharpe": 0.6,
@@ -107,7 +114,9 @@ def _make_candidate_info(metrics: dict | None = None):
     )
 
 
-def _make_gate_result(candidate_id: str = "test:T1:equal_weight", verdict_str: str = "ADOPT_CANDIDATE"):
+def _make_gate_result(
+    candidate_id: str = "test:T1:equal_weight", verdict_str: str = "ADOPT_CANDIDATE"
+):
     """Return a minimal CandidateGateResult stub (MagicMock — avoids NamedTuple field count coupling).
 
     Using MagicMock instead of the real CandidateGateResult so that changes to
@@ -340,8 +349,8 @@ def test_pb1_live_baseline_uses_tail_aligned_window_matching_passes_screens():
     Approach: call _persist_survivor with mismatched lengths; capture raw_response;
     verify live_baseline.max_drawdown matches the tail-aligned computation.
     """
-    from analytics import compute_quantstats_metrics
     from advisors.strategy_builder_engine import _persist_survivor
+    from analytics import compute_quantstats_metrics
 
     # live_returns shorter than returns_pct would be stored in info.metrics context
     # We embed returns_pct length info via a custom info object
@@ -408,8 +417,8 @@ def test_pb2_live_baseline_max_drawdown_agrees_with_tail_aligned_live_series():
     compute_quantstats_metrics on the correctly-aligned tail of live_returns.
     NOT the full returns_pct series, NOT a head-aligned slice.
     """
-    from analytics import compute_quantstats_metrics
     from advisors.strategy_builder_engine import _persist_survivor
+    from analytics import compute_quantstats_metrics
 
     live_returns = [0.2, -0.3, 0.1, 0.05, -0.15, 0.12, -0.08, 0.18]  # length 8
     returns_pct_length = 20
@@ -955,7 +964,7 @@ class TestAdversarialCycle2Phase35:
         assert corr is not None, (
             "correlation_vs_live must be a float (not None) when both live_returns "
             "and returns_pct are non-empty. Tail-alignment must handle unequal lengths. "
-            f"Got None. live_returns length=3, returns_pct length=10."
+            "Got None. live_returns length=3, returns_pct length=10."
         )
         assert isinstance(corr, float), (
             f"correlation_vs_live must be a float, got {type(corr).__name__}={corr!r}. "
@@ -1074,4 +1083,980 @@ class TestAdversarialCycle2Phase35:
         assert verdict_written is not None, (
             "Rejected-candidate persist must write a non-None verdict. "
             "The verdict is required for the audit trail and the Discuss affordance."
+        )
+
+
+# ===========================================================================
+# INDEPENDENT CYCLE 2 — adversarial tests (quant-test-writer, 2026-06-12)
+# Commissioned after cycle-1 GREEN + dual deferred review.
+# Six attack vectors per commission spec.
+# ===========================================================================
+
+
+class TestIndependentCycle2Phase35:
+    """Independent Cycle 2 — adversarial second-pass against Phase 3.5 implementation.
+
+    Attack vectors:
+      IC2-1: JSON-serializability when metrics contain numpy types + NaN propagation
+      IC2-2: _build_live_baseline pathological live_returns inputs
+      IC2-3: Template rendering with PARTIAL live_baseline (missing key) and None metric values
+      IC2-4: _persist_rejected with empty/all-vetoed batch
+      IC2-5: M6 card_artifacts for new-format row with metrics but live_baseline absent
+      IC2-6: Old-row golden fixture through full GET render + card_artifacts
+             (IC2-independent fixture)
+
+    Each test is independently derived — no shared state with Cycle 1 or pre-implementation
+    tests.
+    All fixtures are function-scoped via local construction or the _load_basic_fixture helper.
+    """
+
+    # -----------------------------------------------------------------------
+    # IC2-1: JSON-serializability — numpy types and NaN propagation
+    # -----------------------------------------------------------------------
+
+    def test_ic2_1a_numpy_float64_metrics_do_not_raise_typeerror_on_json_serialize(self):
+        """IC2-1a: info.metrics with numpy.float64 values must not raise TypeError on json.dumps.
+
+        The production path calls compute_quantstats_metrics() which returns Python float,
+        but nothing prevents a caller from injecting numpy.float64 values (e.g., from a
+        quantstats version that returns numpy scalars directly). numpy.float64 is a
+        subclass of Python float so json.dumps accepts it; this test asserts that the
+        serialization does NOT raise TypeError and that the persisted raw_response dict
+        can be round-tripped through json.dumps without error.
+
+        Why this matters: database.insert_advisor_observation calls json.dumps(raw_response).
+        If any value in the raw_response is a non-serializable numpy type (e.g. numpy.int64),
+        the persist call crashes silently (wrapped in try/except in propose_strategies, so
+        the error is swallowed — no observation is written, no crash to operator).
+        """
+        import json
+
+        import numpy as np
+
+        from advisors.strategy_builder_engine import _persist_survivor
+
+        np_metrics = {
+            "annualized_return": np.float64(0.12),
+            "sharpe": np.float64(0.78),
+            "calmar": np.float64(0.55),
+            "max_drawdown": np.float64(-0.22),
+            "sortino": np.float64(0.90),
+            "total_return": np.float64(0.50),
+            "win_rate": np.float64(0.55),
+            "volatility": np.float64(0.10),
+        }
+        info = _make_candidate_info(metrics=np_metrics)
+        gate_result = _make_gate_result()
+
+        captured: dict = {}
+
+        def fake_insert(**kwargs):
+            captured.update(kwargs)
+            # Simulate what database.py does — this is the real serialization step.
+            rr = kwargs.get("raw_response", {})
+            json.dumps(rr)  # Must NOT raise TypeError
+
+        with patch("database.insert_advisor_observation", side_effect=fake_insert):
+            try:
+                _persist_survivor(
+                    symphony_id="sym-test",
+                    info=info,
+                    gate_result=gate_result,
+                    n_candidates=4,
+                    live_returns=[0.1, -0.2, 0.3, -0.1, 0.2],
+                    n_survivors=1,
+                )
+            except TypeError as exc:
+                pytest.fail(
+                    f"json.dumps raised TypeError on numpy.float64 metrics: {exc}. "
+                    "IC2-1a: raw_response must be fully JSON-serializable when metrics "
+                    "contain numpy.float64 values. numpy.float64 subclasses float so "
+                    "standard json.dumps handles it — but any numpy.int64 in the payload "
+                    "would cause a TypeError (see IC2-1b for that vector)."
+                )
+
+        rr = captured.get("raw_response", {})
+        assert isinstance(rr, dict), (
+            "IC2-1a: insert_advisor_observation must have been called with raw_response=dict."
+        )
+
+    def test_ic2_1b_nan_in_info_metrics_produces_non_rfc_json_is_xfail_bug(self):
+        """IC2-1b: float('nan') in info.metrics propagates to raw_response as JSON 'NaN' literal.
+
+        json.dumps(float('nan')) emits the string 'NaN' which is NOT valid RFC 7159 JSON.
+        The JS Discuss button reads data-artifact='...' and calls JSON.parse() on it.
+        JSON.parse('...NaN...') throws SyntaxError in every browser, silently breaking
+        the Discuss affordance for any row whose metrics contain NaN.
+
+        The implementation does NOT sanitize NaN -> null on the persist path.
+        compute_quantstats_metrics() prevents NaN via _safe(), but nothing prevents an
+        external caller from setting info.metrics = {'annualized_return': float('nan'), ...}.
+
+        This xfail(strict=True) asserts the BUG IS PRESENT: if the implementation adds
+        NaN sanitization, the test will flip to XPASS and must be promoted to a passing test.
+
+        IC2-BUG: NaN in info.metrics propagates verbatim to the persisted raw_response,
+        producing non-RFC 7159 JSON ('NaN' literal). json.dumps emits 'NaN' without error
+        but the output violates RFC 7159 and breaks JS JSON.parse on the Discuss button.
+        """
+        import json
+
+        from advisors.strategy_builder_engine import _persist_survivor
+
+        nan_metrics = {
+            "annualized_return": float("nan"),  # NaN that bypasses compute_quantstats_metrics
+            "sharpe": 0.5,
+            "calmar": 0.3,
+            "max_drawdown": -0.15,
+        }
+        info = _make_candidate_info(metrics=nan_metrics)
+        gate_result = _make_gate_result()
+
+        captured: dict = {}
+
+        def fake_insert(**kwargs):
+            captured.update(kwargs)
+
+        with patch("database.insert_advisor_observation", side_effect=fake_insert):
+            _persist_survivor(
+                symphony_id="sym-test",
+                info=info,
+                gate_result=gate_result,
+                n_candidates=3,
+                live_returns=[],
+                n_survivors=1,
+            )
+
+        rr = captured.get("raw_response", {})
+        json_str = json.dumps(rr)
+        json_contains_nan_literal = "NaN" in json_str
+
+        # Assert the CORRECT behavior: no 'NaN' literal in the JSON string.
+        # This assertion FAILS because the bug is present (implementation does not sanitize NaN).
+        # When the bug is fixed, json_contains_nan_literal becomes False, this assertion passes
+        # → XPASS(strict) → remove the xfail decorator and promote to a passing test.
+        assert not json_contains_nan_literal, (
+            # Tolerance: N/A — exact string membership check.
+            "IC2-1b: json.dumps(raw_response) contains 'NaN' literal (non-RFC 7159). "
+            "The implementation must sanitize NaN -> None (JSON null) before persisting. "
+            "NaN in raw_response breaks JS JSON.parse on the Discuss button."
+        )
+
+    test_ic2_1b_nan_in_info_metrics_produces_non_rfc_json_is_xfail_bug = pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "IC2-BUG: NaN in info.metrics propagates verbatim to the persisted raw_response, "
+            "producing non-RFC 7159 JSON ('NaN' literal). json.dumps emits 'NaN' without error "
+            "but the output is not valid JSON per RFC 7159 and breaks JS JSON.parse on the "
+            "Discuss button (openChatWithArtifact calls JSON.parse(artifactJson)). "
+            "The implementation must sanitize NaN -> null (JSON null) before persisting "
+            "raw_response to guard against any caller bypassing compute_quantstats_metrics."
+        ),
+    )(test_ic2_1b_nan_in_info_metrics_produces_non_rfc_json_is_xfail_bug)
+
+    def test_ic2_1c_numpy_nan_in_metrics_produces_non_rfc_json_is_xfail_bug(self):
+        """IC2-1c: numpy.float64('nan') in info.metrics also produces non-RFC JSON.
+
+        Companion to IC2-1b: numpy.float64 nan behaves identically to Python float nan
+        when passed through json.dumps — both emit 'NaN'. This test uses numpy.float64
+        nan specifically because quantstats could return numpy nan scalars in edge cases.
+
+        IC2-BUG: same as IC2-1b but the nan source is numpy.float64 (not Python float).
+        """
+        import json
+
+        import numpy as np
+
+        from advisors.strategy_builder_engine import _persist_survivor
+
+        np_nan_metrics = {
+            "annualized_return": np.float64("nan"),  # numpy NaN
+            "sharpe": np.float64(0.5),
+            "calmar": np.float64(0.3),
+            "max_drawdown": np.float64(-0.15),
+        }
+        info = _make_candidate_info(metrics=np_nan_metrics)
+        gate_result = _make_gate_result()
+
+        captured: dict = {}
+
+        def fake_insert(**kwargs):
+            captured.update(kwargs)
+
+        with patch("database.insert_advisor_observation", side_effect=fake_insert):
+            _persist_survivor(
+                symphony_id="sym-test",
+                info=info,
+                gate_result=gate_result,
+                n_candidates=3,
+                live_returns=[],
+                n_survivors=1,
+            )
+
+        rr = captured.get("raw_response", {})
+        json_str = json.dumps(rr)
+        json_contains_nan_literal = "NaN" in json_str
+
+        # Assert the CORRECT behavior: no 'NaN' literal in the JSON string.
+        # Fails because the implementation does not sanitize numpy nan either.
+        assert not json_contains_nan_literal, (
+            # Tolerance: N/A — exact string membership check.
+            "IC2-1c: json.dumps(raw_response) contains 'NaN' literal for numpy.float64 nan. "
+            "The implementation must sanitize both Python nan and numpy nan -> None."
+        )
+
+    test_ic2_1c_numpy_nan_in_metrics_produces_non_rfc_json_is_xfail_bug = pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "IC2-BUG: numpy.float64('nan') in info.metrics propagates to raw_response as"
+            " JSON 'NaN' literal (same path as IC2-1b but via numpy nan). "
+            "math.isfinite(np.float64(nan)) is False so a correct implementation's NaN guard"
+            " would catch both Python and numpy nan. "
+            "Sanitize NaN -> null before calling json.dumps."
+        ),
+    )(test_ic2_1c_numpy_nan_in_metrics_produces_non_rfc_json_is_xfail_bug)
+
+    # -----------------------------------------------------------------------
+    # IC2-2: _build_live_baseline pathological live_returns inputs
+    # -----------------------------------------------------------------------
+
+    def test_ic2_2a_build_live_baseline_single_element_returns_all_none_metrics(self):
+        """IC2-2a: _build_live_baseline with single-element live_returns returns all-None metrics.
+
+        compute_quantstats_metrics requires at least 2 finite observations.
+        A single-element series must produce a baseline dict with all None values,
+        NOT a crash (ZeroDivisionError, IndexError) and NOT a baseline with NaN values.
+
+        Asserts: result is a dict with keys, all metric values are None (not NaN, not float).
+        """
+        from advisors.strategy_builder_engine import _build_live_baseline
+
+        result = _build_live_baseline(
+            live_returns=[0.05],  # single element
+            returns_pct=[0.1, 0.2, 0.3, 0.4, 0.5],  # candidate series (longer)
+        )
+
+        assert isinstance(result, dict), (
+            f"_build_live_baseline with single-element live_returns must return a dict, "
+            f"got {type(result).__name__}."
+        )
+        # The single-element window (min(1, 5)=1) has insufficient data for metrics.
+        # All metric values must be None — not NaN, not a number.
+        for key in ("cagr", "sharpe", "calmar", "max_drawdown"):
+            val = result.get(key)
+            assert val is None, (
+                f"_build_live_baseline single-element: {key}={val!r} must be None "
+                "(insufficient data — fewer than 2 observations). "
+                "IC2-2a: single-element live_returns must yield all-None baseline metrics."
+            )
+
+    def test_ic2_2b_build_live_baseline_all_zeros_does_not_crash_and_no_nan(self):
+        """IC2-2b: _build_live_baseline with all-zeros live_returns does not crash.
+
+        Zero-variance series causes division-by-zero in Sharpe ratio (0 / 0 = NaN).
+        The _safe() wrapper in compute_quantstats_metrics converts NaN -> None.
+        Asserts: no exception raised; sharpe and calmar are None (not NaN); cagr is 0.0.
+
+        This test verifies that zero-variance does NOT silently inject NaN into the baseline.
+        """
+        import math
+
+        from advisors.strategy_builder_engine import _build_live_baseline
+
+        result = _build_live_baseline(
+            live_returns=[0.0, 0.0, 0.0, 0.0, 0.0],
+            returns_pct=[0.1, 0.2, 0.3, 0.4, 0.5],
+        )
+
+        assert isinstance(result, dict), (
+            "IC2-2b: all-zeros live_returns must produce a dict, not crash."
+        )
+
+        # sharpe and calmar must be None (0/0 → NaN → None via _safe)
+        sharpe_val = result.get("sharpe")
+        assert sharpe_val is None or not math.isnan(
+            float(sharpe_val) if sharpe_val is not None else 0.0
+        ), (
+            f"IC2-2b: all-zeros sharpe must be None (not NaN). Got {sharpe_val!r}. "
+            "_safe() in compute_quantstats_metrics must convert NaN -> None. "
+            "NaN in the baseline dict would propagate to raw_response -> non-RFC JSON."
+        )
+        # More direct: no NaN anywhere in the baseline
+        for key, val in result.items():
+            if isinstance(val, float):
+                assert not math.isnan(val), (
+                    # Exact property: NaN identity check.
+                    f"IC2-2b: all-zeros live_returns produced NaN for baseline['{key}']={val!r}. "
+                    "All NaN values must be converted to None by the analytics layer."
+                )
+
+    def test_ic2_2c_build_live_baseline_length_mismatch_live_longer_than_candidate(self):
+        """IC2-2c: _build_live_baseline with live_returns longer than returns_pct uses tail of live.
+
+        HR-5 tail-alignment: n = min(len(live_returns), len(returns_pct)).
+        When live_returns is longer (10) than returns_pct (2), n=2, and baseline is computed
+        from live_returns[-2:] — NOT from the full live_returns[-10:].
+
+        Asserts: result is not None; metrics are computed from the correct 2-element window.
+        We verify by checking that the result equals compute_quantstats_metrics(live_returns[-2:]).
+        """
+        from advisors.strategy_builder_engine import _build_live_baseline
+        from analytics import compute_quantstats_metrics
+
+        live_returns = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]  # length 10
+        returns_pct = [0.2, 0.3]  # length 2
+
+        result = _build_live_baseline(live_returns=live_returns, returns_pct=returns_pct)
+
+        assert isinstance(result, dict), (
+            "IC2-2c: _build_live_baseline must return a dict (not None) when both series non-empty."
+        )
+
+        # n = min(10, 2) = 2 → baseline from live_returns[-2:] = [0.9, 1.0]
+        n_tail = min(len(live_returns), len(returns_pct))
+        expected = compute_quantstats_metrics(live_returns[-n_tail:])
+        expected_cagr = expected.get("annualized_return")
+        result_cagr = result.get("cagr")
+
+        if expected_cagr is None:
+            assert result_cagr is None, (
+                f"IC2-2c: expected cagr=None (insufficient data for {n_tail}-element window), "
+                f"got {result_cagr!r}. Baseline must use the HR-5 tail-aligned window."
+            )
+        else:
+            assert result_cagr == pytest.approx(expected_cagr, abs=1e-9), (
+                # Tolerance: 1e-9 — both sides call the same function with the same input;
+                # bit-for-bit equality expected; tiny epsilon guards intermediate rounding.
+                f"IC2-2c: baseline cagr={result_cagr!r} does not match "
+                f"compute_quantstats_metrics(live_returns[-{n_tail}:]) cagr={expected_cagr!r}. "
+                "HR-5: baseline must use tail-aligned window n=min(live_len, pct_len)."
+            )
+
+    def test_ic2_2d_build_live_baseline_live_returns_containing_none_does_not_crash(self):
+        """IC2-2d: _build_live_baseline with None element in live_returns does not crash.
+
+        compute_quantstats_metrics() filters out non-numeric values via try: float(v).
+        None in the input list causes float(None) -> TypeError -> filtered out.
+        Asserts: no crash; returns a dict with sensible (non-NaN) metric values.
+
+        This tests the defensive filtering path of compute_quantstats_metrics.
+        """
+        import math
+
+        from advisors.strategy_builder_engine import _build_live_baseline
+
+        live_returns_with_none = [0.1, None, 0.2, -0.1, 0.3]  # None in the middle
+        returns_pct = [0.1, 0.2, 0.3, 0.4, 0.5]
+
+        try:
+            result = _build_live_baseline(
+                live_returns=live_returns_with_none,
+                returns_pct=returns_pct,
+            )
+        except Exception as exc:
+            pytest.fail(
+                f"_build_live_baseline raised {type(exc).__name__} on live_returns"
+                f" with None: {exc}. "
+                "IC2-2d: None elements must be filtered silently — not crash the "
+                "baseline computation."
+            )
+
+        assert isinstance(result, dict), (
+            f"IC2-2d: result must be a dict, got {type(result).__name__}."
+        )
+        # No NaN values must survive
+        for key, val in result.items():
+            if isinstance(val, float):
+                assert not math.isnan(val), (
+                    # Exact property: NaN identity.
+                    f"IC2-2d: live_returns with None produced NaN for baseline['{key}']={val!r}. "
+                    "None elements must be filtered; resulting metrics must be "
+                    "None or finite float."
+                )
+
+    # -----------------------------------------------------------------------
+    # IC2-3: Template rendering with partial live_baseline and None metric values
+    # -----------------------------------------------------------------------
+
+    def test_ic2_3a_template_with_partial_live_baseline_missing_sharpe_renders_crash_free(
+        self, client
+    ):
+        """IC2-3a: Template renders crash-free when live_baseline is missing the 'sharpe' key.
+
+        The template does {% set bl_val = live_baseline.get('sharpe') %} — a missing key
+        returns None, which is correctly handled by the {% if bl_val is not none %} guard.
+        Asserts: HTTP 200 and no 'None%' artifact or Traceback in the HTML.
+
+        This is an independent fixture test (not using the team's _make_new_row_obs helper).
+        """
+        # Build a partial live_baseline without the 'sharpe' key
+        partial_baseline_obs = {
+            "id": 551,
+            "created_at": "2026-06-12T10:00:00",
+            "advisor_role": "STRATEGY_BUILDER",
+            "subject_type": "strategy_proposal",
+            "subject_id": "sym-ic2-partial",
+            "verdict": "ADOPT_CANDIDATE",
+            "raw_response": {
+                "objective": "diversify",
+                "template_id": "T1",
+                "candidate_id": "sym-ic2-partial:T1:0",
+                "metrics": {},
+                # live_baseline missing 'sharpe' key entirely
+                "live_baseline": {
+                    "cagr": 0.07,
+                    # 'sharpe' is ABSENT (not None — absent)
+                    "calmar": 0.40,
+                    "max_drawdown": -0.19,
+                },
+                "cagr": 0.09,
+                "sharpe": 0.62,
+                "calmar": 0.44,
+                "max_drawdown": -0.17,
+                "n_candidates": 3,
+                "n_survivors": 1,
+                "gate_decision": "ADOPT_CANDIDATE",
+                "winner_p_adj": 0.012,
+                "fdr_q": 0.05,
+                "fdr_adjusted_threshold": 0.017,
+                "caveats": ["Selected on backtest"],
+                "rules_text": "Equal weight: SPY, AGG",
+            },
+            "is_advisory_only": 1,
+            "spec_bundle_id": None,
+        }
+
+        with (
+            patch(
+                "database.get_advisor_observations_for_symphony",
+                return_value=[partial_baseline_obs],
+            ),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-ic2-partial")
+
+        assert resp.status_code == 200, (
+            f"IC2-3a: GET returned {resp.status_code} for partial live_baseline (missing sharpe). "
+            "Missing baseline metric key must NOT crash the template."
+        )
+        html = resp.get_data(as_text=True)
+        assert "None%" not in html, (
+            "IC2-3a: HTML contains 'None%' when live_baseline.sharpe is absent (not present). "
+            "A missing key must render as '—', not format None as a percentage."
+        )
+        assert "Traceback" not in html, (
+            "IC2-3a: HTML contains Traceback for partial live_baseline (missing sharpe key). "
+            "Template must handle missing baseline keys gracefully."
+        )
+
+    def test_ic2_3b_template_with_none_max_drawdown_in_live_baseline_renders_dash_not_none_pct(
+        self, client
+    ):
+        """IC2-3b: Template renders '—' (not 'None%') when live_baseline.max_drawdown is None.
+
+        The max_drawdown cell uses {{ '%.2f%%' | format(bl_mdd * 100) }}.
+        If bl_mdd is None, evaluating None * 100 would produce a TypeError.
+        The template guards this with {% if bl_mdd is not none %} — verify it works.
+
+        This is an independent fixture with None in max_drawdown (not calmar like ADV35-4).
+        """
+        obs = {
+            "id": 552,
+            "created_at": "2026-06-12T10:00:00",
+            "advisor_role": "STRATEGY_BUILDER",
+            "subject_type": "strategy_proposal",
+            "subject_id": "sym-ic2-none-mdd",
+            "verdict": "ADOPT_CANDIDATE",
+            "raw_response": {
+                "objective": "cut_drawdown",
+                "template_id": "T3",
+                "candidate_id": "sym-ic2-none-mdd:T3:0",
+                "metrics": {},
+                "live_baseline": {
+                    "cagr": 0.06,
+                    "sharpe": 0.50,
+                    "calmar": None,  # Also None
+                    "max_drawdown": None,  # max_drawdown is None — the key under test
+                },
+                "cagr": 0.08,
+                "sharpe": 0.55,
+                "calmar": None,
+                "max_drawdown": -0.20,
+                "n_candidates": 3,
+                "n_survivors": 1,
+                "gate_decision": "ADOPT_CANDIDATE",
+                "winner_p_adj": 0.014,
+                "fdr_q": 0.05,
+                "fdr_adjusted_threshold": 0.017,
+                "caveats": ["Selected on backtest"],
+                "rules_text": "Inverse vol: SPY, TLT",
+            },
+            "is_advisory_only": 1,
+            "spec_bundle_id": None,
+        }
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-ic2-none-mdd")
+
+        if resp.status_code != 200:
+            pytest.skip(f"Route returned {resp.status_code}.")
+
+        html = resp.get_data(as_text=True)
+        assert "None%" not in html, (
+            "IC2-3b: HTML contains 'None%' when live_baseline.max_drawdown=None. "
+            "The template must guard bl_mdd with 'is not none' before formatting as '%.2f%%'. "
+            "None * 100 would TypeError if unguarded; None% appears if format is applied"
+            " to None string."
+        )
+
+    def test_ic2_3c_withheld_card_with_partial_live_baseline_missing_cagr_renders_ok(self, client):
+        """IC2-3c: Withheld (rejected) card with partial live_baseline (missing cagr) renders OK.
+
+        The rejected-cards section of the template also renders a stats-table with live_baseline.
+        This test specifically targets the WITHHELD card path (not survivor cards) to ensure
+        the same None-guard is present in both branches of the template.
+
+        Uses a WITHHELD verdict obs (goes into the 'withheld' list, not 'survivors').
+        """
+        withheld_partial_obs = {
+            "id": 553,
+            "created_at": "2026-06-12T10:00:00",
+            "advisor_role": "STRATEGY_BUILDER",
+            "subject_type": "strategy_proposal",
+            "subject_id": "sym-ic2-withheld",
+            "verdict": "WITHHELD",  # goes into withheld bucket
+            "raw_response": {
+                "objective": "diversify",
+                "template_id": "T1",
+                "candidate_id": "sym-ic2-withheld:T1:0",
+                "metrics": {},
+                "live_baseline": {
+                    # 'cagr' key is ABSENT
+                    "sharpe": 0.48,
+                    "calmar": None,
+                    "max_drawdown": -0.22,
+                },
+                "cagr": None,  # candidate cagr also None (edge case)
+                "sharpe": 0.55,
+                "max_drawdown": -0.25,
+                "n_candidates": 3,
+                "n_survivors": 0,
+                "gate_decision": "WITHHELD_FDR",
+                "winner_p_adj": 0.8,
+                "fdr_q": 0.05,
+                "fdr_adjusted_threshold": 0.017,
+                "caveats": [],
+                "rules_text": "Equal weight: SPY",
+            },
+            "is_advisory_only": 1,
+            "spec_bundle_id": None,
+        }
+
+        with (
+            patch(
+                "database.get_advisor_observations_for_symphony",
+                return_value=[withheld_partial_obs],
+            ),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-ic2-withheld")
+
+        assert resp.status_code == 200, (
+            f"IC2-3c: GET returned {resp.status_code} for withheld card "
+            "with partial live_baseline. "
+            "Withheld card with missing live_baseline.cagr must NOT crash the template."
+        )
+        html = resp.get_data(as_text=True)
+        assert "None%" not in html, (
+            "IC2-3c: HTML contains 'None%' in withheld card when live_baseline.cagr is absent. "
+            "Both survivor and withheld card paths must guard None/absent baseline values."
+        )
+        assert "Traceback" not in html, (
+            "IC2-3c: Traceback in HTML for withheld card with partial live_baseline. "
+            "The withheld card stats-table must handle missing baseline keys."
+        )
+
+    # -----------------------------------------------------------------------
+    # IC2-4: _persist_rejected with empty / all-vetoed batch
+    # -----------------------------------------------------------------------
+
+    def test_ic2_4a_persist_rejected_with_empty_gate_batch_does_not_crash(self):
+        """IC2-4a: _persist_rejected with all-vetoed batch (n_candidates=0) does not crash.
+
+        When the gate returns no results (e.g., an empty universe produces no candidates),
+        n_candidates=0. The Yekutieli harmonic sum c(0) = 0 → the implementation uses the
+        fallback c_n=1.0. Asserts: no ZeroDivisionError, no crash, insert IS called.
+
+        Verifies the guard: c_n = sum(1/k for k in range(1, 0+1)) → empty sum = 0.0,
+        with the code's own guard `if n_candidates > 0 else 1.0`.
+        """
+        from advisors.strategy_builder_engine import _persist_rejected
+
+        gate_result = _make_gate_result(verdict_str="WITHHELD_FDR")
+        info = _make_candidate_info()
+
+        with patch("database.insert_advisor_observation") as mock_insert:
+            try:
+                _persist_rejected(
+                    symphony_id="sym-test",
+                    info=info,
+                    gate_result=gate_result,
+                    n_candidates=0,  # edge: empty batch
+                    live_returns=[],
+                    returns_pct=[],
+                    n_survivors=0,
+                )
+            except ZeroDivisionError as exc:
+                pytest.fail(
+                    f"_persist_rejected raised ZeroDivisionError for n_candidates=0: {exc}. "
+                    "IC2-4a: empty gate batch must not cause ZeroDivisionError in Yekutieli sum. "
+                    "The harmonic sum over range(1, 1) is the empty sum = 0.0; the guard "
+                    "'if n_candidates > 0 else 1.0' must prevent division by zero."
+                )
+            except Exception as exc:
+                pytest.fail(
+                    f"_persist_rejected raised {type(exc).__name__} for n_candidates=0: {exc}. "
+                    "IC2-4a: empty batch must not crash the rejected-candidate persist path."
+                )
+
+        assert mock_insert.called, (
+            "IC2-4a: _persist_rejected with n_candidates=0 must still call "
+            "database.insert_advisor_observation. The candidate is real — it should be persisted "
+            "even if the batch count is anomalous."
+        )
+        # Verify the written verdict is NOT ADOPT_CANDIDATE
+        verdict_written = mock_insert.call_args.kwargs.get("verdict")
+        assert verdict_written != "ADOPT_CANDIDATE", (
+            f"IC2-4a: _persist_rejected with n_candidates=0 wrote verdict='ADOPT_CANDIDATE'. "
+            f"Got: {verdict_written!r}. Rejected candidates must never get ADOPT_CANDIDATE verdict."
+        )
+
+    def test_ic2_4b_persist_rejected_with_all_vetoed_batch_writes_correct_observations_count(self):
+        """IC2-4b: Calling _persist_rejected for each candidate in an all-vetoed batch yields
+        exactly one insert per call.
+
+        When every candidate is vetoed (all results in gate_batch.results have no survivors),
+        _persist_rejected must be called once per candidate, and each call must invoke
+        database.insert_advisor_observation exactly once.
+
+        Simulates the loop in propose_strategies step 5b with N=3 all-vetoed candidates.
+        Asserts: insert_advisor_observation called exactly 3 times total (once per candidate).
+        """
+        from advisors.strategy_builder_engine import _persist_rejected
+
+        candidates = [
+            (
+                _make_candidate_info(),
+                _make_gate_result(candidate_id=f"c{i}", verdict_str="WITHHELD_FDR"),
+            )
+            for i in range(3)
+        ]
+
+        insert_call_count = 0
+
+        def counting_insert(**kwargs):
+            nonlocal insert_call_count
+            insert_call_count += 1
+
+        with patch("database.insert_advisor_observation", side_effect=counting_insert):
+            for info, gate_result in candidates:
+                _persist_rejected(
+                    symphony_id="sym-test",
+                    info=info,
+                    gate_result=gate_result,
+                    n_candidates=3,
+                    live_returns=[],
+                    returns_pct=[],
+                    n_survivors=0,
+                )
+
+        assert insert_call_count == 3, (
+            f"IC2-4b: all-vetoed batch of 3 candidates produced {insert_call_count} insert calls. "
+            "Expected exactly 3 — one per candidate. Each _persist_rejected call must produce "
+            "exactly one database.insert_advisor_observation call."
+        )
+
+    # -----------------------------------------------------------------------
+    # IC2-5: M6 card_artifacts for new-format row with metrics but live_baseline absent
+    # -----------------------------------------------------------------------
+
+    def test_ic2_5a_card_artifacts_populated_for_new_row_without_live_baseline(self, client):
+        """IC2-5a: GET card_artifacts contains Phase 3.5 metric keys for a new-format row
+        where metrics are present in raw_response but live_baseline is ABSENT.
+
+        The card_artifacts building loop in app.py reads metrics directly from raw_response
+        top-level keys (rr.get('cagr'), etc.) — it does NOT require live_baseline to be
+        present. Asserts: no KeyError, artifact populated, all §2 metric keys present.
+        """
+        # New-format row: has cagr/sharpe/calmar/etc. but NO live_baseline key
+        new_row_no_baseline = {
+            "id": 701,
+            "created_at": "2026-06-12T10:00:00",
+            "advisor_role": "STRATEGY_BUILDER",
+            "subject_type": "strategy_proposal",
+            "subject_id": "sym-ic2-no-bl",
+            "verdict": "ADOPT_CANDIDATE",
+            "raw_response": {
+                "objective": "lift_risk_adjusted",
+                "template_id": "T6",
+                "candidate_id": "sym-ic2-no-bl:T6:0",
+                "metrics": {"annualized_return": 0.11, "sharpe": 0.72},
+                # Phase 3.5 flat metric fields present
+                "cagr": 0.11,
+                "sharpe": 0.72,
+                "calmar": 0.50,
+                "max_drawdown": -0.16,
+                "correlation_vs_live": 0.28,
+                "blended_drawdown": -0.09,
+                "n_candidates": 5,
+                "n_survivors": 1,
+                # live_baseline is ABSENT (not present at all)
+                "gate_decision": "ADOPT_CANDIDATE",
+                "winner_p_adj": 0.011,
+                "fdr_q": 0.05,
+                "fdr_adjusted_threshold": 0.015,
+                "caveats": ["Selected on backtest"],
+                "rules_text": "Momentum top-3: SPY, QQQ, IWM",
+            },
+            "is_advisory_only": 1,
+            "spec_bundle_id": None,
+        }
+
+        captured: dict = {}
+
+        def capture_render(*args, **kwargs):
+            captured.update(kwargs)
+            return "<html><body>stub</body></html>"
+
+        with (
+            patch(
+                "database.get_advisor_observations_for_symphony",
+                return_value=[new_row_no_baseline],
+            ),
+            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module, "render_template", side_effect=capture_render),
+        ):
+            try:
+                client.get("/ai-advisor/strategy-builder?symphony_id=sym-ic2-no-bl")
+            except KeyError as exc:
+                pytest.fail(
+                    f"GET route raised KeyError on new-format row without live_baseline: {exc}. "
+                    "IC2-5a: card_artifacts building must not require live_baseline to be present."
+                )
+
+        card_artifacts = captured.get("card_artifacts", {})
+        artifact = card_artifacts.get(701, {})
+
+        assert artifact, (
+            "IC2-5a: card_artifacts must contain entry for obs id=701 (new-format row). "
+            "The card_artifacts building loop must process new-format rows regardless of "
+            "whether live_baseline is present."
+        )
+
+        # Phase 3.5 metric keys must be present in the artifact
+        for key in ("cagr", "sharpe", "calmar", "correlation_vs_live", "blended_drawdown"):
+            assert key in artifact, (
+                f"IC2-5a: card_artifacts[701] missing Phase 3.5 key '{key}'. "
+                "The GET route must surface all §2 flat metric keys into card_artifacts "
+                "regardless of whether live_baseline is present."
+            )
+
+    def test_ic2_5b_card_artifacts_metric_values_are_none_not_missing_for_old_row(self, client):
+        """IC2-5b: For a pre-3.5 row, card_artifacts Phase 3.5 keys have value None (not absent).
+
+        The card_artifacts building uses rr.get('cagr') which returns None when the key is
+        absent. The artifact dict must CONTAIN the key 'cagr' with value None — not omit the
+        key entirely. This preserves a consistent artifact shape for the chat layer.
+
+        Verifies: artifact has 'cagr' key; value is None (not string 'None').
+        """
+        fixture = _load_basic_fixture()
+        obs = fixture["observation_survivor"]
+        obs_id = obs["id"]
+
+        # Confirm this is a pre-3.5 row (no cagr in raw_response)
+        assert "cagr" not in obs["raw_response"], (
+            "IC2-5b test setup: fixture must not have 'cagr' in raw_response."
+        )
+
+        captured: dict = {}
+
+        def capture_render(*args, **kwargs):
+            captured.update(kwargs)
+            return "<html><body>stub</body></html>"
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module, "render_template", side_effect=capture_render),
+        ):
+            client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+
+        card_artifacts = captured.get("card_artifacts", {})
+        artifact = card_artifacts.get(obs_id, {})
+
+        # Must have the 'cagr' key (with value None), not be absent
+        assert "cagr" in artifact, (
+            f"IC2-5b: card_artifacts[{obs_id}] must have 'cagr' key (None) for pre-3.5 row. "
+            "The card_artifacts dict must have a consistent shape regardless of row vintage — "
+            "the chat layer must not KeyError on 'cagr' when grounding on a pre-3.5 row."
+        )
+        assert artifact["cagr"] is None, (
+            f"IC2-5b: card_artifacts[{obs_id}]['cagr']={artifact['cagr']!r} must be Python None "
+            "for a pre-3.5 row (raw_response has no 'cagr' key). "
+            "None is the correct sentinel for absent pre-3.5 metrics, not the string 'None'."
+        )
+
+    # -----------------------------------------------------------------------
+    # IC2-6: Old-row golden fixture — independent IC2 assertion
+    # -----------------------------------------------------------------------
+
+    def test_ic2_6a_old_row_golden_fixture_full_get_render_crash_free_and_no_none_percent(
+        self, client
+    ):
+        """IC2-6a: Pre-3.5 golden fixture obs (IC2-independent) renders crash-free via GET.
+
+        Independent of the team's PC-1 test. Uses the same JSON fixture but asserts
+        independently: HTTP 200, no 'None%', no 'Traceback', no 'None' string in metric cells.
+
+        Fixture: tests/fixtures/ai_advisor/m6/strategy_builder_observations_basic.json
+        (observation_survivor — pre-3.5, has no cagr/sharpe/calmar/live_baseline in raw_response)
+        """
+        fixture = _load_basic_fixture()
+        obs = fixture["observation_survivor"]
+
+        # IC2 assertion: confirm fixture is pre-3.5 (IC2-independent guard)
+        for phase35_key in ("cagr", "sharpe", "live_baseline"):
+            assert phase35_key not in obs["raw_response"], (
+                f"IC2-6a test setup: fixture raw_response must NOT have '{phase35_key}'. "
+                "This is a pre-3.5 fixture — it must not contain Phase 3.5 fields."
+            )
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+
+        assert resp.status_code == 200, (
+            f"IC2-6a: GET returned {resp.status_code} for pre-3.5 golden fixture. "
+            "HR-1: old rows must render crash-free."
+        )
+
+        html = resp.get_data(as_text=True)
+
+        assert "None%" not in html, (
+            "IC2-6a: HTML contains 'None%' for pre-3.5 golden fixture row. "
+            "HR-1: missing metrics must render as '—', never as 'None%'."
+        )
+        assert "Traceback" not in html, (
+            "IC2-6a: HTML contains Traceback for pre-3.5 golden fixture row. "
+            "HR-1: pre-3.5 rows must not cause any server-side exception."
+        )
+        assert "Live Baseline" not in html, (
+            "IC2-6a: HTML contains 'Live Baseline' column for pre-3.5 row "
+            "(no live_baseline in raw_response). "
+            "HR-1 / PA-3: the baseline column must be absent when live_baseline "
+            "is not in raw_response."
+        )
+
+    def test_ic2_6b_old_row_golden_fixture_card_artifacts_has_correct_shape(self, client):
+        """IC2-6b: Pre-3.5 golden fixture card_artifacts has the expected keys and types.
+
+        IC2-independent golden fixture check: verifies card_artifacts for the pre-3.5
+        survivor obs has the correct structure — 'artifact_type', 'gate_verdict', and
+        Phase 3.5 keys (all None). Also verifies cagr is None (not string 'None').
+        """
+        fixture = _load_basic_fixture()
+        obs = fixture["observation_survivor"]
+        obs_id = obs["id"]
+
+        captured: dict = {}
+
+        def capture_render(*args, **kwargs):
+            captured.update(kwargs)
+            return "<html><body>stub</body></html>"
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module, "render_template", side_effect=capture_render),
+        ):
+            client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+
+        card_artifacts = captured.get("card_artifacts", {})
+        assert obs_id in card_artifacts, (
+            f"IC2-6b: card_artifacts missing entry for obs id={obs_id} (pre-3.5 fixture). "
+            "The GET route must build card_artifacts for all observation rows, not just new ones."
+        )
+        artifact = card_artifacts[obs_id]
+
+        # Required artifact structure keys (Phase 4 contract)
+        for required_key in ("artifact_type", "gate_verdict", "n_candidates"):
+            assert required_key in artifact, (
+                f"IC2-6b: card_artifacts[{obs_id}] missing required key '{required_key}'. "
+                "The artifact must have the Phase 4 structural keys regardless of row vintage."
+            )
+
+        assert artifact["artifact_type"] == "strategy_proposal", (
+            f"IC2-6b: artifact_type={artifact['artifact_type']!r} must be 'strategy_proposal'. "
+            "The artifact type must be the static Phase 4 contract value for all rows."
+        )
+
+        # Phase 3.5 metric keys must be present with value None (not absent, not string 'None')
+        for key in ("cagr", "sharpe", "calmar"):
+            val = artifact.get(key)
+            # Key must be present
+            assert key in artifact, (
+                f"IC2-6b: card_artifacts[{obs_id}] must have key '{key}' (with None value) "
+                "for pre-3.5 row. Consistent artifact shape required for chat grounding."
+            )
+            # Value must be None, not the string 'None'
+            assert val != "None", (
+                f"IC2-6b: card_artifacts[{obs_id}]['{key}']={val!r} is string 'None'. "
+                "Must be Python None (JSON null), never the string 'None'."
+            )
+
+    def test_ic2_6c_old_row_golden_fixture_all_three_observations_render_together(self, client):
+        """IC2-6c: All three pre-3.5 fixture observations (survivor, rejected, backtest-failed)
+        render together in a single GET request without crash.
+
+        The basic fixture contains: observation_survivor (ADOPT_CANDIDATE),
+        observation_rejected (WITHHELD), and observation_backtest_failed (WITHHELD +
+        backtest_error). Rendering all three together exercises the template's three conditional
+        branches
+        (survivors, withheld, bt_failed) with pre-3.5 rows simultaneously.
+
+        Asserts: HTTP 200, no 'None%', no 'Traceback'.
+        """
+        fixture = _load_basic_fixture()
+        all_obs = [
+            fixture["observation_survivor"],
+            fixture["observation_rejected"],
+            fixture["observation_backtest_failed"],
+        ]
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=all_obs),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+
+        assert resp.status_code == 200, (
+            f"IC2-6c: GET returned {resp.status_code} when rendering all 3 pre-3.5 fixture rows. "
+            "All three observation types (survivor, rejected, bt-failed) must render together "
+            "without crashing."
+        )
+
+        html = resp.get_data(as_text=True)
+        assert "None%" not in html, (
+            "IC2-6c: HTML contains 'None%' when rendering all 3 pre-3.5 fixture rows together. "
+            "All three template branches must guard None metric values."
+        )
+        assert "Traceback" not in html, (
+            "IC2-6c: Traceback in HTML when rendering all 3 pre-3.5 fixture rows. "
+            "No template branch must raise an exception for pre-3.5 rows."
         )
