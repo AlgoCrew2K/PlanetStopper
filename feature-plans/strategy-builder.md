@@ -1,10 +1,11 @@
 # Planet Stopper — Strategy Builder (Living Program Doc)
 
 **Status:** Phase 1 complete (`advisors/symphony_schema.py`, 108-test contract suite,
-2026-06-11). Phase 2 in progress (`advisors/strategy_builder_engine.py` — templates,
-screens, FDR gate). This is the durable program-level reference; phase-scoped working
-state lives in `strategy-builder-phase1-handoff.md` (Phase 1 archive) and the binding
-Phase-2 contract in `strategy-builder-phase2-contract.md`. Grammar pinned in
+2026-06-11). Phase 2 complete (`advisors/strategy_builder_engine.py` — templates T1-T7,
+screens, FDR gate, quantstats pin, 2026-06-12). This is the durable program-level
+reference; phase-scoped working state lives in `strategy-builder-phase1-handoff.md`
+(Phase 1 archive) and the binding Phase-2 contract in
+`strategy-builder-phase2-contract.md`. Grammar pinned in
 `strategy-builder-composer-grammar.md`.
 
 ---
@@ -59,8 +60,8 @@ these `feature-plans/strategy-builder-*.md` docs.
 | `advisors/symphony_schema.py` | 1 (complete) | Build / validate / lint / describe Composer `raw_value` trees. Pure stdlib; never-raises validation. |
 | `advisors/composer_backtest_client.py` | (existing) | POST /backtest transport; consumes trees the schema layer produces. |
 | `advisors/backtest_gate_engine.py` | (existing) | Overfitting acceptance gate around backtest results. |
-| `analytics.compute_quantstats_metrics()` | 2 (in progress) | Metric engine for candidate-screening. `quantstats` dependency not yet in `requirements.txt` — Phase-2 team adds the pin (contract §2.9). |
-| `advisors/strategy_builder_engine.py` | 2 (in progress) | Phase 2 proposal engine: builds candidate trees from templates T1-T7 via `symphony_schema` constructors → backtests via `composer_backtest_client` (1 req/s) → applies single-batch FDR gate via `backtest_gate_engine.evaluate_candidate_batch` → applies `ScreenConfig` screens to survivors → persists via `database.insert_advisor_observation`. Public surface: `propose_strategies(objective, universe, screen_config, live_returns) -> ProposalRun`. Never-raises (failures surface via `ProposalRun.error`). |
+| `analytics.compute_quantstats_metrics()` | 2 (complete) | Metric engine for candidate-screening. `quantstats~=0.0.81` pinned in `requirements.txt` by Phase-2 team. |
+| `advisors/strategy_builder_engine.py` | 2 (complete) | Phase 2 proposal engine: builds candidate trees from templates T1-T7 via `symphony_schema` constructors → backtests via `composer_backtest_client` (1 req/s) → applies single-batch FDR gate via `backtest_gate_engine.evaluate_candidate_batch` → applies `ScreenConfig` screens to survivors → persists via `database.insert_advisor_observation`. Public surface: `propose_strategies(objective, universe, screen_config, live_returns, symphony_id, *, incumbent_oos_alpha, default_oos_alpha) -> ProposalRun`. Never-raises (failures surface via `ProposalRun.error`). |
 
 ---
 
@@ -150,18 +151,34 @@ scratch** (vs existing engines that mutate live ones). Binding contract:
 
 ```python
 propose_strategies(
-    objective,        # Objective enum: diversify | cut_drawdown | lift_risk_adjusted  [PM-ASSUMED]
-    universe,         # list[str] tickers available for construction
-    screen_config,    # ScreenConfig dataclass (see §6.4)
-    live_returns,     # dict[str, float] — live portfolio daily returns, %-scale
-    ...
+    objective: Objective,            # Objective enum: diversify | cut_drawdown | lift_risk_adjusted
+    universe: list[str],             # tickers available for construction (engine uses up to 10)
+    screen_config: ScreenConfig,     # post-gate presentation filter config (see §6.4)
+    live_returns: list[float],       # live portfolio daily returns, %-scale, chronological
+    symphony_id: str = "",           # state-DB key for persisted observations
+    *,
+    incumbent_oos_alpha: float = 0.0,  # passed to evaluate_candidate_batch
+    default_oos_alpha: float = 0.0,    # passed to evaluate_candidate_batch
 ) -> ProposalRun
 ```
 
-`ProposalRun` is a NamedTuple/dataclass carrying: `candidates`, `gated_batch`
-summary, `screened_survivors`, `observations_written`, `error`. Never raises —
-failures surface via the `error` field; one candidate's failure never aborts the
-batch.
+`ProposalRun` is a `@dataclass` carrying:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `candidates` | `list[CandidateInfo]` | Successfully-backtested candidates only (backtest failures excluded) |
+| `gated_batch` | `GatedBatch` | Full FDR gate result; `n_candidates` equals `len(candidates)` |
+| `screened_survivors` | `list[CandidateGateResult]` | Gate survivors that pass all ScreenConfig screens |
+| `observations_written` | `int` | Count of rows written to `advisor_observations` |
+| `error` | `str \| None` | Non-None on any fatal failure; `None` on success |
+
+Never raises — failures surface via the `error` field; one candidate's backtest
+failure never aborts the batch.
+
+`CandidateInfo` is a `@dataclass` carrying: `candidate_id`, `tree`, `template_id`,
+`params`, `metrics` (dict from `compute_quantstats_metrics`), `backtest_error`
+(str or None), `data_warnings` (list). It is a public type — callers inspect it to
+read per-candidate metrics and error state.
 
 ### 6.2 Template library (T1-T7) `[PM-ASSUMED selection]`
 
@@ -171,18 +188,19 @@ and round-trip `json.dumps`.
 
 | ID | Function | Construction |
 |----|----------|--------------|
-| T1 | `equal_weight_basket(tickers)` | root → wt-cash-equal → assets |
-| T2 | `specified_weight_basket(weighted_tickers)` | root → wt-cash-specified (weights sum 100) |
-| T3 | `inverse_vol_basket(tickers)` | root → wt-inverse-vol → assets |
-| T4 | `trend_switch(signal_ticker, ma_window, risk_on, risk_off)` | if current-price > moving-average-price(window) → risk-on basket else defensive basket |
-| T5 | `rsi_rotation(signal_ticker, rsi_window, threshold, overbought_children, neutral_children)` | if relative-strength-index > threshold → overbought branch else neutral branch |
-| T6 | `momentum_top_n(universe, n, window)` | filter select-top n by cumulative-return(window) |
-| T7 | `low_vol_floor(universe, n, window)` | filter select-bottom n by standard-deviation-return(window) |
+| T1 | `equal_weight_basket(tickers, *, name="Equal Weight Basket")` | root → wt-cash-equal → assets |
+| T2 | `specified_weight_basket(weighted_tickers, *, name="Specified Weight Basket")` — `weighted_tickers: list[tuple[str, float]]` | root → wt-cash-specified (weights sum 100) |
+| T3 | `inverse_vol_basket(tickers, *, name="Inverse Vol Basket")` | root → wt-inverse-vol → assets |
+| T4 | `trend_switch(signal_ticker, ma_window, risk_on_tickers, risk_off_tickers, *, name="Trend Switch")` | if current-price > moving-average-price(window) → equal-weight risk-on basket else equal-weight risk-off basket |
+| T5 | `rsi_rotation(signal_ticker, rsi_window, threshold, overbought_tickers, neutral_tickers, *, name="RSI Rotation")` | if relative-strength-index > threshold → equal-weight overbought branch else equal-weight neutral branch |
+| T6 | `momentum_top_n(universe, n, window, *, name="Momentum Top N")` | filter select-top n by cumulative-return(window) |
+| T7 | `low_vol_floor(universe, n, window, *, name="Low Vol Floor")` | filter select-bottom n by standard-deviation-return(window) |
 
+All templates accept an optional `name` kwarg that sets the Composer symphony name.
 Composability (e.g. T4 whose risk-on child is a T6 filter) is allowed but not
 required for Phase 2.
 
-### 6.3 Objective enum `[PM-ASSUMED]`
+### 6.3 Objective enum (implemented — values verified against source)
 
 ```python
 class Objective(enum.Enum):
@@ -192,25 +210,35 @@ class Objective(enum.Enum):
 ```
 
 The objective steers template selection and parameter ranges within a run; it does
-not override the FDR gate.
+not override the FDR gate. Template routing per objective (internal logic in
+`_generate_candidate_trees`; bounded to `MAX_CANDIDATES_PER_RUN = 30` total; universe
+silently truncated to 10 tickers before generation):
 
-### 6.4 ScreenConfig defaults `[PM-ASSUMED values — flagged for operator review]`
+| Objective | Templates used |
+|-----------|----------------|
+| `diversify` | T1, T3, T6 (windows 63, 126) |
+| `cut_drawdown` | T3, T7 (windows 20, 60), T4 (200-day MA, if ≥4 tickers) |
+| `lift_risk_adjusted` | T6 (windows 21, 63, 126), T5 (RSI 14/70), T2 |
 
-`ScreenConfig` is a dataclass with named-constant defaults. Screens are
+### 6.4 ScreenConfig defaults (implemented values — flagged for operator review)
+
+`ScreenConfig` is a `@dataclass` with named-constant defaults. Screens are
 **post-gate presentation filters** only; they never shrink the batch that enters
 `evaluate_candidate_batch` (FDR integrity — see §6.5).
 
-| Constant | Default | Meaning |
-|----------|---------|---------|
-| `SCREEN_MIN_CAGR_DEFAULT` | `0.0` `[PM-ASSUMED]` | Minimum CAGR (fraction-scale) to surface a survivor |
-| `SCREEN_MIN_SHARPE_DEFAULT` | `0.0` `[PM-ASSUMED]` | Minimum Sharpe ratio |
-| `SCREEN_MIN_CALMAR_DEFAULT` | `0.0` `[PM-ASSUMED]` | Minimum Calmar ratio |
-| `SCREEN_MAX_ABS_DRAWDOWN_DEFAULT` | `0.50` `[PM-ASSUMED]` | Max candidate-level absolute drawdown (0.50 = 50%) |
-| `SCREEN_MAX_BLENDED_ABS_DRAWDOWN_DEFAULT` | `0.40` `[PM-ASSUMED]` | Max blended abs drawdown — candidate returns blended 50/50 with live portfolio |
-| `SCREEN_MAX_CORRELATION_DEFAULT` | `0.85` `[PM-ASSUMED]` | Max Pearson correlation vs live portfolio daily returns |
+| Field | Constant | Implemented value | Meaning |
+|-------|----------|-------------------|---------|
+| `min_cagr` | `SCREEN_MIN_CAGR_DEFAULT` | `0.0` `[PM-ASSUMED]` | Minimum CAGR (fraction-scale) to surface a survivor |
+| `min_sharpe` | `SCREEN_MIN_SHARPE_DEFAULT` | `0.0` `[PM-ASSUMED]` | Minimum Sharpe ratio |
+| `min_calmar` | `SCREEN_MIN_CALMAR_DEFAULT` | `0.0` `[PM-ASSUMED]` | Minimum Calmar ratio |
+| `max_abs_drawdown` | `SCREEN_MAX_ABS_DRAWDOWN_DEFAULT` | `0.50` `[PM-ASSUMED]` | Max candidate-level absolute drawdown (0.50 = 50%; fraction scale) |
+| `max_blended_abs_drawdown` | `SCREEN_MAX_BLENDED_ABS_DRAWDOWN_DEFAULT` | `0.40` `[PM-ASSUMED]` | Max blended abs drawdown — candidate returns blended 50/50 with live portfolio |
+| `max_correlation` | `SCREEN_MAX_CORRELATION_DEFAULT` | `0.85` `[PM-ASSUMED]` | Max Pearson correlation vs live portfolio daily returns |
 
 None-metric (insufficient data for a screen) → screen fails closed (candidate
-marked as failing, never silently passed).
+marked as failing, never silently passed). Pearson correlation is computed via
+stdlib-only `_pearson_corr` (no scipy); degenerate series (n < 2 or zero variance)
+returns 0.0.
 
 ### 6.5 FDR integrity protocol (AC-3.2)
 
@@ -245,10 +273,9 @@ not re-derive. Sign conventions have dedicated golden tests.
 
 ### 6.8 Dependency: quantstats
 
-`quantstats` is not yet in `requirements.txt` (verified 2026-06-11). Phase-2
-contract §2.9 requires the team to pin it there (additive). Until the pin lands,
-`analytics.compute_quantstats_metrics` is unavailable at runtime — the engine must
-not be imported or called in the default test suite before the pin is in place.
+`quantstats~=0.0.81` is pinned in `requirements.txt` (added by Phase-2 team per
+contract §2.9). `analytics.compute_quantstats_metrics` is available at runtime.
+The living-doc note from 2026-06-11 ("not yet pinned") is superseded by this pin.
 
 ---
 
