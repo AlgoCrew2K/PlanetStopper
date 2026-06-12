@@ -114,3 +114,18 @@ class TestDefaultPageShowsAllProposals:
 
         src = inspect.getsource(database.get_advisor_observations_for_role)
         assert "get_ro_connection" in src
+
+
+class TestDashboardLoadsDotenv:
+    """app.py must load .env into os.environ for the dashboard process.
+
+    The dashboard spawns alpha_bot_execution.py as a subprocess and never
+    imports it, so its load_dotenv never runs here. Before the fix,
+    ai_advisor._build_client (chat + LLM suggestions) silently degraded to
+    'no API key' on any daemon not launched from a key-exporting shell.
+    Found by live-daemon verification with real credentials (2026-06-12).
+    """
+
+    def test_app_calls_load_dotenv_on_env_file_path(self):
+        src = (Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+        assert "load_dotenv(ENV_FILE_PATH)" in src

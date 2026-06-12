@@ -19,7 +19,7 @@ import dotenv as _dotenv_module
 import psutil
 import requests
 import schedule
-from dotenv import dotenv_values, set_key
+from dotenv import dotenv_values, load_dotenv, set_key
 from flask import Flask, abort, jsonify, render_template, request, session
 
 import ai_advisor
@@ -50,6 +50,14 @@ _PERFORMANCE_NONE_METRICS = {k: None for k in _PERFORMANCE_METRIC_KEYS}
 
 ENV_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alphabot_daemon.log")
+
+# Load .env into os.environ for THIS process. The dashboard spawns
+# alpha_bot_execution.py as a subprocess and never imports it, so its
+# load_dotenv never runs here — os.getenv consumers in the dashboard
+# (ai_advisor._build_client: chat + LLM suggestions) silently degraded to
+# "no API key" on any daemon not launched from a shell exporting the keys.
+# Found by live-daemon verification with real credentials, 2026-06-12.
+load_dotenv(ENV_FILE_PATH)
 
 app = Flask(__name__)
 # Reload .html templates on every request without restarting the process.
