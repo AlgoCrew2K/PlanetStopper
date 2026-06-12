@@ -826,8 +826,9 @@
                     Template: {{ rr.get('template_id', '—') | e }}
                 </div>
 
-                <!-- Stats table: candidate metrics (baseline = live portfolio, shown
-                     as placeholder where not available from stored observation) -->
+                <!-- Stats table: candidate metrics only — live-portfolio baseline
+                     deferred (no baseline series stored in advisor_observations;
+                     see Phase-3 Deviation 1 in contract). -->
                 <table class="stats-table" data-testid="stats-table">
                     <thead>
                         <tr>

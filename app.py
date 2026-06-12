@@ -3223,7 +3223,7 @@ def ai_advisor_strategy_builder():
 
 @app.route("/ai-advisor/strategy-builder/run", methods=["POST"])
 def ai_advisor_strategy_builder_run():
-    """Operator-initiated strategy-builder proposal endpoint (Phase-3 AC-1).
+    """Operator-initiated strategy-builder proposal endpoint (AC-2, AC-5, AC-X1).
 
     Accepts JSON: { objective, universe, symphony_id? }.
     Calls propose_strategies from advisors.strategy_builder_engine, gates
