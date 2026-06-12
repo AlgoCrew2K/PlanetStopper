@@ -3340,6 +3340,9 @@ def ai_advisor_strategy_builder():
             "correlation_vs_live": rr.get("correlation_vs_live"),
             "blended_drawdown": rr.get("blended_drawdown"),
         }
+        # Phase 3.6: sparkline points — NOT added to card_artifacts (CHAT_ARTIFACT_ALLOWED_FIELDS
+        # is frozen). Injected directly onto obs so the template can render the SVG.
+        obs["sparkline_points"] = rr.get("equity_curve_downsampled")
 
     return render_template(
         "ai_advisor_strategy_builder.html",

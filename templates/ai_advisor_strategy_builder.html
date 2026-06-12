@@ -762,6 +762,50 @@
         {% endif %}{# no_api_key #}
 
         <!-- ================================================================ -->
+        <!-- Phase 3.6: inline SVG sparkline macro                          -->
+        <!-- Called on both survivor and withheld cards.                     -->
+        <!-- ================================================================ -->
+        {% macro render_sparkline(points) %}
+        {% if points %}
+        {% set ns = namespace(all_numeric=true) %}
+        {% for p in points %}
+            {% if p is none or p is not number %}
+                {% set ns.all_numeric = false %}
+            {% endif %}
+        {% endfor %}
+        {% if ns.all_numeric %}
+        {% set w = 120 %}
+        {% set h = 32 %}
+        {% set n = points | length %}
+        {% set min_v = points | min %}
+        {% set max_v = points | max %}
+        {% set v_range = (max_v - min_v) if (max_v - min_v) > 0 else 1 %}
+        {% set pts_str = namespace(v='') %}
+        {% for p in points %}
+            {% set x = (loop.index0 / (n - 1) * w) if n > 1 else (w / 2) %}
+            {% set y = h - ((p - min_v) / v_range * (h - 4) + 2) %}
+            {% set pts_str.v = pts_str.v ~ ' ' ~ (x | round(1) | string) ~ ',' ~ (y | round(1) | string) %}
+        {% endfor %}
+        <svg role="img" width="{{ w }}" height="{{ h }}"
+             aria-label="Equity curve: {{ '%.2f' | format(points[0]) }}% &#8594; {{ '%.2f' | format(points[-1]) }}%"
+             viewBox="0 0 {{ w }} {{ h }}"
+             preserveAspectRatio="none"
+             style="display:block;overflow:visible"
+             data-testid="sparkline-svg">
+            <polyline
+                points="{{ pts_str.v | trim }}"
+                fill="none"
+                stroke="var(--studio-accent)"
+                stroke-width="1.5"
+                stroke-linejoin="round"
+                stroke-linecap="round"
+            />
+        </svg>
+        {% endif %}
+        {% endif %}
+        {% endmacro %}
+
+        <!-- ================================================================ -->
         <!-- Stored observations rendered server-side (read-only SQLite path) -->
         <!-- Always rendered regardless of no_api_key — past runs are visible  -->
         <!-- even when the run controls are unavailable (AC-5 read-only path). -->
@@ -829,6 +873,9 @@
                         Advisory Only
                     </span>
                 </div>
+
+                <!-- Phase 3.6: equity-curve sparkline (absent for old rows — HR-1) -->
+                {{ render_sparkline(obs.sparkline_points) }}
 
                 <!-- Objective strip — mandatory on every card (AC-3.3) -->
                 <div class="objective-strip" data-testid="objective-strip">
@@ -1054,6 +1101,10 @@
                                 Advisory Only
                             </span>
                         </div>
+
+                        <!-- Phase 3.6: equity-curve sparkline (absent for old rows — HR-1) -->
+                        {{ render_sparkline(obs.sparkline_points) }}
+
                         <div class="objective-strip" data-testid="objective-strip">
                             Objective: {{ rr.get('objective', '—') | e }}
                             &nbsp;&middot;&nbsp;

@@ -122,6 +122,54 @@ def _empty_gate_batch() -> GatedBatch:
     return GatedBatch(results=[], survivors=[], n_candidates=0, fdr_q=HARVEY_LIU_FDR_Q)
 
 
+# ---------------------------------------------------------------------------
+# Phase 3.6 — Equity-curve helpers
+# ---------------------------------------------------------------------------
+
+
+def _cumulative_returns(returns_pct: list[float]) -> list[float]:
+    """Running sum of a daily-returns-pct series, each value rounded to 2dp.
+
+    An empty input returns an empty list.  A single-element input returns a
+    one-element list containing that element rounded to 2 decimal places.
+    """
+    result: list[float] = []
+    running = 0.0
+    for r in returns_pct:
+        running += r
+        result.append(round(running, 2))
+    return result
+
+
+def _downsample(series: list[float], target: int = 60) -> list[float]:
+    """Deterministically reduce ``series`` to at most ``target`` points.
+
+    Guarantees:
+    - Returns the series unchanged when ``len(series) <= target``.
+    - Preserves the first and last points exactly.
+    - Deterministic: identical inputs always produce identical outputs.
+
+    Uses integer stride selection (evenly-spaced indices) over the interior,
+    then appends the final element to guarantee endpoint preservation.
+    """
+    n = len(series)
+    if n <= target:
+        return list(series)
+    if target <= 0:
+        return []
+    if target == 1:
+        return [series[0]]
+    # Select ``target - 1`` evenly-spaced indices from [0, n-2), then force
+    # the last element.  This guarantees exactly ``target`` output points.
+    indices: list[int] = []
+    for i in range(target - 1):
+        idx = int(i * (n - 1) / (target - 1))
+        indices.append(idx)
+    # Always include the last index
+    indices.append(n - 1)
+    return [series[i] for i in indices]
+
+
 def _has_composer_key() -> bool:
     try:
         from alpha_bot_execution import COMPOSER_KEY_ID, COMPOSER_SECRET  # noqa: PLC0415
@@ -667,6 +715,12 @@ def _persist_survivor(
     # returns a dict (which requires both live_returns and returns_pct to be non-empty).
     if live_baseline is not None:
         raw_response["live_baseline"] = live_baseline
+
+    # Phase 3.6: inject downsampled equity curve when returns are available.
+    # Key is ABSENT (not None, not []) when _returns_pct is empty — template
+    # renders sparkline only when the key is present and non-empty.
+    if _returns_pct:
+        raw_response["equity_curve_downsampled"] = _downsample(_cumulative_returns(_returns_pct))
 
     # Independent cycle 2, IC2-BUG 1/2: non-finite floats (NaN/inf, Python or
     # numpy) anywhere in the payload make json.dumps emit non-RFC 'NaN', which
