@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import math
 from dataclasses import dataclass, field
 
 import database
@@ -537,6 +538,23 @@ def _build_live_baseline(
     }
 
 
+def _sanitize_non_finite(obj):
+    """Recursively replace non-finite floats (NaN/±inf, incl. numpy scalars)
+    with None so the persisted raw_response is always RFC-7159-serializable.
+
+    float(x) coerces numpy float64 before the isfinite check, so a single
+    guard covers both Python and numpy non-finite values (IC2-BUG 1/2).
+    """
+    if isinstance(obj, dict):
+        return {k: _sanitize_non_finite(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_non_finite(v) for v in obj]
+    if isinstance(obj, float) or type(obj).__name__ in ("float64", "float32"):
+        value = float(obj)
+        return value if math.isfinite(value) else None
+    return obj
+
+
 def _build_screen_metrics(
     live_returns: list[float],
     returns_pct: list[float],
@@ -649,6 +667,13 @@ def _persist_survivor(
     # returns a dict (which requires both live_returns and returns_pct to be non-empty).
     if live_baseline is not None:
         raw_response["live_baseline"] = live_baseline
+
+    # Independent cycle 2, IC2-BUG 1/2: non-finite floats (NaN/inf, Python or
+    # numpy) anywhere in the payload make json.dumps emit non-RFC 'NaN', which
+    # silently breaks JSON.parse in the Discuss button's data-artifact attribute.
+    # The compute path never produces NaN today, but the persist boundary must
+    # not depend on that.
+    raw_response = _sanitize_non_finite(raw_response)
 
     database.insert_advisor_observation(
         advisor_role="STRATEGY_BUILDER",

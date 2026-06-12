@@ -117,7 +117,7 @@ def _make_candidate_info(metrics: dict | None = None):
 def _make_gate_result(
     candidate_id: str = "test:T1:equal_weight", verdict_str: str = "ADOPT_CANDIDATE"
 ):
-    """Return a minimal CandidateGateResult stub (MagicMock — avoids NamedTuple field count coupling).
+    """Return a minimal CandidateGateResult stub (MagicMock avoids field-count coupling).
 
     Using MagicMock instead of the real CandidateGateResult so that changes to
     the NamedTuple's field list in backtest_gate_engine.py do not break the test
@@ -258,7 +258,7 @@ def test_pa3_persist_survivor_without_live_returns_has_no_live_baseline():
 
     assert "live_baseline" not in rr, (
         "_persist_survivor must NOT include 'live_baseline' in raw_response when "
-        "live_returns is empty. Contract §2: 'live_baseline sub-dict ... omitted when not provided'. "
+        "live_returns is empty. Contract §2: 'live_baseline ... omitted when not provided'. "
         f"Got raw_response keys: {list(rr.keys())!r}"
     )
 
@@ -1242,17 +1242,6 @@ class TestIndependentCycle2Phase35:
             "NaN in raw_response breaks JS JSON.parse on the Discuss button."
         )
 
-    test_ic2_1b_nan_in_info_metrics_produces_non_rfc_json_is_xfail_bug = pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "IC2-BUG: NaN in info.metrics propagates verbatim to the persisted raw_response, "
-            "producing non-RFC 7159 JSON ('NaN' literal). json.dumps emits 'NaN' without error "
-            "but the output is not valid JSON per RFC 7159 and breaks JS JSON.parse on the "
-            "Discuss button (openChatWithArtifact calls JSON.parse(artifactJson)). "
-            "The implementation must sanitize NaN -> null (JSON null) before persisting "
-            "raw_response to guard against any caller bypassing compute_quantstats_metrics."
-        ),
-    )(test_ic2_1b_nan_in_info_metrics_produces_non_rfc_json_is_xfail_bug)
 
     def test_ic2_1c_numpy_nan_in_metrics_produces_non_rfc_json_is_xfail_bug(self):
         """IC2-1c: numpy.float64('nan') in info.metrics also produces non-RFC JSON.
@@ -1305,16 +1294,6 @@ class TestIndependentCycle2Phase35:
             "The implementation must sanitize both Python nan and numpy nan -> None."
         )
 
-    test_ic2_1c_numpy_nan_in_metrics_produces_non_rfc_json_is_xfail_bug = pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "IC2-BUG: numpy.float64('nan') in info.metrics propagates to raw_response as"
-            " JSON 'NaN' literal (same path as IC2-1b but via numpy nan). "
-            "math.isfinite(np.float64(nan)) is False so a correct implementation's NaN guard"
-            " would catch both Python and numpy nan. "
-            "Sanitize NaN -> null before calling json.dumps."
-        ),
-    )(test_ic2_1c_numpy_nan_in_metrics_produces_non_rfc_json_is_xfail_bug)
 
     # -----------------------------------------------------------------------
     # IC2-2: _build_live_baseline pathological live_returns inputs
