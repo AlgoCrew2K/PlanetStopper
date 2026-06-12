@@ -1,5 +1,16 @@
 # Strategy Builder — Phase 4 Contract: Chat Anchoring for Strategy Proposals
 
+> **PHASE 4 COMPLETE — 2026-06-12.** Toxic Pair TDD team delivered RED(36)→GREEN
+> in one cycle + dual reviewer CLEAN; team under-delivered the §5 minimum-2
+> adversarial cycles, so the PM commissioned cycle 2 post-exit (quant-test-writer,
+> 18 attack tests) which found 3 real bugs — explain_artifact missing internal
+> validate_artifact (cap bypass at the public seam), GET-route crash on truthy
+> non-dict raw_response, KeyError on id-less rows — all fixed in `84fbdb2`,
+> xfail pins promoted. Final: 54/54 Phase-4 tests; full suite 5,987/6/0.
+> [PM-ASSUMED] §5 field-drops ledgered: cagr/sharpe/calmar/correlation_vs_live/
+> blended_drawdown allowlisted but not populated (absent from stored rows —
+> will light up when Phase 3.5 persists metrics at write time).
+
 **Status:** BINDING contract for the Phase-4 Toxic Pair TDD team. Where this doc
 conflicts with the living doc (`strategy-builder.md`), this doc wins for Phase 4.
 Phase-3 surface (`templates/ai_advisor_strategy_builder.html`, Strategy Builder
