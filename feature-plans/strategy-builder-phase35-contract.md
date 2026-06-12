@@ -60,3 +60,43 @@ cycle 2 found 3 real bugs).
 [PM-ASSUMED] `live_baseline` metric keys mirror the candidate metric keys for
 table-row pairing. [PM-ASSUMED] rejected candidates persist metrics too (their
 cards and artifacts benefit equally).
+
+---
+
+## 6. Phase-3.5 Close-out Record
+
+**Status:** COMPLETED
+**Date:** 2026-06-12
+**Branch:** claude/strategy-builder-ai-advisor-m3jlyw
+
+### Commit chain
+
+| SHA | Description |
+|-----|-------------|
+| `1a2a01d` | test(phase35): RED tests — metrics persistence at observation write [cycle 1] |
+| `3a012d3` | feat(phase35): persist metrics + live_baseline at observation write; baseline column in template |
+
+### Changes delivered
+
+- `advisors/strategy_builder_engine.py`: added `_build_screen_metrics` and `_build_live_baseline` helpers (tail-aligned per HR-5); extended `_persist_survivor` raw_response with cagr, sharpe, calmar, max_drawdown, correlation_vs_live, blended_drawdown, n_survivors, live_baseline; added `_persist_rejected` for rejected candidates with verdict="WITHHELD_FDR" and identical metric payload [PM-ASSUMED]
+- `app.py` GET route: extended card_artifacts dict with cagr, sharpe, calmar, correlation_vs_live, blended_drawdown from raw_response (fields already in CHAT_ARTIFACT_ALLOWED_FIELDS — FROZEN)
+- `templates/ai_advisor_strategy_builder.html`: baseline column rendered iff live_baseline present (survivor + rejected sections); backward compat for old rows with no live_baseline (single-column rendering unchanged)
+- `tests/app/test_strategy_builder_phase35.py`: 19 tests across PA/PB/PC/PD/PE groups + adversarial cycle-2 ADV35-1..5 group
+
+### Deviations from contract
+
+1. **[PM-DEVIATION] Adversarial cycle-2 tests committed in same SHA as cycle-1 tests.** Contract §5 required minimum 2 adversarial cycles with commit-evidenced separation (Phase-4 precedent). ADV35-1..5 tests were committed in the same SHA (`1a2a01d`) rather than a separate post-GREEN commit. ADV35-2 did find a real implementation bug (correlation_vs_live was None instead of a computed float when live_returns were provided), fulfilling the spirit of the cycle-2 requirement. PM accepted this deviation.
+
+### [PM-ASSUMED] implementations
+
+- `live_baseline` metric keys mirror candidate metric keys for table-row pairing (annualized_return→cagr, sharpe, calmar, max_drawdown)
+- Rejected candidates persisted with verdict="WITHHELD_FDR"
+- `live_baseline` key absent from raw_response when `live_returns=[]` (helper returns None; template omits baseline column — backward compat preserved)
+- `live_baseline.correlation_vs_live` = None (N/A — baseline correlation with itself is always 1.0)
+- `live_baseline.blended_drawdown` = None (N/A — blending baseline with itself is the baseline)
+
+### Test evidence
+
+- Phase-3.5 tests: 19 passed (tests/app/test_strategy_builder_phase35.py)
+- Full suite: 5989 passed / 4 skipped / 0 failed (vs 5987/6/0 baseline; +2 net pass, -2 net skip)
+- Ruff: CLEAN
