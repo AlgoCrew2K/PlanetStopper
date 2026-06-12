@@ -850,3 +850,365 @@ class TestGroupSR:
             "SR-6 / [PM-ASSUMED]: rejected/withheld cards must also render the sparkline. "
             "The render_sparkline macro must be called in the withheld-card section."
         )
+
+
+# ===========================================================================
+# CYCLE 2 — Adversarial tests targeting pathological series, edge cases,
+# and the exact implementation choices described in the cycle-1 handoff.
+# ===========================================================================
+
+
+class TestAdversarialCycle2Phase36:
+    """Adversarial Cycle 2: attack vectors specific to the actual implementation.
+
+    These tests exercise degenerate inputs, arithmetic-edge cases in the SVG
+    coordinate math, aria-label content, ``preserveAspectRatio`` presence,
+    mixed-row rendering, and the copy-semantics of ``_downsample``.
+    """
+
+    # -----------------------------------------------------------------------
+    # ADV-1: Single-point sparkline (n=1 → x=w/2 degenerate polyline)
+    # -----------------------------------------------------------------------
+
+    def test_adv36_1_single_point_series_no_svg(self, client):
+        """ADV-1: equity_curve_downsampled=[5.0] (1 point) — route returns 200, no crash.
+
+        With n=1 the Jinja macro uses x=w/2 to avoid division by zero (``n-1``
+        would be 0 in the default branch).  A single-point polyline is degenerate
+        but must not raise a Jinja error or produce a 500.  The macro renders an
+        SVG element (points is truthy, all_numeric=True) — the key invariant is
+        that no server-side crash occurs.
+        """
+        obs = _make_phase36_obs(obs_id=701, sparkline=[5.0])
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-36:701")
+
+        assert resp.status_code == 200, (
+            f"GET returned {resp.status_code} for single-point sparkline obs. "
+            "ADV-1: a single-point equity_curve_downsampled=[5.0] must not crash the route. "
+            "With n=1 the macro uses x=w/2; it must still return HTTP 200."
+        )
+
+        html = resp.get_data(as_text=True)
+        assert "Traceback" not in html, (
+            "Rendered HTML contains 'Traceback' for a single-point sparkline obs. "
+            "ADV-1: no Python exception must reach the response for n=1 input."
+        )
+
+    # -----------------------------------------------------------------------
+    # ADV-2: Constant series → v_range=0 → fallback to 1.0 (no division by zero)
+    # -----------------------------------------------------------------------
+
+    def test_adv36_2_constant_series_no_division_by_zero(self, client):
+        """ADV-2: all points same value → v_range fallback to 1.0 — status=200, SVG present.
+
+        When all points are equal, max_v - min_v = 0.  The macro guards with
+        ``v_range = (max_v - min_v) if (max_v - min_v) > 0 else 1`` so the y
+        coordinate formula does not divide by zero.  The SVG must render (points
+        is truthy, all_numeric=True) and the route must return 200.
+        """
+        obs = _make_phase36_obs(obs_id=702, sparkline=[1.5, 1.5, 1.5])
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-36:702")
+
+        assert resp.status_code == 200, (
+            f"GET returned {resp.status_code} for constant-series sparkline. "
+            "ADV-2: constant series [1.5, 1.5, 1.5] must not crash the route. "
+            "The v_range=0 guard (fallback to 1.0) must prevent division by zero."
+        )
+
+        html = resp.get_data(as_text=True)
+        assert "<svg" in html, (
+            "Rendered HTML does not contain '<svg' for constant-series sparkline [1.5, 1.5, 1.5]. "
+            "ADV-2: the macro must render the SVG even when all y-coordinates are the same. "
+            "v_range fallback to 1.0 should produce a flat horizontal line, not suppress the SVG."
+        )
+
+        assert "Traceback" not in html, (
+            "Rendered HTML contains 'Traceback' for constant-series sparkline. "
+            "ADV-2: no Python/Jinja exception may surface for a flat equity curve."
+        )
+
+    # -----------------------------------------------------------------------
+    # ADV-3: _downsample stride produces exactly 60 points for 1250-point input
+    # -----------------------------------------------------------------------
+
+    def test_adv36_3_downsample_stride_produces_exactly_60_points(self):
+        """ADV-3: _downsample([0..1249], target=60) returns exactly 60 points.
+
+        The implementation selects (target-1)=59 evenly-spaced indices then
+        appends the last index, giving 59+1=60 points exactly.  This test
+        directly validates the stride formula ``int(i*(n-1)/(target-1))`` for
+        i in range(59) plus the forced last element.
+        """
+        from advisors.strategy_builder_engine import _downsample
+
+        series = [float(i) for i in range(1250)]
+        result = _downsample(series, target=60)
+
+        assert len(result) == 60, (
+            f"_downsample([0..1249], target=60) returned {len(result)} points. "
+            "ADV-3: the stride formula int(i*(n-1)/(target-1)) for i in range(59) "
+            "plus forced last element must yield exactly 60 points. "
+            f"Got: {len(result)}"
+        )
+
+    # -----------------------------------------------------------------------
+    # ADV-4: Last point equals terminal cumulative return (endpoint preservation)
+    # -----------------------------------------------------------------------
+
+    def test_adv36_4_last_point_equals_terminal_cumulative_return(self):
+        """ADV-4: _downsample(_cumulative_returns(series))[-1] equals cumulative[-1].
+
+        The last element of the downsampled series must exactly equal the last
+        element of the full cumulative series.  This ensures the sparkline always
+        shows the correct final total return — a forced-last-element guarantee.
+        """
+        from advisors.strategy_builder_engine import _cumulative_returns, _downsample
+
+        series = [float(i) * 0.01 for i in range(300)]
+        cumulative = _cumulative_returns(series)
+        downsampled = _downsample(cumulative)
+
+        assert downsampled[-1] == cumulative[-1], (
+            f"_downsample(_cumulative_returns(...))[−1]={downsampled[-1]!r} "
+            f"does not equal cumulative[-1]={cumulative[-1]!r}. "
+            "ADV-4: the last point of the downsampled series must exactly equal the "
+            "last point of the full cumulative series (endpoint preservation guarantee). "
+            "The implementation must force series[-1] as the final element."
+        )
+
+    # -----------------------------------------------------------------------
+    # ADV-5: aria-label contains actual start and end values
+    # -----------------------------------------------------------------------
+
+    def test_adv36_5_aria_label_contains_start_and_end_values(self, client):
+        """ADV-5: aria-label shows the actual first and last values of the sparkline.
+
+        The macro template is:
+          aria-label="Equity curve: {{ '%.2f' | format(points[0]) }}% → {{ '%.2f' | format(points[-1]) }}%"
+        For sparkline=[2.50, 5.00, 3.75] the aria-label must contain '2.50' and '3.75'.
+        This is a dynamic aria-label — not a static string — so the test verifies
+        actual value injection, not just attribute presence (which SR-2 already covers).
+        """
+        obs = _make_phase36_obs(obs_id=705, sparkline=[2.50, 5.00, 3.75])
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-36:705")
+
+        assert resp.status_code == 200, (
+            f"GET returned {resp.status_code} for aria-label test obs. ADV-5."
+        )
+
+        html = resp.get_data(as_text=True)
+
+        assert "2.50" in html, (
+            "Rendered HTML does not contain '2.50' (start value) in the sparkline aria-label. "
+            "ADV-5: the aria-label must embed the actual first point value formatted to 2dp. "
+            "For sparkline=[2.50, 5.00, 3.75], the start value '2.50' must appear in the HTML."
+        )
+        assert "3.75" in html, (
+            "Rendered HTML does not contain '3.75' (end value) in the sparkline aria-label. "
+            "ADV-5: the aria-label must embed the actual last point value formatted to 2dp. "
+            "For sparkline=[2.50, 5.00, 3.75], the end value '3.75' must appear in the HTML."
+        )
+
+    # -----------------------------------------------------------------------
+    # ADV-6: preserveAspectRatio present in SVG
+    # -----------------------------------------------------------------------
+
+    def test_adv36_6_preserveaspectratio_in_svg(self, client):
+        """ADV-6: rendered SVG contains the preserveAspectRatio attribute.
+
+        The macro includes ``preserveAspectRatio="none"`` to allow the sparkline
+        to scale freely within its container without distorting proportions.
+        This attribute must appear in the rendered HTML.
+        """
+        obs = _make_phase36_obs(obs_id=706)
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-36:706")
+
+        html = resp.get_data(as_text=True)
+
+        assert "preserveAspectRatio" in html, (
+            "Rendered HTML does not contain 'preserveAspectRatio' attribute in the SVG. "
+            "ADV-6: the macro must include preserveAspectRatio='none' on the <svg> element "
+            "so the sparkline scales freely within its card container."
+        )
+
+    # -----------------------------------------------------------------------
+    # ADV-7: Mixed old + new observations — SVG appears exactly once
+    # -----------------------------------------------------------------------
+
+    def test_adv36_7_old_and_new_obs_mixed_in_same_response(self, client):
+        """ADV-7: two obs in response — one old (no sparkline), one new (has sparkline).
+
+        When the dashboard lists both a pre-3.6 obs (no equity_curve_downsampled)
+        and a Phase 3.6 obs (with equity_curve_downsampled), the SVG must appear
+        exactly once — for the new row only.  The old row must not get an SVG stub.
+        """
+        fixture = _load_basic_fixture()
+        old_obs = fixture["observation_survivor"]
+
+        # Confirm old obs truly lacks the key.
+        assert "equity_curve_downsampled" not in old_obs["raw_response"], (
+            "Test setup error: old fixture already has equity_curve_downsampled."
+        )
+
+        new_obs = _make_phase36_obs(obs_id=707, sparkline=[0.1, 0.5, 0.9])
+
+        with (
+            patch(
+                "database.get_advisor_observations_for_symphony",
+                return_value=[old_obs, new_obs],
+            ),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=mixed-test")
+
+        assert resp.status_code == 200, (
+            f"GET returned {resp.status_code} for mixed old+new obs. ADV-7."
+        )
+
+        html = resp.get_data(as_text=True)
+        svg_count = html.count("<svg")
+
+        assert svg_count == 1, (
+            f"Expected exactly 1 <svg> element in the mixed-obs response, got {svg_count}. "
+            "ADV-7: the old obs (no equity_curve_downsampled) must not produce an SVG stub. "
+            "The new obs (with sparkline) must produce exactly one SVG."
+        )
+
+    # -----------------------------------------------------------------------
+    # ADV-8: equity_curve_downsampled absent vs empty — both suppress SVG
+    # -----------------------------------------------------------------------
+
+    def test_adv36_8_equity_curve_absent_no_svg(self, client):
+        """ADV-8a: obs with equity_curve_downsampled key ABSENT → no <svg> rendered.
+
+        When the key is absent from raw_response, the route sets
+        obs['sparkline_points'] = rr.get('equity_curve_downsampled') → None.
+        The Jinja macro guard ``{% if points %}`` evaluates False for None.
+        No SVG element must be emitted.
+        """
+        fixture = _load_basic_fixture()
+        obs = fixture["observation_survivor"]
+
+        # Guarantee the key is absent.
+        rr = dict(obs["raw_response"])
+        rr.pop("equity_curve_downsampled", None)
+        obs = dict(obs)
+        obs["raw_response"] = rr
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-absent")
+
+        html = resp.get_data(as_text=True)
+
+        assert "<svg" not in html, (
+            "Rendered HTML contains '<svg' when equity_curve_downsampled is absent. "
+            "ADV-8a: absent key → sparkline_points=None → macro must skip render."
+        )
+
+    def test_adv36_8_equity_curve_empty_list_no_svg(self, client):
+        """ADV-8b: obs with equity_curve_downsampled=[] → no <svg> rendered.
+
+        An empty list is falsy in Jinja2 (``{% if points %}`` is False).
+        No SVG element must be emitted — not even an empty stub.
+        This mirrors SR-5 but is explicitly grouped here as an ADV-8 variant.
+        """
+        obs = _make_phase36_obs(obs_id=708, sparkline=[])
+
+        with (
+            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
+            patch("analytics.list_available_symphonies", return_value=[]),
+        ):
+            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-empty-list")
+
+        html = resp.get_data(as_text=True)
+
+        assert "<svg" not in html, (
+            "Rendered HTML contains '<svg' when equity_curve_downsampled=[]. "
+            "ADV-8b: empty list → falsy → macro must skip render. "
+            "No empty SVG stub may appear."
+        )
+
+    # -----------------------------------------------------------------------
+    # ADV-9: _downsample([]) returns [] (empty series edge case)
+    # -----------------------------------------------------------------------
+
+    def test_adv36_9_downsample_none_input_is_empty(self):
+        """ADV-9: _downsample([]) returns [] without error.
+
+        An empty series is a valid edge case — no points to downsample.
+        The function must return an empty list, not raise IndexError or
+        produce a single-element list from some fallback path.
+        """
+        from advisors.strategy_builder_engine import _downsample
+
+        result = _downsample([])
+
+        assert result == [], (
+            f"_downsample([]) returned {result!r}. "
+            "ADV-9: empty input must return [] (empty list). "
+            "n=0 <= target=60, so the 'n <= target → return list(series)' branch applies."
+        )
+
+    # -----------------------------------------------------------------------
+    # ADV-10: _downsample copy semantics — caller mutation does not affect result
+    # -----------------------------------------------------------------------
+
+    def test_adv36_10_downsample_preserves_copy_not_same_object(self):
+        """ADV-10: _downsample([1.0], target=60) returns a new list, not the original.
+
+        For n <= target the implementation does ``return list(series)`` — a copy,
+        not the original object.  Mutating the returned list must not affect the
+        original, and mutating the original must not affect the returned list.
+        This guards against callers aliasing the result or the implementation
+        returning the same object reference.
+        """
+        from advisors.strategy_builder_engine import _downsample
+
+        original = [1.0]
+        result = _downsample(original, target=60)
+
+        # Must be a different object.
+        assert result is not original, (
+            "_downsample([1.0], target=60) returned the same list object as the input. "
+            "ADV-10: the implementation must return a copy (list(series)), not the original. "
+            "Returning the same object allows callers to alias and mutate the persisted series."
+        )
+
+        # Mutating the result must not affect the original.
+        result.append(99.0)
+        assert original == [1.0], (
+            f"After appending to result, original became {original!r}. "
+            "ADV-10: result and original must be independent objects."
+        )
+
+        # Mutating the original must not affect a freshly computed result.
+        original2 = [2.0]
+        result2 = _downsample(original2, target=60)
+        original2[0] = 999.0
+        assert result2[0] == 2.0, (
+            f"After mutating original2, result2[0]={result2[0]!r} (expected 2.0). "
+            "ADV-10: the returned copy must be independent of the source list."
+        )
