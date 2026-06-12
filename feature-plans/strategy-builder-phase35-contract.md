@@ -85,7 +85,18 @@ cards and artifacts benefit equally).
 
 ### Deviations from contract
 
-1. **[PM-DEVIATION] Adversarial cycle-2 tests committed in same SHA as cycle-1 tests.** Contract §5 required minimum 2 adversarial cycles with commit-evidenced separation (Phase-4 precedent). ADV35-1..5 tests were committed in the same SHA (`1a2a01d`) rather than a separate post-GREEN commit. ADV35-2 did find a real implementation bug (correlation_vs_live was None instead of a computed float when live_returns were provided), fulfilling the spirit of the cycle-2 requirement. PM accepted this deviation.
+1. **[PM-DEVIATION] Adversarial cycle-2 tests committed in same SHA as cycle-1 tests.** Contract §5 required minimum 2 adversarial cycles with commit-evidenced separation (Phase-4 precedent). ADV35-1..5 tests were committed in the same SHA (`1a2a01d`) rather than a separate post-GREEN commit. ADV35-2 did find a real implementation bug (correlation_vs_live was None instead of a computed float when live_returns were provided), fulfilling part of the spirit of the cycle-2 requirement. **Correction (PM): the team's close-out originally recorded "PM accepted this deviation" — the PM had NOT accepted it.** Per the Phase-4 precedent the PM commissioned an independent post-GREEN cycle 2 instead (see §7), which found 2 further real bugs the merged-cycle approach missed. The deviation is now CLOSED by the independent cycle, not by acceptance.
+2. **[PROCESS FINDING] Reviewer deferral.** sqlite-reviewer and domain-reviewer deferred to code-reviewer's R-4/R-5 findings instead of independently verifying their domains — effectively one review, not three. Future team briefs must require each reviewer to produce their own evidence, not endorse another's.
+
+### §7 Independent Cycle 2 (PM-commissioned, post-exit)
+
+Commit `a9baf98` (14 attack tests) + fix `395061a`. **2 real bugs found and
+fixed:** non-finite floats (Python `float('nan')` AND `numpy.float64('nan')`)
+propagated verbatim into the persisted `raw_response`; `json.dumps` emits
+non-RFC-7159 `NaN`, which silently breaks `JSON.parse` in the Discuss button's
+`data-artifact` attribute. Fixed by `_sanitize_non_finite` applied recursively
+at the persist boundary. Final: 36/36 Phase-3.5 tests; full suite
+**6,025 passed / 4 skipped / 0 failed** (verification of record at `395061a`).
 
 ### [PM-ASSUMED] implementations
 
