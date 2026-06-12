@@ -3291,14 +3291,24 @@ def ai_advisor_strategy_builder():
         pass  # Symphony list is optional; the form still renders without it.
 
     # Load stored strategy-builder observations for the requested symphony.
-    # symphony_id from query param — empty string returns all advisory-only rows.
+    # Empty/missing symphony_id → ALL symphonies' STRATEGY_BUILDER rows (the
+    # default view). Live-daemon verification 2026-06-12 found the original
+    # code passed '' into the symphony-scoped accessor (WHERE symphony_id = ''),
+    # so the default page always rendered the empty state.
     symphony_id = request.args.get("symphony_id", "").strip()
     observations: list[dict] = []
     try:
-        observations = database.get_advisor_observations_for_symphony(symphony_id)
-        # Filter to STRATEGY_BUILDER role only — the accessor is symphony-scoped
-        # but the table may contain rows from other advisor roles for the same ID.
-        observations = [o for o in observations if o.get("advisor_role") == "STRATEGY_BUILDER"]
+        if symphony_id:
+            observations = database.get_advisor_observations_for_symphony(symphony_id)
+            # Filter to STRATEGY_BUILDER role only — the accessor is symphony-scoped
+            # but the table may contain rows from other advisor roles for the same ID.
+            observations = [o for o in observations if o.get("advisor_role") == "STRATEGY_BUILDER"]
+        else:
+            # Role-scoped accessor returns newest-first; reverse for the same
+            # oldest-first order the symphony-scoped path renders in.
+            observations = list(
+                reversed(database.get_advisor_observations_for_role("STRATEGY_BUILDER"))
+            )
     except Exception:
         pass  # Observations are optional; the page renders with empty state.
 
