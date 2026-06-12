@@ -1,5 +1,19 @@
 # Strategy Builder — Phase 2 Contract: `advisors/strategy_builder_engine.py`
 
+> **PHASE 2 COMPLETE — 2026-06-12.** Delivered by Toxic Pair TDD team (resumed
+> session after a mid-phase lead crash; no work lost). Final: 97 passed / 2
+> conditional skips / 0 failed; ruff clean; zero full-suite collateral vs
+> baseline. Reviewer round 1 found 1 BLOCKER (`select-fn` values must be
+> `top`/`bottom` per grammar §3.5) + 2 MAJOR (head→tail alignment in
+> correlation/blended-DD screens; T6/T7 `sort-by-fn` unverified) — all fixed,
+> round 2 dual APPROVE. **PM-ACCEPTED deviation:** T6/T7 emit
+> `cumulative-return`/`standard-deviation-return` in sort-by position where
+> they are verified only as indicator fns — documented in code + grammar doc;
+> runtime degradation is graceful (failed backtest → candidate excluded and
+> marked). First live backtest run will attest or refute; revisit then.
+> [PM-ASSUMED] values implemented as ledgered in the team exit report
+> (MAX_CANDIDATES_PER_RUN=30, screen defaults, objective→template mapping).
+
 **Status:** BINDING contract for the Phase-2 Toxic Pair TDD team. Where this doc
 conflicts with the living doc (`strategy-builder.md`), this doc wins for Phase 2.
 Grammar authority: `strategy-builder-composer-grammar.md` incl. §16. Schema layer
