@@ -71,7 +71,14 @@ class Objective(enum.Enum):
 
 @dataclass
 class ScreenConfig:
-    """Post-gate presentation filter configuration. Defaults are named constants above."""
+    """Post-gate presentation filter configuration. Defaults are named constants above.
+
+    Applied to gate *survivors* only — never to the gate's input batch.
+    Shrinking the gate input would corrupt the FDR correction (AC-3.2).
+
+    A None value for any metric (e.g. insufficient history) causes the
+    candidate to fail closed — it is excluded from screened_survivors.
+    """
 
     min_cagr: float = SCREEN_MIN_CAGR_DEFAULT
     min_sharpe: float = SCREEN_MIN_SHARPE_DEFAULT
@@ -184,7 +191,13 @@ def rsi_rotation(
     neutral_tickers: list[str],
     name: str = "RSI Rotation",
 ) -> dict:
-    """T5: RSI-based rotation — overbought when RSI > threshold, else neutral."""
+    """T5: RSI-based rotation — overbought when RSI > threshold, else neutral.
+
+    The indicator function token is ``relative-strength-index`` (the full canonical
+    name per grammar doc §4.1).  Using the abbreviation ``rsi`` is a lint warning
+    (unknown fn) and must NOT appear as a standalone fn value in any tree this
+    template emits.
+    """
     # Condition: relative-strength-index(signal, window) > threshold (fixed value)
     lhs = symphony_schema.make_indicator(
         "relative-strength-index", signal_ticker, window=rsi_window
@@ -509,7 +522,33 @@ def propose_strategies(
 ) -> ProposalRun:
     """Propose new candidate symphonies from scratch.
 
-    Never raises — returns ProposalRun with error field on any failure.
+    Never raises — all exceptions are caught and surfaced as ``ProposalRun.error``.
+
+    Args:
+        objective: Steers template selection and parameter ranges.
+        universe: Ticker symbols to draw candidates from (at most 10 are used).
+        screen_config: Post-gate presentation filter; applied to gate survivors only
+            (never to the gate input — see AC-3.2 FDR integrity).
+        live_returns: Chronological daily returns of the live portfolio in
+            percent scale (e.g. 0.5 means +0.5%).  Used for blended-drawdown and
+            Pearson-correlation screens.  May be empty; screens that require it are
+            skipped when it is.
+        symphony_id: Composer symphony ID that observations are keyed to.
+            Defaults to ``""`` (advisory runs not tied to a specific symphony).
+        incumbent_oos_alpha: Out-of-sample alpha of the incumbent strategy, passed
+            directly to ``evaluate_candidate_batch`` for the BHY FDR gate.
+        default_oos_alpha: Fallback OOS alpha used by the gate when no incumbent
+            alpha is available.
+
+    Returns:
+        ProposalRun where:
+        - ``candidates`` contains only successfully-backtested ``CandidateInfo``
+          objects (candidates whose backtest errored are omitted).
+        - ``gated_batch.n_candidates`` equals ``len(candidates)`` (the FDR gate
+          input count — never the total attempted or the post-screen count).
+        - ``screened_survivors`` is a subset of ``gated_batch.survivors``.
+        - ``error`` is non-None when a top-level exception occurred.
+
     FDR integrity: evaluate_candidate_batch receives ALL successfully backtested
     candidates (AC-3.2). Screens apply only to gate survivors (post-gate presentation).
     """
