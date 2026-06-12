@@ -122,9 +122,12 @@ def _empty_gate_batch() -> GatedBatch:
 
 
 def _has_composer_key() -> bool:
-    from alpha_bot_execution import COMPOSER_KEY_ID, COMPOSER_SECRET  # noqa: PLC0415
+    try:
+        from alpha_bot_execution import COMPOSER_KEY_ID, COMPOSER_SECRET  # noqa: PLC0415
 
-    return bool(COMPOSER_KEY_ID and COMPOSER_SECRET)
+        return bool(COMPOSER_KEY_ID and COMPOSER_SECRET)
+    except ImportError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -219,8 +222,12 @@ def rsi_rotation(
 def momentum_top_n(universe: list[str], n: int, window: int, name: str = "Momentum Top N") -> dict:
     """T6: select top-N assets by cumulative return over the given window."""
     assets = [symphony_schema.make_asset(t) for t in universe]
+    # select-fn "top" is the VERIFIED-LOCAL Composer API value (grammar §3.5).
+    # sort-by-fn "cumulative-return" is used per Phase-2 contract mandate (T6).
+    # UNVERIFIED as sort-by-fn in grammar fixtures (verified as indicator fn only).
+    # If Composer API rejects, consult grammar doc §4.2 and composer-api-researcher.
     flt = symphony_schema.make_filter(
-        select_fn="select-top",
+        select_fn="top",
         select_n=n,
         sort_by_fn="cumulative-return",
         children=assets,
@@ -232,8 +239,12 @@ def momentum_top_n(universe: list[str], n: int, window: int, name: str = "Moment
 def low_vol_floor(universe: list[str], n: int, window: int, name: str = "Low Vol Floor") -> dict:
     """T7: select bottom-N assets by standard-deviation-return over the given window."""
     assets = [symphony_schema.make_asset(t) for t in universe]
+    # select-fn "bottom" is the VERIFIED-LOCAL Composer API value (grammar §3.5).
+    # sort-by-fn "standard-deviation-return" is used per Phase-2 contract mandate (T7).
+    # UNVERIFIED as sort-by-fn in grammar fixtures (verified as indicator fn only).
+    # If Composer API rejects, consult grammar doc §4.2 and composer-api-researcher.
     flt = symphony_schema.make_filter(
-        select_fn="select-bottom",
+        select_fn="bottom",
         select_n=n,
         sort_by_fn="standard-deviation-return",
         children=assets,
@@ -411,7 +422,7 @@ def _pearson_corr(xs: list[float], ys: list[float]) -> float:
     n = min(len(xs), len(ys))
     if n < 2:
         return 0.0
-    xs, ys = xs[:n], ys[:n]
+    xs, ys = xs[-n:], ys[-n:]
     mean_x = sum(xs) / n
     mean_y = sum(ys) / n
     cov = sum((a - mean_x) * (b - mean_y) for a, b in zip(xs, ys, strict=True)) / n
@@ -450,13 +461,23 @@ def _passes_screens(
 
     # max_abs_drawdown (max_drawdown <= 0 from quantstats; abs converts)
     mdd = metrics.get("max_drawdown")
-    if mdd is None or abs(mdd) > screen_config.max_abs_drawdown:
+    if mdd is None:
+        return False
+    if mdd > 0:
+        logger.warning(
+            "_passes_screens: max_drawdown > 0 from analytics layer (expected <= 0); "
+            "treating as magnitude"
+        )
+    if abs(mdd) > screen_config.max_abs_drawdown:
         return False
 
-    # max_blended_abs_drawdown: blend candidate and live returns 50/50
+    # max_blended_abs_drawdown: blend candidate and live returns 50/50 (tail-aligned)
     if live_returns and returns_pct:
         n = min(len(live_returns), len(returns_pct))
-        blended = [(r + lv) * 0.5 for r, lv in zip(returns_pct[:n], live_returns[:n], strict=True)]
+        blended = [
+            (r + lv) * 0.5
+            for r, lv in zip(returns_pct[-n:], live_returns[-n:], strict=True)
+        ]
         blended_metrics = compute_quantstats_metrics(blended)
         blended_mdd = blended_metrics.get("max_drawdown")
         if blended_mdd is None or abs(blended_mdd) > screen_config.max_blended_abs_drawdown:
@@ -490,7 +511,6 @@ def _persist_survivor(
         subject_id=info.candidate_id,
         verdict="ADOPT_CANDIDATE",
         is_advisory_only=1,
-        observation_type=_OBSERVATION_TYPE,
         raw_response={
             "objective": info.params.get("objective", ""),
             "template_id": info.template_id,
