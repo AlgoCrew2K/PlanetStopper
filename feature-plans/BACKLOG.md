@@ -30,7 +30,10 @@ nothing else is worked on until the operator sees a real report + logs.
 
 | # | Feature | File | Status |
 |---|---------|------|--------|
-| B1 | Lens data producers: GDELT tone, technicals, derivatives | [lens-data-completion.md](lens-data-completion.md) | 🔴 (deferred until A unblocks) |
+| B0 | Epic overview / cross-cutting rules | [lens-data-completion.md](lens-data-completion.md) | 🔴 (deferred until A unblocks) |
+| B1 | GDELT tone / sentiment producer → `sentiment_analyst` | [lens-data-gdelt-sentiment.md](lens-data-gdelt-sentiment.md) | 🔴 |
+| B2 | Technicals producer → `technicals_analyst` | [lens-data-technicals.md](lens-data-technicals.md) | 🔴 |
+| B3 | Derivatives producer → `derivatives_analyst` | [lens-data-derivatives.md](lens-data-derivatives.md) | 🔴 |
 
 ## Epic C — Platform polish / tech debt (independent, schedule around A)
 

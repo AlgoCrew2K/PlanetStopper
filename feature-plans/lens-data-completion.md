@@ -1,53 +1,35 @@
-# Lens Data Completion (Cycle 2b)
+# Lens Data Completion (Cycle 2b) — Epic B Overview
 
-**Epic:** B — feeds richer reads to the Prism analysts · **Status:** 🔴 deferred until Epic A
-(Market Prism) unblocks. Not a hard blocker for Phase 2 (analysts run `limited-inputs` where a
-producer is missing), but raises the quality of the overnight read.
+**Status:** 🔴 deferred until Epic A (Market Prism) unblocks. Not a hard blocker for Prism
+Phase 2 (analysts run `limited-inputs` where a producer is missing), but raises the quality of
+the overnight read.
 
 ## Goal
 
-Complete the off-hours lens data layer so each Prism analyst has real directional data to
-reason about. Cycle 4 stood up the pipeline scaffold + some producers; three producers remain
-thin or stubbed.
+Complete the off-hours lens data layer so each Prism analyst has real directional data to reason
+about. Cycle 4 stood up the pipeline scaffold + some producers; three producers remain thin or
+stubbed. Each is its own feature (separable data source → can be a parallel agent / its own
+RED→GREEN cycle).
 
-## Sub-deliverables (each can be a parallel agent / its own RED→GREEN)
+## Features (each has its own plan)
 
-### B1a — GDELT tone fetch (sentiment lens)
-- Pull GDELT tone / news-sentiment signal for the relevant universe; normalize to a directional
-  score the `sentiment_analyst` can consume. $0/mo source.
-- Producer feeds the existing `advisors/lens_pipeline.py` data layer.
+| # | Producer | Feeds analyst | File |
+|---|----------|---------------|------|
+| B1 | GDELT tone / sentiment | `sentiment_analyst` | [lens-data-gdelt-sentiment.md](lens-data-gdelt-sentiment.md) |
+| B2 | Technicals (price/trend/breadth) | `technicals_analyst` | [lens-data-technicals.md](lens-data-technicals.md) |
+| B3 | Derivatives (vol/skew/positioning) | `derivatives_analyst` | [lens-data-derivatives.md](lens-data-derivatives.md) |
 
-### B1b — Technicals producer (technicals lens)
-- Price/trend/breadth technicals (e.g. moving-average posture, breadth, momentum) for the
-  universe, normalized for the `technicals_analyst`.
+## Cross-cutting rules (apply to all three)
 
-### B1c — Derivatives producer (derivatives lens)
-- Options/vol/positioning signals (e.g. vol term structure, skew, put/call) for the
-  `derivatives_analyst`. Identify a $0/mo source first (researcher task).
-
-## Acceptance criteria
-
-1. Each producer returns a normalized, documented signal shape the corresponding analyst can
-   pull, with an honest-availability empty-state (no fabricated data when the source is down).
-2. Producers are fixture-testable (captured-from-producer or schema-derived + runtime
-   validator — NOT parser+fixture co-design, which is a Gate-1 fail).
-3. No hardcoded producer values in tests — assert shape/format/presence.
-4. Off-execution-path; bounded retries; no blocking I/O on any execution path.
-5. Tests never hardcode producer-computed values (rates/tone/percents derive from fixture or
-   assert shape).
-
-## Team / approach
-
-Toxic Pair TDD (new codepaths): test-writer + implementer + `composer-alpaca-integration` (or
-the relevant integration specialist) + doc-gen. Precede client work for any new source with the
-matching researcher (`composer-api-researcher` style) to pin the contract.
-
-## Provenance hard rule (Gate 1)
-
-Fixtures must be captured-from-producer, schema-derived with a runtime validator, or
-producer-owner signed off. Parser+fixture co-design is an automatic Gate-1 fail.
+- Honest-availability empty-state — NEVER fabricate data when a source is down.
+- Provenance hard rule (Gate 1): fixtures captured-from-producer, schema-derived + runtime
+  validator, or producer-owner signed off. Parser+fixture co-design is an automatic Gate-1 fail.
+- Tests never hardcode producer-computed values (assert shape/format/presence).
+- Off-execution-path; bounded retries (persistent-429 infinite-loop was a PC-crash root cause);
+  no blocking I/O on any execution path.
+- Each producer feeds the existing `advisors/lens_pipeline.py` data layer that the analysts pull.
 
 ## Dependencies
 
-Sequenced AFTER Epic A's observed proof (exclusive-focus rule). Pulls into the Phase-2 data
-layer the analysts already read from.
+Sequenced AFTER Epic A's observed proof (exclusive-focus rule). The three producers are mutually
+independent and can be dispatched in parallel once unblocked.
