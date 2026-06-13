@@ -141,6 +141,23 @@ def _make_fake_client(text: str = None):
     return fake_client
 
 
+def _make_spa_corr_module():
+    """Return a fake advisors.correlation_diagnostic module for SPA route mocks."""
+    fake_corr = MagicMock()
+    fake_corr.compute_pairwise_correlations.return_value = []
+    fake_corr.CRISIS_CAVEAT = ""
+    return fake_corr
+
+
+def _spa_obs_side_effect(sb_obs):
+    """Return a get_advisor_observations_for_role side_effect serving sb_obs for STRATEGY_BUILDER."""
+    def _side_effect(role, limit=50):
+        if role == "STRATEGY_BUILDER":
+            return list(sb_obs) if sb_obs is not None else []
+        return []
+    return _side_effect
+
+
 # ===========================================================================
 # Group AA: validate_artifact M6 (AC-1)
 # ===========================================================================
@@ -518,7 +535,7 @@ def test_ab2_no_pre_existing_m1_m4_field_removed_from_allowlist():
 
 
 def test_ac1_get_route_passes_card_artifacts_to_render_template(client):
-    """AC-1: GET /ai-advisor/strategy-builder passes card_artifacts to render_template.
+    """AC-1: GET /ai-advisor (SPA) passes sb_card_artifacts to render_template.
 
     Phase 4 extends the GET route to serialize per-card M6 artifact dicts into
     the template context under the key 'card_artifacts'. The implementer must
@@ -538,30 +555,34 @@ def test_ac1_get_route_passes_card_artifacts_to_render_template(client):
         return "<html><body>stub</body></html>"
 
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": _make_spa_corr_module()}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
-    assert resp.status_code == 200, f"GET /ai-advisor/strategy-builder returned {resp.status_code}."
+    assert resp.status_code == 200, f"GET /ai-advisor returned {resp.status_code}; expected 200 (unified SPA route)."
 
-    assert "card_artifacts" in captured, (
-        "GET /ai-advisor/strategy-builder must pass 'card_artifacts' to render_template. "
+    assert "sb_card_artifacts" in captured, (
+        "GET /ai-advisor (SPA) must pass 'sb_card_artifacts' to render_template. "
         "Phase 4 requires per-card M6 artifact dicts in the template context so the "
         "'Discuss this proposal' button can be populated with the artifact JSON. "
-        "DOM contract: context variable name is 'card_artifacts' (keyed by obs['id'])."
+        "DOM contract: context variable name is 'sb_card_artifacts' (keyed by obs['id'])."
     )
-    card_artifacts = captured["card_artifacts"]
+    card_artifacts = captured["sb_card_artifacts"]
     assert isinstance(card_artifacts, dict), (
-        f"card_artifacts must be a dict (keyed by obs id). Got {type(card_artifacts).__name__}."
+        f"sb_card_artifacts must be a dict (keyed by obs id). Got {type(card_artifacts).__name__}."
     )
 
 
 def test_ac2_card_artifacts_keyed_by_obs_id_with_strategy_proposal_type(client):
     """AC-2: card_artifacts keyed by obs id; each value has artifact_type=='strategy_proposal'.
 
-    The Discuss button JS reads card_artifacts[obs_id].artifact_type to confirm
+    The Discuss button JS reads sb_card_artifacts[obs_id].artifact_type to confirm
     it is an M6 artifact before sending to /ai-advisor/chat/send.
     Wrong key type (str vs int) or wrong artifact_type would silently break chat grounding.
     """
@@ -576,27 +597,31 @@ def test_ac2_card_artifacts_keyed_by_obs_id_with_strategy_proposal_type(client):
         return "<html><body>stub</body></html>"
 
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": _make_spa_corr_module()}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        client.get("/ai-advisor")
 
-    card_artifacts = captured.get("card_artifacts", {})
+    card_artifacts = captured.get("sb_card_artifacts", {})
 
     # Key must be obs["id"] (int), not str(id) or index
     assert obs_id in card_artifacts, (
-        f"card_artifacts must be keyed by obs['id']={obs_id!r} (int). "
+        f"sb_card_artifacts must be keyed by obs['id']={obs_id!r} (int). "
         f"Got keys: {list(card_artifacts.keys())!r}. "
-        "DOM contract: key is obs['id'] exactly — the JS reads card_artifacts[obs.id]."
+        "DOM contract: key is obs['id'] exactly — the JS reads sb_card_artifacts[obs.id]."
     )
 
     artifact = card_artifacts[obs_id]
     assert isinstance(artifact, dict), (
-        f"card_artifacts[{obs_id}] must be a dict. Got {type(artifact).__name__}."
+        f"sb_card_artifacts[{obs_id}] must be a dict. Got {type(artifact).__name__}."
     )
     assert artifact.get("artifact_type") == "strategy_proposal", (
-        f"card_artifacts[{obs_id}]['artifact_type'] must be 'strategy_proposal'. "
+        f"sb_card_artifacts[{obs_id}]['artifact_type'] must be 'strategy_proposal'. "
         f"Got {artifact.get('artifact_type')!r}. "
         "The artifact_type identifies this as an M6 artifact to the chat backend."
     )
@@ -621,13 +646,17 @@ def test_ac3_server_built_artifact_contains_template_id_from_raw_response(client
         return "<html><body>stub</body></html>"
 
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": _make_spa_corr_module()}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        client.get("/ai-advisor")
 
-    card_artifacts = captured.get("card_artifacts", {})
+    card_artifacts = captured.get("sb_card_artifacts", {})
     artifact = card_artifacts.get(obs_id, {})
 
     assert "template_id" in artifact, (
@@ -661,13 +690,17 @@ def test_ac4_server_built_artifact_contains_tickers_from_raw_response(client):
         return "<html><body>stub</body></html>"
 
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": _make_spa_corr_module()}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        client.get("/ai-advisor")
 
-    card_artifacts = captured.get("card_artifacts", {})
+    card_artifacts = captured.get("sb_card_artifacts", {})
     artifact = card_artifacts.get(obs_id, {})
 
     assert "tickers" in artifact, (
@@ -698,13 +731,17 @@ def test_ac5_server_built_artifact_contains_rules_text_from_raw_response(client)
         return "<html><body>stub</body></html>"
 
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": _make_spa_corr_module()}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        client.get("/ai-advisor")
 
-    card_artifacts = captured.get("card_artifacts", {})
+    card_artifacts = captured.get("sb_card_artifacts", {})
     artifact = card_artifacts.get(obs_id, {})
 
     assert "rules_text" in artifact, (
@@ -746,13 +783,17 @@ def test_ac6_server_built_artifact_truncates_rules_text_to_500_chars(client):
         return "<html><body>stub</body></html>"
 
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": _make_spa_corr_module()}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        client.get("/ai-advisor")
 
-    card_artifacts = captured.get("card_artifacts", {})
+    card_artifacts = captured.get("sb_card_artifacts", {})
     artifact = card_artifacts.get(obs_id, {})
     rules_in_artifact = artifact.get("rules_text", "")
 
@@ -782,11 +823,16 @@ def test_ad1_survivor_card_contains_discuss_proposal_btn_testid(client):
     fixture = _load_basic_fixture()
     obs = fixture["observation_survivor"]
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
     if resp.status_code != 200:
         pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
@@ -809,11 +855,16 @@ def test_ad2_rejected_card_contains_discuss_proposal_btn_testid(client):
     fixture = _load_basic_fixture()
     obs = fixture["observation_rejected"]
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
     if resp.status_code != 200:
         pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
@@ -839,11 +890,16 @@ def test_ad3_discuss_button_carries_data_artifact_with_strategy_proposal_type(cl
     fixture = _load_basic_fixture()
     obs = fixture["observation_survivor"]
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
     if resp.status_code != 200:
         pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
@@ -914,7 +970,7 @@ def test_ae1_discuss_button_is_not_type_submit(client):
         patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
         patch("analytics.list_available_symphonies", return_value=[]),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
     if resp.status_code != 200:
         pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
@@ -957,7 +1013,7 @@ def test_ae2_discuss_button_does_not_post_to_non_chat_endpoint(client):
         patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
         patch("analytics.list_available_symphonies", return_value=[]),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
     if resp.status_code != 200:
         pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
@@ -1004,7 +1060,7 @@ def test_ae3_f17_adversarial_no_forms_no_submit_buttons_still_passes(client):
         patch("database.get_advisor_observations_for_symphony", return_value=observations),
         patch("analytics.list_available_symphonies", return_value=[]),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
     if resp.status_code != 200:
         pytest.skip(f"Route returned {resp.status_code} — skipping F-17 re-run.")
@@ -1558,7 +1614,7 @@ def test_adv8_get_route_with_empty_observations_returns_empty_dict_card_artifact
 def test_adv9_card_artifacts_key_matches_obs_id_exactly_not_str_not_index(client):
     """ADV-9: card_artifacts key matches obs["id"] exactly — int, not str(id), not index.
 
-    The Jinja template accesses card_artifacts[obs.id] — if the key is str(id)
+    The Jinja template accesses sb_card_artifacts[obs.id] — if the key is str(id)
     or the positional index, the lookup would silently fail (returning None/default),
     breaking the Discuss button data population without any visible error.
     """
@@ -1588,9 +1644,9 @@ def test_adv9_card_artifacts_key_matches_obs_id_exactly_not_str_not_index(client
 
     # Must be keyed by obs["id"] as int
     assert obs_id in card_artifacts, (
-        f"sb_card_artifacts must be keyed by obs['id']={obs_id} (int). "
+        f"sb_sb_card_artifacts must be keyed by obs['id']={obs_id} (int). "
         f"Got keys: {list(card_artifacts.keys())!r}. "
-        "The Jinja template uses sb_card_artifacts[obs.id] — key must be int, not str."
+        "The Jinja template uses sb_sb_card_artifacts[obs.id] — key must be int, not str."
     )
 
     # Must NOT be keyed by str(id) in addition to or instead of int id
@@ -1604,7 +1660,7 @@ def test_adv9_card_artifacts_key_matches_obs_id_exactly_not_str_not_index(client
 
     # Must NOT be keyed by positional index (0)
     assert 0 not in card_artifacts or obs_id in card_artifacts, (
-        "sb_card_artifacts must be keyed by obs['id'], not by positional index. "
+        "sb_sb_card_artifacts must be keyed by obs['id'], not by positional index. "
         "Index-keyed dicts break when observations are reordered or filtered."
     )
 
@@ -2281,7 +2337,7 @@ class TestAdversarialCycle2:
             patch("analytics.list_available_symphonies", return_value=[]),
             patch.object(app_module, "render_template", side_effect=_capture),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
 
         assert resp.status_code != 500, (
             f"GET route must not 500 when raw_response=0 (falsy int → or {{}} fires). "
@@ -2291,7 +2347,7 @@ class TestAdversarialCycle2:
     def test_c2_5d_get_route_obs_missing_id_key_does_not_500(self, client):
         """C2-5d: GET route with observation row missing 'id' key must return 200, not crash.
 
-        The card_artifacts loop uses `card_artifacts[obs["id"]]` as the dict key.
+        The card_artifacts loop uses `sb_card_artifacts[obs["id"]]` as the dict key.
         A missing 'id' raises KeyError, crashing the page for ALL observations
         in the response (one bad row kills the entire page render).
 
@@ -2351,7 +2407,7 @@ class TestAdversarialCycle2:
             patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
             patch("analytics.list_available_symphonies", return_value=[]),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
 
         if resp.status_code != 200:
             pytest.skip(f"Route returned {resp.status_code} — skipping JS scan.")
@@ -2409,7 +2465,7 @@ class TestAdversarialCycle2:
             patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
             patch("analytics.list_available_symphonies", return_value=[]),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
 
         if resp.status_code != 200:
             pytest.skip(f"Route returned {resp.status_code} — skipping onclick scan.")
@@ -2464,7 +2520,7 @@ class TestAdversarialCycle2:
             patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
             patch("analytics.list_available_symphonies", return_value=[]),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
 
         if resp.status_code != 200:
             pytest.skip(f"Route returned {resp.status_code} — skipping type check.")
@@ -2506,11 +2562,16 @@ class TestAdversarialCycle2:
             fixture["observation_backtest_failed"],
         ]
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=observations),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect(observations)),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
 
         if resp.status_code != 200:
             pytest.skip(f"Route returned {resp.status_code} — skipping form scan.")

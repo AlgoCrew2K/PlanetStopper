@@ -1967,11 +1967,16 @@ class TestIndependentCycle2Phase35:
                 "This is a pre-3.5 fixture — it must not contain Phase 3.5 fields."
             )
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([obs])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
 
         assert resp.status_code == 200, (
             f"IC2-6a: GET returned {resp.status_code} for pre-3.5 golden fixture. "
@@ -2012,24 +2017,29 @@ class TestIndependentCycle2Phase35:
             captured.update(kwargs)
             return "<html><body>stub</body></html>"
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([obs])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch.object(app_module, "render_template", side_effect=capture_render),
         ):
-            client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            client.get("/ai-advisor")
 
-        card_artifacts = captured.get("card_artifacts", {})
+        card_artifacts = captured.get("sb_card_artifacts", {})
         assert obs_id in card_artifacts, (
-            f"IC2-6b: card_artifacts missing entry for obs id={obs_id} (pre-3.5 fixture). "
-            "The GET route must build card_artifacts for all observation rows, not just new ones."
+            f"IC2-6b: sb_card_artifacts missing entry for obs id={obs_id} (pre-3.5 fixture). "
+            "The GET route must build sb_card_artifacts for all observation rows, not just new ones."
         )
         artifact = card_artifacts[obs_id]
 
         # Required artifact structure keys (Phase 4 contract)
         for required_key in ("artifact_type", "gate_verdict", "n_candidates"):
             assert required_key in artifact, (
-                f"IC2-6b: card_artifacts[{obs_id}] missing required key '{required_key}'. "
+                f"IC2-6b: sb_card_artifacts[{obs_id}] missing required key '{required_key}'. "
                 "The artifact must have the Phase 4 structural keys regardless of row vintage."
             )
 
@@ -2043,12 +2053,12 @@ class TestIndependentCycle2Phase35:
             val = artifact.get(key)
             # Key must be present
             assert key in artifact, (
-                f"IC2-6b: card_artifacts[{obs_id}] must have key '{key}' (with None value) "
+                f"IC2-6b: sb_card_artifacts[{obs_id}] must have key '{key}' (with None value) "
                 "for pre-3.5 row. Consistent artifact shape required for chat grounding."
             )
             # Value must be None, not the string 'None'
             assert val != "None", (
-                f"IC2-6b: card_artifacts[{obs_id}]['{key}']={val!r} is string 'None'. "
+                f"IC2-6b: sb_card_artifacts[{obs_id}]['{key}']={val!r} is string 'None'. "
                 "Must be Python None (JSON null), never the string 'None'."
             )
 
@@ -2071,11 +2081,16 @@ class TestIndependentCycle2Phase35:
             fixture["observation_backtest_failed"],
         ]
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=all_obs),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect(all_obs)),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
 
         assert resp.status_code == 200, (
             f"IC2-6c: GET returned {resp.status_code} when rendering all 3 pre-3.5 fixture rows. "
