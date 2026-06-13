@@ -1,0 +1,57 @@
+{
+  "_comment": "Fixture: a complete MARKET_PRISM summary row for Cycle-5 tests. Shape mirrors database.get_latest_market_prism_summary() return value. Values are representative sentinel strings — NOT real producer outputs.",
+  "id": 42,
+  "advisor_role": "MARKET_PRISM",
+  "subject_id": null,
+  "verdict": "neutral",
+  "created_at": "2026-06-13T03:17:00",
+  "raw_response": {
+    "run_ts": "2026-06-13T03:17:00",
+    "overall_sentiment": "neutral",
+    "sentiment_rationale": "Mixed signals: technicals lean bullish but macro headwinds persist.",
+    "per_lens_digest": {
+      "technicals": {
+        "available": true,
+        "summary": "RSI overbought; MACD positive crossover.",
+        "sources": []
+      },
+      "sentiment": {
+        "available": true,
+        "summary": "Retail sentiment elevated; institutional flows neutral.",
+        "sources": [
+          {
+            "title": "Market Sentiment Daily",
+            "url": "https://example.com/sentiment",
+            "published": "2026-06-12",
+            "lens": "sentiment"
+          }
+        ]
+      },
+      "derivatives": {
+        "available": false,
+        "reason": "DerivativesError",
+        "sources": []
+      },
+      "macro": {
+        "available": true,
+        "summary": "CPI inline; Fed hold expected.",
+        "sources": []
+      },
+      "fundamentals": {
+        "available": false,
+        "reason": "TimeoutError",
+        "sources": []
+      }
+    },
+    "available_lens_count": 3,
+    "total_lens_count": 5,
+    "sources": [
+      {
+        "title": "Market Sentiment Daily",
+        "url": "https://example.com/sentiment",
+        "published": "2026-06-12",
+        "lens": "sentiment"
+      }
+    ]
+  }
+}
