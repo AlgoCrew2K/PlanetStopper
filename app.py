@@ -3447,15 +3447,10 @@ def ai_advisor_strategy_builder_run():
         )
     except Exception as exc:
         _daemon_log.error("ai_advisor_strategy_builder_run failed: %s", exc, exc_info=True)
-        return jsonify(
-            {
-                "survivors": [],
-                "rejected": [],
-                "n_candidates": 0,
-                "fdr_adjusted_threshold": None,
-                "error": f"evaluation error: {exc}",
-            }
-        ), 200
+        # D-1 security contract: do NOT echo str(exc) — exception messages may contain
+        # API keys or internal paths. Surface only the error class for operator triage;
+        # full detail is logged server-side via exc_info=True above.
+        return jsonify({"error": type(exc).__name__}), 200
 
     # Surface top-level engine error (e.g. no API key, unexpected exception).
     if run.error:
