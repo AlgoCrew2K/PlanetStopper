@@ -437,3 +437,30 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Status:** GREEN at cycle/market-prism-overview-surface. 16/16 Cycle-5 tests GREEN (AC-1 through AC-6). Acceptance criteria verified.
 
 ---
+
+## Market Prism — Prism Phase 1: Audit-Log Foundation (2026-06-13)
+
+### DE-PRISM-001: Per-run deliberation trail in `prism_audit_log` (migration 032)
+
+**Decision:** A new `prism_audit_log` table (migration 032) provides an append-only, per-agent, per-phase deliberation trail for the Market Prism nightly pipeline. Each nightly run may produce multiple rows — one per `agent_role` × `phase` combination — all keyed by `run_id` (an ISO UTC timestamp, identical to `run_ts`) so the full deliberation is auditable in one query. The `MARKET_PRISM` `advisor_observations` row also carries `run_id` in `raw_response`, providing a stable join key from report to audit trail.
+
+**Key design choices:**
+
+1. **`run_id` = `run_ts` (same value, two names).** The pipeline generates a single ISO UTC timestamp at the start of each run (`run_ts`). `run_id` is set to the same value and written into `raw_response` alongside the existing `run_ts` key. Callers use `.get("run_id")` (not direct access) for backward-compat: existing rows that predate Prism Phase 1 simply return `None` for the missing key and do not crash.
+
+2. **Append-only, parameterized writes.** No `update_prism_*` or `delete_prism_*` accessor exists. All four caller-supplied fields (`run_id`, `agent_role`, `phase`, `content`) are written via `?` placeholders — never f-string interpolation. Injection-shaped content (SQL keywords, quotes, semicolons, embedded nulls) is stored verbatim.
+
+3. **Agent-callable CLI (`advisors/prism_audit_write.py`).** A `python -m advisors.prism_audit_write` CLI bridges the boundary between the scheduled Claude agent session (which cannot import `database` directly) and the state DB. Content is read from STDIN to avoid shell argument-length limits on long analyst output. On success the new row id is printed to STDOUT; on any error, only `type(exc).__name__` is written to STDERR (D-1 contract) — no tracebacks, no file paths.
+
+4. **D-1 error handling throughout.** Both `insert_prism_audit_entry` and `get_prism_audit_for_run` do not expose exception detail to callers. The CLI writer exits non-zero with a type-only STDERR message on any failure.
+
+5. **Index on `run_id`.** `idx_prism_audit_log_run_id` makes `get_prism_audit_for_run` O(log n) rather than a full table scan.
+
+**New public surface:**
+- `database.insert_prism_audit_entry(run_id, agent_role, phase, content) -> int` — appends one row, returns rowid.
+- `database.get_prism_audit_for_run(run_id) -> list[dict]` — returns all entries for a run, ordered by id ascending (chronological); returns `[]` for unknown `run_id`.
+- `advisors/prism_audit_write.py` — agent-callable CLI (module, not route). No Flask dependency.
+
+**Rationale:** The audit log separates the per-analyst deliberation record from the synthesized `MARKET_PRISM` verdict. The verdict row (in `advisor_observations`) is what the dashboard renders; the audit log is what a human reviewer — or a future meta-agent — reads to understand why that verdict was reached. Keeping them in separate tables with a join key (`run_id`) avoids bloating the `advisor_observations.raw_response` blob with multi-kilobyte analyst transcripts. Backward-compatibility is preserved by the `.get("run_id")` access pattern: old rows without the key continue to read fine without schema modification.
+
+**Status:** GREEN at 885e1a4. 35 AC-1/AC-2 database tests + 9 AC-3/AC-4 lens-pipeline / CLI tests GREEN. Acceptance criteria verified: migration idempotent, append-only contract enforced, D-1 error isolation confirmed.

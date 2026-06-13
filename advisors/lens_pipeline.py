@@ -391,8 +391,13 @@ def run_pipeline(*, dry_run: bool = False) -> dict:
     verdict = overall_sentiment if available_count > 0 else _SENTIMENT_LIMITED_INPUTS
 
     # Assemble raw_response (AC-4 schema contract).
+    # run_id is identical to run_ts — the ISO UTC timestamp uniquely identifies
+    # this nightly run and joins the MARKET_PRISM observation to its prism_audit_log
+    # entries (Prism Phase 1 / migration 032).  Backward-compat: existing rows
+    # without this key read fine; callers use .get("run_id") not direct access.
     raw_response: dict[str, Any] = {
         "run_ts": run_ts,
+        "run_id": run_ts,
         "per_lens_digest": per_lens_digest,
         "overall_sentiment": overall_sentiment,
         "sentiment_rationale": sentiment_rationale,

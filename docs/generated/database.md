@@ -3,11 +3,11 @@
 > SQLite state management for Planet Stopper: schema, migrations, all read/write accessors for the state DB, and a pytest sentinel guard that structurally prevents tests from writing to the production DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-06-10
+**Last updated:** 2026-06-13
 
 ## Overview
 
-`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 31 numbered migration SQL files (001–031), and every public accessor function. `_MIGRATION_FILES` wires 28 active entries (004–031); migrations 001–003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
+`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 32 numbered migration SQL files (001–032), and every public accessor function. `_MIGRATION_FILES` wires 29 active entries (004–032); migrations 001–003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
 
 WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads while the engine holds a write lock.
 
@@ -15,17 +15,18 @@ WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads
 
 ## Schema Migrations
 
-Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **031** (`031_shadow_history_sym_ts_index.sql`).
+Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **032** (`032_prism_audit_log.sql`).
 
 Notable ordering: 021 is listed before 020 — intentional. See `ARCH-002` inline comment; reordering would corrupt live DBs.
 
-Migrations 026–031:
+Migrations 026–032:
 - `026_mc_regime_match_telemetry.sql` — regime match columns on `exit_triggers`
 - `027_regime_label_cache.sql` — `regime_label_cache` table
 - `028_autotune_runs_pbo.sql` — `pbo` column on `autotune_runs`
 - `029_exit_triggers_also_true.sql` — `also_true_json` column on `exit_triggers`
 - `030_per_symphony_live_mode.sql` — `live_mode` on `symphony_strategies`, `config_audit_log` table
 - `031_shadow_history_sym_ts_index.sql` — composite index on `shadow_history (symphony_id, ts_utc)`
+- `032_prism_audit_log.sql` — `prism_audit_log` table + `idx_prism_audit_log_run_id` index (Prism Phase 1)
 
 ## Public API Reference
 
@@ -155,10 +156,10 @@ Inserts one `advisor_observations` row. Returns the new row id. `is_advisory_onl
 **Parameters:**
 | Name | Type | Description |
 |------|------|-------------|
-| `advisor_role` | `str` | `"OVERFITTING_CONSCIENCE"`, `"SPEC_CRITIC"`, `"DIVERGENCE_EXPLAINER"`, or `"WALL_BREACH"` |
-| `subject_type` | `str` | `"autotune_run"`, `"spec_bundle"`, or `"fold_role_wall"` |
+| `advisor_role` | `str` | `"OVERFITTING_CONSCIENCE"`, `"SPEC_CRITIC"`, `"DIVERGENCE_EXPLAINER"`, `"WALL_BREACH"`, or `"MARKET_PRISM"` |
+| `subject_type` | `str` | `"autotune_run"`, `"spec_bundle"`, `"fold_role_wall"`, or `"portfolio"` |
 | `subject_id` | `str` | String PK of the observed entity |
-| `verdict` | `str \| None` | `"CLEAR"`, `"WATCH"`, `"BREACH"`, `"INFORMATIONAL"`, or `"NOT_APPLICABLE"` |
+| `verdict` | `str \| None` | `"CLEAR"`, `"WATCH"`, `"BREACH"`, `"INFORMATIONAL"`, `"NOT_APPLICABLE"`, `"neutral"`, `"bullish"`, `"bearish"`, or `"limited-inputs"` |
 | `raw_response` | `dict \| str \| None` | Serialized to JSON; `None` → `"{}"` |
 | `symphony_id` | `str \| None` | Denormalized symphony name (migration 025) |
 
@@ -172,6 +173,9 @@ Returns all rows for a given subject, oldest-first.
 
 #### `get_advisor_observations_for_role(advisor_role: str, limit: int = 50) → list[dict]`
 Returns rows for a given advisor role, newest-first.
+
+#### `get_latest_market_prism_summary() → dict | None`
+Returns the most recently inserted `advisor_observations` row with `advisor_role="MARKET_PRISM"`, deserialized (including `raw_response` as a dict), or `None` when no row exists. Used by the Cycle-5 Overview tab to render the always-on Market Prism block.
 
 ---
 
@@ -299,6 +303,66 @@ Returns the `port_state` row for the account as a dict, or `None`. Display-only;
 
 #### `write_port_state(account_id: str, state_dict: dict) → None`
 Upserts the `port_state` row for the account.
+
+---
+
+### Prism Audit Log (migration 032)
+
+Append-only deliberation trail for the Market Prism nightly pipeline. No UPDATE or DELETE accessor exists — entries are immutable. All writes use parameterized queries (`?` placeholders); user-supplied content is never interpolated into SQL.
+
+**Table schema (`prism_audit_log`):**
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | Row identifier |
+| `run_id` | TEXT | NOT NULL | Nightly run identifier; joins to `MARKET_PRISM` observation's `raw_response.run_id` |
+| `agent_role` | TEXT | NOT NULL | The agent that produced this entry (e.g. `"technicals_analyst"`, `"synthesizer"`) |
+| `phase` | TEXT | NOT NULL | Deliberation phase (e.g. `"initial_read"`, `"synthesis"`) |
+| `content` | TEXT | NOT NULL | The agent's verbatim output for that phase |
+| `created_at` | TEXT | NOT NULL DEFAULT datetime('now') | UTC timestamp auto-populated on insert |
+
+**Index:** `idx_prism_audit_log_run_id ON prism_audit_log (run_id)` — accelerates `get_prism_audit_for_run`.
+
+#### `insert_prism_audit_entry(run_id: str, agent_role: str, phase: str, content: str) → int`
+
+Insert one `prism_audit_log` row and return the new row id.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `run_id` | `str` | Nightly run identifier linking all entries of one pipeline run to the corresponding `MARKET_PRISM` advisor_observation |
+| `agent_role` | `str` | The agent that produced this entry (e.g. `"technicals_analyst"`, `"synthesizer"`) |
+| `phase` | `str` | The deliberation phase (e.g. `"initial_read"`, `"synthesis"`) |
+| `content` | `str` | The agent's verbatim output for that phase |
+
+**Returns:** `int` — the SQLite rowid of the newly inserted row (always > 0).
+
+**Example:**
+```python
+row_id = database.insert_prism_audit_entry(
+    run_id="2026-06-13T03:00:00+00:00",
+    agent_role="technicals_analyst",
+    phase="initial_read",
+    content="Volatility is elevated; RSI at 72.",
+)
+```
+
+#### `get_prism_audit_for_run(run_id: str) → list[dict]`
+
+Return all `prism_audit_log` entries for a run, ordered by `id` ascending (insertion / chronological order).
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `run_id` | `str` | The nightly run identifier to query |
+
+**Returns:** `list[dict]` — each dict has keys `id`, `run_id`, `agent_role`, `phase`, `content`, `created_at`. Returns `[]` when no rows match — never raises for an unknown `run_id`. Uses `get_ro_connection()` per architecture constraint 5 (read paths structurally isolated from the write path).
+
+**Example:**
+```python
+entries = database.get_prism_audit_for_run("2026-06-13T03:00:00+00:00")
+for entry in entries:
+    print(entry["agent_role"], entry["phase"], entry["content"][:80])
+```
 
 ## Types
 
