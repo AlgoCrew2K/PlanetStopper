@@ -139,8 +139,10 @@ CYCLE1_LENSES = ["technicals", "sentiment", "derivatives", "macro", "fundamental
 # macro (FRED), and fundamentals (SEC EDGAR) were promoted to real producers
 # in commit 960d544 and are covered by tests/ai_advisor/test_cycle2_lens_producers.py.
 # Stub-contract assertions (available=False, empty payload, unconditional stub)
-# apply only to the two lenses that are still honest stubs.
-CYCLE1_STUB_LENSES = ["technicals", "derivatives"]
+# apply only to lenses that are still honest stubs.  Technicals graduated to a
+# real producer (B2: _build_technicals_section wires advisors.lens_technicals);
+# derivatives remains a stub until its producer is wired in a later cycle.
+CYCLE1_STUB_LENSES = ["derivatives"]
 
 
 @pytest.mark.parametrize("lens_name", CYCLE1_LENSES)

@@ -1,0 +1,34 @@
+{
+  "_provenance": "Schema-derived fixture — Cycle B2 RED. Represents the shape of an Alpaca Markets v2 bars API response for daily bars. Written before any implementation (TDD RED phase). Values are type/format sentinels — NOT hardcoded producer outputs (feedback_no_hardcoded_test_values). The technicals producer (advisors/lens_technicals.py) consumes bars in this shape via synthetic_history.fetch_bars.",
+  "_api_url_pattern": "https://data.alpaca.markets/v2/stocks/bars?symbols={symbols}&timeframe=1Day&start={start}&end={end}&adjustment=split&feed=iex",
+  "_field_reference": "Alpaca Markets v2 bars API — https://docs.alpaca.markets/reference/stockbars. Each bar: t (RFC3339 timestamp), o (open float), h (high float), l (low float), c (close float), v (volume int), vw (VWAP float), n (trade count int).",
+  "alpaca_bars_response_shape": {
+    "bars": {
+      "__is_dict_of_symbol_to_bar_list__": true,
+      "SPY": [
+        {
+          "t": "2026-01-02T05:00:00Z",
+          "o": "__is_positive_float__",
+          "h": "__is_positive_float__",
+          "l": "__is_positive_float__",
+          "c": "__is_positive_float__",
+          "v": "__is_positive_int__",
+          "vw": "__is_positive_float__",
+          "n": "__is_positive_int__"
+        }
+      ]
+    },
+    "next_page_token": "__is_string_or_null__"
+  },
+  "bar_field_names": ["t", "o", "h", "l", "c", "v", "vw", "n"],
+  "required_bar_fields_for_technicals": ["t", "c"],
+  "optional_bar_fields_for_technicals": ["v", "h", "l"],
+  "invariants": {
+    "close_positive": "c > 0.0 for all valid bars",
+    "timestamp_format": "t is an ISO 8601 / RFC 3339 string; t[:10] gives YYYY-MM-DD",
+    "ordering": "bars are ordered chronologically (oldest first) within a symbol",
+    "minimum_bars_for_50sma": "at least 50 bars required; fewer → 50-day SMA unavailable",
+    "minimum_bars_for_200sma": "at least 200 bars required; fewer → 200-day SMA unavailable",
+    "minimum_bars_for_momentum": "at least 21 bars required for 20-day return (current + 20 prior closes)"
+  }
+}

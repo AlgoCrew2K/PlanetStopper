@@ -443,17 +443,25 @@ def _fetch_with_backoff(
 
 
 def _build_technicals_section(_data: object = None) -> dict:
-    """Technicals lens block — cycle-1 stub (Cycle-2b deliverable).
+    """Technicals lens block — SMA posture, breadth, momentum (Cycle-2b).
 
-    Honest availability: Alpaca IEX / Alpha Vantage indicator source not yet
-    connected.  Returns available=False with an informative reason.
+    Lazy-imports ``advisors.lens_technicals`` (CC-2 boundary: no module-level
+    import of advisor producers inside ai_advisor.py).  Universe defaults to an
+    empty list; the caller or pipeline may inject a universe in future cycles.
     """
+    import advisors.lens_technicals as _lt  # CC-2: lazy import
+
+    payload = _lt._fetch_technicals(universe=[])
     return {
         "lens": "technicals",
-        "available": False,
-        "reason": "technicals source not connected — cycle-2b deliverable",
-        "payload": None,
-        "sources": [],
+        "available": payload.get("available", False),
+        "reason": payload.get("reason"),
+        "payload": payload,
+        "sources": (
+            [{"source": payload["source"], "lens": "technicals"}]
+            if payload.get("source")
+            else []
+        ),
     }
 
 
