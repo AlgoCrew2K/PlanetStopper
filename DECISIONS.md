@@ -357,3 +357,57 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** Blending free-data lens evidence (technicals, sentiment, macro, fundamentals, derivatives) into swap-candidate ranking gives the operator a richer "why suggested" signal without changing the statistical acceptance gate. The position-based blend (rather than a score-unit blend) avoids unit-comparability issues between objective metrics (Pearson correlation, variance, Sharpe) and lens scores. `LENS_BLEND_WEIGHT=0.25` keeps the lens as supporting evidence — the objective metric anchors ranking. Risk-first decorrelation and de-risking intent is preserved; the operator selects from surviving candidates, no single-winner verdict is imposed.
 
 **Status:** GREEN at d0228b3. 24/24 new cycle3 tests GREEN; 35/35 existing `test_asset_swap_engine` tests unaffected. Acceptance criteria AC-1 through AC-6 verified.
+
+---
+
+## Multi-Lens AI Advisor — Cycle 4: Off-Hours Lens Pipeline + Market Prism Always-On (2026-06-13)
+
+### DE-CY4-001: Scheduled off-hours pipeline with always-written Market Prism observation
+
+**Decision:** A daily scheduled pipeline (`advisors/lens_pipeline.py`) runs at 03:00 off-hours via the `app.py` scheduler. It calls all five `ai_advisor._build_<lens>_section()` builders, validates citations through `ai_advisor.build_citation`, synthesises an overall `overall_sentiment` label via Claude Haiku, and writes exactly one `advisor_role="MARKET_PRISM"` row to `advisor_observations` per run — regardless of how many lenses are available.
+
+**Key design choices:**
+
+1. **Always-emit invariant.** The pipeline writes the observation even when all 5 lenses are `available=False`. Verdict is `"limited-inputs"` in that case. This ensures the Overview tab (Cycle 5) always has a row to render — it never needs to handle "no data ever written" as a separate empty-state branch.
+
+2. **Per-lens exception isolation.** Each `_build_<lens>_section()` call is wrapped in its own `try/except`. One lens failing does not abort the remaining lenses or the persistence step. The failing lens is recorded in `per_lens_digest` as `available=False` with `reason=type(exc).__name__` (D-1 contract).
+
+3. **Off-hours scheduling, not on-demand.** The pipeline is driven by a daily 03:00 scheduler job, not by user requests. This keeps it off the 1-minute live-execution path (Architecture Constraint 1) and ensures one authoritative nightly run rather than stale-or-duplicate on-demand calls.
+
+4. **Lazy import / CC-2 boundary.** `advisors.lens_pipeline` is imported inside `_lens_pipeline_worker()` (a daemon thread spawned by `_run_lens_pipeline()`), never at `app.py` module level. `alpha_bot_execution.py` has zero advisor imports (static-scan verified by AC-6 regression test).
+
+5. **Claude synthesis degrades gracefully.** If Claude is unavailable or the API call fails, `overall_sentiment` degrades to `"limited-inputs"` with an honest rationale. The observation is still persisted. No exception leaks to the caller.
+
+**New database accessor:** `database.get_latest_market_prism_summary() -> dict | None` returns the most recently inserted `MARKET_PRISM` row, deserialized, or `None` when none exists. Used by the Cycle-5 Overview tab.
+
+**Rationale:** The always-emit design eliminates a class of silent failures where the pipeline runs but writes nothing. A `"limited-inputs"` observation is more honest than absence — it tells the dashboard "we ran but had no data", which is actionable. The per-lens isolation means a single unreachable data source (FRED, a sentiment feed) does not invalidate the remaining available lenses.
+
+**Status:** GREEN at b85eee3. 40/40 Cycle-4 tests GREEN (AC-1 through AC-9). Acceptance criteria AC-10 (docs) verified by this entry and `docs/generated/advisors_lens_pipeline.md`.
+
+---
+
+## Multi-Lens AI Advisor — Cycle 4: Off-Hours Lens Pipeline + Market Prism Summary (2026-06-13)
+
+### DE-CY4-001: Scheduled off-hours lens pipeline with always-emit Market Prism invariant
+
+**Decision:** A new module `advisors/lens_pipeline.py` implements a daily off-hours (03:00) pipeline that collects multi-lens market data, synthesizes it into a Market Prism summary via Claude, and persists exactly one `advisor_role="MARKET_PRISM"` observation per run — unconditionally.
+
+**Pipeline architecture (4 passes):**
+
+1. **Per-lens pass** — calls each `ai_advisor._build_<lens>_section()` (all 5 lenses: technicals, sentiment, derivatives, macro, fundamentals) with full per-lens exception isolation. One lens failing never aborts the pipeline. Unavailable lenses record `available=False` with `reason=type(exc).__name__` only (D-1 / CC-10).
+
+2. **Citation assembly pass** — aggregates sources from all `available=True` lens blocks and validates each through `ai_advisor.build_citation`. Malformed citations are dropped (CC-4).
+
+3. **Synthesis pass** — calls Claude (`claude-haiku-4-5-20251001`) to synthesize available lens summaries into an `overall_sentiment` label (`"risk-on"`, `"neutral"`, `"risk-off"`, or `"limited-inputs"`) and a one-sentence `sentiment_rationale`. Degrades gracefully to `"limited-inputs"` when Claude is unavailable, the response is malformed, or all lenses are unavailable (synthesis skipped). Error details are never included — only `type(exc).__name__` (D-1).
+
+4. **Persistence pass** — writes one `advisor_observations` row (`advisor_role="MARKET_PRISM"`, `is_advisory_only=1`, `subject_type="portfolio"`, `subject_id="global"`, `verdict=overall_sentiment`). The `raw_response` carries: `run_ts`, `per_lens_digest` (per-lens availability + summaries/reasons), `overall_sentiment`, `sentiment_rationale`, `available_lens_count`, `total_lens_count=5`, `sources` (validated citation dicts). No schema migration required — `raw_response` is an existing untyped JSON blob column.
+
+**Always-emit invariant:** Every non-dry_run `run_pipeline()` call writes exactly one `MARKET_PRISM` row, even when all 5 lenses are `available=False`. This prevents a silent no-op from leaving the Overview tab with no data. When all lenses are unavailable, `verdict="limited-inputs"`.
+
+**Scheduling seam (`app.py`):** `run_scheduler()` gains `schedule.every().day.at("03:00").do(_run_lens_pipeline)`. The `_run_lens_pipeline()` wrapper starts a daemon thread and returns immediately (CC-7 / architecture constraint 1 — never blocks the 1-minute execution cadence). `advisors.lens_pipeline` is lazy-imported inside the worker thread, never at module level in `app.py` or `alpha_bot_execution.py` (CC-2 import-boundary invariant).
+
+**New database accessor:** `database.get_latest_market_prism_summary() -> dict | None` returns the most recent `MARKET_PRISM` row (deserialized `raw_response`), or `None`. Uses `get_ro_connection()` — read-only. Intended for the Cycle-5 Overview tab.
+
+**Rationale:** An on-demand pipeline (called when the operator opens the tab) would add latency and incur API cost on every page view. An off-hours scheduled job runs once per day at low-traffic hours, is cost-predictable, and ensures the Overview tab always has a pre-computed summary ready. The always-emit invariant means the Overview tab is never blank due to a silent pipeline no-op — honest degradation is visible as `"limited-inputs"` rather than missing data. The daemon-thread wrapper is a strict requirement of architecture constraint 1 (no blocking I/O on the 1-minute execution path).
+
+**Status:** GREEN at HEAD (`b85eee3` and subsequent commits). Acceptance criteria AC-1 through AC-10 verified. Files: `advisors/lens_pipeline.py` (new), `app.py` (scheduler seam), `database.py` (`get_latest_market_prism_summary`), `tests/ai_advisor/test_cycle4_lens_pipeline.py`.
