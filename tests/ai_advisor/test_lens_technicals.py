@@ -663,14 +663,19 @@ class TestPipelineIntegration:
             f"run_pipeline missing keys. Got: {set(result.keys())}"
         )
 
-    def test_build_technicals_section_is_not_stub_anymore(self):
+    def test_build_technicals_section_is_not_stub_anymore(self, mock_technicals_available):
         """_build_technicals_section in ai_advisor.py does NOT return the old stub message.
 
         The old stub returns reason='technicals source not connected — cycle-2b deliverable'.
         After implementation, it must call _fetch_technicals and return the real result.
+
+        _fetch_technicals is mocked so this test is deterministic and makes no live
+        Alpaca call in CI (no-live-API-in-CI invariant).
         """
         import ai_advisor
-        result = ai_advisor._build_technicals_section()
+        with patch("advisors.lens_technicals._fetch_technicals",
+                   return_value=mock_technicals_available):
+            result = ai_advisor._build_technicals_section()
         # Must not be the old stub message
         assert result.get("reason") != "technicals source not connected — cycle-2b deliverable", (
             "_build_technicals_section still returns the cycle-2b stub — must be wired to _fetch_technicals"

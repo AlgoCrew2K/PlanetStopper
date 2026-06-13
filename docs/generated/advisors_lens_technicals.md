@@ -104,7 +104,7 @@ The literal strings `"EmptyUniverse"` and `"InsufficientHistory"` are used for t
 ## Test Coverage
 
 **Test files:**
-- `tests/ai_advisor/test_lens_technicals.py` (52 tests)
+- `tests/ai_advisor/test_lens_technicals.py` (55 tests)
 - `tests/ai_advisor/test_technicals_golden.py` (11 golden-fixture math tests)
 
 | Class | Tests | Coverage |
