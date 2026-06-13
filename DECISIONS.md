@@ -409,3 +409,31 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** The always-emit design eliminates a class of silent failures where the pipeline runs but writes nothing. A `"limited-inputs"` observation is more honest than absence — it tells the dashboard "we ran but had no data", which is actionable. The per-lens isolation means a single unreachable data source (FRED, a sentiment feed) does not invalidate the remaining available lenses.
 
 **Status:** GREEN at b85eee3. 40/40 Cycle-4 tests GREEN (AC-1 through AC-9). Acceptance criteria AC-10 (docs) verified by this entry and `docs/generated/advisors_lens_pipeline.md`.
+
+## Market Prism Overview Surface — Cycle 5 (2026-06-13)
+
+### DE-CY5-001: Market Prism always-on block on AI Advisor Overview tab
+
+**Decision:** The AI Advisor Overview tab in `templates/ai_advisor.html` always renders a "Market Prism" block populated from `database.get_latest_market_prism_summary()`. The block shows: overall sentiment (as a labeled chip with semantic color), sentiment rationale, an as-of timestamp, a per-lens digest (all 5 lenses — honest-availability: shows reason when unavailable), and cited sources as clickable `<a href>` links with safe external attributes.
+
+**Key design choices:**
+
+1. **Always renders.** When `get_latest_market_prism_summary()` returns `None` (no row written yet), the block renders an informative empty state: "No overnight market read yet — the off-hours pipeline runs daily at 03:00." It never shows a blank section or raises a 500. This is consistent with the always-emit invariant established in Cycle 4 (DE-CY4-001).
+
+2. **Read-only GET path.** The route prefetches the summary via `get_latest_market_prism_summary()` (read-only SQLite) and passes it to the template as `market_prism_summary`. `run_pipeline` is never called from the GET path. The block is never re-run on user request — it reflects the most recent nightly write.
+
+3. **Advisory-only.** The block carries no accept/execute trade affordances. It is strictly informational context for the operator. Consistent with the broader advise-only AI Advisor posture.
+
+4. **Design-token conformance.** All colors use `var(--studio-*)` tokens (no raw hex). The chip, lens cards, and source links reuse the existing card/panel/chip component patterns from the other advisor tabs. Verified by the ux-expert visual gate.
+
+5. **XSS safety.** All dynamic values are rendered with Jinja2 `| e` escaping. No `Markup()` or `|safe` filters on source fields. The test suite includes an adversarial hostile-title XSS check (AC-3).
+
+**Route change (`app.py`):** `ai_advisor_tab()` gains a `market_prism_summary` prefetch block (guarded `try/except`; `None` on failure). The variable is appended to the `render_template` call.
+
+**Template change (`templates/ai_advisor.html`):** The `data-testid="market-prism-block"` container is inserted at the top of the Overview tab panel (above the controls bar), with the full sentiment chip / rationale / per-lens / sources / empty-state Jinja2 structure.
+
+**Rationale:** Surfacing the nightly off-hours sentiment read on the Overview tab is the natural consumer of the Cycle-4 pipeline (DE-CY4-001). The always-on design (not hidden behind a gate) ensures the operator always sees the most recent market read and an honest status when the pipeline has not run yet.
+
+**Status:** GREEN at cycle/market-prism-overview-surface. 16/16 Cycle-5 tests GREEN (AC-1 through AC-6). Acceptance criteria verified.
+
+---

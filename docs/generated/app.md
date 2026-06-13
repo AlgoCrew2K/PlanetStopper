@@ -165,8 +165,9 @@ Unified single-page render for all 6 in-place tab panels. Server-side assembles 
 | `chat_available` | `bool(os.environ.get("ANTHROPIC_API_KEY"))` — key presence only, value never passed to template | Chat |
 | `sb_observations` | `database.get_advisor_observations_for_role("STRATEGY_BUILDER")`, reversed (oldest-first); empty list on error | Strategy Builder |
 | `sb_card_artifacts` | dict keyed by `obs["id"]`; each value is an M6 `strategy_proposal` artifact dict for the Discuss/Chat affordance; built from `raw_response` fields per observation | Strategy Builder |
+| `market_prism_summary` | `database.get_latest_market_prism_summary()`; `dict` or `None`; wrapped in `try/except` — `None` on failure renders an informative empty state | Overview (Market Prism block) |
 
-The Correlations, API-key, Symphonies, and Strategy Builder data assembly sections are wrapped in `try/except` — if those panels' data fails, the others still render. The Overview observations loop is not wrapped.
+The Correlations, API-key, Symphonies, Strategy Builder, and Market Prism data assembly sections are wrapped in `try/except` — if those panels' data fails, the others still render. The Overview observations loop is not wrapped.
 
 #### `GET /ai-advisor/correlations` → 302 redirect to `/ai-advisor`
 #### `GET /ai-advisor/asset-swaps` → 302 redirect to `/ai-advisor`

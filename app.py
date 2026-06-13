@@ -2939,6 +2939,17 @@ def ai_advisor_tab():
     chat_available: bool = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
     # ------------------------------------------------------------------ #
+    # Market Prism panel: prefetch latest MARKET_PRISM summary for the   #
+    # Overview tab.  Always renders (empty state when None).              #
+    # Read-only — never reruns the pipeline from the UI.                  #
+    # ------------------------------------------------------------------ #
+    market_prism_summary: dict | None = None
+    try:
+        market_prism_summary = database.get_latest_market_prism_summary()
+    except Exception:
+        pass  # Empty state rendered by template on None.
+
+    # ------------------------------------------------------------------ #
     # Strategy Builder panel: prefetch STRATEGY_BUILDER observations +    #
     # build per-card M6 artifact dicts for the Discuss affordance.        #
     # Lazy import keeps advisor_chat off the live 1-minute execution path. #
@@ -3003,6 +3014,7 @@ def ai_advisor_tab():
         chat_available=chat_available,
         sb_observations=sb_observations,
         sb_card_artifacts=sb_card_artifacts,
+        market_prism_summary=market_prism_summary,
     )
 
 
