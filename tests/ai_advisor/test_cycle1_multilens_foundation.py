@@ -135,6 +135,13 @@ def assembled_context(fake_autotune_run, fake_condensed_logic):
 
 CYCLE1_LENSES = ["technicals", "sentiment", "derivatives", "macro", "fundamentals"]
 
+# Lenses that remain intentional stubs after Cycle 2.  Sentiment (GDELT),
+# macro (FRED), and fundamentals (SEC EDGAR) were promoted to real producers
+# in commit 960d544 and are covered by tests/ai_advisor/test_cycle2_lens_producers.py.
+# Stub-contract assertions (available=False, empty payload, unconditional stub)
+# apply only to the two lenses that are still honest stubs.
+CYCLE1_STUB_LENSES = ["technicals", "derivatives"]
+
 
 @pytest.mark.parametrize("lens_name", CYCLE1_LENSES)
 def test_build_lens_section_helper_exists_in_ai_advisor(lens_name: str):
@@ -187,13 +194,17 @@ def test_lens_section_returns_dict_with_required_keys(lens_name: str):
     )
 
 
-@pytest.mark.parametrize("lens_name", CYCLE1_LENSES)
+@pytest.mark.parametrize("lens_name", CYCLE1_STUB_LENSES)
 def test_cycle1_stub_lens_returns_available_false(lens_name: str):
-    """Cycle-1 stub lenses return available: False — sources not yet connected.
+    """Remaining Cycle-1 stub lenses (technicals, derivatives) return available: False.
+
+    Sentiment (GDELT), macro (FRED), and fundamentals (SEC EDGAR) were promoted
+    to real producers in Cycle 2 (commit 960d544) and may return available=True
+    when their data source is reachable; they are covered by
+    tests/ai_advisor/test_cycle2_lens_producers.py instead.
 
     A stub that returns available: True is fabricating data. This test ensures
-    no cycle-1 stub lies about availability.
-    FAILS until cycle-1 impl creates the stubs (RED until then).
+    the two remaining stubs never lie about availability.
     """
     import ai_advisor
 
@@ -207,13 +218,16 @@ def test_cycle1_stub_lens_returns_available_false(lens_name: str):
     )
 
 
-@pytest.mark.parametrize("lens_name", CYCLE1_LENSES)
+@pytest.mark.parametrize("lens_name", CYCLE1_STUB_LENSES)
 def test_cycle1_stub_lens_reason_is_non_empty_and_names_source(
     lens_name: str,
     lens_contract_fixture: dict,
 ):
-    """When available: False the 'reason' key must be non-empty and name the
-    missing source.
+    """Remaining Cycle-1 stubs (technicals, derivatives): available=False reason
+    must be non-empty and name the missing source.
+
+    Sentiment/macro/fundamentals are real Cycle-2 producers and are excluded
+    from this stub-contract check (see test_cycle2_lens_producers.py).
 
     Mirrors the _build_volatility_regime pattern:
         'reason': 'vol/atr columns not yet in autotune schema ...'
@@ -240,9 +254,14 @@ def test_cycle1_stub_lens_reason_is_non_empty_and_names_source(
     )
 
 
-@pytest.mark.parametrize("lens_name", CYCLE1_LENSES)
+@pytest.mark.parametrize("lens_name", CYCLE1_STUB_LENSES)
 def test_stub_lens_emits_no_payload_when_available_false(lens_name: str):
-    """When available: False the stub must not emit a non-empty payload.
+    """Remaining Cycle-1 stubs (technicals, derivatives): no payload when
+    available=False.
+
+    Sentiment/macro/fundamentals are real Cycle-2 producers that may return
+    a payload when their data source is reachable; they are excluded from this
+    stub-contract check (see test_cycle2_lens_producers.py).
 
     A stub returning available: False with a populated 'payload' key is
     fabricating analytical data through the unavailability mask —
@@ -921,16 +940,21 @@ def test_caller_cannot_override_is_advisory_only_for_new_roles():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("lens_name", CYCLE1_LENSES)
+@pytest.mark.parametrize("lens_name", CYCLE1_STUB_LENSES)
 def test_stub_lens_called_with_non_none_arg_still_returns_available_false(
     lens_name: str,
 ):
-    """Stub lens helpers return available=False even when called with data.
+    """Remaining Cycle-1 stubs (technicals, derivatives): return available=False
+    unconditionally regardless of argument.
+
+    Sentiment/macro/fundamentals are real Cycle-2 producers that make live
+    requests and may return available=True when data is reachable; they are
+    excluded from this unconditional-stub check (see test_cycle2_lens_producers.py).
 
     A stub that only returns available=False when called with None but switches
     to available=True when given any data object would be a cycle-1 violation.
-    Each stub is called with a non-None sentinel to confirm the stub nature is
-    unconditional.
+    Each remaining stub is called with a non-None sentinel to confirm the stub
+    nature is unconditional.
     """
     import ai_advisor
 

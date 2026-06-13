@@ -26,7 +26,7 @@
       "c_5": 2.283333333333333,
       "c_10": 2.9289682539682538,
       "c_100": 5.187377517639621,
-      "c_500": 6.79282342999052
+      "c_500": 6.792823429990524
     },
     "log_approx_comparison": {
       "note": "c(500) = 6.7928 vs ln(500)+0.5772 = 6.7918. The ~1% gap is small but present. At N=5: c(5) = 2.2833 vs ln(5)+0.5772 = 2.1867 -- a 4.4% under-correction that the harmonic-number test catches.",
