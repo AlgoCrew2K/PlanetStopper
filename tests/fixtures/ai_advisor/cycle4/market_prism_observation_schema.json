@@ -1,0 +1,26 @@
+{
+  "_note": "Schema contract for the MARKET_PRISM advisor_observation raw_response. Tests assert KEY PRESENCE only — values are producer-computed and must never be hardcoded (global rule: feedback_no_hardcoded_test_values). Add keys here when the contract is extended; removing a key is a breaking change.",
+  "required_raw_keys": [
+    "run_ts",
+    "per_lens_digest",
+    "overall_sentiment",
+    "sentiment_rationale",
+    "available_lens_count",
+    "total_lens_count",
+    "sources"
+  ],
+  "required_lens_names": [
+    "technicals",
+    "sentiment",
+    "derivatives",
+    "macro",
+    "fundamentals"
+  ],
+  "valid_overall_sentiment_values": [
+    "risk-on",
+    "neutral",
+    "risk-off",
+    "limited-inputs"
+  ],
+  "_provenance": "schema-derived from AC-4 contract in CYCLE4-BRIEF.md; not captured from a live producer run"
+}
