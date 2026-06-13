@@ -1,0 +1,73 @@
+{
+  "_provenance": "captured-from-producer -- live GET https://api.gdeltproject.org/api/v2/doc/doc?query=stock+market+finance&mode=timelinetone&format=json&timespan=1440 on 2026-06-13. Captured 80 data points, avg_raw=0.4947, normalized_tone=0.004947.",
+  "_capture_date": "2026-06-13",
+  "_api_url": "https://api.gdeltproject.org/api/v2/doc/doc?query=stock+market+finance&mode=timelinetone&format=json&timespan=1440",
+  "_note": "REAL GDELT 2.0 timelinetone response shape. The timeline key is a LIST OF SERIES OBJECTS, not a flat list of {date,value} points. Each series object has series (string label) and data (list of {date, value} points). The old fixture was schema-derived and had the wrong shape -- tone values were nested one level deeper than assumed, causing tone=None in production.",
+  "_bug_note": "The previous fixture had timeline as [{date,value}] -- WRONG. Real shape is timeline:[{series:Average Tone, data:[{date,value},...]}]. The parser must iterate timeline[*].data[*].value, not timeline[*].value.",
+  "gdelt_timelinetone_shape": {
+    "query_details": {
+      "title": "stock market finance",
+      "date_resolution": "15m"
+    },
+    "timeline": [
+      {
+        "series": "Average Tone",
+        "data": [
+          {
+            "date": "20260612T204500Z",
+            "value": -1.3478
+          },
+          {
+            "date": "20260612T210000Z",
+            "value": 1.5847
+          },
+          {
+            "date": "20260612T211500Z",
+            "value": 1.4022
+          },
+          {
+            "date": "20260612T213000Z",
+            "value": 2.4334
+          },
+          {
+            "date": "20260612T214500Z",
+            "value": 1.4118
+          },
+          {
+            "date": "20260612T220000Z",
+            "value": -0.0947
+          },
+          {
+            "date": "20260612T221500Z",
+            "value": 0
+          },
+          {
+            "date": "20260612T223000Z",
+            "value": -0.8057
+          },
+          {
+            "date": "20260612T224500Z",
+            "value": 0.006
+          },
+          {
+            "date": "20260612T230000Z",
+            "value": 1.0534
+          }
+        ]
+      }
+    ]
+  },
+  "empty_timelinetone_shape": {
+    "query_details": {
+      "title": "stock market finance",
+      "date_resolution": "15m"
+    },
+    "timeline": []
+  },
+  "invariants": {
+    "tone_normalization": "value (GDELT AvgTone, [-100,100]) / 100.0 = normalized tone in [-1,1]",
+    "empty_data_is_unavailable": "when timeline is [] or data arrays contain no numeric values: available=False or (available=True, tone=None) -- never a fabricated float",
+    "no_live_api_in_ci": "all tests mock requests.get -- no live GDELT calls from CI",
+    "series_nesting": "timeline[*] is a series object with keys series (str) and data (list). data[*] has date (str) and value (float). Parse timeline[*].data[*].value -- NOT timeline[*].value."
+  }
+}
