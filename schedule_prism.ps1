@@ -10,7 +10,9 @@
 # See feature-plans/market-prism-phase4-unattended-scheduling.md for design rationale.
 
 $TaskName    = "PlanetStopperMarketPrism"
-$ProjectRoot = "C:\Users\paulm\Documents\Projects\POC\AlphaBotPM"
+# Derive the project root from this script's own location (it lives in the repo root)
+# rather than hardcoding a machine-specific path — portable + no PII in VCS.
+$ProjectRoot = $PSScriptRoot
 $Python      = (Get-Command python).Source
 $Script      = Join-Path $ProjectRoot "prism_scheduler.py"
 

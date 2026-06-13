@@ -386,3 +386,57 @@ class TestD1Contract:
 
         # Should exit non-zero — not propagate the raw OSError
         assert exc_info.value.code != 0, "Should exit non-zero on subprocess exception"
+
+    def test_get_summary_db_failure_does_not_leak_message_body(self, capsys):
+        """D-1: when _get_summary() raises, only type(exc).__name__ appears in output.
+
+        The fallback path (lines 113-117 of prism_scheduler.py) catches the exception
+        and prints only type(exc).__name__. A bad implementation could print str(exc),
+        leaking internal DB paths/messages. This test locks that contract.
+
+        It also verifies the scheduler treats the DB failure as 'no row' and proceeds
+        to attempt the run (exiting 0 on the mocked successful _run_prism call).
+        """
+        mod = _import_scheduler()
+
+        # A message body that MUST NOT appear anywhere in stdout/stderr
+        secret_body = "some/internal/secret/path"
+
+        with (
+            patch.object(
+                mod,
+                "_get_summary",
+                side_effect=RuntimeError(secret_body),
+            ),
+            # _run_prism returns True so main() exits 0 — confirming DB failure is
+            # treated as 'no row' and does NOT abort the run
+            patch.object(mod, "_run_prism", return_value=True),
+            # Suppress _load_env's dotenv import; it swallows exceptions, but patch
+            # it here so the test is fully hermetic regardless of the environment
+            patch.object(mod, "_load_env"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            mod.main()
+
+        captured = capsys.readouterr()
+        combined_output = captured.out + captured.err
+
+        # D-1 positive assertion: the exception type name IS surfaced (so operators
+        # know *something* went wrong without leaking internals)
+        assert "RuntimeError" in combined_output, (
+            "Expected 'RuntimeError' (the type name) in scheduler output — "
+            f"D-1 requires the type name to be logged. Got: {combined_output!r}"
+        )
+
+        # D-1 negative assertion: the raw message body MUST NOT appear
+        assert secret_body not in combined_output, (
+            f"Secret message body {secret_body!r} leaked into output — "
+            "D-1 contract violated: only type(exc).__name__ may be surfaced"
+        )
+
+        # Behavioral assertion: DB failure is treated as 'no row' (not a crash),
+        # so _run_prism is invoked and the scheduler exits 0 on success
+        assert exc_info.value.code == 0, (
+            "DB failure on idempotency check should be treated as 'no row' "
+            "— run proceeds, exits 0 on successful _run_prism"
+        )
