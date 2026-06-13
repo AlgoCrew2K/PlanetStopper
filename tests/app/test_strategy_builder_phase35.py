@@ -553,14 +553,19 @@ def test_pc2_old_row_card_artifacts_cagr_is_none_not_string_none(client):
         captured.update(kwargs)
         return "<html><body>stub</body></html>"
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        client.get("/ai-advisor")
 
-    card_artifacts = captured.get("card_artifacts", {})
+    card_artifacts = captured.get("sb_card_artifacts", {})
     artifact = card_artifacts.get(obs_id, {})
 
     for field in ("cagr", "sharpe", "calmar"):
@@ -590,11 +595,16 @@ def test_pc3_old_row_stats_table_has_no_live_baseline_column(client):
         "This test requires a row without live_baseline."
     )
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
     if resp.status_code != 200:
         pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
@@ -683,11 +693,16 @@ def test_pd1_new_row_stats_table_has_two_column_headers(client):
     """
     obs = _make_new_row_obs(obs_id=201)
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-new")
+        resp = client.get("/ai-advisor")
 
     if resp.status_code != 200:
         pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
@@ -721,11 +736,16 @@ def test_pd2_new_row_baseline_column_shows_formatted_value_not_dash(client):
         "Test setup: live_baseline.cagr must be non-None for this test."
     )
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-new")
+        resp = client.get("/ai-advisor")
 
     if resp.status_code != 200:
         pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
@@ -764,11 +784,16 @@ def test_pd3_old_row_stats_table_header_has_exactly_one_data_column(client):
     fixture = _load_basic_fixture()
     obs = fixture["observation_survivor"]
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
     if resp.status_code != 200:
         pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
@@ -1069,11 +1094,16 @@ class TestAdversarialCycle2Phase35:
         obs["raw_response"]["live_baseline"] = dict(obs["raw_response"]["live_baseline"])
         obs["raw_response"]["live_baseline"]["calmar"] = None
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([obs])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-new")
+            resp = client.get("/ai-advisor")
 
         if resp.status_code != 200:
             pytest.skip(f"Route returned {resp.status_code}.")
@@ -1618,11 +1648,16 @@ class TestIndependentCycle2Phase35:
             "spec_bundle_id": None,
         }
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([obs])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-ic2-none-mdd")
+            resp = client.get("/ai-advisor")
 
         if resp.status_code != 200:
             pytest.skip(f"Route returned {resp.status_code}.")
