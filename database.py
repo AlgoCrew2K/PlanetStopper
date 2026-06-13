@@ -1193,6 +1193,80 @@ def get_latest_market_prism_summary() -> dict | None:
     return _parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS)
 
 
+# --- Prism Phase 1: audit-log accessors (migration 032) ---
+
+_PRISM_AUDIT_COLUMNS: tuple[str, ...] = (
+    "id",
+    "run_id",
+    "agent_role",
+    "phase",
+    "content",
+    "created_at",
+)
+
+
+def insert_prism_audit_entry(
+    run_id: str,
+    agent_role: str,
+    phase: str,
+    content: str,
+) -> int:
+    """Insert one prism_audit_log row and return the new row id.
+
+    Append-only: no update or delete accessor exists — audit entries are immutable.
+    All four caller-supplied fields are required and stored verbatim via parameterized
+    query (? placeholders) — never f-strings, never user-input interpolation.
+
+    Args:
+        run_id:     Nightly run identifier linking all entries of one pipeline run
+                    to the corresponding MARKET_PRISM advisor_observation.
+        agent_role: The agent that produced this entry (e.g. "technicals_analyst",
+                    "synthesizer").
+        phase:      The deliberation phase (e.g. "initial_read", "synthesis").
+        content:    The agent's verbatim output for that phase.
+
+    Returns:
+        The SQLite rowid of the newly inserted row (always > 0).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO prism_audit_log (run_id, agent_role, phase, content)"
+        " VALUES (?, ?, ?, ?)",
+        (run_id, agent_role, phase, content),
+    )
+    conn.commit()
+    row_id = cursor.lastrowid
+    conn.close()
+    return row_id
+
+
+def get_prism_audit_for_run(run_id: str) -> list[dict]:
+    """Return all prism_audit_log entries for a run, ordered by id ascending.
+
+    Returns an empty list when no rows match — never raises for an unknown run_id.
+    Uses get_ro_connection() per architecture constraint 5 (read paths are
+    structurally isolated from the write path).
+
+    Args:
+        run_id: The nightly run identifier to query.
+
+    Returns:
+        List of dicts with keys: id, run_id, agent_role, phase, content, created_at.
+        Ordered by id ASC (insertion / chronological order).
+    """
+    conn = get_ro_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT " + ", ".join(_PRISM_AUDIT_COLUMNS)
+        + " FROM prism_audit_log WHERE run_id = ? ORDER BY id ASC",
+        (run_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(zip(_PRISM_AUDIT_COLUMNS, row)) for row in rows]
+
+
 # --- Phase 3c: regime label cache (offline-produced, read on the live path) ---
 
 
@@ -1319,6 +1393,7 @@ _MIGRATION_FILES = [
     "029_exit_triggers_also_true.sql",
     "030_per_symphony_live_mode.sql",
     "031_shadow_history_sym_ts_index.sql",
+    "032_prism_audit_log.sql",
 ]
 
 
