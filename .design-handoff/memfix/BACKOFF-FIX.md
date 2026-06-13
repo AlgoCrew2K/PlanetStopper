@@ -144,4 +144,4 @@ are on separate code paths in `alpha_bot_execution.py` and `app.py`.
 
 ## Commit SHA
 
-To be filled in after commit is created.
+`948fb02` on branch `fix/test-memory-blowup`
