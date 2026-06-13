@@ -686,6 +686,114 @@ class TestPipelineIntegration:
             "_build_technicals_section must call advisors.lens_technicals._fetch_technicals"
         )
 
+    def test_build_technicals_section_calls_fetch_technicals_with_non_empty_universe(
+        self, mock_technicals_available
+    ):
+        """Anti-hollow regression lock: _build_technicals_section must call
+        _fetch_technicals with a NON-EMPTY universe.
+
+        The hollow-universe bug (universe=[]) silently produced available=False
+        for every run even after the producer was wired.  This test locks the
+        fix: whatever universe the section passes, it must have at least one
+        ticker in it.
+
+        Patch target: advisors.lens_technicals._fetch_technicals — this is the
+        symbol the lazy import inside _build_technicals_section resolves to.
+        assert_called_once_with is NOT used here because the exact ticker list
+        is a production decision (it lives in _MARKET_PROXY_UNIVERSE); this
+        test only asserts the non-emptiness invariant.
+        """
+        import ai_advisor
+        with patch("advisors.lens_technicals._fetch_technicals",
+                   return_value=mock_technicals_available) as mock_fetch:
+            ai_advisor._build_technicals_section()
+        assert mock_fetch.called, (
+            "_build_technicals_section must call _fetch_technicals"
+        )
+        # Extract the 'universe' kwarg (or first positional arg) from the call
+        call_args = mock_fetch.call_args
+        # Production code uses keyword: _lt._fetch_technicals(universe=_MARKET_PROXY_UNIVERSE)
+        universe = call_args.kwargs.get("universe", call_args.args[0] if call_args.args else None)
+        assert universe is not None, (
+            "_build_technicals_section did not pass a 'universe' argument to _fetch_technicals"
+        )
+        assert isinstance(universe, list), (
+            f"'universe' passed to _fetch_technicals must be a list, got {type(universe)}"
+        )
+        assert len(universe) > 0, (
+            "_build_technicals_section passed an EMPTY universe=[] to _fetch_technicals. "
+            "This is the hollow-universe bug: an empty universe always returns available=False "
+            "regardless of Alpaca data. The section must pass _MARKET_PROXY_UNIVERSE (14 tickers)."
+        )
+
+    def test_build_technicals_section_surfaces_available_payload(
+        self, mock_technicals_available
+    ):
+        """When _fetch_technicals returns available=True, _build_technicals_section
+        returns available=True, payload is the producer dict (not None), and
+        sources is non-empty.
+
+        This is the wiring correctness test: the section must not swallow the
+        producer's available=True result.  Asserts shape/presence only — never
+        hardcodes specific indicator values from the mock payload.
+        """
+        import ai_advisor
+        with patch("advisors.lens_technicals._fetch_technicals",
+                   return_value=mock_technicals_available):
+            result = ai_advisor._build_technicals_section()
+
+        # available must be surfaced faithfully
+        assert result.get("available") is True, (
+            "_build_technicals_section returned available=False even though "
+            "_fetch_technicals returned available=True. The section is swallowing "
+            "the producer's result."
+        )
+        # payload must be the producer dict, not None
+        payload = result.get("payload")
+        assert payload is not None, (
+            "_build_technicals_section returned payload=None even though "
+            "_fetch_technicals returned available=True. The payload must be "
+            "passed through so Market Prism synthesis can read indicator values."
+        )
+        assert isinstance(payload, dict), (
+            f"payload must be a dict (the producer output), got {type(payload)}"
+        )
+        # sources must be non-empty when producer has a source field
+        sources = result.get("sources")
+        assert sources is not None and len(sources) > 0, (
+            "_build_technicals_section returned empty sources even though the "
+            "mock producer payload has a non-empty 'source' field. The section "
+            "must build at least one citation entry from payload['source']."
+        )
+
+    def test_build_technicals_section_payload_none_when_unavailable(self):
+        """When _fetch_technicals returns available=False, _build_technicals_section
+        returns payload=None — consistent with other lens sections and CC-3
+        (no fabricated data through the unavailability mask).
+        """
+        import ai_advisor
+        unavailable_payload = {
+            "available": False,
+            "reason": "ConnectionError",
+            "ma_posture": None,
+            "breadth": None,
+            "momentum": None,
+            "source": None,
+        }
+        with patch("advisors.lens_technicals._fetch_technicals",
+                   return_value=unavailable_payload):
+            result = ai_advisor._build_technicals_section()
+
+        assert result.get("available") is False, (
+            "_build_technicals_section did not surface available=False from the producer"
+        )
+        payload = result.get("payload")
+        assert payload is None, (
+            f"_build_technicals_section returned payload={payload!r} when producer "
+            f"returned available=False. payload must be None when unavailable "
+            f"(CC-3: no data through the unavailability mask)."
+        )
+
     def test_pipeline_technicals_available_increments_lens_count(self, mock_technicals_available):
         """When technicals available=True, lenses_available in pipeline summary increases."""
         pipeline = _import_pipeline()

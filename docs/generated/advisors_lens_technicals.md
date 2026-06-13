@@ -17,7 +17,7 @@
 - **D-1 error contract.** The `reason` field in any `available=False` return carries only `type(exc).__name__`, never `str(exc)` (which may contain hostnames or partial credentials).
 - **Honest-availability.** `pct_above_200sma=None` when fewer than 200 bars are available for any ticker. No fabricated values.
 
-**Integration point:** `ai_advisor._build_technicals_section` lazy-imports this module and calls `_fetch_technicals(universe=[])` (CC-2 boundary). The `universe=[]` default means the call currently returns `available=False, reason="EmptyUniverse"` until a caller injects a real universe — tracked in BACKLOG as the next evolution (B3 or later).
+**Integration point:** `ai_advisor._build_technicals_section` lazy-imports this module and calls `_fetch_technicals(universe=_MARKET_PROXY_UNIVERSE)` — a fixed 14-ticker market-proxy basket (SPY, QQQ, IWM, and all 11 SPDR sector ETFs). This gives a market-level breadth/posture/momentum read for the Market Prism context. The lens is **fully functional in production**: when Alpaca is reachable, it returns `available=True` with real indicator data. The `available=False, reason="EmptyUniverse"` path is only reached if the caller explicitly passes an empty list — it is a degradation path, not the normal operating state.
 
 **Fixture provenance:** Output shape is pinned in `tests/fixtures/math/technicals_producer_schema.json` (schema-derived, Cycle B2 RED — written before any implementation). Bar field requirements are pinned in `tests/fixtures/math/alpaca_bars_schema.json`.
 
@@ -27,7 +27,6 @@
 |----------|-------|---------|
 | `_TECH_SMA_SHORT_WINDOW` | `50` | 50-day simple moving average window |
 | `_TECH_SMA_LONG_WINDOW` | `200` | 200-day simple moving average window |
-| `_TECH_BREADTH_WINDOW` | `50` | Breadth tracks the short SMA window (same as `_TECH_SMA_SHORT_WINDOW`) |
 | `_TECH_MOMENTUM_WINDOW` | `20` | 20-day return lookback (requires 21 bars: today + 20 prior) |
 | `_TECH_MAX_ATTEMPTS` | `3` | Hard ceiling on `fetch_bars` attempts. PC-crash regression guard — finite, well below the ceiling of 20. |
 | `_TECH_LOOKBACK_CALENDAR_DAYS` | `380` | Calendar-day window requested from Alpaca. 250 trading days ≈ 360 calendar days; 380 provides headroom. |
@@ -105,8 +104,8 @@ The literal strings `"EmptyUniverse"` and `"InsufficientHistory"` are used for t
 ## Test Coverage
 
 **Test files:**
-- `tests/ai_advisor/test_lens_technicals.py` (43 tests)
-- `tests/ai_advisor/test_technicals_golden.py` (8 golden-fixture math tests)
+- `tests/ai_advisor/test_lens_technicals.py` (52 tests)
+- `tests/ai_advisor/test_technicals_golden.py` (11 golden-fixture math tests)
 
 | Class | Tests | Coverage |
 |-------|-------|---------|

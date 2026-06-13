@@ -11,7 +11,11 @@ logger = logging.getLogger(__name__)
 # --- named constants (no magic numbers) ---
 _TECH_SMA_SHORT_WINDOW: int = 50    # 50-day simple moving average
 _TECH_SMA_LONG_WINDOW: int = 200    # 200-day simple moving average
-_TECH_BREADTH_WINDOW: int = 50      # breadth tracks the short SMA window
+# Breadth = fraction of qualifying tickers (those with >= _TECH_SMA_SHORT_WINDOW bars)
+# above the 50-day SMA.  The denominator is the qualifying sub-universe, not the full
+# universe — tickers with insufficient history are excluded from both numerator and
+# denominator.  _TECH_BREADTH_WINDOW was removed: breadth is intentionally the 50-SMA
+# window and is not independently configurable.
 _TECH_MOMENTUM_WINDOW: int = 20     # 20-day return lookback
 _TECH_MAX_ATTEMPTS: int = 3         # bounded retry on transient fetch errors
 
@@ -52,7 +56,7 @@ def _fetch_technicals(universe: list) -> dict:
                 "pct_above_200sma": float | None, # None when < 200 bars
                 "overall": "bullish" | "bearish" | "mixed",
             },
-            "breadth": float | None,              # == pct_above_50sma
+            "breadth": float | None,              # fraction of qualifying tickers above 50-day SMA
             "momentum": {
                 "mean_20d_return": float,
                 "direction": "positive" | "negative" | "flat",
@@ -118,6 +122,9 @@ def _fetch_technicals(universe: list) -> dict:
             # no ticker had enough history for the short SMA
             return dict(_UNAVAILABLE, reason="InsufficientHistory")
 
+        # Denominator = tickers with sufficient history (qualifying sub-universe),
+        # not len(universe) — tickers below the 50-bar minimum are excluded from both
+        # numerator and denominator so sparse history does not deflate breadth.
         pct_above_50 = sum(above_50_flags) / len(above_50_flags)
         pct_above_200 = (
             sum(above_200_flags) / len(above_200_flags)
