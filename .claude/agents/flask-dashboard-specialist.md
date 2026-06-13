@@ -1,7 +1,7 @@
 ---
 name: flask-dashboard-specialist
 description: "Flask dashboard UI specialist for Planet Stopper. Owns app.py routes, templates/index.html, templates/table_partial.html, and static/. Enforces read-only SQLite access on non-write paths, CSRF protection on the two guarded write endpoints (POST /api/settings, POST /api/symphony-settings/<name>), non-blocking request patterns, and safe rendering of live trading state."
-tools: Read, Edit, Write, Glob, Grep, Bash, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput
+tools: Read, Edit, Write, Glob, Grep, Bash, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput, Skill
 model: sonnet
 ---
 

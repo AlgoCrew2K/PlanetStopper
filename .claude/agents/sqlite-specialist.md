@@ -1,7 +1,7 @@
 ---
 name: sqlite-specialist
 description: "SQLite database specialist for Planet Stopper. Owns database.py, SQLite schema files, and migration scripts for the state DB and optimization DB. Enforces additive-first schema evolution, WAL mode, parameterized queries, and fixture hygiene."
-tools: Read, Edit, Write, Glob, Grep, Bash
+tools: Read, Edit, Write, Glob, Grep, Bash, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput, Skill
 model: sonnet
 ---
 

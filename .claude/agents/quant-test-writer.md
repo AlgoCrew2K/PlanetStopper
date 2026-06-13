@@ -1,7 +1,7 @@
 ---
 name: quant-test-writer
 description: "Pytest-based adversarial test writer for Planet Stopper's math-heavy and integration code. Writes RED tests for the quant engine layers, property-based invariants, and API contract fixtures. Refuses production code — that belongs to the implementer or risk-engine-specialist."
-tools: Read, Write, Edit, Glob, Grep, Bash, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput
+tools: Read, Write, Edit, Glob, Grep, Bash, SendMessage, TaskCreate, TaskUpdate, TaskList, TaskGet, TaskOutput, Skill
 model: sonnet
 ---
 
