@@ -3,7 +3,7 @@
 > Flask daemon: minute-by-minute scheduler, operator dashboard routes, AI Advisor endpoints (single-page SPA), and daemon singleton lifecycle.
 
 **Source:** `app.py`
-**Last updated:** 2026-06-10
+**Last updated:** 2026-06-13
 
 ## Overview
 
@@ -12,7 +12,7 @@
 - **Daemon singleton** — pidfile-based single-instance enforcement at startup.
 - **Minute scheduler** — spawns `alpha_bot_execution.py` at `:00` via `subprocess.run`; refreshes Composer account totals once per minute; prunes telemetry at 02:00.
 - **Dashboard routes** — operator UI routes. Two CSRF-protected write paths exist: `POST /api/settings` (allowlisted .env keys) and `POST /api/symphony-settings/<name>` (per-symphony live-mode toggle). Templates open SQLite read-only; the dashboard is NOT a live-trade-action surface.
-- **AI Advisor routes** — unified single-page SPA at `GET /ai-advisor` renders all 5 tabs in one server-side render; GET sub-routes for the 4 old per-tab pages now 302-redirect to `/ai-advisor`; POST action routes (suggest, evaluate, accept, reject, chat/send) are unchanged.
+- **AI Advisor routes** — unified single-page SPA at `GET /ai-advisor` renders all 6 tabs in one server-side render; GET sub-routes for all 5 old per-tab pages now 302-redirect to `/ai-advisor`; POST action routes (suggest, evaluate, accept, reject, chat/send, strategy-builder/run) are unchanged.
 - **CSRF infrastructure** — `_validate_csrf()` hook; `_csrf_before_request` before-request handler; `GET /api/csrf-token` token endpoint; `_SETTINGS_WRITE_ALLOWLIST` restricts which .env keys the settings write path can touch.
 
 Module-level thread-safety constructs:
@@ -144,11 +144,13 @@ CSRF-protected write path. Requires explicit `confirmed=true` in request body. C
 
 ### AI Advisor Routes
 
-The AI Advisor was converted from 5 separate MPA templates to a **single-page SPA** (merged 2026-06-10). All 5 panels (Overview, Correlations, Asset Swaps, Logic Changes, Chat) are rendered in one server-side template at `GET /ai-advisor`. Tab switching is in-place via JS (`initTabSwitcher` in `static/ai_advisor.js`). The 4 old GET sub-routes 302-redirect to `/ai-advisor`; the POST action routes are unchanged.
+The AI Advisor SPA was extended from 5 to **6 in-place tabs** in the spa-port cycle (2026-06-13). The Strategy Builder was formerly a separate page (`GET /ai-advisor/strategy-builder` → `render_template("ai_advisor_strategy_builder.html")`); it is now the 6th tab panel in the unified `templates/ai_advisor.html` SPA. Its GET route now 302-redirects to `/ai-advisor` like all the other former sub-pages. The POST action route (`POST /ai-advisor/strategy-builder/run`) is unchanged.
+
+All 6 panels (Overview, Correlations, Asset Swaps, Logic Changes, Chat, Strategy Builder) are rendered in one server-side template at `GET /ai-advisor`. Tab switching is in-place via JS (`initTabSwitcher` in `static/ai_advisor.js`). All 5 old GET sub-routes 302-redirect to `/ai-advisor`; the POST action routes are unchanged.
 
 #### `GET /ai-advisor` — `ai_advisor_tab()`
 
-Unified single-page render for all 5 in-place tab panels. Server-side assembles all data needed for every panel in one request:
+Unified single-page render for all 6 in-place tab panels. Server-side assembles all data needed for every panel in one request:
 
 **Template context:**
 | Key | Source | Panel |
@@ -161,15 +163,18 @@ Unified single-page render for all 5 in-place tab panels. Server-side assembles 
 | `no_api_key` | `True` when Composer credentials absent | Asset Swaps, Logic Changes |
 | `symphonies` | `analytics.list_available_symphonies` | Asset Swaps, Logic Changes forms |
 | `chat_available` | `bool(os.environ.get("ANTHROPIC_API_KEY"))` — key presence only, value never passed to template | Chat |
+| `sb_observations` | `database.get_advisor_observations_for_role("STRATEGY_BUILDER")`, reversed (oldest-first); empty list on error | Strategy Builder |
+| `sb_card_artifacts` | dict keyed by `obs["id"]`; each value is an M6 `strategy_proposal` artifact dict for the Discuss/Chat affordance; built from `raw_response` fields per observation | Strategy Builder |
 
-The Correlations, API-key, and Symphonies data assembly sections are wrapped in `try/except` — if those panels' data fails, the others still render. The Overview observations loop (`app.py:2756-2778`) is not wrapped.
+The Correlations, API-key, Symphonies, and Strategy Builder data assembly sections are wrapped in `try/except` — if those panels' data fails, the others still render. The Overview observations loop is not wrapped.
 
 #### `GET /ai-advisor/correlations` → 302 redirect to `/ai-advisor`
 #### `GET /ai-advisor/asset-swaps` → 302 redirect to `/ai-advisor`
 #### `GET /ai-advisor/logic-changes` → 302 redirect to `/ai-advisor`
 #### `GET /ai-advisor/chat` → 302 redirect to `/ai-advisor`
+#### `GET /ai-advisor/strategy-builder` → 302 redirect to `/ai-advisor` — `ai_advisor_strategy_builder()`
 
-Old bookmarks redirect cleanly rather than 404ing.
+Old bookmarks and links redirect cleanly rather than 404ing. The Strategy Builder content is now rendered as the 6th tab panel in the unified SPA. The POST action route is unaffected.
 
 #### `POST /ai-advisor/asset-swaps/evaluate` — `ai_advisor_asset_swaps_evaluate()`
 
@@ -201,6 +206,10 @@ Records operator rejection to `llm_suggestions` audit trail. No config write, no
 
 Rate-limited (per-IP via `_CHAT_RATE_LIMITER`) explain-only chat endpoint. Accepts `{ artifact_type, artifact_id, artifact, history, message }`. Delegates to `advisors.advisor_chat.explain_artifact`. Hard constraints: no write path, no trade directives, no new unvalidated recommendations. Returns `{reply: str}` on success, `{error: str}` on failure; never returns 500 or HTML.
 
+#### `POST /ai-advisor/strategy-builder/run` — `ai_advisor_strategy_builder_run()`
+
+CSRF-protected. Accepts JSON: `{ objective, universe, symphony_id? }`. Lazy-imports `propose_strategies` from `advisors.strategy_builder_engine` (keeps the engine off the live 1-minute execution path). Calls `propose_strategies` with a `ScreenConfig`, gates candidates via the full FDR batch, and returns JSON with survivor/rejected detail plus FDR metadata for the operator audit trail. Advisory-only: never calls Composer write endpoints, never touches `LIVE_EXECUTION`. Not in `_SETTINGS_WRITE_ALLOWLIST`. D-1 contract honored: returns `{"error": type(exc).__name__}` on exception, never `str(exc)`.
+
 ---
 
 ### State Helpers
@@ -225,5 +234,6 @@ Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 - `advisors.correlation_diagnostic` — `compute_pairwise_correlations`, `CRISIS_CAVEAT`
 - `advisors.asset_swap_engine` — `propose_operator_swap`, `SwapObjective`, `_has_composer_key`
 - `advisors.logic_change_engine` — `propose_operator_logic_change`, `LogicTweak`, `LogicChangeObjective`
-- `advisors.advisor_chat` — `explain_artifact`
+- `advisors.advisor_chat` — `explain_artifact`, `CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS`
+- `advisors.strategy_builder_engine` — `propose_strategies`, `Objective`, `ScreenConfig` (lazy import)
 - `symphony_logic` — `fetch_symphony_score`

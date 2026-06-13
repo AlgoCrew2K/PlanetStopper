@@ -51,6 +51,28 @@ import pytest
 import app as app_module
 
 # ---------------------------------------------------------------------------
+# SPA migration helpers — route-level tests now hit GET /ai-advisor (SPA)
+# ---------------------------------------------------------------------------
+
+
+def _make_spa_corr_module():
+    """Return a fake advisors.correlation_diagnostic module for SPA route mocks."""
+    fake_corr = MagicMock()
+    fake_corr.compute_pairwise_correlations.return_value = []
+    fake_corr.CRISIS_CAVEAT = ""
+    return fake_corr
+
+
+def _spa_obs_side_effect(sb_obs):
+    """Return a get_advisor_observations_for_role side_effect serving sb_obs for STRATEGY_BUILDER."""
+    def _side_effect(role, limit=50):
+        if role == "STRATEGY_BUILDER":
+            return list(sb_obs) if sb_obs is not None else []
+        return []
+    return _side_effect
+
+
+# ---------------------------------------------------------------------------
 # Repository root and fixture paths
 # ---------------------------------------------------------------------------
 
@@ -482,14 +504,19 @@ def test_pc1_old_row_renders_single_column_stats_table_no_crash(client):
         "The golden-fixture test requires a pre-3.5 row without Phase 3.5 fields."
     )
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
     assert resp.status_code == 200, (
-        f"GET /ai-advisor/strategy-builder returned {resp.status_code} for a pre-3.5 "
+        f"GET /ai-advisor returned {resp.status_code} for a pre-3.5 "
         "observation row. HR-1: old rows must render without crashing."
     )
 
@@ -796,26 +823,31 @@ def test_pe1_get_route_card_artifacts_for_new_row_includes_phase35_metric_keys(c
         captured.update(kwargs)
         return "<html><body>stub</body></html>"
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-new")
+        client.get("/ai-advisor")
 
-    card_artifacts = captured.get("card_artifacts", {})
+    card_artifacts = captured.get("sb_card_artifacts", {})
     artifact = card_artifacts.get(obs_id, {})
 
     assert artifact, (
-        f"card_artifacts must contain an entry for new-row obs id={obs_id}. "
-        "The GET route must build card_artifacts for Phase 3.5 rows."
+        f"sb_card_artifacts must contain an entry for new-row obs id={obs_id}. "
+        "The GET route must build sb_card_artifacts for Phase 3.5 rows."
     )
 
     phase35_keys = ["cagr", "sharpe", "calmar", "correlation_vs_live", "blended_drawdown"]
     missing = [k for k in phase35_keys if k not in artifact]
     assert not missing, (
-        f"card_artifacts[{obs_id}] is missing Phase 3.5 metric keys: {missing}. "
-        "PE-1: The GET route must surface all §2 metric fields into card_artifacts "
+        f"sb_card_artifacts[{obs_id}] is missing Phase 3.5 metric keys: {missing}. "
+        "PE-1: The GET route must surface all §2 metric fields into sb_card_artifacts "
         "for new rows. These fields are already allowlisted in Phase 4 — construction only."
     )
 
@@ -837,24 +869,29 @@ def test_pe2_get_route_card_artifacts_cagr_matches_raw_response_cagr(client):
         captured.update(kwargs)
         return "<html><body>stub</body></html>"
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-new")
+        client.get("/ai-advisor")
 
-    card_artifacts = captured.get("card_artifacts", {})
+    card_artifacts = captured.get("sb_card_artifacts", {})
     artifact = card_artifacts.get(obs_id, {})
 
     assert "cagr" in artifact, (
-        f"card_artifacts[{obs_id}] must contain 'cagr'. "
+        f"sb_card_artifacts[{obs_id}] must contain 'cagr'. "
         "PE-2: the GET route must populate cagr from raw_response['cagr']."
     )
     assert artifact["cagr"] == expected_cagr, (
         # Tolerance: exact equality — cagr is copied from raw_response dict,
         # not recomputed, so floating-point should be bit-for-bit identical.
-        f"card_artifacts[{obs_id}]['cagr']={artifact['cagr']!r} does not match "
+        f"sb_card_artifacts[{obs_id}]['cagr']={artifact['cagr']!r} does not match "
         f"raw_response['cagr']={expected_cagr!r}. "
         "PE-2: cagr must be derived directly from raw_response (HR-2: no recomputation "
         "at read time). If the values differ, the route is synthesizing the metric."
@@ -987,12 +1024,17 @@ class TestAdversarialCycle2Phase35:
             "Test setup: observation_backtest_failed must have metrics={} (empty dict)."
         )
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([obs])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
             try:
-                resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+                resp = client.get("/ai-advisor")
             except Exception as exc:
                 pytest.fail(
                     f"GET route raised {type(exc).__name__} on row with metrics={{}}: {exc}. "
@@ -1505,14 +1547,16 @@ class TestIndependentCycle2Phase35:
             "spec_bundle_id": None,
         }
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch(
-                "database.get_advisor_observations_for_symphony",
-                return_value=[partial_baseline_obs],
-            ),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([partial_baseline_obs])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-ic2-partial")
+            resp = client.get("/ai-advisor")
 
         assert resp.status_code == 200, (
             f"IC2-3a: GET returned {resp.status_code} for partial live_baseline (missing sharpe). "
@@ -1634,14 +1678,16 @@ class TestIndependentCycle2Phase35:
             "spec_bundle_id": None,
         }
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch(
-                "database.get_advisor_observations_for_symphony",
-                return_value=[withheld_partial_obs],
-            ),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([withheld_partial_obs])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-ic2-withheld")
+            resp = client.get("/ai-advisor")
 
         assert resp.status_code == 200, (
             f"IC2-3c: GET returned {resp.status_code} for withheld card "
@@ -1810,36 +1856,38 @@ class TestIndependentCycle2Phase35:
             captured.update(kwargs)
             return "<html><body>stub</body></html>"
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch(
-                "database.get_advisor_observations_for_symphony",
-                return_value=[new_row_no_baseline],
-            ),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([new_row_no_baseline])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch.object(app_module, "render_template", side_effect=capture_render),
         ):
             try:
-                client.get("/ai-advisor/strategy-builder?symphony_id=sym-ic2-no-bl")
+                client.get("/ai-advisor")
             except KeyError as exc:
                 pytest.fail(
                     f"GET route raised KeyError on new-format row without live_baseline: {exc}. "
-                    "IC2-5a: card_artifacts building must not require live_baseline to be present."
+                    "IC2-5a: sb_card_artifacts building must not require live_baseline to be present."
                 )
 
-        card_artifacts = captured.get("card_artifacts", {})
+        card_artifacts = captured.get("sb_card_artifacts", {})
         artifact = card_artifacts.get(701, {})
 
         assert artifact, (
-            "IC2-5a: card_artifacts must contain entry for obs id=701 (new-format row). "
-            "The card_artifacts building loop must process new-format rows regardless of "
+            "IC2-5a: sb_card_artifacts must contain entry for obs id=701 (new-format row). "
+            "The sb_card_artifacts building loop must process new-format rows regardless of "
             "whether live_baseline is present."
         )
 
         # Phase 3.5 metric keys must be present in the artifact
         for key in ("cagr", "sharpe", "calmar", "correlation_vs_live", "blended_drawdown"):
             assert key in artifact, (
-                f"IC2-5a: card_artifacts[701] missing Phase 3.5 key '{key}'. "
-                "The GET route must surface all §2 flat metric keys into card_artifacts "
+                f"IC2-5a: sb_card_artifacts[701] missing Phase 3.5 key '{key}'. "
+                "The GET route must surface all §2 flat metric keys into sb_card_artifacts "
                 "regardless of whether live_baseline is present."
             )
 
@@ -1867,24 +1915,29 @@ class TestIndependentCycle2Phase35:
             captured.update(kwargs)
             return "<html><body>stub</body></html>"
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([obs])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch.object(app_module, "render_template", side_effect=capture_render),
         ):
-            client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            client.get("/ai-advisor")
 
-        card_artifacts = captured.get("card_artifacts", {})
+        card_artifacts = captured.get("sb_card_artifacts", {})
         artifact = card_artifacts.get(obs_id, {})
 
         # Must have the 'cagr' key (with value None), not be absent
         assert "cagr" in artifact, (
-            f"IC2-5b: card_artifacts[{obs_id}] must have 'cagr' key (None) for pre-3.5 row. "
-            "The card_artifacts dict must have a consistent shape regardless of row vintage — "
+            f"IC2-5b: sb_card_artifacts[{obs_id}] must have 'cagr' key (None) for pre-3.5 row. "
+            "The sb_card_artifacts dict must have a consistent shape regardless of row vintage — "
             "the chat layer must not KeyError on 'cagr' when grounding on a pre-3.5 row."
         )
         assert artifact["cagr"] is None, (
-            f"IC2-5b: card_artifacts[{obs_id}]['cagr']={artifact['cagr']!r} must be Python None "
+            f"IC2-5b: sb_card_artifacts[{obs_id}]['cagr']={artifact['cagr']!r} must be Python None "
             "for a pre-3.5 row (raw_response has no 'cagr' key). "
             "None is the correct sentinel for absent pre-3.5 metrics, not the string 'None'."
         )

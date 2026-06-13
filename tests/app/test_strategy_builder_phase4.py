@@ -1483,30 +1483,35 @@ def test_adv6_get_route_with_backtest_failed_obs_still_builds_card_artifacts(cli
         captured.update(kwargs)
         return "<html><body>stub</body></html>"
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
         try:
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
         except Exception as exc:
             pytest.fail(
                 f"GET route raised {type(exc).__name__} on backtest-failed observation: {exc}. "
-                "The route must never crash when building card_artifacts for any observation type."
+                "The route must never crash when building sb_card_artifacts for any observation type."
             )
 
     assert resp.status_code == 200, (
         f"GET route must return 200 for backtest-failed observations. Got {resp.status_code}."
     )
 
-    card_artifacts = captured.get("card_artifacts", {})
+    card_artifacts = captured.get("sb_card_artifacts", {})
     assert isinstance(card_artifacts, dict), (
-        "card_artifacts must be a dict even when only backtest-failed observations exist."
+        "sb_card_artifacts must be a dict even when only backtest-failed observations exist."
     )
     # The backtest-failed obs must have an entry (may be minimal)
     assert obs_id in card_artifacts, (
-        f"card_artifacts must contain an entry for backtest-failed obs id={obs_id}. "
+        f"sb_card_artifacts must contain an entry for backtest-failed obs id={obs_id}. "
         "AC-2 requires all cards to have artifact data — even failed ones."
     )
 
@@ -1524,22 +1529,27 @@ def test_adv8_get_route_with_empty_observations_returns_empty_dict_card_artifact
         captured.update(kwargs)
         return "<html><body>stub</body></html>"
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        resp = client.get("/ai-advisor")
 
     assert resp.status_code == 200
 
-    assert "card_artifacts" in captured, (
-        "card_artifacts must always be passed to render_template, even with empty observations. "
+    assert "sb_card_artifacts" in captured, (
+        "sb_card_artifacts must always be passed to render_template, even with empty observations. "
         "A missing key would cause a NameError in the template."
     )
-    card_artifacts = captured["card_artifacts"]
+    card_artifacts = captured["sb_card_artifacts"]
     assert card_artifacts == {}, (
-        f"card_artifacts must be an empty dict when observations=[]. "
+        f"sb_card_artifacts must be an empty dict when observations=[]. "
         f"Got: {card_artifacts!r}. "
         "None or a missing key would crash the template Jinja code."
     )
@@ -1562,34 +1572,39 @@ def test_adv9_card_artifacts_key_matches_obs_id_exactly_not_str_not_index(client
         captured.update(kwargs)
         return "<html><body>stub</body></html>"
 
+    fake_corr = _make_spa_corr_module()
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-        patch("analytics.list_available_symphonies", return_value=[]),
+        patch.object(app_module.database, "get_advisor_observations_for_role",
+                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
-        client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+        client.get("/ai-advisor")
 
-    card_artifacts = captured.get("card_artifacts", {})
+    card_artifacts = captured.get("sb_card_artifacts", {})
 
     # Must be keyed by obs["id"] as int
     assert obs_id in card_artifacts, (
-        f"card_artifacts must be keyed by obs['id']={obs_id} (int). "
+        f"sb_card_artifacts must be keyed by obs['id']={obs_id} (int). "
         f"Got keys: {list(card_artifacts.keys())!r}. "
-        "The Jinja template uses card_artifacts[obs.id] — key must be int, not str."
+        "The Jinja template uses sb_card_artifacts[obs.id] — key must be int, not str."
     )
 
     # Must NOT be keyed by str(id) in addition to or instead of int id
     str_id = str(obs_id)
     if str_id in card_artifacts and obs_id not in card_artifacts:
         pytest.fail(
-            f"card_artifacts is keyed by str(id)='{str_id}' instead of int id={obs_id}. "
+            f"sb_card_artifacts is keyed by str(id)='{str_id}' instead of int id={obs_id}. "
             "The Jinja template lookup uses the raw obs.id value (typically int from SQLite). "
             "Key must be the same type as obs['id']."
         )
 
     # Must NOT be keyed by positional index (0)
     assert 0 not in card_artifacts or obs_id in card_artifacts, (
-        "card_artifacts must be keyed by obs['id'], not by positional index. "
+        "sb_card_artifacts must be keyed by obs['id'], not by positional index. "
         "Index-keyed dicts break when observations are reordered or filtered."
     )
 
@@ -1600,11 +1615,15 @@ def test_adv9_card_artifacts_key_matches_obs_id_exactly_not_str_not_index(client
 
 
 def test_static_phase4_get_route_still_uses_lazy_import_for_has_composer_key():
-    """Static: GET /ai-advisor/strategy-builder route still imports _has_composer_key lazily.
+    """Static: The unified ai_advisor_tab route imports _has_composer_key lazily.
 
-    Phase 4 extends the GET route handler body. The lazy import of
-    _has_composer_key must be preserved (AC-X2) — a module-scope import
-    couples the 1-minute execution path to the advisor engine.
+    SPA-port: the strategy-builder panel content now lives in ai_advisor_tab (the
+    unified GET /ai-advisor handler). The lazy import of _has_composer_key must be
+    preserved there (AC-X2) — a module-scope import couples the 1-minute execution
+    path to the advisor engine.
+
+    Note: ai_advisor_strategy_builder is now a thin redirect (302); _has_composer_key
+    moved to ai_advisor_tab which is the correct lazy-import boundary.
     """
     import ast as _ast
 
@@ -1613,18 +1632,19 @@ def test_static_phase4_get_route_still_uses_lazy_import_for_has_composer_key():
 
     fn_body = None
     for node in _ast.walk(tree):
-        if isinstance(node, _ast.FunctionDef) and node.name == "ai_advisor_strategy_builder":
+        if isinstance(node, _ast.FunctionDef) and node.name == "ai_advisor_tab":
             fn_body = _ast.unparse(node)
             break
 
     assert fn_body is not None, (
-        "ai_advisor_strategy_builder function not found in app.py. "
-        "The GET route handler must be defined."
+        "ai_advisor_tab function not found in app.py. "
+        "The unified GET /ai-advisor route handler must be defined."
     )
 
     assert "_has_composer_key" in fn_body, (
-        "ai_advisor_strategy_builder must still import _has_composer_key inside its body. "
-        "Phase 4 must not move this lazy import to module scope (AC-X2)."
+        "ai_advisor_tab must import _has_composer_key inside its body. "
+        "SPA-port: _has_composer_key moved from ai_advisor_strategy_builder to "
+        "ai_advisor_tab — the lazy-import AC-X2 constraint must be preserved there."
     )
 
 
@@ -2170,20 +2190,24 @@ class TestAdversarialCycle2:
             captured.update(kwargs)
             return "<html><body>stub</body></html>"
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([obs])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch.object(app_module, "render_template", side_effect=_capture),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
 
-        # This assertion will fail when the bug exists (route crashes → exception propagates
-        # through the Flask test client in TESTING=True mode, so resp is never assigned).
-        # When the fix is applied, resp.status_code == 200 and the xfail mark must be removed.
+        # The SPA route has isinstance(rr, dict) guard in the sb_card_artifacts loop,
+        # so a string raw_response must be treated as {} and not crash the route.
         assert resp.status_code == 200, (
             f"GET route must return 200 when raw_response is a string. "
             f"Got status {resp.status_code}. "
-            "CYCLE2-BUG: isinstance(rr, dict) guard missing in card_artifacts loop."
+            "CYCLE2-BUG: isinstance(rr, dict) guard missing in sb_card_artifacts loop."
         )
 
     def test_c2_5b_get_route_raw_response_string_is_truthy_bug_documented(self, client):
@@ -2208,21 +2232,25 @@ class TestAdversarialCycle2:
             captured.update(kwargs)
             return "<html><body>stub</body></html>"
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=[obs]),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([obs])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch.object(app_module, "render_template", side_effect=_capture),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
 
-        # If the bug exists, resp.status_code is 500.
-        # xfail(strict=True) means: this assertion MUST fail on the buggy code.
-        # Once fixed, the assertion passes → xfail becomes an xpass → test is
-        # promoted to a normal pass by removing the xfail mark.
+        # The SPA route has isinstance(rr, dict) guard so string raw_response is
+        # treated as {} — the route must return 200, not crash.
         assert resp.status_code == 200, (
             f"CYCLE2-BUG: GET route returned {resp.status_code} (expected 200) when "
             "raw_response is a non-empty string. "
-            "The `or {}` guard in app.py does not protect against truthy non-dict values."
+            "The isinstance(rr, dict) guard in ai_advisor_tab must prevent crashes on "
+            "truthy non-dict raw_response values."
         )
 
     def test_c2_5c_get_route_raw_response_is_integer_does_not_500(self, client):
@@ -2281,20 +2309,24 @@ class TestAdversarialCycle2:
             captured.update(kwargs)
             return "<html><body>stub</body></html>"
 
+        fake_corr = _make_spa_corr_module()
         with (
-            patch("database.get_advisor_observations_for_symphony", return_value=[obs_no_id]),
-            patch("analytics.list_available_symphonies", return_value=[]),
+            patch.object(app_module.database, "get_advisor_observations_for_role",
+                         side_effect=_spa_obs_side_effect([obs_no_id])),
+            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch.object(app_module, "render_template", side_effect=_capture),
         ):
-            resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
+            resp = client.get("/ai-advisor")
 
-        # In the buggy state, the route raises KeyError → Flask test client (TESTING=True)
-        # propagates the exception, so this assertion is never reached.
-        # When fixed, resp.status_code == 200.
+        # The SPA route guards: if _obs_id is None: continue — so a missing 'id' key
+        # (returns None from .get()) must not crash the route.
         assert resp.status_code == 200, (
             f"GET route must return 200 when an observation row has no 'id' key. "
             f"Got status {resp.status_code}. "
-            "CYCLE2-BUG: obs['id'] KeyError in card_artifacts loop."
+            "CYCLE2-BUG: obs.get('id') guard missing in sb_card_artifacts loop."
         )
 
     # -----------------------------------------------------------------------

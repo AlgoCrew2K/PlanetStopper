@@ -321,3 +321,13 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** `TRIGGER_THRESHOLD_PCT` is the default locked variable and is NOT suggestible (verified at `database.DEFAULT_LOCKED_VARS`). The "9-item" figure was a carry-over from an earlier spec draft. The `_PARAM_VALID_RANGES` comment was corrected in a prior commit (540d89d); this commit aligns the docstring.
 
 **Status:** Merged (95ba125). Pinned by `test_docstring_says_7_item_allowlist` in `tests/test_cycle1_foundation.py`.
+
+---
+
+### DE-SPA-001: Strategy Builder folded into unified AI-Advisor SPA as 6th tab
+
+**Decision:** `templates/ai_advisor_strategy_builder.html` (the standalone Strategy Builder page) is deleted. Its content is ported into `templates/ai_advisor.html` as the 6th in-place tab panel (`id="tab-panel-strategy-builder"`). `GET /ai-advisor/strategy-builder` returns 302 to `/ai-advisor`, matching the pattern of the existing 4 GET sub-routes (Correlations, Asset Swaps, Logic Changes, Chat). `POST /ai-advisor/strategy-builder/run` is unchanged. `sbRunAnalysis()` and `openChatWithArtifact()` are moved from the deleted template's inline `<script>` into `static/ai_advisor.js` (exposed on `window`). The `/ai-advisor` route (`ai_advisor_tab`) gains a STRATEGY_BUILDER observation prefetch via `database.get_advisor_observations_for_role("STRATEGY_BUILDER")` and passes `strategy_builder_observations` + `sb_card_artifacts` to `render_template`.
+
+**Rationale:** The standalone page created a navigation seam (full-page reload on tab switch), duplicated the advisor header/nav chrome, and could not participate in the unified SPA's in-place tab switching. Folding it in eliminates the seam while preserving all advisory-only, CSRF, and D-1 contracts unchanged.
+
+**Status:** Merged into `cycle/spa-port-strategy-builder` at 7908d77. Acceptance criteria verified by `tests/app/test_strategy_builder_spa_port.py` (53 passed / 9 skipped / 0 failed). The 9 skips are legacy card-anatomy tests on the standalone route that now correctly skip on 302.

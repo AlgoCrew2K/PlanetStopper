@@ -1,9 +1,9 @@
 # static/ai_advisor.js
 
-> Client-side logic for the AI Advisor single-page SPA: in-place tab switching, suggestion card rendering with per-symphony assessment, accept/reject lifecycle, autotune run feed, and symphony selection.
+> Client-side logic for the AI Advisor single-page SPA: in-place tab switching, suggestion card rendering with per-symphony assessment, accept/reject lifecycle, autotune run feed, symphony selection, and Strategy Builder run/chat affordances.
 
 **Source:** `static/ai_advisor.js`
-**Last updated:** 2026-06-10
+**Last updated:** 2026-06-13
 
 ## Overview
 
@@ -16,6 +16,7 @@ Key responsibilities:
 - **CSRF token** — fetches `GET /api/csrf-token` on `DOMContentLoaded`; all POST requests include `X-CSRF-Token: _csrfToken`.
 - **Autotune run feed** (`loadRecentRuns`) — polls `GET /api/autotune-runs` every 15 seconds; renders run cards with decision pills, Sortino/selection t-stat, and frozen-eval verdict; renders a Chart.js sparkline of historical Sortino values.
 - **Symphony selection** (`loadSymphonies`) — populates the `#symphony-id-input` select from `GET /api/performance/symphonies`; fires `getSuggestions` automatically on select change.
+- **Strategy Builder tab** (`sbRunAnalysis`, `openChatWithArtifact`) — operator-initiated proposal run and artifact-to-chat navigation for the 6th tab panel. Moved from the deleted `templates/ai_advisor_strategy_builder.html` inline script in the spa-port cycle (2026-06-13); live inside the IIFE to share the `_csrfToken` closure, then exposed on `window`.
 
 ## API Reference
 
@@ -91,14 +92,40 @@ Null guard: if `rows` is falsy or empty, renders a "No tuning runs recorded yet"
 
 Fetches `GET /api/performance/symphonies`, populates `#symphony-id-input` options. Preserves the previously-selected value if it is still in the returned list. On select `change`, calls `syncRunBtn()` and auto-fires `getSuggestions()` if a value is selected (C-11 wire).
 
+---
+
+### `window.sbRunAnalysis()` (Strategy Builder tab)
+
+Operator-initiated proposal run for the Strategy Builder tab. Reads `#sb-objective-select`, `#sb-universe-input`, and `#sb-symphony-select` from the panel controls. Obtains the CSRF token from the cached `_csrfToken` or fetches fresh from `GET /api/csrf-token` on a miss. POSTs to `POST /ai-advisor/strategy-builder/run` with `X-CSRF-Token` header and JSON body `{ objective, universe, symphony_id }`.
+
+On success: navigates to `/ai-advisor` (the unified SPA) so newly-persisted `STRATEGY_BUILDER` observations are rendered server-side. Navigates to `/ai-advisor`, not the old standalone `/ai-advisor/strategy-builder` URL (which 302-redirects anyway per the spa-port fold-in).
+
+On error: shows the error class name in `#sb-run-error` inline without a page navigation.
+
+Disables `#sb-run-btn` during the request; re-enables it in the `finally` block regardless of outcome.
+
+*Moved from inline `<script>` in the deleted `templates/ai_advisor_strategy_builder.html`; defined inside the IIFE to share the `_csrfToken` closure; exposed as `window.sbRunAnalysis` for Jinja `onclick` handlers (spa-port cycle, 2026-06-13).*
+
+---
+
+### `window.openChatWithArtifact(artifactJson)` (Strategy Builder tab)
+
+Stores a strategy-proposal artifact in `sessionStorage` under the key `sb_pending_chat_artifact` so the Chat tab can retrieve it on load. Then navigates to `/ai-advisor/chat` with `from_strategy_builder=1` and `symphony_id` query params if `#sb-symphony-select` has a value.
+
+This is pure JS navigation — no form submission, no POST. Buttons invoking this must be `type="button"` (never `type="submit"`).
+
+*Moved from inline `<script>` in the deleted `templates/ai_advisor_strategy_builder.html`; exposed as `window.openChatWithArtifact` for Jinja `onclick` handlers (spa-port cycle, 2026-06-13).*
+
 ## Internal Dependencies
 
 - `GET /api/csrf-token` — CSRF token fetch
 - `POST /ai-advisor/suggest` — suggestion fetch
 - `POST /ai-advisor/accept` — suggestion acceptance
 - `POST /ai-advisor/reject` — suggestion rejection
+- `POST /ai-advisor/strategy-builder/run` — strategy-builder proposal run (Strategy Builder tab)
 - `GET /api/autotune-runs` — autotune run history feed
 - `GET /api/performance/symphonies` — symphony list
 - `Chart.js` (global) — autotune sparkline; guarded by `typeof Chart === 'undefined'` check
 - `openChatPanel` (global, optional) — chat slide-in panel; defined in the SPA template's inline script; falls back to navigation if absent
+- `sessionStorage` — used by `openChatWithArtifact` to pass a strategy-proposal artifact to the Chat tab across the navigation boundary
 - CSS custom properties: `--studio-pos`, `--studio-neg`, `--studio-warn`, `--studio-accent`, `--studio-ink`, `--studio-ink-dim`, `--studio-surface`, `--studio-border`, `--studio-chip-bg`, `--studio-white`, `--studio-surface-raised`, `--studio-rule`, `--studio-swatch-1`
