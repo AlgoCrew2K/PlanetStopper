@@ -1,0 +1,42 @@
+{
+  "_provenance": "Output-shape fixture (producer schema). Input API shape pinned from a LIVE GDELT capture on 2026-06-13 at gdelt_timelinetone_api_shape.json (captured-from-producer). This file defines the PRODUCER OUTPUT shape only -- not the raw API shape. Values marked __is_*__ are type/format assertions -- NOT hardcoded producer outputs.",
+  "_api_contract_note": "GDELT 2.0 DOC API timelinetone mode (free, no key). Real response shape (captured 2026-06-13): {query_details, timeline:[{series:Average Tone, data:[{date,value},...]}]}. The value field lives inside timeline[*].data[*], NOT at timeline[*] directly -- the old schema-derived fixture had the wrong nesting level causing tone=None in production.",
+  "_tone_normalization_note": "GDELT AvgTone is in [-100, 100]. Producer normalizes to [-1, 1] (divide by 100). Tests assert -1.0 <= tone <= 1.0 (or None on unavailable) -- NOT a specific value.",
+  "_per_ticker_note": "GDELT does not expose per-ticker filtering in the free timelinetone API. per_ticker is always null.",
+  "_endpoint_note": "Uses mode=timelinetone (not mode=artlist). artlist carries NO per-article tone field in practice.",
+  "required_output_keys": [
+    "available",
+    "tone",
+    "per_ticker",
+    "source"
+  ],
+  "available_true_shape": {
+    "available": true,
+    "tone": "__is_float_in_[-1,1]_or_null__",
+    "per_ticker": "__is_dict_or_null__",
+    "source": "__is_non_empty_string__"
+  },
+  "available_false_shape": {
+    "available": false,
+    "tone": null,
+    "per_ticker": null,
+    "source": "__is_string_or_null__",
+    "reason": "__is_non_empty_string__"
+  },
+  "gdelt_timelinetone_series_shape": {
+    "series": "__is_non_empty_string__",
+    "data": "__is_list_of_data_points__"
+  },
+  "gdelt_timelinetone_data_point_shape": {
+    "date": "__is_non_empty_string__",
+    "value": "__is_float_or_int__"
+  },
+  "invariants": {
+    "tone_bounds": "when available=True and tone is not None: -1.0 <= tone <= 1.0",
+    "tone_on_unavailable": "when available=False: tone is None",
+    "reason_d1_compliant": "reason is type(exc).__name__ only -- never str(exc)",
+    "no_fabricated_tone": "when GDELT returns no timeline entries or no value data: available=False (or available=True with tone=None), never a fabricated float",
+    "endpoint_uses_timelinetone": "the producer MUST use mode=timelinetone, NOT mode=artlist. artlist has no per-article tone field in the free GDELT API.",
+    "series_nesting": "timeline[*] is a series object with keys series and data; value fields are in data[*], not at series level."
+  }
+}
