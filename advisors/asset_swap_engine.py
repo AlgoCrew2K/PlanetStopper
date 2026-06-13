@@ -1200,7 +1200,9 @@ def suggest_swaps(
                 # Cycle-3 AC-4: build per-candidate lens_evidence for persistence.
                 cand_ticker = shell.candidate_asset if hasattr(shell, "candidate_asset") else ""
                 cand_lens_ev = _build_candidate_lens_evidence(cand_ticker, lens_scores)
-                cand_sources = _collect_lens_sources(lens_scores)
+                # AC-4: use caller-supplied citations when provided; fall back to
+                # auto-collected metadata from lens_scores otherwise.
+                cand_sources = lens_sources if lens_sources is not None else _collect_lens_sources(lens_scores)
                 _persist_observation(
                     symphony_id,
                     shell,

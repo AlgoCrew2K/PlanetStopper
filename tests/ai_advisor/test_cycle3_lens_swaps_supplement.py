@@ -260,6 +260,84 @@ class TestLensSourcesKwargOnSuggestSwaps:
 
         assert result is not None
 
+    def test_suggest_swaps_caller_sources_appear_in_raw_response(self):
+        """AC-4: citation dicts passed via lens_sources must appear in each candidate's
+        raw_response['sources'] when suggest_swaps persists observations.
+
+        RED intent: the implementer added lens_sources to the suggest_swaps signature
+        but the loop body still calls _collect_lens_sources(lens_scores) unconditionally,
+        discarding any caller-supplied citations. This test catches that gap:
+        the URL in _LENS_SOURCES_FIXTURE must appear in at least one persisted raw_response.
+        """
+        engine = _import_engine()
+        import inspect
+
+        fn = engine.suggest_swaps
+        sig = inspect.signature(fn)
+        if "lens_sources" not in sig.parameters:
+            pytest.skip("lens_sources not yet on suggest_swaps — wait for RED→GREEN.")
+
+        # Build a gate batch that admits BND (ADOPT_CANDIDATE) so persistence is triggered.
+        mock_gate_result = MagicMock()
+        mock_gate_result.candidate_id = "test-sym-001:SPY->BND"
+        mock_gate_result.verdict = MagicMock()
+        mock_gate_result.verdict.decision = "ADOPT_CANDIDATE"
+        mock_gate_result.oos_alpha = 0.05
+        mock_gate_result.validation_days = 25
+        mock_gate_result.caveats = []
+
+        mock_gate_batch = MagicMock()
+        mock_gate_batch.results = [mock_gate_result]
+
+        obj = engine.SwapObjective(
+            objective_type="reduce_correlation",
+            target_pair=("SPY", "GLD"),
+            measured_value=0.85,
+        )
+
+        captured: list[dict] = []
+
+        def _capture(**kwargs):
+            captured.append(kwargs)
+
+        with (
+            patch("advisors.asset_swap_engine.run_backtest", return_value=_make_mock_bt()),
+            patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
+            patch("advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch),
+            patch("database.insert_advisor_observation", side_effect=_capture),
+        ):
+            engine.suggest_swaps(
+                symphony_id="test-sym-001",
+                score_tree=_SCORE_TREE,
+                objective=obj,
+                correlation_data=_CORR_DATA,
+                available_assets=["BND"],
+                lens_scores=_LENS_SCORES_FIXTURE,
+                lens_sources=_LENS_SOURCES_FIXTURE,
+            )
+
+        assert captured, (
+            "insert_advisor_observation was not called. "
+            "A gate-admitted candidate must be persisted."
+        )
+        caller_urls = {s["url"] for s in _LENS_SOURCES_FIXTURE}
+        any_url_present = False
+        for call_kw in captured:
+            raw = call_kw.get("raw_response", {})
+            sources = raw.get("sources", [])
+            persisted_urls = {s.get("url") for s in sources if isinstance(s, dict)}
+            if caller_urls & persisted_urls:
+                any_url_present = True
+                break
+        assert any_url_present, (
+            f"Caller-supplied lens_sources URLs {caller_urls} not found in any persisted "
+            f"raw_response['sources']. "
+            "AC-4: suggest_swaps must propagate caller-supplied citation dicts into "
+            "_persist_observation. The implementation accepted lens_sources in the signature "
+            "but the loop body ignored it (called _collect_lens_sources unconditionally). "
+            "Fix: use 'lens_sources if lens_sources is not None else _collect_lens_sources(lens_scores)'."
+        )
+
 
 # ===========================================================================
 # AC-5 gap: static no-defund / no-pull / no-trade-execution guard
