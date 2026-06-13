@@ -584,7 +584,13 @@ class TestUnavailableOn429AfterMaxRetries:
         assert result.get("available") is False
 
     def test_single_success_after_one_429_does_retry(self, timelinetone_shape):
-        """A single 429 followed by a 200 must succeed (retry works)."""
+        """A single 429 followed by a 200 must succeed (retry works).
+
+        Asserts:
+          1. At least 2 HTTP calls were made (the retry actually happened).
+          2. The final result is the successful shape (available=True) — a silent
+             available=False after a 200 cannot pass this test.
+        """
         mod = _import_lens_gdelt()
         timeline = _make_timeline_entries(timelinetone_shape)
         resp_429 = MagicMock()
@@ -603,6 +609,13 @@ class TestUnavailableOn429AfterMaxRetries:
 
         assert call_order["n"] >= 2, (
             f"Expected at least 2 HTTP calls (1 retry after 429); made {call_order['n']}"
+        )
+        # NIT-1: assert the successful shape — available=False after a 200 is a silent bug.
+        assert result.get("available") is True, (
+            f"After a 429 then a 200 success, the producer must return available=True. "
+            f"Got available={result.get('available')!r}. "
+            f"A silent available=False would mean the retry succeeded at the HTTP level "
+            f"but the result was incorrectly marked unavailable."
         )
 
 
@@ -706,12 +719,26 @@ class TestEmptyTimelineReturnsUnavailable:
             )
 
     def test_timeline_with_no_value_field_handled_gracefully(self):
-        """Timeline entries without a 'value' field must not crash the producer."""
+        """Non-empty timeline with no numeric 'value' fields must not crash, and must
+        not fabricate a tone.
+
+        Producer path: timeline_series is non-empty, so the empty-timeline early-exit
+        is NOT taken.  All entries lack a numeric 'value', so raw_tones stays empty,
+        _normalize_tone([]) returns None, and the function returns:
+            {"available": True, "tone": None, ...}
+
+        This test locks the honest-availability contract for that path:
+          - available=True (non-empty timeline was received)
+          - tone is None  (no numeric values — no fabrication)
+          - tone is NOT 0.0 and NOT any float  (0.0 would be a fabricated neutral)
+        """
         mod = _import_lens_gdelt()
-        # Entries missing the 'value' field.
+        # Entries with non-numeric / missing 'value' fields — no numeric tone data.
         bad_data_points = [
             {"date": "20260613T000000Z"},
             {"date": "20260613T010000Z", "other_field": "oops"},
+            {"date": "20260613T020000Z", "value": "not-a-number"},
+            {"date": "20260613T030000Z", "value": None},
         ]
         bad_timeline = [{"series": "Average Tone", "data": bad_data_points}]
         mock_resp = _make_timelinetone_response(bad_timeline)
@@ -727,6 +754,25 @@ class TestEmptyTimelineReturnsUnavailable:
 
         assert isinstance(result, dict)
         assert "available" in result
+
+        # MINOR-1: lock the honest-availability contract on the available=True branch.
+        # The producer receives a non-empty timeline (so available=True) but no numeric
+        # values, so it MUST return tone=None — never a fabricated float such as 0.0.
+        if result.get("available") is True:
+            tone = result.get("tone")
+            assert tone is None, (
+                f"Honest-availability contract violated: when timeline is non-empty but "
+                f"contains no numeric 'value' fields, tone MUST be None — not a fabricated "
+                f"float. Got tone={tone!r}. "
+                f"0.0 would be a fabricated neutral; any non-None float is wrong here."
+            )
+            # Belt-and-suspenders: explicitly rule out 0.0 as a special case.
+            assert tone is not 0.0, (  # noqa: F632  # identity check is intentional
+                "tone must not be 0.0 (fabricated neutral) when no numeric values exist."
+            )
+            assert not isinstance(tone, float), (
+                f"tone must not be any float when no numeric values were available; got {tone!r}."
+            )
 
     def test_missing_timeline_key_handled_gracefully(self):
         """A response without a 'timeline' key must not crash the producer."""
