@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -176,6 +177,69 @@ def _build_per_lens_digest(per_lens: dict[str, dict]) -> dict:
     return digest
 
 
+# Regex that matches an opening code fence for JSON, optionally with a language
+# tag.  Claude Haiku frequently wraps its JSON response in ```json ... ``` or
+# plain ``` ... ``` fences; stripping them before json.loads is required for
+# reliable parsing.
+# Pattern source: empirical observation of Claude Haiku output during live ops
+# (confirmed defect 2026-06-13 nightly run).
+_CODE_FENCE_OPEN_RE: re.Pattern = re.compile(r"^```(?:json)?\s*\n?", re.IGNORECASE)
+_CODE_FENCE_CLOSE_RE: re.Pattern = re.compile(r"\n?```\s*$")
+
+
+def _extract_json_object(raw_text: str) -> str:
+    """Extract the first balanced JSON object from a raw Claude response string.
+
+    Strategy (applied in order):
+    1. Strip markdown code fences (```json ... ``` or ``` ... ```).
+    2. If the remaining text contains a ``{``, scan for the first balanced
+       ``{ ... }`` block and return it.  This tolerates leading/trailing prose
+       that Claude sometimes adds around the JSON payload.
+    3. If no ``{`` is found, return the stripped text as-is and let
+       ``json.loads`` raise ``JSONDecodeError`` — the caller degrades gracefully.
+
+    Returns the extracted candidate string; never raises.
+    """
+    text = raw_text.strip()
+
+    # Step 1 — strip code fences if present.
+    text = _CODE_FENCE_OPEN_RE.sub("", text)
+    text = _CODE_FENCE_CLOSE_RE.sub("", text)
+    text = text.strip()
+
+    # Step 2 — find the first balanced { ... } block.
+    start = text.find("{")
+    if start == -1:
+        # No JSON object — return as-is; json.loads will raise; caller degrades.
+        return text
+
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i, ch in enumerate(text[start:], start=start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+
+    # Unbalanced braces — return everything from the first `{`; json.loads
+    # will raise; caller degrades to limited-inputs.
+    return text[start:]
+
+
 def _synthesize_via_claude(
     per_lens: dict[str, dict],
     per_lens_digest: dict,
@@ -223,8 +287,13 @@ def _synthesize_via_claude(
         )
         raw_text = response.content[0].text.strip()
 
-        # Parse the JSON response; degrade on any parse error.
-        parsed = json.loads(raw_text)
+        # Claude (especially Haiku) frequently wraps the JSON payload in
+        # markdown code fences (```json ... ```) or adds leading/trailing prose.
+        # _extract_json_object strips fences and locates the first balanced
+        # { ... } block before parsing, preventing JSONDecodeError on every
+        # real-API run (confirmed live defect 2026-06-13).
+        candidate = _extract_json_object(raw_text)
+        parsed = json.loads(candidate)
         sentiment = parsed.get("overall_sentiment", _SENTIMENT_LIMITED_INPUTS)
         rationale = parsed.get("sentiment_rationale", "Synthesis returned no rationale.")
 

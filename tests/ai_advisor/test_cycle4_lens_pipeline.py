@@ -1110,3 +1110,192 @@ class TestGoldenFixtureSchemaContract:
                 f"Fixture schema contract: per_lens_digest must contain lens {lens_name!r}; "
                 f"got: {sorted(digest.keys())}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Robust Claude response parsing — confirmed live defect 2026-06-13
+#
+# Real Claude Haiku returns JSON wrapped in ```json...``` fences or preceded by
+# prose.  The original code did json.loads(raw_text) which always raised
+# JSONDecodeError, causing every synthesis to degrade to "limited-inputs".
+# These tests verify _extract_json_object and the _synthesize_via_claude path.
+# ---------------------------------------------------------------------------
+
+
+def _make_claude_response_mock(text: str) -> MagicMock:
+    """Build a MagicMock that mimics anthropic SDK response.content[0].text."""
+    block = MagicMock()
+    block.text = text
+    response = MagicMock()
+    response.content = [block]
+    return response
+
+
+def _make_client_mock(response_text: str) -> MagicMock:
+    """Build a MagicMock client whose messages.create returns the given text."""
+    response = _make_claude_response_mock(response_text)
+    client = MagicMock()
+    client.messages.create.return_value = response
+    return client
+
+
+_VALID_JSON_PAYLOAD = '{"overall_sentiment": "risk-on", "sentiment_rationale": "Equities led by momentum."}'
+
+
+class TestRobustClaudeJsonParsing:
+    """Regression tests for the live defect: Claude Haiku wraps JSON in code fences.
+
+    Defect confirmed 2026-06-13 nightly run: json.loads(raw_text) raised
+    JSONDecodeError on every response; synthesis always degraded to limited-inputs.
+    Fix: _extract_json_object strips fences and locates the first { ... } block.
+    """
+
+    def test_fenced_json_response_parsed_correctly(self):
+        """A response with ```json ... ``` fences must parse to correct sentiment + rationale.
+
+        This is the primary regression case: Claude Haiku wraps its response in
+        markdown code fences, causing bare json.loads() to raise JSONDecodeError.
+        The fix must strip the fences and parse the inner JSON correctly.
+        """
+        fenced_response = f"```json\n{_VALID_JSON_PAYLOAD}\n```"
+        client_mock = _make_client_mock(fenced_response)
+
+        pipeline = _import_pipeline()
+        captured: list[dict] = []
+
+        def _capture(**kwargs):
+            captured.append(kwargs)
+            return 700
+
+        with (
+            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_available("technicals")),
+            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
+            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
+            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch("ai_advisor._build_client", return_value=client_mock),
+            patch("database.insert_advisor_observation", side_effect=_capture),
+        ):
+            result = pipeline.run_pipeline(dry_run=False)
+
+        assert captured, "Observation must be written"
+        raw = captured[0].get("raw_response", {})
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+
+        sentiment = raw.get("overall_sentiment")
+        rationale = raw.get("sentiment_rationale")
+
+        assert sentiment == "risk-on", (
+            f"Fenced JSON response must parse correctly; expected 'risk-on', got {sentiment!r}. "
+            "This is the primary live defect regression: bare json.loads() fails on fenced output."
+        )
+        assert rationale and rationale != "Synthesis returned no rationale.", (
+            f"Rationale must be parsed from the response, not the fallback sentinel; got {rationale!r}"
+        )
+        assert sentiment != "limited-inputs", (
+            "Fenced JSON response must NOT degrade to limited-inputs — that was the bug."
+        )
+
+    def test_prose_then_json_response_parsed_correctly(self):
+        """A response with leading prose before the JSON object must parse correctly.
+
+        Claude sometimes adds an explanatory sentence before the JSON payload.
+        The fix must skip the prose and extract the first { ... } object.
+        """
+        prose_response = (
+            "Based on the available lens data, here is my assessment:\n\n"
+            + _VALID_JSON_PAYLOAD
+        )
+        client_mock = _make_client_mock(prose_response)
+
+        pipeline = _import_pipeline()
+        captured: list[dict] = []
+
+        def _capture(**kwargs):
+            captured.append(kwargs)
+            return 701
+
+        with (
+            patch("ai_advisor._build_technicals_section", return_value=_stub_lens_available("technicals")),
+            patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
+            patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+            patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
+            patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+            patch("ai_advisor._build_client", return_value=client_mock),
+            patch("database.insert_advisor_observation", side_effect=_capture),
+        ):
+            pipeline.run_pipeline(dry_run=False)
+
+        assert captured, "Observation must be written"
+        raw = captured[0].get("raw_response", {})
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+
+        sentiment = raw.get("overall_sentiment")
+        assert sentiment == "risk-on", (
+            f"Prose-prefixed JSON response must parse correctly; "
+            f"expected 'risk-on', got {sentiment!r}."
+        )
+        assert sentiment != "limited-inputs", (
+            "Prose-prefixed JSON response must NOT degrade to limited-inputs."
+        )
+
+    def test_genuinely_unparseable_response_degrades_gracefully(self):
+        """A response with no JSON object at all must degrade to limited-inputs without raising.
+
+        The graceful-degradation path must still hold: if Claude returns prose
+        with no JSON object, the pipeline must not raise and must return
+        limited-inputs with a D-1-compliant rationale (type name only, no raw text).
+        """
+        unparseable_response = (
+            "I'm sorry, I cannot provide a market sentiment analysis at this time "
+            "due to insufficient data from the available lens sources."
+        )
+        client_mock = _make_client_mock(unparseable_response)
+
+        pipeline = _import_pipeline()
+        captured: list[dict] = []
+
+        def _capture(**kwargs):
+            captured.append(kwargs)
+            return 702
+
+        try:
+            with (
+                patch("ai_advisor._build_technicals_section", return_value=_stub_lens_available("technicals")),
+                patch("ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")),
+                patch("ai_advisor._build_derivatives_section", return_value=_stub_lens_unavailable("derivatives")),
+                patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
+                patch("ai_advisor._build_fundamentals_section", return_value=_stub_lens_unavailable("fundamentals")),
+                patch("ai_advisor._build_client", return_value=client_mock),
+                patch("database.insert_advisor_observation", side_effect=_capture),
+            ):
+                result = pipeline.run_pipeline(dry_run=False)
+        except Exception as exc:
+            pytest.fail(
+                f"run_pipeline() must never raise even on unparseable Claude response; "
+                f"raised {type(exc).__name__}: {exc}"
+            )
+
+        assert isinstance(result, dict), "run_pipeline() must return a dict"
+        assert captured, "Observation must still be written even on unparseable response"
+        raw = captured[0].get("raw_response", {})
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+
+        sentiment = raw.get("overall_sentiment")
+        rationale = raw.get("sentiment_rationale", "")
+
+        assert sentiment == "limited-inputs", (
+            f"Unparseable Claude response must degrade to 'limited-inputs'; got {sentiment!r}"
+        )
+        # D-1: rationale must not contain the raw unparseable text.
+        assert unparseable_response not in rationale, (
+            "D-1 violation: raw Claude response text must not appear in persisted rationale."
+        )
+        # Rationale must contain the exception type name (JSONDecodeError), not raw prose.
+        assert "JSONDecodeError" in rationale, (
+            f"D-1: rationale for a parse failure must contain 'JSONDecodeError' (type name); "
+            f"got {rationale!r}"
+        )
