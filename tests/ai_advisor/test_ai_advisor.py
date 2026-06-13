@@ -71,6 +71,36 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
+# Network hermeticity — module-scoped autouse.
+#
+# assemble_advisor_context calls the three live-network section producers
+# (_build_sentiment_section, _build_macro_section, _build_fundamentals_section)
+# which in turn call _fetch_with_backoff -> requests.get against live GDELT,
+# FRED, and SEC EDGAR endpoints.  Unit tests in this file must never touch the
+# network, for two reasons:
+#   1. Fixture-hygiene: a unit test that hits live endpoints is not a unit test.
+#   2. Safety: persistent 429s from those endpoints trigger the very backoff
+#      loop this cycle fixes — a network-dependent unit test could itself OOM.
+#
+# The autouse fixture requests ``stub_network_producers`` from conftest.py,
+# which patches the three producers for the duration of every test in this
+# module.  The function scope (default) means each test gets a fresh patch
+# activation — no state leaks across tests.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _block_network_producers(stub_network_producers):  # noqa: PT004
+    """Apply the network-producer stubs to every test in this module.
+
+    Delegating to ``stub_network_producers`` (conftest.py) keeps the patch
+    list in one place.  Tests in other files (test_cycle2_lens_producers.py,
+    test_backoff_termination.py) do not receive this fixture and can exercise
+    the real producer bodies.
+    """
+
+
+# ---------------------------------------------------------------------------
 # Fixtures — all function-scoped, no shared mutable state.
 # ---------------------------------------------------------------------------
 

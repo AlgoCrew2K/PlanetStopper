@@ -290,6 +290,14 @@ def _build_volatility_regime(autotune_run: dict | None) -> dict:
 # backoff sleeps before giving up.  Named constant per custom instructions.
 _FETCH_MAX_BACKOFF_TOTAL_WAIT_S: float = 8.0
 
+# Hard cap on the number of GET attempts inside _fetch_with_backoff.
+# Defense-in-depth against delay collapsing to 0.0 (which would allow an
+# infinite spin when total_waited == _FETCH_MAX_BACKOFF_TOTAL_WAIT_S).
+# With a 1.0s initial delay doubling each retry the budget is naturally
+# spent in ~4-5 attempts; 6 is the safety ceiling.
+# Source: custom instructions §4 "No unbounded retry loops."
+_FETCH_MAX_ATTEMPTS: int = 6
+
 # Seconds to wait for a response from any external lens API.
 _FETCH_TIMEOUT_S: float = 15.0
 
@@ -361,7 +369,18 @@ def _fetch_with_backoff(
 
     Retries on connection errors and 429 responses.  Raises the final
     exception if retries are exhausted.  Never waits longer than
-    _FETCH_MAX_BACKOFF_TOTAL_WAIT_S in total across all sleeps.
+    _FETCH_MAX_BACKOFF_TOTAL_WAIT_S in total across all sleeps, and never
+    exceeds _FETCH_MAX_ATTEMPTS total attempts.
+
+    The retry predicate ``_can_retry`` is the single authoritative gate: it
+    is true ONLY when all three conditions hold simultaneously —
+      1. attempt < _FETCH_MAX_ATTEMPTS (hard attempt ceiling),
+      2. delay > 0.0 (delay has not collapsed to zero),
+      3. total_waited + delay <= _FETCH_MAX_BACKOFF_TOTAL_WAIT_S (budget not
+         exhausted).
+    This prevents the infinite-spin that occurred when delay collapsed to 0.0
+    after the budget was spent (total_waited == _FETCH_MAX_BACKOFF_TOTAL_WAIT_S
+    made condition 3 ``8.0 <= 8.0 = True`` forever).
 
     Args:
         url: the full request URL.
@@ -377,6 +396,20 @@ def _fetch_with_backoff(
     attempt = 0
     while True:
         attempt += 1
+        # Single authoritative retry predicate — evaluated after every attempt.
+        # All three conditions must hold simultaneously for a retry to be safe:
+        #   1. attempt < _FETCH_MAX_ATTEMPTS (hard ceiling, prevents infinite spin
+        #      when delay collapses to 0.0 after budget is exhausted),
+        #   2. delay > 0.0 (delay must be positive — a zero sleep is not a retry),
+        #   3. total_waited + delay <= budget (time budget is not yet spent).
+        # The original code lacked condition 1 and 2, causing the collapse:
+        # when total_waited == 8.0, min(delay*2, 8.0-8.0) == 0.0, so condition 3
+        # became 8.0+0.0 <= 8.0 = True forever → time.sleep(0) spin + OOM.
+        can_retry = (
+            attempt < _FETCH_MAX_ATTEMPTS
+            and delay > 0.0
+            and total_waited + delay <= _FETCH_MAX_BACKOFF_TOTAL_WAIT_S
+        )
         try:
             resp = requests.get(
                 url,
@@ -384,19 +417,19 @@ def _fetch_with_backoff(
                 params=params,
                 timeout=_FETCH_TIMEOUT_S,
             )
-            # Retry on 429 (rate limit) if budget remains.
-            if resp.status_code == 429 and total_waited + delay <= _FETCH_MAX_BACKOFF_TOTAL_WAIT_S:
+            if resp.status_code == 429 and can_retry:
                 logger.info("lens fetch 429 (attempt %d) — backing off %.1fs", attempt, delay)
                 time.sleep(delay)
                 total_waited += delay
                 delay = min(delay * 2, _FETCH_MAX_BACKOFF_TOTAL_WAIT_S - total_waited)
                 continue
+            # Budget exhausted or non-429: return to caller.
             return resp
         except (
             requests.exceptions.ConnectionError,
             requests.exceptions.Timeout,
         ) as exc:
-            if total_waited + delay > _FETCH_MAX_BACKOFF_TOTAL_WAIT_S:
+            if not can_retry:
                 raise
             logger.info(
                 "lens fetch %s (attempt %d) — backing off %.1fs",

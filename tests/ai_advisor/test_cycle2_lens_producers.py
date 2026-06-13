@@ -1182,13 +1182,20 @@ if _HYPOTHESIS_AVAILABLE:
             )
 
     @given(st.booleans())
-    @settings(max_examples=10)
+    @settings(max_examples=10, deadline=None)
     def test_available_false_payload_always_empty(make_available_false: bool):
         """PROPERTY: available=False => payload is None or empty, sources is empty.
 
         This invariant must hold regardless of the error path taken.
         Tested by simulating both timeout (available=False) and
         no-key (available=False) paths.
+
+        deadline=None: _fetch_with_backoff performs real time.sleep() calls
+        during its exponential-backoff retry loop when ConnectionError/Timeout
+        is raised; the total sleep budget is up to 8 seconds
+        (_FETCH_MAX_BACKOFF_TOTAL_WAIT_S), which far exceeds hypothesis's default
+        200ms deadline.  The test does not depend on wall-clock behaviour, only
+        on the returned lens-block shape, so deadline enforcement is disabled.
         """
         import ai_advisor
 
@@ -1198,9 +1205,11 @@ if _HYPOTHESIS_AVAILABLE:
             with patch.dict(os.environ, env_without_fred, clear=True):
                 block = ai_advisor._build_macro_section()
         else:
-            # Trigger via timeout (GDELT)
+            # Trigger via timeout (GDELT) — patch time.sleep so the backoff
+            # loop doesn't wait real wall-clock seconds inside the test.
             from requests.exceptions import Timeout
-            with patch("requests.get", side_effect=Timeout("test")):
+            with patch("requests.get", side_effect=Timeout("test")), \
+                 patch("ai_advisor.time.sleep"):
                 block = ai_advisor._build_sentiment_section()
 
         if block.get("available") is False:
