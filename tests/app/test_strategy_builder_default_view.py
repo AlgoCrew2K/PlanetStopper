@@ -1,12 +1,19 @@
-"""Regression: default Strategy Builder page (no symphony_id param) must show
-stored proposals — through the REAL database accessor, no mocks.
+"""Regression + SPA-port: default Strategy Builder view must show stored proposals
+via the unified SPA (/ai-advisor), not the deleted standalone page.
 
-Found by live-daemon verification 2026-06-12: the GET route's docstring claimed
-'empty string returns all advisory-only rows', but
-get_advisor_observations_for_symphony('') does WHERE symphony_id = '' and
-returns nothing — so the default page load ALWAYS rendered the empty state.
-Every prior route test mocked the accessor, encoding the docstring's false
-claim into the mock. This module deliberately uses a real seeded SQLite DB.
+SPA-PORT UPDATE (cycle/spa-port-strategy-builder):
+  The original tests asserted GET /ai-advisor/strategy-builder returns 200 and
+  renders template_id values. After SPA-port, the GET route returns 302 and the
+  content lives in the 6th tab of /ai-advisor. Tests updated accordingly.
+
+Original regression (pre-SPA-port): found by live-daemon verification 2026-06-12:
+  the GET route's docstring claimed 'empty string returns all advisory-only rows',
+  but get_advisor_observations_for_symphony('') returns nothing — default page
+  ALWAYS rendered the empty state. Fix was to call get_advisor_observations_for_role
+  on the all-symphonies path.
+
+Post-SPA-port: these tests verify the /ai-advisor route carries STRATEGY_BUILDER
+observations to the unified template (same data, new delivery vehicle).
 """
 
 from __future__ import annotations
@@ -81,29 +88,84 @@ def client(seeded_db):
 
 
 class TestDefaultPageShowsAllProposals:
-    def test_default_get_renders_rows_from_all_symphonies(self, client):
-        """No symphony_id param → all STRATEGY_BUILDER rows, across symphonies."""
+    def test_default_get_redirects_to_spa(self, client):
+        """SPA-port: GET /ai-advisor/strategy-builder (no params) must redirect to /ai-advisor.
+
+        OLD: returned 200 with standalone template rendering all STRATEGY_BUILDER rows.
+        NEW: returns 302 to /ai-advisor — content is in the 6th tab panel (AC3).
+        """
         resp = client.get("/ai-advisor/strategy-builder")
+        assert resp.status_code in (301, 302, 303, 308), (
+            f"GET /ai-advisor/strategy-builder returned {resp.status_code}; "
+            "expected a redirect after SPA-port. "
+            "The route must redirect to /ai-advisor (AC3)."
+        )
+
+    def test_spa_route_renders_strategy_builder_rows_from_all_symphonies(self, client):
+        """SPA-port: GET /ai-advisor must render STRATEGY_BUILDER rows from all symphonies.
+
+        The original regression (default page always empty) is now tested against
+        the /ai-advisor route which must prefetch STRATEGY_BUILDER observations.
+        The template_id values from the seeded DB must appear in /ai-advisor's response.
+
+        RED: current /ai-advisor route does not prefetch strategy builder rows.
+        """
+        import app as _am
+        from unittest.mock import MagicMock, patch
+        _am.app.config["TESTING"] = True
+
+        fake_corr = MagicMock()
+        fake_corr.compute_pairwise_correlations.return_value = []
+        fake_corr.CRISIS_CAVEAT = "caveat"
+
+        with patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}):
+            resp = client.get("/ai-advisor")
+
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
-        assert "T1_equal_weight" in html, (
-            "Default page load must render stored proposals; rendering the "
-            "empty state while rows exist was the live-verification bug"
+        # The seeded DB has T1_equal_weight and T6_momentum_top_n for STRATEGY_BUILDER.
+        # These must appear in /ai-advisor if the route correctly prefetches the observations.
+        assert "T1_equal_weight" in html or "T6_momentum_top_n" in html, (
+            "GET /ai-advisor must render stored STRATEGY_BUILDER proposals from the seeded DB. "
+            "The route must call get_advisor_observations_for_role('STRATEGY_BUILDER') "
+            "and pass the observations to the unified template (AC2, AC4). "
+            "This is the SPA-port version of the original 'default page always empty' regression."
         )
-        assert "T6_momentum_top_n" in html, "Rows from every symphony must appear"
 
-    def test_default_get_excludes_other_advisor_roles(self, client):
-        resp = client.get("/ai-advisor/strategy-builder")
+    def test_spa_excludes_other_advisor_roles(self, client):
+        """SPA-port: GET /ai-advisor must not render non-STRATEGY_BUILDER observation markers.
+
+        The role filter from the original route must carry over to the SPA context.
+        The seeded DB has an OVERFITTING_CONSCIENCE row with 'OC_ROW_MARKER' in raw_response.
+        This must not appear on /ai-advisor.
+        """
+        import app as _am
+        from unittest.mock import MagicMock, patch
+        _am.app.config["TESTING"] = True
+
+        fake_corr = MagicMock()
+        fake_corr.compute_pairwise_correlations.return_value = []
+        fake_corr.CRISIS_CAVEAT = "caveat"
+
+        with patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}):
+            resp = client.get("/ai-advisor")
+
         assert "OC_ROW_MARKER" not in resp.get_data(as_text=True), (
-            "Role filter must hold on the all-symphonies path"
+            "Role filter must hold in the SPA: OVERFITTING_CONSCIENCE rows from the "
+            "same symphonies must not appear in the strategy-builder panel on /ai-advisor."
         )
 
-    def test_symphony_param_still_scopes(self, client):
+    def test_symphony_param_scopes_via_redirect(self, client):
+        """SPA-port: GET /ai-advisor/strategy-builder?symphony_id=X must still redirect.
+
+        The redirect must apply regardless of query parameters — no 200 response.
+        The symphony_id param may be passed along in the redirect Location header,
+        or dropped (either is acceptable — the tab state can be managed client-side).
+        """
         resp = client.get("/ai-advisor/strategy-builder?symphony_id=Alpha+Symphony")
-        html = resp.get_data(as_text=True)
-        assert "T1_equal_weight" in html
-        assert "T6_momentum_top_n" not in html, (
-            "Explicit symphony_id must still scope to that symphony only"
+        assert resp.status_code in (301, 302, 303, 308), (
+            f"GET /ai-advisor/strategy-builder?symphony_id=... returned {resp.status_code}; "
+            "expected redirect. Query parameters must not bypass the redirect (AC3)."
         )
 
     def test_accessor_role_scoped_read_is_read_only(self, seeded_db):

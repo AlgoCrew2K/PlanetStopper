@@ -1,17 +1,24 @@
-"""RED tests — Phase 3 Strategy Builder Flask routes and template.
+"""Tests — Strategy Builder Flask routes and template.
 
-Tests the two routes added by Phase 3:
-  GET  /ai-advisor/strategy-builder      — renders Strategy Builder tab (HTML page)
-  POST /ai-advisor/strategy-builder/run  — CSRF-protected, dispatches propose_strategies(),
-                                           returns JSON (mirrors /ai-advisor/asset-swaps/evaluate)
+SPA-PORT UPDATE (cycle/spa-port-strategy-builder): Group A tests A1-A4 have been
+updated from the standalone-page model to the SPA model.
 
-Architecture contracts verified (all RED until GREEN implementation lands):
+  OLD model (standalone page): GET /ai-advisor/strategy-builder → 200 with own template
+  NEW model (SPA): GET /ai-advisor/strategy-builder → 302 to /ai-advisor
+                   Strategy Builder content now lives in /ai-advisor as the 6th tab
 
-  Group A: GET route
-    A1. GET returns HTTP 200.
-    A2. Rendered HTML contains data-testid="strategy-builder-tab".
-    A3. Non-dismissible risk banner present with overfitting-risk text.
-    A4. data-testid="strategy-builder-run-form" NOT present in GET response.
+Tests the two routes:
+  GET  /ai-advisor/strategy-builder      — NOW a 302 redirect to /ai-advisor (AC3)
+  POST /ai-advisor/strategy-builder/run  — unchanged: CSRF-protected, dispatches
+                                           propose_strategies(), returns JSON
+
+Architecture contracts verified:
+
+  Group A: GET route (SPA-port model)
+    A1. GET returns 302 redirect to /ai-advisor (NOT 200 standalone page).
+    A2. GET /ai-advisor (200) contains data-tab="strategy-builder" (6th tab button).
+    A3. GET /ai-advisor (200) contains risk banner in the 6th tab panel.
+    A4. GET /ai-advisor/strategy-builder does NOT return 200.
 
   Group B: POST /run — CSRF enforcement
     B5. POST with no X-CSRF-Token header returns 403.
@@ -168,11 +175,15 @@ def _assert_route_exists(resp, route: str) -> None:
 # ===========================================================================
 
 
-def test_get_strategy_builder_returns_200(client):
-    """A-1: GET /ai-advisor/strategy-builder must return HTTP 200.
+def test_get_strategy_builder_returns_302(client):
+    """A-1 (SPA-port): GET /ai-advisor/strategy-builder must return 302 redirect to /ai-advisor.
 
-    Route must exist and respond — before any observations are loaded the page
-    must not 404, error, or redirect.
+    SPA-PORT UPDATE: the standalone page is folded into the unified SPA as the 6th tab.
+    The GET sub-route must now return a 302 redirect to /ai-advisor — matching the
+    pattern of Correlations, Asset Swaps, Logic Changes, and Chat (AC3).
+
+    OLD contract (pre-SPA-port): GET returned 200 with standalone template.
+    NEW contract (post-SPA-port): GET returns 302 to /ai-advisor.
     """
     with (
         patch("database.get_advisor_observations_for_symphony", return_value=[]),
@@ -181,76 +192,114 @@ def test_get_strategy_builder_returns_200(client):
         resp = client.get("/ai-advisor/strategy-builder")
 
     _assert_route_exists(resp, "GET /ai-advisor/strategy-builder")
+    assert resp.status_code in (301, 302, 303, 308), (
+        f"GET /ai-advisor/strategy-builder returned {resp.status_code}, expected a redirect. "
+        "SPA-port requires this route to redirect to /ai-advisor (AC3). "
+        "Convert the GET handler in app.py to return redirect('/ai-advisor')."
+    )
+
+
+def test_get_ai_advisor_spa_contains_strategy_builder_tab_button(client):
+    """A-2 (SPA-port): GET /ai-advisor must contain data-tab="strategy-builder" tab button.
+
+    SPA-PORT UPDATE: the tab landmark is now in the unified SPA at /ai-advisor,
+    not on the deleted standalone page. This test verifies the 6th tab button
+    is present in the unified SPA.
+
+    OLD contract: checked data-testid="strategy-builder-tab" on standalone page.
+    NEW contract: checks data-tab="strategy-builder" on /ai-advisor (AC1).
+    """
+    import app as _app_module
+    _stub_patches = [
+        patch.object(_app_module.analytics, "get_history_with_cache_invalidation",
+                     return_value={}),
+        patch.object(_app_module.analytics, "list_available_symphonies",
+                     return_value=[]),
+        patch.object(_app_module.analytics, "compute_per_symphony_returns",
+                     return_value=([], [], [])),
+        patch.object(_app_module.database, "get_advisor_observations_for_role",
+                     return_value=[]),
+    ]
+    from unittest.mock import MagicMock
+    fake_corr = MagicMock()
+    fake_corr.compute_pairwise_correlations.return_value = []
+    fake_corr.CRISIS_CAVEAT = "caveat"
+    with patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}):
+        for p in _stub_patches:
+            p.start()
+        try:
+            resp = client.get("/ai-advisor")
+        finally:
+            for p in _stub_patches:
+                p.stop()
+
     assert resp.status_code == 200, (
-        f"GET /ai-advisor/strategy-builder returned {resp.status_code}, expected 200"
+        f"GET /ai-advisor returned {resp.status_code}; expected 200 (SPA base route)."
     )
-
-
-def test_get_strategy_builder_contains_tab_testid(client):
-    """A-2: Rendered HTML must contain data-testid="strategy-builder-tab".
-
-    This is the DOM landmark for the Strategy Builder tab navigation element.
-    The JS uses it to identify which tab is active.
-    """
-    with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[]),
-        patch("analytics.list_available_symphonies", return_value=[]),
-    ):
-        resp = client.get("/ai-advisor/strategy-builder")
-
-    _assert_route_exists(resp, "GET /ai-advisor/strategy-builder")
-    if resp.status_code != 200:
-        pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
-
     html = resp.get_data(as_text=True)
-    assert 'data-testid="strategy-builder-tab"' in html, (
-        'GET /ai-advisor/strategy-builder must render data-testid="strategy-builder-tab". '
-        "The tab landmark is required for JS tab navigation and integration tests."
+    assert 'data-tab="strategy-builder"' in html, (
+        'GET /ai-advisor must contain a tab button with data-tab="strategy-builder". '
+        "The 6th tab button is absent from the unified SPA. Add it to templates/ai_advisor.html (AC1)."
     )
 
 
-def test_get_strategy_builder_contains_risk_banner(client):
-    """A-3: Non-dismissible overfitting risk banner must be present.
+def test_get_ai_advisor_spa_contains_strategy_builder_risk_banner(client):
+    """A-3 (SPA-port): GET /ai-advisor must contain the strategy-builder risk banner.
 
-    Strategy Builder carries the highest overfitting risk of all advisor tabs
-    (building a full symphony from scratch vs modifying existing logic).
-    The banner must be permanent, not dismissible via JS.
-    The banner must contain 'data-testid="strategy-builder-risk-banner"'
-    OR text matching 'Logic-change proposals carry the highest overfitting risk'
-    OR 'non-dismissible'.
+    SPA-PORT UPDATE: the non-dismissible risk banner lives inside the 6th tab panel
+    on the unified SPA at /ai-advisor, not on the deleted standalone page.
+
+    OLD contract: checked risk banner on /ai-advisor/strategy-builder (200).
+    NEW contract: checks risk banner on /ai-advisor (6th tab panel — AC2).
     """
-    with (
-        patch("database.get_advisor_observations_for_symphony", return_value=[]),
-        patch("analytics.list_available_symphonies", return_value=[]),
-    ):
-        resp = client.get("/ai-advisor/strategy-builder")
+    import app as _app_module
+    _stub_patches = [
+        patch.object(_app_module.analytics, "get_history_with_cache_invalidation",
+                     return_value={}),
+        patch.object(_app_module.analytics, "list_available_symphonies",
+                     return_value=[]),
+        patch.object(_app_module.analytics, "compute_per_symphony_returns",
+                     return_value=([], [], [])),
+        patch.object(_app_module.database, "get_advisor_observations_for_role",
+                     return_value=[]),
+    ]
+    from unittest.mock import MagicMock
+    fake_corr = MagicMock()
+    fake_corr.compute_pairwise_correlations.return_value = []
+    fake_corr.CRISIS_CAVEAT = "caveat"
+    with patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}):
+        for p in _stub_patches:
+            p.start()
+        try:
+            resp = client.get("/ai-advisor")
+        finally:
+            for p in _stub_patches:
+                p.stop()
 
-    _assert_route_exists(resp, "GET /ai-advisor/strategy-builder")
-    if resp.status_code != 200:
-        pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
-
+    assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     has_testid = 'data-testid="strategy-builder-risk-banner"' in html
     has_text_a = "Logic-change proposals carry the highest overfitting risk" in html
     has_text_b = "non-dismissible" in html
 
     assert has_testid or has_text_a or has_text_b, (
-        "GET /ai-advisor/strategy-builder must render a non-dismissible risk banner. "
-        "Expected one of: "
-        'data-testid="strategy-builder-risk-banner", '
-        '"Logic-change proposals carry the highest overfitting risk", '
-        'or "non-dismissible". '
-        "This is a hard safety requirement — strategy proposals carry the highest "
-        "overfitting risk of any advisor capability."
+        "GET /ai-advisor must render a non-dismissible risk banner in the strategy-builder panel. "
+        "Expected one of: data-testid=\"strategy-builder-risk-banner\", "
+        "'Logic-change proposals carry the highest overfitting risk', "
+        "or 'non-dismissible'. "
+        "Port the risk banner from the standalone template into the 6th tab panel (AC2)."
     )
 
 
-def test_get_strategy_builder_does_not_contain_run_form_testid(client):
-    """A-4: data-testid="strategy-builder-run-form" must NOT be in the GET response.
+def test_get_strategy_builder_does_not_return_200_standalone(client):
+    """A-4 (SPA-port): GET /ai-advisor/strategy-builder must NOT return 200.
 
-    The form is only triggered via JS fetch (POST /run) — it does not render
-    as a visible <form> in the page. A form in the GET response would expose
-    a direct submission path, bypassing the JS CSRF token flow.
+    SPA-PORT UPDATE: the old A-4 checked that data-testid="strategy-builder-run-form"
+    was absent from the 200 response. After SPA-port there must be NO 200 response
+    at all — the route must redirect.
+
+    OLD contract (A-4): 200 response must not contain data-testid="strategy-builder-run-form".
+    NEW contract (A-4): 200 response is forbidden — route must redirect (AC3).
     """
     with (
         patch("database.get_advisor_observations_for_symphony", return_value=[]),
@@ -259,14 +308,10 @@ def test_get_strategy_builder_does_not_contain_run_form_testid(client):
         resp = client.get("/ai-advisor/strategy-builder")
 
     _assert_route_exists(resp, "GET /ai-advisor/strategy-builder")
-    if resp.status_code != 200:
-        pytest.skip(f"Route returned {resp.status_code} — skipping DOM check.")
-
-    html = resp.get_data(as_text=True)
-    assert 'data-testid="strategy-builder-run-form"' not in html, (
-        'GET /ai-advisor/strategy-builder must NOT contain data-testid="strategy-builder-run-form". '
-        "The run form is JS-triggered via fetch POST — it must not be a plain HTML form "
-        "in the GET response (which would bypass the CSRF token fetch flow)."
+    assert resp.status_code != 200, (
+        f"GET /ai-advisor/strategy-builder returned 200. "
+        "After SPA-port this route must redirect — a 200 response means the standalone "
+        "page is still being rendered, which is the defect being eliminated (AC3)."
     )
 
 
