@@ -45,7 +45,8 @@ def _load_env() -> None:
         from dotenv import load_dotenv  # noqa: PLC0415
         load_dotenv(dotenv_path=_PROJECT_ROOT / ".env", override=False)
     except Exception:  # noqa: BLE001
-        # dotenv missing or unreadable — log type only (D-1), continue with current env
+        # dotenv missing or unreadable — silent fallback (no logging, to avoid
+        # echoing env paths; stricter than D-1), continue with current env
         pass
 
 
