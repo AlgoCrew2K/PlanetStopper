@@ -331,3 +331,29 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** The standalone page created a navigation seam (full-page reload on tab switch), duplicated the advisor header/nav chrome, and could not participate in the unified SPA's in-place tab switching. Folding it in eliminates the seam while preserving all advisory-only, CSRF, and D-1 contracts unchanged.
 
 **Status:** Merged into `cycle/spa-port-strategy-builder` at 7908d77. Acceptance criteria verified by `tests/app/test_strategy_builder_spa_port.py` (53 passed / 9 skipped / 0 failed). The 9 skips are legacy card-anatomy tests on the standalone route that now correctly skip on 302.
+
+---
+
+## Multi-Lens AI Advisor — Cycle 3: Lens-Informed Swap Ranking (2026-06-13)
+
+### DE-CY3-001: Lens evidence blended into asset-swap candidate ranking
+
+**Decision:** `advisors/asset_swap_engine.py` gains lens-awareness via additions-only changes to the existing candidate-ranking seam. The implementation adds:
+
+- `extract_lens_scores(context)` — public helper that walks the 5 lens blocks (`technicals`, `sentiment`, `derivatives`, `macro`, `fundamentals`) in an assembled advisor context dict and extracts `{ticker: {lens_name: score}}`. Only `available=True` lenses contribute; `available=False` blocks are skipped entirely (honest-availability).
+- `LENS_BLEND_WEIGHT = 0.25` — named constant for the additive lens weight.
+- `_apply_lens_blend(candidates, lens_scores, higher_is_better)` — position-based reranker applied after the primary objective sort. Blend formula: `blended_key[i] = position[i] - LENS_BLEND_WEIGHT * mean_lens_score[i]`. Tickers absent from `lens_scores` receive neutral score 0.5. The blend is additive only — it never eliminates candidates.
+- `generate_objective_directed_candidates` gains `lens_scores=None` kwarg; all 3 objective paths + unknown fallback call `_apply_lens_blend` after their primary sort.
+- `propose_operator_swap` and `suggest_swaps` gain `lens_scores=None` and `lens_sources=None` kwargs; both thread through to ranking, rationale, and persistence.
+- `_build_objective_rationale` gains `lens_scores=None`; appends a lens evidence summary ("Lens evidence (macro: 0.80, sentiment: 0.60).") when the candidate ticker has available scores.
+- `_persist_observation` gains `lens_evidence` and `sources` params; both are written into `raw_response` alongside existing fields.
+
+**Gate unchanged:** Candidates still go through `advisors.backtest_gate_engine.evaluate_candidate_batch` (BHY-FDR). Lens scoring influences ranking only — it does not relax or replace the statistical gate.
+
+**Backward-compatibility:** All existing call sites pass `lens_scores=None` (the default). Pre-Cycle-3 behaviour is byte-identical when `lens_scores` is `None` or empty. Existing test suite (35 tests in `tests/advisors/test_asset_swap_engine.py`) unaffected.
+
+**Persistence contract (AC-4):** Persisted observations (`advisor_role="ASSET_SWAP"`, `is_advisory_only=1`) now carry `lens_evidence: {ticker: {signal, source_lens, confidence}}` and `sources: [{title, url, published, lens}]` in `raw_response`. Both default to `{}` / `[]` when no lens evidence is supplied. No schema migration required — `raw_response` is an untyped JSON blob (per DE-ML-002).
+
+**Rationale:** Blending free-data lens evidence (technicals, sentiment, macro, fundamentals, derivatives) into swap-candidate ranking gives the operator a richer "why suggested" signal without changing the statistical acceptance gate. The position-based blend (rather than a score-unit blend) avoids unit-comparability issues between objective metrics (Pearson correlation, variance, Sharpe) and lens scores. `LENS_BLEND_WEIGHT=0.25` keeps the lens as supporting evidence — the objective metric anchors ranking. Risk-first decorrelation and de-risking intent is preserved; the operator selects from surviving candidates, no single-winner verdict is imposed.
+
+**Status:** GREEN at d0228b3. 24/24 new cycle3 tests GREEN; 35/35 existing `test_asset_swap_engine` tests unaffected. Acceptance criteria AC-1 through AC-6 verified.
