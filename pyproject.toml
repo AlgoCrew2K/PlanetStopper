@@ -15,7 +15,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = """
     -ra --strict-markers -m 'not live and not slow and not perf'
-    -n auto --dist loadfile
+    -n 2 --dist loadfile
     --deselect tests/meta/test_zero_skip_xfail_close.py::test_full_suite_reports_zero_skips_and_zero_xfails
 """
 markers = [
@@ -24,9 +24,16 @@ markers = [
     "perf: wall-clock latency benchmarks; excluded from default run (opt-in: pytest -m perf)",
 ]
 
-# xdist parallelization notes (Phase 1 — 2026-06-01):
-# - "-n auto --dist loadfile": each file's tests run together on one worker,
+# xdist parallelization notes (Phase 1 — 2026-06-01; worker cap added 2026-06-12):
+# - "-n 2 --dist loadfile": each file's tests run together on one worker,
 #   preserving within-file ordering invariants and maximizing DB-isolation safety.
+# - WORKER COUNT IS CAPPED AT 2 (was "-n auto"). "-n auto" spawned one worker per
+#   core, and several engine tests nest joblib.Parallel(n_jobs=-1) / optuna
+#   study.optimize(n_jobs=-1) (all cores) inside each worker. The multiplicative
+#   fan-out (workers x cores) committed >90 GB of virtual memory and caused two
+#   CRITICAL_PROCESS_DIED bugchecks / full PC reboots (2026-06-11, 2026-06-12).
+#   Never restore "-n auto". The nested joblib/optuna n_jobs=-1 cap is a separate
+#   tracked follow-up. Run ONE pytest invocation at a time across the whole fleet.
 # - "test_full_suite_reports_zero_skips_and_zero_xfails" is permanently deselected
 #   from the default run because it spawns the ENTIRE suite as a subprocess with a
 #   50-minute timeout.  Run it explicitly: pytest tests/meta/test_zero_skip_xfail_close.py

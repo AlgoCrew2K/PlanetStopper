@@ -22,7 +22,7 @@ allowed-tools: Read, Glob, Bash
    Then stop.
 
 3. **Build the command** — start with `python -m pytest`.
-   - No args → full suite in parallel (xdist `-n auto --dist loadfile` is in addopts; parallel is the default).
+   - No args → full suite in parallel (xdist `-n 2 --dist loadfile` is in addopts; worker count is CAPPED AT 2 — never raise it or use `-n auto`, which caused PC-crashing memory blowups; see pyproject.toml notes). Run only ONE pytest invocation at a time across the whole fleet.
    - `<path>` arg → append the path.
    - `-k <expr>` → append `-k <expr>`.
    - `--fast` → append `-x --ff`.
