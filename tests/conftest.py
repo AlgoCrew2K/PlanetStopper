@@ -41,6 +41,29 @@ def pytest_configure(config):
         session_db = os.path.join(_SESSION_TEMP_DIR.name, "session_alphabot_state.db")
         os.environ["DB_PATH"] = session_db
 
+    # ---------------------------------------------------------------------
+    # Bound nested parallelism in the TEST ENVIRONMENT ONLY (memory-blowup
+    # mitigation; companion to the "-n 2" xdist cap in pyproject.toml addopts).
+    #
+    # Two production code paths spawn all-core child processes:
+    #   * synthetic_history.generate_synthetic_history -> joblib.Parallel(n_jobs=-1)
+    #   * autotuner study.optimize(n_jobs=OPTUNA_N_JOBS) (already defaults to 1)
+    # Nested inside N pytest-xdist workers, the fan-out is multiplicative
+    # (workers x cores) and committed >90 GB of memory, causing two
+    # CRITICAL_PROCESS_DIED host bugchecks (2026-06-11, 2026-06-12).
+    #
+    # Forcing both degrees to 1 here is reproducibility-NEUTRAL:
+    #   - the joblib replay is content-keyed/deterministic (per-(symphony,day)
+    #     SHA-256 MC seed), order-independent of worker scheduling;
+    #   - OPTUNA_N_JOBS=1 is already the production default and is the
+    #     SQLite-writer-lock-safe setting Optuna determinism relies on.
+    # Production leaves both unset, so live behavior is unchanged.
+    #
+    # setdefault preserves an explicit operator override (e.g. a perf harness
+    # that deliberately wants more parallelism in a controlled environment).
+    os.environ.setdefault("ALPHABOT_MAX_JOBS", "1")
+    os.environ.setdefault("OPTUNA_N_JOBS", "1")
+
 
 def pytest_unconfigure(config):
     """Clean up the session temp directory after the test run."""

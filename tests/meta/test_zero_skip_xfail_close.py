@@ -430,6 +430,15 @@ def _collected_node_ids() -> list[str]:
             "-q",
             "-p",
             "no:cacheprovider",
+            # MEMORY SAFETY: force the nested invocation single-process. Without
+            # this, the child pytest INHERITS the "-n" worker count from
+            # pyproject.toml addopts and re-spawns the whole xdist worker pool —
+            # nested inside the parent's own xdist worker. That multiplicative
+            # fan-out committed >90 GB and bugchecked the host (2026-06-11/12).
+            "-p",
+            "no:xdist",
+            "-o",
+            "addopts=",
         ],
         cwd=str(_PROJECT_ROOT),
         capture_output=True,
@@ -497,6 +506,21 @@ def test_full_suite_reports_zero_skips_and_zero_xfails() -> None:
             "--tb=no",
             "-p",
             "no:cacheprovider",
+            # MEMORY SAFETY: clear inherited addopts and force this whole-suite
+            # subprocess SINGLE-PROCESS. Without "-o addopts=" the child inherits
+            # the "-n 2" xdist worker count from pyproject.toml and re-spawns the
+            # entire worker pool nested inside the parent's own xdist worker; that
+            # multiplicative fan-out (plus the nested joblib/optuna n_jobs) is what
+            # committed >90 GB and bugchecked the host (2026-06-11/12). Because we
+            # blank addopts, we must RE-PASS the default-run marker filter so the
+            # nested run keeps the same scope (no live/slow/perf tests) — otherwise
+            # this would silently start running the excluded heavy tiers serially.
+            "-p",
+            "no:xdist",
+            "-o",
+            "addopts=",
+            "-m",
+            "not live and not slow and not perf",
             # Exclude this meta-file from recursive invocation to keep the run
             # tractable and avoid recursion (subprocess shells the runner).
             "--deselect",
@@ -519,3 +543,70 @@ def test_full_suite_reports_zero_skips_and_zero_xfails() -> None:
         f"Default pytest run reports outcomes that violate the zero-skip/zero-"
         f"xfail mandate: {found}. Last lines of pytest stdout:\n{stdout_tail}"
     )
+
+
+# ---------------------------------------------------------------------------
+# MEMORY SAFETY GUARD — recursive subprocess invocations must be single-process
+# ---------------------------------------------------------------------------
+#
+# Both tests above spawn a nested ``python -m pytest`` subprocess. A pytest
+# child run in this rootdir INHERITS the "-n" xdist worker count from
+# pyproject.toml addopts. Nested inside the parent's own xdist worker, that
+# re-spawned worker pool (plus joblib/optuna n_jobs) is the multiplicative
+# fan-out that committed >90 GB and bugchecked the host (2026-06-11/12). The
+# fix forces every nested invocation single-process via "-p no:xdist" and
+# "-o addopts=". This guard pins that so the safety flags can't be dropped.
+
+
+def _string_arg_lists(tree: ast.AST) -> list[list[str]]:
+    """Return, for every ``subprocess.run([...])`` call, the list of literal
+    string arguments in its first positional arg (best-effort: skips non-str)."""
+    arg_lists: list[list[str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        is_subprocess_run = (
+            isinstance(func, ast.Attribute)
+            and func.attr == "run"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "subprocess"
+        )
+        if not is_subprocess_run or not node.args:
+            continue
+        first = node.args[0]
+        if not isinstance(first, ast.List):
+            continue
+        strings = [
+            elt.value
+            for elt in first.elts
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+        ]
+        arg_lists.append(strings)
+    return arg_lists
+
+
+def test_recursive_pytest_subprocesses_force_single_process():
+    """Every nested ``python -m pytest`` subprocess in this file must disable
+    xdist (``-p no:xdist``) and clear inherited addopts (``-o addopts=``)."""
+    tree = ast.parse(pathlib.Path(__file__).read_text(encoding="utf-8"))
+    pytest_subprocess_argvs = [
+        args
+        for args in _string_arg_lists(tree)
+        if "-m" in args or "pytest" in args  # the python -m pytest invocations
+        if "pytest" in args
+    ]
+    assert pytest_subprocess_argvs, (
+        "Expected at least one nested 'python -m pytest' subprocess.run call."
+    )
+    for argv in pytest_subprocess_argvs:
+        assert "no:xdist" in argv, (
+            "A nested pytest subprocess does not pass '-p no:xdist'. Without it "
+            "the child inherits the addopts '-n' worker count and re-spawns the "
+            f"xdist pool — the host-crash fan-out. argv={argv}"
+        )
+        assert "addopts=" in argv, (
+            "A nested pytest subprocess does not pass '-o addopts='. Without it "
+            "the inherited '-n' flag both errors against '-p no:xdist' and would "
+            f"re-enable the worker pool. argv={argv}"
+        )

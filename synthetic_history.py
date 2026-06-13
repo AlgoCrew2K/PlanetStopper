@@ -24,6 +24,40 @@ ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://data.alpaca.markets/v2")
 # year-round (a fixed UTC-4 offset is wrong for the ~5 months ET is on EST).
 _US_EASTERN = ZoneInfo("America/New_York")
 
+# Environment-bounded parallelism degree for the intraday replay Parallel() call.
+# PRODUCTION DEFAULT IS -1 (all cores) — byte-identical to the historical
+# behavior. The per-day replay work (process_day -> build_replay_day) is
+# deterministic and order-independent: each tick's Monte-Carlo seed is content-
+# derived (math_engine.derive_cycle_mc_seed(f"{sym_id}_{date_str}")), so the
+# degree of parallelism does NOT affect numerical results (verified: no RNG
+# call in this module depends on worker index or scheduling order). Changing
+# n_jobs is therefore reproducibility-neutral.
+#
+# WHY THIS EXISTS: generate_synthetic_history runs INSIDE pytest-xdist workers
+# during the test suite. With joblib n_jobs=-1 nested inside each of N xdist
+# workers, the process fan-out is multiplicative (workers x cores) and committed
+# >90 GB of memory, causing two CRITICAL_PROCESS_DIED bugchecks (2026-06-11/12).
+# tests/conftest.py sets ALPHABOT_MAX_JOBS=1 so the test environment runs this
+# loop single-process; production leaves it unset (-> -1, all cores).
+_MAX_JOBS_ENV = "ALPHABOT_MAX_JOBS"
+
+
+def _resolve_replay_n_jobs() -> int:
+    """Return the joblib n_jobs degree for the intraday replay.
+
+    Reads ALPHABOT_MAX_JOBS from the environment; default -1 (all cores) so
+    production behavior is unchanged. A garbled value falls back to the same
+    safe production default. This is a test-environment throttle ONLY — it is
+    reproducibility-neutral (see _MAX_JOBS_ENV comment above).
+    """
+    raw = os.environ.get(_MAX_JOBS_ENV)
+    if raw is not None and raw.strip():
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return -1
+
 
 def compute_vwap_from_bars(bars):
     """Cumulative session VWAP for a list of minute-bar dicts.
@@ -610,7 +644,12 @@ def generate_synthetic_history(bot_state, current_date_str):
         return date_str, day_history
 
     print(f"  -> Simulating {len(intraday_dates)} days of Intraday Tick Data using Parallel Processing...")
-    results = Parallel(n_jobs=-1)(delayed(process_day)(d) for d in intraday_dates)
+    # n_jobs is env-bounded (ALPHABOT_MAX_JOBS, default -1 = all cores in prod;
+    # set to 1 by tests/conftest.py to neutralize the xdist x cores fan-out that
+    # crashed the host — see _resolve_replay_n_jobs). Reproducibility-neutral.
+    results = Parallel(n_jobs=_resolve_replay_n_jobs())(
+        delayed(process_day)(d) for d in intraday_dates
+    )
     
     for date_str, day_history in results:
         for sym_id, ticks in day_history.items():
