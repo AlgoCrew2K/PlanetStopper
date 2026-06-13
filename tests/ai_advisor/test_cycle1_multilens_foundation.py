@@ -139,8 +139,10 @@ CYCLE1_LENSES = ["technicals", "sentiment", "derivatives", "macro", "fundamental
 # macro (FRED), and fundamentals (SEC EDGAR) were promoted to real producers
 # in commit 960d544 and are covered by tests/ai_advisor/test_cycle2_lens_producers.py.
 # Stub-contract assertions (available=False, empty payload, unconditional stub)
-# apply only to the two lenses that are still honest stubs.
-CYCLE1_STUB_LENSES = ["technicals", "derivatives"]
+# apply only to lenses that are still honest stubs.  Technicals graduated to a
+# real producer (B2: _build_technicals_section wires advisors.lens_technicals);
+# derivatives remains a stub until its producer is wired in a later cycle.
+CYCLE1_STUB_LENSES = ["derivatives"]
 
 
 @pytest.mark.parametrize("lens_name", CYCLE1_LENSES)
@@ -196,15 +198,16 @@ def test_lens_section_returns_dict_with_required_keys(lens_name: str):
 
 @pytest.mark.parametrize("lens_name", CYCLE1_STUB_LENSES)
 def test_cycle1_stub_lens_returns_available_false(lens_name: str):
-    """Remaining Cycle-1 stub lenses (technicals, derivatives) return available: False.
+    """Remaining Cycle-1 stub lenses (derivatives) return available: False.
 
     Sentiment (GDELT), macro (FRED), and fundamentals (SEC EDGAR) were promoted
     to real producers in Cycle 2 (commit 960d544) and may return available=True
     when their data source is reachable; they are covered by
-    tests/ai_advisor/test_cycle2_lens_producers.py instead.
+    tests/ai_advisor/test_cycle2_lens_producers.py instead.  Technicals was
+    promoted to a real producer in B2 (advisors/lens_technicals.py).
 
     A stub that returns available: True is fabricating data. This test ensures
-    the two remaining stubs never lie about availability.
+    the remaining stub never lies about availability.
     """
     import ai_advisor
 
@@ -223,8 +226,8 @@ def test_cycle1_stub_lens_reason_is_non_empty_and_names_source(
     lens_name: str,
     lens_contract_fixture: dict,
 ):
-    """Remaining Cycle-1 stubs (technicals, derivatives): available=False reason
-    must be non-empty and name the missing source.
+    """Remaining Cycle-1 stubs (derivatives): available=False reason must be
+    non-empty and name the missing source.
 
     Sentiment/macro/fundamentals are real Cycle-2 producers and are excluded
     from this stub-contract check (see test_cycle2_lens_producers.py).
@@ -256,8 +259,7 @@ def test_cycle1_stub_lens_reason_is_non_empty_and_names_source(
 
 @pytest.mark.parametrize("lens_name", CYCLE1_STUB_LENSES)
 def test_stub_lens_emits_no_payload_when_available_false(lens_name: str):
-    """Remaining Cycle-1 stubs (technicals, derivatives): no payload when
-    available=False.
+    """Remaining Cycle-1 stubs (derivatives): no payload when available=False.
 
     Sentiment/macro/fundamentals are real Cycle-2 producers that may return
     a payload when their data source is reachable; they are excluded from this
@@ -944,7 +946,7 @@ def test_caller_cannot_override_is_advisory_only_for_new_roles():
 def test_stub_lens_called_with_non_none_arg_still_returns_available_false(
     lens_name: str,
 ):
-    """Remaining Cycle-1 stubs (technicals, derivatives): return available=False
+    """Remaining Cycle-1 stubs (derivatives): return available=False
     unconditionally regardless of argument.
 
     Sentiment/macro/fundamentals are real Cycle-2 producers that make live

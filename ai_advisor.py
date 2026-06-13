@@ -275,6 +275,23 @@ def _build_volatility_regime(autotune_run: dict | None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Market-breadth proxy basket for the technicals lens (market-level regime read).
+# Broad indices + all 11 SPDR sector ETFs give a representative cross-section of
+# the US equity market without requiring portfolio-specific tickers.  This is a
+# deliberate market-level read, not a per-portfolio read — the technicals lens
+# answers "what is the broad market doing?" for the Market Prism context.
+# Source: SPDR sector ETF list (State Street Global Advisors) + standard US
+# broad-market benchmark indices.
+# ---------------------------------------------------------------------------
+_MARKET_PROXY_UNIVERSE: list[str] = [
+    "SPY", "QQQ", "IWM",   # broad-market benchmarks (large-cap, tech-heavy, small-cap)
+    "XLK", "XLF", "XLE",   # technology, financials, energy
+    "XLV", "XLI", "XLP",   # health care, industrials, consumer staples
+    "XLY", "XLU", "XLB",   # consumer discretionary, utilities, materials
+    "XLRE", "XLC",          # real estate, communication services
+]
+
+# ---------------------------------------------------------------------------
 # Cycle-2 multi-lens producers — GDELT sentiment, SEC EDGAR fundamentals,
 # FRED macro.  Each replaces its Cycle-1 stub with a real fetcher that:
 #   - makes HTTP calls with explicit timeouts,
@@ -283,7 +300,8 @@ def _build_volatility_regime(autotune_run: dict | None) -> dict:
 #     type(exc).__name__, never str(exc) which may contain keys/URLs),
 #   - returns available=True with real payload + citation-validated sources on
 #     success.
-# Technicals + derivatives remain cycle-1 stubs (Cycle-2b).
+# Technicals promoted to a real producer in B2 (advisors/lens_technicals.py).
+# Only derivatives remains a cycle-1 stub (Cycle-2b deliverable).
 # ---------------------------------------------------------------------------
 
 # Maximum total wall-clock seconds the retry loop will wait across all
@@ -443,17 +461,28 @@ def _fetch_with_backoff(
 
 
 def _build_technicals_section(_data: object = None) -> dict:
-    """Technicals lens block — cycle-1 stub (Cycle-2b deliverable).
+    """Technicals lens block — SMA posture, breadth, momentum (B2 real producer).
 
-    Honest availability: Alpaca IEX / Alpha Vantage indicator source not yet
-    connected.  Returns available=False with an informative reason.
+    Lazy-imports ``advisors.lens_technicals`` (CC-2 boundary: no module-level
+    import of advisor producers inside ai_advisor.py).  Uses
+    ``_MARKET_PROXY_UNIVERSE`` — the fixed broad-market basket of indices and
+    SPDR sector ETFs — to produce a market-level regime/breadth read for the
+    Market Prism.  This is an intentional market-level read, not per-portfolio.
     """
+    import advisors.lens_technicals as _lt  # CC-2: lazy import
+
+    payload = _lt._fetch_technicals(universe=_MARKET_PROXY_UNIVERSE)
+    available = payload.get("available", False)
     return {
         "lens": "technicals",
-        "available": False,
-        "reason": "technicals source not connected — cycle-2b deliverable",
-        "payload": None,
-        "sources": [],
+        "available": available,
+        "reason": payload.get("reason"),
+        "payload": payload if available else None,
+        "sources": (
+            [{"source": payload["source"], "lens": "technicals"}]
+            if payload.get("source")
+            else []
+        ),
     }
 
 
@@ -1177,10 +1206,11 @@ def assemble_advisor_context(
         "risk_invariants": _RISK_INVARIANTS,
         # P2 — condensed symphony logic / composition.
         "symphony_logic": condensed_logic,
-        # Cycle-1 multi-lens scaffold — 5 stub lens blocks.
-        # Each is available=False until the fast-follow producer connects its
-        # free-data source.  Honest degradation: never fabricates analytical
-        # context (CC-3 data-wall, GATE-1-AC §1).
+        # Multi-lens context — 5 lens blocks.
+        # Technicals (B2) and sentiment/macro/fundamentals (Cycle-2) are real producers.
+        # Only derivatives remains a stub pending a CBOE put/call data source (Cycle-2b).
+        # Honest degradation: any lens that cannot fetch returns available=False
+        # and never fabricates analytical context (CC-3 data-wall, GATE-1-AC §1).
         "technicals": _build_technicals_section(),
         "sentiment": _build_sentiment_section(),
         "derivatives": _build_derivatives_section(),
