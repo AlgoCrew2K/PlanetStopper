@@ -128,14 +128,14 @@ The literal strings `"TooManyRequests"` and `"empty_timeline"` are used for the 
 
 ## Test Coverage
 
-**Test file:** `tests/ai_advisor/test_lens_gdelt.py` (42 tests)
+**Test file:** `tests/ai_advisor/test_lens_gdelt.py` (50 tests)
 
 | Class | Tests | Coverage |
 |-------|-------|---------|
 | `TestFetchGdeltSentimentExists` | 3 | Module importable, function callable, `universe` parameter present |
 | `TestEndpointUsesTimelinetone` | 3 | URL constant contains `timelinetone` not `artlist`; static source scan; response parsing reads `timeline` key not `articles` |
 | `TestFetchReturnsValidShape` | 7 | Required keys, bool `available`, float-or-None `tone`, normalized bounds, non-empty `source`, `per_ticker` type, never raises on success |
-| `TestGoldenFixtureSchemaContract` | 8 | Schema fixture exists + has required fields + has invariants + asserts `endpoint_uses_timelinetone`; timelinetone shape fixture exists + has `timeline` array + entries have `value` field; producer output satisfies schema keys; tone bounds invariant |
+| `TestGoldenFixtureSchemaContract` | 9 | Schema fixture exists + has required fields + has invariants + asserts `endpoint_uses_timelinetone`; timelinetone shape fixture exists + has `timeline` array + entries have `value` field; producer output satisfies schema keys; tone bounds invariant |
 | `TestUnavailableOnNetworkError` | 6 | `ConnectionError`, `Timeout`, `HTTPError`, `tone=None` on error, D-1 reason, never raises |
 | `TestUnavailableOn429AfterMaxRetries` | 4 | `available=False`, `tone=None`, call count bounded (< 20), single-429-then-200 retries correctly |
 | `TestBoundedRetries` | 4 | `_GDELT_MAX_ATTEMPTS` exists and is in `[1, 20]`; backoff cap constant exists; timeout constant exists |
