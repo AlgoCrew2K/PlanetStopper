@@ -56,6 +56,14 @@ Agents to kick off:
 
 Wait for each analyst to send you their initial read via SendMessage. Track which analysts have responded. If an analyst does not respond within a reasonable time (use TaskList to check for stalls), note them as `limited-inputs` for their lens and continue — do not hang the run on a non-responsive agent.
 
+**THE AUDIT DB IS THE SOURCE OF TRUTH, NOT YOUR INBOX.** SendMessage inboxes lag badly — an analyst can file its `initial_read` to `prism_audit_log` well before its message reaches you (observed 2026-06-13: a sentiment read was filed as audit row 5 but the synthesizer, polling its inbox, wrongly recorded it as "non-responsive / 1 of 5"). Therefore, **before declaring ANY analyst non-responsive and before synthesizing, query the audit DB directly** and treat its rows as authoritative:
+
+```bash
+python -c "import database; rows=database.get_prism_audit_for_run('<run_id>'); import collections; print({r['agent_role'] for r in rows if r['phase']=='initial_read'})"
+```
+
+Only treat a lens as non-responsive if it has NO `initial_read` row in the audit DB after a reasonable wait. Derive `available_lens_count` and `per_lens_digest` availability from the audit-DB rows for this `run_id`, never from inbox messages alone.
+
 ### 5. Facilitate clarifying Q&A (free, non-debate)
 
 After initial reads arrive, clarifications flow freely. Analysts may message each other or you directly. Your role:
