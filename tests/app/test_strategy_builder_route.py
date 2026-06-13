@@ -1021,86 +1021,48 @@ def test_strategy_builder_run_route_imports_propose_strategies_inside_function()
 
 
 def test_get_route_filters_out_non_strategy_builder_observations(client):
-    """I-21: GET route must filter observations to STRATEGY_BUILDER role only.
+    """I-21 (SPA-port): Role isolation — only STRATEGY_BUILDER observations reach the SPA.
 
-    The database accessor get_advisor_observations_for_symphony returns ALL
-    advisor observations for a given symphony_id — it is not role-scoped.
-    The route must apply a role filter so OVERFITTING_CONSCIENCE,
-    SPEC_CRITIC, DIVERGENCE_EXPLAINER, and ASSET_SWAP observations for the
-    same symphony_id do not leak into the Strategy Builder template.
+    SPA-PORT UPDATE: the GET /ai-advisor/strategy-builder sub-route now returns 302.
+    Role isolation is enforced at the DB layer: the /ai-advisor route must call
+    database.get_advisor_observations_for_role("STRATEGY_BUILDER"), which returns
+    only STRATEGY_BUILDER rows. OVERFITTING_CONSCIENCE, SPEC_CRITIC, and other
+    advisor roles are never passed to the Strategy Builder panel.
 
-    This is a role-bleed safety test: rendering a SPEC_CRITIC verdict as a
-    strategy proposal card would produce misleading UI for the operator.
+    Two assertions:
+      1. GET /ai-advisor/strategy-builder returns 302 (sub-route redirects, AC3).
+      2. app.py ai_advisor_tab route source calls
+         get_advisor_observations_for_role("STRATEGY_BUILDER") — source-code
+         inspection proves the role-scoped accessor is wired correctly (AC4).
+         Source inspection is used instead of a live call to avoid mocking the
+         full correlation/history machinery that surrounds the prefetch.
     """
-    # Build a mixed list: one STRATEGY_BUILDER observation + two from other roles
-    fixture = _load_fixture()
-    sb_obs = fixture["observation_survivor"]
-
-    other_role_obs_1 = {
-        "id": 301,
-        "created_at": "2026-06-10T14:00:00",
-        "advisor_role": "OVERFITTING_CONSCIENCE",
-        "subject_type": "autotune_run",
-        "subject_id": "sym-test-001",
-        "verdict": "CLEAR",
-        "raw_response": {"indicators": {"I1": False}},
-        "is_advisory_only": 1,
-        "spec_bundle_id": None,
-    }
-    other_role_obs_2 = {
-        "id": 302,
-        "created_at": "2026-06-10T14:00:01",
-        "advisor_role": "SPEC_CRITIC",
-        "subject_type": "spec_bundle",
-        "subject_id": "sym-test-001",
-        "verdict": "WATCH",
-        "raw_response": {"flags": ["param_count_high"]},
-        "is_advisory_only": 1,
-        "spec_bundle_id": None,
-    }
-
-    mixed_observations = [other_role_obs_1, other_role_obs_2, sb_obs]
-
-    captured_render: dict = {}
-
-    def _capture(*args, **kwargs):
-        captured_render.update(kwargs)
-        # Return minimal HTML that includes the testids we need so downstream
-        # DOM tests don't fail — actual template rendering tested elsewhere.
-        return "<html><body>stub</body></html>"
-
+    # Part 1: GET sub-route returns 302 — not 200 standalone page.
     with (
-        patch("database.get_advisor_observations_for_symphony", return_value=mixed_observations),
+        patch("database.get_advisor_observations_for_symphony", return_value=[]),
         patch("analytics.list_available_symphonies", return_value=[]),
-        patch.object(app_module, "render_template", side_effect=_capture),
     ):
         resp = client.get("/ai-advisor/strategy-builder?symphony_id=sym-test-001")
 
-    assert resp.status_code == 200
-    observations_passed = captured_render.get("observations", [])
-
-    # Only the STRATEGY_BUILDER observation must reach the template
-    roles_in_template = {o.get("advisor_role") for o in observations_passed}
-    assert roles_in_template <= {"STRATEGY_BUILDER"}, (
-        f"GET /ai-advisor/strategy-builder passed non-STRATEGY_BUILDER observations "
-        f"to render_template. "
-        f"Roles found: {roles_in_template}. "
-        "The route must filter observations to advisor_role=='STRATEGY_BUILDER' only — "
-        "OVERFITTING_CONSCIENCE, SPEC_CRITIC, and other advisor roles for the same "
-        "symphony_id must not leak into the Strategy Builder template."
+    assert resp.status_code in (301, 302, 303, 308), (
+        f"GET /ai-advisor/strategy-builder returned {resp.status_code}; expected a redirect. "
+        "SPA-port: this sub-route must redirect to /ai-advisor (AC3). "
+        "Role isolation is now enforced at the DB accessor level (AC4)."
     )
 
-    # The one STRATEGY_BUILDER observation must still be present (filter is selective,
-    # not a blanket drop)
-    sb_obs_in_template = [
-        o for o in observations_passed if o.get("advisor_role") == "STRATEGY_BUILDER"
-    ]
-    assert len(sb_obs_in_template) == 1, (
-        f"Expected exactly 1 STRATEGY_BUILDER observation to pass through to the template; "
-        f"got {len(sb_obs_in_template)}. "
-        "The role filter must preserve STRATEGY_BUILDER observations, not drop all of them."
+    # Part 2: Source-code verification that ai_advisor_tab calls the role-scoped
+    # accessor with "STRATEGY_BUILDER". Source inspection avoids needing to stub
+    # the full correlation-diagnostic / history machinery around the prefetch call.
+    import inspect
+    import app as _app_mod
+    source = inspect.getsource(_app_mod.ai_advisor_tab)
+    assert 'get_advisor_observations_for_role("STRATEGY_BUILDER")' in source or            "get_advisor_observations_for_role('STRATEGY_BUILDER')" in source, (
+        "ai_advisor_tab does not call "
+        "database.get_advisor_observations_for_role('STRATEGY_BUILDER'). "
+        "The route must use the role-scoped DB accessor to fetch Strategy Builder "
+        "observations (AC4) so that OVERFITTING_CONSCIENCE, SPEC_CRITIC, and other "
+        "advisor roles cannot bleed into the Strategy Builder panel."
     )
-
 
 # ---------------------------------------------------------------------------
 # J: POST /run — unknown objective defaults to diversify (no 400/500)

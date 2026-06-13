@@ -532,6 +532,129 @@
         @media (max-width: 768px) {
             .chat-panel { width: 100%; right: -100%; }
         }
+
+        /* ------------------------------------------------------------------ */
+        /* Strategy Builder panel — ported from ai_advisor_strategy_builder    */
+        /* ------------------------------------------------------------------ */
+
+        /* Non-dismissible risk banner (highest overfitting risk tier) */
+        .sb-risk-banner {
+            display: flex; align-items: flex-start; gap: 0.625rem;
+            background: var(--studio-warn-tint);
+            border: 1px solid var(--studio-warn-border);
+            border-radius: 0.625rem;
+            padding: 0.875rem 1rem;
+            margin-bottom: 1.25rem;
+        }
+        .sb-risk-banner-icon { flex-shrink: 0; color: var(--studio-warn); font-size: 1rem; line-height: 1.5; }
+        .sb-risk-banner-text { font-size: 0.8125rem; color: var(--studio-ink-dim); line-height: 1.6; }
+        .sb-risk-banner-text strong { color: var(--studio-ink); font-weight: 700; }
+
+        /* Run controls panel */
+        .run-controls-panel {
+            background: var(--studio-surface); border: 1px solid var(--studio-border);
+            border-radius: 1rem; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem;
+        }
+        .run-controls-header {
+            font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.1em; color: var(--studio-ink-dim); margin-bottom: 1rem;
+        }
+        .run-controls-row { display: flex; align-items: flex-end; gap: 0.75rem; flex-wrap: wrap; }
+        .run-trigger-btn {
+            padding: 0.5rem 1.25rem; background: var(--studio-accent); color: var(--studio-white);
+            border: none; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 700;
+            cursor: pointer; flex-shrink: 0; white-space: nowrap; align-self: flex-end;
+            font-family: var(--studio-sans, sans-serif);
+        }
+        .run-trigger-btn:hover:not(:disabled) { opacity: 0.9; }
+        .run-trigger-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .run-controls-note { font-size: 0.75rem; color: var(--studio-ink-dim); margin-top: 0.75rem; }
+        .run-error { font-size: 0.8125rem; color: var(--studio-neg); margin-top: 0.5rem; }
+        #sb-run-results { min-height: 4rem; margin-top: 1rem; }
+        .sb-loading-state {
+            background: var(--studio-surface); border: 1px solid var(--studio-border);
+            border-radius: 1rem; padding: 2rem 1.5rem; text-align: center;
+            color: var(--studio-ink-dim); font-size: 0.875rem;
+        }
+
+        /* Section header */
+        .section-header {
+            font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.1em; color: var(--studio-ink-dim);
+            margin-bottom: 0.875rem; margin-top: 1.5rem;
+        }
+
+        /* Proposal card grid */
+        .proposal-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(28rem, 1fr)); gap: 0.875rem; }
+        .proposal-card {
+            background: var(--studio-surface); border: 1px solid var(--studio-border);
+            border-radius: 1rem; padding: 1.25rem 1.5rem;
+        }
+        .proposal-card--survivor { border-color: var(--studio-pos); }
+        .proposal-card--rejected { opacity: 0.75; }
+        .proposal-card--backtest-failed { background: var(--studio-warn-tint); border-color: var(--studio-warn-border); }
+
+        /* Advisory-only badge */
+        .advisory-only-badge {
+            display: inline-block; padding: 0.125rem 0.5rem; border-radius: 999px;
+            font-size: 0.5rem; font-weight: 700; letter-spacing: 0.06em;
+            text-transform: uppercase; border: 1px solid var(--studio-border); color: var(--studio-ink-dim);
+        }
+
+        /* Card anatomy */
+        .card-header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem; }
+        .card-candidate-id { font-size: 0.875rem; font-weight: 700; color: var(--studio-ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+        /* Objective strip */
+        .objective-strip {
+            background: var(--studio-accent-tint, rgba(46,165,102,0.06));
+            border: 1px solid var(--studio-accent-border, rgba(46,165,102,0.2));
+            border-left: 3px solid var(--studio-accent);
+            border-radius: 0 0.375rem 0.375rem 0;
+            padding: 0.375rem 0.625rem; margin-bottom: 0.875rem;
+            font-size: 0.8125rem; font-weight: 600; color: var(--studio-ink-dim);
+        }
+
+        /* Stats table */
+        .stats-table { width: 100%; border-collapse: collapse; margin-bottom: 0.875rem; font-size: 0.8125rem; }
+        .stats-table th { font-size: 0.5625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-muted); padding: 0.25rem 0.5rem 0.25rem 0; border-bottom: 1px solid var(--studio-border); text-align: left; }
+        .stats-table td { padding: 0.25rem 0.5rem 0.25rem 0; border-bottom: 1px solid var(--studio-border); color: var(--studio-ink); font-variant-numeric: tabular-nums; }
+        .stats-table td:first-child { font-size: 0.6875rem; color: var(--studio-ink-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+        .stat-pos { color: var(--studio-pos); }
+        .stat-neg { color: var(--studio-neg); }
+        .stat-nil { color: var(--studio-ink-muted); }
+
+        /* Gate verdict */
+        .gate-verdict-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 0.5rem; background: var(--studio-bg); flex-wrap: wrap; }
+        .gate-pill { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.5625rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid; }
+        .gate-pill--passed { color: var(--studio-pos); border-color: var(--studio-pos); background: rgba(31,122,77,0.07); }
+        .gate-pill--withheld { color: var(--studio-warn); border-color: var(--studio-warn); background: var(--studio-warn-tint); }
+        .gate-pill--failed { color: var(--studio-neg); border-color: var(--studio-neg); background: var(--studio-neg-tint); }
+        .fdr-metadata { font-size: 0.6875rem; color: var(--studio-ink-muted); font-variant-numeric: tabular-nums; margin-top: 0.25rem; flex-basis: 100%; }
+        .fdr-metadata strong { color: var(--studio-ink-dim); }
+
+        /* Caveats + apply guidance */
+        .caveat-text { font-size: 0.6875rem; color: var(--studio-ink-dim); line-height: 1.5; border-left: 2px solid var(--studio-warn); padding-left: 0.625rem; margin-bottom: 0.375rem; }
+        .caveats-block { margin-bottom: 0.75rem; }
+        .apply-guidance { font-size: 0.6875rem; color: var(--studio-ink-dim); background: var(--studio-bg); border: 1px solid var(--studio-border); border-radius: 0.5rem; padding: 0.5rem 0.75rem; line-height: 1.5; margin-bottom: 0.75rem; }
+        .apply-guidance strong { color: var(--studio-ink); font-weight: 700; }
+        .rules-collapsible summary { cursor: pointer; font-size: 0.75rem; font-weight: 600; color: var(--studio-ink-dim); margin-bottom: 0.375rem; }
+        .rules-collapsible pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; color: var(--studio-ink); background: var(--studio-bg); border: 1px solid var(--studio-border); border-radius: 0.375rem; padding: 0.625rem; white-space: pre-wrap; word-break: break-all; margin: 0; }
+        .backtest-error { font-size: 0.8125rem; color: var(--studio-neg); margin-top: 0.5rem; }
+
+        /* Discuss button */
+        .discuss-btn { margin-top: 0.5rem; padding: 0.25rem 0.75rem; font-size: 0.75rem; color: var(--studio-ink-dim); background: transparent; border: 1px solid var(--studio-border); border-radius: 0.375rem; cursor: pointer; font-family: var(--studio-sans, sans-serif); }
+        .discuss-btn:hover { border-color: var(--studio-accent); color: var(--studio-ink); }
+
+        /* Empty state */
+        .empty-state { background: var(--studio-neg-tint, rgba(180,58,42,0.06)); border: 1px solid var(--studio-neg-border, rgba(180,58,42,0.25)); border-left: 3px solid var(--studio-neg); border-radius: 1rem; padding: 2rem 1.5rem; }
+        .empty-state-title { font-size: 1rem; font-weight: 700; color: var(--studio-ink); margin-bottom: 0.5rem; }
+        .empty-state-body { font-size: 0.875rem; color: var(--studio-ink-dim); }
+
+        /* Rejected section */
+        .rejected-section { margin-top: 1.5rem; }
+        .rejected-collapsible summary { cursor: pointer; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-faint, var(--studio-ink-dim)); margin-bottom: 0.875rem; user-select: none; }
+        .rejected-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(28rem, 1fr)); gap: 0.875rem; margin-top: 0.875rem; }
     </style>
 </head>
 
@@ -598,6 +721,15 @@
                     data-tab="chat">
                 Chat
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Explain-only"></span>
+            </button>
+            <button role="tab"
+                    aria-selected="false"
+                    aria-controls="tab-panel-strategy-builder"
+                    class="cap-tab"
+                    data-testid="strategy-builder-tab"
+                    data-tab="strategy-builder">
+                Strategy Builder
+                <span class="cap-tab-badge cap-tab-badge--yellow" title="Highest overfitting risk — building from scratch"></span>
             </button>
         </nav>
 
@@ -950,6 +1082,407 @@
             </div>
 
         </div>{# /tab-panel-chat #}
+
+        <!-- ============================================================ -->
+        <!-- TAB PANEL: Strategy Builder (6th tab — folded in from         -->
+        <!-- templates/ai_advisor_strategy_builder.html)                   -->
+        <!-- Advisory-only. Non-dismissible risk banner stays.             -->
+        <!-- CSRF on POST /run unchanged. D-1 preserved.                   -->
+        <!-- ============================================================ -->
+        <div id="tab-panel-strategy-builder"
+             role="tabpanel"
+             data-testid="tab-panel-strategy-builder"
+             data-tab="strategy-builder"
+             class="tab-panel">
+
+            <!--
+                Persistent non-dismissible risk warning (AC-3.2 + AC-3.3).
+                Strategy Builder carries the highest overfitting risk tier — proposals
+                are built entirely from scratch via backtest-and-select, which is
+                maximally exposed to the selection-bias trap. NOT dismissible.
+            -->
+            <div class="sb-risk-banner"
+                 data-testid="strategy-builder-risk-banner"
+                 role="note"
+                 aria-live="polite">
+                <span class="sb-risk-banner-icon" aria-hidden="true">&#x26A0;</span>
+                <p class="sb-risk-banner-text">
+                    <strong>Logic-change proposals carry the highest overfitting risk.</strong>
+                    A multiple-testing correction (FDR/Yekutieli) is applied across ALL
+                    backtested candidates — raising the number of candidates raises the bar
+                    each must clear. Survivors are <strong>sound-but-unprovable</strong>:
+                    a clean gate pass is not proof of a live edge. Strategy Builder proposals
+                    are built entirely from scratch, maximising selection-bias exposure.
+                </p>
+            </div>
+
+            {% if no_api_key %}
+
+            <!-- AC-X4: no API key configured — run controls unavailable.
+                 Stored observations from previous runs are still shown below. -->
+            <div class="no-api-key-state" data-testid="no-api-key-state-sb">
+                <div class="no-api-key-title">Advisor Unavailable</div>
+                <div class="no-api-key-body">
+                    Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
+                    <code>COMPOSER_SECRET</code> environment variables to enable
+                    strategy-builder proposals.
+                </div>
+            </div>
+
+            {% else %}
+
+            <!-- Run controls — no HTML form element; trigger uses JS fetch + X-CSRF-Token header -->
+            <div class="run-controls-panel" data-testid="strategy-builder-controls">
+                <div class="run-controls-header">Propose New Strategies</div>
+                <div class="run-controls-row">
+                    <div class="form-group">
+                        <label class="form-label" for="sb-objective-select">Objective</label>
+                        <select id="sb-objective-select"
+                                class="form-select"
+                                data-testid="sb-objective-select"
+                                aria-label="Objective">
+                            <option value="diversify">Diversify</option>
+                            <option value="cut_drawdown">Cut drawdown</option>
+                            <option value="lift_risk_adjusted">Lift risk-adjusted return</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="sb-universe-input">Universe (tickers)</label>
+                        <input type="text"
+                               id="sb-universe-input"
+                               class="form-input"
+                               data-testid="sb-universe-input"
+                               placeholder="e.g. SPY, AGG, GLD, TLT"
+                               aria-label="Ticker universe, comma-separated"
+                               autocomplete="off"
+                               spellcheck="false">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="sb-symphony-select">Symphony (optional)</label>
+                        <select id="sb-symphony-select"
+                                class="form-select"
+                                data-testid="sb-symphony-select"
+                                aria-label="Symphony">
+                            <option value="">All symphonies (advisory)</option>
+                            {% for sym in symphonies %}
+                            <option value="{{ sym | e }}">{{ sym | e }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button id="sb-run-btn"
+                            type="button"
+                            class="run-trigger-btn"
+                            data-testid="sb-run-btn"
+                            onclick="sbRunAnalysis()">
+                        Run analysis
+                    </button>
+                </div>
+                <p class="run-controls-note">
+                    The advisor generates candidate symphonies from templates, backtests
+                    each one, and applies FDR/Yekutieli multiple-testing correction. Only
+                    candidates that clear the gate are surfaced as proposals.
+                </p>
+                <div id="sb-run-error"
+                     class="run-error"
+                     data-testid="sb-run-error"
+                     style="display:none;"
+                     role="alert"></div>
+            </div>
+
+            <!-- Live run results area — populated by JS after POST /run -->
+            <div id="sb-run-results"></div>
+
+            {% endif %}{# no_api_key #}
+
+            {# Inline SVG sparkline macro for strategy-builder cards #}
+            {% macro render_sb_sparkline(points) %}
+            {% if points %}
+            {% set ns = namespace(all_numeric=true) %}
+            {% for p in points %}
+                {% if p is none or p is not number %}
+                    {% set ns.all_numeric = false %}
+                {% endif %}
+            {% endfor %}
+            {% if ns.all_numeric %}
+            {% set w = 120 %}
+            {% set h = 32 %}
+            {% set n = points | length %}
+            {% set min_v = points | min %}
+            {% set max_v = points | max %}
+            {% set v_range = (max_v - min_v) if (max_v - min_v) > 0 else 1 %}
+            {% set pts_str = namespace(v='') %}
+            {% for p in points %}
+                {% set x = (loop.index0 / (n - 1) * w) if n > 1 else (w / 2) %}
+                {% set y = h - ((p - min_v) / v_range * (h - 4) + 2) %}
+                {% set pts_str.v = pts_str.v ~ ' ' ~ (x | round(1) | string) ~ ',' ~ (y | round(1) | string) %}
+            {% endfor %}
+            <svg role="img" width="{{ w }}" height="{{ h }}"
+                 aria-label="Equity curve: {{ '%.2f' | format(points[0]) }}% &#8594; {{ '%.2f' | format(points[-1]) }}%"
+                 viewBox="0 0 {{ w }} {{ h }}"
+                 preserveAspectRatio="none"
+                 style="display:block;overflow:visible"
+                 data-testid="sparkline-svg">
+                <polyline
+                    points="{{ pts_str.v | trim }}"
+                    fill="none"
+                    stroke="var(--studio-accent)"
+                    stroke-width="1.5"
+                    stroke-linejoin="round"
+                    stroke-linecap="round"
+                />
+            </svg>
+            {% endif %}
+            {% endif %}
+            {% endmacro %}
+
+            <!-- ============================================================ -->
+            <!-- Stored observations rendered server-side (read-only SQLite)  -->
+            <!-- Always rendered regardless of no_api_key (AC-5 read-only).   -->
+            <!-- ============================================================ -->
+
+            {% if not sb_observations %}
+
+            <!-- Empty state: no proposals yet, or gate rejected all — valid, not an error -->
+            <div class="empty-state" data-testid="strategy-builder-empty-state">
+                <div class="empty-state-title">No candidate cleared the gate this run.</div>
+                <div class="empty-state-body">
+                    This is a valid outcome — the gate rejected all candidates to protect
+                    against overfitting. Use the controls above to run a new analysis.
+                </div>
+            </div>
+
+            {% else %}
+
+            {% set sb_survivors = [] %}
+            {% set sb_bt_failed = [] %}
+            {% set sb_withheld = [] %}
+            {% for obs in sb_observations %}
+                {% if obs.verdict == 'ADOPT_CANDIDATE' %}
+                    {% if sb_survivors.append(obs) %}{% endif %}
+                {% elif obs.raw_response and obs.raw_response.get('backtest_error') %}
+                    {% if sb_bt_failed.append(obs) %}{% endif %}
+                {% else %}
+                    {% if sb_withheld.append(obs) %}{% endif %}
+                {% endif %}
+            {% endfor %}
+
+            <!-- Survivor cards (ADOPT_CANDIDATE) — ZERO action affordances -->
+            {% if sb_survivors %}
+            <div class="section-header">Strategy Proposals — Gate Passed</div>
+            <div class="proposal-cards" data-testid="survivor-cards">
+                {% for obs in sb_survivors %}
+                {% set rr = obs.raw_response %}
+                {% set metrics = rr.get('metrics') or {} %}
+                {% set n_cand = rr.get('n_candidates') or 1 %}
+                {% set fdr_q_val = rr.get('fdr_q') or 0.05 %}
+                {% set p_adj = rr.get('winner_p_adj') %}
+                <div class="proposal-card proposal-card--survivor">
+                    <div class="card-header-row">
+                        <span class="card-candidate-id">{{ rr.get('candidate_id') or obs.subject_id | e }}</span>
+                        <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory Only</span>
+                    </div>
+                    {{ render_sb_sparkline(obs.sparkline_points) }}
+                    <div class="objective-strip" data-testid="objective-strip">
+                        {% set obj = rr.get('objective', '') %}
+                        Objective:
+                        {% if obj == 'diversify' %}Diversify portfolio
+                        {% elif obj == 'cut_drawdown' %}Cut drawdown
+                        {% elif obj == 'lift_risk_adjusted' %}Lift risk-adjusted return
+                        {% else %}{{ obj | e }}{% endif %}
+                        &nbsp;&middot;&nbsp;
+                        Template: {{ rr.get('template_id', '—') | e }}
+                    </div>
+                    {% set live_baseline = rr.get('live_baseline') %}
+                    <table class="stats-table" data-testid="stats-table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>Candidate</th>
+                                {% if live_baseline %}<th data-testid="baseline-col-header">Live Baseline</th>{% endif %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% set sharpe = rr.get('sharpe') if rr.get('sharpe') is not none else metrics.get('sharpe_ratio') %}
+                            <tr>
+                                <td>Sharpe</td>
+                                <td class="{% if sharpe is not none %}{% if sharpe >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
+                                    {% if sharpe is not none %}{{ "%.3f" | format(sharpe) }}{% else %}—{% endif %}
+                                </td>
+                                {% if live_baseline %}
+                                {% set bl_val = live_baseline.get('sharpe') %}
+                                <td class="{% if bl_val is not none %}{% if bl_val >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-sharpe">
+                                    {% if bl_val is not none %}{{ "%.3f" | format(bl_val) }}{% else %}—{% endif %}
+                                </td>
+                                {% endif %}
+                            </tr>
+                            {% set sortino = metrics.get('sortino_ratio') %}
+                            <tr>
+                                <td>Sortino</td>
+                                <td class="{% if sortino is not none %}{% if sortino >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
+                                    {% if sortino is not none %}{{ "%.3f" | format(sortino) }}{% else %}—{% endif %}
+                                </td>
+                                {% if live_baseline %}<td class="stat-nil" data-testid="baseline-sortino">—</td>{% endif %}
+                            </tr>
+                            {% set mdd = rr.get('max_drawdown') if rr.get('max_drawdown') is not none else metrics.get('max_drawdown') %}
+                            <tr>
+                                <td>Max Drawdown</td>
+                                <td class="{% if mdd is not none %}{% if (mdd | abs) <= 0.20 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
+                                    {% if mdd is not none %}{{ "%.2f%%" | format(mdd * 100) }}{% else %}—{% endif %}
+                                </td>
+                                {% if live_baseline %}
+                                {% set bl_mdd = live_baseline.get('max_drawdown') %}
+                                <td class="{% if bl_mdd is not none %}{% if (bl_mdd | abs) <= 0.20 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-max-drawdown">
+                                    {% if bl_mdd is not none %}{{ "%.2f%%" | format(bl_mdd * 100) }}{% else %}—{% endif %}
+                                </td>
+                                {% endif %}
+                            </tr>
+                            {% set ann_ret = rr.get('cagr') if rr.get('cagr') is not none else metrics.get('annualized_return') %}
+                            <tr>
+                                <td>Annual Return</td>
+                                <td class="{% if ann_ret is not none %}{% if ann_ret >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
+                                    {% if ann_ret is not none %}{{ "%.2f%%" | format(ann_ret * 100) }}{% else %}—{% endif %}
+                                </td>
+                                {% if live_baseline %}
+                                {% set bl_cagr = live_baseline.get('cagr') %}
+                                <td class="{% if bl_cagr is not none %}{% if bl_cagr >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-cagr">
+                                    {% if bl_cagr is not none %}{{ "%.2f%%" | format(bl_cagr * 100) }}{% else %}—{% endif %}
+                                </td>
+                                {% endif %}
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div class="gate-verdict-row">
+                        <span class="gate-pill gate-pill--passed" data-testid="gate-verdict-pill">PASSED</span>
+                        <span style="font-size:0.75rem;color:var(--studio-ink-dim);">Cleared BHY/Yekutieli FDR gate</span>
+                        {% set fdr_display = rr.get('fdr_adjusted_threshold') or rr.get('fdr_q') or 0.05 %}
+                        <span class="fdr-metadata" data-testid="fdr-metadata">
+                            <strong>N={{ n_cand }}</strong> candidates tested
+                            &middot; adjusted threshold &alpha;={{ "%.4f" | format(fdr_display) }} (Yekutieli-adjusted)
+                            {% if p_adj is not none %}
+                            &middot; this candidate p={{ "%.4f" | format(p_adj) }} (PASSED)
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="caveats-block">
+                        <p class="caveat-text" data-testid="caveat-text">Selected on backtest across {{ n_cand }} candidates. FDR correction applied ({{ n_cand }} tested, threshold Yekutieli-adjusted). Overfitting risk cannot be eliminated — only resisted.</p>
+                        {% for caveat in rr.get('caveats') or [] %}
+                        {% if caveat and 'Selected on backtest' not in caveat %}
+                        <p class="caveat-text">{{ caveat | e }}</p>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    <div class="apply-guidance" data-testid="apply-guidance">
+                        <strong>To adopt:</strong> create this symphony in Composer manually — rules below.
+                        {% if rr.get('apply_guidance') %}{{ rr['apply_guidance'] | e }}{% endif %}
+                    </div>
+                    <details class="rules-collapsible" data-testid="rules-collapsible">
+                        <summary>Show rules</summary>
+                        <pre>{{ rr.get('rules_text') or '(no rules text available)' | e }}</pre>
+                    </details>
+                    {% set _art = sb_card_artifacts.get(obs.id) %}
+                    {% if _art %}
+                    <button type="button"
+                            class="discuss-btn"
+                            data-testid="discuss-proposal-btn"
+                            data-artifact='{{ _art | tojson | e }}'
+                            onclick="openChatWithArtifact(this.dataset.artifact)">
+                        Discuss this proposal
+                    </button>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}{# sb_survivors #}
+
+            <!-- Backtest-failed cards -->
+            {% if sb_bt_failed %}
+            <div class="section-header" style="margin-top:1.25rem;">Backtest Failures</div>
+            <div class="proposal-cards">
+                {% for obs in sb_bt_failed %}
+                {% set rr = obs.raw_response %}
+                <div class="proposal-card proposal-card--backtest-failed" data-testid="backtest-failed-card">
+                    <div class="card-header-row">
+                        <span class="card-candidate-id">{{ rr.get('candidate_id') or obs.subject_id | e }}</span>
+                        <span class="gate-pill gate-pill--failed">BACKTEST FAILED</span>
+                    </div>
+                    <div class="objective-strip" data-testid="objective-strip">
+                        Objective: {{ rr.get('objective', '—') | e }}
+                        &nbsp;&middot;&nbsp;
+                        Template: {{ rr.get('template_id', '—') | e }}
+                    </div>
+                    <p class="backtest-error">Composer API returned: {{ rr.get('backtest_error', 'unknown error') | e }}</p>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}{# sb_bt_failed #}
+
+            <!-- Rejected candidates — collapsible, de-emphasised -->
+            {% if sb_withheld %}
+            <div class="rejected-section" data-testid="rejected-candidates-section">
+                <details class="rejected-collapsible">
+                    <summary>Candidates that did not clear the gate ({{ sb_withheld | length }})</summary>
+                    <div class="rejected-cards">
+                        {% for obs in sb_withheld %}
+                        {% set rr = obs.raw_response %}
+                        {% set metrics = rr.get('metrics') or {} %}
+                        {% set n_cand = rr.get('n_candidates') or 1 %}
+                        <div class="proposal-card proposal-card--rejected">
+                            <div class="card-header-row">
+                                <span class="card-candidate-id">{{ rr.get('candidate_id') or obs.subject_id | e }}</span>
+                                <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory Only</span>
+                            </div>
+                            {{ render_sb_sparkline(obs.sparkline_points) }}
+                            <div class="objective-strip" data-testid="objective-strip">
+                                Objective: {{ rr.get('objective', '—') | e }}
+                                &nbsp;&middot;&nbsp;
+                                Template: {{ rr.get('template_id', '—') | e }}
+                            </div>
+                            {% set live_baseline = rr.get('live_baseline') %}
+                            <table class="stats-table" data-testid="stats-table">
+                                <thead><tr><th>Metric</th><th>Candidate</th>{% if live_baseline %}<th data-testid="baseline-col-header">Live Baseline</th>{% endif %}</tr></thead>
+                                <tbody>
+                                    {% set sharpe = rr.get('sharpe') if rr.get('sharpe') is not none else metrics.get('sharpe_ratio') %}
+                                    <tr><td>Sharpe</td><td class="stat-nil">{% if sharpe is not none %}{{ "%.3f" | format(sharpe) }}{% else %}—{% endif %}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-sharpe">—</td>{% endif %}</tr>
+                                    {% set sortino = metrics.get('sortino_ratio') %}
+                                    <tr><td>Sortino</td><td class="stat-nil">{% if sortino is not none %}{{ "%.3f" | format(sortino) }}{% else %}—{% endif %}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-sortino">—</td>{% endif %}</tr>
+                                    {% set mdd = rr.get('max_drawdown') if rr.get('max_drawdown') is not none else metrics.get('max_drawdown') %}
+                                    <tr><td>Max Drawdown</td><td class="stat-nil">{% if mdd is not none %}{{ "%.2f%%" | format(mdd * 100) }}{% else %}—{% endif %}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-max-drawdown">—</td>{% endif %}</tr>
+                                    {% set ann_ret = rr.get('cagr') if rr.get('cagr') is not none else metrics.get('annualized_return') %}
+                                    <tr><td>Annual Return</td><td class="stat-nil">{% if ann_ret is not none %}{{ "%.2f%%" | format(ann_ret * 100) }}{% else %}—{% endif %}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-cagr">—</td>{% endif %}</tr>
+                                </tbody>
+                            </table>
+                            <div class="gate-verdict-row">
+                                <span class="gate-pill gate-pill--withheld" data-testid="gate-verdict-pill">WITHHELD</span>
+                                <span class="fdr-metadata" data-testid="fdr-metadata"><strong>N={{ n_cand }}</strong> candidates tested</span>
+                            </div>
+                            <div class="apply-guidance" data-testid="apply-guidance">
+                                <strong>Gate withheld:</strong> this candidate did not clear the FDR correction threshold.
+                            </div>
+                            <details class="rules-collapsible" data-testid="rules-collapsible">
+                                <summary>Show rules</summary>
+                                <pre>{{ rr.get('rules_text') or '(no rules text available)' | e }}</pre>
+                            </details>
+                            <p class="caveat-text" data-testid="caveat-text">Selected on backtest: gate withheld this candidate — selection-bias risk exceeds the FDR correction threshold.</p>
+                            {% set _art = sb_card_artifacts.get(obs.id) %}
+                            {% if _art %}
+                            <button type="button"
+                                    class="discuss-btn"
+                                    data-testid="discuss-proposal-btn"
+                                    data-artifact='{{ _art | tojson | e }}'
+                                    onclick="openChatWithArtifact(this.dataset.artifact)">
+                                Discuss this proposal
+                            </button>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </details>
+            </div>
+            {% endif %}{# sb_withheld #}
+
+            {% endif %}{# sb_observations #}
+
+        </div>{# /tab-panel-strategy-builder #}
 
     </div>{# /page-wrap #}
 

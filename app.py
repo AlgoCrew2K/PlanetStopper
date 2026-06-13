@@ -2910,6 +2910,57 @@ def ai_advisor_tab():
     # ------------------------------------------------------------------ #
     chat_available: bool = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
+    # ------------------------------------------------------------------ #
+    # Strategy Builder panel: prefetch STRATEGY_BUILDER observations +    #
+    # build per-card M6 artifact dicts for the Discuss affordance.        #
+    # Lazy import keeps advisor_chat off the live 1-minute execution path. #
+    # ------------------------------------------------------------------ #
+    sb_observations: list[dict] = []
+    sb_card_artifacts: dict = {}
+    try:
+        sb_observations = list(
+            reversed(database.get_advisor_observations_for_role("STRATEGY_BUILDER"))
+        )
+    except Exception:
+        pass
+
+    if sb_observations:
+        try:
+            from advisors.advisor_chat import CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS as _sb_chat_max  # noqa: PLC0415
+        except Exception:
+            _sb_chat_max = 500
+        for _obs in sb_observations:
+            _rr = _obs.get("raw_response")
+            if not isinstance(_rr, dict):
+                _rr = {}
+            _rules_text = _rr.get("rules_text") or ""
+            if isinstance(_rules_text, str) and len(_rules_text) > _sb_chat_max:
+                _rules_text = _rules_text[:_sb_chat_max]
+            _obs_id = _obs.get("id")
+            if _obs_id is None:
+                continue
+            sb_card_artifacts[_obs_id] = {
+                "artifact_type": "strategy_proposal",
+                "artifact_id": _rr.get("candidate_id") or _obs.get("subject_id", ""),
+                "symphony_id": _obs.get("subject_id", ""),
+                "template_id": _rr.get("template_id"),
+                "tickers": _rr.get("tickers"),
+                "rules_text": _rules_text,
+                "gate_verdict": _rr.get("gate_decision") or _obs.get("verdict"),
+                "n_candidates": _rr.get("n_candidates"),
+                "n_survivors": _rr.get("n_survivors"),
+                "fdr_adjusted_threshold": _rr.get("fdr_adjusted_threshold") or _rr.get("fdr_q"),
+                "screen_verdict": _rr.get("screen_verdict"),
+                "rejected_reason": _rr.get("rejected_reason"),
+                "cagr": _rr.get("cagr"),
+                "sharpe": _rr.get("sharpe"),
+                "calmar": _rr.get("calmar"),
+                "correlation_vs_live": _rr.get("correlation_vs_live"),
+                "blended_drawdown": _rr.get("blended_drawdown"),
+            }
+            # Inject sparkline points directly onto obs for template rendering.
+            _obs["sparkline_points"] = _rr.get("equity_curve_downsampled")
+
     return render_template(
         "ai_advisor.html",
         active_route="advisor",
@@ -2922,6 +2973,8 @@ def ai_advisor_tab():
         no_api_key=no_api_key,
         symphonies=symphonies,
         chat_available=chat_available,
+        sb_observations=sb_observations,
+        sb_card_artifacts=sb_card_artifacts,
     )
 
 
@@ -3285,114 +3338,15 @@ def ai_advisor_logic_changes_evaluate():
 
 @app.route("/ai-advisor/strategy-builder", methods=["GET"])
 def ai_advisor_strategy_builder():
-    """Render the Phase-3/4 Strategy Builder tab (AC-2, AC-5, AC-X1..X5).
+    """Redirect to the unified /ai-advisor page (SPA-port fold-in).
 
-    Read-only surface — no writes to live positions, no Composer write endpoints.
-    All strategy proposals are advisory-only (apply manually in Composer).
+    The Strategy Builder content is now the 6th in-place tab panel on /ai-advisor.
+    Old bookmarks and links redirect cleanly rather than 404ing — same pattern as
+    Correlations, Asset-Swaps, Logic-Changes, and Chat GET sub-routes.
 
-    Template context:
-      no_api_key     — True when Composer credentials are absent (AC-X4)
-      symphonies     — list of known symphony IDs for the operator-initiated form
-      observations   — stored STRATEGY_BUILDER advisor_observations for the
-                       selected symphony (read-only, SQLite RO connection)
-      card_artifacts — dict keyed by obs["id"] (int); each value is an M6
-                       strategy_proposal artifact dict built server-side from
-                       the stored observation row (Phase 4 Discuss affordance).
-                       rules_text is pre-truncated to 500 chars server-side.
-                       Empty dict ({}) when observations is empty.
+    POST /ai-advisor/strategy-builder/run remains the action endpoint (unchanged).
     """
-    # Lazy import keeps the module off the live 1-minute execution path (AC-X2).
-    from advisors.advisor_chat import CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS as _CHAT_MAX_CHARS  # noqa: PLC0415
-    from advisors.strategy_builder_engine import _has_composer_key  # noqa: PLC0415
-
-    no_api_key = not _has_composer_key()
-
-    # Symphony list for the operator-initiated form (optional — page renders without it).
-    symphonies: list[str] = []
-    try:
-        import analytics as _analytics  # noqa: PLC0415
-
-        history = _analytics.get_history_with_cache_invalidation(
-            base_dir=_analytics._POST_MORTEMS_DIR
-        )
-        symphonies = _analytics.list_available_symphonies(history)
-    except Exception:
-        pass  # Symphony list is optional; the form still renders without it.
-
-    # Load stored strategy-builder observations for the requested symphony.
-    # Empty/missing symphony_id → ALL symphonies' STRATEGY_BUILDER rows (the
-    # default view). Live-daemon verification 2026-06-12 found the original
-    # code passed '' into the symphony-scoped accessor (WHERE symphony_id = ''),
-    # so the default page always rendered the empty state.
-    symphony_id = request.args.get("symphony_id", "").strip()
-    observations: list[dict] = []
-    try:
-        if symphony_id:
-            observations = database.get_advisor_observations_for_symphony(symphony_id)
-            # Filter to STRATEGY_BUILDER role only — the accessor is symphony-scoped
-            # but the table may contain rows from other advisor roles for the same ID.
-            observations = [o for o in observations if o.get("advisor_role") == "STRATEGY_BUILDER"]
-        else:
-            # Role-scoped accessor returns newest-first; reverse for the same
-            # oldest-first order the symphony-scoped path renders in.
-            observations = list(
-                reversed(database.get_advisor_observations_for_role("STRATEGY_BUILDER"))
-            )
-    except Exception:
-        pass  # Observations are optional; the page renders with empty state.
-
-    # Build per-card M6 artifact dicts for the Discuss affordance (Phase 4).
-    # Server-side construction ensures only allowlisted fields reach the template.
-    # rules_text is truncated to CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS here.
-    card_artifacts: dict = {}
-    for obs in observations:
-        rr = obs.get("raw_response")
-        # Truthy non-dict raw_response (e.g. an unparsed JSON string from a
-        # corrupted row) would pass an `or {}` guard and crash on .get().
-        if not isinstance(rr, dict):
-            rr = {}
-        rules_text = rr.get("rules_text") or ""
-        if isinstance(rules_text, str) and len(rules_text) > _CHAT_MAX_CHARS:
-            rules_text = rules_text[:_CHAT_MAX_CHARS]
-        obs_id = obs.get("id")
-        if obs_id is None:
-            # Row without a primary key (migration edge / NULL id): skip the
-            # artifact rather than crash the whole page render.
-            continue
-        card_artifacts[obs_id] = {
-            "artifact_type": "strategy_proposal",
-            "artifact_id": rr.get("candidate_id") or obs.get("subject_id", ""),
-            "symphony_id": obs.get("subject_id", ""),
-            "template_id": rr.get("template_id"),
-            "tickers": rr.get("tickers"),
-            "rules_text": rules_text,
-            "gate_verdict": rr.get("gate_decision") or obs.get("verdict"),
-            "n_candidates": rr.get("n_candidates"),
-            "n_survivors": rr.get("n_survivors"),
-            "fdr_adjusted_threshold": rr.get("fdr_adjusted_threshold") or rr.get("fdr_q"),
-            "screen_verdict": rr.get("screen_verdict"),
-            "rejected_reason": rr.get("rejected_reason"),
-            # Phase-3.5: flat metric fields (already in CHAT_ARTIFACT_ALLOWED_FIELDS — FROZEN)
-            "cagr": rr.get("cagr"),
-            "sharpe": rr.get("sharpe"),
-            "calmar": rr.get("calmar"),
-            "correlation_vs_live": rr.get("correlation_vs_live"),
-            "blended_drawdown": rr.get("blended_drawdown"),
-        }
-        # Phase 3.6: sparkline points — NOT added to card_artifacts (CHAT_ARTIFACT_ALLOWED_FIELDS
-        # is frozen). Injected directly onto obs so the template can render the SVG.
-        obs["sparkline_points"] = rr.get("equity_curve_downsampled")
-
-    return render_template(
-        "ai_advisor_strategy_builder.html",
-        active_route="advisor",
-        meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
-        no_api_key=no_api_key,
-        symphonies=symphonies,
-        observations=observations,
-        symphony_id=symphony_id,
-        card_artifacts=card_artifacts,
-    )
+    return redirect(url_for("ai_advisor_tab"), code=302)
 
 
 @app.route("/ai-advisor/strategy-builder/run", methods=["POST"])

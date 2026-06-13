@@ -132,27 +132,51 @@ class TestDefaultPageShowsAllProposals:
             "This is the SPA-port version of the original 'default page always empty' regression."
         )
 
-    def test_spa_excludes_other_advisor_roles(self, client):
-        """SPA-port: GET /ai-advisor must not render non-STRATEGY_BUILDER observation markers.
+    def test_spa_strategy_builder_panel_uses_role_scoped_accessor(self, client):
+        """SPA-port: GET /ai-advisor must call get_advisor_observations_for_role('STRATEGY_BUILDER').
 
-        The role filter from the original route must carry over to the SPA context.
-        The seeded DB has an OVERFITTING_CONSCIENCE row with 'OC_ROW_MARKER' in raw_response.
-        This must not appear on /ai-advisor.
+        The role filter is enforced at the DB accessor layer: the /ai-advisor route
+        uses database.get_advisor_observations_for_role("STRATEGY_BUILDER"), which
+        only returns STRATEGY_BUILDER rows. Non-SB roles (OC, SC, etc.) can appear
+        elsewhere on the page (their own panels) — but the SB panel is fed only by
+        the role-scoped accessor call.
+
+        We verify the accessor call contract (not full-page HTML) to avoid false
+        positives from legitimate OC/SC observations in the Overview panel.
         """
         import app as _am
         from unittest.mock import MagicMock, patch
         _am.app.config["TESTING"] = True
 
+        called_roles: list = []
+
+        def _capture_role(role, limit=50):
+            called_roles.append(role)
+            return []
+
         fake_corr = MagicMock()
         fake_corr.compute_pairwise_correlations.return_value = []
         fake_corr.CRISIS_CAVEAT = "caveat"
 
-        with patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}):
+        with (
+            patch.object(_am.database, "get_advisor_observations_for_role",
+                         side_effect=_capture_role),
+            patch.object(_am.analytics, "get_history_with_cache_invalidation",
+                         return_value={}),
+            patch.object(_am.analytics, "list_available_symphonies",
+                         return_value=[]),
+            patch.object(_am.analytics, "compute_per_symphony_returns",
+                         return_value=([], [], [])),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
+        ):
             resp = client.get("/ai-advisor")
 
-        assert "OC_ROW_MARKER" not in resp.get_data(as_text=True), (
-            "Role filter must hold in the SPA: OVERFITTING_CONSCIENCE rows from the "
-            "same symphonies must not appear in the strategy-builder panel on /ai-advisor."
+        assert resp.status_code == 200
+        assert "STRATEGY_BUILDER" in called_roles, (
+            f"GET /ai-advisor did not call get_advisor_observations_for_role('STRATEGY_BUILDER'). "
+            f"Roles called: {called_roles}. "
+            "Role isolation for the strategy-builder panel requires the route to use "
+            "the role-scoped accessor with 'STRATEGY_BUILDER'."
         )
 
     def test_symphony_param_scopes_via_redirect(self, client):

@@ -635,4 +635,112 @@
         }());
 
     });
+
+    // ---------------------------------------------------------------------------
+    // Strategy Builder tab functions (moved from inline script in deleted
+    // ai_advisor_strategy_builder.html — AC5 of the SPA-port fold-in).
+    //
+    // These functions are defined inside the IIFE so they share the _csrfToken
+    // closure, then exposed on window so Jinja onclick="sbRunAnalysis()" works.
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Open the Chat tab pre-loaded with a strategy-proposal artifact (Phase 4).
+     *
+     * Stores the artifact in sessionStorage so the Chat tab picks it up on load,
+     * then navigates to /ai-advisor/chat with from_strategy_builder param.
+     *
+     * This is pure JS navigation — no form submission, no POST.
+     * The button calling this must be type="button" (never type="submit").
+     */
+    function openChatWithArtifact(artifactJson) {
+        try {
+            var artifact = JSON.parse(artifactJson);
+            sessionStorage.setItem('sb_pending_chat_artifact', JSON.stringify(artifact));
+        } catch (e) {
+            // Ignore parse errors — navigate anyway.
+        }
+        var sym = document.getElementById('sb-symphony-select')
+            ? document.getElementById('sb-symphony-select').value : '';
+        var url = '/ai-advisor/chat';
+        if (sym) { url += '?from_strategy_builder=1&symphony_id=' + encodeURIComponent(sym); }
+        window.location.href = url;
+    }
+
+    /**
+     * Strategy Builder run trigger.
+     *
+     * Reads objective/universe/symphony from the controls panel, obtains the
+     * CSRF token from the prefetched _csrfToken (or fetches fresh on miss),
+     * then POSTs to /ai-advisor/strategy-builder/run with X-CSRF-Token header.
+     *
+     * On success: navigates to /ai-advisor (the unified SPA) so newly-persisted
+     * observations are rendered server-side from the read-only SQLite accessor.
+     * Note: navigates to /ai-advisor (not the old /ai-advisor/strategy-builder
+     * standalone URL) per the SPA-port fold-in contract.
+     *
+     * On error: the sb-run-error div is shown inline.
+     */
+    async function sbRunAnalysis() {
+        var btn = document.getElementById('sb-run-btn');
+        var errDiv = document.getElementById('sb-run-error');
+        var resultsDiv = document.getElementById('sb-run-results');
+        if (!btn) { return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Running…';
+        if (errDiv) { errDiv.style.display = 'none'; errDiv.textContent = ''; }
+        if (resultsDiv) {
+            resultsDiv.innerHTML = '<div class="sb-loading-state">Running analysis…</div>';
+        }
+
+        try {
+            // Obtain CSRF token — use cached value or fetch fresh.
+            var csrfToken = _csrfToken;
+            if (!csrfToken) {
+                var tokenResp = await fetch('/api/csrf-token');
+                if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
+                var tokenData = await tokenResp.json();
+                csrfToken = tokenData.csrf_token;
+            }
+
+            // Build payload from the strategy-builder controls.
+            var objective = (document.getElementById('sb-objective-select') || {}).value || 'diversify';
+            var universeRaw = (document.getElementById('sb-universe-input') || {}).value || '';
+            var universe = universeRaw.split(',')
+                .map(function (s) { return s.trim().toUpperCase(); })
+                .filter(Boolean);
+            var symphonyId = (document.getElementById('sb-symphony-select') || {}).value || '';
+
+            // POST to the unchanged action route.
+            var resp = await fetch('/ai-advisor/strategy-builder/run', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': csrfToken,
+                },
+                body: JSON.stringify({ objective: objective, universe: universe, symphony_id: symphonyId }),
+            });
+
+            var data = await resp.json();
+            if (data.error) {
+                if (errDiv) { errDiv.textContent = data.error; errDiv.style.display = 'block'; }
+                if (resultsDiv) { resultsDiv.innerHTML = ''; }
+            } else {
+                // Navigate to /ai-advisor (unified SPA) — the strategy-builder tab
+                // panel will re-render with newly-persisted observations.
+                window.location.href = '/ai-advisor';
+            }
+        } catch (err) {
+            if (errDiv) { errDiv.textContent = 'Request failed: ' + err.message; errDiv.style.display = 'block'; }
+            if (resultsDiv) { resultsDiv.innerHTML = ''; }
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Run analysis'; }
+        }
+    }
+
+    // Expose on window so Jinja onclick="..." handlers can call them.
+    window.openChatWithArtifact = openChatWithArtifact;
+    window.sbRunAnalysis = sbRunAnalysis;
+
 })();
