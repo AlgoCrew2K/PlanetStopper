@@ -492,3 +492,43 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** The Market Prism pipeline (`advisors/lens_pipeline.py`, DE-CY4-001) synthesises one verdict per night and discards the raw lens data. A warehouse accumulates that raw data so future consumers — trend analysis, regression detection, meta-agent training — can access the full nightly record, not just the synthesised verdict. Keeping it separate avoids bloating `advisor_observations.raw_response` with large raw payloads and avoids widening the state DB schema for non-execution data.
 
 **Status:** Scaffolded on feat/lens-warehouse. `init_warehouse`, `persist_lens_snapshot`, `get_lens_snapshots` implemented and documented. No production caller yet. Test suite to be driven by the test-writer teammate.
+
+
+---
+
+## Options/Vol Proxy Lens (feat/options-proxy, 2026-06-13)
+
+### DE-OPTPROXY-001: Free FRED-based index-vol proxy for the derivatives lens
+
+**Decision:** The derivatives lens in the Market Prism pipeline is implemented as a free, no-subscription proxy using two FRED series: VIXCLS (CBOE Volatility Index, 1-month implied vol) and VXVCLS (CBOE 3-Month Volatility Index). No paid options data feed is required. The lens classifies the VIX term-structure shape (contango / backwardation / flat) and layers in absolute VIX level to produce a three-state risk read (risk-off / risk-on / neutral).
+
+**Key design choices:**
+
+1. **Free data source, no subscription.** VIXCLS and VXVCLS are published on FRED at no cost. The FRED_API_KEY is a free registration key, not a paid subscription. This satisfies CC-5 (free APIs only) without compromising the quality of the derivatives signal for an index-vol read.
+
+2. **Two-factor risk read: regime + absolute level.** The term-structure regime alone (contango vs. backwardation) is insufficient for a strong risk signal — an inverted curve at VIX=10 carries different implications than an inverted curve at VIX=35. The `_derive_risk_read` function requires both the regime condition AND a VIX level threshold before emitting `risk-off` or `risk-on`. Mixed evidence (e.g., backwardation + VIX below 20) falls to `neutral` rather than fabricating a signal.
+
+   Named thresholds (practitioner convention; no magic numbers):
+   - `_VIX_LOW_THRESHOLD = 15.0` — VIX < 15 = low-fear environment; paired with contango for `risk-on`.
+   - `_VIX_ELEVATED_THRESHOLD = 20.0` — VIX >= 20 = elevated stress; paired with backwardation for `risk-off`.
+   - `_FLAT_BAND_RATIO = 0.02` — spot/3m within ±2% is classified as `flat` to suppress noise-driven regime flips.
+
+3. **put/call omitted (AC-12).** No genuinely free FRED series exists for index-level put/call ratio. Skew data (25-delta risk reversal, etc.) also requires a paid options feed. The decision to omit put/call is documented here as a hard constraint (AC-12), not a gap to be silently worked around. Adding put/call in a future cycle requires a paid data source and a new decision entry.
+
+4. **Bounded retry + explicit timeout.** `_fetch_fred_series` implements exponential backoff (base 2 s, cap 16 s) with a maximum of 3 attempts per series, yielding a hard ceiling of 6 s total cumulative wait (`MAX_OPTIONS_RETRY_WAIT_SECONDS = 6.0`). Every `requests.get` call carries an explicit 15 s timeout (`_OPTIONS_PROXY_TIMEOUT_S`). FRED is a well-maintained government data service; 15 s is generous. Never relies on the urllib3 default (None), which would allow indefinite blocking.
+
+5. **Honest availability + D-1 error contract.** `_fetch_options_proxy` never raises and never fabricates data. When FRED is unreachable, the API key is absent, or no valid observation is found, it returns `{"available": False, "reason": "<ExcTypeName>", "source": "..."}`. The `reason` field is always `type(exc).__name__` — never `str(exc)` and never a raw exception message. This is consistent with all other advisor-layer modules.
+
+6. **No production caller (not yet wired).** As of this decision, `_fetch_options_proxy` has no caller in `advisors/lens_pipeline.py` or any other production module. The module is fully implemented but not yet wired into the nightly pipeline. Wiring it requires updating `lens_pipeline.py` to call `_fetch_options_proxy` and pass its output into the per-lens pipeline pass — a separate cycle.
+
+**What the lens does NOT provide:**
+- Put/call ratio (omitted — no free FRED series; AC-12 hard constraint).
+- VIX futures curve beyond the 1m/3m pair (requires paid futures data).
+- Options skew / risk-reversal / gamma exposure (requires paid options feed).
+- Realized vs. implied vol spread (requires a realized-vol time series that aligns with the VIX observation date).
+
+The lens is explicitly scoped as an index-level volatility-structure proxy, not a full options market read.
+
+**Rationale:** The Market Prism derivatives lens stub (`available=False`) was the only one of the five lens blocks without a real data producer. FRED provides index-level VIX data for free with a simple REST API. The VIX term structure (spot vs. 3-month) is a well-established practitioner risk-regime indicator: backwardation signals acute stress; contango signals calm. The two-factor read (regime + absolute level) avoids false signals at extreme VIX levels where a structural signal alone would be misleading. This approach delivers a real derivatives signal at $0 marginal cost with no third-party subscription dependency.
+
+**Status:** Implemented on feat/options-proxy. `_fetch_options_proxy`, `_fetch_fred_series`, `_parse_latest_observation`, `_classify_regime`, and `_derive_risk_read` implemented and documented. No production caller yet.
