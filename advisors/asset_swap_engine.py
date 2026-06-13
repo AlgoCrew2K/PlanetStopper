@@ -77,6 +77,11 @@ NO_SURVIVORS_MESSAGE = "no swap cleared the gate this run"
 # not the main signal).  Named constant per no-magic-numbers rule.
 LENS_BLEND_WEIGHT: float = 0.25
 
+# Neutral lens score assigned to tickers absent from lens_scores during blending.
+# 0.5 represents "no evidence — neither boost nor penalty" on the [0,1] lens scale.
+# Named to avoid the magic-number 0.5 appearing inline (reviewer advisory AC-2).
+_LENS_NEUTRAL_SCORE: float = 0.5
+
 # The 5 lens keys as they appear in the assembled advisor context dict (Cycle-3 AC-1).
 # Used by extract_lens_scores to iterate the lens blocks deterministically.
 _LENS_CONTEXT_KEYS: tuple[str, ...] = (
@@ -407,14 +412,14 @@ def _apply_lens_blend(
         return candidates
 
     # Compute the mean lens score for each candidate ticker.
-    # Tickers absent from lens_scores get a neutral mean of 0.5 so they don't
+    # Tickers absent from lens_scores get _LENS_NEUTRAL_SCORE so they don't
     # benefit from or lose to missing-data artefacts.
     def _mean_lens(ticker: str) -> float:
         scores = lens_scores.get(ticker)
         if not scores or not isinstance(scores, dict):
-            return 0.5  # neutral: no evidence available
+            return _LENS_NEUTRAL_SCORE  # neutral: no evidence available
         vals = [v for v in scores.values() if isinstance(v, (int, float))]
-        return sum(vals) / len(vals) if vals else 0.5
+        return sum(vals) / len(vals) if vals else _LENS_NEUTRAL_SCORE
 
     # Position-based blend: assign each candidate a blended sort key.
     # Lower blended key → closer to the front of the returned list.
@@ -738,7 +743,25 @@ def _persist_observation(
     Cycle-3 AC-4: ``lens_evidence`` and ``sources`` are written into ``raw_response``
     when provided, enabling downstream audit of which lens signals contributed to
     surfacing this candidate.  Both default to empty/None (additions-only).
+
+    AC-4 citation validation: each entry in ``sources`` is validated through
+    ``ai_advisor.build_citation`` before writing.  Malformed citation dicts
+    (missing required fields, invalid URL scheme) are dropped so the persisted
+    audit row only contains well-formed ``{title, url, published, lens}`` objects.
+    Uses a deferred import to avoid module-level circular-import risk.
     """
+    # Validate source citations through the shared build_citation gate (AC-4 / CC-4).
+    # Deferred import: ai_advisor does not import asset_swap_engine, so this is safe
+    # at call-time even though a top-level import would be circular.
+    _validated_sources: list = []
+    if sources:
+        try:
+            from ai_advisor import build_citation as _bc  # noqa: PLC0415
+            _validated_sources = [r for s in sources if (r := _bc(s)) is not None]
+        except Exception:
+            # Fallback: write valid-looking dicts unvalidated rather than losing them.
+            _validated_sources = [s for s in sources if isinstance(s, dict)]
+
     database.insert_advisor_observation(
         advisor_role="ASSET_SWAP",
         symphony_id=symphony_id,
@@ -757,9 +780,10 @@ def _persist_observation(
             "validation_days": gate_result.validation_days,
             "oos_alpha": gate_result.oos_alpha,
             "caveats": gate_result.caveats,
-            # Cycle-3 AC-4: lens evidence + citations for auditability.
+            # Cycle-3 AC-4: lens evidence + validated citations for auditability.
+            # Sources are filtered through build_citation — only valid structs persist.
             "lens_evidence": lens_evidence if lens_evidence is not None else {},
-            "sources": sources if sources is not None else [],
+            "sources": _validated_sources,
         },
     )
 

@@ -1,7 +1,7 @@
 {
   "_fixture_meta": {
     "description": "Golden fixture for extract_lens_scores shape/contract (AC-1). Schema-derived — not producer-computed values.",
-    "provenance": "test-authored (cycle3-test-writer); represents the structural contract only",
+    "provenance": "schema-derived (not producer-computed); numeric values are synthetic test data representing the structural contract between available/unavailable lens blocks and per-ticker score output",
     "cycle": "cycle3-lens-swaps"
   },
   "input_lens_blocks": {

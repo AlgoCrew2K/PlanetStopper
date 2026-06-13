@@ -44,6 +44,7 @@ If you attempt to merge or check out main, the PM will revert. This has happened
 - Never assert exact floats — use `pytest.approx` with an explicit tolerance and a comment explaining why that tolerance is appropriate
 - Never share state across tests via module-level mutables; use `pytest` fixtures with explicit scope declarations
 - Never run `git merge`, `git checkout main`, or `git push` — merge is PM-only
+- **Never run the full test tree** — run only the explicitly listed target files. Full-tree gate is PM-owned. If a brief says "run these 5 files", run those 5 files with `-n0` and stop. Launching additional full-tree runs (even to "verify") violates the one-pytest-at-a-time memory ceiling (project CLAUDE.md §Architecture Constraints 7) and burns machine resources the PM has not authorized.
 
 ## Output Format
 

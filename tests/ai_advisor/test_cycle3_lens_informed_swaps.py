@@ -835,3 +835,235 @@ class TestSafetyContracts:
         assert tickers_empty == tickers_none, (
             f"lens_scores={{}} must produce same ranking as None; got {tickers_empty} vs {tickers_none}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Reviewer hardening — BLOCK resolutions (post-merge follow-up)
+# ---------------------------------------------------------------------------
+
+
+class TestFixtureBackedContract:
+    """BLOCK resolution: lens_score_extraction_basic.json must be referenced by a test.
+
+    Reviewer BLOCK: fixture was committed but unreferenced — a dead artifact.
+    This class enforces the fixture's shape/contract by loading and running it.
+    """
+
+    def test_extract_lens_scores_against_fixture(self):
+        """Load lens_score_extraction_basic.json, run extract_lens_scores, assert contract.
+
+        The fixture's expected_output_contract specifies which lens keys must be
+        PRESENT per ticker (available lenses) and which must be ABSENT (unavailable lenses).
+        This test enforces those constraints — it does NOT hardcode numeric scores
+        (those are implementation-defined, per fixture note).
+        """
+        import json
+
+        engine = _import_engine()
+        fn = getattr(engine, "extract_lens_scores", None)
+        if fn is None:
+            ai = _import_ai_advisor()
+            fn = getattr(ai, "extract_lens_scores")
+
+        fixture_path = _REPO_ROOT / "tests" / "fixtures" / "ai_advisor" / "cycle3" / "lens_score_extraction_basic.json"
+        if not fixture_path.exists():
+            pytest.skip("Fixture file not found — schema-derived fixture expected at tests/fixtures/ai_advisor/cycle3/lens_score_extraction_basic.json")
+
+        with fixture_path.open(encoding="utf-8") as fh:
+            fixture = json.load(fh)
+
+        input_blocks = fixture["input_lens_blocks"]
+        contract = fixture["expected_output_contract"]
+
+        result = fn(input_blocks)
+
+        for ticker, ticker_contract in contract.items():
+            if ticker.startswith("_"):
+                continue  # skip metadata keys
+
+            assert ticker in result, (
+                f"Fixture contract: ticker {ticker!r} must appear in extract_lens_scores output. "
+                f"Available lenses in fixture have ticker_scores for {ticker!r}. "
+                f"Got output tickers: {sorted(result.keys())}"
+            )
+
+            ticker_scores = result[ticker]
+            assert isinstance(ticker_scores, dict), (
+                f"Per-ticker scores for {ticker!r} must be dict; got {type(ticker_scores)}"
+            )
+
+            for lens_name in ticker_contract.get("_present_lens_keys", []):
+                assert lens_name in ticker_scores, (
+                    f"Fixture contract: lens {lens_name!r} must be present in result[{ticker!r}]; "
+                    f"got keys: {sorted(ticker_scores.keys())}"
+                )
+
+            for lens_name in ticker_contract.get("_absent_lens_keys", []):
+                assert lens_name not in ticker_scores, (
+                    f"Fixture contract: lens {lens_name!r} must be ABSENT from result[{ticker!r}] "
+                    f"(unavailable lens — honest-availability AC-6); got: {ticker_scores}"
+                )
+
+            for lens_name, score in ticker_scores.items():
+                assert isinstance(score, (int, float)), (
+                    f"Score for {ticker!r}.{lens_name!r} must be numeric; got {type(score)}"
+                )
+                assert score == score, (  # NaN check: NaN != NaN
+                    f"Score for {ticker!r}.{lens_name!r} must not be NaN; got {score}"
+                )
+
+
+class TestCitationValidationOnPersistence:
+    """BLOCK resolution: malformed lens_sources entries must be filtered, not written raw.
+
+    Reviewer BLOCK: build_citation bypassed — raw unvalidated dicts could corrupt audit rows.
+    """
+
+    def test_malformed_citation_filtered_from_raw_response(self):
+        """Malformed lens_sources entries (missing url) must not appear in persisted sources."""
+        engine = _import_engine()
+        mock_bt_result = MagicMock()
+        mock_bt_result.error = None
+        mock_bt_result.stats = {}
+        mock_bt_result.daily_returns = {f"d{i}": 0.001 for i in range(10)}
+        mock_bt_result.data_warnings = []
+
+        captured: list[dict] = []
+
+        def _capture(**kwargs):
+            captured.append(kwargs)
+
+        obj = engine.SwapObjective(
+            objective_type="reduce_correlation",
+            target_pair=("SPY", "GLD"),
+            measured_value=0.85,
+        )
+
+        mixed_sources = [
+            {"title": "Valid bond article", "url": "https://example.com/bond", "published": "2026-06-01", "lens": "sentiment"},
+            {"title": "Missing URL", "published": "2026-06-01", "lens": "macro"},
+            {"title": "Bad scheme", "url": "ftp://example.com/data", "published": "2026-06-01", "lens": "macro"},
+        ]
+
+        with (
+            patch("advisors.asset_swap_engine.run_backtest", return_value=mock_bt_result),
+            patch("database.insert_advisor_observation", side_effect=_capture),
+        ):
+            engine.propose_operator_swap(
+                symphony_id="test-sym-001",
+                score_tree=_SCORE_TREE,
+                incumbent_asset="SPY",
+                candidate_asset="BND",
+                objective=obj,
+                lens_sources=mixed_sources,
+            )
+
+        assert captured, "insert_advisor_observation must have been called"
+        persisted_sources = captured[0].get("raw_response", {}).get("sources", [])
+        persisted_urls = [s.get("url") for s in persisted_sources if isinstance(s, dict)]
+        assert "https://example.com/bond" in persisted_urls, (
+            f"Valid citation URL must survive filtering; got persisted_urls={persisted_urls}"
+        )
+        assert not any("ftp://" in (u or "") for u in persisted_urls), (
+            f"ftp:// citation must be filtered out; got persisted_urls={persisted_urls}"
+        )
+        assert all(s.get("url") for s in persisted_sources if isinstance(s, dict)), (
+            f"All persisted citations must have a non-empty url; got {persisted_sources}"
+        )
+
+    def test_valid_citations_pass_through_unchanged(self):
+        """Well-formed lens_sources entries must appear in the persisted sources list."""
+        engine = _import_engine()
+        mock_bt_result = MagicMock()
+        mock_bt_result.error = None
+        mock_bt_result.stats = {}
+        mock_bt_result.daily_returns = {f"d{i}": 0.001 for i in range(10)}
+        mock_bt_result.data_warnings = []
+
+        captured: list[dict] = []
+
+        def _capture(**kwargs):
+            captured.append(kwargs)
+
+        obj = engine.SwapObjective(
+            objective_type="reduce_correlation",
+            target_pair=("SPY", "GLD"),
+            measured_value=0.85,
+        )
+
+        valid_sources = [
+            {"title": "Bond rally driven by FOMC", "url": "https://example.com/bond", "published": "2026-06-01", "lens": "sentiment"},
+            {"title": "FRED 10-Yr yield", "url": "https://fred.stlouisfed.org/series/DGS10", "published": "2026-06-01", "lens": "macro"},
+        ]
+
+        with (
+            patch("advisors.asset_swap_engine.run_backtest", return_value=mock_bt_result),
+            patch("database.insert_advisor_observation", side_effect=_capture),
+        ):
+            engine.propose_operator_swap(
+                symphony_id="test-sym-001",
+                score_tree=_SCORE_TREE,
+                incumbent_asset="SPY",
+                candidate_asset="BND",
+                objective=obj,
+                lens_sources=valid_sources,
+            )
+
+        assert captured
+        persisted_sources = captured[0].get("raw_response", {}).get("sources", [])
+        persisted_urls = {s.get("url") for s in persisted_sources if isinstance(s, dict)}
+        for src in valid_sources:
+            assert src["url"] in persisted_urls, (
+                f"Valid citation URL {src['url']!r} was dropped by citation filter; "
+                f"persisted_urls={persisted_urls}"
+            )
+
+
+class TestLensBlendPrimaryMetricDominance:
+    """Reviewer advisory gap: primary metric must dominate when clearly better than alternatives."""
+
+    def test_primary_metric_dominates_opposing_lens_preference(self):
+        """When primary metric clearly favors BND, BND ranks first even with strong opposing lens.
+
+        LENS_BLEND_WEIGHT=0.25 max perturbation is 0.25 positions.
+        A 1-position primary gap cannot be inverted by lens alone.
+        """
+        engine = _import_engine()
+        obj = engine.SwapObjective(
+            objective_type="reduce_correlation",
+            target_pair=("SPY", "GLD"),
+            measured_value=0.85,
+        )
+
+        primary_corr = {
+            "SPY": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+            "BND": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # corr~0 → best
+            "TLT": [0.5, 0.6, 0.7, 0.8, 0.9, 0.5, 0.6, 0.7, 0.8, 0.9],  # corr~0.95 → worse
+            "AGG": [0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9],  # corr~1.0 → worst
+        }
+
+        # Lens strongly opposes primary: TLT=0.99, BND=0.01.
+        # Max lens bump for TLT vs BND = 0.25*(0.99-0.01)=0.245 < 1.0-position gap.
+        lens_scores_oppose = {
+            "BND": {"sentiment": 0.01},
+            "TLT": {"sentiment": 0.99},
+            "AGG": {"sentiment": 0.5},
+        }
+
+        result = engine.generate_objective_directed_candidates(
+            symphony_id="test-sym-001",
+            objective=obj,
+            correlation_data=primary_corr,
+            available_assets=["BND", "TLT", "AGG"],
+            lens_scores=lens_scores_oppose,
+        )
+
+        tickers = [c["ticker"] if isinstance(c, dict) else c for c in result]
+        assert tickers, "Must return at least one candidate"
+        assert tickers[0] == "BND", (
+            f"Primary metric (low correlation) must dominate lens preference. "
+            f"BND has near-zero correlation and must rank first even though lens "
+            f"strongly prefers TLT. With LENS_BLEND_WEIGHT=0.25 the max lens "
+            f"perturbation (0.245) cannot bridge a 1.0-position primary gap. "
+            f"Got ranking: {tickers}."
+        )
