@@ -1,0 +1,23 @@
+{
+  "_comment": "Fixture: a MARKET_PRISM summary row where all lenses unavailable (limited-inputs case). Tests that the template handles this gracefully without blank/500.",
+  "id": 1,
+  "advisor_role": "MARKET_PRISM",
+  "subject_id": null,
+  "verdict": "limited-inputs",
+  "created_at": "2026-06-13T03:01:00",
+  "raw_response": {
+    "run_ts": "2026-06-13T03:01:00",
+    "overall_sentiment": "limited-inputs",
+    "sentiment_rationale": "All lenses unavailable — insufficient market data.",
+    "per_lens_digest": {
+      "technicals": {"available": false, "reason": "ConnectionError", "sources": []},
+      "sentiment": {"available": false, "reason": "ConnectionError", "sources": []},
+      "derivatives": {"available": false, "reason": "ConnectionError", "sources": []},
+      "macro": {"available": false, "reason": "ConnectionError", "sources": []},
+      "fundamentals": {"available": false, "reason": "ConnectionError", "sources": []}
+    },
+    "available_lens_count": 0,
+    "total_lens_count": 5,
+    "sources": []
+  }
+}

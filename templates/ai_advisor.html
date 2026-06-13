@@ -655,6 +655,202 @@
         .rejected-section { margin-top: 1.5rem; }
         .rejected-collapsible summary { cursor: pointer; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-faint, var(--studio-ink-dim)); margin-bottom: 0.875rem; user-select: none; }
         .rejected-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(28rem, 1fr)); gap: 0.875rem; margin-top: 0.875rem; }
+
+        /* ------------------------------------------------------------------ */
+        /* Market Prism block — always-on overnight market summary             */
+        /* ------------------------------------------------------------------ */
+        .prism-block {
+            background: var(--studio-surface);
+            border: 1px solid var(--studio-border);
+            border-radius: 1rem;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .prism-block-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .prism-block-title {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+        }
+
+        .prism-as-of {
+            font-size: 0.625rem;
+            color: var(--studio-ink-dim);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Sentiment chip — semantic color by value */
+        .prism-sentiment-chip {
+            display: inline-block;
+            padding: 0.2rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid;
+            margin-bottom: 0.75rem;
+        }
+
+        .prism-sentiment-chip--risk-on {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+            background: rgba(31, 122, 77, 0.07);
+        }
+
+        .prism-sentiment-chip--risk-off {
+            color: var(--studio-neg);
+            border-color: var(--studio-neg);
+            background: var(--studio-neg-tint, rgba(180, 58, 42, 0.06));
+        }
+
+        .prism-sentiment-chip--neutral {
+            color: var(--studio-ink-dim);
+            border-color: var(--studio-border);
+            background: var(--studio-chip-bg, rgba(0, 0, 0, 0.04));
+        }
+
+        .prism-sentiment-chip--limited-inputs {
+            color: var(--studio-warn);
+            border-color: var(--studio-warn);
+            background: var(--studio-warn-tint, rgba(176, 116, 25, 0.08));
+        }
+
+        .prism-rationale {
+            font-size: 0.8125rem;
+            color: var(--studio-ink);
+            line-height: 1.6;
+            margin-bottom: 1rem;
+        }
+
+        /* Per-lens digest */
+        .prism-lenses {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+            gap: 0.625rem;
+            margin-bottom: 1rem;
+        }
+
+        .prism-lens {
+            background: var(--studio-bg);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.625rem 0.875rem;
+        }
+
+        .prism-lens--available {
+            border-left: 3px solid var(--studio-pos);
+        }
+
+        .prism-lens--unavailable {
+            border-left: 3px solid var(--studio-border);
+            opacity: 0.75;
+        }
+
+        .prism-lens-name {
+            font-size: 0.5625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+            margin-bottom: 0.25rem;
+        }
+
+        .prism-lens-status {
+            display: inline-block;
+            font-size: 0.5rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border: 1px solid;
+            border-radius: 999px;
+            padding: 0.05rem 0.375rem;
+            margin-bottom: 0.375rem;
+        }
+
+        .prism-lens-status--ok {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+        }
+
+        .prism-lens-status--unavailable {
+            color: var(--studio-ink-dim);
+            border-color: var(--studio-border);
+        }
+
+        .prism-lens-text {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            line-height: 1.5;
+        }
+
+        /* Cited sources */
+        .prism-sources-header {
+            font-size: 0.5625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+            margin-bottom: 0.5rem;
+        }
+
+        .prism-sources-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+        }
+
+        .prism-source-item {
+            font-size: 0.75rem;
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .prism-source-link {
+            color: var(--studio-accent);
+            text-decoration: none;
+            word-break: break-word;
+        }
+
+        .prism-source-link:hover { text-decoration: underline; }
+
+        .prism-source-meta {
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+            white-space: nowrap;
+        }
+
+        .prism-source-lens-tag {
+            font-size: 0.5625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--studio-ink-dim);
+            border: 1px solid var(--studio-border);
+            border-radius: 999px;
+            padding: 0.05rem 0.3rem;
+        }
+
+        /* Empty / no-data state */
+        .prism-empty {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--studio-ink-dim);
+            font-size: 0.875rem;
+        }
     </style>
 </head>
 
@@ -741,6 +937,107 @@
              data-testid="tab-panel-overview"
              data-tab="overview"
              class="tab-panel tab-panel--active">
+
+        <!-- ============================================================ -->
+        <!-- Market Prism block — always-on overnight market summary      -->
+        <!-- Reads from get_latest_market_prism_summary() prefetched in   -->
+        <!-- the route.  Advisory-only, no trade affordances.             -->
+        <!-- ============================================================ -->
+        <div data-testid="market-prism-block" class="prism-block">
+
+            {# Determine the sentiment value and CSS modifier once for the block #}
+            {% if market_prism_summary %}
+                {% set _raw = market_prism_summary.get('raw_response', {}) %}
+                {% set _sentiment = _raw.get('overall_sentiment', 'limited-inputs') %}
+                {% set _rationale = _raw.get('sentiment_rationale', '') %}
+                {% set _per_lens  = _raw.get('per_lens_digest', {}) %}
+                {% set _sources   = _raw.get('sources', []) %}
+                {% set _created   = market_prism_summary.get('created_at', '') %}
+            {% endif %}
+
+            <div class="prism-block-header">
+                <span class="prism-block-title">Market Prism</span>
+                {% if market_prism_summary %}
+                    <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created }}</span>
+                {% endif %}
+            </div>
+
+            {% if market_prism_summary %}
+
+                {# Sentiment chip — maps overall_sentiment to semantic CSS modifier #}
+                {% set _chip_class = {
+                    'risk-on':        'prism-sentiment-chip--risk-on',
+                    'risk-off':       'prism-sentiment-chip--risk-off',
+                    'neutral':        'prism-sentiment-chip--neutral',
+                    'limited-inputs': 'prism-sentiment-chip--limited-inputs',
+                }.get(_sentiment, 'prism-sentiment-chip--neutral') %}
+
+                <span class="prism-sentiment-chip {{ _chip_class }}"
+                      data-testid="prism-sentiment-chip">{{ _sentiment | e }}</span>
+
+                {% if _rationale %}
+                    <p class="prism-rationale" data-testid="prism-rationale">{{ _rationale | e }}</p>
+                {% endif %}
+
+                {# Per-lens digest — render all 5 lenses, available or not (honest-availability) #}
+                {% set _lens_names = ['technicals', 'sentiment', 'derivatives', 'macro', 'fundamentals'] %}
+                {% if _per_lens %}
+                    <div class="prism-lenses" data-testid="prism-lenses">
+                        {% for _lens_name in _lens_names %}
+                            {% set _lens = _per_lens.get(_lens_name, {}) %}
+                            {% set _available = _lens.get('available', false) %}
+                            <div class="prism-lens {% if _available %}prism-lens--available{% else %}prism-lens--unavailable{% endif %}"
+                                 data-testid="prism-lens-{{ _lens_name }}">
+                                <div class="prism-lens-name">{{ _lens_name | e }}</div>
+                                {% if _available %}
+                                    <span class="prism-lens-status prism-lens-status--ok">Available</span>
+                                    {% if _lens.get('summary') %}
+                                        <p class="prism-lens-text">{{ _lens.get('summary') | e }}</p>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="prism-lens-status prism-lens-status--unavailable">Unavailable</span>
+                                    {% if _lens.get('reason') %}
+                                        <p class="prism-lens-text">{{ _lens.get('reason') | e }}</p>
+                                    {% endif %}
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+
+                {# Cited news sources — clickable <a href>, XSS-safe, external link safety attrs #}
+                {% if _sources %}
+                    <div data-testid="prism-sources">
+                        <div class="prism-sources-header">Sources</div>
+                        <ul class="prism-sources-list" style="list-style: none; margin: 0; padding: 0;">
+                            {% for _src in _sources %}
+                                <li class="prism-source-item" data-testid="prism-source-item">
+                                    <a class="prism-source-link"
+                                       href="{{ _src.get('url', '#') | e }}"
+                                       target="_blank"
+                                       rel="noopener noreferrer">{{ _src.get('title', 'Untitled') | e }}</a>
+                                    {% if _src.get('published') %}
+                                        <span class="prism-source-meta">{{ _src.get('published') | e }}</span>
+                                    {% endif %}
+                                    {% if _src.get('lens') %}
+                                        <span class="prism-source-lens-tag">{{ _src.get('lens') | e }}</span>
+                                    {% endif %}
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endif %}
+
+            {% else %}
+
+                {# Informative empty state — pipeline runs nightly at 03:00 #}
+                <p class="prism-empty" data-testid="prism-empty-state">
+                    No overnight market read yet — the off-hours pipeline runs daily at 03:00.
+                </p>
+
+            {% endif %}
+
+        </div>{# /market-prism-block #}
 
         <!-- Controls bar -->
         <div data-testid="advisor-controls" class="adv-controls">
