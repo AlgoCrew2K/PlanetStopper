@@ -464,3 +464,31 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** The audit log separates the per-analyst deliberation record from the synthesized `MARKET_PRISM` verdict. The verdict row (in `advisor_observations`) is what the dashboard renders; the audit log is what a human reviewer — or a future meta-agent — reads to understand why that verdict was reached. Keeping them in separate tables with a join key (`run_id`) avoids bloating the `advisor_observations.raw_response` blob with multi-kilobyte analyst transcripts. Backward-compatibility is preserved by the `.get("run_id")` access pattern: old rows without the key continue to read fine without schema modification.
 
 **Status:** GREEN at 885e1a4. 35 AC-1/AC-2 database tests + 9 AC-3/AC-4 lens-pipeline / CLI tests GREEN. Acceptance criteria verified: migration idempotent, append-only contract enforced, D-1 error isolation confirmed.
+
+---
+
+## Lens Data Warehouse (feat/lens-warehouse, 2026-06-13)
+
+### DE-WARCH-001: Separate warehouse SQLite DB for per-lens nightly snapshots
+
+**Decision:** A dedicated warehouse SQLite database (`WAREHOUSE_DB_PATH`, default `alphabot_warehouse.db`) stores per-lens nightly snapshots in an append-only `lens_snapshots` table. The warehouse is entirely separate from the state DB (`alphabot_state.db`) and the optimization DB — never cross-joined with either.
+
+**Key design choices:**
+
+1. **Third DB, never the state DB.** Per-lens raw payload data is large, changes nightly, and is not part of live execution state. Keeping it in a separate file ensures the state DB stays narrow and fast. Architecture Constraint 3 (never cross-join across DBs in app code) is preserved.
+
+2. **Append-only.** `persist_lens_snapshot` only INSERTs — there is no UPDATE or DELETE surface. The full snapshot history is preserved for trend analysis, replay, and debugging. A future cleanup policy (e.g., rolling 90-day window) would be a new accessor, not an in-place overwrite.
+
+3. **WAL mode.** `init_warehouse()` sets `PRAGMA journal_mode=WAL` idempotently. This enables concurrent Flask dashboard reads alongside the single nightly daemon writer without reader-writer locking contention.
+
+4. **Secret-stripping before write.** `_strip_secrets` traverses the full payload dict/list tree at any nesting depth and replaces the value of any key matching `api[_-]?key|token|secret|password|webhook` (case-insensitive) with `<redacted>`. Applied in `persist_lens_snapshot` before `json.dumps`. This is a key-name-pattern guard — it does not scan scalar string values for credential-shaped content. Callers must not embed credentials in non-key positions.
+
+5. **D-1 error contract.** No `str(exc)`, stack frames, or file paths reach any caller surface. Type-name-only error surfacing is consistent with `advisors/lens_pipeline.py` (CC-10), `advisors/prism_audit_write.py` (Prism Phase 1), and all other advisor-layer modules.
+
+6. **Off-execution-path.** The module carries no Flask dependency and is never imported on the 1-minute engine loop. It is safe to import in daemon threads or scheduled jobs.
+
+**Known limit — no production caller yet.** As of this decision, no production code calls `persist_lens_snapshot`. The warehouse is scaffolded infrastructure for the upcoming lens data accumulation phase. Tests exercise the full public surface via `WAREHOUSE_DB_PATH` env override (a temp path per test session, matching the `database.py` isolation pattern).
+
+**Rationale:** The Market Prism pipeline (`advisors/lens_pipeline.py`, DE-CY4-001) synthesises one verdict per night and discards the raw lens data. A warehouse accumulates that raw data so future consumers — trend analysis, regression detection, meta-agent training — can access the full nightly record, not just the synthesised verdict. Keeping it separate avoids bloating `advisor_observations.raw_response` with large raw payloads and avoids widening the state DB schema for non-execution data.
+
+**Status:** Scaffolded on feat/lens-warehouse. `init_warehouse`, `persist_lens_snapshot`, `get_lens_snapshots` implemented and documented. No production caller yet. Test suite to be driven by the test-writer teammate.
