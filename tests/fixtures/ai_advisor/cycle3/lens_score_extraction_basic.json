@@ -1,0 +1,84 @@
+{
+  "_fixture_meta": {
+    "description": "Golden fixture for extract_lens_scores shape/contract (AC-1). Schema-derived — not producer-computed values.",
+    "provenance": "test-authored (cycle3-test-writer); represents the structural contract only",
+    "cycle": "cycle3-lens-swaps"
+  },
+  "input_lens_blocks": {
+    "technicals": {
+      "lens": "technicals",
+      "available": false,
+      "reason": "technicals stub — cycle-1 not yet wired",
+      "payload": null,
+      "sources": []
+    },
+    "sentiment": {
+      "lens": "sentiment",
+      "available": true,
+      "payload": {
+        "ticker_scores": {
+          "AGG": 0.70,
+          "GLD": 0.30
+        },
+        "article_count": 5,
+        "tone_summary": "slightly positive"
+      },
+      "sources": [
+        {
+          "title": "Test article for AGG",
+          "url": "https://example.com/agg-article",
+          "published": "2026-01-01",
+          "lens": "sentiment"
+        }
+      ]
+    },
+    "derivatives": {
+      "lens": "derivatives",
+      "available": false,
+      "reason": "derivatives stub — cycle-1 not yet wired",
+      "payload": null,
+      "sources": []
+    },
+    "macro": {
+      "lens": "macro",
+      "available": true,
+      "payload": {
+        "ticker_scores": {
+          "AGG": 0.65,
+          "GLD": 0.50
+        },
+        "series_count": 3
+      },
+      "sources": [
+        {
+          "title": "FRED series FEDFUNDS",
+          "url": "https://fred.stlouisfed.org/series/FEDFUNDS",
+          "published": "2026-01-01",
+          "lens": "macro"
+        }
+      ]
+    },
+    "fundamentals": {
+      "lens": "fundamentals",
+      "available": false,
+      "reason": "no SEC EDGAR ticker mapped",
+      "payload": null,
+      "sources": []
+    }
+  },
+  "expected_output_contract": {
+    "_note": "Shape/contract only — actual numeric values are implementation-defined. The contract is: available lenses contribute, unavailable lenses are absent.",
+    "AGG": {
+      "_present_lens_keys": ["sentiment", "macro"],
+      "_absent_lens_keys": ["technicals", "derivatives", "fundamentals"],
+      "_score_type": "float",
+      "_score_is_finite": true
+    },
+    "GLD": {
+      "_present_lens_keys": ["sentiment", "macro"],
+      "_absent_lens_keys": ["technicals", "derivatives", "fundamentals"],
+      "_score_type": "float",
+      "_score_is_finite": true
+    }
+  }
+}

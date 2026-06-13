@@ -70,6 +70,86 @@ _OBSERVATION_TYPE = "asset_swap_proposal"
 # No-survivors message (AC-2.5 — must appear in SwapRunResult.message).
 NO_SURVIVORS_MESSAGE = "no swap cleared the gate this run"
 
+# Additive weight applied to the normalised mean lens score when blending into
+# the objective-directed ranking (Cycle-3 AC-2).  0 < w ≤ 1.
+# Kept at 0.25 so the lens signal nudges ranking without overriding the primary
+# correlation/variance measurement from the objective (lens is supporting evidence,
+# not the main signal).  Named constant per no-magic-numbers rule.
+LENS_BLEND_WEIGHT: float = 0.25
+
+# The 5 lens keys as they appear in the assembled advisor context dict (Cycle-3 AC-1).
+# Used by extract_lens_scores to iterate the lens blocks deterministically.
+_LENS_CONTEXT_KEYS: tuple[str, ...] = (
+    "technicals",
+    "sentiment",
+    "derivatives",
+    "macro",
+    "fundamentals",
+)
+
+
+# ---------------------------------------------------------------------------
+# Cycle-3 AC-1: Lens-score extraction helper
+# ---------------------------------------------------------------------------
+
+
+def extract_lens_scores(context: dict) -> dict:
+    """Extract per-ticker lens scores from an assembled advisor context dict.
+
+    Walks the 5 standard lens blocks (technicals, sentiment, derivatives, macro,
+    fundamentals) present in the context returned by
+    ``ai_advisor.assemble_advisor_context``.  Only ``available=True`` lenses
+    contribute scores; ``available=False`` blocks are skipped entirely —
+    no fabrication (AC-6 honest-availability).
+
+    A lens contributes ticker scores when its ``payload`` dict contains a
+    ``"ticker_scores"`` sub-dict mapping ticker → numeric score.  Lenses without
+    this key (e.g. the GDELT sentiment block whose payload currently carries only
+    article_count) are skipped without error.
+
+    Args:
+        context:
+            The dict returned by ``ai_advisor.assemble_advisor_context``, or any
+            dict with lens-block values keyed by lens name.  Missing lens keys,
+            None payload, and malformed blocks are handled gracefully — they
+            contribute nothing and never raise.
+
+    Returns:
+        ``{ticker: {lens_name: score, ...}, ...}`` — dict of dicts.
+        Returns ``{}`` when no available lens carries per-ticker scores.
+        Never raises; malformed input degrades to ``{}``.
+    """
+    if not isinstance(context, dict):
+        return {}
+
+    result: dict[str, dict[str, float]] = {}
+
+    for lens_key in _LENS_CONTEXT_KEYS:
+        block = context.get(lens_key)
+        if not isinstance(block, dict):
+            continue
+        if not block.get("available", False):
+            # Honest-availability: unavailable lens → skip entirely, no fabrication.
+            continue
+
+        payload = block.get("payload")
+        if not isinstance(payload, dict):
+            continue
+
+        ticker_scores = payload.get("ticker_scores")
+        if not isinstance(ticker_scores, dict):
+            continue
+
+        lens_name = block.get("lens", lens_key)
+        for ticker, score in ticker_scores.items():
+            if not isinstance(ticker, str) or not isinstance(score, (int, float)):
+                continue
+            if ticker not in result:
+                result[ticker] = {}
+            result[ticker][lens_name] = float(score)
+
+    return result
+
 
 # ---------------------------------------------------------------------------
 # SwapObjective — typed representation of the objective driving a swap
@@ -278,6 +358,79 @@ def extract_tickers(raw_value: dict) -> set:
 
 
 # ---------------------------------------------------------------------------
+# Cycle-3 AC-2: Lens-score blend helper
+# ---------------------------------------------------------------------------
+
+
+def _apply_lens_blend(
+    candidates: list,
+    lens_scores: dict | None,
+    higher_is_better: bool,
+) -> list:
+    """Re-rank an already-sorted candidate list by blending in lens evidence.
+
+    Applies an ADDITIVE adjustment to each candidate's existing ranking position
+    using the mean of its available lens scores, weighted by ``LENS_BLEND_WEIGHT``.
+    The primary sort (correlation / variance / Sharpe) is the anchor; the lens
+    blend is a nudge — the gate (evaluate_candidate_batch) is the hard filter.
+
+    Blend formula (position-based, avoids unit-comparability issues between
+    objective scores and lens scores):
+        blended_key[i] = position[i] - LENS_BLEND_WEIGHT * normalised_lens_mean[i]
+
+    where ``position`` is the 0-based rank from the primary sort and
+    ``normalised_lens_mean`` is the mean lens score in [0, 1] for the ticker.
+    Subtracting moves high-lens-score tickers toward position 0 (top of list)
+    regardless of whether the primary sort is ascending or descending.
+
+    Args:
+        candidates:
+            List of ``{"ticker": ..., "score": ...}`` dicts, pre-sorted by the
+            primary objective metric.  Returned unchanged when ``lens_scores``
+            is None or empty.
+        lens_scores:
+            ``{ticker: {lens_name: score, ...}}`` as returned by
+            ``extract_lens_scores``.  None or empty → no reranking.
+        higher_is_better:
+            Unused parameter preserved for call-site documentation clarity
+            (the blend is position-based, so direction doesn't affect the math).
+
+    Returns:
+        Re-ordered candidate list.  All input candidates are preserved (lens
+        scoring does NOT eliminate candidates — that is the gate's job).
+    """
+    if not lens_scores:
+        # lens_scores=None or {} → no blend; return as-is (backward-compat).
+        return candidates
+
+    if not candidates:
+        return candidates
+
+    # Compute the mean lens score for each candidate ticker.
+    # Tickers absent from lens_scores get a neutral mean of 0.5 so they don't
+    # benefit from or lose to missing-data artefacts.
+    def _mean_lens(ticker: str) -> float:
+        scores = lens_scores.get(ticker)
+        if not scores or not isinstance(scores, dict):
+            return 0.5  # neutral: no evidence available
+        vals = [v for v in scores.values() if isinstance(v, (int, float))]
+        return sum(vals) / len(vals) if vals else 0.5
+
+    # Position-based blend: assign each candidate a blended sort key.
+    # Lower blended key → closer to the front of the returned list.
+    blended = []
+    for position, cand in enumerate(candidates):
+        ticker = cand.get("ticker", "") if isinstance(cand, dict) else str(cand)
+        mean_lens = _mean_lens(ticker)
+        # Subtracting lens contribution brings high-score tickers toward position 0.
+        blended_key = position - LENS_BLEND_WEIGHT * mean_lens
+        blended.append((blended_key, cand))
+
+    blended.sort(key=lambda t: t[0])
+    return [cand for _, cand in blended]
+
+
+# ---------------------------------------------------------------------------
 # Objective-directed candidate generation (AC-2.2 / Gate-1 Resolution #2)
 # ---------------------------------------------------------------------------
 
@@ -287,6 +440,7 @@ def generate_objective_directed_candidates(
     objective: SwapObjective,
     correlation_data: dict,
     available_assets: list,
+    lens_scores: dict | None = None,
 ) -> list:
     """Generate a shortlist of swap candidates that address the stated objective.
 
@@ -324,6 +478,13 @@ def generate_objective_directed_candidates(
             pairwise correlations and volatility estimates for candidate ranking.
         available_assets:
             The candidate pool.  No allowlist; open universe per Gate-1 Res. #2.
+        lens_scores:
+            Optional per-ticker lens evidence dict as returned by
+            ``extract_lens_scores``.  When ``None`` (default) or empty, behaviour
+            is byte-identical to the pre-Cycle-3 implementation.  When provided,
+            the mean lens score is blended into the post-primary-sort ranking via
+            ``_apply_lens_blend`` (additive, weighted by ``LENS_BLEND_WEIGHT``).
+            Lens scoring influences RANKING ONLY — it never bypasses the gate.
 
     Returns:
         An ordered list of candidate dicts, each with a ``"ticker"`` key
@@ -374,7 +535,11 @@ def generate_objective_directed_candidates(
 
         # Sort ascending by absolute correlation: lowest first = most de-correlated.
         scored.sort(key=lambda t: t[1])
-        return [{"ticker": asset, "score": corr} for asset, corr in scored]
+        return _apply_lens_blend(
+            [{"ticker": asset, "score": corr} for asset, corr in scored],
+            lens_scores=lens_scores,
+            higher_is_better=False,  # lower absolute correlation = better
+        )
 
     # ---------------------------------------------------------------------------
     # reduce_drawdown: rank by smoothness of return series (low variance as proxy)
@@ -394,7 +559,11 @@ def generate_objective_directed_candidates(
 
         # Sort ascending by variance: lowest variance = most defensive.
         scored.sort(key=lambda t: t[1])
-        return [{"ticker": asset, "score": v} for asset, v in scored]
+        return _apply_lens_blend(
+            [{"ticker": asset, "score": v} for asset, v in scored],
+            lens_scores=lens_scores,
+            higher_is_better=False,  # lower variance = better
+        )
 
     # ---------------------------------------------------------------------------
     # lift_risk_adjusted: rank by mean return / std (Sharpe-like from return series)
@@ -415,12 +584,20 @@ def generate_objective_directed_candidates(
 
         # Sort descending by pseudo-Sharpe: highest risk-adjusted return first.
         scored.sort(key=lambda t: t[1], reverse=True)
-        return [{"ticker": asset, "score": s} for asset, s in scored]
+        return _apply_lens_blend(
+            [{"ticker": asset, "score": s} for asset, s in scored],
+            lens_scores=lens_scores,
+            higher_is_better=True,  # higher Sharpe = better
+        )
 
     # ---------------------------------------------------------------------------
     # Unknown objective: return full available_assets as-is (defensive default).
     # ---------------------------------------------------------------------------
-    return [{"ticker": t} for t in available_assets]
+    return _apply_lens_blend(
+        [{"ticker": t} for t in available_assets],
+        lens_scores=lens_scores,
+        higher_is_better=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -432,37 +609,108 @@ def _build_objective_rationale(
     candidate_asset: str,
     incumbent_asset: str,
     objective: SwapObjective,
+    lens_scores: dict | None = None,
 ) -> str:
-    """Build a human-readable rationale string explaining why this candidate addresses the objective."""
+    """Build a human-readable rationale string explaining why this candidate addresses the objective.
+
+    When ``lens_scores`` is provided and contains evidence for ``candidate_asset``,
+    a lens evidence summary is appended to the rationale (Cycle-3 AC-5).
+    Each candidate stands on its own merits — no ranked single-winner verdict.
+    """
     obj_type = objective.objective_type
     measured = objective.measured_value
     pair = objective.target_pair
 
     if obj_type == "reduce_correlation":
         pair_str = f"{pair[0]} and {pair[1]}" if pair else "the correlated pair"
-        return (
+        base = (
             f"Replacing {incumbent_asset} with {candidate_asset} addresses the "
             f"{measured:.2f} correlation between {pair_str}. "
             f"{candidate_asset} is expected to exhibit lower correlation with the pair "
             f"based on objective-directed candidate scoring."
         )
     elif obj_type == "reduce_drawdown":
-        return (
+        base = (
             f"Replacing {incumbent_asset} with {candidate_asset} targets reduction of "
             f"the measured {measured:.1%} drawdown. {candidate_asset} was selected as "
             f"a lower-volatility candidate from objective-directed ranking."
         )
     elif obj_type == "lift_risk_adjusted":
-        return (
+        base = (
             f"Replacing {incumbent_asset} with {candidate_asset} aims to lift "
             f"risk-adjusted return from the measured Sharpe of {measured:.2f}. "
             f"{candidate_asset} was scored as a higher risk-adjusted candidate."
         )
     else:
-        return (
+        base = (
             f"Replacing {incumbent_asset} with {candidate_asset} per the stated objective "
             f"({obj_type}, measured_value={measured})."
         )
+
+    # Cycle-3 AC-5: append lens evidence summary when available.
+    lens_summary = _build_lens_evidence_summary(candidate_asset, lens_scores)
+    if lens_summary:
+        return f"{base} {lens_summary}"
+    return base
+
+
+def _build_lens_evidence_summary(ticker: str, lens_scores: dict | None) -> str:
+    """Return a concise lens evidence sentence for inclusion in the rationale.
+
+    Returns an empty string when no lens evidence is available for the ticker —
+    callers must handle this gracefully (honest-availability, AC-6).
+    """
+    if not lens_scores or not isinstance(lens_scores, dict):
+        return ""
+    ticker_scores = lens_scores.get(ticker)
+    if not ticker_scores or not isinstance(ticker_scores, dict):
+        return ""
+    valid = {k: v for k, v in ticker_scores.items() if isinstance(v, (int, float))}
+    if not valid:
+        return ""
+    # Format as "Lens evidence (sentiment: 0.80, macro: 0.60)."
+    parts = ", ".join(f"{lens}: {score:.2f}" for lens, score in sorted(valid.items()))
+    return f"Lens evidence ({parts})."
+
+
+def _build_candidate_lens_evidence(ticker: str, lens_scores: dict | None) -> dict:
+    """Build the lens_evidence dict for a single candidate ticker (AC-4 persistence).
+
+    Returns ``{ticker: {signal: mean_score, source_lens: [lens_names], confidence: mean_score}}``
+    when lens evidence is available, or ``{}`` when lens_scores is absent/empty.
+    Only available lenses (present in lens_scores) contribute — honest-availability.
+    """
+    if not lens_scores or not isinstance(lens_scores, dict):
+        return {}
+    ticker_scores = lens_scores.get(ticker)
+    if not ticker_scores or not isinstance(ticker_scores, dict):
+        return {}
+    valid = {k: v for k, v in ticker_scores.items() if isinstance(v, (int, float))}
+    if not valid:
+        return {}
+    mean_score = sum(valid.values()) / len(valid)
+    return {
+        ticker: {
+            "signal": mean_score,
+            "source_lens": sorted(valid.keys()),
+            "confidence": mean_score,
+        }
+    }
+
+
+def _collect_lens_sources(lens_scores: dict | None) -> list:
+    """Return sources list from lens_scores metadata (AC-4 persistence).
+
+    Currently lens_scores carries only numeric scores (no embedded citation dicts).
+    Returns empty list — callers that have access to the full lens context blocks
+    should pass sources directly.  This function exists as the structural hook
+    for future enrichment without a signature change.
+    """
+    # lens_scores dict contains {ticker: {lens_name: score}} — no citation objects.
+    # Source citations live in the context's lens block "sources" lists, which are
+    # not threaded through generate_objective_directed_candidates (they live at the
+    # assemble_advisor_context level).  An empty list is the correct honest value here.
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +722,8 @@ def _persist_observation(
     symphony_id: str,
     proposal: SwapProposalResult,
     gate_result: CandidateGateResult,
+    lens_evidence: dict | None = None,
+    sources: list | None = None,
 ) -> None:
     """Persist a swap proposal as an advisor_observation, REGARDLESS of verdict (RC-4).
 
@@ -484,6 +734,10 @@ def _persist_observation(
     RC-4: persistence is verdict-agnostic so the operator sees the engine ran and
     kept the incumbent — an ADOPT-only write left advisor_observations empty on the
     common KEEP path, making the advisor look dead.
+
+    Cycle-3 AC-4: ``lens_evidence`` and ``sources`` are written into ``raw_response``
+    when provided, enabling downstream audit of which lens signals contributed to
+    surfacing this candidate.  Both default to empty/None (additions-only).
     """
     database.insert_advisor_observation(
         advisor_role="ASSET_SWAP",
@@ -503,6 +757,9 @@ def _persist_observation(
             "validation_days": gate_result.validation_days,
             "oos_alpha": gate_result.oos_alpha,
             "caveats": gate_result.caveats,
+            # Cycle-3 AC-4: lens evidence + citations for auditability.
+            "lens_evidence": lens_evidence if lens_evidence is not None else {},
+            "sources": sources if sources is not None else [],
         },
     )
 
@@ -519,6 +776,7 @@ def _evaluate_single_variant(
     candidate_asset: str,
     objective: SwapObjective,
     symphony_name: str = "",
+    lens_scores: dict | None = None,
 ) -> tuple:
     """Backtest a single swap variant.  Returns (BacktestCandidate | None, SwapProposalResult, baseline_stats).
 
@@ -526,9 +784,12 @@ def _evaluate_single_variant(
     - candidate is None when the variant backtest failed (AC-X5)
     - proposal_shell is a SwapProposalResult with backtest_error set on failure
     - baseline_stats is the stats dict from the baseline backtest (or None on failure)
+
+    Cycle-3 AC-5: when ``lens_scores`` is provided, the rationale incorporates
+    lens evidence for ``candidate_asset``.
     """
     candidate_id = f"{symphony_id}:{incumbent_asset}->{candidate_asset}"
-    rationale = _build_objective_rationale(candidate_asset, incumbent_asset, objective)
+    rationale = _build_objective_rationale(candidate_asset, incumbent_asset, objective, lens_scores=lens_scores)
     symphony_name = symphony_name or symphony_id
 
     apply_guidance = ADVISE_ONLY_APPLY_TEMPLATE.format(
@@ -628,6 +889,8 @@ def propose_operator_swap(
     *,
     incumbent_oos_alpha: float | None = None,
     default_oos_alpha: float = 0.0,
+    lens_scores: dict | None = None,
+    lens_sources: list | None = None,
 ) -> SwapRunResult:
     """Evaluate one operator-specified asset swap (AC-2.1).
 
@@ -651,6 +914,12 @@ def propose_operator_swap(
             Used as the gate's KEEP_INCUMBENT comparison baseline.
         default_oos_alpha:
             The global-default params' OOS alpha.
+        lens_scores:
+            Optional per-ticker lens evidence dict as returned by ``extract_lens_scores``.
+            When provided, the rationale mentions lens signals (AC-5) and
+            ``lens_evidence``/``sources`` are written to the persisted observation (AC-4).
+            Ranking of candidates is unaffected by this param in operator mode
+            (the operator already chose the candidate). Default None.
 
     Returns:
         ``SwapRunResult`` — always returned, never raises.
@@ -664,6 +933,7 @@ def propose_operator_swap(
         candidate_asset=candidate_asset,
         objective=objective,
         symphony_name=symphony_name,
+        lens_scores=lens_scores,
     )
 
     # Backtest failed — zero candidates to gate.
@@ -721,9 +991,20 @@ def propose_operator_swap(
     # engine ran (incl. KEEP_INCUMBENT / REJECT_VETO_FAILED), not just on ADOPT.
     # RC-5: a persistence failure must be SURFACED (persistence_error), not swallowed
     # to a warning — otherwise an adopted survivor is shown whose audit row never landed.
+    # Cycle-3 AC-4: build lens_evidence dict for the candidate asset from lens_scores.
+    # Use caller-supplied lens_sources when provided (AC-4 citation provenance);
+    # fall back to auto-collected sources from lens_scores metadata otherwise.
+    candidate_lens_evidence = _build_candidate_lens_evidence(candidate_asset, lens_scores)
+    candidate_sources = lens_sources if lens_sources is not None else _collect_lens_sources(lens_scores)
     persistence_error = None
     try:
-        _persist_observation(symphony_id, proposal_shell, gate_result)
+        _persist_observation(
+            symphony_id,
+            proposal_shell,
+            gate_result,
+            lens_evidence=candidate_lens_evidence,
+            sources=candidate_sources,
+        )
     except Exception as exc:
         persistence_error = f"{type(exc).__name__}: {exc}"
         logger.error(
@@ -767,6 +1048,8 @@ def suggest_swaps(
     *,
     incumbent_oos_alpha: float | None = None,
     default_oos_alpha: float = 0.0,
+    lens_scores: dict | None = None,
+    lens_sources: list | None = None,
 ) -> SwapRunResult:
     """Evaluate advisor-suggested objective-directed swap candidates (AC-2.2).
 
@@ -794,6 +1077,10 @@ def suggest_swaps(
             Incumbent's OOS alpha for the gate's KEEP_INCUMBENT comparison.
         default_oos_alpha:
             Global-default params' OOS alpha.
+        lens_scores:
+            Optional per-ticker lens evidence as returned by ``extract_lens_scores``.
+            When provided, blended into candidate ranking (AC-2) and written to
+            persistence (AC-4).  None → byte-identical pre-Cycle-3 behaviour.
 
     Returns:
         ``SwapRunResult`` — always returned, never raises.
@@ -820,12 +1107,13 @@ def suggest_swaps(
             objective=objective,
         )
 
-    # Objective-directed candidate generation.
+    # Objective-directed candidate generation (Cycle-3: lens_scores blends into ranking).
     candidates_ranked = generate_objective_directed_candidates(
         symphony_id=symphony_id,
         objective=objective,
         correlation_data=correlation_data,
         available_assets=available_assets,
+        lens_scores=lens_scores,
     )
 
     if not candidates_ranked:
@@ -866,6 +1154,7 @@ def suggest_swaps(
             candidate_asset=candidate_asset,
             objective=objective,
             symphony_name=symphony_name,
+            lens_scores=lens_scores,
         )
         proposal_shells.append(proposal_shell)
         if bt_cand is not None:
@@ -908,7 +1197,19 @@ def suggest_swaps(
             else:
                 rejected.append(shell)
             try:
-                _persist_observation(symphony_id, shell, gate_result)
+                # Cycle-3 AC-4: build per-candidate lens_evidence for persistence.
+                cand_ticker = shell.candidate_asset if hasattr(shell, "candidate_asset") else ""
+                cand_lens_ev = _build_candidate_lens_evidence(cand_ticker, lens_scores)
+                # AC-4: use caller-supplied citations when provided; fall back to
+                # auto-collected metadata from lens_scores otherwise.
+                cand_sources = lens_sources if lens_sources is not None else _collect_lens_sources(lens_scores)
+                _persist_observation(
+                    symphony_id,
+                    shell,
+                    gate_result,
+                    lens_evidence=cand_lens_ev,
+                    sources=cand_sources,
+                )
             except Exception as exc:
                 if persistence_error is None:
                     persistence_error = f"{type(exc).__name__}: {exc}"
