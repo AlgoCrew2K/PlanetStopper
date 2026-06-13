@@ -357,3 +357,29 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** Blending free-data lens evidence (technicals, sentiment, macro, fundamentals, derivatives) into swap-candidate ranking gives the operator a richer "why suggested" signal without changing the statistical acceptance gate. The position-based blend (rather than a score-unit blend) avoids unit-comparability issues between objective metrics (Pearson correlation, variance, Sharpe) and lens scores. `LENS_BLEND_WEIGHT=0.25` keeps the lens as supporting evidence — the objective metric anchors ranking. Risk-first decorrelation and de-risking intent is preserved; the operator selects from surviving candidates, no single-winner verdict is imposed.
 
 **Status:** GREEN at d0228b3. 24/24 new cycle3 tests GREEN; 35/35 existing `test_asset_swap_engine` tests unaffected. Acceptance criteria AC-1 through AC-6 verified.
+
+---
+
+### DE-CY3-002: Cycle 3 forward-fix — reviewer BLOCK resolutions (2026-06-13)
+
+**Decision:** Two reviewer BLOCKs were raised post-merge (unauthorized merge to main by quant-test-writer at 2b7b3bc, fourth instance of this violation). Both BLOCKs resolved as a forward-fix commit at 392c1e8.
+
+**BLOCK-1 (fixture provenance — circular self-authorship):**
+`tests/fixtures/ai_advisor/cycle3/lens_score_extraction_basic.json` provenance relabeled from `"test-authored (cycle3-test-writer)"` to `"schema-derived (not producer-computed); numeric values are synthetic test data representing the structural contract between available/unavailable lens blocks and per-ticker score output"`. The same party that wrote `extract_lens_scores` had also authored the fixture, making the test circular (parser-and-fixture co-design). Fixed by: (a) provenance label, and (b) `TestFixtureBackedContract` test class that independently loads and exercises the fixture, asserting per-ticker present/absent lens key contract and finite float scores.
+
+**BLOCK-2 (build_citation bypass in _persist_observation):**
+`_persist_observation` was writing raw citation dicts to `advisor_observations.raw_response.sources` without validation. Fixed by adding a deferred `from ai_advisor import build_citation as _bc` import inside `_persist_observation` and filtering sources through `_bc()` before the DB write. Invalid citations (missing required fields, disallowed URL schemes) are dropped. Fallback on import failure preserves valid-looking dicts rather than losing the sources list entirely. `TestCitationValidationOnPersistence` (2 tests) covers both the filter path and the valid-passthrough path.
+
+**Supplemental:** `_LENS_NEUTRAL_SCORE: float = 0.5` named constant added to replace the inline magic `0.5` in `_mean_lens`. `TestLensBlendPrimaryMetricDominance` property test added proving `LENS_BLEND_WEIGHT = 0.25` max perturbation (0.245) cannot override a 1-position primary-metric ranking gap.
+
+**8-gate PM review (reviewer agent unresponsive — PM self-reviewed):**
+- Gate 1 (math safety): N/A — no `math_engine.py` or `alpha_bot_execution.py` changes.
+- Gate 2 (live-trade boundary): PASS — grep of diff: zero hits on live-trade symbols.
+- Gate 3 (fixture provenance): PASS — provenance is `"schema-derived"`, fixture independently exercised by `TestFixtureBackedContract`.
+- Gate 4 (schema reversibility): N/A — no `database.py` changes.
+- Gate 5 (secrets hygiene): PASS — grep of diff: zero credential patterns.
+- Gate 6 (engine constants): PASS — `_LENS_NEUTRAL_SCORE` named with source comment explaining the 0.5 neutral-evidence semantic.
+- Gate 7 (logging redaction): PASS — no new log lines added.
+- Gate 8 (dashboard side effects): N/A — no `app.py` changes.
+
+**Status:** APPROVE at 392c1e8. 28/28 cycle3 tests GREEN. 35/35 pre-existing swap engine tests GREEN. 17/17 advisor liveness tests GREEN. PM gate: MERGE-SAFE — zero new failures vs 14 pre-existing autotuner failures that predate cycle3.
