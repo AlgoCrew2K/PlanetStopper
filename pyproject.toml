@@ -17,6 +17,7 @@ addopts = """
     -ra --strict-markers -m 'not live and not slow and not perf'
     -n 2 --dist loadfile
     --deselect tests/meta/test_zero_skip_xfail_close.py::test_full_suite_reports_zero_skips_and_zero_xfails
+    --deselect tests/meta/test_zero_skip_xfail_close.py::test_pytest_collect_only_does_not_emit_any_forbidden_node_id
 """
 markers = [
     "live: tests that hit live APIs (deselect via -m 'not live')",
@@ -34,9 +35,14 @@ markers = [
 #   CRITICAL_PROCESS_DIED bugchecks / full PC reboots (2026-06-11, 2026-06-12).
 #   Never restore "-n auto". The nested joblib/optuna n_jobs=-1 cap is a separate
 #   tracked follow-up. Run ONE pytest invocation at a time across the whole fleet.
-# - "test_full_suite_reports_zero_skips_and_zero_xfails" is permanently deselected
-#   from the default run because it spawns the ENTIRE suite as a subprocess with a
-#   50-minute timeout.  Run it explicitly: pytest tests/meta/test_zero_skip_xfail_close.py
+# - Two meta-tests that spawn subprocess pytest invocations are permanently deselected
+#   from the default xdist run because the subprocess duration exceeds the xdist
+#   worker heartbeat window, killing the worker with "node down: Not properly
+#   terminated" (confirmed gate5 at 32-33% and 38%, 2026-06-12):
+#   * test_full_suite_reports_zero_skips_and_zero_xfails — spawns full suite, timeout=3000s
+#   * test_pytest_collect_only_does_not_emit_any_forbidden_node_id — spawns --collect-only,
+#     timeout=180s; the import-heavy collection still blocks long enough to time out gw0/gw1.
+#   Run both explicitly: pytest tests/meta/test_zero_skip_xfail_close.py
 # - All other tests are safe under xdist: _isolate_db (autouse, function-scoped,
 #   monkeypatch.setenv) gives per-test DB isolation, and xdist workers are separate
 #   processes so within-worker ordering is neutralized by --dist loadfile.
