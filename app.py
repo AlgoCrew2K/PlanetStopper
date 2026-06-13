@@ -407,10 +407,38 @@ def _refresh_account_totals() -> None:
         )
 
 
+def _lens_pipeline_worker() -> None:
+    """Background worker that runs the off-hours lens pipeline.
+
+    Imported lazily to keep advisors.lens_pipeline off the execution path (CC-2).
+    D-1 error contract: only type(exc).__name__ appears in log records at WARNING+.
+    """
+    try:
+        from advisors.lens_pipeline import run_pipeline  # lazy — not module-level (CC-2)
+        result = run_pipeline()
+        _daemon_log.info("Lens pipeline complete: %s", result)
+    except Exception as exc:
+        _daemon_log.error("Lens pipeline worker failed: %s", type(exc).__name__)
+
+
+def _run_lens_pipeline() -> None:
+    """Non-blocking daily off-hours wrapper for the lens pipeline (AC-7).
+
+    Spawns a daemon thread so the scheduler thread returns immediately —
+    the pipeline never blocks the 1-minute execution path (arch constraint 1).
+    """
+    import threading
+    t = threading.Thread(target=_lens_pipeline_worker, daemon=True, name="lens-pipeline")
+    t.start()
+
+
 def run_scheduler():
     schedule.every().minute.at(":00").do(threaded_trigger)
     schedule.every().minute.at(":00").do(_refresh_account_totals)
     schedule.every().day.at("02:00").do(_run_trigger_retention)
+    # Component 7+8: daily off-hours lens pipeline — Market Prism summary (CYCLE4-BRIEF.md).
+    # Runs at 03:00 (off-hours) so it never overlaps the live market-hours execution path.
+    schedule.every().day.at("03:00").do(_run_lens_pipeline)
     while True:
         schedule.run_pending()
         time.sleep(1)
