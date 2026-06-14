@@ -41,5 +41,5 @@ N/A — no UI surface. All tests are unit tests.
 - The 7 security invariant tests (PASSED) are not to be broken — they assert things that must hold on both stub and real implementation.
 - The 1 skipped projection test activates once find() is called with a projection arg.
 - Trees must be deserialised from edn_string then passed through validate_tree ([] = keep; errors = validate_rejected++).
-- Dedup: use database.compute_composition_hash on tickers list from extract_tickers(tree). Keep doc with higher oos_metrics.get('sharpe', -inf) when hashes collide.
+- Dedup: do NOT use database.compute_composition_hash (that function takes list[str] of symphony IDs — wrong type for this use case). Instead implement a private _composition_hash(tree) helper: strip all 'id' keys recursively from a deep copy of the tree, then json.dumps(stripped, sort_keys=True, separators=(',',':')), then hashlib.sha256(...).hexdigest(). Keep doc with higher oos_metrics.get('sharpe', float('-inf')) when hashes collide.
 - Missing sharpe: treat as -inf for dedup comparison only; keep doc regardless of min_oos_sharpe floor.
