@@ -301,8 +301,10 @@ _MARKET_PROXY_UNIVERSE: list[str] = [
 #     type(exc).__name__, never str(exc) which may contain keys/URLs),
 #   - returns available=True with real payload + citation-validated sources on
 #     success.
-# Technicals promoted to a real producer in B2 (advisors/lens_technicals.py).
-# Only derivatives remains a cycle-1 stub (Cycle-2b deliverable).
+# Technicals (B2, advisors/lens_technicals.py) and derivatives
+# (advisors/lens_options_proxy.py, FRED VIX term structure) are both real
+# producers now.  No cycle-1 stub lenses remain (sentiment/macro/fundamentals
+# were promoted in Cycle-2).
 # ---------------------------------------------------------------------------
 
 # Maximum total wall-clock seconds the retry loop will wait across all
@@ -550,17 +552,31 @@ def _build_sentiment_section(_data: object = None) -> dict:
 
 
 def _build_derivatives_section(_data: object = None) -> dict:
-    """Derivatives / options lens block — cycle-1 stub (Cycle-2b deliverable).
+    """Derivatives / volatility lens block — FRED VIXCLS/VXVCLS producer (real).
 
-    Honest availability: CBOE put/call + Alpaca IV source not yet connected.
-    Returns available=False with an informative reason.
+    Lazy-imports ``advisors.lens_options_proxy`` (CC-2 boundary: no module-level
+    import of advisor producers inside ai_advisor.py).  This is an INDEX-LEVEL
+    lens (VIX term structure) — no universe argument is passed to the producer.
+    Classifies the VIX term-structure regime (contango / backwardation / flat)
+    and derives a directional risk read (risk-on / risk-off / neutral).
+
+    D-1: error reason passes through the producer's type(exc).__name__ string;
+    never str(exc) or any raw exception message.
     """
+    import advisors.lens_options_proxy as _lop  # CC-2: lazy import
+
+    payload = _lop._fetch_options_proxy()
+    available = payload.get("available", False)
     return {
         "lens": "derivatives",
-        "available": False,
-        "reason": "derivatives source not connected — cycle-2b deliverable",
-        "payload": None,
-        "sources": [],
+        "available": available,
+        "reason": payload.get("reason"),
+        "payload": payload if available else None,
+        "sources": (
+            [{"source": payload["source"], "lens": "derivatives"}]
+            if payload.get("source")
+            else []
+        ),
     }
 
 
@@ -1207,9 +1223,9 @@ def assemble_advisor_context(
         "risk_invariants": _RISK_INVARIANTS,
         # P2 — condensed symphony logic / composition.
         "symphony_logic": condensed_logic,
-        # Multi-lens context — 5 lens blocks.
-        # Technicals (B2) and sentiment/macro/fundamentals (Cycle-2) are real producers.
-        # Only derivatives remains a stub pending a CBOE put/call data source (Cycle-2b).
+        # Multi-lens context — 5 lens blocks, all real producers:
+        # technicals (B2), derivatives (FRED VIX term structure), and
+        # sentiment/macro/fundamentals (Cycle-2). No cycle-1 stub lenses remain.
         # Honest degradation: any lens that cannot fetch returns available=False
         # and never fabricates analytical context (CC-3 data-wall, GATE-1-AC §1).
         "technicals": _build_technicals_section(),

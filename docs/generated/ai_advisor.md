@@ -145,7 +145,7 @@ All five are wired as top-level keys in the dict returned by `assemble_advisor_c
 |--------|----------------|----------------------------------|
 | `_build_technicals_section()` | `"technicals"` | Alpaca IEX / Alpha Vantage indicator |
 | `_build_sentiment_section()` | `"sentiment"` | GDELT 2.0 / Alpaca News |
-| `_build_derivatives_section()` | `"derivatives"` | CBOE put/call + Alpaca IV |
+| `_build_derivatives_section()` | `"derivatives"` | Wired: lazy-imports `advisors.lens_options_proxy`, calls `_fetch_options_proxy()` — FRED VIXCLS/VXVCLS term-structure regime + risk read (index-level, no universe) |
 | `_build_macro_section()` | `"macro"` | FRED / US Treasury XML |
 | `_build_fundamentals_section()` | `"fundamentals"` | SEC EDGAR companyfacts |
 
