@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: feature-plans/symphony-validator-grammar.md
 Branch: pr/symphony-validator-grammar
-Phase: red
+Phase: green
 
 ## Test Files
 - tests/advisors/test_symphony_schema.py — new tests appended (classes TestGrammarV2Alignment,
@@ -111,6 +111,30 @@ The implementation is three one-line frozenset literal edits in advisors/symphon
 No logic changes. No new functions. No changes to validate_tree or lint_tree behavior.
 The frozensets are already iterated in membership checks — adding tokens is the only change.
 
+## Test File Issues (for test-writer to fix)
+
+### TestModuleConstants::test_known_comparators_does_not_contain_gte (line 2365)
+
+**File:** tests/advisors/test_symphony_schema.py
+**Test name:** `TestModuleConstants::test_known_comparators_does_not_contain_gte`
+**What the test expects:** `"gte" not in KNOWN_COMPARATORS`
+**What correct code produces:** `"gte" in KNOWN_COMPARATORS` (AC-1 confirmed VERIFIED-CORPUS n=39,596 §8)
+**Root cause:** Stale v1 OQ-2 guard. The test-writer re-pointed two other stale tests
+(gte→eq in TestAdversarialMutations; quarterly→hourly in TestAdversarialCasesRound2) but missed
+this third one in TestModuleConstants. The regression it intended to guard is already covered by
+`TestGrammarV2RegressionGuard::test_unknown_comparator_eq_still_produces_hard_error_after_widening`.
+**Suggested fix:** Re-point this test to assert `"eq" not in KNOWN_COMPARATORS` and update the
+docstring from "OQ-2: unconfirmed, omit until verified" to "eq has 0 corpus occurrences — permanent hard error".
+
+## Implementation Notes
+
+Three frozenset literal additions only — no logic changes, no constructor changes, no new functions:
+1. `KNOWN_INDICATOR_FNS` (~L65): added 6 tokens (ema-price, std-dev-price, ppo, ppo-signal, upper-bollinger, lower-bollinger). Updated comment to 13 total with VERIFIED-CORPUS provenance.
+2. `KNOWN_COMPARATORS` (~L84): added `"gte"`. Updated comment to replace OQ-2 with VERIFIED-CORPUS n=39,596 §8; eq/neq remain permanent hard errors (0 corpus occurrences, explicitly noted).
+3. `KNOWN_REBALANCE` (~L88): added `"quarterly"` and `"yearly"`. Updated comment with VERIFIED-CORPUS n=58/n=27 §6.
+
+Only `advisors/symphony_schema.py` was touched. No test files modified.
+
 ## Status Log
 - [2026-06-14] test-writer: Starting RED phase
 - [2026-06-14] test-writer: RED complete — 17 tests failing (all on assertions, zero
@@ -120,3 +144,4 @@ The frozensets are already iterated in membership checks — adding tokens is th
 - [2026-06-14] test-writer: Re-pointed two stale pre-existing tests (test_unknown_comparator_eq_produces_hard_error
   from gte→eq; test_make_root_with_unknown_rebalance from quarterly→hourly). Both pass now and
   will pass after GREEN. 17 RED / 122 GREEN count unchanged.
+- [2026-06-14] implementer: GREEN complete — 138/139 tests passing. All 17 RED now GREEN. All 122 pre-existing still GREEN. 1 test bug documented: TestModuleConstants::test_known_comparators_does_not_contain_gte (stale v1 OQ-2 guard, test-writer missed re-pointing — see Test File Issues above). Implementation touches ONLY advisors/symphony_schema.py (3 frozenset literals + inline comments updated). Lint clean.
