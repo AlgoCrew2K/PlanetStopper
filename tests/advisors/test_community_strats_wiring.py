@@ -752,16 +752,18 @@ class TestAC3Dedup:
                 community_candidates=[colliding_info],
             )
 
-        if not captured_gate_calls:
-            pytest.skip("Gate was not called — no candidates to check")
-
+        # Hollow guard removed: a buggy impl that drops ALL candidates would skip this body.
+        # The gate is always called (even with empty batch), so assert it was invoked.
+        assert captured_gate_calls, (
+            "evaluate_candidate_batch must be called — gate is invoked unconditionally; "
+            "no captured calls means the engine returned early, hiding the dedup bug (AC-3)"
+        )
         all_gate_ids = [c.candidate_id for batch in captured_gate_calls for c in batch]
         # The colliding id must appear at most once in the gate (dedup)
         colliding_count = all_gate_ids.count("diversify:T1:equal_weight")
         assert colliding_count <= 1, (
             f"Colliding candidate_id 'diversify:T1:equal_weight' must appear at most once "
-            f"in the gate batch (dedup contract AC-3); appeared {colliding_count} times. "
-            "This fails because dedup is not yet implemented."
+            f"in the gate batch (dedup contract AC-3); appeared {colliding_count} times."
         )
 
 
@@ -839,14 +841,17 @@ class TestAC4FailureIsolation:
             f"got error={result.error!r} (AC-4)"
         )
 
-        # When ALL backtests error, the gate receives an empty batch (or isn't called).
-        # The critical assertion: the error community id is not in any gate batch.
-        if captured_gate_calls:
-            gate_ids = {c.candidate_id for batch in captured_gate_calls for c in batch}
-            assert error_community_id not in gate_ids, (
-                f"Failed community candidate {error_community_id!r} must be absent from "
-                f"the gate batch (AC-4); gate received: {sorted(gate_ids)!r}"
-            )
+        # The gate is always called (even with an empty batch when all backtests error).
+        # Hollow guard removed: assert gate was actually invoked so the body cannot silently skip.
+        assert captured_gate_calls, (
+            "evaluate_candidate_batch must be called even when all backtests error "
+            "(engine calls gate unconditionally before returning — AC-4)"
+        )
+        gate_ids = {c.candidate_id for batch in captured_gate_calls for c in batch}
+        assert error_community_id not in gate_ids, (
+            f"Failed community candidate {error_community_id!r} must be absent from "
+            f"the gate batch (AC-4); gate received: {sorted(gate_ids)!r}"
+        )
 
     def test_community_backtest_exception_does_not_abort_run(self, sbe):
         """A community candidate whose run_backtest RAISES (not just error result) must be
