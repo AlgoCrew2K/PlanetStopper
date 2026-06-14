@@ -75,13 +75,16 @@ KNOWN_INDICATOR_FNS: frozenset[str] = frozenset(
 )
 
 # Confirmed comparators. Source: grammar doc §8. "gt"/"lt" VERIFIED-LOCAL,
-# "lte" VERIFIED-COMMUNITY. "gte"/"eq" are OQ-2 unconfirmed and excluded — they
-# are hard errors until observed in a local fixture.
-KNOWN_COMPARATORS: frozenset[str] = frozenset({"gt", "lt", "lte"})
+# "lte" VERIFIED-COMMUNITY. "gte" corpus-verified (n≈39,596 across 10,441 real
+# symphonies — AC-1 grammar-foundation). "eq"/"neq" absent from corpus, excluded.
+KNOWN_COMPARATORS: frozenset[str] = frozenset({"gt", "lt", "gte", "lte"})
 
 # Confirmed rebalance cadences. Source: grammar doc §6. "daily" VERIFIED-LOCAL;
 # "none"/"weekly"/"monthly" VERIFIED-COMMUNITY (2026-05-31 swagger enum).
-KNOWN_REBALANCE: frozenset[str] = frozenset({"daily", "none", "weekly", "monthly"})
+# "quarterly" (n≈58) and "yearly" (n≈27) corpus-verified — AC-2 grammar-foundation.
+KNOWN_REBALANCE: frozenset[str] = frozenset(
+    {"daily", "none", "weekly", "monthly", "quarterly", "yearly"}
+)
 
 # Construction-side size ceilings. Source: grammar doc OQ-7 (conservative <500
 # node bound for SYNTHETIC trees) + handoff amendment 1. These gate the
