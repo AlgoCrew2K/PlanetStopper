@@ -35,6 +35,17 @@ N/A — no UI surface. All tests are unit tests.
 - [2026-06-14] test-writer: Starting RED phase for community-strats-loader (AC-1..AC-9)
 - [2026-06-14] test-writer: RED complete — 32 tests total (24 failing on stub, 7 green security/invariant guards, 1 skipped pending pymongo call). Stub created at advisors/community_strats.py. Committed at c1bca14 on team/community-strats.
 - [2026-06-14] test-writer: REVIEW — found 1 test bug (_raise side_effect TypeError masking D-1 test) + added 6 integration-specialist tests (S1-C plumbing, S2-B cache pipeline, S2-C stats invariant). Fixed bug. 38/38 GREEN at 3fbb650. APPROVED — all AC-1..AC-9 covered, 38 passed / 0 failed / 0 skipped. Ready for doc-writer then PM gate.
+- [2026-06-14] implementer: GREEN complete — 38/38 tests passing on committed tree f6d48c1. No test bugs documented (test-writer pre-fixed the _raise side_effect issue). Typecheck N/A (stdlib + lazy imports). Lint clean (ruff via linter hook).
+
+## Implementation Notes
+- `_composition_hash(tree)`: strips uuid4 `id` keys recursively before JSON-dumping; ensures identical-logic trees hash identically regardless of node id generation. Does NOT use `database.compute_composition_hash` (which takes `list[str]` of symphony IDs — different semantic).
+- `_oos_sharpe(doc)` returns `float("-inf")` for missing/absent sharpe so docs-with-sharpe always win dedup ties.
+- `client` kwarg retained for interface compatibility but unused — the fetch_fn closure always uses `pymongo.MongoClient(os.environ["MONGO_URI"], ...)` directly.
+- `cached_pull` returning `None` (documented sentinel) → `available=False, reason="NoneType"` (no raise).
+- Non-list payload from cache → `available=False, reason="TypeError"` (guards against corrupt cache returning a dict).
+- All outer logic wrapped in `try/except Exception` — nothing can escape.
+- Stats `valid` counts post-dedup survivors (post-limit if limit applied). The stats sum invariant holds when no limit is applied.
+- `sharpe_filtered` counter: only increments for docs that HAVE a sharpe AND it's below the floor; docs lacking sharpe entirely pass through.
 
 ## Test File Issues (for test-writer to fix)
 None remaining. Fixed: zero-arg `_raise` callable used as side_effect in 3 D-1 tests — mock forwarded call args causing TypeError. Fixed by using exception instances as side_effect.
