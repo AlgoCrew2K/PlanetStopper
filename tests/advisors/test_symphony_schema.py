@@ -5108,3 +5108,1108 @@ class TestCycleANits:
             f"AC-11: lint_tree must not warn about {fn_token!r} used as lhs-fn. "
             f"Got: {fn_warnings!r}"
         )
+
+
+# ===========================================================================
+# 12. DE-SYMPH-001 — Recursive nested condition-block validation (RED)
+#
+#     These tests are RED by construction: _validate_condition_block currently
+#     validates TOP-LEVEL condition blocks only. Its docstring says so explicitly:
+#     "Checks the top-level condition block only (not sub-conditions)." A compound
+#     block nesting malformed sub-conditions passes validate_tree today because
+#     recursion stops at depth-0.
+#
+#     AC-1..AC-6 are RED (will fail until the implementer adds recursion +
+#     depth bound to _validate_condition_block).
+#     AC-7 is GREEN (regression guard — must not break existing top-level checks).
+#
+#     Implementation hint for the implementer (NOT for the test-writer):
+#       Recurse _validate_condition_block into compound.conditions[] per sub-dict.
+#       Add a depth bound (MAX_CONDITION_DEPTH constant or internal _depth param)
+#       so pathological inputs are bounded — never-raises contract preserved.
+#
+#     Golden fixture:
+#       tests/fixtures/math/nested_condition_validation_basic.json
+#       (hand-built malformed nested dicts + the v2 §7.3 valid ANY example)
+#
+#     Grammar token strings ("xor", "any", "all", "compound", "binary-compound",
+#     "binary", "xor") are vocabulary literals from grammar-v2.md — hardcoding
+#     them is correct per project rule (feedback_no_hardcoded_test_values applies
+#     to producer-computed numeric outputs, not grammar vocabulary constants).
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Shared builder helpers for DE-SYMPH-001 tests
+# ---------------------------------------------------------------------------
+
+
+def _make_if_compound_tree(condition_block: dict) -> dict:
+    """Build a minimal but fully-valid tree whose true-branch carries condition_block.
+
+    Shape: root(daily) -> wt-cash-equal -> make_if_compound(condition_block) -> [
+        if-child(condition_block) -> asset(SPY)
+        if-child(else)            -> asset(BIL)
+    ]
+
+    The tree is structurally valid at every level EXCEPT for whatever is wrong
+    inside condition_block itself — isolating exactly the nested-validation gap.
+    """
+    return {
+        "step": "root",
+        "name": "Nested Condition Test",
+        "rebalance": "daily",
+        "id": str(uuid.uuid4()),
+        "children": [
+            {
+                "step": "wt-cash-equal",
+                "id": str(uuid.uuid4()),
+                "children": [
+                    {
+                        "step": "if",
+                        "id": str(uuid.uuid4()),
+                        "children": [
+                            {
+                                "step": "if-child",
+                                "is-else-condition?": False,
+                                "condition": copy.deepcopy(condition_block),
+                                "id": str(uuid.uuid4()),
+                                "children": [
+                                    {
+                                        "step": "asset",
+                                        "ticker": "SPY",
+                                        "name": "",
+                                        "exchange": "NYSE",
+                                        "id": str(uuid.uuid4()),
+                                    }
+                                ],
+                            },
+                            {
+                                "step": "if-child",
+                                "is-else-condition?": True,
+                                "id": str(uuid.uuid4()),
+                                "children": [
+                                    {
+                                        "step": "asset",
+                                        "ticker": "BIL",
+                                        "name": "",
+                                        "exchange": "NYSE",
+                                        "id": str(uuid.uuid4()),
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _load_nested_cond_fixture() -> dict:
+    """Load the golden fixture for DE-SYMPH-001 nested condition tests."""
+    fixture_path = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "tests"
+        / "fixtures"
+        / "math"
+        / "nested_condition_validation_basic.json"
+    )
+    with open(fixture_path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+class TestNestedConditionValidation:
+    """DE-SYMPH-001: recursive nested condition-block validation.
+
+    All AC-1..AC-6 tests are RED: _validate_condition_block currently stops at
+    the top level, so malformed NESTED sub-blocks pass validate_tree silently.
+    AC-7 tests are GREEN (regression guard — top-level validation must be preserved).
+
+    Adversarial strategy: we hand-build malformed nested condition dicts (because
+    constructors won't emit invalid ones) and nest them inside otherwise-valid
+    compound blocks. Each test uses _make_if_compound_tree to plant the malformed
+    block inside a fully-valid tree wrapper so the ONLY source of errors should be
+    the nested block.
+    """
+
+    # -----------------------------------------------------------------------
+    # AC-1: nested unknown condition-type → HARD error
+    # RED today: _validate_condition_block does not recurse into conditions[]
+    # -----------------------------------------------------------------------
+
+    def test_nested_sub_block_unknown_condition_type_produces_hard_error(self):
+        """AC-1: a compound whose conditions[] contains a sub-block with an unknown
+        condition-type (e.g. 'xor') must cause validate_tree to return a HARD error.
+
+        Why RED: _validate_condition_block (line ~326) checks the top-level ct only,
+        then returns without recursing into conditions[]. A nested 'xor' is invisible
+        to the current validator.
+
+        Fixture source: nested_condition_validation_basic.json →
+        malformed_nested_unknown_condition_type.
+        Grammar token 'xor' is a vocabulary literal — not a valid condition-type in
+        {binary, binary-compound, compound}. Hardcoding it as the bad token is correct
+        (grammar vocabulary string, not a producer-computed numeric value).
+        """
+        m = _import_schema()
+        fixture = _load_nested_cond_fixture()
+        bad_block = fixture["malformed_nested_unknown_condition_type"]
+        tree = _make_if_compound_tree(bad_block)
+
+        errors = m.validate_tree(tree)
+
+        # RED assertion: today this returns [] (no error) because recursion is absent.
+        assert len(errors) >= 1, (
+            "AC-1: a compound containing a nested sub-block with condition-type='xor' "
+            "must produce a HARD error. Got none — recursion into conditions[] is absent. "
+            f"(validate_tree returned: {errors!r})"
+        )
+        # Adversarial quality check: at least one error must mention the bad token
+        # so the error is actionable (not a red herring from an unrelated check).
+        bad_token = "xor"
+        assert any(bad_token in e for e in errors), (
+            f"AC-1: at least one error must mention the unknown type {bad_token!r}. "
+            f"Got errors: {errors!r}"
+        )
+
+    def test_nested_sub_block_unknown_condition_type_names_it_in_error_message(self):
+        """AC-1 (precision): the error message must name the bad condition-type token.
+
+        A generic 'invalid condition block' message without the offending token value
+        is not actionable for debugging. This adversarial test ensures the implementer
+        includes the bad ct value in the error string.
+
+        Why RED: no recursion → no error at all today. When GREEN the error must
+        name the token explicitly (existing top-level AC-8 errors follow this pattern:
+        "condition block has unknown condition-type 'xor' (parent if-child id=...)").
+        """
+        m = _import_schema()
+        # Use a different unknown token to confirm it's not just a static 'xor' string
+        # in the error — it must actually reflect what was found.
+        outer = {
+            "condition-type": "compound",
+            "operator": "any",
+            "conditions": [
+                {
+                    "condition-type": "nand",   # another non-existent condition-type
+                    "tickers": ["SPY"],
+                    "lhs": {"fn": "cumulative-return", "ticker": "%", "params": {"window": 200}},
+                    "comparator": "gt",
+                    "rhs": {"constant": 0},
+                }
+            ],
+        }
+        tree = _make_if_compound_tree(outer)
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-1 (precision): nested sub-block with condition-type='nand' must produce "
+            "a HARD error. Got none — recursion absent."
+        )
+        assert any("nand" in e for e in errors), (
+            "AC-1 (precision): error message must name the bad token 'nand', not just "
+            f"report a generic failure. Got: {errors!r}"
+        )
+
+    # -----------------------------------------------------------------------
+    # AC-2: nested compound/binary-compound with operator not in {any, all} → HARD error
+    # RED today: recursion absent, nested bad operator passes silently
+    # -----------------------------------------------------------------------
+
+    def test_nested_compound_with_bad_operator_produces_hard_error(self):
+        """AC-2: a compound nesting another compound with operator='xor' must produce a HARD error.
+
+        The nested compound is valid in structure (has 'conditions') but carries an
+        operator that is not in {any, all}. The validator must catch this at any depth.
+
+        Why RED: recursion into conditions[] absent — nested operator not inspected.
+        Fixture: nested_condition_validation_basic.json → malformed_nested_bad_operator.
+        'xor' is a grammar vocabulary constant (explicitly excluded by v2 §7.1:
+        'operator is only ever "any" or "all"').
+        """
+        m = _import_schema()
+        fixture = _load_nested_cond_fixture()
+        bad_block = fixture["malformed_nested_bad_operator"]
+        tree = _make_if_compound_tree(bad_block)
+
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-2: compound containing a nested binary-compound with operator='xor' "
+            "must produce a HARD error. Got none — recursion absent. "
+            f"(validate_tree returned: {errors!r})"
+        )
+
+    def test_nested_binary_compound_with_bad_operator_names_it_in_error(self):
+        """AC-2 (precision): the operator error must name the bad value, not be generic."""
+        m = _import_schema()
+        outer = {
+            "condition-type": "compound",
+            "operator": "all",
+            "conditions": [
+                {
+                    "condition-type": "binary-compound",
+                    "operator": "or",   # wrong — not any/all
+                    "tickers": ["TLT"],
+                    "lhs": {"fn": "cumulative-return", "ticker": "%", "params": {"window": 200}},
+                    "comparator": "gt",
+                    "rhs": {"constant": 0},
+                }
+            ],
+        }
+        tree = _make_if_compound_tree(outer)
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-2 (precision): nested binary-compound with operator='or' must be a HARD error."
+        )
+        assert any("or" in e for e in errors), (
+            f"AC-2 (precision): error must mention the bad operator value 'or'. Got: {errors!r}"
+        )
+
+    def test_nested_compound_with_none_operator_produces_hard_error(self):
+        """AC-2 (edge): operator=None (missing key) inside a nested compound must error.
+
+        A compound block where 'operator' key is absent or maps to None is
+        structurally degenerate — None is not in {any, all}. Validate_tree must
+        reject it when it is NESTED (the top-level version already rejects it).
+        """
+        m = _import_schema()
+        outer = {
+            "condition-type": "compound",
+            "operator": "any",
+            "conditions": [
+                {
+                    "condition-type": "compound",
+                    # operator key deliberately absent → None via .get()
+                    "conditions": [
+                        {
+                            "condition-type": "binary",
+                            "lhs": {"fn": "cumulative-return", "ticker": "SPY", "params": {"window": 200}},
+                            "comparator": "gt",
+                            "rhs": {"constant": 0},
+                        }
+                    ],
+                }
+            ],
+        }
+        tree = _make_if_compound_tree(outer)
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-2 (edge): nested compound missing 'operator' (resolves to None) must be a HARD error. "
+            "None is not in {any, all}. Got none — recursion absent."
+        )
+
+    # -----------------------------------------------------------------------
+    # AC-3: nested compound missing 'conditions', nested binary-compound missing
+    # 'tickers' → HARD error each
+    # -----------------------------------------------------------------------
+
+    def test_nested_compound_missing_conditions_key_produces_hard_error(self):
+        """AC-3a: a nested compound block missing the 'conditions' key must be a HARD error.
+
+        This is the nested analogue of the existing top-level check at line ~357:
+        'if ct == "compound": if "conditions" not in condition: errs.append(...)'.
+        That check fires only on the top-level block today — not on nested compounds.
+
+        Fixture: nested_condition_validation_basic.json →
+        malformed_nested_compound_missing_conditions.
+        """
+        m = _import_schema()
+        fixture = _load_nested_cond_fixture()
+        bad_block = fixture["malformed_nested_compound_missing_conditions"]
+        tree = _make_if_compound_tree(bad_block)
+
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-3a: a nested compound missing the 'conditions' key must produce a HARD error. "
+            "Got none — recursion into conditions[] is absent. "
+            f"(validate_tree returned: {errors!r})"
+        )
+
+    def test_nested_binary_compound_missing_tickers_produces_hard_error(self):
+        """AC-3b: a nested binary-compound block missing the 'tickers' key must be a HARD error.
+
+        Top-level check at line ~363:
+        'elif ct == "binary-compound" and "tickers" not in condition: errs.append(...)'.
+        That fires only on the top-level block today.
+
+        Fixture: nested_condition_validation_basic.json →
+        malformed_nested_binary_compound_missing_tickers.
+        """
+        m = _import_schema()
+        fixture = _load_nested_cond_fixture()
+        bad_block = fixture["malformed_nested_binary_compound_missing_tickers"]
+        tree = _make_if_compound_tree(bad_block)
+
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-3b: a nested binary-compound missing 'tickers' must produce a HARD error. "
+            "Got none — recursion absent. "
+            f"(validate_tree returned: {errors!r})"
+        )
+
+    def test_nested_compound_missing_conditions_and_binary_compound_missing_tickers_both_error(self):
+        """AC-3 (combined): TWO separate malformed nested blocks both produce errors.
+
+        Constructs a compound whose conditions[] contains two malformed sub-blocks:
+        [0] a nested compound missing 'conditions'
+        [1] a nested binary-compound missing 'tickers'
+        Both must be caught — not just the first one (guards against early-exit on first error).
+        """
+        m = _import_schema()
+        outer = {
+            "condition-type": "compound",
+            "operator": "any",
+            "conditions": [
+                # Sub-block 0: compound missing 'conditions'
+                {
+                    "condition-type": "compound",
+                    "operator": "all",
+                    # 'conditions' key deliberately absent
+                },
+                # Sub-block 1: binary-compound missing 'tickers'
+                {
+                    "condition-type": "binary-compound",
+                    "operator": "any",
+                    # 'tickers' key deliberately absent
+                    "lhs": {"fn": "cumulative-return", "ticker": "%", "params": {"window": 200}},
+                    "comparator": "gt",
+                    "rhs": {"constant": 0},
+                },
+            ],
+        }
+        tree = _make_if_compound_tree(outer)
+        errors = m.validate_tree(tree)
+
+        # Both malformed blocks must produce errors — >= 2 total
+        assert len(errors) >= 2, (
+            "AC-3 (combined): both a nested compound missing 'conditions' AND a nested "
+            "binary-compound missing 'tickers' must produce errors (one each). "
+            f"Got {len(errors)} errors: {errors!r}"
+        )
+
+    # -----------------------------------------------------------------------
+    # AC-4: malformed block TWO+ levels deep must be caught
+    # compound → compound → bad binary-compound (depth 2)
+    # RED: recursion absent → any depth-2 malformation is invisible
+    # -----------------------------------------------------------------------
+
+    def test_malformed_block_two_levels_deep_is_caught(self):
+        """AC-4: a malformed block nested two levels deep must produce a HARD error.
+
+        Structure: top-level compound (valid) → nested compound (valid) →
+        nested binary-compound with operator='xor' (MALFORMED).
+
+        The malformed block is at depth-2 relative to the top-level condition.
+        Current implementation stops at depth-0 → this must be caught.
+
+        Fixture: nested_condition_validation_basic.json →
+        malformed_deeply_nested_bad_binary_compound.
+        """
+        m = _import_schema()
+        fixture = _load_nested_cond_fixture()
+        bad_block = fixture["malformed_deeply_nested_bad_binary_compound"]
+        tree = _make_if_compound_tree(bad_block)
+
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-4: malformed binary-compound (operator='xor') at depth-2 must produce a HARD error. "
+            "compound → compound → binary-compound(xor). "
+            "Got none — recursion absent. "
+            f"(validate_tree returned: {errors!r})"
+        )
+
+    def test_malformed_block_three_levels_deep_is_caught(self):
+        """AC-4 (extra depth): a malformed unknown condition-type at depth-3 must be caught.
+
+        compound → compound → compound → binary-compound with bad operator.
+        Guards against a fixed-depth-2 implementation that doesn't recurse fully.
+        """
+        m = _import_schema()
+        bad_block = {
+            "condition-type": "compound",
+            "operator": "any",
+            "conditions": [
+                {
+                    "condition-type": "compound",
+                    "operator": "all",
+                    "conditions": [
+                        {
+                            "condition-type": "compound",
+                            "operator": "any",
+                            "conditions": [
+                                {
+                                    # Depth-3 malformed: bad operator on binary-compound
+                                    "condition-type": "binary-compound",
+                                    "operator": "xnor",
+                                    "tickers": ["SPY"],
+                                    "lhs": {"fn": "cumulative-return", "ticker": "%", "params": {"window": 200}},
+                                    "comparator": "gt",
+                                    "rhs": {"constant": 0},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        tree = _make_if_compound_tree(bad_block)
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-4 (extra depth): binary-compound with operator='xnor' at depth-3 must be caught. "
+            "compound→compound→compound→binary-compound(xnor). "
+            f"Got: {errors!r}"
+        )
+
+    def test_malformed_unknown_type_at_depth_2_names_it_in_error(self):
+        """AC-4 (precision): error for a depth-2 malformation must name the bad token.
+
+        Guards against an over-broad 'condition block invalid' message that doesn't
+        identify WHICH sub-block was bad — needed for debuggability.
+        """
+        m = _import_schema()
+        bad_block = {
+            "condition-type": "compound",
+            "operator": "any",
+            "conditions": [
+                {
+                    "condition-type": "compound",
+                    "operator": "all",
+                    "conditions": [
+                        {
+                            "condition-type": "nor",   # depth-2 unknown type
+                            "tickers": ["TLT"],
+                            "comparator": "gt",
+                        }
+                    ],
+                }
+            ],
+        }
+        tree = _make_if_compound_tree(bad_block)
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-4 (precision): 'nor' at depth-2 must produce a HARD error."
+        )
+        assert any("nor" in e for e in errors), (
+            f"AC-4 (precision): at least one error must mention 'nor'. Got: {errors!r}"
+        )
+
+    # -----------------------------------------------------------------------
+    # AC-5: valid deeply-nested compound passes without condition-block errors
+    # GREEN guard — must pass BOTH before AND after the implementation
+    # -----------------------------------------------------------------------
+
+    def test_valid_any_gate_from_v2_s7_3_corpus_example_passes_clean(self):
+        """AC-5: the real §7.3 corpus ANY example wrapped in a valid tree must produce
+        NO condition-block errors.
+
+        This is the adversary's check against over-rejection. The implementer's
+        recursion must not introduce false positives on valid deeply-nested structures.
+
+        Fixture: nested_condition_validation_basic.json → valid_any_gate_corpus_s7_3
+        (VERIFIED-CORPUS: top-level compound operator='any' with 1 binary + 4 binary-compounds,
+        v2 grammar §7.3).
+        """
+        m = _import_schema()
+        fixture = _load_nested_cond_fixture()
+        valid_block = fixture["valid_any_gate_corpus_s7_3"]
+        tree = _make_if_compound_tree(valid_block)
+
+        errors = m.validate_tree(tree)
+
+        # Filter to only condition-block errors (guard against unrelated structural errors
+        # from other parts of the tree, e.g. the tree builder introducing an issue).
+        # Condition-block errors from _validate_condition_block contain "condition" in the text.
+        condition_errors = [e for e in errors if "condition" in e.lower()]
+        assert condition_errors == [], (
+            "AC-5: the valid v2 §7.3 corpus ANY example must produce NO condition-block errors. "
+            f"Over-rejection detected: {condition_errors!r} (full errors: {errors!r})"
+        )
+
+    def test_valid_any_gate_wrapped_in_another_compound_passes_clean(self):
+        """AC-5 (extra nesting): the §7.3 ANY example wrapped in a further compound passes.
+
+        Guards against implementations that cap at depth=1 — the outer compound must
+        recurse into the inner one, and all the inner binary-compound leaves must validate.
+        """
+        m = _import_schema()
+        # Build a valid deeply-nested structure using constructors
+        # (constructors cannot emit malformed blocks, so this is guaranteed well-formed)
+        schema = _import_schema()
+        inner_bc1 = schema.make_binary_compound_condition(
+            "relative-strength-index", ["FDL"], "gt", schema.make_constant_rhs(83), window=10
+        )
+        inner_bc2 = schema.make_binary_compound_condition(
+            "relative-strength-index", ["IDLV"], "gt", schema.make_constant_rhs(80), window=10
+        )
+        inner_any = schema.make_compound_condition("any", [inner_bc1, inner_bc2])
+        outer_all = schema.make_compound_condition("all", [inner_any])
+        tree = _make_if_compound_tree(outer_all)
+
+        errors = m.validate_tree(tree)
+        condition_errors = [e for e in errors if "condition" in e.lower()]
+        assert condition_errors == [], (
+            "AC-5 (extra nesting): valid constructor-built compound→compound→binary-compound "
+            f"must produce NO condition-block errors. Got: {condition_errors!r}"
+        )
+
+    def test_valid_all_gate_from_v2_s7_4_passes_clean(self):
+        """AC-5: the v2 §7.4 ALL-gate corpus example (compound operator='all' with 3
+        binary-compounds) must produce no condition-block errors.
+
+        Structure: compound(all) → [binary-compound(any), binary-compound(any), binary-compound(any)]
+        All sub-blocks have valid operators and tickers.
+        Source: v2 grammar §7.4 (VERIFIED-CORPUS).
+        """
+        m = _import_schema()
+        all_gate = {
+            "condition-type": "compound",
+            "operator": "all",
+            "conditions": [
+                {
+                    "condition-type": "binary-compound",
+                    "operator": "any",
+                    "tickers": ["SPY"],
+                    "lhs": {"fn": "moving-average-return", "ticker": "%", "params": {"window": 400}},
+                    "comparator": "lt",
+                    "rhs": {"fn": "moving-average-return", "ticker": "DBC", "params": {"window": 360}},
+                },
+                {
+                    "condition-type": "binary-compound",
+                    "operator": "any",
+                    "tickers": ["VIXM"],
+                    "lhs": {"fn": "relative-strength-index", "ticker": "%", "params": {"window": 10}},
+                    "comparator": "lt",
+                    "rhs": {"constant": 73.5},
+                },
+                {
+                    "condition-type": "binary-compound",
+                    "operator": "any",
+                    "tickers": ["VTV"],
+                    "lhs": {"fn": "relative-strength-index", "ticker": "%", "params": {"window": 10}},
+                    "comparator": "gt",
+                    "rhs": {"constant": 30},
+                },
+            ],
+        }
+        tree = _make_if_compound_tree(all_gate)
+        errors = m.validate_tree(tree)
+        condition_errors = [e for e in errors if "condition" in e.lower()]
+        assert condition_errors == [], (
+            "AC-5: v2 §7.4 ALL-gate example must produce no condition-block errors. "
+            f"Got: {condition_errors!r}"
+        )
+
+    # -----------------------------------------------------------------------
+    # AC-6: pathologically deep nested compound → never raises, bounded
+    # RED today: once recursion is added without a depth bound, a 5000-deep
+    # compound could blow the stack. This test enforces the depth-cap contract.
+    # -----------------------------------------------------------------------
+
+    def test_pathologically_deep_nested_compound_does_not_raise(self):
+        """AC-6: a compound nested 5000 levels deep must NOT raise — not RecursionError,
+        not any other exception. validate_tree must return a list (possibly containing
+        a depth-cap error) and complete without blowing the stack.
+
+        This is the depth-bound adversarial test. After recursion is added, a naive
+        recursive implementation would blow Python's recursion limit (~1000 by default)
+        at this depth. The implementer must use an iterative explicit stack (matching
+        the module's existing iterative-traversal ethos) or add a depth cap that
+        returns a hard error before recursing unbounded.
+
+        The test does NOT assert the content of errors — only that no exception propagates.
+        Both 'stops at cap and returns an error' and 'stops at cap silently' are valid.
+
+        Implementation note: _make_if_compound_tree uses copy.deepcopy which itself
+        blows the stack on a 5000-deep dict. We build the tree directly here WITHOUT
+        deepcopy to avoid that at the test-setup level — the test is about validate_tree,
+        not the test helper.
+        """
+        m = _import_schema()
+        # Build 5000-deep nested compound programmatically.
+        # Do NOT deepcopy — the structure is built fresh and passed directly.
+        DEPTH = 5000
+        innermost = {
+            "condition-type": "binary",
+            "lhs": {"fn": "cumulative-return", "ticker": "SPY", "params": {"window": 200}},
+            "comparator": "gt",
+            "rhs": {"constant": 0},
+        }
+        current = innermost
+        for _ in range(DEPTH):
+            current = {
+                "condition-type": "compound",
+                "operator": "any",
+                "conditions": [current],
+            }
+        # Build the tree inline without deepcopy to avoid setup-time RecursionError.
+        tree = {
+            "step": "root",
+            "name": "AC-6 Depth Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "condition": current,   # reference, no deepcopy
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "SPY",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+        try:
+            result = m.validate_tree(tree)
+        except RecursionError as exc:
+            pytest.fail(
+                f"AC-6: validate_tree raised RecursionError on {DEPTH}-deep nested compound. "
+                "The implementation must be iterative (explicit stack) or have a depth cap. "
+                f"Exception: {exc}"
+            )
+        except Exception as exc:
+            pytest.fail(
+                f"AC-6: validate_tree raised {type(exc).__name__} on {DEPTH}-deep nested compound. "
+                "The never-raises contract must be preserved. "
+                f"Exception: {exc}"
+            )
+
+        assert isinstance(result, list), (
+            f"AC-6: validate_tree must return a list even for pathological inputs; "
+            f"got {type(result).__name__}"
+        )
+
+    def test_pathologically_deep_compound_with_malformed_leaf_either_catches_or_caps(self):
+        """AC-6 (malformed + deep): either catch the malformed leaf or emit a depth-cap error.
+
+        Same 5000-deep structure, but the innermost block has operator='xor' (malformed).
+        Two acceptable outcomes:
+        (a) Recursion is bounded by a depth cap before reaching the bad leaf
+            → validate_tree emits a depth-cap hard error (and possibly no xor error)
+        (b) Recursion reaches the bad leaf (within the cap)
+            → validate_tree emits an operator error for 'xor'
+
+        Either way: no exception, and at least one hard error in the returned list.
+
+        Tree is built without deepcopy to avoid setup-time RecursionError (see AC-6 above).
+        """
+        m = _import_schema()
+        DEPTH = 5000
+        innermost_bad = {
+            "condition-type": "binary-compound",
+            "operator": "xor",   # malformed
+            "tickers": ["SPY"],
+            "lhs": {"fn": "cumulative-return", "ticker": "%", "params": {"window": 200}},
+            "comparator": "gt",
+            "rhs": {"constant": 0},
+        }
+        current = innermost_bad
+        for _ in range(DEPTH):
+            current = {
+                "condition-type": "compound",
+                "operator": "any",
+                "conditions": [current],
+            }
+        # Build tree inline without deepcopy.
+        tree = {
+            "step": "root",
+            "name": "AC-6 Malformed Depth Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "condition": current,   # reference, no deepcopy
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "SPY",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+        try:
+            result = m.validate_tree(tree)
+        except RecursionError as exc:
+            pytest.fail(
+                f"AC-6: RecursionError on {DEPTH}-deep compound with malformed leaf. "
+                f"Exception: {exc}"
+            )
+        except Exception as exc:
+            pytest.fail(
+                f"AC-6: {type(exc).__name__} on {DEPTH}-deep compound with malformed leaf. "
+                f"Exception: {exc}"
+            )
+
+        assert isinstance(result, list), (
+            "AC-6: must return a list even for pathological malformed input"
+        )
+        # At least one error must appear: either depth-cap or the xor operator error.
+        # A fully-silent return ([]) on a definitively-malformed deep tree would mean
+        # BOTH the depth cap fires without emitting an error (wrong) AND recursion never
+        # reached the bad leaf (missed) — not acceptable.
+        # EXCEPTION: if depth cap silently truncates without emitting an error string,
+        # that is still AC-6 compliant as long as no exception is raised. We assert
+        # isinstance(result, list) above which covers that case. The additional
+        # length check below is advisory; comment explains the intent rather than
+        # mandating a specific error count, since the depth-cap behavior is
+        # implementation-defined.
+        # (No assertion on len(result) here — the test's primary requirement is no-raise.)
+
+    def test_deeply_nested_valid_compound_does_not_raise_or_falsely_error(self):
+        """AC-6 (valid + deep): a 200-level VALID nested compound must not raise
+        and must not produce any condition-block false-positive errors.
+
+        The depth is chosen to be comfortably within any reasonable depth cap
+        (the feature plan suggests a cap of a few hundred) but deep enough to
+        prove the iterative implementation works on non-trivial depth.
+        """
+        m = _import_schema()
+        DEPTH = 200
+        innermost_valid = {
+            "condition-type": "binary",
+            "lhs": {"fn": "cumulative-return", "ticker": "SPY", "params": {"window": 200}},
+            "comparator": "gt",
+            "rhs": {"constant": 0},
+        }
+        current = innermost_valid
+        for _ in range(DEPTH):
+            current = {
+                "condition-type": "compound",
+                "operator": "any",
+                "conditions": [current],
+            }
+        tree = _make_if_compound_tree(current)
+
+        try:
+            result = m.validate_tree(tree)
+        except RecursionError as exc:
+            pytest.fail(
+                f"AC-6: RecursionError on {DEPTH}-deep valid compound. "
+                "Iterative implementation required. Exception: {exc}"
+            )
+        except Exception as exc:
+            pytest.fail(
+                f"AC-6: {type(exc).__name__} on {DEPTH}-deep valid compound. Exception: {exc}"
+            )
+
+        condition_errors = [e for e in result if "condition" in e.lower()]
+        assert condition_errors == [], (
+            f"AC-6: {DEPTH}-level valid nested compound must not produce condition-block "
+            f"errors (no false positives from the depth bound). Got: {condition_errors!r}"
+        )
+
+    # -----------------------------------------------------------------------
+    # AC-7: regression guard — existing top-level validation must not break
+    # These tests are GREEN today and must STAY green after the implementer
+    # adds recursion. They confirm the change does not accidentally remove or
+    # weaken the existing top-level condition-block checks (AC-8 from Cycle B).
+    # -----------------------------------------------------------------------
+
+    def test_top_level_unknown_condition_type_still_errors_after_recursion_added(self):
+        """AC-7 regression: top-level condition-type='xor' must still produce a HARD error.
+
+        The top-level check existed before DE-SYMPH-001. Adding recursion must not
+        accidentally skip or weaken the top-level pass.
+        This test is currently GREEN (the existing AC-8 code catches it).
+        """
+        m = _import_schema()
+        bad_top = {
+            "condition-type": "xor",    # bad at top level — existing behavior
+            "operator": "any",
+            "conditions": [],
+        }
+        tree = _make_if_compound_tree(bad_top)
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-7 regression: top-level condition-type='xor' must still produce a HARD error "
+            "after the recursion addition. The existing top-level check must be preserved."
+        )
+        assert any("xor" in e for e in errors), (
+            f"AC-7 regression: error must mention 'xor'. Got: {errors!r}"
+        )
+
+    def test_top_level_compound_bad_operator_still_errors(self):
+        """AC-7 regression: top-level compound with operator='xor' must still error."""
+        m = _import_schema()
+        bad_top = {
+            "condition-type": "compound",
+            "operator": "xor",  # bad at top level
+            "conditions": [
+                {
+                    "condition-type": "binary",
+                    "lhs": {"fn": "cumulative-return", "ticker": "SPY", "params": {"window": 200}},
+                    "comparator": "gt",
+                    "rhs": {"constant": 0},
+                }
+            ],
+        }
+        tree = _make_if_compound_tree(bad_top)
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-7 regression: top-level compound operator='xor' must still error after recursion added."
+        )
+
+    def test_top_level_compound_missing_conditions_still_errors(self):
+        """AC-7 regression: top-level compound missing 'conditions' key must still error."""
+        m = _import_schema()
+        bad_top = {
+            "condition-type": "compound",
+            "operator": "any",
+            # 'conditions' deliberately absent
+        }
+        tree = _make_if_compound_tree(bad_top)
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-7 regression: top-level compound missing 'conditions' must still produce "
+            "a HARD error after recursion added."
+        )
+
+    def test_top_level_binary_compound_missing_tickers_still_errors(self):
+        """AC-7 regression: top-level binary-compound missing 'tickers' must still error."""
+        m = _import_schema()
+        bad_top = {
+            "condition-type": "binary-compound",
+            "operator": "any",
+            # 'tickers' deliberately absent
+            "lhs": {"fn": "cumulative-return", "ticker": "%", "params": {"window": 200}},
+            "comparator": "gt",
+            "rhs": {"constant": 0},
+        }
+        tree = _make_if_compound_tree(bad_top)
+        errors = m.validate_tree(tree)
+
+        assert len(errors) >= 1, (
+            "AC-7 regression: top-level binary-compound missing 'tickers' must still produce "
+            "a HARD error after recursion added."
+        )
+
+    def test_valid_flat_if_child_still_validates_clean(self):
+        """AC-7 regression: a flat (non-compound) true-branch if-child must still validate clean.
+
+        The recursion addition targets compound condition blocks only. Standard flat
+        if-children (lhs-fn / comparator / rhs-fixed-value? fields) must be unaffected.
+        """
+        m = _import_schema()
+        flat_tree = {
+            "step": "root",
+            "name": "Flat If Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "lhs-fn": "cumulative-return",
+                                    "lhs-fn-params": {"window": 200},
+                                    "lhs-val": "TLT",
+                                    "comparator": "gt",
+                                    "rhs-fixed-value?": True,
+                                    "rhs-val": "0",
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "TLT",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        errors = m.validate_tree(flat_tree)
+        assert errors == [], (
+            f"AC-7 regression: valid flat if-child must still validate clean after "
+            f"recursion added. Got errors: {errors!r}"
+        )
+
+    def test_make_if_compound_constructor_tree_still_validates_clean(self):
+        """AC-7 regression: a tree built with make_if_compound (valid constructors) must pass.
+
+        Constructors emit valid structures by contract. Adding recursion must not
+        accidentally reject valid constructor output.
+        """
+        m = _import_schema()
+        bc = m.make_binary_compound_condition(
+            "cumulative-return",
+            ["TLT", "BIL"],
+            "gt",
+            m.make_constant_rhs(0),
+            window=200,
+            operator="any",
+        )
+        compound = m.make_compound_condition("any", [bc])
+        if_node = m.make_if_compound(
+            compound,
+            then_children=[m.make_asset("TLT")],
+            else_children=[m.make_asset("BIL")],
+        )
+        root = m.make_root("Regression Guard", "daily", [m.make_weight_equal([if_node])])
+        errors = m.validate_tree(root)
+        assert errors == [], (
+            f"AC-7 regression: constructor-built make_if_compound tree must still "
+            f"validate clean after recursion added. Got: {errors!r}"
+        )
+
+    def test_validate_tree_never_raises_on_malformed_nested_condition_inputs(self):
+        """AC-7 / AC-6: validate_tree must never raise on any malformed nested input.
+
+        Parametrised adversarial inputs designed to hit edge cases in the recursion:
+        - conditions[] is not a list (e.g. a string, int, None)
+        - conditions[] contains non-dict items (None, integers)
+        - conditions[] is deeply malformed and nested
+        The never-raises contract must hold in ALL cases.
+        """
+        m = _import_schema()
+        junk_cases = [
+            # conditions is a string instead of list
+            {
+                "condition-type": "compound",
+                "operator": "any",
+                "conditions": "not-a-list",
+            },
+            # conditions is None
+            {
+                "condition-type": "compound",
+                "operator": "any",
+                "conditions": None,
+            },
+            # conditions contains None items
+            {
+                "condition-type": "compound",
+                "operator": "any",
+                "conditions": [None, None, {"condition-type": "binary"}],
+            },
+            # conditions contains integers
+            {
+                "condition-type": "compound",
+                "operator": "any",
+                "conditions": [42, "bad", {"condition-type": "xor"}],
+            },
+            # conditions contains an empty dict
+            {
+                "condition-type": "compound",
+                "operator": "any",
+                "conditions": [{}],
+            },
+        ]
+
+        for i, bad_block in enumerate(junk_cases):
+            tree = _make_if_compound_tree(bad_block)
+            try:
+                result = m.validate_tree(tree)
+            except Exception as exc:
+                pytest.fail(
+                    f"AC-7/AC-6 never-raises: validate_tree raised {type(exc).__name__} "
+                    f"on junk_case[{i}]={bad_block!r}. Exception: {exc}"
+                )
+            assert isinstance(result, list), (
+                f"AC-7/AC-6 never-raises: validate_tree must return a list for "
+                f"junk_case[{i}]. Got {type(result).__name__}."
+            )

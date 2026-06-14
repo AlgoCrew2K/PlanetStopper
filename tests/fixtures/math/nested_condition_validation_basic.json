@@ -1,0 +1,129 @@
+{
+  "_comment": "Golden fixture for DE-SYMPH-001 nested condition-block validation. Input shapes are hand-built malformed nested dicts (constructors cannot emit invalid ones). Expected outputs are HARD error markers — not exact strings, just non-empty list assertions. The valid_any_gate shape is the v2 grammar §7.3 corpus-verified real ANY example built with make_compound_condition / make_binary_compound_condition constructors.",
+  "valid_any_gate_corpus_s7_3": {
+    "_source": "feature-plans/strategy-builder-composer-grammar-v2.md §7.3 (VERIFIED-CORPUS) — top-level compound operator=any with 1 binary + 4 binary-compound sub-conditions",
+    "condition-type": "compound",
+    "operator": "any",
+    "conditions": [
+      {
+        "condition-type": "binary",
+        "lhs": {"fn": "relative-strength-index", "ticker": "EQUITIES::XLY//USD", "params": {"window": 10}},
+        "comparator": "gt",
+        "rhs": {"constant": 80}
+      },
+      {
+        "condition-type": "binary-compound",
+        "operator": "any",
+        "tickers": ["FDL"],
+        "lhs": {"fn": "relative-strength-index", "ticker": "%", "params": {"window": 10}},
+        "comparator": "gt",
+        "rhs": {"constant": 83}
+      },
+      {
+        "condition-type": "binary-compound",
+        "operator": "any",
+        "tickers": ["IDLV"],
+        "lhs": {"fn": "relative-strength-index", "ticker": "%", "params": {"window": 10}},
+        "comparator": "gt",
+        "rhs": {"constant": 80}
+      },
+      {
+        "condition-type": "binary-compound",
+        "operator": "any",
+        "tickers": ["RETL"],
+        "lhs": {"fn": "relative-strength-index", "ticker": "%", "params": {"window": 10}},
+        "comparator": "gt",
+        "rhs": {"constant": 86}
+      },
+      {
+        "condition-type": "binary-compound",
+        "operator": "any",
+        "tickers": ["XLE"],
+        "lhs": {"fn": "relative-strength-index", "ticker": "%", "params": {"window": 10}},
+        "comparator": "gt",
+        "rhs": {"constant": 89}
+      }
+    ]
+  },
+  "malformed_nested_unknown_condition_type": {
+    "_source": "Hand-built for AC-1: a valid compound top-level wrapping a sub-block with unknown condition-type 'xor'. Constructors cannot emit this — built manually to exercise the missing recursion in _validate_condition_block.",
+    "_expected": "validate_tree returns >= 1 HARD error mentioning 'xor'",
+    "condition-type": "compound",
+    "operator": "any",
+    "conditions": [
+      {
+        "condition-type": "xor",
+        "operator": "any",
+        "tickers": ["SPY"],
+        "lhs": {"fn": "cumulative-return", "ticker": "%", "params": {"window": 200}},
+        "comparator": "gt",
+        "rhs": {"constant": 0}
+      }
+    ]
+  },
+  "malformed_nested_bad_operator": {
+    "_source": "Hand-built for AC-2: valid compound top-level wrapping a nested binary-compound with operator='xor' (not any/all). Exercises the nested operator check.",
+    "_expected": "validate_tree returns >= 1 HARD error mentioning bad operator",
+    "condition-type": "compound",
+    "operator": "any",
+    "conditions": [
+      {
+        "condition-type": "binary-compound",
+        "operator": "xor",
+        "tickers": ["SPY"],
+        "lhs": {"fn": "cumulative-return", "ticker": "%", "params": {"window": 200}},
+        "comparator": "gt",
+        "rhs": {"constant": 0}
+      }
+    ]
+  },
+  "malformed_nested_compound_missing_conditions": {
+    "_source": "Hand-built for AC-3a: valid compound top-level wrapping a nested compound missing the 'conditions' key.",
+    "_expected": "validate_tree returns >= 1 HARD error mentioning missing conditions",
+    "condition-type": "compound",
+    "operator": "any",
+    "conditions": [
+      {
+        "condition-type": "compound",
+        "operator": "all"
+      }
+    ]
+  },
+  "malformed_nested_binary_compound_missing_tickers": {
+    "_source": "Hand-built for AC-3b: valid compound top-level wrapping a nested binary-compound missing the 'tickers' key.",
+    "_expected": "validate_tree returns >= 1 HARD error mentioning missing tickers",
+    "condition-type": "compound",
+    "operator": "any",
+    "conditions": [
+      {
+        "condition-type": "binary-compound",
+        "operator": "any",
+        "lhs": {"fn": "cumulative-return", "ticker": "%", "params": {"window": 200}},
+        "comparator": "gt",
+        "rhs": {"constant": 0}
+      }
+    ]
+  },
+  "malformed_deeply_nested_bad_binary_compound": {
+    "_source": "Hand-built for AC-4: compound -> compound -> binary-compound with operator='xor'. The malformed block is two levels deep — tests that recursion reaches depth-2.",
+    "_expected": "validate_tree returns >= 1 HARD error (catches the xor operator at depth 2)",
+    "condition-type": "compound",
+    "operator": "any",
+    "conditions": [
+      {
+        "condition-type": "compound",
+        "operator": "all",
+        "conditions": [
+          {
+            "condition-type": "binary-compound",
+            "operator": "xor",
+            "tickers": ["SPY"],
+            "lhs": {"fn": "cumulative-return", "ticker": "%", "params": {"window": 200}},
+            "comparator": "gt",
+            "rhs": {"constant": 0}
+          }
+        ]
+      }
+    ]
+  }
+}
