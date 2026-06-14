@@ -1,6 +1,6 @@
 # Planet Stopper -- Generated Module Reference Index
 
-**Last regenerated:** 2026-06-13 (cycle5-market-prism-surface — templates/ai_advisor.html Overview tab gains always-on Market Prism block; app.py ai_advisor_tab() prefetches get_latest_market_prism_summary(); 16 new tests AC-1..AC-6 GREEN)
+**Last regenerated:** 2026-06-14 (grammar-foundation — advisors/symphony_schema.py widened with gte/quarterly/yearly/6 indicator fns + 6 compound constructors + iterative compound-aware validate_tree; 210 AC-1..AC-12 tests GREEN)
 
 All pages in this directory are auto-generated from source. Do not hand-edit generated sections. Sections marked `<!-- manual -->` are preserved across regenerations.
 
@@ -10,6 +10,7 @@ All pages in this directory are auto-generated from source. Do not hand-edit gen
 
 | Module | File | Description | Last Updated |
 |--------|------|-------------|--------------|
+| `advisors/symphony_schema` | [advisors_symphony_schema.md](advisors_symphony_schema.md) | Pure-stdlib Composer decision-tree schema: 16 constructors (incl. 6 compound AC-4..AC-8), 4 read-only inspection fns (validate_tree / lint_tree / extract_tickers / render_rules_text), corpus-verified grammar vocabulary; iterative traversal, never-raises, deep-copy | 2026-06-14 |
 | `advisors/lens_pipeline` | [advisors_lens_pipeline.md](advisors_lens_pipeline.md) | Off-hours lens pipeline (daily 03:00): 4-pass orchestrator (per-lens isolation, citation validation, Claude synthesis, MARKET_PRISM persistence); always writes one MARKET_PRISM advisor_observation per run; never raises; lazy-imported by app.py scheduler | 2026-06-13 |
 | `advisors/asset_swap_engine` | [advisors_asset_swap_engine.md](advisors_asset_swap_engine.md) | Offline asset-swap proposal engine: objective-directed candidate generation with lens-informed ranking (Cycle-3), BHY-FDR gating, and audit-trail persistence — advise-only, never executes | 2026-06-13 |
 | `ai_advisor` | [ai_advisor.md](ai_advisor.md) | Claude-backed config advisor: context assembly, per-symphony assessment, structured-output Claude call, safety gates (7-item allowlist, risk-direction check, OOS re-validation), and Cycle-1 multi-lens scaffold (5 honest-availability stub lens blocks + citation convention) | 2026-06-10 |

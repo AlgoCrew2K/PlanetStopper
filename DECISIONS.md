@@ -4,6 +4,72 @@ This file records binding architectural decisions made during Planet Stopper dev
 
 ---
 
+## Grammar Foundation — symphony_schema Rebuild (2026-06-14)
+
+Cycle: `grammar-foundation` on branch `team/grammar-foundation`. 210/210 tests GREEN at `83f5623` (AC-1..AC-12). Merger pending PM merge gate.
+
+### DE-GRAM-001: OQ-2 reversal — `gte` is corpus-verified valid; added to KNOWN_COMPARATORS
+
+**Decision:** `gte` is added to `KNOWN_COMPARATORS`. The prior OQ-2 stance ("unconfirmed, exclude") is reversed.
+
+**Evidence:** `gte` appears n≈39,596 times across 10,441 real Composer symphonies in the grammar corpus. It is the third most frequent comparator in the dataset. Excluding it caused `validate_tree` to false-positive on real `/score` responses and blocked frontrunner-style strategies from passing schema validation.
+
+**Consequence:** Tests that asserted `gte` produces a hard error have been updated to assert it produces no error. The `KNOWN_COMPARATORS` frozenset now contains exactly `{gt, lt, gte, lte}`. `eq` and `neq` remain absent — zero corpus occurrences.
+
+**Status:** GREEN at `fc633d0`. Part of grammar-foundation cycle.
+
+---
+
+### DE-GRAM-002: `quarterly` and `yearly` rebalance cadences corpus-verified; added to KNOWN_REBALANCE
+
+**Decision:** `quarterly` (n≈58) and `yearly` (n≈27) are added to `KNOWN_REBALANCE`. Prior stance treated both as invalid.
+
+**Rationale:** Both appear in real symphony corpus data. Excluding them caused false-positive hard errors on real `/score` trees with non-standard rebalance cadences. The set now contains `{daily, none, weekly, monthly, quarterly, yearly}`. `hourly` remains absent (zero corpus occurrences) and is the canonical test value for "invalid rebalance".
+
+**Consequence:** Tests that used `"quarterly"` as the invalid-rebalance test value were updated to use `"hourly"`.
+
+**Status:** GREEN at `fc633d0`. Part of grammar-foundation cycle.
+
+---
+
+### DE-GRAM-003: 6 corpus-verified indicator fns added to KNOWN_INDICATOR_FNS
+
+**Decision:** `KNOWN_INDICATOR_FNS` is extended from 7 to 13 entries with the following corpus-verified additions:
+- `exponential-moving-average-price` (n≈45,816 — highest-frequency new fn)
+- `standard-deviation-price` (n≈5,572 — promoted from lint-only to verified)
+- `percentage-price-oscillator`
+- `percentage-price-oscillator-signal`
+- `upper-bollinger`
+- `lower-bollinger`
+
+**Rationale:** All 6 appear in the grammar corpus. The prior `KNOWN_INDICATOR_FNS` frozenset reflected only the 7 VERIFIED-LOCAL entries from the initial fixture set. The lint-only treatment of these fns meant real symphonies using them generated spurious warnings in `lint_tree`. They are now first-class known fns; `lint_tree` no longer warns on them.
+
+**Note:** `rsi` (abbreviation of `relative-strength-index`) remains absent — it is a lint-warned abbreviation, not a valid corpus token.
+
+**Status:** GREEN at `7f85791`. Part of grammar-foundation cycle.
+
+---
+
+### DE-GRAM-004: Compound condition grammar implemented — 6 constructors + iterative validate_tree extension
+
+**Decision:** The grammar §7 compound condition types (`binary`, `binary-compound`, `compound`) are fully implemented via 6 new constructors and an extended `validate_tree` that hard-errors on malformed compound blocks at any tree depth.
+
+**New constructors:**
+- `make_condition_operand(fn, ticker, *, window)` — grammar §7 operand shape `{fn, ticker, params:{window}}`
+- `make_constant_rhs(value)` — `{constant: value}` descriptor
+- `make_binary_condition(lhs_operand, comparator, rhs)` — binary leaf `condition-type="binary"`
+- `make_binary_compound_condition(fn, tickers, comparator, rhs, *, window, operator="any")` — frontrunner primitive; broadcasts one predicate over a tickers list with any/all semantics; lhs uses grammar `%` placeholder
+- `make_compound_condition(operator, conditions)` — joins N sub-conditions with any/all
+- `make_if_compound(condition_block, *, then_children, else_children)` — if node carrying a compound condition block directly on the true-branch if-child
+
+**Validation extension (`_validate_condition_block`):** Iterative DFS using an explicit `(cond, depth)` stack bounded by `MAX_CONDITION_DEPTH=400`. Hard errors: unknown `condition-type`, bad `operator`, missing `conditions` key on compound blocks, missing `tickers` key on binary-compound blocks. Absent `condition-type` (raw binary leaf) is tolerated. `RecursionError` is structurally impossible regardless of nesting depth.
+
+**`%` placeholder convention:** The binary-compound lhs operand uses `ticker="%"` as a grammar placeholder. `extract_tickers` explicitly excludes `%` from its results. The test reference walker does the same.
+
+**Status:** GREEN at `7f85791`. 210/210 tests pass. Part of grammar-foundation cycle.
+
+---
+
 ## Sprint 3 Close (2026-05-27)
 
 These decisions were made during Sprint 3 (port-level deprecation + AI Advisor) and its audit-fix pass.
