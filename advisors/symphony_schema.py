@@ -747,7 +747,15 @@ def _render_compound_condition_line(condition: dict, indent: str) -> str:
     if cond_type == "compound":
         gate = operator.upper() if operator else "ANY"
         sub_conds = condition.get("conditions") or []
-        return f"{indent}WHEN {gate}({len(sub_conds)} conditions)"
+        # Collect all real tickers from nested binary-compound sub-conditions so
+        # that render_rules_text mentions every ticker present in the tree (AC-9,
+        # golden fixture contract). Use the same iterative walk as extract_tickers.
+        all_tickers: set[str] = set()
+        _collect_condition_tickers(condition, all_tickers)
+        tickers_part = (
+            f" [{', '.join(sorted(all_tickers))}]" if all_tickers else ""
+        )
+        return f"{indent}WHEN {gate}({len(sub_conds)} conditions){tickers_part}"
     # binary leaf or unknown: render minimally
     lhs = condition.get("lhs") or {}
     fn = lhs.get("fn", "")

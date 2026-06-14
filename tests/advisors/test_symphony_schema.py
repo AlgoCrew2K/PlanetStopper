@@ -75,7 +75,18 @@ def _load_fixture(path: pathlib.Path) -> dict:
 
 
 def _ref_collect_tickers(node: Any, out: set[str] | None = None) -> set[str]:
-    """Iteratively gather all ticker strings from a raw tree node."""
+    """Iteratively gather all ticker strings from a raw tree node via children only.
+
+    This is the simple children-only reference walker — it collects the ``ticker``
+    field from every node reachable via ``children``.  It is intentionally simple
+    so ``render_rules_text`` tests can assert the rendered output mentions every
+    ticker the reference walker finds.
+
+    Note: ``extract_tickers`` may return additional tickers collected from
+    compound ``condition`` blocks (AC-9).  See
+    ``test_small_fixture_extract_tickers_is_superset_of_reference_walk`` for the
+    assertion that covers that invariant.
+    """
     if out is None:
         out = set()
     if not isinstance(node, dict):
@@ -169,11 +180,15 @@ class TestGoldenFixtureSmall:
         errors = m.validate_tree(raw_small)
         assert errors == [], f"Expected no hard errors on golden small fixture, got: {errors}"
 
-    def test_small_fixture_extract_tickers_matches_reference_walk(self, raw_small):
-        """extract_tickers must agree with the independent reference walker.
+    def test_small_fixture_extract_tickers_is_superset_of_reference_walk(self, raw_small):
+        """extract_tickers must contain every ticker the reference walker finds.
 
-        The expected set is derived from the fixture at test time — never
-        hardcoded — so if the fixture changes the test re-derives automatically.
+        The reference walker (children-only) is a lower bound — extract_tickers
+        must include at least those tickers.  AC-9 extends extract_tickers to
+        also collect real tickers from compound condition blocks, so the result
+        may be a strict superset of what the children-only walker finds.
+
+        The '%' placeholder must NOT appear in the result (AC-9 invariant).
         """
         m = _import_schema()
         expected = _ref_collect_tickers(raw_small)
@@ -181,7 +196,13 @@ class TestGoldenFixtureSmall:
         assert len(expected) > 0, "reference walker found no tickers in small fixture"
         result = m.extract_tickers(raw_small)
         assert isinstance(result, set), "extract_tickers must return a set"
-        assert result == expected
+        # extract_tickers must include everything the reference walker finds.
+        assert expected.issubset(result), (
+            f"extract_tickers is missing tickers that the reference walker found: "
+            f"{expected - result}"
+        )
+        # The '%' placeholder must never appear in the result (AC-9).
+        assert "%" not in result, "extract_tickers must not return the '%' placeholder"
 
     def test_small_fixture_render_rules_text_mentions_all_tickers(self, raw_small):
         """render_rules_text must mention every ticker present in the tree."""
@@ -231,14 +252,24 @@ class TestGoldenFixtureLarge:
         errors = m.validate_tree(raw_large)
         assert errors == [], f"Expected no hard errors on golden large fixture, got: {errors}"
 
-    def test_large_fixture_extract_tickers_matches_reference_walk(self, raw_large):
-        """extract_tickers on the large fixture must agree with the reference walker."""
+    def test_large_fixture_extract_tickers_is_superset_of_reference_walk(self, raw_large):
+        """extract_tickers on the large fixture must contain every reference-walker ticker.
+
+        Same invariant as the small fixture test: extract_tickers is a superset
+        of the children-only reference walker.  AC-9 compound condition tickers
+        may add additional real tickers beyond what the reference walker finds.
+        The '%' placeholder must not appear.
+        """
         m = _import_schema()
         expected = _ref_collect_tickers(raw_large)
         assert len(expected) > 0, "reference walker found no tickers in large fixture"
         result = m.extract_tickers(raw_large)
         assert isinstance(result, set)
-        assert result == expected
+        assert expected.issubset(result), (
+            f"extract_tickers is missing tickers the reference walker found: "
+            f"{expected - result}"
+        )
+        assert "%" not in result, "extract_tickers must not return the '%' placeholder"
 
     def test_large_fixture_render_rules_text_mentions_all_tickers(self, raw_large):
         """render_rules_text on the large fixture must mention every ticker."""
