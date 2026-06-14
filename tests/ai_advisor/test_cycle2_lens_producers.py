@@ -40,8 +40,10 @@ Test scope (this file):
      - Every source in the returned lens block passes build_citation validation.
      - Score-only / aggregate values that have no URL are NOT presented as sources.
 
-  6. Technicals + derivatives stubs UNCHANGED (Cycle 2 does not fill them):
-     - _build_technicals_section still returns available=False (cycle-1 stub).
+  6. Technicals graduated to a real producer in B2; derivatives stub unchanged:
+     - _build_technicals_section is a REAL producer (B2) — wired to
+       advisors.lens_technicals._fetch_technicals; returns available=True
+       when the producer succeeds (mocked; no live Alpaca call in tests).
      - _build_derivatives_section still returns available=False (cycle-1 stub).
 
   7. Property-based invariants (via hypothesis where available):
@@ -1028,23 +1030,65 @@ class TestD1ErrorContract:
 
 
 # ---------------------------------------------------------------------------
-# 5. Technicals + derivatives stubs UNCHANGED (Cycle 2 does not fill them)
+# 5. Technicals graduated to real producer in B2; derivatives stub unchanged
 # ---------------------------------------------------------------------------
 
 
-def test_technicals_stub_still_returns_available_false():
-    """_build_technicals_section is unchanged in Cycle 2 — still available=False.
+def test_technicals_is_now_a_real_producer():
+    """_build_technicals_section is a real producer (graduated in B2), not a stub.
 
-    Cycle 2 fills ONLY sentiment, fundamentals, macro.  Technicals is Cycle-2b.
-    FAILS if Cycle 2 accidentally breaks or changes the technicals stub.
+    B2 wired _build_technicals_section to advisors.lens_technicals._fetch_technicals.
+    This test mocks the producer to return available=True and asserts the section
+    surfaces that result — confirming the wiring is intact.
+
+    Mocking strategy: patch advisors.lens_technicals._fetch_technicals directly
+    (the function _build_technicals_section calls via lazy import).  No live
+    Alpaca fetch is made.
+
+    FAILS if:
+    - _build_technicals_section is an unconditional stub (available=False always)
+    - The section does not delegate to _fetch_technicals
+    - The section ignores the producer's available=True payload
     """
     import ai_advisor
 
-    block = ai_advisor._build_technicals_section()
+    # Build a minimal but structurally correct technicals payload — shape asserted,
+    # values are not producer-computed and thus not hardcoded as magic constants.
+    fake_technicals_payload = {
+        "available": True,
+        "ma_posture": {
+            "pct_above_50sma": 0.6,
+            "pct_above_200sma": 0.5,
+            "overall": "bullish",
+        },
+        "breadth": 0.6,
+        "momentum": {
+            "mean_20d_return": 0.01,
+            "direction": "positive",
+        },
+        "source": "alpaca/synthetic_history",
+    }
+
+    with patch("advisors.lens_technicals._fetch_technicals", return_value=fake_technicals_payload):
+        block = ai_advisor._build_technicals_section()
+
     _assert_lens_block_shape(block, "technicals")
-    assert block["available"] is False, (
-        "_build_technicals_section must remain available=False after Cycle 2. "
-        "Technicals is a Cycle-2b deliverable — do not fill it in Cycle 2."
+    assert block["available"] is True, (
+        "_build_technicals_section must surface available=True when the producer "
+        "returns available=True.  If this fails, technicals has regressed to the "
+        "old unconditional stub (which always returned available=False)."
+    )
+    assert block.get("payload") is not None, (
+        "_build_technicals_section with available=True must carry a non-None payload"
+    )
+    # Confirm the payload flows through from the producer (shape check — not magic values)
+    payload = block["payload"]
+    assert isinstance(payload, dict), (
+        "technicals payload must be a dict when available=True"
+    )
+    assert "available" in payload or "ma_posture" in payload, (
+        "technicals payload must contain at least one field from the producer "
+        "(e.g. 'ma_posture') — confirms the producer output is being forwarded"
     )
 
 
