@@ -750,20 +750,28 @@ class TestNeverRaisingD1Contract:
         )
 
     def test_d1_reason_is_exception_class_name_only(self, module_under_test):
-        """reason must be exactly type(exc).__name__ — nothing more, nothing less."""
+        """reason must be exactly type(exc).__name__ — nothing more, nothing less.
+
+        The side_effect is an exception instance (not a zero-arg callable) so
+        unittest.mock raises it directly without forwarding call args, which
+        would cause a TypeError masking the real exception type.
+        """
         class _FakeMongoPymongoError(ConnectionError):
             pass
 
-        def _raise():
-            raise _FakeMongoPymongoError("mongodb+srv://user:password@cluster.example.com")
+        # Use an exception INSTANCE as side_effect so mock raises it directly,
+        # without forwarding the (collection_name, fetch_fn, ...) call arguments.
+        exc_instance = _FakeMongoPymongoError(
+            "mongodb+srv://user:password@cluster.example.com"
+        )
 
-        with patch("advisors.atlas_cache.cached_pull", side_effect=_raise):
+        with patch("advisors.atlas_cache.cached_pull", side_effect=exc_instance):
             mod = importlib.reload(module_under_test)
             result = mod.load_community_strategies()
 
         assert result["available"] is False
         reason = result.get("reason", "")
-        # Must be the class name exactly.
+        # Must be the class name exactly — type(exc).__name__ of the raised exception.
         assert reason == "_FakeMongoPymongoError", (
             f"expected reason='_FakeMongoPymongoError'; got {reason!r}"
         )
@@ -774,11 +782,10 @@ class TestNeverRaisingD1Contract:
         fake_uri = "mongodb+srv://admin:secret@cluster.mongodb.net/db"
         monkeypatch.setenv("MONGO_URI", fake_uri)
 
-        def _raise():
-            uri = os.environ.get("MONGO_URI", "")
-            raise ConnectionError(f"Failed to connect to {uri}")
+        # Use exception instances as side_effect to avoid TypeError from arg forwarding.
+        exc = ConnectionError(f"Failed to connect to {fake_uri}")
 
-        with patch("advisors.atlas_cache.cached_pull", side_effect=_raise):
+        with patch("advisors.atlas_cache.cached_pull", side_effect=exc):
             mod = importlib.reload(module_under_test)
             result = mod.load_community_strategies()
 
@@ -794,10 +801,10 @@ class TestNeverRaisingD1Contract:
         """Exception messages containing connection hostnames must not propagate."""
         monkeypatch.setenv("MONGO_URI", "mongodb+srv://u:p@myhost.example.com/db")
 
-        def _raise():
-            raise OSError("Connection refused: myhost.example.com:27017")
+        # Use exception instance as side_effect to avoid TypeError from arg forwarding.
+        exc = OSError("Connection refused: myhost.example.com:27017")
 
-        with patch("advisors.atlas_cache.cached_pull", side_effect=_raise):
+        with patch("advisors.atlas_cache.cached_pull", side_effect=exc):
             mod = importlib.reload(module_under_test)
             result = mod.load_community_strategies()
 
@@ -1047,3 +1054,229 @@ class TestProjection:
             assert field in projection, (
                 f"projection must include required field {field!r} — AC-9"
             )
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage from integration-specialist audit (S1-C, S2-B additions)
+# ---------------------------------------------------------------------------
+
+
+class TestSignatureAndPlumbing:
+    """S1-C: force_refresh is a keyword-only param and propagates to cached_pull."""
+
+    def test_load_community_strategies_accepts_force_refresh_kwarg(self):
+        """load_community_strategies must accept force_refresh as a keyword-only
+        parameter. Inspect the signature to catch a missing parameter before
+        any test even calls the function."""
+        import inspect
+        import pathlib
+
+        # Import the module under test (stub or real).
+        if "advisors.community_strats" in sys.modules:
+            mod = sys.modules["advisors.community_strats"]
+        else:
+            mod = importlib.import_module("advisors.community_strats")
+
+        sig = inspect.signature(mod.load_community_strategies)
+        params = sig.parameters
+        assert "force_refresh" in params, (
+            "load_community_strategies must have a 'force_refresh' parameter; "
+            f"got parameters: {list(params.keys())!r}"
+        )
+        # It must be keyword-only (after the bare *).
+        p = params["force_refresh"]
+        assert p.kind in (
+            inspect.Parameter.KEYWORD_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ), (
+            f"force_refresh must be keyword-only or positional-or-keyword; "
+            f"got kind={p.kind.name!r}"
+        )
+        # Default must be False (safe default — never force-refresh unless asked).
+        assert p.default is False, (
+            f"force_refresh default must be False; got {p.default!r}"
+        )
+
+    def test_force_refresh_propagated_to_cached_pull(self, module_under_test):
+        """When load_community_strategies is called with force_refresh=True, the
+        call to atlas_cache.cached_pull must include force_refresh=True.
+        A spy on cached_pull captures the kwargs and asserts propagation."""
+        captured_kwargs: list = []
+
+        def spy_cached_pull(collection_name, fetch_fn, **kwargs):
+            captured_kwargs.append(kwargs)
+            # Return an empty list so the function can finish without error.
+            return []
+
+        with patch("advisors.atlas_cache.cached_pull", side_effect=spy_cached_pull):
+            mod = importlib.reload(module_under_test)
+            mod.load_community_strategies(force_refresh=True)
+
+        assert captured_kwargs, (
+            "cached_pull was not called — implementation must call atlas_cache.cached_pull"
+        )
+        # The force_refresh kwarg must have been forwarded.
+        assert captured_kwargs[0].get("force_refresh") is True, (
+            f"force_refresh=True must be forwarded to cached_pull; "
+            f"got cached_pull kwargs: {captured_kwargs[0]!r}"
+        )
+
+    def test_force_refresh_false_propagated_to_cached_pull(self, module_under_test):
+        """When force_refresh is False (the default), cached_pull must be called
+        with force_refresh=False (not missing or True)."""
+        captured_kwargs: list = []
+
+        def spy_cached_pull(collection_name, fetch_fn, **kwargs):
+            captured_kwargs.append(kwargs)
+            return []
+
+        with patch("advisors.atlas_cache.cached_pull", side_effect=spy_cached_pull):
+            mod = importlib.reload(module_under_test)
+            mod.load_community_strategies()  # default force_refresh=False
+
+        assert captured_kwargs, "cached_pull was not called"
+        assert captured_kwargs[0].get("force_refresh") is False, (
+            f"force_refresh=False (default) must be forwarded to cached_pull; "
+            f"got: {captured_kwargs[0]!r}"
+        )
+
+    def test_cached_pull_collection_name_is_captplanet_strategies(self, module_under_test):
+        """The collection_name argument to cached_pull must be 'captplanet.strategies'
+        (the canonical Atlas collection name for this loader)."""
+        captured_collections: list = []
+
+        def spy_cached_pull(collection_name, fetch_fn, **kwargs):
+            captured_collections.append(collection_name)
+            return []
+
+        with patch("advisors.atlas_cache.cached_pull", side_effect=spy_cached_pull):
+            mod = importlib.reload(module_under_test)
+            mod.load_community_strategies()
+
+        assert captured_collections, "cached_pull was not called"
+        assert captured_collections[0] == "captplanet.strategies", (
+            f"cached_pull must be called with collection_name='captplanet.strategies'; "
+            f"got {captured_collections[0]!r}"
+        )
+
+
+class TestCachePipelineIntegrity:
+    """S2-B + AC-1: Cache-hit result goes through the same parse/validate/dedup
+    pipeline as a live-fetch result (not raw bytes returned directly)."""
+
+    def test_cache_hit_result_undergoes_validate_tree_pipeline(
+        self, isolated_atlas_cache_db, single_valid_doc
+    ):
+        """A cache-hit payload (pre-seeded row) must still be parsed and validated,
+        producing structurally correct candidates, not raw Mongo docs."""
+        import json as _json
+        from datetime import datetime, timezone
+
+        # Pre-seed a fresh cache row with valid docs.
+        conn = sqlite3.connect(isolated_atlas_cache_db)
+        try:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "INSERT OR REPLACE INTO atlas_cache (collection, fetched_at, payload) "
+                "VALUES (?, ?, ?)",
+                ("captplanet.strategies", now_iso, _json.dumps(single_valid_doc)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        if "advisors.community_strats" in sys.modules:
+            mod = importlib.reload(sys.modules["advisors.community_strats"])
+        else:
+            mod = importlib.import_module("advisors.community_strats")
+
+        # Do NOT mock cached_pull — use the real one with the isolated DB.
+        result = mod.load_community_strategies()
+
+        # The cache hit must produce a fully-processed result (not just raw docs).
+        assert result["available"] is True, (
+            "cache-hit path must produce available=True when cached docs are valid"
+        )
+        assert len(result["candidates"]) >= 1, (
+            "cache-hit path must yield at least one candidate from the pre-seeded doc"
+        )
+        # Each candidate must have the full required shape (pipeline was applied).
+        candidate = result["candidates"][0]
+        required_keys = {"sid", "name", "tree", "tickers", "oos_metrics", "composition_hash"}
+        missing = required_keys - candidate.keys()
+        assert not missing, (
+            f"cache-hit candidate missing required keys: {missing!r} — "
+            "the parse/validate/dedup pipeline must run on cached payloads too"
+        )
+        # The tree must pass validate_tree (pipeline ran correctly).
+        errors = ss.validate_tree(candidate["tree"])
+        assert errors == [], (
+            f"cache-hit candidate tree failed validate_tree: {errors}"
+        )
+
+
+class TestStatsInvariant:
+    """S2-C: stats accounting invariant — all drops are accounted for."""
+
+    def test_stats_sum_invariant_holds_across_all_counters(self, module_under_test):
+        """The sum invariant: pulled == valid + deduped + missing_edn_string +
+        parse_failed + validate_rejected + sharpe_filtered.
+
+        Every doc pulled from the cache must be accounted for in exactly one
+        stats counter. This catches off-by-one errors in the accounting loop.
+        """
+        # Build a mixed batch: 1 valid, 1 missing edn, 1 bad parse,
+        # 1 validate-rejected, 1 sharpe-filtered, 2 duplicates (1 deduped).
+        valid_doc = _make_mongo_doc(sid="v1", name="Valid", ticker="SPY", sharpe=2.0)
+
+        missing_edn = {"sid": "m1", "name": "Missing", "oos_metrics": {}}
+
+        bad_parse = {
+            "sid": "p1", "name": "BadParse",
+            "edn_string": "NOT_JSON{{{",
+            "oos_metrics": {},
+        }
+
+        # A tree that parses but validate_tree rejects (list at root).
+        bad_tree_doc = {
+            "sid": "t1", "name": "BadTree",
+            "edn_string": json.dumps([{"step": "asset", "ticker": "X"}]),
+            "oos_metrics": {},
+        }
+
+        # sharpe-filtered: has a sharpe of 0.1 which is below floor=1.0.
+        sharpe_filtered_doc = _make_mongo_doc(
+            sid="sf1", name="SharpeFail", ticker="TLT", sharpe=0.1
+        )
+
+        # Duplicate pair: same tree → same hash; one will be deduped.
+        tree = _make_minimal_tree(name="Dup", ticker="IVV")
+        edn = _tree_as_edn_string(tree)
+        dup_a = {"sid": "d1", "name": "DupA", "edn_string": edn, "oos_metrics": {"sharpe": 1.5}}
+        dup_b = {"sid": "d2", "name": "DupB", "edn_string": edn, "oos_metrics": {"sharpe": 1.0}}
+
+        docs = [valid_doc, missing_edn, bad_parse, bad_tree_doc, sharpe_filtered_doc, dup_a, dup_b]
+        # Total pulled: 7
+
+        with patch("advisors.atlas_cache.cached_pull", return_value=docs):
+            mod = importlib.reload(module_under_test)
+            result = mod.load_community_strategies(min_oos_sharpe=1.0)
+
+        stats = result["stats"]
+        pulled = stats["pulled"]
+        accounted = (
+            stats["valid"]
+            + stats["deduped"]
+            + stats["missing_edn_string"]
+            + stats["parse_failed"]
+            + stats["validate_rejected"]
+            + stats["sharpe_filtered"]
+        )
+        assert pulled == len(docs), (
+            f"stats['pulled'] must equal the number of docs from the cache ({len(docs)}); "
+            f"got {pulled}"
+        )
+        assert pulled == accounted, (
+            f"stats sum invariant failed: pulled ({pulled}) != sum of all drop counters "
+            f"({accounted}). Stats: {stats!r}. Every pulled doc must land in exactly one bucket."
+        )
