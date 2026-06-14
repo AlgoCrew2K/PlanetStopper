@@ -4,7 +4,7 @@ Branch: team/atlas-cache
 Phase: red
 
 ## Test Files
-- `tests/advisors/test_atlas_cache.py` — 18 tests
+- `tests/advisors/test_atlas_cache.py` — 24 tests
 
 ## Fixture Files
 - `tests/fixtures/math/atlas_cache_ttl_boundary.json`
@@ -35,3 +35,4 @@ N/A — no UI surface.
 
 ## Status Log
 - [2026-06-14] test-writer: Starting RED phase
+- [2026-06-14] test-writer: RED complete — 24 tests (23 failing on NotImplementedError from stub, 1 passing structural import check), 1 stub created, 1 fixture file written. Committed fcd543f on team/atlas-cache.
