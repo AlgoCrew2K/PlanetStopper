@@ -83,7 +83,7 @@ Calls Claude's structured-output endpoint. Synchronous — blocks until the resp
 
 **Returns:** `(ConfigSuggestionsResponse, None)` on success; `(None, error_message)` on any failure. Never raises.
 
-**Model:** `claude-opus-4-7`, `max_tokens=2048`.
+**Model:** `_CLAUDE_MODEL` — env-configurable via `ADVISOR_LLM_MODEL` (default `claude-opus-4-8`). `max_tokens=2048`.
 
 An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: fully honored — all failure paths (`messages.parse` at `ai_advisor.py:631` and client construction) return only `type(exc).__name__` to the browser. Full exception detail is logged server-side via `exc_info=True`; no exception text reaches the JSON response.
 
