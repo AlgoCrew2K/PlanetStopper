@@ -562,3 +562,38 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** The operator's directive was to protect the captplanet Atlas provider's billing by caching weekly. A new dedicated DB (not the state DB) keeps the cache's schema evolvable without risking state DB migrations. The never-raising posture means a transiently-unavailable Atlas cluster (or an unreachable local DB) degrades gracefully to stale data or `None` rather than aborting the caller. The secrets-isolation invariant (no `MONGO_URI` in `atlas_cache.py`) means the cache layer can be audited and tested without any Mongo credentials.
 
 **Status:** GREEN at d05670c. 24/24 tests GREEN (AC-1..AC-9). Acceptance criteria verified: init_atlas_cache idempotent + WAL, cached_pull HIT/MISS/force/degrade contract confirmed, never-raises enforced, secrets isolation (no MONGO_URI) + structural isolation (no database/autotuner imports) verified. Docs committed at 48cca9d.
+
+---
+
+## Community-Strategies Loader — Weekly-Cached captplanet Atlas Reader (2026-06-14)
+
+Cycle: `community-strats` on branch `team/community-strats`. 38/38 tests GREEN at `f6d48c1` (AC-1..AC-9).
+
+### DE-CS-001: Route captplanet.strategies Atlas read through atlas_cache.cached_pull (weekly TTL); tree-structural hash for dedup; rebuilt via Agent Team after solo-built rip
+
+**Decision:** `advisors/community_strats.py` provides `load_community_strategies(*, limit, min_oos_sharpe, client, force_refresh) -> dict`. The Atlas network read is routed through `atlas_cache.cached_pull("captplanet.strategies", fetch_fn)` — it is never called directly from application code — enforcing the operator's weekly-cache directive to protect the captplanet provider's bill.
+
+**Key design choices:**
+
+1. **Weekly cache routing (operator directive).** The prior standalone-built version (ripped at `ad3a637`) pulled Mongo on every call. The rebuild routes through `atlas_cache.cached_pull` so Atlas is contacted at most once per week per TTL. Only the raw projected docs are cached; validation, dedup, and filtering run on every call (cheap, in-process) on the cached payload.
+
+2. **Rebuilt via a real Agent Team.** The operator's hard rule is that new codepaths use the Toxic Pair TDD composition. The previous community-strats loader was built by a solo agent in violation of that rule and was ripped. This version was built by the team on `team/community-strats` via the full TDD cycle.
+
+3. **Tree-structural composition hash — NOT `database.compute_composition_hash`.** Deduplication uses a local `_composition_hash(tree)` function: strip all `id` keys recursively (`_strip_ids`) → `json.dumps(sort_keys=True, separators=(",", ":"))` → `hashlib.sha256(...).hexdigest()`. This produces a stable hash for structurally identical trees regardless of uuid4 node ids. **`database.compute_composition_hash` is a different function** — it takes a `list[str]` of symphony IDs and is used for portfolio-set identity in the mode-resolver. The two functions are not interchangeable. The feature plan AC-5 incorrectly named `database.compute_composition_hash`; the correct behavior is the tree-structural hash described here (verified vs ripped `c4d6a36`).
+
+4. **Sharpe filter: absent sharpe = kept.** Docs whose `oos_metrics` is missing or lacks the `sharpe` key are retained regardless of `min_oos_sharpe`. Only docs that have a parseable sharpe below the floor are excluded. Absence of a metric is not a failing metric.
+
+5. **edn_string is JSON, not EDN.** Despite the field name, `edn_string` stores a JSON-encoded Composer decision tree. `json.loads` is the parser. No eval/exec.
+
+6. **Projection caps doc size.** `_PROJECTION = {sid, name, edn_string, oos_metrics}` explicitly excludes `backtest` and `quantstats_metrics` (multi-MB arrays). Both bandwidth and provider cost are bounded.
+
+7. **Never-raising D-1 contract.** All failure modes (Mongo unreachable, MONGO_URI unset, cache unavailable, non-list payload, any exception) return `{available: False, reason: type(exc).__name__, ...}`. The `raw_docs is None` path uses the named sentinel `"AtlasCacheUnavailable"` rather than `type(exc).__name__` (no exception is raised by `cached_pull` in that path). The propose_strategies wiring cycle will improve this to a clearer string.
+
+8. **DB isolation.** No import of `database`, `autotuner`, or any execution module. No direct sqlite3 connection; Atlas cache access is entirely through `atlas_cache.cached_pull`. `MONGO_URI` is read inside `fetch_fn` only, never returned or stored.
+
+**Public surface:**
+- `load_community_strategies(*, limit=None, min_oos_sharpe=None, client=None, force_refresh=False) -> dict` — returns `{available, candidates, stats, source}` on success; `{available: False, reason, candidates: [], stats: {...}, source}` on any failure. Never raises.
+
+**No production caller yet.** The propose_strategies wiring (making `strategy_builder_engine` consume these candidates as community-strategy inputs) is the next cycle. `load_community_strategies` must not be called from production routes until that wiring is in.
+
+**Status:** GREEN at `f6d48c1`. 38/38 tests GREEN (AC-1..AC-9). Acceptance criteria verified: cache HIT/MISS/force semantics (closure call counts), D-1 secret-leak walk (MONGO_URI never in returns/cache), never-raising on Mongo-down/cache-fail/bad-edn, dedup by tree-structural hash, sharpe-filter keeping no-sharpe docs.
