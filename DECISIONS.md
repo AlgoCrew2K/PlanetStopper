@@ -530,3 +530,35 @@ These decisions were made during the advisor hardening session (autotuner remedi
 **Rationale:** The audit log separates the per-analyst deliberation record from the synthesized `MARKET_PRISM` verdict. The verdict row (in `advisor_observations`) is what the dashboard renders; the audit log is what a human reviewer — or a future meta-agent — reads to understand why that verdict was reached. Keeping them in separate tables with a join key (`run_id`) avoids bloating the `advisor_observations.raw_response` blob with multi-kilobyte analyst transcripts. Backward-compatibility is preserved by the `.get("run_id")` access pattern: old rows without the key continue to read fine without schema modification.
 
 **Status:** GREEN at 885e1a4. 35 AC-1/AC-2 database tests + 9 AC-3/AC-4 lens-pipeline / CLI tests GREEN. Acceptance criteria verified: migration idempotent, append-only contract enforced, D-1 error isolation confirmed.
+
+---
+
+## Atlas Read Cache — Weekly captplanet Pull Cache (2026-06-14)
+
+### DE-ATLAS-001: Dedicated SQLite cache DB for captplanet MongoDB Atlas reads; weekly TTL; never-raising
+
+**Decision:** `advisors/atlas_cache.py` is a new pure-stdlib caching layer (sqlite3 + json + os) that gates all captplanet MongoDB Atlas reads to at most one live pull per collection per week. The cache lives in a **new dedicated SQLite DB** (`alphabot_atlas_cache.db`, path from `ATLAS_CACHE_DB_PATH` env) — separate from the state DB, optimization DB, and lens warehouse.
+
+**Key design choices:**
+
+1. **New dedicated DB (operator directive).** The operator explicitly requested "create a new db locally." The cache DB is isolated: `atlas_cache.py` imports neither `database.py` nor `autotuner.py` (AC-9 AST-verified). No cross-joins with any other DB in application code.
+
+2. **Weekly default TTL, env-configurable.** `ATLAS_CACHE_TTL_DAYS` (default `7`) controls the freshness window. Boundary is strict: `age < ttl_days` is fresh (HIT, no fetch); `age >= ttl_days` is stale (MISS, fetch called). The `ttl_days` kwarg on `cached_pull` lets callers override per-call; the env var sets the module default.
+
+3. **Never-raising contract (AC-5, AC-7).** `cached_pull` absorbs every exception path. Degradation order: cached payload → stale payload (when `fetch_fn` raises on MISS but a stale row exists) → `None` sentinel (when `fetch_fn` raises and no row exists). A write failure after a successful fetch returns the fetched payload without raising. This matches the `lens_pipeline` resilience posture.
+
+4. **Secrets isolation (AC-8, AC-9).** `atlas_cache.py` never reads `MONGO_URI` or any credential. Callers own the Mongo connection and pass projected docs as the `fetch_fn` return value. The cache stores only what `fetch_fn` returns. Structurally enforced: no Mongo/pymongo/motor imports in `atlas_cache.py` (AC-9 AST walk).
+
+5. **`collection TEXT PRIMARY KEY` + `INSERT OR REPLACE`.** One row per collection; upsert is last-writer-wins. Bounded storage: one row per distinct collection name, never unbounded growth. WAL mode for concurrent daemon + manual access.
+
+6. **Mirrors `advisors/lens_warehouse.py` pattern.** The separate-DB, WAL, never-raising, off-execution-path design follows the established lens_warehouse precedent. Workers connecting to Atlas wire through `cached_pull`; `atlas_cache.py` is unaware of what the fetched data means.
+
+**Public surface:**
+- `init_atlas_cache() -> None` — idempotent schema creation + WAL enable.
+- `cached_pull(collection_name, fetch_fn, *, ttl_days=7, force_refresh=False) -> object | None` — HIT/MISS/force/degrade logic; never raises.
+
+**No production caller yet.** The community-strats and frontrunner loaders that will pull through this cache are separate rebuild cycles. `alphabot_atlas_cache.db` must not be referenced from production code until a caller is wired. Tests use `ATLAS_CACHE_DB_PATH` env override to an isolated temp path.
+
+**Rationale:** The operator's directive was to protect the captplanet Atlas provider's billing by caching weekly. A new dedicated DB (not the state DB) keeps the cache's schema evolvable without risking state DB migrations. The never-raising posture means a transiently-unavailable Atlas cluster (or an unreachable local DB) degrades gracefully to stale data or `None` rather than aborting the caller. The secrets-isolation invariant (no `MONGO_URI` in `atlas_cache.py`) means the cache layer can be audited and tested without any Mongo credentials.
+
+**Status:** GREEN at d05670c. 24/24 tests GREEN (AC-1..AC-9). Acceptance criteria verified: init_atlas_cache idempotent + WAL, cached_pull HIT/MISS/force/degrade contract confirmed, never-raises enforced, secrets isolation (no MONGO_URI) + structural isolation (no database/autotuner imports) verified. Docs committed at 48cca9d.
