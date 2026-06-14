@@ -75,29 +75,48 @@ def _load_fixture(path: pathlib.Path) -> dict:
 
 
 def _ref_collect_tickers(node: Any, out: set[str] | None = None) -> set[str]:
-    """Iteratively gather all ticker strings from a raw tree node via children only.
+    """Iteratively gather all ticker strings from a raw tree node.
 
-    This is the simple children-only reference walker — it collects the ``ticker``
-    field from every node reachable via ``children``.  It is intentionally simple
-    so ``render_rules_text`` tests can assert the rendered output mentions every
-    ticker the reference walker finds.
+    Mirrors extract_tickers exactly: collects ``ticker`` from every node
+    reachable via ``children`` (excluding the ``'%'`` binary-compound
+    placeholder), and also walks ``condition`` blocks to collect real tickers
+    from ``tickers[]`` lists (binary-compound) and nested compound sub-conditions
+    — the same traversal performed by ``_collect_condition_tickers`` in the
+    implementation.
 
-    Note: ``extract_tickers`` may return additional tickers collected from
-    compound ``condition`` blocks (AC-9).  See
-    ``test_small_fixture_extract_tickers_is_superset_of_reference_walk`` for the
-    assertion that covers that invariant.
+    Used for exact-equality assertions in the golden-fixture extract_tickers
+    tests and as a lower-bound for render_rules_text tests (render only covers
+    tickers reachable via children, so it is still the correct reference there).
     """
     if out is None:
         out = set()
     if not isinstance(node, dict):
         return out
-    stack = [node]
+    stack: list = [node]
     while stack:
         current = stack.pop()
         if not isinstance(current, dict):
             continue
-        if current.get("ticker"):
-            out.add(current["ticker"])
+        # Collect node-level ticker, skipping the '%' binary-compound placeholder.
+        ticker = current.get("ticker")
+        if isinstance(ticker, str) and ticker and ticker != "%":
+            out.add(ticker)
+        # Walk condition block — mirrors _collect_condition_tickers in the impl.
+        condition = current.get("condition")
+        if isinstance(condition, dict):
+            cond_stack: list = [condition]
+            while cond_stack:
+                cond = cond_stack.pop()
+                if not isinstance(cond, dict):
+                    continue
+                # binary-compound: collect from top-level tickers list.
+                for t in (cond.get("tickers") or []):
+                    if isinstance(t, str) and t and t != "%":
+                        out.add(t)
+                # compound: recurse into sub-conditions.
+                for sub in (cond.get("conditions") or []):
+                    if isinstance(sub, dict):
+                        cond_stack.append(sub)
         for child in current.get("children") or []:
             stack.append(child)
     return out
@@ -180,13 +199,13 @@ class TestGoldenFixtureSmall:
         errors = m.validate_tree(raw_small)
         assert errors == [], f"Expected no hard errors on golden small fixture, got: {errors}"
 
-    def test_small_fixture_extract_tickers_is_superset_of_reference_walk(self, raw_small):
-        """extract_tickers must contain every ticker the reference walker finds.
+    def test_small_fixture_extract_tickers_matches_reference_walk(self, raw_small):
+        """extract_tickers must return exactly the same set as the reference walker.
 
-        The reference walker (children-only) is a lower bound — extract_tickers
-        must include at least those tickers.  AC-9 extends extract_tickers to
-        also collect real tickers from compound condition blocks, so the result
-        may be a strict superset of what the children-only walker finds.
+        Both _ref_collect_tickers and extract_tickers walk children tickers
+        (excluding '%') AND condition block tickers from binary-compound
+        tickers[] lists.  Exact equality is the strong invariant — any spurious
+        extra ticker returned by extract_tickers is a bug.
 
         The '%' placeholder must NOT appear in the result (AC-9 invariant).
         """
@@ -196,10 +215,11 @@ class TestGoldenFixtureSmall:
         assert len(expected) > 0, "reference walker found no tickers in small fixture"
         result = m.extract_tickers(raw_small)
         assert isinstance(result, set), "extract_tickers must return a set"
-        # extract_tickers must include everything the reference walker finds.
-        assert expected.issubset(result), (
-            f"extract_tickers is missing tickers that the reference walker found: "
-            f"{expected - result}"
+        # Exact equality — both oracles must agree completely.
+        assert result == expected, (
+            f"extract_tickers diverged from reference walker. "
+            f"Extra (spurious): {result - expected}. "
+            f"Missing: {expected - result}."
         )
         # The '%' placeholder must never appear in the result (AC-9).
         assert "%" not in result, "extract_tickers must not return the '%' placeholder"
@@ -252,12 +272,12 @@ class TestGoldenFixtureLarge:
         errors = m.validate_tree(raw_large)
         assert errors == [], f"Expected no hard errors on golden large fixture, got: {errors}"
 
-    def test_large_fixture_extract_tickers_is_superset_of_reference_walk(self, raw_large):
-        """extract_tickers on the large fixture must contain every reference-walker ticker.
+    def test_large_fixture_extract_tickers_matches_reference_walk(self, raw_large):
+        """extract_tickers on the large fixture must match the reference walker exactly.
 
-        Same invariant as the small fixture test: extract_tickers is a superset
-        of the children-only reference walker.  AC-9 compound condition tickers
-        may add additional real tickers beyond what the reference walker finds.
+        Same strong invariant as the small fixture test: exact equality between
+        extract_tickers and the independent reference oracle.  Both oracles walk
+        children tickers AND condition block binary-compound tickers[].
         The '%' placeholder must not appear.
         """
         m = _import_schema()
@@ -265,9 +285,10 @@ class TestGoldenFixtureLarge:
         assert len(expected) > 0, "reference walker found no tickers in large fixture"
         result = m.extract_tickers(raw_large)
         assert isinstance(result, set)
-        assert expected.issubset(result), (
-            f"extract_tickers is missing tickers the reference walker found: "
-            f"{expected - result}"
+        assert result == expected, (
+            f"extract_tickers diverged from reference walker on large fixture. "
+            f"Extra (spurious): {result - expected}. "
+            f"Missing: {expected - result}."
         )
         assert "%" not in result, "extract_tickers must not return the '%' placeholder"
 
@@ -4165,10 +4186,9 @@ class TestCompoundConditionValidation:
         }
         tree = self._wrap_condition_in_if_tree(condition_with_raw_leaf)
         errors = m.validate_tree(tree)
-        # This must NOT produce a hard error (absent condition-type = raw binary leaf = tolerated)
-        # Filter to condition-block related errors only
-        cond_type_errors = [e for e in errors if "condition-type" in e and "absent" in e.lower()]
-        assert len(cond_type_errors) == 0, (
+        # The whole tree must be error-free — a raw binary leaf (absent condition-type)
+        # is tolerated grammar, so no hard error of any kind must be emitted.
+        assert errors == [], (
             "AC-10: absent condition-type on a raw binary leaf must be tolerated, not hard-errored. "
             f"Got errors: {errors}"
         )

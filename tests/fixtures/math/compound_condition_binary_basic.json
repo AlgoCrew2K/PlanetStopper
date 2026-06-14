@@ -9,8 +9,8 @@
   },
   "expected_shape": {
     "condition-type": "binary",
-    "required_keys": ["condition-type", "operator", "conditions"],
+    "required_keys": ["condition-type", "lhs", "comparator", "rhs"],
     "condition_type_value": "binary"
   },
-  "notes": "A binary leaf has condition-type='binary'. No nested conditions list is required on a binary leaf — the predicate is directly on the node. Shape must match corpus §7 grammar."
+  "notes": "A binary leaf has condition-type='binary'. Its required keys are lhs, comparator, rhs — not operator/conditions (those are compound fields). Shape must match corpus §7 grammar."
 }
