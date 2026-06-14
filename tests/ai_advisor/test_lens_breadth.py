@@ -113,27 +113,44 @@ def _make_wikipedia_html(tickers: list[str]) -> str:
 
 
 def _make_mock_response(body: str | bytes, status_code: int = 200) -> MagicMock:
-    """Build a mock requests.Response."""
+    """Build a mock requests.Response.
+
+    Sets up both the non-streaming attributes (content, text) and the streaming
+    iter_content method so the mock works whether the caller uses the datahub
+    path (reads resp.content directly) or the Wikipedia path (uses stream=True +
+    iter_content).
+    """
     mock = MagicMock()
     mock.status_code = status_code
     if isinstance(body, bytes):
-        mock.content = body
-        mock.text = body.decode("utf-8", errors="replace")
+        body_bytes = body
+        mock.content = body_bytes
+        mock.text = body_bytes.decode("utf-8", errors="replace")
     else:
-        mock.content = body.encode("utf-8")
+        body_bytes = body.encode("utf-8")
+        mock.content = body_bytes
         mock.text = body
     mock.raise_for_status = MagicMock()
     if status_code >= 400:
         import requests
         mock.raise_for_status.side_effect = requests.HTTPError(response=mock)
+    mock.close = MagicMock()
+    # Wire iter_content so the Wikipedia streaming path can consume the body.
+    # Split into 65536-byte chunks matching the real chunk_size used by the impl.
+    chunk_size = 65536
+    body_chunks = [
+        body_bytes[i : i + chunk_size]
+        for i in range(0, max(len(body_bytes), 1), chunk_size)
+    ]
+    mock.iter_content = MagicMock(return_value=iter(body_chunks))
     return mock
 
 
 def _make_bars(n_closes: int, last_close: float = 100.0) -> list[dict]:
     """Build a list of n_closes mock daily bar dicts with sequential dates.
 
-    Each bar has at least a 'c' (close) field.  The last bar's close is
-    last_close.  Earlier bars use close = last_close * 0.98 to stay below SMA.
+    Each bar has at least a 'c' (close) field.  All bars use close = last_close
+    (flat series); the SMA equals last_close so the name counts as above-or-equal.
     """
     bars = []
     for i in range(n_closes):
@@ -916,3 +933,534 @@ class TestD1ErrorContract:
         assert "reason" in result
         assert isinstance(result["reason"], str)
         assert len(result["reason"]) > 0, "reason must be non-empty"
+
+
+# ---------------------------------------------------------------------------
+# Robustness: bounded retry — recover on transient failure
+# ---------------------------------------------------------------------------
+
+
+class TestBoundedRetryRecovers:
+    """Retry logic: first attempt fails with a retryable error; second succeeds.
+
+    Patch time.sleep so retries are instant. Assert requests.get call count
+    reflects at least two attempts (the failing one + the successful one).
+    """
+
+    def test_datahub_retry_recovers_on_connection_error(self):
+        """_fetch_datahub_constituents retries on ConnectionError and returns on success.
+
+        Scenario: attempt 0 → ConnectionError; attempt 1 → valid 200 CSV.
+        get_sp500_constituents must return the correct list without raising,
+        and requests.get must have been called at least twice (proving a retry).
+        """
+        mod = _import_module()
+        import requests as req_lib
+
+        tickers = _make_valid_constituent_list(503)
+        csv_body = _make_csv_body(tickers)
+        good_response = _make_mock_response(csv_body, status_code=200)
+
+        # Attempt 0 fails; attempt 1 returns a valid CSV.
+        side_effects = [req_lib.ConnectionError("transient"), good_response]
+
+        with patch("time.sleep"):  # prevent real sleeps during backoff
+            with patch("requests.get", side_effect=side_effects) as mock_get:
+                result = mod.get_sp500_constituents()
+
+        assert _SANITY_MIN <= len(result) <= _SANITY_MAX, (
+            f"Expected result within sanity band after retry; got {len(result)}"
+        )
+        assert mock_get.call_count >= 2, (
+            f"Expected at least 2 requests.get calls (retry proof); "
+            f"got {mock_get.call_count}"
+        )
+
+    def test_datahub_retry_recovers_on_503_response(self):
+        """_fetch_datahub_constituents retries on HTTP 503 and returns on success.
+
+        Scenario: attempt 0 → 503 response; attempt 1 → valid 200 CSV.
+        The 503 response must not raise immediately — the retry loop must absorb
+        it and proceed to the next attempt.
+        """
+        mod = _import_module()
+        import requests as req_lib
+
+        tickers = _make_valid_constituent_list(500)
+        csv_body = _make_csv_body(tickers)
+
+        fail_response = MagicMock()
+        fail_response.status_code = 503
+        # raise_for_status will only be called if the retry loop reaches it;
+        # for intermediate attempts the loop sleeps-and-continues without calling it.
+        fail_response.raise_for_status = MagicMock(
+            side_effect=req_lib.HTTPError(response=fail_response)
+        )
+
+        good_response = _make_mock_response(csv_body, status_code=200)
+        side_effects = [fail_response, good_response]
+
+        with patch("time.sleep"):
+            with patch("requests.get", side_effect=side_effects) as mock_get:
+                result = mod.get_sp500_constituents()
+
+        assert _SANITY_MIN <= len(result) <= _SANITY_MAX, (
+            f"Expected result within sanity band after 503→200 retry; got {len(result)}"
+        )
+        assert mock_get.call_count >= 2, (
+            f"Expected at least 2 requests.get calls (retry proof); "
+            f"got {mock_get.call_count}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Robustness: bounded retry — exhaustion falls through honestly
+# ---------------------------------------------------------------------------
+
+
+class TestBoundedRetryExhaustion:
+    """Retry exhaustion: all _CONSTITUENT_MAX_ATTEMPTS fail.
+
+    After all datahub attempts are exhausted, get_sp500_constituents falls
+    through to Wikipedia (which also exhausts), then returns [].
+    No exception must escape the public surface.
+    Call count per source must not exceed _CONSTITUENT_MAX_ATTEMPTS.
+    """
+
+    def test_exhausted_datahub_retries_fall_through_to_empty_list(self):
+        """All datahub attempts fail → falls back to Wikipedia → [] returned.
+
+        The total call count for datahub must not exceed _CONSTITUENT_MAX_ATTEMPTS.
+        After Wikipedia also exhausts, get_sp500_constituents returns []
+        (honest-availability) without raising.
+        """
+        mod = _import_module()
+        import requests as req_lib
+
+        max_attempts = mod._CONSTITUENT_MAX_ATTEMPTS
+
+        # Build enough side_effects for datahub (max_attempts) + wikipedia (max_attempts)
+        # All return 503 so both sources fully exhaust their retry budgets.
+        def _make_503() -> MagicMock:
+            resp = MagicMock()
+            resp.status_code = 503
+            resp.close = MagicMock()
+            resp.raise_for_status = MagicMock(
+                side_effect=req_lib.HTTPError(response=resp)
+            )
+            return resp
+
+        side_effects = [_make_503() for _ in range(max_attempts * 2)]
+
+        with patch("time.sleep"):
+            with patch("requests.get", side_effect=side_effects) as mock_get:
+                try:
+                    result = mod.get_sp500_constituents()
+                except Exception as exc:
+                    pytest.fail(
+                        f"get_sp500_constituents raised {type(exc).__name__} on retry "
+                        f"exhaustion — must return [] and never raise."
+                    )
+
+        assert result == [], (
+            f"Expected [] after both sources exhausted; got {result!r}"
+        )
+        # Each source must not exceed its own attempt budget.
+        assert mock_get.call_count <= max_attempts * 2, (
+            f"Call count {mock_get.call_count} exceeds 2 × _CONSTITUENT_MAX_ATTEMPTS "
+            f"({max_attempts * 2}); retry is not bounded."
+        )
+
+    def test_exhausted_datahub_call_count_bounded(self):
+        """requests.get call count for datahub alone is bounded by _CONSTITUENT_MAX_ATTEMPTS.
+
+        We isolate datahub by making Wikipedia succeed on the first Wikipedia call,
+        so that we can verify the datahub retry count precisely.
+        """
+        mod = _import_module()
+        import requests as req_lib
+
+        max_attempts = mod._CONSTITUENT_MAX_ATTEMPTS
+
+        def _make_503() -> MagicMock:
+            resp = MagicMock()
+            resp.status_code = 503
+            resp.close = MagicMock()
+            resp.raise_for_status = MagicMock(
+                side_effect=req_lib.HTTPError(response=resp)
+            )
+            return resp
+
+        # Datahub gets max_attempts 503 responses; then Wikipedia gets a valid page.
+        tickers = _make_valid_constituent_list(500)
+        wiki_html = _make_wikipedia_html(tickers)
+        wiki_response = _make_mock_response(wiki_html, status_code=200)
+        # Wikipedia uses iter_content; wire it up for the mock.
+        wiki_response.iter_content = MagicMock(
+            return_value=iter([wiki_html.encode("utf-8")])
+        )
+
+        side_effects = [_make_503() for _ in range(max_attempts)] + [wiki_response]
+
+        with patch("time.sleep"):
+            with patch("requests.get", side_effect=side_effects) as mock_get:
+                result = mod.get_sp500_constituents()
+
+        # Datahub used exactly max_attempts calls; Wikipedia used 1 more.
+        assert mock_get.call_count == max_attempts + 1, (
+            f"Expected {max_attempts + 1} total calls "
+            f"({max_attempts} datahub + 1 wikipedia); "
+            f"got {mock_get.call_count}. "
+            "Datahub retry is not bounded at _CONSTITUENT_MAX_ATTEMPTS."
+        )
+        # Result should be valid from Wikipedia fallback.
+        assert _SANITY_MIN <= len(result) <= _SANITY_MAX, (
+            f"Wikipedia fallback result {len(result)} outside sanity band."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Robustness: body size cap
+# ---------------------------------------------------------------------------
+
+
+class TestBodySizeCap:
+    """Wikipedia stream=True path: body exceeding _MAX_HTML_BYTES is treated as failure.
+
+    The impl accumulates chunks from iter_content and raises ValueError when
+    total > _MAX_HTML_BYTES.  get_sp500_constituents catches this and falls through
+    to [] (since datahub also fails in these tests).
+
+    Datahub path: resp.content[:_MAX_HTML_BYTES] is sliced, then if
+    len(resp.content) > _MAX_HTML_BYTES a ValueError is raised.
+    """
+
+    def test_wikipedia_oversized_body_causes_source_failure_not_crash(self):
+        """Wikipedia response body > _MAX_HTML_BYTES → that source fails; no exception escapes.
+
+        We mock iter_content to return a single chunk larger than _MAX_HTML_BYTES.
+        The Wikipedia fetch must raise internally (ValueError), which
+        get_sp500_constituents catches.  With datahub also failing, result is [].
+        """
+        mod = _import_module()
+        import requests as req_lib
+
+        max_bytes = mod._MAX_HTML_BYTES
+
+        # Datahub fails immediately.
+        datahub_resp = MagicMock()
+        datahub_resp.status_code = 503
+        datahub_resp.close = MagicMock()
+        datahub_resp.raise_for_status = MagicMock(
+            side_effect=req_lib.HTTPError(response=datahub_resp)
+        )
+
+        # Wikipedia returns 200 but the body is one chunk of (max_bytes + 1) bytes.
+        oversized_chunk = b"X" * (max_bytes + 1)
+        wiki_resp = MagicMock()
+        wiki_resp.status_code = 200
+        wiki_resp.raise_for_status = MagicMock()
+        wiki_resp.close = MagicMock()
+        wiki_resp.iter_content = MagicMock(return_value=iter([oversized_chunk]))
+
+        # datahub gets max_attempts 503s; wikipedia gets 1 oversized response.
+        max_attempts = mod._CONSTITUENT_MAX_ATTEMPTS
+        side_effects = [datahub_resp] * max_attempts + [wiki_resp]
+
+        with patch("time.sleep"):
+            with patch("requests.get", side_effect=side_effects):
+                try:
+                    result = mod.get_sp500_constituents()
+                except Exception as exc:
+                    pytest.fail(
+                        f"get_sp500_constituents raised {type(exc).__name__} when "
+                        f"Wikipedia body exceeded _MAX_HTML_BYTES — must degrade to []."
+                    )
+
+        assert result == [], (
+            "Oversized Wikipedia body must cause honest-availability [] result, "
+            f"not a partial parse; got {result!r}"
+        )
+
+    def test_datahub_oversized_body_causes_source_failure_not_crash(self):
+        """Datahub response body > _MAX_HTML_BYTES → raises ValueError internally.
+
+        The impl slices resp.content[:_MAX_HTML_BYTES] then checks len(resp.content);
+        if over the ceiling it raises ValueError.  get_sp500_constituents catches
+        this and falls through to Wikipedia (which also fails), returning [].
+        """
+        mod = _import_module()
+        import requests as req_lib
+
+        max_bytes = mod._MAX_HTML_BYTES
+
+        # Datahub returns a 200 but with content exceeding the cap.
+        oversized_content = b"Symbol,Name,Sector\n" + b"A" * (max_bytes + 1)
+        datahub_resp = MagicMock()
+        datahub_resp.status_code = 200
+        datahub_resp.content = oversized_content
+        datahub_resp.raise_for_status = MagicMock()
+
+        # Wikipedia also fails (connection error) → total result is [].
+        wiki_fail = req_lib.ConnectionError("wiki down")
+
+        side_effects = [datahub_resp] + [wiki_fail] * mod._CONSTITUENT_MAX_ATTEMPTS
+
+        with patch("time.sleep"):
+            with patch("requests.get", side_effect=side_effects):
+                try:
+                    result = mod.get_sp500_constituents()
+                except Exception as exc:
+                    pytest.fail(
+                        f"get_sp500_constituents raised {type(exc).__name__} when "
+                        f"datahub body exceeded _MAX_HTML_BYTES — must degrade to []."
+                    )
+
+        assert result == [], (
+            "Oversized datahub body must yield [], not a partial result; "
+            f"got {result!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Robustness: bar-key guard (missing / non-numeric "c" field)
+# ---------------------------------------------------------------------------
+
+
+class TestBarKeyGuard:
+    """compute_breadth filters bars missing 'c' or with non-numeric 'c'.
+
+    A name with N total bars but M < _MIN_QUALIFYING_BARS valid closes is
+    excluded from the qualifying count (re-application of qualifying threshold
+    after filtering).  A name with enough valid closes after filtering is kept.
+    No crash must occur when malformed bars are present.
+    """
+
+    def test_bar_missing_c_key_excluded_from_closes(self):
+        """Bars without 'c' key are silently skipped; name qualifies if enough valid closes remain.
+
+        Build a name with 250 bar dicts: the first 10 lack the 'c' key entirely.
+        After filtering, 240 valid closes remain (≥ 200) → name qualifies.
+        """
+        mod = _import_module()
+
+        close_val = 150.0
+        # 10 malformed bars (missing 'c'), then 240 valid bars.
+        bad_bars = [
+            {"t": f"2023-01-{i+1:02d}T00:00:00Z", "o": close_val, "h": close_val, "l": close_val, "v": 1_000_000}
+            for i in range(10)
+        ]
+        good_bars = [
+            {"t": f"2023-02-{i+1:02d}T00:00:00Z", "o": close_val, "h": close_val,
+             "l": close_val, "c": close_val, "v": 1_000_000}
+            for i in range(240)
+        ]
+        all_bars = bad_bars + good_bars  # 250 total, 240 valid closes
+
+        tickers = ["BADKEY"]
+        bars_by_symbol = {"BADKEY": all_bars}
+
+        with patch("synthetic_history.fetch_bars", return_value=bars_by_symbol):
+            result = mod.compute_breadth(tickers)
+
+        # Should not crash.
+        assert isinstance(result, dict)
+        # 240 valid closes ≥ 200 → name qualifies.
+        assert result["qualifying_count"] == 1, (
+            f"Name with 240 valid closes after filtering must qualify; "
+            f"got qualifying_count={result['qualifying_count']}"
+        )
+
+    def test_bar_with_non_numeric_c_excluded_from_closes(self):
+        """Bars with non-numeric 'c' value are silently skipped without crashing.
+
+        Build a name with 250 bars: 60 have c='N/A' (string), 190 have numeric c.
+        After filtering only 190 valid closes remain (< 200) → name is excluded.
+        """
+        mod = _import_module()
+
+        close_val = 75.0
+        # 60 bars with string 'c' (malformed).
+        bad_bars = [
+            {"t": f"2023-01-{(i % 28)+1:02d}T00:00:00Z", "o": close_val, "h": close_val,
+             "l": close_val, "c": "N/A", "v": 1_000_000}
+            for i in range(60)
+        ]
+        # 190 bars with valid numeric 'c'.
+        good_bars = [
+            {"t": f"2023-02-{(i % 28)+1:02d}T00:00:00Z", "o": close_val, "h": close_val,
+             "l": close_val, "c": close_val, "v": 1_000_000}
+            for i in range(190)
+        ]
+        all_bars = bad_bars + good_bars  # 250 total, 190 valid closes
+
+        tickers = ["BADVAL"]
+        bars_by_symbol = {"BADVAL": all_bars}
+
+        with patch("synthetic_history.fetch_bars", return_value=bars_by_symbol):
+            result = mod.compute_breadth(tickers)
+
+        # Should not crash.
+        assert isinstance(result, dict)
+        # 190 valid closes < 200 → name excluded from qualifying.
+        assert result["qualifying_count"] == 0, (
+            f"Name with only 190 valid closes must not qualify; "
+            f"got qualifying_count={result['qualifying_count']}"
+        )
+        assert result["total_count"] == 1
+
+    def test_mixed_valid_and_malformed_bars_correct_breadth_count(self):
+        """Breadth numerator is computed only over valid closes; malformed bars don't count.
+
+        Two names: NAME_GOOD has 250 all-valid bars (qualifies, above SMA).
+        NAME_BAD_KEYS has 200 total bars, 50 missing 'c' → only 150 valid → excluded.
+        qualifying_count must be 1 (NAME_GOOD only); NAME_BAD_KEYS excluded.
+        """
+        mod = _import_module()
+
+        high_close = 200.0
+
+        good_bars = [
+            {"t": f"2024-01-{(i % 28)+1:02d}T00:00:00Z", "o": high_close,
+             "h": high_close, "l": high_close, "c": high_close, "v": 1_000_000}
+            for i in range(250)
+        ]
+
+        bad_head = [
+            {"t": f"2024-02-{(i % 28)+1:02d}T00:00:00Z", "o": high_close,
+             "h": high_close, "l": high_close, "v": 1_000_000}  # no 'c'
+            for i in range(50)
+        ]
+        good_tail = [
+            {"t": f"2024-03-{(i % 28)+1:02d}T00:00:00Z", "o": high_close,
+             "h": high_close, "l": high_close, "c": high_close, "v": 1_000_000}
+            for i in range(150)
+        ]
+
+        bars_by_symbol = {
+            "NAME_GOOD": good_bars,
+            "NAME_BAD_KEYS": bad_head + good_tail,  # 200 total, 150 valid closes
+        }
+        tickers = list(bars_by_symbol.keys())
+
+        with patch("synthetic_history.fetch_bars", return_value=bars_by_symbol):
+            result = mod.compute_breadth(tickers)
+
+        assert result["qualifying_count"] == 1, (
+            f"Only NAME_GOOD should qualify; expected qualifying_count=1, "
+            f"got {result['qualifying_count']}"
+        )
+        assert result["total_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Robustness: ZeroQualifying contract — pct keys absent from unavailable result
+# ---------------------------------------------------------------------------
+
+
+class TestZeroQualifyingContract:
+    """fetch_breadth ZeroQualifying path: pct_above_50sma / pct_above_200sma absent.
+
+    When qualifying_count == 0, fetch_breadth must return available=False +
+    reason="ZeroQualifying" + qualifying_count + total_count, but must NOT
+    include pct_above_50sma or pct_above_200sma.  Those keys are 0.0 placeholders
+    in compute_breadth; presenting them as real measurements is a contract violation.
+    """
+
+    def test_zero_qualifying_result_has_available_false(self):
+        """fetch_breadth with zero qualifying names → available=False (ZeroQualifying path)."""
+        mod = _import_module()
+        tickers = _make_valid_constituent_list(503)
+        csv_body = _make_csv_body(tickers)
+        # All bars short-history → zero qualifying after compute_breadth.
+        bars = {t: _make_bars(5) for t in tickers[:20]}
+
+        with patch("requests.get", return_value=_make_mock_response(csv_body)):
+            with patch("synthetic_history.fetch_bars", return_value=bars):
+                with patch("advisors.lens_warehouse.persist_lens_snapshot", return_value=1):
+                    result = mod.fetch_breadth()
+
+        assert result["available"] is False, (
+            f"Expected available=False for ZeroQualifying; got available={result['available']!r}"
+        )
+
+    def test_zero_qualifying_result_has_reason_zerqualifying(self):
+        """fetch_breadth ZeroQualifying path → reason == 'ZeroQualifying'."""
+        mod = _import_module()
+        tickers = _make_valid_constituent_list(503)
+        csv_body = _make_csv_body(tickers)
+        bars = {t: _make_bars(5) for t in tickers[:20]}
+
+        with patch("requests.get", return_value=_make_mock_response(csv_body)):
+            with patch("synthetic_history.fetch_bars", return_value=bars):
+                with patch("advisors.lens_warehouse.persist_lens_snapshot", return_value=1):
+                    result = mod.fetch_breadth()
+
+        assert result.get("reason") == "ZeroQualifying", (
+            f"Expected reason='ZeroQualifying'; got {result.get('reason')!r}"
+        )
+
+    def test_zero_qualifying_result_omits_pct_above_50sma(self):
+        """fetch_breadth ZeroQualifying path must NOT include pct_above_50sma key.
+
+        The 0.0 placeholder from compute_breadth is a false measurement; the
+        docstring contract states pct keys are 'present when available=True' only.
+        """
+        mod = _import_module()
+        tickers = _make_valid_constituent_list(503)
+        csv_body = _make_csv_body(tickers)
+        bars = {t: _make_bars(5) for t in tickers[:20]}
+
+        with patch("requests.get", return_value=_make_mock_response(csv_body)):
+            with patch("synthetic_history.fetch_bars", return_value=bars):
+                with patch("advisors.lens_warehouse.persist_lens_snapshot", return_value=1):
+                    result = mod.fetch_breadth()
+
+        assert "pct_above_50sma" not in result, (
+            "ZeroQualifying result must NOT include pct_above_50sma — "
+            "it is a 0.0 placeholder, not a real breadth measurement."
+        )
+
+    def test_zero_qualifying_result_omits_pct_above_200sma(self):
+        """fetch_breadth ZeroQualifying path must NOT include pct_above_200sma key."""
+        mod = _import_module()
+        tickers = _make_valid_constituent_list(503)
+        csv_body = _make_csv_body(tickers)
+        bars = {t: _make_bars(5) for t in tickers[:20]}
+
+        with patch("requests.get", return_value=_make_mock_response(csv_body)):
+            with patch("synthetic_history.fetch_bars", return_value=bars):
+                with patch("advisors.lens_warehouse.persist_lens_snapshot", return_value=1):
+                    result = mod.fetch_breadth()
+
+        assert "pct_above_200sma" not in result, (
+            "ZeroQualifying result must NOT include pct_above_200sma — "
+            "it is a 0.0 placeholder, not a real breadth measurement."
+        )
+
+    def test_zero_qualifying_result_includes_count_keys(self):
+        """fetch_breadth ZeroQualifying path DOES include qualifying_count and total_count.
+
+        These diagnostic counts are safe to expose — they are integer measurements,
+        not fabricated percentages.
+        """
+        mod = _import_module()
+        tickers = _make_valid_constituent_list(503)
+        csv_body = _make_csv_body(tickers)
+        bars = {t: _make_bars(5) for t in tickers[:20]}
+
+        with patch("requests.get", return_value=_make_mock_response(csv_body)):
+            with patch("synthetic_history.fetch_bars", return_value=bars):
+                with patch("advisors.lens_warehouse.persist_lens_snapshot", return_value=1):
+                    result = mod.fetch_breadth()
+
+        assert "qualifying_count" in result, (
+            "ZeroQualifying result must include qualifying_count for diagnostics."
+        )
+        assert "total_count" in result, (
+            "ZeroQualifying result must include total_count for diagnostics."
+        )
+        assert result["qualifying_count"] == 0, (
+            f"qualifying_count must be 0 in ZeroQualifying path; "
+            f"got {result['qualifying_count']}"
+        )

@@ -21,6 +21,7 @@ Scope boundaries: no Flask route, no execution path, no eval/exec/subprocess.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, timedelta
 
 import requests
@@ -43,6 +44,36 @@ _BREADTH_TIMEOUT_S: float = 15.0  # explicit HTTP timeout (seconds)
 # trading days (200 trading days ≈ ~290 calendar days; 320 gives headroom for
 # weekends, holidays, and recent IPOs with partial history).
 _BAR_LOOKBACK_CALENDAR_DAYS: int = 320
+
+# ---------------------------------------------------------------------------
+# Constituent fetch retry policy (mirrors lens_options_proxy.py pattern)
+# ---------------------------------------------------------------------------
+
+# Exponential backoff base (seconds) for constituent HTTP retries.
+_CONSTITUENT_BACKOFF_BASE_S: float = 1.0
+
+# Per-sleep cap to prevent runaway waits.
+_CONSTITUENT_BACKOFF_CAP_S: float = 8.0
+
+# Maximum fetch attempts per constituent source (1 initial + 2 retries).
+_CONSTITUENT_MAX_ATTEMPTS: int = 3
+
+# Hard ceiling on cumulative retry wait: base + 2*base = 1 + 2 = 3 s.
+MAX_CONSTITUENT_RETRY_WAIT_SECONDS: float = (
+    _CONSTITUENT_BACKOFF_BASE_S + _CONSTITUENT_BACKOFF_BASE_S * 2
+)  # 3.0 s
+
+# HTTP status codes that warrant a constituent-fetch retry (transient errors).
+_CONSTITUENT_RETRYABLE_HTTP_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+# ---------------------------------------------------------------------------
+# Body-size safety caps
+# ---------------------------------------------------------------------------
+
+# Maximum bytes accepted from any constituent HTTP response body.
+# Wikipedia pages can be large; 4 MB is ample for the S&P 500 table and
+# provides a hard ceiling against runaway memory allocation.
+_MAX_HTML_BYTES: int = 4_000_000  # 4 MB
 
 # Source identifier (IEX caveat embedded)
 _SOURCE: str = "datahub+alpaca-iex"
@@ -112,31 +143,141 @@ def get_sp500_constituents() -> list[str]:
 def _fetch_datahub_constituents() -> list[str]:
     """Fetch constituent tickers from the datahub raw CSV.
 
-    Raises on any HTTP or parse error (caller handles).
+    Applies bounded exponential backoff (_CONSTITUENT_MAX_ATTEMPTS attempts,
+    _CONSTITUENT_BACKOFF_BASE_S base, capped at _CONSTITUENT_BACKOFF_CAP_S).
+    Retries on timeout, connection errors, and _CONSTITUENT_RETRYABLE_HTTP_STATUSES.
+    Response body is capped at _MAX_HTML_BYTES to prevent unbounded allocation.
+    Raises on all failures after exhausting retries (caller handles).
     """
-    resp = requests.get(_DATAHUB_CSV_URL, timeout=_BREADTH_TIMEOUT_S)
-    resp.raise_for_status()
-    lines = resp.text.splitlines()
-    # First line is header ("Symbol,Name,Sector,..."); skip it.
-    tickers: list[str] = []
-    for line in lines[1:]:
-        if not line.strip():
-            continue
-        symbol = line.split(",")[0].strip()
-        if symbol:
-            tickers.append(symbol)
-    return tickers
+    last_exc: Exception | None = None
+    for attempt in range(_CONSTITUENT_MAX_ATTEMPTS):
+        try:
+            resp = requests.get(_DATAHUB_CSV_URL, timeout=_BREADTH_TIMEOUT_S)
+            if resp.status_code in _CONSTITUENT_RETRYABLE_HTTP_STATUSES:
+                if attempt < _CONSTITUENT_MAX_ATTEMPTS - 1:
+                    sleep_s = min(
+                        _CONSTITUENT_BACKOFF_BASE_S * (2 ** attempt),
+                        _CONSTITUENT_BACKOFF_CAP_S,
+                    )
+                    logger.debug(
+                        "lens_breadth: datahub returned %d; retrying in %.1fs (attempt %d/%d)",
+                        resp.status_code, sleep_s,
+                        attempt + 1, _CONSTITUENT_MAX_ATTEMPTS,
+                    )
+                    time.sleep(sleep_s)
+                    continue
+                resp.raise_for_status()  # final attempt — surface the error
+
+            resp.raise_for_status()
+            # Cap body size to _MAX_HTML_BYTES before decode (datahub CSV is
+            # small, but an unexpectedly large response is treated as a failure).
+            raw_bytes = resp.content[:_MAX_HTML_BYTES]
+            if len(resp.content) > _MAX_HTML_BYTES:
+                raise ValueError(
+                    f"datahub response exceeds {_MAX_HTML_BYTES} bytes"
+                )
+            lines = raw_bytes.decode("utf-8", errors="replace").splitlines()
+            # First line is header ("Symbol,Name,Sector,..."); skip it.
+            tickers: list[str] = []
+            for line in lines[1:]:
+                if not line.strip():
+                    continue
+                symbol = line.split(",")[0].strip()
+                if symbol:
+                    tickers.append(symbol)
+            return tickers
+
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_exc = exc
+            if attempt < _CONSTITUENT_MAX_ATTEMPTS - 1:
+                sleep_s = min(
+                    _CONSTITUENT_BACKOFF_BASE_S * (2 ** attempt),
+                    _CONSTITUENT_BACKOFF_CAP_S,
+                )
+                logger.debug(
+                    "lens_breadth: datahub transport error %s; retrying in %.1fs (attempt %d/%d)",
+                    type(exc).__name__, sleep_s,
+                    attempt + 1, _CONSTITUENT_MAX_ATTEMPTS,
+                )
+                time.sleep(sleep_s)
+                continue
+            raise
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Exhausted datahub constituent fetch retries")  # pragma: no cover
 
 
 def _fetch_wikipedia_constituents() -> list[str]:
     """Fetch constituent tickers from the Wikipedia S&P 500 article.
 
     Parses the first ``wikitable sortable`` HTML table, first data column.
+    Applies bounded exponential backoff (_CONSTITUENT_MAX_ATTEMPTS attempts).
+    Retries on timeout, connection errors, and _CONSTITUENT_RETRYABLE_HTTP_STATUSES.
+    Uses stream=True with a chunk-capped read so the body never exceeds
+    _MAX_HTML_BYTES in memory; raises ValueError if the ceiling is hit.
     Raises on any HTTP or parse error (caller handles).
     """
-    resp = requests.get(_WIKIPEDIA_URL, timeout=_BREADTH_TIMEOUT_S)
-    resp.raise_for_status()
-    html = resp.text
+    last_exc: Exception | None = None
+    for attempt in range(_CONSTITUENT_MAX_ATTEMPTS):
+        try:
+            resp = requests.get(
+                _WIKIPEDIA_URL,
+                timeout=_BREADTH_TIMEOUT_S,
+                stream=True,
+            )
+            if resp.status_code in _CONSTITUENT_RETRYABLE_HTTP_STATUSES:
+                resp.close()
+                if attempt < _CONSTITUENT_MAX_ATTEMPTS - 1:
+                    sleep_s = min(
+                        _CONSTITUENT_BACKOFF_BASE_S * (2 ** attempt),
+                        _CONSTITUENT_BACKOFF_CAP_S,
+                    )
+                    logger.debug(
+                        "lens_breadth: wikipedia returned %d; retrying in %.1fs (attempt %d/%d)",
+                        resp.status_code, sleep_s,
+                        attempt + 1, _CONSTITUENT_MAX_ATTEMPTS,
+                    )
+                    time.sleep(sleep_s)
+                    continue
+                resp.raise_for_status()  # final attempt
+
+            resp.raise_for_status()
+
+            # Read body with a hard ceiling; abort if the page is pathologically large.
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in resp.iter_content(chunk_size=65536):
+                total += len(chunk)
+                if total > _MAX_HTML_BYTES:
+                    resp.close()
+                    raise ValueError(
+                        f"Wikipedia response exceeds {_MAX_HTML_BYTES} bytes"
+                    )
+                chunks.append(chunk)
+            html = b"".join(chunks).decode("utf-8", errors="replace")
+            break  # success — exit retry loop
+
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_exc = exc
+            if attempt < _CONSTITUENT_MAX_ATTEMPTS - 1:
+                sleep_s = min(
+                    _CONSTITUENT_BACKOFF_BASE_S * (2 ** attempt),
+                    _CONSTITUENT_BACKOFF_CAP_S,
+                )
+                logger.debug(
+                    "lens_breadth: wikipedia transport error %s; retrying in %.1fs (attempt %d/%d)",
+                    type(exc).__name__, sleep_s,
+                    attempt + 1, _CONSTITUENT_MAX_ATTEMPTS,
+                )
+                time.sleep(sleep_s)
+                continue
+            raise
+    else:
+        # All attempts exhausted via the retryable-HTTP branch without breaking
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("Exhausted wikipedia constituent fetch retries")  # pragma: no cover
 
     # Locate the first wikitable sortable
     table_marker = 'class="wikitable sortable'
@@ -255,7 +396,19 @@ def compute_breadth(constituents: list[str]) -> dict:
             # Short history or halted — excluded from denominator
             continue
 
-        closes = [bar["c"] for bar in bars]
+        # Guard: exclude any bar that is missing "c" or has a non-numeric value.
+        # A single malformed bar must not raise a KeyError / TypeError that
+        # darkens the whole name; if too few valid closes remain the qualifying
+        # check (len < _MIN_QUALIFYING_BARS) already excludes this name.
+        closes = [
+            bar["c"]
+            for bar in bars
+            if isinstance(bar, dict)
+            and "c" in bar
+            and isinstance(bar["c"], (int, float))
+        ]
+        if len(closes) < _MIN_QUALIFYING_BARS:
+            continue  # re-apply qualifying threshold after filtering
         current_price = closes[-1]
 
         # 50-day SMA: arithmetic mean of the last _SMA_50_WINDOW closes
@@ -341,11 +494,16 @@ def fetch_breadth() -> dict:
         _persist(lens_warehouse, result)
         return result
 
-    # Step 3: zero-qualifying guard
+    # Step 3: zero-qualifying guard.
+    # Do NOT merge pct_above_50sma / pct_above_200sma into the unavailable
+    # result — those are 0.0 placeholders that contradict the docstring
+    # contract ("present when available=True").  Diagnostic counts are safe
+    # to include for debugging, but percentage fields are withheld.
     if breadth["qualifying_count"] == 0:
         result["available"] = False
         result["reason"] = "ZeroQualifying"
-        result.update(breadth)
+        result["qualifying_count"] = breadth["qualifying_count"]
+        result["total_count"] = breadth["total_count"]
         _persist(lens_warehouse, result)
         return result
 
