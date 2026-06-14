@@ -4,7 +4,7 @@ Branch: pr/community-strats-loader
 Phase: red
 
 ## Test Files
-- `tests/advisors/test_community_strats.py` — 61 tests (8 RED / 53 already-GREEN)
+- `tests/advisors/test_community_strats.py` — 71 tests (17 RED / 54 already-GREEN)
 
 ## Behavioral Test Plan
 N/A — no UI surface. This is a read-only data loader, off-execution-path, advisory-only.
@@ -71,8 +71,22 @@ No e2e spec required (no Flask route, no browser interaction).
 | AC-9 | projection includes oos_metrics | TestAC9QueryEfficiency | test_projection_includes_oos_metrics | RED |
 | AC-9 | projection excludes backtest | TestAC9QueryEfficiency | test_projection_excludes_backtest | RED |
 | AC-9 | projection excludes quantstats_metrics | TestAC9QueryEfficiency | test_projection_excludes_quantstats_metrics | RED |
+| AC-10 | stats has missing_edn_string key (not generic invalid) | TestAC10GranularDropAccounting | test_stats_has_missing_edn_string_key | RED |
+| AC-10 | stats has parse_failed key | TestAC10GranularDropAccounting | test_stats_has_parse_failed_key | RED |
+| AC-10 | stats has validate_rejected key | TestAC10GranularDropAccounting | test_stats_has_validate_rejected_key | RED |
+| AC-10 | stats does NOT have old 'invalid' key | TestAC10GranularDropAccounting | test_stats_does_not_have_invalid_key | RED |
+| AC-10 | absent edn_string → missing_edn_string only, not others | TestAC10GranularDropAccounting | test_absent_edn_string_increments_missing_edn_string_not_others | RED |
+| AC-10 | empty edn_string → missing_edn_string | TestAC10GranularDropAccounting | test_empty_edn_string_increments_missing_edn_string | RED |
+| AC-10 | non-JSON edn_string → parse_failed only, not others | TestAC10GranularDropAccounting | test_bad_json_increments_parse_failed_not_others | RED |
+| AC-10 | validate_tree-failing tree → validate_rejected only, not others | TestAC10GranularDropAccounting | test_validate_rejected_tree_increments_validate_rejected_not_others | RED |
+| AC-10 | pulled == valid + deduped + missing_edn_string + parse_failed + validate_rejected | TestAC10GranularDropAccounting | test_pulled_equals_sum_of_all_drop_and_success_buckets | RED |
+| AC-10 | invariant holds on all-valid batch (all drop keys == 0) | TestAC10GranularDropAccounting | test_sum_invariant_holds_for_all_valid_batch | RED |
 
-## Already-GREEN (7 tests — all AC-8 boundary assertions)
+## Already-GREEN (54 tests)
+7 are AC-8 static boundary assertions (text scan / signature).
+47 are prior-cycle AC-1..AC-9 tests that remain GREEN after the AC-10 re-pointing.
+
+### AC-8 boundary assertions
 
 These 7 tests pass against the stub because they assert STATIC properties of the source file
 and import signature — not runtime behavior:
@@ -118,20 +132,27 @@ Implement `advisors/community_strats.py`. Replace the stub. The public surface i
 
 ### `load_community_strategies(*, limit=None, min_oos_sharpe=None, client=None) -> dict`
 
-Returns: `{available: bool, candidates: list[dict], stats: {pulled, valid, invalid, deduped}, source: str, reason?: str}`
+Returns: `{available: bool, candidates: list[dict], stats: {pulled, valid, deduped, missing_edn_string, parse_failed, validate_rejected}, source: str, reason?: str}`
+
+**AC-10 contract (replaces old `invalid` key):**
+- `missing_edn_string`: docs with absent or empty `edn_string` field
+- `parse_failed`: docs where `json.loads(edn_string)` raises `JSONDecodeError`
+- `validate_rejected`: docs where parsed tree fails `validate_tree` (has hard errors)
+- Invariant: `pulled == valid + deduped + missing_edn_string + parse_failed + validate_rejected`
+- The old `invalid` key must NOT appear in the returned stats dict.
 
 Each candidate: `{sid, name, tree (validated raw_value dict), tickers (set/list from extract_tickers), oos_metrics (dict|None), composition_hash (str)}`
 
 #### Pipeline (in order):
 
 1. **Get collection.** If `client` is not None, extract the collection from it (captplanet.strategies). Else call `_connect_mongo()` to get it.
-2. **Call collection.find()**. Wrap in try/except. On any exception: return `{available: False, candidates: [], stats: {pulled:0, valid:0, invalid:0, deduped:0}, source: "captplanet", reason: type(exc).__name__}`. NEVER include the exception message or the MONGO_URI env value in reason.
-3. **Handle empty result.** If find() returns no docs: return `{available: False, reason: "EmptyCollection", candidates: [], stats: {pulled:0, valid:0, invalid:0, deduped:0}, source: "captplanet"}`.
+2. **Call collection.find()**. Wrap in try/except. On any exception: return `{available: False, candidates: [], stats: {pulled:0, valid:0, deduped:0, missing_edn_string:0, parse_failed:0, validate_rejected:0}, source: "captplanet", reason: type(exc).__name__}`. NEVER include the exception message or the MONGO_URI env value in reason.
+3. **Handle empty result.** If find() returns no docs: return `{available: False, reason: "EmptyCollection", candidates: [], stats: {pulled:0, valid:0, deduped:0, missing_edn_string:0, parse_failed:0, validate_rejected:0}, source: "captplanet"}`.
 4. **Honour limit.** If limit is not None, take only the first `limit` docs from find() (or pass limit to find() — implementer's choice).
 5. **Parse each doc:**
-   - If doc missing `edn_string` key or `sid` key → skip, increment invalid.
-   - `json.loads(doc["edn_string"])` → on JSONDecodeError → skip, increment invalid.
-   - `validate_tree(tree)` → if errors not empty → skip, increment invalid.
+   - If doc missing `edn_string` key, or `edn_string` is empty/falsy → skip, increment `missing_edn_string`.
+   - `json.loads(doc["edn_string"])` → on JSONDecodeError → skip, increment `parse_failed`.
+   - `validate_tree(tree)` → if errors not empty → skip, increment `validate_rejected`.
    - Extract tickers via `symphony_schema.extract_tickers(tree)`.
    - Collect `oos_metrics = doc.get("oos_metrics")` (may be None).
    - Apply `min_oos_sharpe` filter: if oos_metrics has a "sharpe" key AND sharpe < min_oos_sharpe → skip (NOT counted as invalid — counted as filtered). Docs with no oos_metrics or no "sharpe" key are KEPT.
@@ -142,9 +163,17 @@ Each candidate: `{sid, name, tree (validated raw_value dict), tickers (set/list 
    {
      "available": True,
      "candidates": [list of candidate dicts],
-     "stats": {"pulled": N_docs_fetched, "valid": N_valid, "invalid": N_invalid, "deduped": N_deduped},
+     "stats": {
+         "pulled": N_docs_fetched,
+         "valid": N_valid,
+         "deduped": N_deduped,
+         "missing_edn_string": N_missing,
+         "parse_failed": N_parse_failed,
+         "validate_rejected": N_validate_rejected,
+     },
      "source": "captplanet",
    }
+   # NOTE: there is NO "invalid" key — it is replaced by the three granular keys above.
    ```
 
 ### `_connect_mongo() -> collection`
@@ -160,13 +189,15 @@ Each candidate: `{sid, name, tree (validated raw_value dict), tickers (set/list 
 - No `LIVE_EXECUTION` anywhere in the file.
 - No top-level `import pymongo` or `import dns` — lazy only inside `_connect_mongo`.
 - D-1: `reason` field is always `type(exc).__name__` — never `str(exc)`, never `repr(exc)`.
-- All 45 RED tests must go GREEN. All 7 already-GREEN tests must stay GREEN.
+- The stats dict MUST NOT contain the key `"invalid"` — use the three granular keys.
+- All 17 RED tests must go GREEN. All 54 already-GREEN tests must stay GREEN.
 
 ## Status Log
 - [2026-06-14] test-writer: Starting RED phase (community-strats-loader)
 - [2026-06-14] test-writer: RED complete — 45 tests RED (all fail on NotImplementedError from stub), 7 tests GREEN (AC-8 static boundary guards). 2 fixtures written. 1 stub created. Failure mode confirmed: NotImplementedError, not syntax/import errors.
 - [2026-06-14] implementer: GREEN complete — 52/52 tests passing, 0 test bugs documented. Typecheck N/A (no separate mypy step). Lint not run (no ruff in worktree isolation; no new magic-number issues introduced).
 - [2026-06-14] test-writer: AC-9 RED added — 8 new failing tests for query-efficiency bug found in live Mongo functional check. Total suite now 61 tests: 8 RED / 53 GREEN. Failure mode: AssertionError on interaction assertions (cursor.limit not called; find() called with no projection). Bug confirmed: `list(collection.find({}))[:limit]` pulls all 8,339 docs before slicing.
+- [2026-06-14] test-writer: AC-10 RED added — granular drop accounting contract. Replaced single `invalid` key with three granular keys: `missing_edn_string`, `parse_failed`, `validate_rejected`. Re-pointed 7 existing AC-1/AC-2 tests to correct granular keys. Added 10 new TestAC10GranularDropAccounting tests including sum-invariant. Total suite now 71 tests: 17 RED / 54 GREEN. Failure mode: KeyError on new keys + AssertionError on `stats must NOT contain 'invalid'`. Zero `stats["invalid"]` references remain in test file.
 
 ## Test File Issues (for test-writer to fix)
 None.

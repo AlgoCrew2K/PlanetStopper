@@ -11,7 +11,8 @@ Every assertion is derived from:
 
 ADVERSARIAL FOCUS:
   - Mock ALL Mongo — no live calls anywhere in this file.
-  - AC-2: invalid trees are SKIPPED (never raised), counted in stats.invalid.
+  - AC-2: invalid trees are SKIPPED (never raised), counted in granular drop keys:
+      missing_edn_string, parse_failed, validate_rejected (replaces the old 'invalid' key).
   - AC-3: dedup collapses same-composition trees; retains higher-OOS-quality copy.
   - AC-4: tickers from condition.tickers[] (binary-compound) ARE extracted; "%" is NOT.
   - AC-5: limit caps candidate count; min_oos_sharpe pre-filters; missing-metric docs KEPT.
@@ -223,8 +224,13 @@ class TestAC1BasicHappyPath:
 
         assert "stats" in result, "result must contain 'stats'"
         stats = result["stats"]
-        for key in ("pulled", "valid", "invalid", "deduped"):
+        # 'invalid' was replaced by three granular drop-accounting keys (AC-10).
+        for key in ("pulled", "valid", "missing_edn_string", "parse_failed",
+                    "validate_rejected", "deduped"):
             assert key in stats, f"stats must contain '{key}'"
+        assert "invalid" not in stats, (
+            "stats must NOT contain the old 'invalid' key — use granular drop keys instead"
+        )
 
     def test_load_returns_source_string(self, simple_doc):
         from advisors.community_strats import load_community_strategies
@@ -335,8 +341,11 @@ class TestAC1BasicHappyPath:
         client, _ = _make_mock_client([simple_doc])
         result = load_community_strategies(client=client)
 
+        # 'invalid' replaced by three granular keys (AC-10).
         assert result["stats"]["valid"] >= 0
-        assert result["stats"]["invalid"] >= 0
+        assert result["stats"]["missing_edn_string"] >= 0
+        assert result["stats"]["parse_failed"] >= 0
+        assert result["stats"]["validate_rejected"] >= 0
         assert result["stats"]["deduped"] >= 0
 
 
@@ -346,9 +355,12 @@ class TestAC1BasicHappyPath:
 
 
 class TestAC2InvalidDocsSkipped:
-    """Invalid edn_string and invalid trees are counted in stats.invalid; loader never raises."""
+    """Dropped docs are counted in granular keys (missing_edn_string / parse_failed /
+    validate_rejected); loader never raises.  The old 'invalid' aggregate key is gone.
+    """
 
     def test_non_json_edn_string_is_skipped(self):
+        """A non-JSON edn_string increments parse_failed, not the old 'invalid' key."""
         from advisors.community_strats import load_community_strategies
 
         bad_doc = {
@@ -362,12 +374,15 @@ class TestAC2InvalidDocsSkipped:
         result = load_community_strategies(client=client)
 
         assert isinstance(result, dict), "loader must not raise on non-JSON edn_string"
-        assert result["stats"]["invalid"] >= 1, "invalid doc must be counted in stats.invalid"
+        assert result["stats"]["parse_failed"] >= 1, (
+            "non-JSON edn_string must increment parse_failed"
+        )
         # No candidate for this doc
         sids = [c["sid"] for c in result["candidates"]]
         assert "bad-json" not in sids, "non-JSON doc must not appear in candidates"
 
     def test_missing_edn_string_field_is_skipped(self):
+        """A doc without edn_string increments missing_edn_string, not parse_failed."""
         from advisors.community_strats import load_community_strategies
 
         no_edn_doc = {
@@ -379,12 +394,14 @@ class TestAC2InvalidDocsSkipped:
         client, _ = _make_mock_client([no_edn_doc])
         result = load_community_strategies(client=client)
 
-        assert result["stats"]["invalid"] >= 1
+        assert result["stats"]["missing_edn_string"] >= 1, (
+            "doc with absent edn_string must increment missing_edn_string"
+        )
         sids = [c["sid"] for c in result["candidates"]]
         assert "no-edn" not in sids
 
     def test_tree_that_fails_validate_tree_is_skipped(self):
-        """A tree with an unknown step should be skipped (validate_tree returns HARD errors)."""
+        """A tree whose validate_tree returns HARD errors increments validate_rejected."""
         from advisors.community_strats import load_community_strategies
 
         invalid_tree = {
@@ -410,12 +427,18 @@ class TestAC2InvalidDocsSkipped:
         client, _ = _make_mock_client([bad_doc])
         result = load_community_strategies(client=client)
 
-        assert result["stats"]["invalid"] >= 1, "invalid-tree doc must increment stats.invalid"
+        assert result["stats"]["validate_rejected"] >= 1, (
+            "doc failing validate_tree must increment validate_rejected"
+        )
         sids = [c["sid"] for c in result["candidates"]]
-        assert "bad-tree" not in sids, "invalid-tree doc must not appear in candidates"
+        assert "bad-tree" not in sids, "validate-rejected doc must not appear in candidates"
 
     def test_loader_never_raises_on_all_invalid_docs(self):
-        """With a batch of all-invalid docs, loader returns dict with available=True and 0 candidates (not raises)."""
+        """With a batch of all-invalid docs, loader returns a dict (not raises).
+
+        One doc has unparseable edn_string (parse_failed); the other lacks edn_string
+        entirely (missing_edn_string).  Combined they account for all pulled docs.
+        """
         from advisors.community_strats import load_community_strategies
 
         docs = [
@@ -427,15 +450,25 @@ class TestAC2InvalidDocsSkipped:
         try:
             result = load_community_strategies(client=client)
         except Exception as exc:
-            pytest.fail(f"load_community_strategies raised unexpectedly: {type(exc).__name__}: {exc}")
+            pytest.fail(
+                f"load_community_strategies raised unexpectedly: {type(exc).__name__}: {exc}"
+            )
 
-        assert result["stats"]["invalid"] >= 2
+        total_dropped = (
+            result["stats"]["missing_edn_string"]
+            + result["stats"]["parse_failed"]
+            + result["stats"]["validate_rejected"]
+        )
+        assert total_dropped >= 2, (
+            "both invalid docs must be counted across the three drop keys"
+        )
 
     def test_valid_and_invalid_mix_only_valid_in_candidates(self):
-        """Mixed batch: valid + invalid — only valid docs appear in candidates."""
+        """Mixed batch: valid + parse-failed — only valid docs appear in candidates."""
         from advisors.community_strats import load_community_strategies
 
         valid_doc = _doc("good", "Good", _simple_tree(), {"sharpe": 1.0})
+        # '!!!' is not valid JSON → parse_failed
         invalid_doc = {"sid": "bad", "name": "Bad", "edn_string": "!!!", "oos_metrics": None}
         client, _ = _make_mock_client([valid_doc, invalid_doc])
         result = load_community_strategies(client=client)
@@ -443,7 +476,9 @@ class TestAC2InvalidDocsSkipped:
         sids = [c["sid"] for c in result["candidates"]]
         assert "good" in sids
         assert "bad" not in sids
-        assert result["stats"]["invalid"] >= 1
+        assert result["stats"]["parse_failed"] >= 1, (
+            "'!!!' must be counted in parse_failed"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1358,3 +1393,244 @@ class TestAC9QueryEfficiency:
         assert not qm_included, (
             f"projection must NOT include 'quantstats_metrics'; got projection={projection!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# AC-10: Granular drop accounting — stats contract change
+#
+# The operator flagged that a single opaque 'invalid' counter hides the nature
+# of drops.  The new contract replaces 'invalid' with three granular keys:
+#
+#   missing_edn_string  — doc had no edn_string field (or empty string)
+#   parse_failed        — edn_string present but json.loads raised
+#   validate_rejected   — tree parsed OK but validate_tree returned HARD errors
+#
+# Invariant: pulled == valid + deduped + missing_edn_string + parse_failed
+#            + validate_rejected
+#
+# These tests are RED against the current implementation which emits only
+# 'invalid' (no granular keys).  The stale references in TestAC2 and TestAC1
+# were updated above; this class tests the new contract in isolation.
+# ---------------------------------------------------------------------------
+
+
+def _make_invalid_tree_doc(sid: str) -> dict:
+    """Return a doc whose tree parses as JSON but fails validate_tree.
+
+    Uses an unknown step value which validate_tree hard-rejects.
+    """
+    tree = {
+        "step": "root",
+        "name": "Bad",
+        "rebalance": "daily",
+        "id": str(uuid.uuid4()),
+        "children": [
+            {"step": "UNKNOWN_XYZ", "id": str(uuid.uuid4()), "children": []}
+        ],
+    }
+    return {"sid": sid, "name": "Bad", "edn_string": json.dumps(tree), "oos_metrics": None}
+
+
+class TestAC10GranularDropAccounting:
+    """stats dict uses three granular drop keys; 'invalid' is gone; sum invariant holds."""
+
+    # ------------------------------------------------------------------
+    # Key presence / absence
+    # ------------------------------------------------------------------
+
+    def test_stats_has_missing_edn_string_key(self):
+        """stats must contain 'missing_edn_string' key — RED against current 'invalid' impl."""
+        from advisors.community_strats import load_community_strategies
+
+        client, _ = _make_mock_client([_doc("ok", "OK", _simple_tree())])
+        result = load_community_strategies(client=client)
+
+        assert "missing_edn_string" in result["stats"], (
+            "stats must contain 'missing_edn_string' key (new granular drop contract)"
+        )
+
+    def test_stats_has_parse_failed_key(self):
+        """stats must contain 'parse_failed' key — RED against current 'invalid' impl."""
+        from advisors.community_strats import load_community_strategies
+
+        client, _ = _make_mock_client([_doc("ok", "OK", _simple_tree())])
+        result = load_community_strategies(client=client)
+
+        assert "parse_failed" in result["stats"], (
+            "stats must contain 'parse_failed' key (new granular drop contract)"
+        )
+
+    def test_stats_has_validate_rejected_key(self):
+        """stats must contain 'validate_rejected' key — RED against current 'invalid' impl."""
+        from advisors.community_strats import load_community_strategies
+
+        client, _ = _make_mock_client([_doc("ok", "OK", _simple_tree())])
+        result = load_community_strategies(client=client)
+
+        assert "validate_rejected" in result["stats"], (
+            "stats must contain 'validate_rejected' key (new granular drop contract)"
+        )
+
+    def test_stats_does_not_have_invalid_key(self):
+        """stats must NOT contain the old 'invalid' key — it is replaced by three granular keys."""
+        from advisors.community_strats import load_community_strategies
+
+        client, _ = _make_mock_client([_doc("ok", "OK", _simple_tree())])
+        result = load_community_strategies(client=client)
+
+        assert "invalid" not in result["stats"], (
+            "stats must NOT contain the old 'invalid' key — "
+            "use missing_edn_string / parse_failed / validate_rejected instead"
+        )
+
+    # ------------------------------------------------------------------
+    # Each drop reason increments exactly the right counter
+    # ------------------------------------------------------------------
+
+    def test_absent_edn_string_increments_missing_edn_string_not_others(self):
+        """A doc with no edn_string field increments missing_edn_string == 1,
+        and parse_failed == validate_rejected == 0.
+        """
+        from advisors.community_strats import load_community_strategies
+
+        doc = {"sid": "no-edn", "name": "NoEDN", "oos_metrics": None}
+        client, _ = _make_mock_client([doc])
+        result = load_community_strategies(client=client)
+
+        stats = result["stats"]
+        assert stats["missing_edn_string"] == 1, (
+            "absent edn_string must increment missing_edn_string to exactly 1"
+        )
+        assert stats["parse_failed"] == 0, (
+            "absent edn_string must NOT increment parse_failed"
+        )
+        assert stats["validate_rejected"] == 0, (
+            "absent edn_string must NOT increment validate_rejected"
+        )
+
+    def test_empty_edn_string_increments_missing_edn_string(self):
+        """An empty-string edn_string is a missing-payload drop, not a parse error."""
+        from advisors.community_strats import load_community_strategies
+
+        doc = {"sid": "empty-edn", "name": "EmptyEDN", "edn_string": "", "oos_metrics": None}
+        client, _ = _make_mock_client([doc])
+        result = load_community_strategies(client=client)
+
+        stats = result["stats"]
+        assert stats["missing_edn_string"] >= 1, (
+            "empty edn_string must increment missing_edn_string"
+        )
+        sids = [c["sid"] for c in result["candidates"]]
+        assert "empty-edn" not in sids
+
+    def test_bad_json_increments_parse_failed_not_others(self):
+        """A non-JSON edn_string increments parse_failed == 1,
+        and missing_edn_string == validate_rejected == 0.
+        """
+        from advisors.community_strats import load_community_strategies
+
+        doc = {"sid": "bad-json", "name": "BadJSON",
+               "edn_string": "NOT_VALID_JSON{{{{", "oos_metrics": None}
+        client, _ = _make_mock_client([doc])
+        result = load_community_strategies(client=client)
+
+        stats = result["stats"]
+        assert stats["parse_failed"] == 1, (
+            "non-JSON edn_string must increment parse_failed to exactly 1"
+        )
+        assert stats["missing_edn_string"] == 0, (
+            "non-JSON edn_string must NOT increment missing_edn_string"
+        )
+        assert stats["validate_rejected"] == 0, (
+            "non-JSON edn_string must NOT increment validate_rejected"
+        )
+
+    def test_validate_rejected_tree_increments_validate_rejected_not_others(self):
+        """A tree that parses but fails validate_tree increments validate_rejected == 1,
+        and missing_edn_string == parse_failed == 0.
+        """
+        from advisors.community_strats import load_community_strategies
+
+        doc = _make_invalid_tree_doc("bad-tree")
+        client, _ = _make_mock_client([doc])
+        result = load_community_strategies(client=client)
+
+        stats = result["stats"]
+        assert stats["validate_rejected"] == 1, (
+            "validate_tree-failing tree must increment validate_rejected to exactly 1"
+        )
+        assert stats["missing_edn_string"] == 0, (
+            "validate-rejected doc must NOT increment missing_edn_string"
+        )
+        assert stats["parse_failed"] == 0, (
+            "validate-rejected doc must NOT increment parse_failed"
+        )
+
+    # ------------------------------------------------------------------
+    # Sum invariant
+    # ------------------------------------------------------------------
+
+    def test_pulled_equals_sum_of_all_drop_and_success_buckets(self):
+        """Invariant: pulled == valid + deduped + missing_edn_string + parse_failed
+        + validate_rejected.
+
+        Batch: 1 valid, 1 missing_edn_string, 1 parse_failed, 1 validate_rejected,
+        plus a duplicate of the valid tree (deduped=1).  pulled must equal 5.
+        """
+        from advisors.community_strats import load_community_strategies
+
+        tree = _simple_tree()
+        docs = [
+            _doc("valid-1", "Valid1", tree, {"sharpe": 1.0}),            # valid
+            _doc("valid-2", "Valid2", tree, {"sharpe": 0.5}),            # deduped (same tree)
+            {"sid": "miss", "name": "Miss", "oos_metrics": None},        # missing_edn_string
+            {"sid": "parse", "name": "Parse",
+             "edn_string": "NOT_JSON", "oos_metrics": None},             # parse_failed
+            _make_invalid_tree_doc("reject"),                             # validate_rejected
+        ]
+        client, _ = _make_mock_client(docs)
+        result = load_community_strategies(client=client)
+
+        stats = result["stats"]
+        total = (
+            stats["valid"]
+            + stats["deduped"]
+            + stats["missing_edn_string"]
+            + stats["parse_failed"]
+            + stats["validate_rejected"]
+        )
+        assert total == stats["pulled"], (
+            f"Invariant violated: pulled={stats['pulled']} but "
+            f"valid({stats['valid']}) + deduped({stats['deduped']}) + "
+            f"missing_edn_string({stats['missing_edn_string']}) + "
+            f"parse_failed({stats['parse_failed']}) + "
+            f"validate_rejected({stats['validate_rejected']}) = {total}"
+        )
+
+    def test_sum_invariant_holds_for_all_valid_batch(self):
+        """Invariant holds when there are no drops at all — all drop keys are 0."""
+        from advisors.community_strats import load_community_strategies
+
+        tree_a = make_root("A", "daily", [make_weight_equal([make_asset("SPY")])])
+        tree_b = make_root("B", "daily", [make_weight_equal([make_asset("BND")])])
+        docs = [
+            _doc("a", "A", tree_a, {"sharpe": 1.0}),
+            _doc("b", "B", tree_b, {"sharpe": 1.2}),
+        ]
+        client, _ = _make_mock_client(docs)
+        result = load_community_strategies(client=client)
+
+        stats = result["stats"]
+        total = (
+            stats["valid"]
+            + stats["deduped"]
+            + stats["missing_edn_string"]
+            + stats["parse_failed"]
+            + stats["validate_rejected"]
+        )
+        assert total == stats["pulled"], (
+            f"Invariant violated on all-valid batch: pulled={stats['pulled']} != sum={total}"
+        )
+        assert stats["missing_edn_string"] == 0
+        assert stats["parse_failed"] == 0
+        assert stats["validate_rejected"] == 0
