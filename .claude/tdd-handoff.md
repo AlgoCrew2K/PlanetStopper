@@ -49,29 +49,20 @@ dependency, no DB access, and no network calls. No e2e spec required.
 | AC-5+AC-2 | KNOWN_REBALANCE contains "yearly" (canary) | TestGrammarV2TypeGuard | test_known_rebalance_after_widening_contains_yearly | RED |
 | AC-5+AC-3 | KNOWN_INDICATOR_FNS contains all 6 new tokens (canary) | TestGrammarV2TypeGuard | test_known_indicator_fns_after_widening_contains_all_six_new_tokens | RED |
 
-## Conflicting Pre-existing Tests — Implementer Must Handle
+## Pre-existing Tests — Already Re-pointed (DONE — implementer leave alone)
 
-Two pre-existing tests in the file are SUPERSEDED by the new AC-1/AC-2 tests and will need
-to be updated (NOT removed — their intent must be preserved with updated tokens) as part of
-the GREEN phase:
+The two conflicting pre-existing tests have been re-pointed by the test-writer. The implementer
+must NOT touch them — they are now correct regression guards.
 
-1. **TestAdversarialMutations::test_unknown_comparator_gte_produces_error** (line ~654)
-   - Old stance: "gte is UNCONFIRMED per OQ-2; reject it." Correct for v1 grammar.
-   - New stance (AC-1): "gte is CONFIRMED per v2 corpus n=39,596; accept it."
-   - Resolution: The implementer (or test-writer review pass) must change this test's
-     comparator from "gte" to "eq" or another genuinely-unknown value. Do NOT delete the
-     test — the intent (unknown comparator must error) is still valid.
+1. **TestAdversarialMutations::test_unknown_comparator_eq_produces_hard_error**
+   - Was: `test_unknown_comparator_gte_produces_error` using `comparator="gte"`
+   - Now: renamed + re-pointed to `comparator="eq"` (v2 §8: 0 corpus occurrences, permanent hard error)
+   - Status: PASSES now AND will pass after GREEN (eq is never added to KNOWN_COMPARATORS)
 
-2. **TestAdversarialCasesRound2::test_make_root_with_unknown_rebalance_produces_error_when_validated** (line ~2645)
-   - Old example value: "quarterly" (was unknown in v1 grammar).
-   - New stance (AC-2): "quarterly" is now corpus-verified.
-   - Resolution: The implementer must change the example value from "quarterly" to a
-     genuinely-unknown value (e.g. "hourly", "biweekly", "decennial").
-   - This test will PASS after GREEN because make_root("quarterly") will no longer produce
-     a validation error — making it a false pass (not testing what it claims to test).
-
-The implementer's first action after GREEN should be to update these two tests. The test-writer
-will verify in the review pass.
+2. **TestAdversarialCasesRound2::test_make_root_with_unknown_rebalance_produces_error_when_validated**
+   - Was: using `rebalance="quarterly"` (was unknown in v1, now accepted in v2/AC-2)
+   - Now: re-pointed to `rebalance="hourly"` (v2 §6 full census: 0 occurrences, permanent hard error)
+   - Status: PASSES now AND will pass after GREEN (hourly is never added to KNOWN_REBALANCE)
 
 ## Questions for User
 None — specification is complete from the v2 grammar doc and feature plan.
@@ -125,4 +116,7 @@ The frozensets are already iterated in membership checks — adding tokens is th
 - [2026-06-14] test-writer: RED complete — 17 tests failing (all on assertions, zero
   import/syntax errors), 122 passing. Test file:
   tests/advisors/test_symphony_schema.py. 0 stubs created.
-  Commit SHA: (see below after commit).
+  Commit SHA: f06500c.
+- [2026-06-14] test-writer: Re-pointed two stale pre-existing tests (test_unknown_comparator_eq_produces_hard_error
+  from gte→eq; test_make_root_with_unknown_rebalance from quarterly→hourly). Both pass now and
+  will pass after GREEN. 17 RED / 122 GREEN count unchanged.

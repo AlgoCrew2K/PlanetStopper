@@ -651,21 +651,24 @@ class TestAdversarialMutations:
     # Unknown comparator
     # -----------------------------------------------------------------------
 
-    def test_unknown_comparator_gte_produces_error(self, valid_tree):
-        """'gte' is NOT in the confirmed grammar (OQ-2 stance: validate against gt/lt/lte only).
+    def test_unknown_comparator_eq_produces_hard_error(self, valid_tree):
+        """'eq' is NOT in the Composer corpus and must produce a hard error.
 
-        This pins the OQ-2 decision: until 'gte' is confirmed in a local fixture,
-        it must be treated as a hard error.
+        Re-pointed from 'gte': v2 grammar §8 (VERIFIED-CORPUS, 2026-06-14) confirms
+        'gte' is real (n=39,596) and is accepted as of AC-1. 'eq' has 0 corpus
+        occurrences and is explicitly excluded by v2 §8 — it is a permanent hard
+        error regardless of any future widening.
+        Provenance: v2 grammar §8 ("eq and neq do NOT exist in the corpus (0 occurrences)").
         """
         m = _import_schema()
         if_child = self._first_node_of_step(valid_tree, "if-child")
         if if_child is None:
             pytest.skip("Minimal fixture has no if-child; rebuild needed")
-        if_child["comparator"] = "gte"
+        if_child["comparator"] = "eq"
         errors = m.validate_tree(valid_tree)
         assert len(errors) >= 1, (
-            "'gte' is UNCONFIRMED per OQ-2; validate_tree should reject it. "
-            "Accepted comparators: gt, lt, lte."
+            "'eq' has 0 corpus occurrences (v2 §8); validate_tree must reject it. "
+            "Accepted comparators after v2 widening: gt, lt, lte, gte."
         )
 
     def test_unknown_comparator_eq_produces_error(self, valid_tree):
@@ -2647,14 +2650,20 @@ class TestAdversarialCasesRound2:
 
         Constructors do not themselves validate (they just build dicts);
         validate_tree is the validation gate.
+
+        Re-pointed from 'quarterly': v2 grammar §6 (VERIFIED-CORPUS, 2026-06-14) confirms
+        'quarterly' is real (n=58) and is accepted as of AC-2. 'hourly' has 0 corpus
+        occurrences in the v2 full census — it is a permanent hard error.
+        Provenance: v2 grammar §6 full census (daily/none/weekly/monthly/quarterly/yearly only).
         """
         m = _import_schema()
         asset = m.make_asset("SPY")
         wt = m.make_weight_equal([asset])
-        root = m.make_root("Test", "quarterly", [wt])  # "quarterly" is unrecognised
+        root = m.make_root("Test", "hourly", [wt])  # "hourly" has 0 corpus occurrences (v2 §6)
         errors = m.validate_tree(root)
         assert len(errors) >= 1, (
-            "Expected error from validate_tree when root has unknown rebalance 'quarterly'"
+            "Expected error from validate_tree when root has unknown rebalance 'hourly' "
+            "(0 occurrences in v2 corpus full census, §6)"
         )
 
     def test_multiple_calls_to_make_root_produce_different_root_ids(self):
