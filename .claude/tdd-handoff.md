@@ -113,18 +113,7 @@ The frozensets are already iterated in membership checks — adding tokens is th
 
 ## Test File Issues (for test-writer to fix)
 
-### TestModuleConstants::test_known_comparators_does_not_contain_gte (line 2365)
-
-**File:** tests/advisors/test_symphony_schema.py
-**Test name:** `TestModuleConstants::test_known_comparators_does_not_contain_gte`
-**What the test expects:** `"gte" not in KNOWN_COMPARATORS`
-**What correct code produces:** `"gte" in KNOWN_COMPARATORS` (AC-1 confirmed VERIFIED-CORPUS n=39,596 §8)
-**Root cause:** Stale v1 OQ-2 guard. The test-writer re-pointed two other stale tests
-(gte→eq in TestAdversarialMutations; quarterly→hourly in TestAdversarialCasesRound2) but missed
-this third one in TestModuleConstants. The regression it intended to guard is already covered by
-`TestGrammarV2RegressionGuard::test_unknown_comparator_eq_still_produces_hard_error_after_widening`.
-**Suggested fix:** Re-point this test to assert `"eq" not in KNOWN_COMPARATORS` and update the
-docstring from "OQ-2: unconfirmed, omit until verified" to "eq has 0 corpus occurrences — permanent hard error".
+RESOLVED — see status log entry 2026-06-14 (third entry).
 
 ## Implementation Notes
 
@@ -145,3 +134,4 @@ Only `advisors/symphony_schema.py` was touched. No test files modified.
   from gte→eq; test_make_root_with_unknown_rebalance from quarterly→hourly). Both pass now and
   will pass after GREEN. 17 RED / 122 GREEN count unchanged.
 - [2026-06-14] implementer: GREEN complete — 138/139 tests passing. All 17 RED now GREEN. All 122 pre-existing still GREEN. 1 test bug documented: TestModuleConstants::test_known_comparators_does_not_contain_gte (stale v1 OQ-2 guard, test-writer missed re-pointing — see Test File Issues above). Implementation touches ONLY advisors/symphony_schema.py (3 frozenset literals + inline comments updated). Lint clean.
+- [2026-06-14] test-writer: Re-pointed third stale test — test_known_comparators_does_not_contain_gte renamed to test_known_comparators_does_not_contain_eq, assertion changed from "gte" not in KNOWN_COMPARATORS to "eq" not in KNOWN_COMPARATORS, docstring updated to cite v2 §8 (eq = 0 corpus occurrences). Full suite: 139/139 passed. No other stale not-in assertions found (grep confirmed).

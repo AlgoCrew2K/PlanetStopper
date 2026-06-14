@@ -2362,11 +2362,18 @@ class TestModuleConstants:
         assert "lt" in m.KNOWN_COMPARATORS
         assert "lte" in m.KNOWN_COMPARATORS
 
-    def test_known_comparators_does_not_contain_gte(self):
-        """KNOWN_COMPARATORS must NOT contain 'gte' (OQ-2: unconfirmed, omit until verified)."""
+    def test_known_comparators_does_not_contain_eq(self):
+        """KNOWN_COMPARATORS must NOT contain 'eq' — it has 0 corpus occurrences.
+
+        Re-pointed from 'gte': v2 grammar §8 (VERIFIED-CORPUS 2026-06-14) confirms
+        'gte' is real (n=39,596) and is now a valid comparator. 'eq' has 0 corpus
+        occurrences and is explicitly excluded by v2 §8 ("eq and neq do NOT exist
+        in the corpus") — it must never be added to KNOWN_COMPARATORS.
+        Provenance: v2 grammar §8.
+        """
         m = _import_schema()
-        assert "gte" not in m.KNOWN_COMPARATORS, (
-            "'gte' must not be in KNOWN_COMPARATORS until confirmed in a local fixture (OQ-2)"
+        assert "eq" not in m.KNOWN_COMPARATORS, (
+            "'eq' must not be in KNOWN_COMPARATORS — v2 §8 confirms 0 corpus occurrences"
         )
 
     def test_known_rebalance_contains_all_four_values(self):
