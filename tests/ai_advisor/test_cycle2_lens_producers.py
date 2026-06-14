@@ -40,15 +40,9 @@ Test scope (this file):
      - Every source in the returned lens block passes build_citation validation.
      - Score-only / aggregate values that have no URL are NOT presented as sources.
 
-  6. Technicals graduated to a real producer in B2; derivatives graduated in
-     pr/derivatives-wiring:
-     - _build_technicals_section is a REAL producer (B2) — wired to
-       advisors.lens_technicals._fetch_technicals; returns available=True
-       when the producer succeeds (mocked; no live Alpaca call in tests).
-     - _build_derivatives_section is a REAL producer (pr/derivatives-wiring) —
-       wired to advisors.lens_options_proxy._fetch_options_proxy (FRED VIXCLS
-       / VXVCLS); returns available=True when the producer succeeds (mocked;
-       no live FRED call in tests).
+  6. Technicals + derivatives stubs UNCHANGED (Cycle 2 does not fill them):
+     - _build_technicals_section still returns available=False (cycle-1 stub).
+     - _build_derivatives_section still returns available=False (cycle-1 stub).
 
   7. Property-based invariants (via hypothesis where available):
      - Monotonicity of article count in GDELT payload vs. sources list length.
@@ -1034,189 +1028,39 @@ class TestD1ErrorContract:
 
 
 # ---------------------------------------------------------------------------
-# 5. Technicals and derivatives are both real producers (B2 / pr/derivatives-wiring)
+# 5. Technicals + derivatives stubs UNCHANGED (Cycle 2 does not fill them)
 # ---------------------------------------------------------------------------
 
 
-def test_technicals_is_now_a_real_producer():
-    """_build_technicals_section is a real producer (graduated in B2), not a stub.
+def test_technicals_stub_still_returns_available_false():
+    """_build_technicals_section is unchanged in Cycle 2 — still available=False.
 
-    B2 wired _build_technicals_section to advisors.lens_technicals._fetch_technicals.
-    This test mocks the producer to return available=True and asserts the section
-    surfaces that result — confirming the wiring is intact.
-
-    Mocking strategy: patch advisors.lens_technicals._fetch_technicals directly
-    (the function _build_technicals_section calls via lazy import).  No live
-    Alpaca fetch is made.
-
-    FAILS if:
-    - _build_technicals_section is an unconditional stub (available=False always)
-    - The section does not delegate to _fetch_technicals
-    - The section ignores the producer's available=True payload
+    Cycle 2 fills ONLY sentiment, fundamentals, macro.  Technicals is Cycle-2b.
+    FAILS if Cycle 2 accidentally breaks or changes the technicals stub.
     """
     import ai_advisor
 
-    # Build a minimal but structurally correct technicals payload — shape asserted,
-    # values are not producer-computed and thus not hardcoded as magic constants.
-    fake_technicals_payload = {
-        "available": True,
-        "ma_posture": {
-            "pct_above_50sma": 0.6,
-            "pct_above_200sma": 0.5,
-            "overall": "bullish",
-        },
-        "breadth": 0.6,
-        "momentum": {
-            "mean_20d_return": 0.01,
-            "direction": "positive",
-        },
-        "source": "alpaca/synthetic_history",
-    }
-
-    with patch("advisors.lens_technicals._fetch_technicals", return_value=fake_technicals_payload):
-        block = ai_advisor._build_technicals_section()
-
+    block = ai_advisor._build_technicals_section()
     _assert_lens_block_shape(block, "technicals")
-    assert block["available"] is True, (
-        "_build_technicals_section must surface available=True when the producer "
-        "returns available=True.  If this fails, technicals has regressed to the "
-        "old unconditional stub (which always returned available=False)."
-    )
-    assert block.get("payload") is not None, (
-        "_build_technicals_section with available=True must carry a non-None payload"
-    )
-    # Confirm the payload flows through from the producer (shape check — not magic values)
-    payload = block["payload"]
-    assert isinstance(payload, dict), (
-        "technicals payload must be a dict when available=True"
-    )
-    assert "available" in payload or "ma_posture" in payload, (
-        "technicals payload must contain at least one field from the producer "
-        "(e.g. 'ma_posture') — confirms the producer output is being forwarded"
-    )
-
-
-def test_derivatives_is_now_a_real_producer():
-    """_build_derivatives_section is a real producer (graduated in pr/derivatives-wiring).
-
-    pr/derivatives-wiring wired _build_derivatives_section to
-    advisors.lens_options_proxy._fetch_options_proxy (FRED VIXCLS/VXVCLS).
-    This test mocks the producer to return available=True and asserts the section
-    surfaces that result — confirming the wiring is intact.
-
-    Root cause for the prior stub-assertion: stale test (intentional behavior
-    change — derivatives graduated stub→real, same DE-STUB-001 pattern as
-    technicals in B2).  The TESTS are corrected; no code regression.
-
-    Mocking strategy: patch advisors.lens_options_proxy._fetch_options_proxy
-    directly (the function _build_derivatives_section calls via lazy import).
-    No live FRED call is made.
-
-    FAILS if:
-    - _build_derivatives_section is still an unconditional stub (available=False
-      always) — i.e., the wiring to _fetch_options_proxy was reverted.
-    - The section does not delegate to _fetch_options_proxy.
-    - The section ignores the producer's available=True payload.
-    """
-    import ai_advisor
-
-    # Minimal structurally correct options-proxy payload — shape asserted, values
-    # are test sentinels (not producer-computed; not hardcoded magic constants).
-    fake_options_payload = {
-        "available": True,
-        "vix_level": 18.5,
-        "vix_term_structure": {
-            "spot": 18.5,
-            "term_3m": 20.1,
-            "ratio": 18.5 / 20.1,
-            "spread": 18.5 - 20.1,
-            "regime": "contango",
-        },
-        "risk_read": "neutral",
-        "as_of_date": "2026-06-13",
-        "source": "FRED VIXCLS/VXVCLS — test sentinel",
-    }
-
-    with patch(
-        "advisors.lens_options_proxy._fetch_options_proxy",
-        return_value=fake_options_payload,
-    ):
-        block = ai_advisor._build_derivatives_section()
-
-    _assert_lens_block_shape(block, "derivatives")
-    assert block["available"] is True, (
-        "_build_derivatives_section must surface available=True when the producer "
-        "returns available=True.  If this fails, derivatives has regressed to the "
-        "old unconditional stub (which always returned available=False)."
-    )
-    assert block.get("payload") is not None, (
-        "_build_derivatives_section with available=True must carry a non-None payload"
-    )
-    # Shape check — confirm producer fields flow through (not magic value assertions)
-    payload = block.get("payload")
-    assert isinstance(payload, dict), (
-        "derivatives payload must be a dict when available=True"
-    )
-    assert "vix_level" in payload or "risk_read" in payload or "available" in payload, (
-        "derivatives payload must contain at least one field from the producer "
-        "(e.g. 'vix_level', 'risk_read') — confirms producer output is forwarded"
-    )
-    # sources must be non-empty (the producer always provides a source citation)
-    sources = block.get("sources")
-    assert isinstance(sources, list) and len(sources) > 0, (
-        "derivatives block with available=True must carry non-empty sources "
-        "(the FRED citation must flow through)"
-    )
-
-
-def test_derivatives_unavailable_path_honest_availability():
-    """_build_derivatives_section returns available=False when the producer fails.
-
-    Lock test for the unavailable (honest-availability) path: when
-    _fetch_options_proxy returns available=False, the derivatives section must
-    surface available=False with a non-empty reason, and must NOT emit a
-    non-empty payload (CC-3 data-wall).
-
-    Note on sources: the derivatives section attaches the FRED source citation
-    even on unavailable paths (so the UI can show data provenance regardless).
-    This is intentional — the sources list is not empty on the unavailable path
-    for this lens.  The critical CC-3 invariant is payload=None, not sources=[].
-
-    Mocking strategy: patch advisors.lens_options_proxy._fetch_options_proxy to
-    return an unavailable dict.  No live FRED call is made.
-
-    FAILS if derivatives regresses to always-available=True (fabricating data),
-    or leaks a payload when the underlying fetch fails.
-    """
-    import ai_advisor
-
-    fake_unavailable_payload = {
-        "available": False,
-        "reason": "ValueError",  # type(exc).__name__ D-1 contract
-        "source": "FRED VIXCLS/VXVCLS — test sentinel",
-    }
-
-    with patch(
-        "advisors.lens_options_proxy._fetch_options_proxy",
-        return_value=fake_unavailable_payload,
-    ):
-        block = ai_advisor._build_derivatives_section()
-
-    _assert_lens_block_shape(block, "derivatives")
-    # Must be unavailable — this is the failure path
     assert block["available"] is False, (
-        "_build_derivatives_section must return available=False when the producer "
-        "returns available=False.  If this fails, derivatives is fabricating data."
+        "_build_technicals_section must remain available=False after Cycle 2. "
+        "Technicals is a Cycle-2b deliverable — do not fill it in Cycle 2."
     )
-    # reason must pass through from the producer (D-1: exc class name only)
-    reason = block.get("reason")
-    assert isinstance(reason, str) and reason.strip(), (
-        "derivatives unavailable block must carry a non-empty reason string"
-    )
-    # payload must be None (CC-3: no analytical data behind the unavailability mask)
-    assert block.get("payload") is None, (
-        "derivatives block with available=False must have payload=None. "
-        f"Got payload={block.get('payload')!r}.  CC-3 data-wall violation."
+
+
+def test_derivatives_stub_still_returns_available_false():
+    """_build_derivatives_section is unchanged in Cycle 2 — still available=False.
+
+    Cycle 2 fills ONLY sentiment, fundamentals, macro.  Derivatives is Cycle-2b.
+    FAILS if Cycle 2 accidentally breaks or changes the derivatives stub.
+    """
+    import ai_advisor
+
+    block = ai_advisor._build_derivatives_section()
+    _assert_lens_block_shape(block, "derivatives")
+    assert block["available"] is False, (
+        "_build_derivatives_section must remain available=False after Cycle 2. "
+        "Derivatives is a Cycle-2b deliverable — do not fill it in Cycle 2."
     )
 
 

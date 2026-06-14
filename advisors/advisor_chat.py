@@ -44,7 +44,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -207,9 +206,9 @@ logger = logging.getLogger(__name__)
 # Model + SDK configuration
 # ---------------------------------------------------------------------------
 
-# Opus 4.8 default — re-uses the same model as the config advisor for consistency.
-# Override at runtime via ADVISOR_LLM_MODEL env var (C1: env-configurable model).
-_CHAT_MODEL: str = os.environ.get("ADVISOR_LLM_MODEL", "claude-opus-4-8")
+# Re-use the same model as the config advisor for consistency.
+# claude-opus-4-7 (analytical reasoning over quant data, claude-api-mechanics.md §2).
+_CHAT_MODEL = "claude-opus-4-7"
 
 # Token budget for chat responses — longer than config suggestions because we
 # are explaining multi-paragraph reasoning, not producing a structured list.

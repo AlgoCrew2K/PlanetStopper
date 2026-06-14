@@ -39,10 +39,6 @@ logger = logging.getLogger(__name__)
 # Maximum candidates generated per proposal run. PM-ASSUMED: 30 (bounded batch per AC-3).
 MAX_CANDIDATES_PER_RUN: int = 30
 
-# Community candidate sub-budget — caps how many loader records can be
-# backtested per run. templates + community <= MAX_CANDIDATES_PER_RUN.
-MAX_COMMUNITY_CANDIDATES_PER_RUN: int = 15
-
 # Observation type tag written to advisor_observations.
 _OBSERVATION_TYPE = "strategy_proposal"
 
@@ -476,34 +472,6 @@ def _generate_candidate_trees(
 
 
 # ---------------------------------------------------------------------------
-# Community candidate adapter
-# ---------------------------------------------------------------------------
-
-
-def community_candidate_infos(records: list[dict]) -> list[CandidateInfo]:
-    """Adapt community loader records → CandidateInfo list for propose_strategies.
-
-    Skips records missing 'sid' or 'tree'. Never raises.
-    candidate_id = 'community:<sid>'; template_id = 'community'.
-    """
-    result: list[CandidateInfo] = []
-    for rec in records:
-        sid = rec.get("sid")
-        tree = rec.get("tree")
-        if not sid or tree is None:
-            continue
-        result.append(
-            CandidateInfo(
-                candidate_id=f"community:{sid}",
-                tree=tree,
-                template_id="community",
-                params={"sid": sid, "name": rec.get("name", "")},
-            )
-        )
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Screen helpers
 # ---------------------------------------------------------------------------
 
@@ -821,7 +789,6 @@ def propose_strategies(
     *,
     incumbent_oos_alpha: float = 0.0,
     default_oos_alpha: float = 0.0,
-    community_candidates: list[CandidateInfo] | None = None,
 ) -> ProposalRun:
     """Propose new candidate symphonies from scratch.
 
@@ -867,26 +834,6 @@ def propose_strategies(
 
         # Step 1: Generate candidate trees (objective-directed, bounded)
         candidate_infos = _generate_candidate_trees(objective, universe)
-
-        # Inject community candidates (AC-2 / AC-3)
-        if community_candidates:
-            # Cap community sub-budget before considering global cap
-            comm = list(community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN])
-            # Dedup by candidate_id — keep template candidate if collision (it was first)
-            existing_ids = {c.candidate_id for c in candidate_infos}
-            for c in comm:
-                if c.candidate_id not in existing_ids:
-                    candidate_infos.append(c)
-                    existing_ids.add(c.candidate_id)
-            # Enforce global cap (templates have priority — they were added first)
-            if len(candidate_infos) > MAX_CANDIDATES_PER_RUN:
-                logger.info(
-                    "propose_strategies: truncating candidate list from %d to %d "
-                    "(MAX_CANDIDATES_PER_RUN cap)",
-                    len(candidate_infos),
-                    MAX_CANDIDATES_PER_RUN,
-                )
-                candidate_infos = candidate_infos[:MAX_CANDIDATES_PER_RUN]
 
         if not candidate_infos:
             return ProposalRun(
