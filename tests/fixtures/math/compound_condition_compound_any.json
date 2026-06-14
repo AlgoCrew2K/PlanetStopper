@@ -1,0 +1,33 @@
+{
+  "_comment": "Golden fixture for make_compound_condition — AC-7. A compound block joining two binary conditions with OR (any). Source: feature-plans/symphony-grammar-foundation.md §Grammar ground truth.",
+  "input": {
+    "operator": "any",
+    "conditions_count": 2,
+    "conditions": [
+      {
+        "description": "cumulative-return(TLT, 200d) gt constant(0)",
+        "lhs_fn": "cumulative-return",
+        "lhs_ticker": "TLT",
+        "lhs_window": 200,
+        "comparator": "gt",
+        "rhs_constant": 0
+      },
+      {
+        "description": "cumulative-return(BIL, 20d) gt constant(0)",
+        "lhs_fn": "cumulative-return",
+        "lhs_ticker": "BIL",
+        "lhs_window": 20,
+        "comparator": "gt",
+        "rhs_constant": 0
+      }
+    ]
+  },
+  "expected_shape": {
+    "condition-type": "compound",
+    "operator": "any",
+    "required_keys": ["condition-type", "operator", "conditions"],
+    "conditions_is_list": true,
+    "conditions_count": 2
+  },
+  "notes": "compound joins N conditions. condition-type='compound', operator in {any,all}, conditions=[...]. Nestable: a compound can appear in another compound's conditions list."
+}

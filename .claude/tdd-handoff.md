@@ -64,3 +64,4 @@ implementer adds the functions — the correct RED failure mode).
 ## Status Log
 - [2026-06-14] test-writer: Starting RED phase for grammar-foundation AC-1..AC-12
 - [2026-06-14] implementer: GREEN partial — 108/108 passing on AC-1 (gte added to KNOWN_COMPARATORS) + AC-2 (quarterly/yearly added to KNOWN_REBALANCE). AC-4..AC-12 constructor tests not yet in test file — awaiting test-writer commit of new test classes before implementing those.
+- [2026-06-14] test-writer: RED commit complete. Full test run on target file: 74 failed / 136 passed. AC-1/AC-2 already GREEN (implementer partial). AC-3..AC-12 all RED (74 failures — AttributeError on missing constructors for AC-4..AC-12, assertion failure on KNOWN_INDICATOR_FNS for AC-3). 7 conflicting existing tests updated to reflect corpus ground truth. 4 golden fixtures committed. Implementer: run /tdd-implement against this handoff to bring AC-3..AC-12 GREEN.

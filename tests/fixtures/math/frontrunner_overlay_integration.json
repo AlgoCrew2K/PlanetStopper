@@ -1,0 +1,12 @@
+{
+  "_comment": "Golden fixture for the AC-9 frontrunner overlay integration test. Full tree: root -> wt-inverse-vol -> if_compound(RSI of ANY([EYEG,LQD,XLV]) > 80 w=10) -> [then: vol basket, else: base]. Source: feature-plans/symphony-grammar-foundation.md AC-9.",
+  "description": "make_if_compound(make_binary_compound_condition('relative-strength-index',[watched_tickers],'gt',make_constant_rhs(80),window=10,operator='any'), then=[vol_basket], else=[base]) wrapped in make_root",
+  "watched_tickers": ["EYEG", "LQD", "XLV"],
+  "vol_basket_tickers": ["SPY", "QQQ"],
+  "base_tickers": ["BIL"],
+  "expected_validate_tree_errors": [],
+  "expected_extract_tickers_excludes": ["%"],
+  "expected_extract_tickers_includes_all": ["EYEG", "LQD", "XLV", "SPY", "QQQ", "BIL"],
+  "expected_render_contains": ["ANY", "relative-strength-index"],
+  "notes": "extract_tickers must NOT include the '%' placeholder. render_rules_text must render the ANY gate in a human-readable way. validate_tree must return []."
+}

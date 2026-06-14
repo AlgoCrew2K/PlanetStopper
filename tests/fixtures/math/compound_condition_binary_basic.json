@@ -1,0 +1,16 @@
+{
+  "_comment": "Golden fixture for make_binary_condition — AC-5. A binary leaf condition: RSI(SPY,14) gt constant(70). Source: feature-plans/symphony-grammar-foundation.md §Grammar ground truth §7.",
+  "input": {
+    "lhs_fn": "relative-strength-index",
+    "lhs_ticker": "SPY",
+    "lhs_window": 14,
+    "comparator": "gt",
+    "rhs_constant": 70
+  },
+  "expected_shape": {
+    "condition-type": "binary",
+    "required_keys": ["condition-type", "operator", "conditions"],
+    "condition_type_value": "binary"
+  },
+  "notes": "A binary leaf has condition-type='binary'. No nested conditions list is required on a binary leaf — the predicate is directly on the node. Shape must match corpus §7 grammar."
+}
