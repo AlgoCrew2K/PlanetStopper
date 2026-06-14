@@ -33,7 +33,7 @@ Never raises — all failure paths return `ChatResponse(answer=None, error=<mess
 
 **Returns:** `ChatResponse` — `answer` is a plain-language explanation string on success, `None` on failure; `error` is `None` on success, an operator-safe error string on failure.
 
-**Model:** `claude-opus-4-7`, `max_tokens=1024`, 30-second timeout.
+**Model:** `_CHAT_MODEL` — env-configurable via `ADVISOR_LLM_MODEL` (default `claude-opus-4-8`). `max_tokens=1024`, 30-second timeout.
 
 ---
 

@@ -51,7 +51,13 @@ Aggregates sources from all `available=True` lens blocks. Each citation is valid
 
 ### Pass 3 — Claude Synthesis
 
-Calls Claude (`claude-haiku-4-5-20251001`, lightest available model) to synthesize the available lens summaries into an `overall_sentiment` label and `sentiment_rationale`. The prompt requests a single JSON response; the response is parsed and validated against the allowed sentinel set (`"risk-on"`, `"neutral"`, `"risk-off"`, `"limited-inputs"`).
+Calls Claude via `_SYNTHESIS_MODEL` (env var `ADVISOR_SYNTHESIS_MODEL`, default `claude-opus-4-8`; previously hardcoded `claude-haiku-4-5-20251001`) to synthesize the available lens summaries into an `overall_sentiment` label and `sentiment_rationale`. The prompt requests a single JSON response; the response is parsed and validated against the allowed sentinel set (`"risk-on"`, `"neutral"`, `"risk-off"`, `"limited-inputs"`).
+
+To override the synthesis model (e.g. to revert to the cheaper Haiku model), set the environment variable before starting the daemon:
+
+```
+ADVISOR_SYNTHESIS_MODEL=claude-haiku-4-5-20251001 python app.py
+```
 
 Degradation paths (all produce `"limited-inputs"` + an explanatory rationale string):
 - All lenses unavailable → Claude call is skipped entirely.

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -49,6 +50,10 @@ _TOTAL_LENS_COUNT: int = len(_LENS_NAMES)  # 5
 
 # Valid overall_sentiment values — exhaustive set from the AC-4 schema contract.
 _SENTIMENT_LIMITED_INPUTS: str = "limited-inputs"
+
+# Opus 4.8 default for nightly synthesis — higher reasoning quality than Haiku.
+# Override at runtime via ADVISOR_SYNTHESIS_MODEL env var (C1: env-configurable model).
+_SYNTHESIS_MODEL: str = os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")
 
 
 def _call_lens_section(lens_name: str) -> dict:
@@ -281,7 +286,7 @@ def _synthesize_via_claude(
         )
 
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",  # lightest model for synthesis
+            model=_SYNTHESIS_MODEL,  # env-configurable via ADVISOR_SYNTHESIS_MODEL (C1)
             max_tokens=256,
             messages=[{"role": "user", "content": synthesis_prompt}],
         )
