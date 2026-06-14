@@ -73,7 +73,21 @@ def _load_fixture(path: pathlib.Path) -> dict:
 
 
 def _ref_collect_tickers(node: Any, out: set[str] | None = None) -> set[str]:
-    """Iteratively gather all ticker strings from a raw tree node."""
+    """Iteratively gather all ticker strings from a raw tree node.
+
+    Walks the full tree including condition blocks:
+    - children[] — standard tree recursion
+    - tickers[] — watched-ticker list in binary-compound condition nodes
+    - conditions[] — nested condition list in compound condition nodes
+    - condition dict — if-child carrying a compound condition block
+    - lhs / rhs dicts — operand objects carrying a ticker field
+    - skips the "%" placeholder (used as lhs.ticker in binary-compound lhs operands)
+
+    This oracle was updated in Cycle B (symphony-compound-construction) to match
+    the extended extract_tickers behaviour after AC-7 added condition-block walking.
+    Exact-match against extract_tickers on both golden fixtures (small: 57 tickers,
+    large: 92 tickers) was verified before committing.
+    """
     if out is None:
         out = set()
     if not isinstance(node, dict):
@@ -83,10 +97,29 @@ def _ref_collect_tickers(node: Any, out: set[str] | None = None) -> set[str]:
         current = stack.pop()
         if not isinstance(current, dict):
             continue
-        if current.get("ticker"):
-            out.add(current["ticker"])
+        # ticker on the current node (asset ticker, operand ticker, etc.)
+        # skip the "%" placeholder used in binary-compound lhs operands
+        t = current.get("ticker")
+        if t and t != "%":
+            out.add(t)
+        # Standard tree walk via children[]
         for child in current.get("children") or []:
             stack.append(child)
+        # binary-compound: tickers[] is the watched-ticker list
+        for ticker_str in current.get("tickers") or []:
+            if isinstance(ticker_str, str) and ticker_str:
+                out.add(ticker_str)
+        # compound: conditions[] holds nested condition nodes
+        for cond in current.get("conditions") or []:
+            stack.append(cond)
+        # if-child: condition dict holds the compound/binary condition block
+        if isinstance(current.get("condition"), dict):
+            stack.append(current["condition"])
+        # operand dicts: lhs and rhs may carry a ticker field
+        if isinstance(current.get("lhs"), dict):
+            stack.append(current["lhs"])
+        if isinstance(current.get("rhs"), dict):
+            stack.append(current["rhs"])
     return out
 
 
