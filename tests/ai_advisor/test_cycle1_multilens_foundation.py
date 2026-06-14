@@ -135,14 +135,16 @@ def assembled_context(fake_autotune_run, fake_condensed_logic):
 
 CYCLE1_LENSES = ["technicals", "sentiment", "derivatives", "macro", "fundamentals"]
 
-# Lenses that remain intentional stubs after Cycle 2.  Sentiment (GDELT),
-# macro (FRED), and fundamentals (SEC EDGAR) were promoted to real producers
-# in commit 960d544 and are covered by tests/ai_advisor/test_cycle2_lens_producers.py.
-# Stub-contract assertions (available=False, empty payload, unconditional stub)
-# apply only to lenses that are still honest stubs.  Technicals graduated to a
-# real producer (B2: _build_technicals_section wires advisors.lens_technicals);
-# derivatives remains a stub until its producer is wired in a later cycle.
-CYCLE1_STUB_LENSES = ["derivatives"]
+# No Cycle-1 stubs remain after the derivatives graduation (pr/derivatives-wiring).
+# Sentiment (GDELT), macro (FRED), and fundamentals (SEC EDGAR) were promoted to
+# real producers in commit 960d544.  Technicals graduated in B2
+# (_build_technicals_section wires advisors.lens_technicals).  Derivatives
+# graduated when _build_derivatives_section was wired to
+# advisors.lens_options_proxy._fetch_options_proxy (FRED VIXCLS/VXVCLS).
+# All parametrized stub-contract tests below now collect zero items — the
+# correct vacuous outcome (same DE-STUB-001 pattern used when technicals
+# graduated).  Real-producer tests live in test_cycle2_lens_producers.py.
+CYCLE1_STUB_LENSES: list[str] = []
 
 
 @pytest.mark.parametrize("lens_name", CYCLE1_LENSES)

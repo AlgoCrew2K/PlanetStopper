@@ -550,17 +550,31 @@ def _build_sentiment_section(_data: object = None) -> dict:
 
 
 def _build_derivatives_section(_data: object = None) -> dict:
-    """Derivatives / options lens block — cycle-1 stub (Cycle-2b deliverable).
+    """Derivatives / volatility lens block — FRED VIXCLS/VXVCLS producer (real).
 
-    Honest availability: CBOE put/call + Alpaca IV source not yet connected.
-    Returns available=False with an informative reason.
+    Lazy-imports ``advisors.lens_options_proxy`` (CC-2 boundary: no module-level
+    import of advisor producers inside ai_advisor.py).  This is an INDEX-LEVEL
+    lens (VIX term structure) — no universe argument is passed to the producer.
+    Classifies the VIX term-structure regime (contango / backwardation / flat)
+    and derives a directional risk read (risk-on / risk-off / neutral).
+
+    D-1: error reason passes through the producer's type(exc).__name__ string;
+    never str(exc) or any raw exception message.
     """
+    import advisors.lens_options_proxy as _lop  # CC-2: lazy import
+
+    payload = _lop._fetch_options_proxy()
+    available = payload.get("available", False)
     return {
         "lens": "derivatives",
-        "available": False,
-        "reason": "derivatives source not connected — cycle-2b deliverable",
-        "payload": None,
-        "sources": [],
+        "available": available,
+        "reason": payload.get("reason"),
+        "payload": payload if available else None,
+        "sources": (
+            [{"source": payload["source"], "lens": "derivatives"}]
+            if payload.get("source")
+            else []
+        ),
     }
 
 
