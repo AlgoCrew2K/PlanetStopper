@@ -383,7 +383,8 @@ class TestAC2CommunityBatchedWithTemplates:
         captured_gate_calls: list = []
         captured_persist_calls: list = []
 
-        from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult, BacktestVerdict  # noqa: PLC0415
+        from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult  # noqa: PLC0415
+        from acceptance_gate import AcceptanceVerdict  # noqa: PLC0415
 
         # Build a minimal GatedBatch that lists every backtested candidate as a survivor
         def _fake_gate(candidates, **kwargs):
@@ -394,9 +395,16 @@ class TestAC2CommunityBatchedWithTemplates:
                 results.append(
                     CandidateGateResult(
                         candidate_id=c.candidate_id,
-                        winner_p_adj=0.01,
-                        verdict=BacktestVerdict(decision="ADOPT_CANDIDATE", is_survivor=True),
+                        verdict=AcceptanceVerdict(
+                            vetoes_passed=True,
+                            panel_score=0.8,
+                            panel_breakdown={},
+                            decision="ADOPT_CANDIDATE",
+                        ),
+                        validation_days=65,
+                        oos_alpha=0.05,
                         caveats=[],
+                        winner_p_adj=0.01,
                     )
                 )
             return GatedBatch(
@@ -970,15 +978,23 @@ class TestAC5Provenance:
         community_infos = sbe.community_candidate_infos(community_records)
         comm_sid = community_records[0]["sid"]
 
-        from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult, BacktestVerdict  # noqa: PLC0415
+        from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult  # noqa: PLC0415
+        from acceptance_gate import AcceptanceVerdict  # noqa: PLC0415
 
         def _fake_gate(candidates, **kwargs):
             results = [
                 CandidateGateResult(
                     candidate_id=c.candidate_id,
-                    winner_p_adj=0.01,
-                    verdict=BacktestVerdict(decision="ADOPT_CANDIDATE", is_survivor=True),
+                    verdict=AcceptanceVerdict(
+                        vetoes_passed=True,
+                        panel_score=0.8,
+                        panel_breakdown={},
+                        decision="ADOPT_CANDIDATE",
+                    ),
+                    validation_days=65,
+                    oos_alpha=0.05,
                     caveats=[],
+                    winner_p_adj=0.01,
                 )
                 for c in candidates
             ]
@@ -1060,15 +1076,23 @@ class TestAC5Provenance:
         community_infos = sbe.community_candidate_infos(community_records)
         comm_sid = community_records[0]["sid"]
 
-        from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult, BacktestVerdict  # noqa: PLC0415
+        from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult  # noqa: PLC0415
+        from acceptance_gate import AcceptanceVerdict  # noqa: PLC0415
 
         def _fake_gate(candidates, **kwargs):
             results = [
                 CandidateGateResult(
                     candidate_id=c.candidate_id,
-                    winner_p_adj=0.01,
-                    verdict=BacktestVerdict(decision="ADOPT_CANDIDATE", is_survivor=True),
+                    verdict=AcceptanceVerdict(
+                        vetoes_passed=True,
+                        panel_score=0.8,
+                        panel_breakdown={},
+                        decision="ADOPT_CANDIDATE",
+                    ),
+                    validation_days=65,
+                    oos_alpha=0.05,
                     caveats=[],
+                    winner_p_adj=0.01,
                 )
                 for c in candidates
             ]
