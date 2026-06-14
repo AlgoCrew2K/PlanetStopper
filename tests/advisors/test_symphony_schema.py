@@ -704,16 +704,6 @@ class TestAdversarialMutations:
             "Accepted comparators after v2 widening: gt, lt, lte, gte."
         )
 
-    def test_unknown_comparator_eq_produces_error(self, valid_tree):
-        """'eq' is not confirmed in any local fixture; must produce a hard error."""
-        m = _import_schema()
-        if_child = self._first_node_of_step(valid_tree, "if-child")
-        if if_child is None:
-            pytest.skip("Minimal fixture has no if-child; rebuild needed")
-        if_child["comparator"] = "eq"
-        errors = m.validate_tree(valid_tree)
-        assert len(errors) >= 1
-
     # -----------------------------------------------------------------------
     # Unknown rebalance
     # -----------------------------------------------------------------------
@@ -5066,29 +5056,19 @@ class TestCycleANits:
         If the duplicate were removed in the previous cycle (as expected), this
         test passes immediately. If the duplicate somehow reappeared, it fails.
         """
-        import tests.advisors.test_symphony_schema as this_module
-        # The RE-POINTED name must exist (it was re-pointed in Cycle A)
+        # The RE-POINTED name must exist (re-pointed from gte→eq in Cycle A)
         assert hasattr(TestAdversarialMutations, "test_unknown_comparator_eq_produces_hard_error"), (
-            "AC-11: The re-pointed test test_unknown_comparator_eq_produces_hard_error must exist."
+            "AC-11: test_unknown_comparator_eq_produces_hard_error must exist in TestAdversarialMutations."
         )
-        # The DUPLICATE (old name without _hard_error) must NOT exist
-        assert not hasattr(TestAdversarialMutations, "test_unknown_comparator_eq_produces_error_duplicate"), (
-            "AC-11: No duplicate of the eq comparator test must exist."
-        )
-        # Both the re-pointed test AND the v2 guard exist; the old _produces_error without
-        # _hard_error suffix was removed in Cycle A. Confirm both existing names are present
-        # and neither is a duplicate assertion of the same thing:
-        has_repointed = hasattr(TestAdversarialMutations, "test_unknown_comparator_eq_produces_hard_error")
+        # The old duplicate name (without _hard_error suffix) must NOT coexist with the
+        # re-pointed name. Both asserting the same thing is hollow redundancy — if the
+        # duplicate reappears, this guard fires loudly.
         has_old_duplicate = hasattr(TestAdversarialMutations, "test_unknown_comparator_eq_produces_error")
-        if has_old_duplicate and has_repointed:
-            # If the old name still exists, it is a duplicate — collect both methods and
-            # compare them by name. Note: both names exist in the file currently (the
-            # re-pointing created test_unknown_comparator_eq_produces_hard_error AND the
-            # old test_unknown_comparator_eq_produces_error was NOT removed yet).
-            # This assertion signals to the implementer to remove the old name.
-            # We do NOT assert False here because that would break the existing suite;
-            # instead we mark this as the live RED signal for the implementer.
-            pass  # The handoff documents this: implementer removes the old name.
+        assert not has_old_duplicate, (
+            "AC-11 duplicate guard: test_unknown_comparator_eq_produces_error still exists in "
+            "TestAdversarialMutations alongside the re-pointed test_unknown_comparator_eq_produces_hard_error. "
+            "Delete the old name — it is an exact duplicate with a weaker docstring."
+        )
 
     def test_upper_bollinger_as_lhs_fn_in_lint_tree_matches_known_indicator_fns(self):
         """upper-bollinger in lhs-fn position must not produce a lint warning after AC-3 widening.
