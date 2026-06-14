@@ -1,7 +1,191 @@
-# TDD Handoff
-Plan: feature-plans/community-strats-loader.md
-Branch: pr/community-strats-loader
-Phase: red
+# TDD Handoff — community-strats wiring (slice 2)
+
+**Branch:** `pr/community-strats-wiring`
+**Worktree:** `.claude/pr-worktrees/community-wire`
+**Plan:** `feature-plans/community-strats-wiring.md`
+**RED commit:** `d6a8fe9`
+**Phase:** green
+
+---
+
+## IMPLEMENTER: Read this file only — do NOT read the feature plan.
+
+### Files to modify
+
+1. `advisors/strategy_builder_engine.py` — add constant, add adapter function, add param, add injection
+2. `advisors/community_strats.py` — add `sharpe_filtered` counter
+
+### What to add in `advisors/strategy_builder_engine.py`
+
+**Step 1 — new constant** (near `MAX_CANDIDATES_PER_RUN`):
+```python
+# Community candidate sub-budget — caps how many loader records can be
+# backtested per run. templates + community <= MAX_CANDIDATES_PER_RUN.
+MAX_COMMUNITY_CANDIDATES_PER_RUN: int = 15
+```
+
+**Step 2 — new function** (add after the template library, before `propose_strategies`):
+```python
+def community_candidate_infos(records: list[dict]) -> list[CandidateInfo]:
+    """Adapt community loader records → CandidateInfo list for propose_strategies.
+
+    Skips records missing 'sid' or 'tree'. Never raises.
+    candidate_id = 'community:<sid>'; template_id = 'community'.
+    """
+    result: list[CandidateInfo] = []
+    for rec in records:
+        sid = rec.get("sid")
+        tree = rec.get("tree")
+        if not sid or tree is None:
+            continue
+        result.append(
+            CandidateInfo(
+                candidate_id=f"community:{sid}",
+                tree=tree,
+                template_id="community",
+                params={"sid": sid, "name": rec.get("name", "")},
+            )
+        )
+    return result
+```
+
+**Step 3 — add `community_candidates` param to `propose_strategies`**:
+```python
+def propose_strategies(
+    objective: Objective,
+    universe: list[str],
+    screen_config: ScreenConfig,
+    live_returns: list[float],
+    symphony_id: str = "",
+    *,
+    incumbent_oos_alpha: float = 0.0,
+    default_oos_alpha: float = 0.0,
+    community_candidates: list[CandidateInfo] | None = None,   # ADD THIS
+) -> ProposalRun:
+```
+
+**Step 4 — inject community candidates in Step 1** (after the `_generate_candidate_trees` call):
+```python
+# Step 1: Generate candidate trees (objective-directed, bounded)
+candidate_infos = _generate_candidate_trees(objective, universe)
+
+# Inject community candidates (AC-2 / AC-3)
+if community_candidates:
+    comm = list(community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN])
+    existing_ids = {c.candidate_id for c in candidate_infos}
+    for c in comm:
+        if c.candidate_id not in existing_ids:
+            candidate_infos.append(c)
+            existing_ids.add(c.candidate_id)
+    # Enforce global cap
+    candidate_infos = candidate_infos[:MAX_CANDIDATES_PER_RUN]
+```
+
+No other changes to `strategy_builder_engine.py` — the existing backtest loop, FDR gate,
+screens, and persist logic all operate on `candidate_infos` and will naturally handle
+community candidates once injected.
+
+### What to add in `advisors/community_strats.py`
+
+Add `sharpe_filtered` counter to the `_EMPTY_STATS` dict and the main loop:
+
+```python
+_EMPTY_STATS = {
+    "pulled": 0,
+    "valid": 0,
+    "missing_edn_string": 0,
+    "parse_failed": 0,
+    "validate_rejected": 0,
+    "deduped": 0,
+    "sharpe_filtered": 0,    # ADD THIS
+}
+```
+
+Declare counter at the top of the doc-processing loop:
+```python
+sharpe_filtered = 0   # ADD
+```
+
+In the `min_oos_sharpe` filter block, add the increment:
+```python
+if min_oos_sharpe is not None:
+    if (
+        oos_metrics is not None
+        and isinstance(oos_metrics, dict)
+        and "sharpe" in oos_metrics
+        and oos_metrics["sharpe"] < min_oos_sharpe
+    ):
+        sharpe_filtered += 1    # ADD THIS LINE
+        continue
+```
+
+Add `"sharpe_filtered": sharpe_filtered` to the returned stats dict.
+
+Update the comment above the return:
+```python
+# pulled == valid + deduped + missing_edn_string + parse_failed
+#          + validate_rejected + sharpe_filtered
+```
+
+---
+
+## Test state: 38 RED / 3 GREEN
+
+Run to verify:
+```
+python -m pytest tests/advisors/test_community_strats_wiring.py -n0 --tb=no -q
+```
+Expected: `38 failed, 3 passed`
+
+---
+
+## RED tests and failure causes
+
+### AC-1 adapter (12 RED)
+All fail with `AttributeError: module has no attribute 'community_candidate_infos'`.
+
+### AC-2 injection (5 RED)
+- Param tests: `AssertionError: 'community_candidates' not in sig.parameters`
+- Batch tests: `AttributeError` from missing adapter + `TypeError` from missing param
+
+### AC-3 cap + dedup (5 RED)
+- Constant tests: `AttributeError: MAX_COMMUNITY_CANDIDATES_PER_RUN does not exist`
+- Truncation + dedup tests: adapter + param absent
+
+### AC-4 failure isolation (3 RED)
+Adapter absent → can't build community_infos to inject
+
+### AC-5 provenance (2 RED)
+No community ids in persist calls (injection not yet wired)
+
+### AC-6 no regression (6 RED)
+`TypeError: propose_strategies() got unexpected keyword argument 'community_candidates'`
+
+### AC-7 sharpe_filtered (4 RED)
+`AssertionError: "sharpe_filtered" not in stats` (key absent from community_strats.py)
+
+### Already GREEN (3 tests — correct by construction)
+- `test_sharpe_filtered_does_not_increment_when_doc_above_threshold` — `.get("sharpe_filtered", 0) == 0` vacuously true when key absent but doc IS above threshold
+- `test_sharpe_filtered_zero_when_no_filter_set` — same
+- `test_sharpe_filtered_docs_without_metrics_not_counted` — same
+
+These 3 must stay GREEN after implementation. They test that the counter is NOT
+incremented in cases where it should not be — a correct implementation satisfies them too.
+
+---
+
+## Scope boundary (must NOT change)
+
+- No Flask/route changes
+- No FDR gate math changes
+- No screen logic changes
+- No `_generate_candidate_trees` changes
+- No database schema changes
+- No new tests (test-writer handles next adversarial cycle)
+
+---
+
+## Previous slice-1 handoff (archive — DO NOT use for this cycle)
 
 ## Test Files
 - `tests/advisors/test_community_strats.py` — 71 tests (17 RED / 54 already-GREEN)
@@ -198,14 +382,65 @@ Each candidate: `{sid, name, tree (validated raw_value dict), tickers (set/list 
 - [2026-06-14] implementer: GREEN complete — 52/52 tests passing, 0 test bugs documented. Typecheck N/A (no separate mypy step). Lint not run (no ruff in worktree isolation; no new magic-number issues introduced).
 - [2026-06-14] test-writer: AC-9 RED added — 8 new failing tests for query-efficiency bug found in live Mongo functional check. Total suite now 61 tests: 8 RED / 53 GREEN. Failure mode: AssertionError on interaction assertions (cursor.limit not called; find() called with no projection). Bug confirmed: `list(collection.find({}))[:limit]` pulls all 8,339 docs before slicing.
 - [2026-06-14] test-writer: AC-10 RED added — granular drop accounting contract. Replaced single `invalid` key with three granular keys: `missing_edn_string`, `parse_failed`, `validate_rejected`. Re-pointed 7 existing AC-1/AC-2 tests to correct granular keys. Added 10 new TestAC10GranularDropAccounting tests including sum-invariant. Total suite now 71 tests: 17 RED / 54 GREEN. Failure mode: KeyError on new keys + AssertionError on `stats must NOT contain 'invalid'`. Zero `stats["invalid"]` references remain in test file.
+- [2026-06-14] implementer: GREEN complete (slice-2) — 207/211 tests passing. 4 test bugs documented (BacktestVerdict ImportError — test-writer must fix). Production changes: advisors/strategy_builder_engine.py + advisors/community_strats.py only. Typecheck N/A. Lint not run (worktree isolation).
 
 ## Test File Issues (for test-writer to fix)
-None.
+
+### 1. `BacktestVerdict` does not exist in `advisors.backtest_gate_engine` (4 tests, ImportError)
+
+**Affected tests:**
+- `TestAC2CommunityBatchedWithTemplates::test_community_candidate_ids_appear_in_gate_input_batch`
+- `TestAC2CommunityBatchedWithTemplates::test_community_candidate_survives_to_persist_call`
+- `TestAC5Provenance::test_persisted_community_survivor_has_template_id_community`
+- `TestAC5Provenance::test_persisted_community_survivor_raw_response_contains_sid`
+
+**What the test expects:** `from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult, BacktestVerdict`
+
+**What the module exports:** `BacktestVerdict` is NOT defined anywhere in `advisors/backtest_gate_engine.py`. The verdict type used by `CandidateGateResult.verdict` is `AcceptanceVerdict` from `acceptance_gate.py`.
+
+**Root cause:** The test-writer named the verdict class `BacktestVerdict` and assumed it was exported from `backtest_gate_engine`. The correct import is `from acceptance_gate import AcceptanceVerdict`.
+
+**Additional issue:** `CandidateGateResult` is a 6-field NamedTuple (`candidate_id`, `verdict`, `validation_days`, `oos_alpha`, `caveats`, `winner_p_adj`). The test constructs it with only 4 keyword args, missing `validation_days` and `oos_alpha`. The `verdict` field also uses the wrong type (`BacktestVerdict` instead of `AcceptanceVerdict`).
+
+**Suggested fix for test-writer:**
+```python
+# Replace:
+from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult, BacktestVerdict
+# With:
+from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult
+from acceptance_gate import AcceptanceVerdict
+
+# Replace BacktestVerdict(decision="ADOPT_CANDIDATE", is_survivor=True) usage with:
+AcceptanceVerdict(
+    vetoes_passed=True,
+    panel_score=0.8,
+    panel_breakdown={},
+    decision="ADOPT_CANDIDATE",
+)
+
+# And add missing fields to CandidateGateResult constructions:
+CandidateGateResult(
+    candidate_id=c.candidate_id,
+    verdict=AcceptanceVerdict(vetoes_passed=True, panel_score=0.8, panel_breakdown={}, decision="ADOPT_CANDIDATE"),
+    validation_days=65,
+    oos_alpha=0.05,
+    caveats=[],
+    winner_p_adj=0.01,
+)
+```
 
 ## Disputed Tests
 None.
 
-## Implementation Notes
+## Implementation Notes (slice-2 additions)
+- `advisors/strategy_builder_engine.py` and `advisors/community_strats.py` are the only files touched in this slice.
+- Added `MAX_COMMUNITY_CANDIDATES_PER_RUN = 15` constant near `MAX_CANDIDATES_PER_RUN`.
+- Added `community_candidate_infos(records)` adapter function between `_generate_candidate_trees` and the screen helpers section. Skips records with falsy `sid` or `tree is None`; never raises.
+- Added `community_candidates: list[CandidateInfo] | None = None` keyword-only param to `propose_strategies`. Injection happens immediately after `_generate_candidate_trees` call: cap community to `MAX_COMMUNITY_CANDIDATES_PER_RUN`, dedup by `candidate_id` (template wins on collision — it was added first), then enforce global `MAX_CANDIDATES_PER_RUN` cap with a logged truncation.
+- `community_candidates=None` and `community_candidates=[]` both skip the injection block entirely, preserving exact existing behaviour (AC-6 no-regression).
+- In `community_strats.py`: added `sharpe_filtered: 0` to `_EMPTY_STATS`, added `sharpe_filtered = 0` counter in the parse loop, incremented at the `min_oos_sharpe` filter branch, included in the return stats dict, and updated the sum-invariant comment.
+
+## Previous slice-1 implementation notes
 - `advisors/community_strats.py` is the only file touched.
 - `limit` is enforced by slicing `list(collection.find({}))` after fetch, not by passing `limit=` to `find()`. The mock's `.find()` ignores keyword arguments; slicing is the only approach that makes both the mock and a real pymongo cursor work correctly.
 - Module docstring originally contained the string "LIVE_EXECUTION" in a "no X" clause. Removed — the AC-8 text-scan test flags ANY occurrence of the string, including negations. Replaced with "no execution flags."
