@@ -1,0 +1,56 @@
+{
+  "_comment": "Golden fixture for community_strats loader (AC-1..AC-5). Input docs and expected output shapes. Producer-computed numeric values (oos metrics) are TEST INPUTS here — they are provided by the fixture, never hardcoded from module output.",
+  "docs": [
+    {
+      "sid": "strat-001",
+      "name": "Simple Equal Weight",
+      "edn_string_description": "A minimal two-asset equal-weight tree. Used for AC-1 happy path.",
+      "oos_metrics": {
+        "sharpe": 1.2,
+        "cagr": 0.08,
+        "max_drawdown": -0.15
+      }
+    },
+    {
+      "sid": "strat-002",
+      "name": "Another Equal Weight",
+      "edn_string_description": "Identical composition to strat-001. Used for AC-3 dedup test — same tree shape, different sid. Has higher OOS sharpe so should be RETAINED.",
+      "oos_metrics": {
+        "sharpe": 1.8,
+        "cagr": 0.10,
+        "max_drawdown": -0.12
+      }
+    },
+    {
+      "sid": "strat-003",
+      "name": "No OOS Metrics",
+      "edn_string_description": "Valid tree with absent oos_metrics. Per AC-5: docs lacking the metric are KEPT (oos_metrics=None in candidate). Used to assert that missing-metrics docs survive the loader.",
+      "oos_metrics": null
+    },
+    {
+      "sid": "strat-invalid-json",
+      "name": "Bad JSON",
+      "edn_string_description": "edn_string is deliberately not valid JSON. Used for AC-2 invalid-skip test.",
+      "oos_metrics": {"sharpe": 0.5}
+    },
+    {
+      "sid": "strat-invalid-tree",
+      "name": "Invalid Tree Structure",
+      "edn_string_description": "edn_string parses as JSON but the tree fails validate_tree (unknown step). Used for AC-2 invalid-skip test.",
+      "oos_metrics": {"sharpe": 0.5}
+    },
+    {
+      "sid": "strat-missing-edn",
+      "name": "Missing edn_string field",
+      "edn_string_description": "No edn_string key at all. Must be skipped and counted invalid.",
+      "oos_metrics": {"sharpe": 0.5}
+    }
+  ],
+  "expected_output_shape": {
+    "available": true,
+    "candidates_is_list": true,
+    "stats_keys": ["pulled", "valid", "invalid", "deduped"],
+    "candidate_keys": ["sid", "name", "tree", "tickers", "oos_metrics", "composition_hash"],
+    "notes": "Exact counts depend on implementation; tests assert shape and behavior (dedup, skip) not literal counts from this fixture."
+  }
+}

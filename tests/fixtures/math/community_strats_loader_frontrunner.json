@@ -1,0 +1,11 @@
+{
+  "_comment": "Golden fixture for community_strats loader AC-4: compound/frontrunner tree ticker extraction. The tree is built with make_if_compound + make_binary_compound_condition so condition.tickers[] carries the watched tickers. The '%' placeholder must NOT appear in extracted tickers. basket_tickers are in asset nodes; watched_tickers are in the binary-compound condition block.",
+  "watched_tickers": ["SPY", "QQQ", "IWM"],
+  "basket_tickers": ["GLD", "TLT"],
+  "percent_placeholder": "%",
+  "assertions": {
+    "watched_tickers_present_in_extracted": true,
+    "basket_tickers_present_in_extracted": true,
+    "percent_placeholder_absent_from_extracted": true
+  }
+}
