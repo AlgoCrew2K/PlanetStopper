@@ -1,7 +1,191 @@
-# TDD Handoff
-Plan: feature-plans/community-strats-loader.md
-Branch: pr/community-strats-loader
-Phase: red
+# TDD Handoff — community-strats wiring (slice 2)
+
+**Branch:** `pr/community-strats-wiring`
+**Worktree:** `.claude/pr-worktrees/community-wire`
+**Plan:** `feature-plans/community-strats-wiring.md`
+**RED commit:** `d6a8fe9`
+**Phase:** red
+
+---
+
+## IMPLEMENTER: Read this file only — do NOT read the feature plan.
+
+### Files to modify
+
+1. `advisors/strategy_builder_engine.py` — add constant, add adapter function, add param, add injection
+2. `advisors/community_strats.py` — add `sharpe_filtered` counter
+
+### What to add in `advisors/strategy_builder_engine.py`
+
+**Step 1 — new constant** (near `MAX_CANDIDATES_PER_RUN`):
+```python
+# Community candidate sub-budget — caps how many loader records can be
+# backtested per run. templates + community <= MAX_CANDIDATES_PER_RUN.
+MAX_COMMUNITY_CANDIDATES_PER_RUN: int = 15
+```
+
+**Step 2 — new function** (add after the template library, before `propose_strategies`):
+```python
+def community_candidate_infos(records: list[dict]) -> list[CandidateInfo]:
+    """Adapt community loader records → CandidateInfo list for propose_strategies.
+
+    Skips records missing 'sid' or 'tree'. Never raises.
+    candidate_id = 'community:<sid>'; template_id = 'community'.
+    """
+    result: list[CandidateInfo] = []
+    for rec in records:
+        sid = rec.get("sid")
+        tree = rec.get("tree")
+        if not sid or tree is None:
+            continue
+        result.append(
+            CandidateInfo(
+                candidate_id=f"community:{sid}",
+                tree=tree,
+                template_id="community",
+                params={"sid": sid, "name": rec.get("name", "")},
+            )
+        )
+    return result
+```
+
+**Step 3 — add `community_candidates` param to `propose_strategies`**:
+```python
+def propose_strategies(
+    objective: Objective,
+    universe: list[str],
+    screen_config: ScreenConfig,
+    live_returns: list[float],
+    symphony_id: str = "",
+    *,
+    incumbent_oos_alpha: float = 0.0,
+    default_oos_alpha: float = 0.0,
+    community_candidates: list[CandidateInfo] | None = None,   # ADD THIS
+) -> ProposalRun:
+```
+
+**Step 4 — inject community candidates in Step 1** (after the `_generate_candidate_trees` call):
+```python
+# Step 1: Generate candidate trees (objective-directed, bounded)
+candidate_infos = _generate_candidate_trees(objective, universe)
+
+# Inject community candidates (AC-2 / AC-3)
+if community_candidates:
+    comm = list(community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN])
+    existing_ids = {c.candidate_id for c in candidate_infos}
+    for c in comm:
+        if c.candidate_id not in existing_ids:
+            candidate_infos.append(c)
+            existing_ids.add(c.candidate_id)
+    # Enforce global cap
+    candidate_infos = candidate_infos[:MAX_CANDIDATES_PER_RUN]
+```
+
+No other changes to `strategy_builder_engine.py` — the existing backtest loop, FDR gate,
+screens, and persist logic all operate on `candidate_infos` and will naturally handle
+community candidates once injected.
+
+### What to add in `advisors/community_strats.py`
+
+Add `sharpe_filtered` counter to the `_EMPTY_STATS` dict and the main loop:
+
+```python
+_EMPTY_STATS = {
+    "pulled": 0,
+    "valid": 0,
+    "missing_edn_string": 0,
+    "parse_failed": 0,
+    "validate_rejected": 0,
+    "deduped": 0,
+    "sharpe_filtered": 0,    # ADD THIS
+}
+```
+
+Declare counter at the top of the doc-processing loop:
+```python
+sharpe_filtered = 0   # ADD
+```
+
+In the `min_oos_sharpe` filter block, add the increment:
+```python
+if min_oos_sharpe is not None:
+    if (
+        oos_metrics is not None
+        and isinstance(oos_metrics, dict)
+        and "sharpe" in oos_metrics
+        and oos_metrics["sharpe"] < min_oos_sharpe
+    ):
+        sharpe_filtered += 1    # ADD THIS LINE
+        continue
+```
+
+Add `"sharpe_filtered": sharpe_filtered` to the returned stats dict.
+
+Update the comment above the return:
+```python
+# pulled == valid + deduped + missing_edn_string + parse_failed
+#          + validate_rejected + sharpe_filtered
+```
+
+---
+
+## Test state: 38 RED / 3 GREEN
+
+Run to verify:
+```
+python -m pytest tests/advisors/test_community_strats_wiring.py -n0 --tb=no -q
+```
+Expected: `38 failed, 3 passed`
+
+---
+
+## RED tests and failure causes
+
+### AC-1 adapter (12 RED)
+All fail with `AttributeError: module has no attribute 'community_candidate_infos'`.
+
+### AC-2 injection (5 RED)
+- Param tests: `AssertionError: 'community_candidates' not in sig.parameters`
+- Batch tests: `AttributeError` from missing adapter + `TypeError` from missing param
+
+### AC-3 cap + dedup (5 RED)
+- Constant tests: `AttributeError: MAX_COMMUNITY_CANDIDATES_PER_RUN does not exist`
+- Truncation + dedup tests: adapter + param absent
+
+### AC-4 failure isolation (3 RED)
+Adapter absent → can't build community_infos to inject
+
+### AC-5 provenance (2 RED)
+No community ids in persist calls (injection not yet wired)
+
+### AC-6 no regression (6 RED)
+`TypeError: propose_strategies() got unexpected keyword argument 'community_candidates'`
+
+### AC-7 sharpe_filtered (4 RED)
+`AssertionError: "sharpe_filtered" not in stats` (key absent from community_strats.py)
+
+### Already GREEN (3 tests — correct by construction)
+- `test_sharpe_filtered_does_not_increment_when_doc_above_threshold` — `.get("sharpe_filtered", 0) == 0` vacuously true when key absent but doc IS above threshold
+- `test_sharpe_filtered_zero_when_no_filter_set` — same
+- `test_sharpe_filtered_docs_without_metrics_not_counted` — same
+
+These 3 must stay GREEN after implementation. They test that the counter is NOT
+incremented in cases where it should not be — a correct implementation satisfies them too.
+
+---
+
+## Scope boundary (must NOT change)
+
+- No Flask/route changes
+- No FDR gate math changes
+- No screen logic changes
+- No `_generate_candidate_trees` changes
+- No database schema changes
+- No new tests (test-writer handles next adversarial cycle)
+
+---
+
+## Previous slice-1 handoff (archive — DO NOT use for this cycle)
 
 ## Test Files
 - `tests/advisors/test_community_strats.py` — 71 tests (17 RED / 54 already-GREEN)
