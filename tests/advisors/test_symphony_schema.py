@@ -2667,3 +2667,750 @@ class TestAdversarialCasesRound2:
         assert r1["id"] != r2["id"], (
             "make_root returned the same id on two separate calls — ids must be fresh UUIDs"
         )
+
+
+# ===========================================================================
+# 11. GRAMMAR V2 ALIGNMENT — Cycle A allowlist widening
+#     These tests are RED against the current codebase until GREEN (the
+#     implementer widens the three frozensets to corpus-verified values).
+#
+#     Provenance for all token strings: feature-plans/strategy-builder-composer-grammar-v2.md
+#     (corpus-validated from 10,441 real Composer symphonies).
+#
+#     Structure:
+#       TestGrammarV2Alignment       — the RED AC-1/AC-2/AC-3 tests (will fail now)
+#       TestGrammarV2RegressionGuard — the AC-4 exactness guards (pass now, must stay green)
+#       TestGrammarV2TypeGuard       — the AC-5 frozenset type checks (pass now, must stay green)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Minimal tree builder shared by V2 tests.
+# Avoids repeating the full wt-cash-equal/if/if-child scaffold in every test.
+# ---------------------------------------------------------------------------
+
+def _make_minimal_if_tree(
+    comparator: str = "gt",
+    rebalance: str = "daily",
+    lhs_fn: str = "cumulative-return",
+    rhs_val: str = "0",
+) -> dict:
+    """Build a minimal valid tree with the given field values.
+
+    Shape: root(rebalance) -> wt-cash-equal -> if -> [
+      if-child(false): lhs_fn(TLT,200d) <comparator> rhs_val -> asset(TLT)
+      if-child(true):                                          -> asset(BIL)
+    ]
+
+    Token strings are grammar corpus-values; no producer-computed numeric values
+    are hardcoded here (rhs_val is the grammar literal "0", not an output).
+    """
+    return {
+        "step": "root",
+        "name": "Grammar V2 Test Tree",
+        "rebalance": rebalance,
+        "id": str(uuid.uuid4()),
+        "children": [
+            {
+                "step": "wt-cash-equal",
+                "id": str(uuid.uuid4()),
+                "children": [
+                    {
+                        "step": "if",
+                        "id": str(uuid.uuid4()),
+                        "children": [
+                            {
+                                "step": "if-child",
+                                "is-else-condition?": False,
+                                "lhs-fn": lhs_fn,
+                                "lhs-fn-params": {"window": 200},
+                                "lhs-val": "TLT",
+                                "comparator": comparator,
+                                "rhs-fixed-value?": True,
+                                "rhs-val": rhs_val,
+                                "id": str(uuid.uuid4()),
+                                "children": [
+                                    {
+                                        "step": "asset",
+                                        "ticker": "TLT",
+                                        "name": "",
+                                        "exchange": "NYSE",
+                                        "id": str(uuid.uuid4()),
+                                    }
+                                ],
+                            },
+                            {
+                                "step": "if-child",
+                                "is-else-condition?": True,
+                                "id": str(uuid.uuid4()),
+                                "children": [
+                                    {
+                                        "step": "asset",
+                                        "ticker": "BIL",
+                                        "name": "",
+                                        "exchange": "NYSE",
+                                        "id": str(uuid.uuid4()),
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _make_minimal_filter_tree(sort_by_fn: str) -> dict:
+    """Build a minimal valid filter tree using the given sort-by-fn token.
+
+    Shape: root(daily) -> filter(top, 1, sort_by_fn) -> asset(SPY)
+
+    The sort_by_fn token is a grammar corpus value (v2 §4b); it's passed in
+    from the test, which derives it from the v2 doc, not from producer output.
+    """
+    return {
+        "step": "root",
+        "name": "Grammar V2 Filter Test",
+        "rebalance": "daily",
+        "id": str(uuid.uuid4()),
+        "children": [
+            {
+                "step": "filter",
+                "select-fn": "top",
+                "select-n": 1,
+                "sort-by-fn": sort_by_fn,
+                "sort-by-fn-params": {"window": 20},
+                "id": str(uuid.uuid4()),
+                "children": [
+                    {
+                        "step": "asset",
+                        "ticker": "SPY",
+                        "name": "",
+                        "exchange": "NYSE",
+                        "id": str(uuid.uuid4()),
+                    }
+                ],
+            }
+        ],
+    }
+
+
+class TestGrammarV2Alignment:
+    """AC-1/AC-2/AC-3: corpus-verified tokens that currently produce errors/warnings
+    must be accepted after the allowlist widening.
+
+    All tests in this class are RED against the unmodified codebase — they will fail
+    because KNOWN_COMPARATORS, KNOWN_REBALANCE, and KNOWN_INDICATOR_FNS do not yet
+    contain the v2 corpus tokens. They become GREEN after the implementer widens
+    the three frozensets.
+
+    Provenance for every token: v2 grammar doc (feature-plans/strategy-builder-
+    composer-grammar-v2.md, corpus-mined from 10,441 real Composer symphonies).
+    Token strings are grammar literals — not producer-computed values. Hardcoding
+    grammar token strings in tests is correct per project rule (feedback_no_hardcoded_test_values
+    applies to NUMERIC producer outputs, not grammar vocabulary).
+    """
+
+    # ------------------------------------------------------------------
+    # AC-1 — comparator "gte"
+    # v2 §8: VERIFIED-CORPUS n=39,596. Enum becomes {gt, lt, gte, lte}.
+    # Currently KNOWN_COMPARATORS = {gt, lt, lte} — gte absent → hard error.
+    # ------------------------------------------------------------------
+
+    def test_comparator_gte_does_not_produce_hard_error(self):
+        """validate_tree must return NO hard error for a true-branch if-child whose
+        comparator is "gte".
+
+        Provenance: v2 grammar §8, VERIFIED-CORPUS n=39,596.
+        Currently RED: KNOWN_COMPARATORS = {gt, lt, lte} rejects gte as a hard error.
+        GREEN when: KNOWN_COMPARATORS widened to include "gte".
+
+        NOTE: The pre-existing test test_unknown_comparator_gte_produces_error (class
+        TestAdversarialMutations) asserted the OPPOSITE — that gte IS a hard error
+        (OQ-2 stance before corpus verification). That test is now SUPERSEDED by this
+        AC-1 test. The implementer must also update or remove that conflicting test as
+        part of the GREEN phase; it is documented in the handoff.
+        """
+        m = _import_schema()
+        # "gte" is the corpus-verified token: v2 §8 n=39,596. It is a grammar
+        # vocabulary string, not a producer-computed numeric value.
+        tree = _make_minimal_if_tree(comparator="gte")
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            "AC-1: validate_tree must accept comparator='gte' (VERIFIED-CORPUS n=39,596, "
+            "v2 grammar §8). Got hard errors: "
+            + repr(errors)
+        )
+
+    def test_comparator_lte_still_does_not_produce_hard_error(self):
+        """validate_tree must still accept "lte" after the widening (regression sanity).
+
+        lte was already in KNOWN_COMPARATORS. This test ensures the widening for gte
+        does not accidentally remove lte (e.g. via a set-replace rather than add).
+        Provenance: v2 §8, VERIFIED-CORPUS (lte n=34,717).
+        This test PASSES on the current codebase and must STAY green after GREEN.
+        """
+        m = _import_schema()
+        tree = _make_minimal_if_tree(comparator="lte")
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            "lte must still be accepted after gte widening; got: " + repr(errors)
+        )
+
+    # ------------------------------------------------------------------
+    # AC-2 — rebalance "quarterly" and "yearly"
+    # v2 §6: quarterly VERIFIED-CORPUS n=58; yearly n=27.
+    # Currently KNOWN_REBALANCE = {daily, none, weekly, monthly} — both absent.
+    # ------------------------------------------------------------------
+
+    def test_rebalance_quarterly_does_not_produce_hard_error(self):
+        """validate_tree must return NO hard error for a root with rebalance="quarterly".
+
+        Provenance: v2 grammar §6, VERIFIED-CORPUS n=58 (document count).
+        Currently RED: KNOWN_REBALANCE does not contain "quarterly" → hard error.
+        GREEN when: KNOWN_REBALANCE widened to include "quarterly".
+
+        NOTE: The pre-existing test test_make_root_with_unknown_rebalance_produces_error_when_validated
+        (class TestAdversarialCasesRound2) used "quarterly" as the unknown-rebalance example.
+        That test is now SUPERSEDED by this AC-2 test. The implementer must update that test
+        to use a genuinely-unknown value (e.g. "hourly") as part of the GREEN phase; it is
+        documented in the handoff.
+        """
+        m = _import_schema()
+        # "quarterly" is a grammar vocabulary token (v2 §6 corpus-verified), not a
+        # producer-computed numeric value. Hardcoding it is correct.
+        tree = _make_minimal_if_tree(rebalance="quarterly")
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            "AC-2: validate_tree must accept rebalance='quarterly' (VERIFIED-CORPUS n=58, "
+            "v2 grammar §6). Got hard errors: "
+            + repr(errors)
+        )
+
+    def test_rebalance_yearly_does_not_produce_hard_error(self):
+        """validate_tree must return NO hard error for a root with rebalance="yearly".
+
+        Provenance: v2 grammar §6, VERIFIED-CORPUS n=27 (document count).
+        Currently RED: KNOWN_REBALANCE does not contain "yearly" → hard error.
+        GREEN when: KNOWN_REBALANCE widened to include "yearly".
+        """
+        m = _import_schema()
+        # "yearly" is a grammar vocabulary token (v2 §6), not a producer-computed value.
+        tree = _make_minimal_if_tree(rebalance="yearly")
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            "AC-2: validate_tree must accept rebalance='yearly' (VERIFIED-CORPUS n=27, "
+            "v2 grammar §6). Got hard errors: "
+            + repr(errors)
+        )
+
+    def test_rebalance_quarterly_and_yearly_both_validate_clean_in_same_run(self):
+        """Both quarterly and yearly must validate clean in a single test run.
+
+        Guards against an implementation that adds one but not the other (e.g. only
+        adds quarterly because it has a higher corpus count). Both are in scope per AC-2.
+        Currently RED: neither is in KNOWN_REBALANCE.
+        """
+        m = _import_schema()
+        for rebalance_val in ("quarterly", "yearly"):
+            tree = _make_minimal_if_tree(rebalance=rebalance_val)
+            errors = m.validate_tree(tree)
+            assert errors == [], (
+                f"AC-2: rebalance={rebalance_val!r} must validate clean (v2 §6 VERIFIED-CORPUS). "
+                f"Got: {errors!r}"
+            )
+
+    # ------------------------------------------------------------------
+    # AC-3 — 6 new indicator fns in KNOWN_INDICATOR_FNS (lint only)
+    # These fns produce "unverified indicator fn" lint warnings today.
+    # After GREEN they must produce NO lint warning (they are corpus-real).
+    # The test structure uses lhs-fn and sort-by-fn (both fn-bearing keys).
+    # ------------------------------------------------------------------
+
+    def test_exponential_moving_average_price_does_not_produce_lint_warning(self):
+        """lint_tree must emit NO "unknown indicator fn" warning for
+        "exponential-moving-average-price" when used as lhs-fn.
+
+        Provenance: v2 grammar §4, VERIFIED-CORPUS n=45,816 (lhs/rhs-fn occurrences).
+        Currently RED: fn not in KNOWN_INDICATOR_FNS → lint warning fires.
+        GREEN when: KNOWN_INDICATOR_FNS widened to include this token.
+
+        Tolerance: Unknown-fn warnings carry the fn name in their text
+        (format: "unverified indicator fn '<fn>' (not in KNOWN_INDICATOR_FNS)").
+        We filter for warnings that mention the specific fn so unrelated lint
+        warnings (size/depth) do not cause a false failure.
+        """
+        m = _import_schema()
+        # Token: v2 §4, 45,816 corpus occurrences — the 8th-most-used indicator fn.
+        fn_token = "exponential-moving-average-price"
+        tree = _make_minimal_if_tree(lhs_fn=fn_token)
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if fn_token in w]
+        assert fn_warnings == [], (
+            f"AC-3: lint_tree must not warn about {fn_token!r} "
+            f"(VERIFIED-CORPUS n=45,816, v2 §4). Got fn-specific warnings: {fn_warnings!r}"
+        )
+
+    def test_standard_deviation_price_as_lhs_fn_does_not_produce_lint_warning(self):
+        """lint_tree must emit NO "unknown indicator fn" warning for
+        "standard-deviation-price" when used as lhs-fn.
+
+        Provenance: v2 grammar §4, VERIFIED-CORPUS n=5,572.
+        Currently RED: fn not in KNOWN_INDICATOR_FNS → lint warning fires.
+        GREEN when: KNOWN_INDICATOR_FNS widened to include this token.
+
+        Note: "standard-deviation-price" already appears in the large golden
+        fixture (sample_score_large.json) — the existing test
+        test_standard_deviation_price_in_large_fixture_is_tolerated verifies
+        it does not produce a HARD error. This test adds the complementary
+        requirement: it must produce NO LINT WARNING either.
+        """
+        m = _import_schema()
+        # Token: v2 §4, 5,572 corpus occurrences.
+        fn_token = "standard-deviation-price"
+        tree = _make_minimal_if_tree(lhs_fn=fn_token)
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if fn_token in w]
+        assert fn_warnings == [], (
+            f"AC-3: lint_tree must not warn about {fn_token!r} "
+            f"(VERIFIED-CORPUS n=5,572, v2 §4). Got fn-specific warnings: {fn_warnings!r}"
+        )
+
+    def test_percentage_price_oscillator_does_not_produce_lint_warning(self):
+        """lint_tree must emit NO "unknown indicator fn" warning for
+        "percentage-price-oscillator" when used as lhs-fn.
+
+        Provenance: v2 grammar §4, VERIFIED-CORPUS n=99 (lhs/rhs-fn occurrences).
+        Currently RED: fn not in KNOWN_INDICATOR_FNS → lint warning fires.
+        GREEN when: KNOWN_INDICATOR_FNS widened to include this token.
+        """
+        m = _import_schema()
+        # Token: v2 §4, 99 corpus occurrences.
+        fn_token = "percentage-price-oscillator"
+        tree = _make_minimal_if_tree(lhs_fn=fn_token)
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if fn_token in w]
+        assert fn_warnings == [], (
+            f"AC-3: lint_tree must not warn about {fn_token!r} "
+            f"(VERIFIED-CORPUS n=99, v2 §4). Got fn-specific warnings: {fn_warnings!r}"
+        )
+
+    def test_percentage_price_oscillator_signal_does_not_produce_lint_warning(self):
+        """lint_tree must emit NO "unknown indicator fn" warning for
+        "percentage-price-oscillator-signal" when used as lhs-fn.
+
+        Provenance: v2 grammar §4, VERIFIED-CORPUS n=100.
+        Currently RED: fn not in KNOWN_INDICATOR_FNS → lint warning fires.
+        GREEN when: KNOWN_INDICATOR_FNS widened to include this token.
+        """
+        m = _import_schema()
+        # Token: v2 §4, 100 corpus occurrences.
+        fn_token = "percentage-price-oscillator-signal"
+        tree = _make_minimal_if_tree(lhs_fn=fn_token)
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if fn_token in w]
+        assert fn_warnings == [], (
+            f"AC-3: lint_tree must not warn about {fn_token!r} "
+            f"(VERIFIED-CORPUS n=100, v2 §4). Got fn-specific warnings: {fn_warnings!r}"
+        )
+
+    def test_upper_bollinger_does_not_produce_lint_warning(self):
+        """lint_tree must emit NO "unknown indicator fn" warning for
+        "upper-bollinger" when used as lhs-fn.
+
+        Provenance: v2 grammar §4b, VERIFIED-CORPUS n=1 (sort-by-fn) — the only
+        appearance of Bollinger fns in the corpus. Low count but corpus-confirmed.
+        Currently RED: fn not in KNOWN_INDICATOR_FNS → lint warning fires.
+        GREEN when: KNOWN_INDICATOR_FNS widened to include this token.
+        """
+        m = _import_schema()
+        # Token: v2 §4b, 1 corpus occurrence in sort-by-fn position.
+        fn_token = "upper-bollinger"
+        tree = _make_minimal_if_tree(lhs_fn=fn_token)
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if fn_token in w]
+        assert fn_warnings == [], (
+            f"AC-3: lint_tree must not warn about {fn_token!r} "
+            f"(VERIFIED-CORPUS v2 §4b). Got fn-specific warnings: {fn_warnings!r}"
+        )
+
+    def test_lower_bollinger_does_not_produce_lint_warning(self):
+        """lint_tree must emit NO "unknown indicator fn" warning for
+        "lower-bollinger" when used as lhs-fn.
+
+        Provenance: v2 grammar §4b, VERIFIED-CORPUS n=1 (sort-by-fn).
+        Currently RED: fn not in KNOWN_INDICATOR_FNS → lint warning fires.
+        GREEN when: KNOWN_INDICATOR_FNS widened to include this token.
+        """
+        m = _import_schema()
+        # Token: v2 §4b, 1 corpus occurrence in sort-by-fn position.
+        fn_token = "lower-bollinger"
+        tree = _make_minimal_if_tree(lhs_fn=fn_token)
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if fn_token in w]
+        assert fn_warnings == [], (
+            f"AC-3: lint_tree must not warn about {fn_token!r} "
+            f"(VERIFIED-CORPUS v2 §4b). Got fn-specific warnings: {fn_warnings!r}"
+        )
+
+    def test_exponential_moving_average_price_as_sort_by_fn_does_not_warn(self):
+        """lint_tree must emit NO "unknown indicator fn" warning for
+        "exponential-moving-average-price" used as sort-by-fn on a filter node.
+
+        Provenance: v2 grammar §4b, VERIFIED-CORPUS n=1,997 (sort-by-fn occurrences).
+        lint_tree scans _FLAT_FN_KEYS = ("lhs-fn", "rhs-fn", "sort-by-fn"), so
+        sort-by-fn is a checked key. Currently RED.
+        GREEN when: KNOWN_INDICATOR_FNS contains "exponential-moving-average-price".
+        """
+        m = _import_schema()
+        # Token: v2 §4b, 1,997 sort-by-fn corpus occurrences.
+        fn_token = "exponential-moving-average-price"
+        tree = _make_minimal_filter_tree(sort_by_fn=fn_token)
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if fn_token in w]
+        assert fn_warnings == [], (
+            f"AC-3: lint_tree must not warn about {fn_token!r} as sort-by-fn "
+            f"(VERIFIED-CORPUS n=1,997, v2 §4b). Got: {fn_warnings!r}"
+        )
+
+    def test_standard_deviation_price_as_sort_by_fn_does_not_warn(self):
+        """lint_tree must emit NO "unknown indicator fn" warning for
+        "standard-deviation-price" used as sort-by-fn on a filter node.
+
+        Provenance: v2 grammar §4b, VERIFIED-CORPUS n=3,975 (sort-by-fn occurrences).
+        Currently RED. GREEN when: KNOWN_INDICATOR_FNS contains "standard-deviation-price".
+        """
+        m = _import_schema()
+        # Token: v2 §4b, 3,975 sort-by-fn corpus occurrences.
+        fn_token = "standard-deviation-price"
+        tree = _make_minimal_filter_tree(sort_by_fn=fn_token)
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if fn_token in w]
+        assert fn_warnings == [], (
+            f"AC-3: lint_tree must not warn about {fn_token!r} as sort-by-fn "
+            f"(VERIFIED-CORPUS n=3,975, v2 §4b). Got: {fn_warnings!r}"
+        )
+
+    def test_all_six_new_indicator_fns_produce_no_lint_warnings_in_batch(self):
+        """All 6 newly corpus-verified indicator fns must produce zero fn-specific lint
+        warnings when used as lhs-fn.
+
+        This omnibus test catches a partial-widening implementation that only adds
+        some of the 6 tokens. It tests all 6 in one parameterised loop. If any one
+        of them still produces a lint warning, this test fails with the specific fn.
+
+        Provenance: v2 grammar §4 and §4b for all six tokens.
+        Currently RED (all 6 absent from KNOWN_INDICATOR_FNS).
+        """
+        m = _import_schema()
+        # These are grammar vocabulary tokens from the v2 corpus doc — not producer values.
+        new_fns = [
+            "exponential-moving-average-price",    # v2 §4, n=45,816
+            "standard-deviation-price",             # v2 §4, n=5,572
+            "percentage-price-oscillator",          # v2 §4, n=99
+            "percentage-price-oscillator-signal",   # v2 §4, n=100
+            "upper-bollinger",                      # v2 §4b, n=1
+            "lower-bollinger",                      # v2 §4b, n=1
+        ]
+        for fn_token in new_fns:
+            tree = _make_minimal_if_tree(lhs_fn=fn_token)
+            warnings = m.lint_tree(tree)
+            fn_warnings = [w for w in warnings if fn_token in w]
+            assert fn_warnings == [], (
+                f"AC-3 batch: lint_tree must not warn about corpus-verified fn {fn_token!r}. "
+                f"Got: {fn_warnings!r}"
+            )
+
+
+class TestGrammarV2RegressionGuard:
+    """AC-4: exactness guards — tokens that must STILL produce errors/warnings after
+    the widening. These tests verify the widening is EXACT (only the corpus-verified
+    tokens are added), not a blanket allowlist open-up.
+
+    All tests in this class PASS on the current codebase and must continue to PASS
+    after the implementer widens the frozensets. If any of these fail after GREEN,
+    the implementer has over-widened.
+    """
+
+    def test_unknown_comparator_eq_still_produces_hard_error_after_widening(self):
+        """validate_tree must STILL produce a hard error for comparator="eq".
+
+        v2 §8 explicitly states: "eq and neq do NOT exist in the corpus (0 occurrences)".
+        The widening adds "gte" but must NOT add "eq". This test guards against an
+        implementation that simply removes all comparator checking.
+
+        Provenance: v2 grammar §8. Currently PASSES. Must stay green after GREEN.
+        """
+        m = _import_schema()
+        # "eq" has 0 corpus occurrences — it is NOT a valid Composer comparator.
+        tree = _make_minimal_if_tree(comparator="eq")
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-4 regression: comparator='eq' must still produce a hard error after widening. "
+            "v2 §8 confirms eq does NOT exist in the corpus (0 occurrences). "
+            f"Got no errors — over-widening detected."
+        )
+
+    def test_unknown_comparator_neq_still_produces_hard_error_after_widening(self):
+        """validate_tree must STILL produce a hard error for comparator="neq".
+
+        v2 §8: "eq and neq do NOT exist" (0 occurrences). Guards against blanket allow.
+        Currently PASSES. Must stay green after GREEN.
+        """
+        m = _import_schema()
+        tree = _make_minimal_if_tree(comparator="neq")
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-4 regression: comparator='neq' must still produce a hard error. "
+            "v2 §8 confirms neq does NOT exist in the corpus."
+        )
+
+    def test_unknown_comparator_symbol_form_still_produces_error_after_widening(self):
+        """validate_tree must STILL produce a hard error for symbol comparator ">".
+
+        The builder_backtests collection uses ">" — that is a DIFFERENT schema
+        (v2 §10 #10, explicitly out of scope). The Composer symphony grammar uses
+        only the word forms (gt/lt/gte/lte). Guards against symbol-form creep.
+        Currently PASSES. Must stay green after GREEN.
+        """
+        m = _import_schema()
+        # ">" is from the builder_backtests schema (v2 §10), not the symphony grammar.
+        tree = _make_minimal_if_tree(comparator=">")
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-4 regression: comparator='>' (symbol form) must still produce a hard error. "
+            "The symphony grammar uses word forms only (gt/lt/gte/lte)."
+        )
+
+    def test_unknown_rebalance_hourly_still_produces_hard_error(self):
+        """validate_tree must STILL produce a hard error for rebalance="hourly".
+
+        "hourly" has 0 corpus occurrences (v2 §6 full census). The widening adds
+        quarterly and yearly but must NOT introduce a blanket allow. Guards against
+        an implementation that simply removes rebalance checking.
+        Currently PASSES. Must stay green after GREEN.
+        """
+        m = _import_schema()
+        # "hourly" is not in the v2 corpus full census (v2 §6).
+        tree = _make_minimal_if_tree(rebalance="hourly")
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-4 regression: rebalance='hourly' must still produce a hard error after widening. "
+            "v2 §6 full census confirms 'hourly' does not exist in the corpus. "
+            f"Got no errors — over-widening detected."
+        )
+
+    def test_unknown_rebalance_biweekly_still_produces_hard_error(self):
+        """validate_tree must STILL produce a hard error for rebalance="biweekly".
+
+        "biweekly" has 0 corpus occurrences. Guards against blanket allow.
+        Currently PASSES (also tested in TestAdversarialMutations). Must stay green.
+        """
+        m = _import_schema()
+        tree = _make_minimal_if_tree(rebalance="biweekly")
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-4 regression: rebalance='biweekly' must still produce a hard error."
+        )
+
+    def test_rsi_abbreviation_still_produces_lint_warning_after_widening(self):
+        """lint_tree must STILL produce an "unknown indicator fn" warning for "rsi".
+
+        The canonical RSI token is "relative-strength-index" (v2 §4). The abbreviation
+        "rsi" has 0 corpus occurrences as an fn value. The 6 new fns being added must
+        not suppress warnings for unconfirmed abbreviations.
+
+        Provenance: v2 §4 ("The rsi abbreviation never appears — canonical RSI token is
+        always the full relative-strength-index"). Currently PASSES. Must stay green.
+        """
+        m = _import_schema()
+        # "rsi" is NOT a valid corpus fn — only the full form is.
+        tree = _make_minimal_if_tree(lhs_fn="rsi")
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if "rsi" in w]
+        assert len(fn_warnings) >= 1, (
+            "AC-4 regression: lint_tree must still warn about 'rsi' (unverified abbreviation) "
+            "after adding the 6 corpus-verified fns. v2 §4 explicitly excludes 'rsi'. "
+            f"Got no rsi-related warnings — over-widening detected."
+        )
+
+    def test_made_up_indicator_fn_still_produces_lint_warning_after_widening(self):
+        """lint_tree must STILL produce an "unknown indicator fn" warning for a
+        completely made-up fn string like "momentum-oscillator-xyz".
+
+        Guards against an implementation that removes indicator fn checking entirely.
+        Currently PASSES. Must stay green after GREEN.
+        """
+        m = _import_schema()
+        tree = _make_minimal_if_tree(lhs_fn="momentum-oscillator-xyz")
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if "momentum-oscillator-xyz" in w]
+        assert len(fn_warnings) >= 1, (
+            "AC-4 regression: lint_tree must still warn about unknown fn "
+            "'momentum-oscillator-xyz' after widening. "
+            "Got no warnings — indicator fn checking may have been removed entirely."
+        )
+
+    def test_existing_v1_indicator_fns_produce_no_lint_warnings_after_widening(self):
+        """All 7 original KNOWN_INDICATOR_FNS tokens must still produce no lint warning.
+
+        Regression guard: the widening operation must not accidentally replace the
+        frozenset (losing v1 tokens) instead of extending it. Tests all 7 original
+        tokens in a single pass.
+        Currently PASSES. Must stay green after GREEN.
+        """
+        m = _import_schema()
+        # These are the 7 tokens from the original KNOWN_INDICATOR_FNS (v1 grammar).
+        original_fns = [
+            "relative-strength-index",
+            "cumulative-return",
+            "max-drawdown",
+            "current-price",
+            "standard-deviation-return",
+            "moving-average-price",
+            "moving-average-return",
+        ]
+        for fn_token in original_fns:
+            tree = _make_minimal_if_tree(lhs_fn=fn_token)
+            warnings = m.lint_tree(tree)
+            fn_warnings = [w for w in warnings if fn_token in w]
+            assert fn_warnings == [], (
+                f"AC-4 regression: original v1 fn {fn_token!r} must still produce no lint "
+                f"warning after widening (regression: frozenset was replaced, not extended?). "
+                f"Got: {fn_warnings!r}"
+            )
+
+    def test_existing_v1_rebalance_values_still_accepted_after_widening(self):
+        """All 4 original KNOWN_REBALANCE tokens must still validate clean.
+
+        Regression guard: the widening must extend the frozenset, not replace it.
+        Currently PASSES. Must stay green.
+        """
+        m = _import_schema()
+        # Original 4 values from KNOWN_REBALANCE (v1 grammar).
+        original_rebalance = ["daily", "none", "weekly", "monthly"]
+        for rebalance_val in original_rebalance:
+            tree = _make_minimal_if_tree(rebalance=rebalance_val)
+            errors = m.validate_tree(tree)
+            assert errors == [], (
+                f"AC-4 regression: original rebalance {rebalance_val!r} must still validate "
+                f"clean after widening. Got: {errors!r}"
+            )
+
+
+class TestGrammarV2TypeGuard:
+    """AC-5: the three vocabulary constants must be frozensets.
+
+    All tests in this class PASS on the current codebase and must STAY green.
+    They guard against an implementer who replaces frozensets with lists or sets,
+    which would break isinstance checks and mutability safety.
+    """
+
+    def test_all_three_vocabulary_constants_are_frozensets(self):
+        """KNOWN_COMPARATORS, KNOWN_REBALANCE, KNOWN_INDICATOR_FNS must all be frozenset.
+
+        frozenset is the type contract (immutable, hashable, O(1) membership test).
+        An implementer who changes any of these to list or set breaks the contract.
+        Currently PASSES. Must stay green after GREEN.
+        """
+        m = _import_schema()
+        for const_name in ("KNOWN_COMPARATORS", "KNOWN_REBALANCE", "KNOWN_INDICATOR_FNS"):
+            const = getattr(m, const_name, None)
+            assert const is not None, f"{const_name} is missing from the module"
+            assert isinstance(const, frozenset), (
+                f"AC-5: {const_name} must be frozenset (immutable, O(1) lookup); "
+                f"got {type(const).__name__!r}"
+            )
+
+    def test_known_comparators_is_frozenset_and_not_mutable(self):
+        """KNOWN_COMPARATORS must be immutable (frozenset, not set or list).
+
+        An accidental mutation of KNOWN_COMPARATORS (e.g. add/discard) between
+        test runs would create test-order dependencies. frozenset prevents this.
+        """
+        m = _import_schema()
+        assert isinstance(m.KNOWN_COMPARATORS, frozenset), (
+            f"KNOWN_COMPARATORS must be frozenset; got {type(m.KNOWN_COMPARATORS).__name__}"
+        )
+        # Attempting to add to a frozenset raises AttributeError — confirm mutability
+        # is blocked by checking the type prevents .add() calls (not by calling .add())
+        assert not hasattr(m.KNOWN_COMPARATORS, "add"), (
+            "frozenset must not have .add() method; type is incorrect"
+        )
+
+    def test_known_rebalance_is_frozenset_and_not_mutable(self):
+        """KNOWN_REBALANCE must be immutable (frozenset)."""
+        m = _import_schema()
+        assert isinstance(m.KNOWN_REBALANCE, frozenset), (
+            f"KNOWN_REBALANCE must be frozenset; got {type(m.KNOWN_REBALANCE).__name__}"
+        )
+        assert not hasattr(m.KNOWN_REBALANCE, "add")
+
+    def test_known_indicator_fns_is_frozenset_and_not_mutable(self):
+        """KNOWN_INDICATOR_FNS must be immutable (frozenset)."""
+        m = _import_schema()
+        assert isinstance(m.KNOWN_INDICATOR_FNS, frozenset), (
+            f"KNOWN_INDICATOR_FNS must be frozenset; got {type(m.KNOWN_INDICATOR_FNS).__name__}"
+        )
+        assert not hasattr(m.KNOWN_INDICATOR_FNS, "add")
+
+    def test_known_comparators_after_widening_still_contains_gte_as_member(self):
+        """After GREEN, KNOWN_COMPARATORS must contain 'gte' as a member.
+
+        This is a post-GREEN membership check — currently RED (gte not present).
+        It serves as a canary: if this test passes but AC-1 is still failing,
+        something is wrong with the validate_tree logic itself.
+        Currently RED: gte not in KNOWN_COMPARATORS.
+        GREEN when: gte added to the frozenset.
+        """
+        m = _import_schema()
+        assert "gte" in m.KNOWN_COMPARATORS, (
+            "AC-5/AC-1 canary: KNOWN_COMPARATORS must contain 'gte' after widening. "
+            "Provenance: v2 §8, VERIFIED-CORPUS n=39,596."
+        )
+
+    def test_known_rebalance_after_widening_contains_quarterly(self):
+        """After GREEN, KNOWN_REBALANCE must contain 'quarterly'.
+
+        Currently RED: quarterly not in KNOWN_REBALANCE.
+        GREEN when: quarterly added to the frozenset.
+        """
+        m = _import_schema()
+        assert "quarterly" in m.KNOWN_REBALANCE, (
+            "AC-5/AC-2 canary: KNOWN_REBALANCE must contain 'quarterly' after widening. "
+            "Provenance: v2 §6, VERIFIED-CORPUS n=58."
+        )
+
+    def test_known_rebalance_after_widening_contains_yearly(self):
+        """After GREEN, KNOWN_REBALANCE must contain 'yearly'.
+
+        Currently RED: yearly not in KNOWN_REBALANCE.
+        GREEN when: yearly added to the frozenset.
+        """
+        m = _import_schema()
+        assert "yearly" in m.KNOWN_REBALANCE, (
+            "AC-5/AC-2 canary: KNOWN_REBALANCE must contain 'yearly' after widening. "
+            "Provenance: v2 §6, VERIFIED-CORPUS n=27."
+        )
+
+    def test_known_indicator_fns_after_widening_contains_all_six_new_tokens(self):
+        """After GREEN, KNOWN_INDICATOR_FNS must contain all 6 newly corpus-verified fns.
+
+        Currently RED: none of the 6 are in KNOWN_INDICATOR_FNS.
+        GREEN when: all 6 added to the frozenset.
+        """
+        m = _import_schema()
+        # All 6 corpus-verified tokens from v2 §4 / §4b.
+        new_fns = [
+            "exponential-moving-average-price",
+            "standard-deviation-price",
+            "percentage-price-oscillator",
+            "percentage-price-oscillator-signal",
+            "upper-bollinger",
+            "lower-bollinger",
+        ]
+        missing = [fn for fn in new_fns if fn not in m.KNOWN_INDICATOR_FNS]
+        assert missing == [], (
+            f"AC-5/AC-3 canary: KNOWN_INDICATOR_FNS is missing corpus-verified fns: {missing!r}. "
+            "All 6 must be present after widening."
+        )

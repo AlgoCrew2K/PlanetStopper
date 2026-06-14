@@ -1,79 +1,128 @@
 # TDD Handoff
-Plan: N/A — defect fix (D3 from .design-handoff/advisor-ui-diag/TAB-DEFECTS-RCA.md)
-Branch: feat/advisor-tab-fixes
-Phase: green
+Plan: feature-plans/symphony-validator-grammar.md
+Branch: pr/symphony-validator-grammar
+Phase: red
 
 ## Test Files
-- `tests/ai_advisor/test_advisor_chat_handoff.py` — 30 tests total (21 failing, 5 skipped, 4 passing)
+- tests/advisors/test_symphony_schema.py — new tests appended (classes TestGrammarV2Alignment,
+  TestGrammarV2RegressionGuard, TestGrammarV2TypeGuard). Total file: 139 tests (122 passing,
+  17 failing = the RED set).
+
+## Behavioral Test Plan
+N/A — pure unit tests, no UI/e2e surface.
+advisors/symphony_schema.py is a stdlib-only pure-function module with no I/O, no Flask
+dependency, no DB access, and no network calls. No e2e spec required.
 
 ## A/C Coverage Matrix
 
-| A/C ID | Description | Test File | Test Name(s) | Status |
-|--------|-------------|-----------|--------------|--------|
-| D3-S1 | asset_swaps.js contains sessionStorage.setItem | test_advisor_chat_handoff.py | TestAssetSwapsSenderHandoff::test_asset_swaps_js_contains_sessionStorage_setItem | RED |
-| D3-S2 | asset_swaps.js uses key 'pendingChatArtifact' | test_advisor_chat_handoff.py | TestAssetSwapsSenderHandoff::test_asset_swaps_js_sessionStorage_uses_correct_key | RED |
-| D3-S3 | asset_swaps.js setItem call is a direct string-literal call | test_advisor_chat_handoff.py | TestAssetSwapsSenderHandoff::test_asset_swaps_js_sessionStorage_setItem_with_key_in_same_expression | RED |
-| D3-S4 | No bare navigation without preceding sessionStorage write | test_advisor_chat_handoff.py | TestAssetSwapsSenderHandoff::test_asset_swaps_js_no_bare_navigation_in_else_branch | RED |
-| D3-S5 | Both else AND catch branches write sessionStorage (≥2 setItem calls) | test_advisor_chat_handoff.py | TestAssetSwapsSenderHandoff::test_asset_swaps_js_catch_branch_also_writes_sessionStorage | RED |
-| D3-L1 | logic_changes.js contains sessionStorage.setItem | test_advisor_chat_handoff.py | TestLogicChangesSenderHandoff::test_logic_changes_js_contains_sessionStorage_setItem | RED |
-| D3-L2 | logic_changes.js uses correct key | test_advisor_chat_handoff.py | TestLogicChangesSenderHandoff::test_logic_changes_js_sessionStorage_uses_correct_key | RED |
-| D3-L3 | logic_changes.js setItem is a direct call | test_advisor_chat_handoff.py | TestLogicChangesSenderHandoff::test_logic_changes_js_sessionStorage_setItem_with_key_in_same_expression | RED |
-| D3-L4 | logic_changes.js no bare navigation without write | test_advisor_chat_handoff.py | TestLogicChangesSenderHandoff::test_logic_changes_js_no_bare_navigation_without_sessionStorage_write | RED |
-| D3-L5 | logic_changes.js both branches write (≥2 setItem calls) | test_advisor_chat_handoff.py | TestLogicChangesSenderHandoff::test_logic_changes_js_catch_branch_also_writes_sessionStorage | RED |
-| D3-R1 | ai_advisor_chat.js reads sessionStorage.getItem | test_advisor_chat_handoff.py | TestChatReceiverHandoff::test_chat_js_reads_sessionStorage_getItem | RED |
-| D3-R2 | chat.js reads correct key | test_advisor_chat_handoff.py | TestChatReceiverHandoff::test_chat_js_reads_correct_key | RED |
-| D3-R3 | chat.js getItem call is a direct string-literal call | test_advisor_chat_handoff.py | TestChatReceiverHandoff::test_chat_js_getItem_with_correct_key_in_same_expression | RED |
-| D3-R4 | chat.js calls sessionStorage.removeItem after consuming | test_advisor_chat_handoff.py | TestChatReceiverHandoff::test_chat_js_removes_item_from_sessionStorage | RED |
-| D3-R5 | chat.js removeItem uses correct key | test_advisor_chat_handoff.py | TestChatReceiverHandoff::test_chat_js_removes_correct_key | RED |
-| D3-R6 | sessionStorage read is inside DOMContentLoaded handler | test_advisor_chat_handoff.py | TestChatReceiverHandoff::test_chat_js_sessionStorage_read_is_in_domcontentloaded_handler | SKIPPED (getItem absent) |
-| D3-R7 | openChatPanel called after getItem | test_advisor_chat_handoff.py | TestChatReceiverHandoff::test_chat_js_calls_openChatPanel_after_reading_sessionStorage | SKIPPED (getItem absent) |
-| D3-R8 | removeItem follows openChatPanel in handler | test_advisor_chat_handoff.py | TestChatReceiverHandoff::test_chat_js_removeItem_follows_openChatPanel_in_domcontentloaded | SKIPPED (getItem absent) |
-| D3-G1 | Receiver has null guard or try/catch near getItem | test_advisor_chat_handoff.py | TestChatReceiverRobustness::test_chat_js_has_null_guard_or_trycatch_near_getItem | SKIPPED (getItem absent) |
-| D3-G2 | removeItem not called unconditionally before openChatPanel | test_advisor_chat_handoff.py | TestChatReceiverRobustness::test_chat_js_does_not_call_removeItem_unconditionally | SKIPPED (getItem absent) |
-| D3-K1 | asset_swaps and chat use same key | test_advisor_chat_handoff.py | TestHandoffKeyCoherence::test_asset_swaps_and_chat_use_same_key | RED |
-| D3-K2 | logic_changes and chat use same key | test_advisor_chat_handoff.py | TestHandoffKeyCoherence::test_logic_changes_and_chat_use_same_key | RED |
-| D3-K3 | No alternate key spellings in sender files | test_advisor_chat_handoff.py | TestHandoffKeyCoherence::test_no_alternate_key_spellings_in_sender_files | PASSES (no typos) |
-| D3-SX1 | JS syntax: asset_swaps.js passes node --check | test_advisor_chat_handoff.py | TestJsSyntaxValidity::test_asset_swaps_js_passes_node_check | PASSES (no change yet) |
-| D3-SX2 | JS syntax: logic_changes.js passes node --check | test_advisor_chat_handoff.py | TestJsSyntaxValidity::test_logic_changes_js_passes_node_check | PASSES (no change yet) |
-| D3-SX3 | JS syntax: ai_advisor_chat.js passes node --check | test_advisor_chat_handoff.py | TestJsSyntaxValidity::test_chat_js_passes_node_check | PASSES (no change yet) |
+| A/C ID | Description | Test Class | Test Name(s) | Status |
+|--------|-------------|------------|--------------|--------|
+| AC-1 | validate_tree: no hard error for comparator "gte" | TestGrammarV2Alignment | test_comparator_gte_does_not_produce_hard_error | RED |
+| AC-1 | validate_tree: "lte" still accepted after widening | TestGrammarV2Alignment | test_comparator_lte_still_does_not_produce_hard_error | GREEN (already passes) |
+| AC-2 | validate_tree: no hard error for rebalance "quarterly" | TestGrammarV2Alignment | test_rebalance_quarterly_does_not_produce_hard_error | RED |
+| AC-2 | validate_tree: no hard error for rebalance "yearly" | TestGrammarV2Alignment | test_rebalance_yearly_does_not_produce_hard_error | RED |
+| AC-2 | Both quarterly and yearly clean in same run | TestGrammarV2Alignment | test_rebalance_quarterly_and_yearly_both_validate_clean_in_same_run | RED |
+| AC-3 | lint_tree: no warning for exponential-moving-average-price (lhs-fn) | TestGrammarV2Alignment | test_exponential_moving_average_price_does_not_produce_lint_warning | RED |
+| AC-3 | lint_tree: no warning for standard-deviation-price (lhs-fn) | TestGrammarV2Alignment | test_standard_deviation_price_as_lhs_fn_does_not_produce_lint_warning | RED |
+| AC-3 | lint_tree: no warning for percentage-price-oscillator (lhs-fn) | TestGrammarV2Alignment | test_percentage_price_oscillator_does_not_produce_lint_warning | RED |
+| AC-3 | lint_tree: no warning for percentage-price-oscillator-signal (lhs-fn) | TestGrammarV2Alignment | test_percentage_price_oscillator_signal_does_not_produce_lint_warning | RED |
+| AC-3 | lint_tree: no warning for upper-bollinger (lhs-fn) | TestGrammarV2Alignment | test_upper_bollinger_does_not_produce_lint_warning | RED |
+| AC-3 | lint_tree: no warning for lower-bollinger (lhs-fn) | TestGrammarV2Alignment | test_lower_bollinger_does_not_produce_lint_warning | RED |
+| AC-3 | lint_tree: no warning for ema-price as sort-by-fn | TestGrammarV2Alignment | test_exponential_moving_average_price_as_sort_by_fn_does_not_warn | RED |
+| AC-3 | lint_tree: no warning for std-dev-price as sort-by-fn | TestGrammarV2Alignment | test_standard_deviation_price_as_sort_by_fn_does_not_warn | RED |
+| AC-3 | All 6 new fns produce no warnings in batch | TestGrammarV2Alignment | test_all_six_new_indicator_fns_produce_no_lint_warnings_in_batch | RED |
+| AC-4 | "eq" comparator still errors after widening | TestGrammarV2RegressionGuard | test_unknown_comparator_eq_still_produces_hard_error_after_widening | GREEN |
+| AC-4 | "neq" comparator still errors after widening | TestGrammarV2RegressionGuard | test_unknown_comparator_neq_still_produces_hard_error_after_widening | GREEN |
+| AC-4 | Symbol ">" comparator still errors after widening | TestGrammarV2RegressionGuard | test_unknown_comparator_symbol_form_still_produces_error_after_widening | GREEN |
+| AC-4 | "hourly" rebalance still errors after widening | TestGrammarV2RegressionGuard | test_unknown_rebalance_hourly_still_produces_hard_error | GREEN |
+| AC-4 | "biweekly" rebalance still errors after widening | TestGrammarV2RegressionGuard | test_unknown_rebalance_biweekly_still_produces_hard_error | GREEN |
+| AC-4 | "rsi" abbreviation still warns after widening | TestGrammarV2RegressionGuard | test_rsi_abbreviation_still_produces_lint_warning_after_widening | GREEN |
+| AC-4 | Made-up fn still warns after widening | TestGrammarV2RegressionGuard | test_made_up_indicator_fn_still_produces_lint_warning_after_widening | GREEN |
+| AC-4 | Original 7 v1 fns produce no lint warnings after widening | TestGrammarV2RegressionGuard | test_existing_v1_indicator_fns_produce_no_lint_warnings_after_widening | GREEN |
+| AC-4 | Original 4 v1 rebalance values accepted after widening | TestGrammarV2RegressionGuard | test_existing_v1_rebalance_values_still_accepted_after_widening | GREEN |
+| AC-5 | All three constants are frozenset | TestGrammarV2TypeGuard | test_all_three_vocabulary_constants_are_frozensets | GREEN |
+| AC-5 | KNOWN_COMPARATORS is frozenset + immutable | TestGrammarV2TypeGuard | test_known_comparators_is_frozenset_and_not_mutable | GREEN |
+| AC-5 | KNOWN_REBALANCE is frozenset + immutable | TestGrammarV2TypeGuard | test_known_rebalance_is_frozenset_and_not_mutable | GREEN |
+| AC-5 | KNOWN_INDICATOR_FNS is frozenset + immutable | TestGrammarV2TypeGuard | test_known_indicator_fns_is_frozenset_and_not_mutable | GREEN |
+| AC-5+AC-1 | KNOWN_COMPARATORS contains "gte" (canary) | TestGrammarV2TypeGuard | test_known_comparators_after_widening_still_contains_gte_as_member | RED |
+| AC-5+AC-2 | KNOWN_REBALANCE contains "quarterly" (canary) | TestGrammarV2TypeGuard | test_known_rebalance_after_widening_contains_quarterly | RED |
+| AC-5+AC-2 | KNOWN_REBALANCE contains "yearly" (canary) | TestGrammarV2TypeGuard | test_known_rebalance_after_widening_contains_yearly | RED |
+| AC-5+AC-3 | KNOWN_INDICATOR_FNS contains all 6 new tokens (canary) | TestGrammarV2TypeGuard | test_known_indicator_fns_after_widening_contains_all_six_new_tokens | RED |
 
-Note: 5 tests are SKIPPED with `pytest.skip()` (not XFAIL) because they depend on
-`sessionStorage.getItem` being present in chat.js — which it isn't yet.  Once the
-implementer adds the getItem call, those 5 tests will automatically ungate and run.
-They will become RED at that point if the order/robustness contract is violated.
+## Conflicting Pre-existing Tests — Implementer Must Handle
+
+Two pre-existing tests in the file are SUPERSEDED by the new AC-1/AC-2 tests and will need
+to be updated (NOT removed — their intent must be preserved with updated tokens) as part of
+the GREEN phase:
+
+1. **TestAdversarialMutations::test_unknown_comparator_gte_produces_error** (line ~654)
+   - Old stance: "gte is UNCONFIRMED per OQ-2; reject it." Correct for v1 grammar.
+   - New stance (AC-1): "gte is CONFIRMED per v2 corpus n=39,596; accept it."
+   - Resolution: The implementer (or test-writer review pass) must change this test's
+     comparator from "gte" to "eq" or another genuinely-unknown value. Do NOT delete the
+     test — the intent (unknown comparator must error) is still valid.
+
+2. **TestAdversarialCasesRound2::test_make_root_with_unknown_rebalance_produces_error_when_validated** (line ~2645)
+   - Old example value: "quarterly" (was unknown in v1 grammar).
+   - New stance (AC-2): "quarterly" is now corpus-verified.
+   - Resolution: The implementer must change the example value from "quarterly" to a
+     genuinely-unknown value (e.g. "hourly", "biweekly", "decennial").
+   - This test will PASS after GREEN because make_root("quarterly") will no longer produce
+     a validation error — making it a false pass (not testing what it claims to test).
+
+The implementer's first action after GREEN should be to update these two tests. The test-writer
+will verify in the review pass.
 
 ## Questions for User
-None — specification is complete from the RCA.
+None — specification is complete from the v2 grammar doc and feature plan.
 
 ## Import Stubs Created
-None required — these are pure JS pattern-matching tests; no new Python modules are
-introduced.  The test imports only stdlib (pathlib, re, subprocess) plus pytest.
+None required. All tests exercise the existing advisors/symphony_schema module.
+No new modules are introduced by this cycle.
+
+## RED Test Count: 17 (all fail on assertions, zero fail on import/syntax errors)
+
+### RED tests (must turn GREEN after implementation):
+1. TestGrammarV2Alignment::test_comparator_gte_does_not_produce_hard_error
+2. TestGrammarV2Alignment::test_rebalance_quarterly_does_not_produce_hard_error
+3. TestGrammarV2Alignment::test_rebalance_yearly_does_not_produce_hard_error
+4. TestGrammarV2Alignment::test_rebalance_quarterly_and_yearly_both_validate_clean_in_same_run
+5. TestGrammarV2Alignment::test_exponential_moving_average_price_does_not_produce_lint_warning
+6. TestGrammarV2Alignment::test_standard_deviation_price_as_lhs_fn_does_not_produce_lint_warning
+7. TestGrammarV2Alignment::test_percentage_price_oscillator_does_not_produce_lint_warning
+8. TestGrammarV2Alignment::test_percentage_price_oscillator_signal_does_not_produce_lint_warning
+9. TestGrammarV2Alignment::test_upper_bollinger_does_not_produce_lint_warning
+10. TestGrammarV2Alignment::test_lower_bollinger_does_not_produce_lint_warning
+11. TestGrammarV2Alignment::test_exponential_moving_average_price_as_sort_by_fn_does_not_warn
+12. TestGrammarV2Alignment::test_standard_deviation_price_as_sort_by_fn_does_not_warn
+13. TestGrammarV2Alignment::test_all_six_new_indicator_fns_produce_no_lint_warnings_in_batch
+14. TestGrammarV2TypeGuard::test_known_comparators_after_widening_still_contains_gte_as_member
+15. TestGrammarV2TypeGuard::test_known_rebalance_after_widening_contains_quarterly
+16. TestGrammarV2TypeGuard::test_known_rebalance_after_widening_contains_yearly
+17. TestGrammarV2TypeGuard::test_known_indicator_fns_after_widening_contains_all_six_new_tokens
+
+### GREEN tests (already passing, must stay green):
+All 122 pre-existing tests + new AC-4 regression guards + AC-5 type guards for current behavior.
+
+## What the Implementer Must Do (deliberately blind to plan — read handoff only)
+
+The implementation is three one-line frozenset literal edits in advisors/symphony_schema.py:
+
+1. Add "gte" to KNOWN_COMPARATORS (~line 80).
+2. Add "quarterly" and "yearly" to KNOWN_REBALANCE (~line 84).
+3. Add "exponential-moving-average-price", "standard-deviation-price",
+   "percentage-price-oscillator", "percentage-price-oscillator-signal",
+   "upper-bollinger", "lower-bollinger" to KNOWN_INDICATOR_FNS (~line 65).
+4. Update the two conflicting pre-existing tests described in "Conflicting Pre-existing Tests"
+   above (changing their example values to genuinely-unknown tokens).
+5. Update source-comment provenance above the three constants (AC-5 from the plan).
+
+No logic changes. No new functions. No changes to validate_tree or lint_tree behavior.
+The frozensets are already iterated in membership checks — adding tokens is the only change.
 
 ## Status Log
-- [2026-06-09] test-writer: Starting RED phase
-- [2026-06-09] test-writer: RED complete — 30 tests (21 failing, 5 skipped, 4 passing on pre-fix
-  codebase), 0 stubs created.
-  Failing = the D3 sessionStorage codepath does not exist yet (correct RED).
-  Skipped = order/robustness tests that gate on getItem being present (will ungate automatically).
-  Passing = node --check (files are syntax-valid today) + no-typo check (both correct baselines).
-- [2026-06-09] implementer: GREEN complete — 26/30 tests passing, 4 skipped (TestCurrentStateIsRed
-  correctly skip when fix is present), 0 test bugs. Full advisor suite: 636 passed / 0 failed /
-  6 skipped on commit eb40ded. Typecheck N/A (JS pattern tests). No regressions.
-
-## Implementation Notes
-- D2A: Straightforward tuple destructure at app.py:2805 — `_dates, live_rets, _shadow = ...` then
-  assign only `live_rets`.
-- D1A: Wrapped lazy imports in `try/except ImportError` that returns 200+JSON error, consistent
-  with existing exception handling in the route's main try/except.
-- D1B: Wrapped the final `return jsonify({...})` block in try/except to guard serialization errors.
-- D2B: Added `if (!list) return;` guard in ai_advisor.js:loadRecentRuns() after getElementById.
-- D3 asset_swaps: The onclick is built via single-quoted JS string concatenation. Used double quotes
-  for the sessionStorage key and href path inside the onclick to avoid `\'` escaping, which would
-  have caused the test regex `['"]` to fail to match backslash-escaped quote characters.
-- D3 logic_changes: Template literal inline onclick — sessionStorage writes added in both branches
-  using single quotes (template literal context; no escaping needed for `'` inside backtick string).
-- D3 chat receiver: Added try/catch block inside DOMContentLoaded after `_syncSendBtn()`, before
-  the closing `});`. Order: getItem → if present → openChatPanel → removeItem.
-
-## Test File Issues (for test-writer to fix)
-None.
+- [2026-06-14] test-writer: Starting RED phase
+- [2026-06-14] test-writer: RED complete — 17 tests failing (all on assertions, zero
+  import/syntax errors), 122 passing. Test file:
+  tests/advisors/test_symphony_schema.py. 0 stubs created.
+  Commit SHA: (see below after commit).
