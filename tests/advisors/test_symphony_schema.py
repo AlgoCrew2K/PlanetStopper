@@ -17,7 +17,9 @@ ADVERSARIAL FOCUS:
     the fixtures by the test's own independent reference walker.
   - "rsi" must produce a lint warning (not a hard error); "relative-strength-index"
     must pass with no errors (tests the exact grammar string).
-  - "gte" must fail; "gt"/"lt"/"lte" must pass (OQ-2 stance).
+  - "gte" must PASS: corpus-verified (n≈39,596); "gt"/"lt"/"gte"/"lte" all valid (AC-1).
+  - "eq"/"neq" must fail (not in corpus).
+  - "quarterly"/"yearly" must PASS: corpus-verified (AC-2); "hourly" must fail.
   - Constructors must emit uuid4-parseable ids, correct field names, and produce
     trees that pass validate_tree with no errors.
 
@@ -73,18 +75,48 @@ def _load_fixture(path: pathlib.Path) -> dict:
 
 
 def _ref_collect_tickers(node: Any, out: set[str] | None = None) -> set[str]:
-    """Iteratively gather all ticker strings from a raw tree node."""
+    """Iteratively gather all ticker strings from a raw tree node.
+
+    Mirrors extract_tickers exactly: collects ``ticker`` from every node
+    reachable via ``children`` (excluding the ``'%'`` binary-compound
+    placeholder), and also walks ``condition`` blocks to collect real tickers
+    from ``tickers[]`` lists (binary-compound) and nested compound sub-conditions
+    — the same traversal performed by ``_collect_condition_tickers`` in the
+    implementation.
+
+    Used for exact-equality assertions in the golden-fixture extract_tickers
+    tests and as a lower-bound for render_rules_text tests (render only covers
+    tickers reachable via children, so it is still the correct reference there).
+    """
     if out is None:
         out = set()
     if not isinstance(node, dict):
         return out
-    stack = [node]
+    stack: list = [node]
     while stack:
         current = stack.pop()
         if not isinstance(current, dict):
             continue
-        if current.get("ticker"):
-            out.add(current["ticker"])
+        # Collect node-level ticker, skipping the '%' binary-compound placeholder.
+        ticker = current.get("ticker")
+        if isinstance(ticker, str) and ticker and ticker != "%":
+            out.add(ticker)
+        # Walk condition block — mirrors _collect_condition_tickers in the impl.
+        condition = current.get("condition")
+        if isinstance(condition, dict):
+            cond_stack: list = [condition]
+            while cond_stack:
+                cond = cond_stack.pop()
+                if not isinstance(cond, dict):
+                    continue
+                # binary-compound: collect from top-level tickers list.
+                for t in (cond.get("tickers") or []):
+                    if isinstance(t, str) and t and t != "%":
+                        out.add(t)
+                # compound: recurse into sub-conditions.
+                for sub in (cond.get("conditions") or []):
+                    if isinstance(sub, dict):
+                        cond_stack.append(sub)
         for child in current.get("children") or []:
             stack.append(child)
     return out
@@ -168,10 +200,14 @@ class TestGoldenFixtureSmall:
         assert errors == [], f"Expected no hard errors on golden small fixture, got: {errors}"
 
     def test_small_fixture_extract_tickers_matches_reference_walk(self, raw_small):
-        """extract_tickers must agree with the independent reference walker.
+        """extract_tickers must return exactly the same set as the reference walker.
 
-        The expected set is derived from the fixture at test time — never
-        hardcoded — so if the fixture changes the test re-derives automatically.
+        Both _ref_collect_tickers and extract_tickers walk children tickers
+        (excluding '%') AND condition block tickers from binary-compound
+        tickers[] lists.  Exact equality is the strong invariant — any spurious
+        extra ticker returned by extract_tickers is a bug.
+
+        The '%' placeholder must NOT appear in the result (AC-9 invariant).
         """
         m = _import_schema()
         expected = _ref_collect_tickers(raw_small)
@@ -179,7 +215,14 @@ class TestGoldenFixtureSmall:
         assert len(expected) > 0, "reference walker found no tickers in small fixture"
         result = m.extract_tickers(raw_small)
         assert isinstance(result, set), "extract_tickers must return a set"
-        assert result == expected
+        # Exact equality — both oracles must agree completely.
+        assert result == expected, (
+            f"extract_tickers diverged from reference walker. "
+            f"Extra (spurious): {result - expected}. "
+            f"Missing: {expected - result}."
+        )
+        # The '%' placeholder must never appear in the result (AC-9).
+        assert "%" not in result, "extract_tickers must not return the '%' placeholder"
 
     def test_small_fixture_render_rules_text_mentions_all_tickers(self, raw_small):
         """render_rules_text must mention every ticker present in the tree."""
@@ -230,13 +273,24 @@ class TestGoldenFixtureLarge:
         assert errors == [], f"Expected no hard errors on golden large fixture, got: {errors}"
 
     def test_large_fixture_extract_tickers_matches_reference_walk(self, raw_large):
-        """extract_tickers on the large fixture must agree with the reference walker."""
+        """extract_tickers on the large fixture must match the reference walker exactly.
+
+        Same strong invariant as the small fixture test: exact equality between
+        extract_tickers and the independent reference oracle.  Both oracles walk
+        children tickers AND condition block binary-compound tickers[].
+        The '%' placeholder must not appear.
+        """
         m = _import_schema()
         expected = _ref_collect_tickers(raw_large)
         assert len(expected) > 0, "reference walker found no tickers in large fixture"
         result = m.extract_tickers(raw_large)
         assert isinstance(result, set)
-        assert result == expected
+        assert result == expected, (
+            f"extract_tickers diverged from reference walker on large fixture. "
+            f"Extra (spurious): {result - expected}. "
+            f"Missing: {expected - result}."
+        )
+        assert "%" not in result, "extract_tickers must not return the '%' placeholder"
 
     def test_large_fixture_render_rules_text_mentions_all_tickers(self, raw_large):
         """render_rules_text on the large fixture must mention every ticker."""
@@ -651,11 +705,13 @@ class TestAdversarialMutations:
     # Unknown comparator
     # -----------------------------------------------------------------------
 
-    def test_unknown_comparator_gte_produces_error(self, valid_tree):
-        """'gte' is NOT in the confirmed grammar (OQ-2 stance: validate against gt/lt/lte only).
+    def test_comparator_gte_is_now_valid_per_corpus_verification(self, valid_tree):
+        """'gte' is corpus-verified (n≈39,596) and must now PASS validate_tree.
 
-        This pins the OQ-2 decision: until 'gte' is confirmed in a local fixture,
-        it must be treated as a hard error.
+        AC-1 (grammar-foundation): KNOWN_COMPARATORS = {gt, lt, gte, lte}.
+        The prior OQ-2 unconfirmed stance is superseded by the 10,441-symphony
+        corpus audit recorded in project memory. A tree with comparator='gte'
+        must produce ZERO hard errors.
         """
         m = _import_schema()
         if_child = self._first_node_of_step(valid_tree, "if-child")
@@ -663,9 +719,9 @@ class TestAdversarialMutations:
             pytest.skip("Minimal fixture has no if-child; rebuild needed")
         if_child["comparator"] = "gte"
         errors = m.validate_tree(valid_tree)
-        assert len(errors) >= 1, (
-            "'gte' is UNCONFIRMED per OQ-2; validate_tree should reject it. "
-            "Accepted comparators: gt, lt, lte."
+        assert errors == [], (
+            "AC-1: 'gte' is corpus-verified (n≈39,596); validate_tree must accept it. "
+            f"Got errors: {errors}"
         )
 
     def test_unknown_comparator_eq_produces_error(self, valid_tree):
@@ -1693,12 +1749,16 @@ class TestPropertyStyleInvariants:
         assert _before == _after, "validate_tree mutated the input dict; it must be read-only"
 
     def test_validate_tree_does_not_mutate_input_on_invalid_tree(self):
-        """validate_tree must not mutate inputs even when it finds errors."""
+        """validate_tree must not mutate inputs even when it finds errors.
+
+        Note: uses 'hourly' as the invalid rebalance value. 'quarterly' and 'yearly'
+        are valid per AC-2 (corpus-verified). 'hourly' is not in the corpus.
+        """
         m = _import_schema()
         bad_tree = {
             "step": "root",
             "name": "Test",
-            "rebalance": "quarterly",  # invalid
+            "rebalance": "hourly",  # invalid — not in corpus (AC-2 widened to quarterly/yearly)
             "id": str(uuid.uuid4()),
             "children": [],
         }
@@ -2359,11 +2419,16 @@ class TestModuleConstants:
         assert "lt" in m.KNOWN_COMPARATORS
         assert "lte" in m.KNOWN_COMPARATORS
 
-    def test_known_comparators_does_not_contain_gte(self):
-        """KNOWN_COMPARATORS must NOT contain 'gte' (OQ-2: unconfirmed, omit until verified)."""
+    def test_known_comparators_contains_gte_after_corpus_verification(self):
+        """KNOWN_COMPARATORS MUST contain 'gte' — corpus-verified (n≈39,596).
+
+        AC-1 (grammar-foundation): the corpus audit of 10,441 real Composer symphonies
+        found 'gte' in wide use. The prior OQ-2 exclusion is superseded. KNOWN_COMPARATORS
+        must now be {gt, lt, gte, lte}.
+        """
         m = _import_schema()
-        assert "gte" not in m.KNOWN_COMPARATORS, (
-            "'gte' must not be in KNOWN_COMPARATORS until confirmed in a local fixture (OQ-2)"
+        assert "gte" in m.KNOWN_COMPARATORS, (
+            "AC-1: 'gte' must be in KNOWN_COMPARATORS after corpus verification (n≈39,596)"
         )
 
     def test_known_rebalance_contains_all_four_values(self):
@@ -2544,9 +2609,13 @@ class TestAdversarialCasesRound2:
             )
 
     def test_valid_rebalance_values_all_accepted_without_error(self):
-        """All 4 known rebalance values must each pass validation."""
+        """All 6 corpus-verified rebalance values must each pass validation.
+
+        AC-2 (grammar-foundation): KNOWN_REBALANCE widened to include 'quarterly'
+        (n≈58) and 'yearly' (n≈27) from the 10,441-symphony corpus audit.
+        """
         m = _import_schema()
-        for rebalance in ("daily", "none", "weekly", "monthly"):
+        for rebalance in ("daily", "none", "weekly", "monthly", "quarterly", "yearly"):
             tree = {
                 "step": "root",
                 "name": "Test",
@@ -2599,13 +2668,17 @@ class TestAdversarialCasesRound2:
         assert isinstance(cond, dict)
 
     def test_validate_tree_errors_are_all_strings(self):
-        """Every item returned by validate_tree must be a string."""
+        """Every item returned by validate_tree must be a string.
+
+        Note: uses 'hourly' as invalid rebalance — 'quarterly' and 'yearly' are
+        valid per AC-2 (corpus-verified). 'hourly' is confirmed absent from corpus.
+        """
         m = _import_schema()
         # Use a definitely-invalid tree to get multiple errors
         bad_tree = {
             "step": "root",
             "name": "T",
-            "rebalance": "quarterly",
+            "rebalance": "hourly",  # invalid — not in corpus (AC-2 uses quarterly/yearly as valid)
             "id": str(uuid.uuid4()),
             "children": [
                 {
@@ -2647,14 +2720,15 @@ class TestAdversarialCasesRound2:
 
         Constructors do not themselves validate (they just build dicts);
         validate_tree is the validation gate.
+        Note: uses 'hourly' — 'quarterly' and 'yearly' are valid per AC-2 corpus verification.
         """
         m = _import_schema()
         asset = m.make_asset("SPY")
         wt = m.make_weight_equal([asset])
-        root = m.make_root("Test", "quarterly", [wt])  # "quarterly" is unrecognised
+        root = m.make_root("Test", "hourly", [wt])  # "hourly" is unrecognised (not in corpus)
         errors = m.validate_tree(root)
         assert len(errors) >= 1, (
-            "Expected error from validate_tree when root has unknown rebalance 'quarterly'"
+            "Expected error from validate_tree when root has unknown rebalance 'hourly'"
         )
 
     def test_multiple_calls_to_make_root_produce_different_root_ids(self):
@@ -2667,3 +2741,1827 @@ class TestAdversarialCasesRound2:
         assert r1["id"] != r2["id"], (
             "make_root returned the same id on two separate calls — ids must be fresh UUIDs"
         )
+
+
+# ===========================================================================
+# GRAMMAR FOUNDATION — AC-1..AC-12 (RED tests for the grammar-foundation cycle)
+#
+# These tests encode the corpus-verified grammar widening (10,441 real Composer
+# symphonies) and the new compound condition constructors.
+#
+# Grammar ground truth (recorded in project memory, corpus audit):
+#   - Comparators in real use: gt, lt, gte (n≈39,596), lte. eq/neq DO NOT occur.
+#   - Rebalance values: daily, none, weekly, monthly, quarterly (n≈58), yearly (n≈27).
+#   - New indicator fns: exponential-moving-average-price (n≈45,816),
+#     standard-deviation-price (n≈5,572), percentage-price-oscillator,
+#     percentage-price-oscillator-signal, upper-bollinger, lower-bollinger.
+#   - Compound condition-type ∈ {binary, binary-compound, compound}.
+#   - operator ∈ {any, all} only.
+#   - binary-compound: lhs ticker="%", tickers:[...], broadcasts one predicate.
+#   - compound: joins conditions:[...] with any/all; nestable.
+# ===========================================================================
+
+
+# ===========================================================================
+# AC-1: Comparator widening — gte now accepted; eq/neq still error
+# ===========================================================================
+
+
+class TestGrammarFoundationComparatorWidening:
+    """AC-1: KNOWN_COMPARATORS = {gt, lt, gte, lte}. Corpus-verified."""
+
+    def _make_minimal_if_tree(self, comparator: str) -> dict:
+        """Build a minimal tree with the given if-child comparator for testing."""
+        return {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "lhs-fn": "cumulative-return",
+                                    "lhs-fn-params": {"window": 200},
+                                    "lhs-val": "TLT",
+                                    "comparator": comparator,
+                                    "rhs-fixed-value?": True,
+                                    "rhs-val": "0",
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "TLT",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+    def test_gte_comparator_produces_no_hard_errors(self):
+        """AC-1: 'gte' is corpus-verified (n≈39,596); validate_tree must accept it.
+
+        The prior OQ-2 stance (excluded until confirmed) is superseded by the
+        10,441-symphony corpus audit. KNOWN_COMPARATORS must contain 'gte'.
+        """
+        m = _import_schema()
+        tree = self._make_minimal_if_tree("gte")
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"AC-1: comparator 'gte' is corpus-verified (n≈39,596); must produce no hard errors. "
+            f"Got: {errors}"
+        )
+
+    def test_known_comparators_contains_gte(self):
+        """AC-1: KNOWN_COMPARATORS frozenset must include 'gte'."""
+        m = _import_schema()
+        assert hasattr(m, "KNOWN_COMPARATORS"), "KNOWN_COMPARATORS missing"
+        assert "gte" in m.KNOWN_COMPARATORS, (
+            "AC-1: 'gte' must be in KNOWN_COMPARATORS — corpus-verified n≈39,596"
+        )
+
+    def test_known_comparators_is_exactly_gt_lt_gte_lte(self):
+        """AC-1: KNOWN_COMPARATORS must be exactly {gt, lt, gte, lte} — no more, no less.
+
+        eq/neq do NOT occur in the corpus and must remain excluded.
+        """
+        m = _import_schema()
+        expected = frozenset({"gt", "lt", "gte", "lte"})
+        actual = frozenset(m.KNOWN_COMPARATORS)
+        assert actual == expected, (
+            f"AC-1: KNOWN_COMPARATORS must be exactly {{gt, lt, gte, lte}}. "
+            f"Got: {sorted(actual)}"
+        )
+
+    def test_all_four_comparators_produce_no_hard_errors(self):
+        """AC-1: All four corpus-verified comparators — gt, lt, gte, lte — must pass."""
+        m = _import_schema()
+        for comp in ("gt", "lt", "gte", "lte"):
+            tree = self._make_minimal_if_tree(comp)
+            errors = m.validate_tree(tree)
+            assert errors == [], (
+                f"AC-1: corpus-verified comparator {comp!r} produced unexpected errors: {errors}"
+            )
+
+    def test_eq_comparator_still_produces_hard_error(self):
+        """AC-1 exactness guard: 'eq' does NOT occur in the corpus and must still error."""
+        m = _import_schema()
+        tree = self._make_minimal_if_tree("eq")
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-1 exactness: 'eq' is absent from the corpus; validate_tree must reject it"
+        )
+
+    def test_neq_comparator_still_produces_hard_error(self):
+        """AC-1 exactness guard: 'neq' does NOT occur in the corpus and must still error."""
+        m = _import_schema()
+        tree = self._make_minimal_if_tree("neq")
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-1 exactness: 'neq' is absent from the corpus; validate_tree must reject it"
+        )
+
+    def test_make_if_with_gte_comparator_validates_clean(self):
+        """AC-1 constructor path: make_condition with 'gte' comparator must produce valid tree."""
+        m = _import_schema()
+        lhs = m.make_indicator("cumulative-return", "TLT", window=200)
+        cond = m.make_condition(lhs, "gte", 0.0)  # gte is now valid
+        if_node = m.make_if(
+            cond,
+            then_children=[m.make_asset("TLT")],
+            else_children=[m.make_asset("BIL")],
+        )
+        root = m.make_root("GTE Test", "daily", [m.make_weight_equal([if_node])])
+        errors = m.validate_tree(root)
+        assert errors == [], (
+            f"AC-1: make_condition with 'gte' comparator produced unexpected errors: {errors}"
+        )
+
+
+# ===========================================================================
+# AC-2: Rebalance widening — quarterly/yearly accepted; hourly still errors
+# ===========================================================================
+
+
+class TestGrammarFoundationRebalanceWidening:
+    """AC-2: KNOWN_REBALANCE = {daily, none, weekly, monthly, quarterly, yearly}."""
+
+    def _make_root_with_rebalance(self, rebalance: str) -> dict:
+        """Build a minimal tree with the given rebalance value."""
+        return {
+            "step": "root",
+            "name": "Test",
+            "rebalance": rebalance,
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "asset",
+                            "ticker": "SPY",
+                            "name": "",
+                            "exchange": "NYSE",
+                            "id": str(uuid.uuid4()),
+                        }
+                    ],
+                }
+            ],
+        }
+
+    def test_quarterly_rebalance_produces_no_hard_errors(self):
+        """AC-2: 'quarterly' is corpus-verified (n≈58); validate_tree must accept it."""
+        m = _import_schema()
+        tree = self._make_root_with_rebalance("quarterly")
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"AC-2: rebalance 'quarterly' (n≈58 corpus) must produce no hard errors. "
+            f"Got: {errors}"
+        )
+
+    def test_yearly_rebalance_produces_no_hard_errors(self):
+        """AC-2: 'yearly' is corpus-verified (n≈27); validate_tree must accept it."""
+        m = _import_schema()
+        tree = self._make_root_with_rebalance("yearly")
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"AC-2: rebalance 'yearly' (n≈27 corpus) must produce no hard errors. "
+            f"Got: {errors}"
+        )
+
+    def test_known_rebalance_contains_quarterly_and_yearly(self):
+        """AC-2: KNOWN_REBALANCE must include 'quarterly' and 'yearly'."""
+        m = _import_schema()
+        assert hasattr(m, "KNOWN_REBALANCE"), "KNOWN_REBALANCE missing"
+        assert "quarterly" in m.KNOWN_REBALANCE, (
+            "AC-2: 'quarterly' must be in KNOWN_REBALANCE — corpus-verified n≈58"
+        )
+        assert "yearly" in m.KNOWN_REBALANCE, (
+            "AC-2: 'yearly' must be in KNOWN_REBALANCE — corpus-verified n≈27"
+        )
+
+    def test_known_rebalance_is_exactly_six_values(self):
+        """AC-2: KNOWN_REBALANCE must be exactly {daily, none, weekly, monthly, quarterly, yearly}.
+
+        'hourly', 'biweekly', and other non-corpus values must NOT be in the set.
+        """
+        m = _import_schema()
+        expected = frozenset({"daily", "none", "weekly", "monthly", "quarterly", "yearly"})
+        actual = frozenset(m.KNOWN_REBALANCE)
+        assert actual == expected, (
+            f"AC-2: KNOWN_REBALANCE must be exactly the 6 corpus-verified values. "
+            f"Got: {sorted(actual)}"
+        )
+
+    def test_hourly_rebalance_still_produces_hard_error(self):
+        """AC-2 exactness guard: 'hourly' is not in the corpus and must still error."""
+        m = _import_schema()
+        tree = self._make_root_with_rebalance("hourly")
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-2 exactness: 'hourly' is absent from the corpus; validate_tree must reject it"
+        )
+
+    def test_all_six_rebalance_values_pass_validation(self):
+        """AC-2: All six corpus-verified rebalance values must each pass validate_tree."""
+        m = _import_schema()
+        for rebalance in ("daily", "none", "weekly", "monthly", "quarterly", "yearly"):
+            tree = self._make_root_with_rebalance(rebalance)
+            errors = m.validate_tree(tree)
+            assert errors == [], (
+                f"AC-2: corpus-verified rebalance {rebalance!r} produced unexpected errors: {errors}"
+            )
+
+
+# ===========================================================================
+# AC-3: Indicator fn widening — 6 new fns no lint warning; rsi still warns
+# ===========================================================================
+
+
+class TestGrammarFoundationIndicatorFnWidening:
+    """AC-3: KNOWN_INDICATOR_FNS widened with 6 new corpus-verified strings."""
+
+    # The 6 new corpus-verified indicator fns from the grammar-foundation plan.
+    _NEW_INDICATOR_FNS = (
+        "exponential-moving-average-price",    # n≈45,816 in corpus
+        "standard-deviation-price",            # n≈5,572 in corpus (was lint-warning before)
+        "percentage-price-oscillator",
+        "percentage-price-oscillator-signal",
+        "upper-bollinger",
+        "lower-bollinger",
+    )
+
+    def _make_if_tree_with_lhs_fn(self, fn: str) -> dict:
+        """Build a minimal tree using fn as the if-child lhs-fn."""
+        return {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "lhs-fn": fn,
+                                    "lhs-fn-params": {"window": 20},
+                                    "lhs-val": "SPY",
+                                    "comparator": "gt",
+                                    "rhs-fixed-value?": True,
+                                    "rhs-val": "0",
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "SPY",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+    @pytest.mark.parametrize("fn", _NEW_INDICATOR_FNS)
+    def test_new_corpus_indicator_fn_produces_no_lint_warning(self, fn):
+        """AC-3: Each of the 6 new corpus-verified indicator fns must NOT produce a lint warning.
+
+        These fns were KNOWN_INDICATOR_FNS candidates; they now belong in the allowlist.
+        An implementation that treats them as unknown will emit lint warnings — this
+        test guards against that regression.
+        """
+        m = _import_schema()
+        tree = self._make_if_tree_with_lhs_fn(fn)
+        warnings = m.lint_tree(tree)
+        # Filter to fn-related lint warnings only
+        fn_warnings = [w for w in warnings if fn in w]
+        assert len(fn_warnings) == 0, (
+            f"AC-3: corpus-verified indicator fn {fn!r} must NOT produce a lint warning. "
+            f"Got fn-related warnings: {fn_warnings}"
+        )
+
+    @pytest.mark.parametrize("fn", _NEW_INDICATOR_FNS)
+    def test_new_corpus_indicator_fn_in_known_indicator_fns(self, fn):
+        """AC-3: Each new corpus fn must be present in KNOWN_INDICATOR_FNS."""
+        m = _import_schema()
+        assert fn in m.KNOWN_INDICATOR_FNS, (
+            f"AC-3: corpus-verified fn {fn!r} must be in KNOWN_INDICATOR_FNS"
+        )
+
+    def test_known_indicator_fns_contains_all_thirteen_verified_fns(self):
+        """AC-3: KNOWN_INDICATOR_FNS must contain all 13 corpus-verified fns (7 original + 6 new)."""
+        m = _import_schema()
+        all_verified = {
+            # Original 7 VERIFIED-LOCAL
+            "relative-strength-index",
+            "cumulative-return",
+            "max-drawdown",
+            "current-price",
+            "standard-deviation-return",
+            "moving-average-price",
+            "moving-average-return",
+            # New 6 from AC-3
+            "exponential-moving-average-price",
+            "standard-deviation-price",
+            "percentage-price-oscillator",
+            "percentage-price-oscillator-signal",
+            "upper-bollinger",
+            "lower-bollinger",
+        }
+        missing = all_verified - set(m.KNOWN_INDICATOR_FNS)
+        assert not missing, (
+            f"AC-3: KNOWN_INDICATOR_FNS is missing corpus-verified fn strings: {missing}"
+        )
+
+    def test_rsi_abbreviation_still_produces_lint_warning(self):
+        """AC-3 exactness guard: 'rsi' is NOT a valid fn string; must still warn."""
+        m = _import_schema()
+        tree = self._make_if_tree_with_lhs_fn("rsi")
+        # rsi is not in KNOWN_INDICATOR_FNS; must produce a lint warning
+        warnings = m.lint_tree(tree)
+        assert len(warnings) >= 1, (
+            "AC-3 exactness: 'rsi' is not a corpus-verified fn; lint_tree must warn about it"
+        )
+
+    def test_standard_deviation_price_no_longer_produces_lint_warning(self):
+        """AC-3: 'standard-deviation-price' (n≈5,572 corpus) must not produce a lint warning.
+
+        This fn appears 3 times in sample_score_large.json and was previously
+        tolerated by validate_tree (amendment 2) but still produced a lint warning.
+        After AC-3 widening it must be in KNOWN_INDICATOR_FNS and must NOT warn.
+        """
+        m = _import_schema()
+        tree = self._make_if_tree_with_lhs_fn("standard-deviation-price")
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if "standard-deviation-price" in w]
+        assert len(fn_warnings) == 0, (
+            "AC-3: 'standard-deviation-price' is now corpus-verified; must not produce lint warnings. "
+            f"Got: {fn_warnings}"
+        )
+
+    def test_exponential_moving_average_price_no_lint_warning(self):
+        """AC-3: 'exponential-moving-average-price' (n≈45,816) must not produce a lint warning.
+
+        This is the highest-frequency new fn in the corpus; failure here indicates the
+        KNOWN_INDICATOR_FNS frozenset was not widened with the new entries.
+        """
+        m = _import_schema()
+        tree = self._make_if_tree_with_lhs_fn("exponential-moving-average-price")
+        warnings = m.lint_tree(tree)
+        fn_warnings = [w for w in warnings if "exponential-moving-average-price" in w]
+        assert len(fn_warnings) == 0, (
+            "AC-3: 'exponential-moving-average-price' (n≈45,816) must not lint-warn. "
+            f"Got: {fn_warnings}"
+        )
+
+
+# ===========================================================================
+# AC-4: make_condition_operand + make_constant_rhs constructors
+# ===========================================================================
+
+
+class TestCompoundConditionOperandConstructors:
+    """AC-4: New operand constructor functions for compound condition building."""
+
+    def test_make_condition_operand_exists(self):
+        """AC-4: make_condition_operand must exist on the module."""
+        m = _import_schema()
+        assert hasattr(m, "make_condition_operand"), (
+            "AC-4: make_condition_operand not found on advisors.symphony_schema"
+        )
+
+    def test_make_condition_operand_returns_correct_shape(self):
+        """AC-4: make_condition_operand(fn, ticker, *, window) → {fn, ticker, params:{window}}.
+
+        The corpus §7 shape for a condition operand is:
+        {"fn": fn, "ticker": ticker, "params": {"window": window}}
+        This is distinct from the flat make_indicator shape used by make_if's flat path.
+        """
+        m = _import_schema()
+        operand = m.make_condition_operand("relative-strength-index", "SPY", window=14)
+        assert isinstance(operand, dict), "make_condition_operand must return a dict"
+        # Must have the fn key
+        assert operand.get("fn") == "relative-strength-index", (
+            f"AC-4: operand must have fn='relative-strength-index'; got fn={operand.get('fn')!r}"
+        )
+        # Must have the ticker key (not 'val' — the §7 operand shape uses 'ticker')
+        assert operand.get("ticker") == "SPY", (
+            f"AC-4: operand must have ticker='SPY'; got ticker={operand.get('ticker')!r}"
+        )
+        # Must have params.window (not fn-params — §7 uses 'params')
+        assert isinstance(operand.get("params"), dict), (
+            f"AC-4: operand must have params={{window: N}}; got params={operand.get('params')!r}"
+        )
+        assert operand["params"].get("window") == 14, (
+            f"AC-4: operand params.window must be 14 (from constructor arg); "
+            f"got {operand['params'].get('window')!r}"
+        )
+
+    def test_make_condition_operand_ticker_is_percent_when_passed_percent(self):
+        """AC-4: make_condition_operand with ticker='%' must emit ticker='%'.
+
+        The binary-compound primitive uses '%' as the lhs ticker placeholder.
+        The constructor must faithfully emit whatever ticker string is passed.
+        """
+        m = _import_schema()
+        operand = m.make_condition_operand("relative-strength-index", "%", window=10)
+        assert operand.get("ticker") == "%", (
+            "AC-4: make_condition_operand must emit ticker='%' when called with '%'"
+        )
+
+    def test_make_constant_rhs_exists(self):
+        """AC-4: make_constant_rhs must exist on the module."""
+        m = _import_schema()
+        assert hasattr(m, "make_constant_rhs"), (
+            "AC-4: make_constant_rhs not found on advisors.symphony_schema"
+        )
+
+    def test_make_constant_rhs_returns_correct_shape(self):
+        """AC-4: make_constant_rhs(value) → {constant: value}.
+
+        The corpus §7 shape for a constant rhs is {"constant": N}.
+        """
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        assert isinstance(rhs, dict), "make_constant_rhs must return a dict"
+        assert "constant" in rhs, (
+            f"AC-4: make_constant_rhs must have key 'constant'; got keys: {list(rhs)}"
+        )
+        # Value must be preserved as-is (derived from constructor arg)
+        assert rhs["constant"] == 80, (
+            f"AC-4: make_constant_rhs(80) must have constant=80; got {rhs['constant']!r}"
+        )
+
+    def test_make_constant_rhs_with_zero(self):
+        """AC-4: make_constant_rhs(0) must emit {constant: 0}."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(0)
+        assert rhs.get("constant") == 0, (
+            f"AC-4: make_constant_rhs(0) must have constant=0; got {rhs.get('constant')!r}"
+        )
+
+    def test_make_constant_rhs_with_float(self):
+        """AC-4: make_constant_rhs accepts float values (e.g. 0.5 for percentage thresholds)."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(0.5)
+        assert rhs.get("constant") == 0.5, (
+            f"AC-4: make_constant_rhs(0.5) must have constant=0.5; got {rhs.get('constant')!r}"
+        )
+
+    def test_make_condition_operand_deep_copies_are_independent(self):
+        """AC-4 deep-copy invariant: two make_condition_operand calls produce independent dicts.
+
+        Mutating one must not affect the other (ensures no shared mutable params dict).
+        """
+        m = _import_schema()
+        op1 = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        op2 = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        # Mutate op1's params
+        op1["params"]["window"] = 999
+        # op2 must be unaffected
+        assert op2["params"]["window"] == 200, (
+            "AC-4: two make_condition_operand calls share a mutable params dict — "
+            "must deep-copy or construct fresh dicts"
+        )
+
+
+# ===========================================================================
+# AC-5: make_binary_condition → binary leaf
+# ===========================================================================
+
+
+class TestMakeBinaryCondition:
+    """AC-5: make_binary_condition(lhs_operand, comparator, rhs) → binary leaf."""
+
+    def test_make_binary_condition_exists(self):
+        """AC-5: make_binary_condition must exist on the module."""
+        m = _import_schema()
+        assert hasattr(m, "make_binary_condition"), (
+            "AC-5: make_binary_condition not found on advisors.symphony_schema"
+        )
+
+    def test_make_binary_condition_with_constant_rhs_returns_binary_leaf(self):
+        """AC-5: make_binary_condition(lhs, 'gt', constant_rhs) → dict with condition-type='binary'.
+
+        The corpus §7 shape for a binary leaf condition has condition-type='binary'.
+        """
+        m = _import_schema()
+        lhs = m.make_condition_operand("relative-strength-index", "SPY", window=14)
+        rhs = m.make_constant_rhs(70)
+        cond = m.make_binary_condition(lhs, "gt", rhs)
+        assert isinstance(cond, dict), "make_binary_condition must return a dict"
+        assert cond.get("condition-type") == "binary", (
+            f"AC-5: binary leaf must have condition-type='binary'; "
+            f"got condition-type={cond.get('condition-type')!r}"
+        )
+
+    def test_make_binary_condition_with_operand_rhs_returns_binary_leaf(self):
+        """AC-5: make_binary_condition with operand rhs (ticker comparison) → binary leaf."""
+        m = _import_schema()
+        lhs = m.make_condition_operand("relative-strength-index", "SPY", window=14)
+        rhs = m.make_condition_operand("relative-strength-index", "QQQ", window=14)
+        cond = m.make_binary_condition(lhs, "gt", rhs)
+        assert isinstance(cond, dict), "make_binary_condition must return a dict"
+        assert cond.get("condition-type") == "binary", (
+            f"AC-5: binary operand comparison must have condition-type='binary'; "
+            f"got {cond.get('condition-type')!r}"
+        )
+
+    def test_make_binary_condition_carries_lhs_operand(self):
+        """AC-5: The returned binary leaf must carry the lhs operand."""
+        m = _import_schema()
+        lhs = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        rhs = m.make_constant_rhs(0)
+        cond = m.make_binary_condition(lhs, "gt", rhs)
+        # The lhs operand must be present (stored under 'lhs' key by corpus convention)
+        assert "lhs" in cond, (
+            f"AC-5: binary condition must carry lhs operand; keys found: {list(cond)}"
+        )
+        # fn from the lhs operand must be preserved
+        lhs_block = cond["lhs"]
+        assert isinstance(lhs_block, dict), "AC-5: lhs must be a dict"
+        assert lhs_block.get("fn") == "cumulative-return", (
+            f"AC-5: lhs.fn must match the operand fn; got {lhs_block.get('fn')!r}"
+        )
+
+    def test_make_binary_condition_carries_comparator(self):
+        """AC-5: The returned binary leaf must carry the comparator."""
+        m = _import_schema()
+        lhs = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        rhs = m.make_constant_rhs(0)
+        cond = m.make_binary_condition(lhs, "gte", rhs)
+        assert cond.get("comparator") == "gte", (
+            f"AC-5: binary condition must carry comparator='gte'; got {cond.get('comparator')!r}"
+        )
+
+    def test_make_binary_condition_lhs_is_deep_copied(self):
+        """AC-5 deep-copy invariant: mutating the lhs operand after construction must not mutate the condition."""
+        m = _import_schema()
+        lhs = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        rhs = m.make_constant_rhs(0)
+        cond = m.make_binary_condition(lhs, "gt", rhs)
+        # Mutate the original lhs
+        lhs["fn"] = "MUTATED"
+        # The condition's internal lhs must be unaffected
+        assert cond["lhs"].get("fn") == "cumulative-return", (
+            "AC-5 deep-copy: mutating lhs after make_binary_condition corrupted the condition's lhs"
+        )
+
+
+# ===========================================================================
+# AC-6: make_binary_compound_condition → binary-compound (frontrunner primitive)
+# ===========================================================================
+
+
+class TestMakeBinaryCompoundCondition:
+    """AC-6: make_binary_compound_condition → binary-compound with lhs ticker='%'."""
+
+    def test_make_binary_compound_condition_exists(self):
+        """AC-6: make_binary_compound_condition must exist on the module."""
+        m = _import_schema()
+        assert hasattr(m, "make_binary_compound_condition"), (
+            "AC-6: make_binary_compound_condition not found on advisors.symphony_schema"
+        )
+
+    def test_make_binary_compound_condition_returns_binary_compound(self):
+        """AC-6: Returns condition-type='binary-compound'.
+
+        The frontrunner primitive: 'RSI of ANY([tickers]) > constant'.
+        """
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index",
+            ["EYEG", "LQD", "XLV"],
+            "gt",
+            rhs,
+            window=10,
+            operator="any",
+        )
+        assert isinstance(cond, dict), "make_binary_compound_condition must return a dict"
+        assert cond.get("condition-type") == "binary-compound", (
+            f"AC-6: must return condition-type='binary-compound'; "
+            f"got {cond.get('condition-type')!r}"
+        )
+
+    def test_make_binary_compound_condition_emits_percent_placeholder_on_lhs(self):
+        """AC-6: lhs ticker must be '%' — the grammar §7 frontrunner placeholder."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index",
+            ["EYEG", "LQD", "XLV"],
+            "gt",
+            rhs,
+            window=10,
+        )
+        # The lhs must carry the '%' placeholder ticker
+        lhs_block = cond.get("lhs") or {}
+        lhs_ticker = lhs_block.get("ticker")
+        assert lhs_ticker == "%", (
+            f"AC-6: binary-compound lhs.ticker must be '%' (grammar §7 placeholder); "
+            f"got {lhs_ticker!r}"
+        )
+
+    def test_make_binary_compound_condition_emits_tickers_list(self):
+        """AC-6: Result must carry the broadcast tickers list at the top level."""
+        m = _import_schema()
+        watched = ["EYEG", "LQD", "XLV"]
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index",
+            watched,
+            "gt",
+            rhs,
+            window=10,
+        )
+        assert "tickers" in cond, (
+            f"AC-6: binary-compound must have a 'tickers' key; keys: {list(cond)}"
+        )
+        assert isinstance(cond["tickers"], list), "AC-6: tickers must be a list"
+        # All watched tickers must be present (order may vary)
+        assert set(cond["tickers"]) == set(watched), (
+            f"AC-6: tickers list must match the input; expected {watched}, got {cond['tickers']}"
+        )
+
+    def test_make_binary_compound_condition_operator_any(self):
+        """AC-6: operator='any' must be emitted correctly."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index",
+            ["SPY", "QQQ"],
+            "gt",
+            rhs,
+            window=10,
+            operator="any",
+        )
+        assert cond.get("operator") == "any", (
+            f"AC-6: operator='any' must be emitted; got {cond.get('operator')!r}"
+        )
+
+    def test_make_binary_compound_condition_operator_all(self):
+        """AC-6: operator='all' must be emitted correctly (AND semantics)."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(20)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index",
+            ["SPY", "QQQ"],
+            "lt",
+            rhs,
+            window=14,
+            operator="all",
+        )
+        assert cond.get("operator") == "all", (
+            f"AC-6: operator='all' must be emitted; got {cond.get('operator')!r}"
+        )
+
+    def test_make_binary_compound_condition_default_operator_is_any(self):
+        """AC-6: operator defaults to 'any' when not specified (OR semantics — the common case)."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        # Call WITHOUT operator keyword
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index",
+            ["SPY"],
+            "gt",
+            rhs,
+            window=10,
+        )
+        assert cond.get("operator") == "any", (
+            f"AC-6: default operator must be 'any'; got {cond.get('operator')!r}"
+        )
+
+    def test_make_binary_compound_condition_single_ticker_works(self):
+        """AC-6 edge: a single-ticker list must work (not require ≥2 tickers)."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index",
+            ["EYEG"],  # single ticker
+            "gt",
+            rhs,
+            window=10,
+        )
+        assert cond.get("condition-type") == "binary-compound"
+        assert len(cond.get("tickers", [])) == 1
+
+    def test_make_binary_compound_condition_tickers_are_deep_copied(self):
+        """AC-6 deep-copy: mutating the input tickers list must not mutate the condition."""
+        m = _import_schema()
+        watched = ["SPY", "QQQ"]
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index",
+            watched,
+            "gt",
+            rhs,
+            window=10,
+        )
+        # Mutate the original list
+        watched.append("MUTATED")
+        # The condition's tickers must be unaffected
+        assert "MUTATED" not in cond.get("tickers", []), (
+            "AC-6 deep-copy: mutating the input tickers list corrupted the condition's tickers"
+        )
+
+
+# ===========================================================================
+# AC-7: make_compound_condition(operator, conditions) → compound block
+# ===========================================================================
+
+
+class TestMakeCompoundCondition:
+    """AC-7: make_compound_condition joins N conditions with any/all; nestable."""
+
+    def test_make_compound_condition_exists(self):
+        """AC-7: make_compound_condition must exist on the module."""
+        m = _import_schema()
+        assert hasattr(m, "make_compound_condition"), (
+            "AC-7: make_compound_condition not found on advisors.symphony_schema"
+        )
+
+    def test_make_compound_condition_returns_compound_type(self):
+        """AC-7: make_compound_condition → condition-type='compound'."""
+        m = _import_schema()
+        lhs = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        cond1 = m.make_binary_condition(lhs, "gt", m.make_constant_rhs(0))
+        lhs2 = m.make_condition_operand("cumulative-return", "BIL", window=20)
+        cond2 = m.make_binary_condition(lhs2, "gt", m.make_constant_rhs(0))
+        compound = m.make_compound_condition("any", [cond1, cond2])
+        assert isinstance(compound, dict), "make_compound_condition must return a dict"
+        assert compound.get("condition-type") == "compound", (
+            f"AC-7: must return condition-type='compound'; got {compound.get('condition-type')!r}"
+        )
+
+    def test_make_compound_condition_operator_any(self):
+        """AC-7: operator='any' must be emitted (OR semantics)."""
+        m = _import_schema()
+        lhs = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        cond = m.make_binary_condition(lhs, "gt", m.make_constant_rhs(0))
+        compound = m.make_compound_condition("any", [cond])
+        assert compound.get("operator") == "any", (
+            f"AC-7: operator='any' must be emitted; got {compound.get('operator')!r}"
+        )
+
+    def test_make_compound_condition_operator_all(self):
+        """AC-7: operator='all' must be emitted (AND semantics)."""
+        m = _import_schema()
+        lhs = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        cond = m.make_binary_condition(lhs, "gt", m.make_constant_rhs(0))
+        compound = m.make_compound_condition("all", [cond])
+        assert compound.get("operator") == "all", (
+            f"AC-7: operator='all' must be emitted; got {compound.get('operator')!r}"
+        )
+
+    def test_make_compound_condition_carries_all_sub_conditions(self):
+        """AC-7: the conditions list in the result must contain all supplied conditions."""
+        m = _import_schema()
+        lhs1 = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        lhs2 = m.make_condition_operand("cumulative-return", "BIL", window=20)
+        lhs3 = m.make_condition_operand("relative-strength-index", "SPY", window=14)
+        conds = [
+            m.make_binary_condition(lhs1, "gt", m.make_constant_rhs(0)),
+            m.make_binary_condition(lhs2, "gt", m.make_constant_rhs(0)),
+            m.make_binary_condition(lhs3, "lte", m.make_constant_rhs(30)),
+        ]
+        compound = m.make_compound_condition("all", conds)
+        result_conds = compound.get("conditions")
+        assert isinstance(result_conds, list), (
+            f"AC-7: conditions must be a list; got {type(result_conds)}"
+        )
+        # Derived from the constructor argument — 3 conditions in, 3 out
+        assert len(result_conds) == len(conds), (
+            f"AC-7: conditions list must contain {len(conds)} items; got {len(result_conds)}"
+        )
+
+    def test_make_compound_condition_nestable_compound_in_compound(self):
+        """AC-7 nestability: a compound can appear inside another compound's conditions list.
+
+        'RSI(SPY) > 50 AND (CumRet(TLT) > 0 OR CumRet(BIL) > 0)'
+        The inner compound is the sub-condition of the outer all-compound.
+        """
+        m = _import_schema()
+        rsi_lhs = m.make_condition_operand("relative-strength-index", "SPY", window=14)
+        rsi_cond = m.make_binary_condition(rsi_lhs, "gt", m.make_constant_rhs(50))
+
+        tlt_lhs = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        bil_lhs = m.make_condition_operand("cumulative-return", "BIL", window=20)
+        inner_any = m.make_compound_condition("any", [
+            m.make_binary_condition(tlt_lhs, "gt", m.make_constant_rhs(0)),
+            m.make_binary_condition(bil_lhs, "gt", m.make_constant_rhs(0)),
+        ])
+
+        outer_all = m.make_compound_condition("all", [rsi_cond, inner_any])
+        assert outer_all.get("condition-type") == "compound"
+        assert outer_all.get("operator") == "all"
+        sub_conds = outer_all.get("conditions", [])
+        assert len(sub_conds) == 2  # rsi_cond + inner_any
+        # The inner compound must appear as a sub-condition
+        nested = [c for c in sub_conds if c.get("condition-type") == "compound"]
+        assert len(nested) == 1, (
+            "AC-7: nested compound-in-compound must work; inner compound not found in conditions"
+        )
+
+    def test_make_compound_condition_conditions_are_deep_copied(self):
+        """AC-7 deep-copy: mutating the input conditions list must not mutate the compound."""
+        m = _import_schema()
+        lhs = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        cond = m.make_binary_condition(lhs, "gt", m.make_constant_rhs(0))
+        input_conds = [cond]
+        compound = m.make_compound_condition("any", input_conds)
+        # Mutate the input list
+        input_conds.append({"injected": True})
+        # The compound's conditions must be unaffected
+        result_conds = compound.get("conditions", [])
+        assert len(result_conds) == 1, (
+            "AC-7 deep-copy: mutating the input conditions list corrupted the compound's conditions"
+        )
+
+
+# ===========================================================================
+# AC-8: make_if_compound → if node with condition block; flat make_if unchanged
+# ===========================================================================
+
+
+class TestMakeIfCompound:
+    """AC-8: make_if_compound produces an if node whose true-branch if-child carries
+    the authoritative condition block; flat make_if / make_condition unchanged."""
+
+    def test_make_if_compound_exists(self):
+        """AC-8: make_if_compound must exist on the module."""
+        m = _import_schema()
+        assert hasattr(m, "make_if_compound"), (
+            "AC-8: make_if_compound not found on advisors.symphony_schema"
+        )
+
+    def _build_binary_compound_condition(self, m) -> dict:
+        """Helper: RSI of ANY([SPY, QQQ]) > 80."""
+        rhs = m.make_constant_rhs(80)
+        return m.make_binary_compound_condition(
+            "relative-strength-index",
+            ["SPY", "QQQ"],
+            "gt",
+            rhs,
+            window=10,
+            operator="any",
+        )
+
+    def test_make_if_compound_returns_if_node(self):
+        """AC-8: make_if_compound must return a dict with step='if'."""
+        m = _import_schema()
+        condition_block = self._build_binary_compound_condition(m)
+        then_a = m.make_asset("SPY")
+        else_a = m.make_asset("BIL")
+        result = m.make_if_compound(
+            condition_block,
+            then_children=[then_a],
+            else_children=[else_a],
+        )
+        assert isinstance(result, dict), "make_if_compound must return a dict"
+        assert result.get("step") == "if", (
+            f"AC-8: make_if_compound must return step='if'; got {result.get('step')!r}"
+        )
+
+    def test_make_if_compound_true_branch_carries_condition_block(self):
+        """AC-8: The true-branch if-child must carry the authoritative 'condition' block."""
+        m = _import_schema()
+        condition_block = self._build_binary_compound_condition(m)
+        then_a = m.make_asset("SPY")
+        else_a = m.make_asset("BIL")
+        if_node = m.make_if_compound(
+            condition_block,
+            then_children=[then_a],
+            else_children=[else_a],
+        )
+        children = if_node.get("children", [])
+        true_branch = next(
+            (c for c in children
+             if isinstance(c, dict) and not c.get("is-else-condition?")),
+            None,
+        )
+        assert true_branch is not None, (
+            "AC-8: make_if_compound must produce a true-branch if-child"
+        )
+        assert true_branch.get("step") == "if-child", (
+            f"AC-8: true branch must have step='if-child'; got {true_branch.get('step')!r}"
+        )
+        # Must carry the condition block (not flat lhs-fn/comparator)
+        assert "condition" in true_branch, (
+            "AC-8: true-branch if-child must carry a 'condition' key with the compound block"
+        )
+        cond_block = true_branch["condition"]
+        assert isinstance(cond_block, dict), "AC-8: 'condition' must be a dict"
+        # The condition block must have the expected condition-type
+        assert cond_block.get("condition-type") in ("binary", "binary-compound", "compound"), (
+            f"AC-8: condition block must have a known condition-type; "
+            f"got {cond_block.get('condition-type')!r}"
+        )
+
+    def test_make_if_compound_produces_valid_tree_via_validate_tree(self):
+        """AC-8: A tree built with make_if_compound must pass validate_tree with no errors.
+
+        The existing validate_tree already tolerates compound condition blocks
+        (Amendment 6). This test confirms the compound-block if-child still validates
+        clean after the grammar-foundation widening.
+        """
+        m = _import_schema()
+        condition_block = self._build_binary_compound_condition(m)
+        spy = m.make_asset("SPY")
+        qqq = m.make_asset("QQQ")
+        bil = m.make_asset("BIL")
+        inv_vol = m.make_inverse_vol([spy, qqq])
+        if_node = m.make_if_compound(
+            condition_block,
+            then_children=[inv_vol],
+            else_children=[bil],
+        )
+        root = m.make_root("Compound Test", "daily", [m.make_weight_equal([if_node])])
+        errors = m.validate_tree(root)
+        assert errors == [], (
+            f"AC-8: tree built with make_if_compound must validate clean; got: {errors}"
+        )
+
+    def test_make_if_compound_has_else_branch(self):
+        """AC-8: make_if_compound must produce an else-branch if-child."""
+        m = _import_schema()
+        condition_block = self._build_binary_compound_condition(m)
+        then_a = m.make_asset("SPY")
+        else_a = m.make_asset("BIL")
+        if_node = m.make_if_compound(
+            condition_block,
+            then_children=[then_a],
+            else_children=[else_a],
+        )
+        children = if_node.get("children", [])
+        else_branch = next(
+            (c for c in children
+             if isinstance(c, dict) and c.get("is-else-condition?")),
+            None,
+        )
+        assert else_branch is not None, (
+            "AC-8: make_if_compound must produce an else-branch if-child"
+        )
+
+    def test_make_if_compound_ids_are_uuid4(self):
+        """AC-8: All node ids produced by make_if_compound must be valid UUID v4 strings."""
+        m = _import_schema()
+        condition_block = self._build_binary_compound_condition(m)
+        then_a = m.make_asset("SPY")
+        else_a = m.make_asset("BIL")
+        if_node = m.make_if_compound(
+            condition_block,
+            then_children=[then_a],
+            else_children=[else_a],
+        )
+        ids = _ref_collect_ids(if_node)
+        for id_val in ids:
+            parsed = uuid.UUID(id_val)
+            assert parsed.version == 4, f"AC-8: id {id_val!r} is not UUID v4"
+
+    def test_flat_make_if_still_works_unchanged(self):
+        """AC-8 no-regression: existing flat make_if must still produce valid trees.
+
+        The grammar-foundation spec states 'existing flat make_if/make_condition UNCHANGED.'
+        """
+        m = _import_schema()
+        lhs = m.make_indicator("cumulative-return", "TLT", window=200)
+        cond = m.make_condition(lhs, "gt", 0.0)
+        if_node = m.make_if(
+            cond,
+            then_children=[m.make_asset("TLT")],
+            else_children=[m.make_asset("BIL")],
+        )
+        root = m.make_root("Flat IF Test", "daily", [m.make_weight_equal([if_node])])
+        errors = m.validate_tree(root)
+        assert errors == [], (
+            f"AC-8 no-regression: flat make_if must still produce valid trees; got: {errors}"
+        )
+
+
+# ===========================================================================
+# AC-9: Full frontrunner overlay integration
+# ===========================================================================
+
+
+class TestFrontrunnerOverlayIntegration:
+    """AC-9: Full end-to-end frontrunner overlay integration test.
+
+    Builds the complete tree from the feature plan:
+      make_if_compound(
+        make_binary_compound_condition("relative-strength-index", [watched_tickers],
+                                       "gt", make_constant_rhs(80), window=10, operator="any"),
+        then=[vol_basket],
+        else=[base],
+      )
+    Wrapped in make_root.
+    """
+
+    _WATCHED_TICKERS = ["EYEG", "LQD", "XLV"]
+    _VOL_BASKET_TICKERS = ["SPY", "QQQ"]
+    _BASE_TICKERS = ["BIL"]
+
+    def _build_frontrunner_overlay(self, m) -> dict:
+        """Build the complete frontrunner overlay tree using the new compound constructors."""
+        # Vol basket: inverse-vol allocation over two ETFs
+        vol_basket = m.make_inverse_vol([
+            m.make_asset(t) for t in self._VOL_BASKET_TICKERS
+        ])
+        # Base: equal-weighted single asset
+        base = m.make_weight_equal([m.make_asset(t) for t in self._BASE_TICKERS])
+        # Frontrunner condition: RSI of ANY([EYEG, LQD, XLV]) > 80, window=10
+        condition_block = m.make_binary_compound_condition(
+            "relative-strength-index",
+            self._WATCHED_TICKERS,
+            "gt",
+            m.make_constant_rhs(80),
+            window=10,
+            operator="any",
+        )
+        # if_compound wraps the condition with then/else branches
+        if_node = m.make_if_compound(
+            condition_block,
+            then_children=[vol_basket],
+            else_children=[base],
+        )
+        # Wrap in root
+        return m.make_root(
+            "Frontrunner Overlay",
+            "daily",
+            [m.make_weight_equal([if_node])],
+        )
+
+    def test_frontrunner_overlay_validates_clean(self):
+        """AC-9: The complete frontrunner overlay tree must pass validate_tree with no errors."""
+        m = _import_schema()
+        tree = self._build_frontrunner_overlay(m)
+        errors = m.validate_tree(tree)
+        assert errors == [], (
+            f"AC-9: frontrunner overlay tree must validate clean; got: {errors}"
+        )
+
+    def test_frontrunner_overlay_extract_tickers_excludes_percent_placeholder(self):
+        """AC-9: extract_tickers must NOT include the '%' placeholder ticker.
+
+        The binary-compound lhs emits ticker='%' as a grammar placeholder;
+        '%' is not a real ticker and must never appear in the ticker set.
+        """
+        m = _import_schema()
+        tree = self._build_frontrunner_overlay(m)
+        tickers = m.extract_tickers(tree)
+        assert "%" not in tickers, (
+            "AC-9: extract_tickers must exclude '%' (binary-compound lhs placeholder); "
+            f"got tickers: {tickers}"
+        )
+
+    def test_frontrunner_overlay_extract_tickers_includes_all_real_tickers(self):
+        """AC-9: extract_tickers must include all real tickers — watched + basket + base."""
+        m = _import_schema()
+        tree = self._build_frontrunner_overlay(m)
+        tickers = m.extract_tickers(tree)
+        all_expected = set(self._WATCHED_TICKERS + self._VOL_BASKET_TICKERS + self._BASE_TICKERS)
+        missing = all_expected - tickers
+        assert not missing, (
+            f"AC-9: extract_tickers is missing real tickers: {missing}. "
+            f"Got: {tickers}"
+        )
+
+    def test_frontrunner_overlay_render_rules_text_contains_any_gate(self):
+        """AC-9: render_rules_text must render the ANY gate in a recognizable way.
+
+        The output must indicate the 'any' semantics of the binary-compound condition
+        so an operator reading the rendered output understands the gate type.
+        """
+        m = _import_schema()
+        tree = self._build_frontrunner_overlay(m)
+        text = m.render_rules_text(tree)
+        assert isinstance(text, str) and len(text) > 0, (
+            "AC-9: render_rules_text must return a non-empty string"
+        )
+        # The render must surface the ANY semantics in some recognizable form
+        text_upper = text.upper()
+        assert "ANY" in text_upper or "any" in text.lower(), (
+            f"AC-9: render_rules_text must indicate the ANY gate; got:\n{text}"
+        )
+
+    def test_frontrunner_overlay_render_rules_text_contains_watched_tickers(self):
+        """AC-9: render_rules_text must reference the watched tickers in the condition."""
+        m = _import_schema()
+        tree = self._build_frontrunner_overlay(m)
+        text = m.render_rules_text(tree)
+        # At least one watched ticker must appear in the render
+        found_any = any(t in text for t in self._WATCHED_TICKERS)
+        assert found_any, (
+            f"AC-9: render_rules_text must reference at least one watched ticker "
+            f"({self._WATCHED_TICKERS}); got:\n{text}"
+        )
+
+    def test_frontrunner_overlay_all_node_ids_are_unique(self):
+        """AC-9: Every node in the complete frontrunner tree must have a unique UUID v4 id."""
+        m = _import_schema()
+        tree = self._build_frontrunner_overlay(m)
+        ids = _ref_collect_ids(tree)
+        assert len(ids) == len(set(ids)), (
+            f"AC-9: duplicate ids found in frontrunner overlay tree: "
+            f"{[x for x in ids if ids.count(x) > 1]}"
+        )
+        for id_val in ids:
+            parsed = uuid.UUID(id_val)
+            assert parsed.version == 4, f"AC-9: id {id_val!r} is not UUID v4"
+
+    def test_frontrunner_overlay_golden_fixture_shape(self):
+        """AC-9: Tree shape matches the golden fixture description.
+
+        Loads and cross-checks against tests/fixtures/math/frontrunner_overlay_integration.json.
+        Grammar tokens are facts and can be checked directly.
+        """
+        m = _import_schema()
+        fixture = _load_fixture(
+            _REPO_ROOT / "tests" / "fixtures" / "math" / "frontrunner_overlay_integration.json"
+        )
+        tree = self._build_frontrunner_overlay(m)
+
+        # validate_tree: must return []
+        assert m.validate_tree(tree) == fixture["expected_validate_tree_errors"]
+
+        # extract_tickers: must include all real tickers
+        tickers = m.extract_tickers(tree)
+        for expected_ticker in fixture["expected_extract_tickers_includes_all"]:
+            assert expected_ticker in tickers, (
+                f"AC-9 fixture: ticker {expected_ticker!r} missing from extract_tickers result"
+            )
+        # Must exclude the placeholder
+        for excluded in fixture["expected_extract_tickers_excludes"]:
+            assert excluded not in tickers, (
+                f"AC-9 fixture: placeholder {excluded!r} must be excluded from extract_tickers"
+            )
+
+
+# ===========================================================================
+# AC-10: validate_tree HARD errors on malformed compound blocks at any depth
+# ===========================================================================
+
+
+class TestCompoundConditionValidation:
+    """AC-10: validate_tree hard-errors on malformed compound blocks, recursively,
+    bounded by a depth cap so a pathologically deep input never raises."""
+
+    def _wrap_condition_in_if_tree(self, condition_block: dict) -> dict:
+        """Wrap a condition block in a minimal if-tree for validate_tree testing."""
+        return {
+            "step": "root",
+            "name": "Test",
+            "rebalance": "daily",
+            "id": str(uuid.uuid4()),
+            "children": [
+                {
+                    "step": "wt-cash-equal",
+                    "id": str(uuid.uuid4()),
+                    "children": [
+                        {
+                            "step": "if",
+                            "id": str(uuid.uuid4()),
+                            "children": [
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": False,
+                                    "condition": condition_block,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "SPY",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                                {
+                                    "step": "if-child",
+                                    "is-else-condition?": True,
+                                    "id": str(uuid.uuid4()),
+                                    "children": [
+                                        {
+                                            "step": "asset",
+                                            "ticker": "BIL",
+                                            "name": "",
+                                            "exchange": "NYSE",
+                                            "id": str(uuid.uuid4()),
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+    def test_compound_block_with_bad_operator_produces_hard_error(self):
+        """AC-10: A compound block with operator='or' (not in {any, all}) must produce a hard error.
+
+        The grammar specifies operator ∈ {any, all} only. 'or'/'and'/'none' are invalid.
+        """
+        m = _import_schema()
+        bad_condition = {
+            "condition-type": "compound",
+            "operator": "or",  # invalid — must be 'any' or 'all'
+            "conditions": [
+                {
+                    "condition-type": "binary",
+                    "lhs": {"fn": "cumulative-return", "ticker": "TLT", "params": {"window": 200}},
+                    "comparator": "gt",
+                    "rhs": {"constant": 0},
+                }
+            ],
+        }
+        tree = self._wrap_condition_in_if_tree(bad_condition)
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-10: compound block with operator='or' must produce a hard error; "
+            "operator must be 'any' or 'all'"
+        )
+
+    def test_compound_block_with_unknown_condition_type_produces_hard_error(self):
+        """AC-10: A condition block with an unknown condition-type must produce a hard error.
+
+        Valid condition-type values are: binary, binary-compound, compound.
+        Any other string is a hard error.
+        """
+        m = _import_schema()
+        bad_condition = {
+            "condition-type": "super-compound",  # not in {binary, binary-compound, compound}
+            "operator": "any",
+            "conditions": [],
+        }
+        tree = self._wrap_condition_in_if_tree(bad_condition)
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-10: condition block with unknown condition-type='super-compound' must hard-error"
+        )
+
+    def test_compound_block_missing_conditions_list_produces_hard_error(self):
+        """AC-10: A 'compound' condition block without a 'conditions' key must produce a hard error.
+
+        A compound block joins conditions; missing the conditions list is structurally invalid.
+        """
+        m = _import_schema()
+        bad_condition = {
+            "condition-type": "compound",
+            "operator": "any",
+            # 'conditions' key deliberately absent
+        }
+        tree = self._wrap_condition_in_if_tree(bad_condition)
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-10: compound block missing 'conditions' key must produce a hard error"
+        )
+
+    def test_binary_compound_missing_tickers_produces_hard_error(self):
+        """AC-10: A 'binary-compound' block without a 'tickers' key must produce a hard error.
+
+        binary-compound requires tickers:[...] to broadcast the predicate over.
+        """
+        m = _import_schema()
+        bad_condition = {
+            "condition-type": "binary-compound",
+            "operator": "any",
+            # 'tickers' key deliberately absent
+            "lhs": {"fn": "relative-strength-index", "ticker": "%", "params": {"window": 10}},
+            "comparator": "gt",
+            "rhs": {"constant": 80},
+        }
+        tree = self._wrap_condition_in_if_tree(bad_condition)
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-10: binary-compound missing 'tickers' key must produce a hard error"
+        )
+
+    def test_malformed_compound_at_depth_2_nested_produces_hard_error(self):
+        """AC-10: A malformed sub-condition at depth 2 inside a compound must produce a hard error.
+
+        The validation must recurse into compound.conditions and validate each
+        sub-condition. A bad operator at depth 2 must not be silently skipped.
+        """
+        m = _import_schema()
+        # Outer compound is valid; inner compound has bad operator
+        inner_bad = {
+            "condition-type": "compound",
+            "operator": "xor",  # invalid — must be any/all
+            "conditions": [
+                {
+                    "condition-type": "binary",
+                    "lhs": {"fn": "cumulative-return", "ticker": "TLT", "params": {"window": 200}},
+                    "comparator": "gt",
+                    "rhs": {"constant": 0},
+                }
+            ],
+        }
+        outer_condition = {
+            "condition-type": "compound",
+            "operator": "any",  # outer is valid
+            "conditions": [
+                inner_bad,  # inner has the defect
+            ],
+        }
+        tree = self._wrap_condition_in_if_tree(outer_condition)
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-10: malformed sub-condition at depth 2 must produce a hard error; "
+            "validate_tree must recurse into compound.conditions"
+        )
+
+    def test_malformed_compound_at_depth_3_nested_produces_hard_error(self):
+        """AC-10: A malformed sub-condition at depth 3 inside nested compounds must produce a hard error.
+
+        Validation must recurse through all levels of compound nesting.
+        """
+        m = _import_schema()
+        # Deeply nested: outer (valid) → middle (valid) → inner_bad (bad operator)
+        inner_bad = {
+            "condition-type": "compound",
+            "operator": "nand",  # invalid
+            "conditions": [
+                {
+                    "condition-type": "binary",
+                    "lhs": {"fn": "cumulative-return", "ticker": "TLT", "params": {"window": 200}},
+                    "comparator": "gt",
+                    "rhs": {"constant": 0},
+                }
+            ],
+        }
+        middle = {
+            "condition-type": "compound",
+            "operator": "all",  # valid
+            "conditions": [inner_bad],
+        }
+        outer = {
+            "condition-type": "compound",
+            "operator": "any",  # valid
+            "conditions": [middle],
+        }
+        tree = self._wrap_condition_in_if_tree(outer)
+        errors = m.validate_tree(tree)
+        assert len(errors) >= 1, (
+            "AC-10: malformed sub-condition at depth 3 must produce a hard error; "
+            "validate_tree must recurse through all compound nesting levels"
+        )
+
+    def test_absent_condition_type_on_raw_binary_leaf_is_tolerated(self):
+        """AC-10 tolerance: a dict inside conditions[] lacking condition-type is skipped gracefully.
+
+        The spec says: 'Absent-condition-type sub-items are tolerated (raw binary leaves),
+        not errored.' A sub-item without condition-type is a raw binary leaf (valid grammar).
+        """
+        m = _import_schema()
+        # A compound whose conditions list contains a raw binary leaf (no condition-type key)
+        condition_with_raw_leaf = {
+            "condition-type": "compound",
+            "operator": "any",
+            "conditions": [
+                {
+                    # No condition-type key — this is a raw binary leaf, must be tolerated
+                    "lhs": {"fn": "cumulative-return", "ticker": "TLT", "params": {"window": 200}},
+                    "comparator": "gt",
+                    "rhs": {"constant": 0},
+                }
+            ],
+        }
+        tree = self._wrap_condition_in_if_tree(condition_with_raw_leaf)
+        errors = m.validate_tree(tree)
+        # The whole tree must be error-free — a raw binary leaf (absent condition-type)
+        # is tolerated grammar, so no hard error of any kind must be emitted.
+        assert errors == [], (
+            "AC-10: absent condition-type on a raw binary leaf must be tolerated, not hard-errored. "
+            f"Got errors: {errors}"
+        )
+
+    def test_5000_deep_compound_condition_never_raises(self):
+        """AC-10 bounded depth: a 5000-deep nested compound must never raise (forces the depth cap).
+
+        The spec states: 'bounded by a depth cap so a pathologically deep (e.g. 5000)
+        input never raises / never blows the stack.' validate_tree must use iterative
+        traversal with a MAX_CONDITION_DEPTH guard on the condition block walk.
+        """
+        m = _import_schema()
+        # Build a 5000-deep compound chain
+        leaf = {
+            "condition-type": "binary",
+            "lhs": {"fn": "cumulative-return", "ticker": "TLT", "params": {"window": 200}},
+            "comparator": "gt",
+            "rhs": {"constant": 0},
+        }
+        current = leaf
+        for _ in range(5000):
+            current = {
+                "condition-type": "compound",
+                "operator": "any",
+                "conditions": [current],
+            }
+        tree = self._wrap_condition_in_if_tree(current)
+        try:
+            errors = m.validate_tree(tree)
+        except RecursionError as exc:
+            pytest.fail(
+                f"AC-10: validate_tree raised RecursionError on 5000-deep compound condition. "
+                f"Must use iterative traversal with a depth cap: {exc}"
+            )
+        except Exception as exc:
+            # Any other exception is also forbidden (never raises contract)
+            pytest.fail(
+                f"AC-10: validate_tree raised {type(exc).__name__} on 5000-deep compound: {exc}"
+            )
+        # Must return a list (possibly with a depth-cap error or empty)
+        assert isinstance(errors, list), (
+            f"AC-10: validate_tree must return a list on 5000-deep compound; got {type(errors)}"
+        )
+
+    def test_validate_tree_never_raises_on_malformed_condition_block(self):
+        """AC-10 never-raises: validate_tree must not raise on any malformed condition block shape."""
+        m = _import_schema()
+        malformed_conditions = [
+            {"condition-type": "compound", "operator": None, "conditions": []},
+            {"condition-type": "binary-compound", "operator": "any", "tickers": None},
+            {"condition-type": "compound", "operator": "all", "conditions": [None, None]},
+            {"condition-type": None, "operator": "any"},
+            {"conditions": "not-a-list"},
+            {},
+        ]
+        for bad_cond in malformed_conditions:
+            tree = self._wrap_condition_in_if_tree(bad_cond)
+            try:
+                result = m.validate_tree(tree)
+            except Exception as exc:
+                pytest.fail(
+                    f"AC-10: validate_tree raised {type(exc).__name__} on malformed condition "
+                    f"block {bad_cond!r}: {exc}"
+                )
+            assert isinstance(result, list), (
+                f"AC-10: validate_tree must return a list; got {type(result)}"
+            )
+
+
+# ===========================================================================
+# AC-11: Invariants — ValueError on bad inputs; deep-copy; read-only
+# ===========================================================================
+
+
+class TestCompoundConditionInvariants:
+    """AC-11: Constructor invariants — ValueError on bad inputs, deep-copy, fresh UUIDs,
+    read-only functions remain read-only with compound blocks."""
+
+    def test_make_binary_compound_condition_invalid_operator_raises_value_error(self):
+        """AC-11: operator not in {any, all} must raise ValueError at construction time."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        with pytest.raises(ValueError):
+            m.make_binary_compound_condition(
+                "relative-strength-index",
+                ["SPY"],
+                "gt",
+                rhs,
+                window=10,
+                operator="or",  # invalid — must be any/all
+            )
+
+    def test_make_compound_condition_invalid_operator_raises_value_error(self):
+        """AC-11: operator not in {any, all} in make_compound_condition raises ValueError."""
+        m = _import_schema()
+        lhs = m.make_condition_operand("cumulative-return", "TLT", window=200)
+        cond = m.make_binary_condition(lhs, "gt", m.make_constant_rhs(0))
+        with pytest.raises(ValueError):
+            m.make_compound_condition("xor", [cond])  # invalid operator
+
+    def test_make_binary_compound_condition_empty_tickers_raises_value_error(self):
+        """AC-11: empty tickers list must raise ValueError.
+
+        A binary-compound with no tickers cannot broadcast the predicate; it is
+        a programming error caught at construction time.
+        """
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        with pytest.raises(ValueError):
+            m.make_binary_compound_condition(
+                "relative-strength-index",
+                [],  # empty list — must raise
+                "gt",
+                rhs,
+                window=10,
+            )
+
+    def test_make_compound_condition_empty_conditions_raises_value_error(self):
+        """AC-11: empty conditions list must raise ValueError.
+
+        A compound joining zero conditions is semantically meaningless; it is
+        a construction error caught at call time.
+        """
+        m = _import_schema()
+        with pytest.raises(ValueError):
+            m.make_compound_condition("any", [])  # empty — must raise
+
+    def test_make_if_compound_fresh_ids_on_each_call(self):
+        """AC-11: Two calls to make_if_compound must produce different root ids (fresh UUIDs)."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index", ["SPY"], "gt", rhs, window=10,
+        )
+        if1 = m.make_if_compound(
+            cond, then_children=[m.make_asset("SPY")], else_children=[m.make_asset("BIL")],
+        )
+        cond2 = m.make_binary_compound_condition(
+            "relative-strength-index", ["SPY"], "gt", rhs, window=10,
+        )
+        if2 = m.make_if_compound(
+            cond2, then_children=[m.make_asset("SPY")], else_children=[m.make_asset("BIL")],
+        )
+        assert if1.get("id") != if2.get("id"), (
+            "AC-11: two make_if_compound calls must produce different ids (fresh UUID each time)"
+        )
+
+    def test_make_if_compound_deep_copies_condition_block(self):
+        """AC-11 deep-copy: mutating the condition block after make_if_compound must not mutate the tree."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index", ["SPY", "QQQ"], "gt", rhs, window=10,
+        )
+        if_node = m.make_if_compound(
+            cond, then_children=[m.make_asset("SPY")], else_children=[m.make_asset("BIL")],
+        )
+        # Mutate the original condition block
+        original_tickers = list(cond.get("tickers", []))
+        cond.get("tickers", []).append("MUTATED")
+        # The if-child's condition block must be unaffected
+        children = if_node.get("children", [])
+        true_branch = next(
+            (c for c in children if isinstance(c, dict) and not c.get("is-else-condition?")),
+            None,
+        )
+        if true_branch and "condition" in true_branch:
+            cond_in_tree = true_branch["condition"]
+            tickers_in_tree = cond_in_tree.get("tickers", [])
+            assert "MUTATED" not in tickers_in_tree, (
+                "AC-11 deep-copy: mutating the condition block after make_if_compound "
+                "corrupted the tree's condition block"
+            )
+
+    def test_make_if_compound_deep_copies_then_children(self):
+        """AC-11 deep-copy: mutating the then_children list after construction must not affect the tree."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index", ["SPY"], "gt", rhs, window=10,
+        )
+        then_asset = m.make_asset("SPY")
+        then_list = [then_asset]
+        if_node = m.make_if_compound(
+            cond, then_children=then_list, else_children=[m.make_asset("BIL")],
+        )
+        # Mutate the input then_list
+        then_list.append(m.make_asset("QQQ"))
+        # Find the true-branch and count its children
+        children = if_node.get("children", [])
+        true_branch = next(
+            (c for c in children if isinstance(c, dict) and not c.get("is-else-condition?")),
+            None,
+        )
+        if true_branch:
+            # The true branch should have 1 child (the original SPY), not 2
+            assert len(true_branch.get("children", [])) == 1, (
+                "AC-11 deep-copy: mutating then_children after make_if_compound corrupted the tree"
+            )
+
+    def test_validate_tree_does_not_mutate_tree_with_compound_block(self):
+        """AC-11 read-only: validate_tree must not mutate a tree containing a compound block."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index", ["SPY", "QQQ"], "gt", rhs, window=10,
+        )
+        if_node = m.make_if_compound(
+            cond,
+            then_children=[m.make_asset("SPY")],
+            else_children=[m.make_asset("BIL")],
+        )
+        root = m.make_root("Mutation Test", "daily", [m.make_weight_equal([if_node])])
+        before = json.dumps(root, sort_keys=True)
+        m.validate_tree(root)
+        after = json.dumps(root, sort_keys=True)
+        assert before == after, (
+            "AC-11 read-only: validate_tree mutated a tree containing a compound condition block"
+        )
+
+    def test_extract_tickers_does_not_mutate_tree_with_compound_block(self):
+        """AC-11 read-only: extract_tickers must not mutate a tree with a compound block."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index", ["SPY", "QQQ"], "gt", rhs, window=10,
+        )
+        if_node = m.make_if_compound(
+            cond,
+            then_children=[m.make_asset("SPY")],
+            else_children=[m.make_asset("BIL")],
+        )
+        root = m.make_root("Read-Only Test", "daily", [m.make_weight_equal([if_node])])
+        before = json.dumps(root, sort_keys=True)
+        m.extract_tickers(root)
+        after = json.dumps(root, sort_keys=True)
+        assert before == after, (
+            "AC-11 read-only: extract_tickers mutated a tree containing a compound condition block"
+        )
+
+    def test_lint_tree_does_not_raise_on_compound_block_tree(self):
+        """AC-11 read-only: lint_tree must not raise on a tree with a compound block."""
+        m = _import_schema()
+        rhs = m.make_constant_rhs(80)
+        cond = m.make_binary_compound_condition(
+            "relative-strength-index", ["SPY"], "gt", rhs, window=10,
+        )
+        if_node = m.make_if_compound(
+            cond,
+            then_children=[m.make_asset("SPY")],
+            else_children=[m.make_asset("BIL")],
+        )
+        root = m.make_root("Lint Test", "daily", [m.make_weight_equal([if_node])])
+        try:
+            warnings = m.lint_tree(root)
+        except Exception as exc:
+            pytest.fail(f"AC-11: lint_tree raised {type(exc).__name__} on compound block tree: {exc}")
+        assert isinstance(warnings, list)
+
+
+# ===========================================================================
+# AC-12: No regression — existing flat constructors and validation unchanged
+# ===========================================================================
+
+
+class TestGrammarFoundationNoRegression:
+    """AC-12: All pre-existing symphony_schema behaviors remain intact after the widening.
+
+    The grammar-foundation changes must be purely additive: widen allowlists,
+    add new constructors, extend validate_tree — never remove or break existing paths.
+    """
+
+    def test_flat_make_condition_make_if_pipeline_still_validates(self):
+        """AC-12: The full flat constructor pipeline must still produce a valid tree."""
+        m = _import_schema()
+        lhs = m.make_indicator("cumulative-return", "TLT", window=200)
+        cond = m.make_condition(lhs, "gt", 0.0)
+        if_node = m.make_if(
+            cond,
+            then_children=[m.make_asset("TLT")],
+            else_children=[m.make_asset("BIL")],
+        )
+        root = m.make_root("AC-12 Regression", "daily", [m.make_weight_equal([if_node])])
+        errors = m.validate_tree(root)
+        assert errors == [], (
+            f"AC-12: flat constructor pipeline regression; got errors: {errors}"
+        )
+
+    def test_known_steps_unchanged(self):
+        """AC-12: KNOWN_STEPS must still contain all 9 original step values (none removed)."""
+        m = _import_schema()
+        original_steps = {
+            "root", "group", "if", "if-child", "filter",
+            "wt-cash-equal", "wt-cash-specified", "wt-inverse-vol", "asset",
+        }
+        missing = original_steps - set(m.KNOWN_STEPS)
+        assert not missing, (
+            f"AC-12: KNOWN_STEPS regression — original step values removed: {missing}"
+        )
+
+    def test_original_seven_indicator_fns_still_in_known_indicator_fns(self):
+        """AC-12: The original 7 VERIFIED-LOCAL indicator fns must still be in KNOWN_INDICATOR_FNS."""
+        m = _import_schema()
+        original_fns = {
+            "relative-strength-index", "cumulative-return", "max-drawdown",
+            "current-price", "standard-deviation-return",
+            "moving-average-price", "moving-average-return",
+        }
+        missing = original_fns - set(m.KNOWN_INDICATOR_FNS)
+        assert not missing, (
+            f"AC-12: KNOWN_INDICATOR_FNS regression — original fn strings removed: {missing}"
+        )
+
+    def test_original_four_rebalance_values_still_in_known_rebalance(self):
+        """AC-12: The original 4 rebalance values must still be in KNOWN_REBALANCE."""
+        m = _import_schema()
+        original_rebalance = {"daily", "none", "weekly", "monthly"}
+        missing = original_rebalance - set(m.KNOWN_REBALANCE)
+        assert not missing, (
+            f"AC-12: KNOWN_REBALANCE regression — original values removed: {missing}"
+        )
+
+    def test_gt_lt_lte_still_in_known_comparators(self):
+        """AC-12: The original 3 comparators (gt, lt, lte) must still be in KNOWN_COMPARATORS."""
+        m = _import_schema()
+        for comp in ("gt", "lt", "lte"):
+            assert comp in m.KNOWN_COMPARATORS, (
+                f"AC-12: original comparator {comp!r} removed from KNOWN_COMPARATORS"
+            )
+
+    def test_validate_tree_still_never_raises_on_none(self):
+        """AC-12: validate_tree(None) must still return a list and never raise."""
+        m = _import_schema()
+        try:
+            result = m.validate_tree(None)
+        except Exception as exc:
+            pytest.fail(f"AC-12 regression: validate_tree(None) raised {type(exc).__name__}: {exc}")
+        assert isinstance(result, list)
+
+    def test_extract_tickers_still_returns_set(self):
+        """AC-12: extract_tickers must still return a set for any input."""
+        m = _import_schema()
+        result = m.extract_tickers(None)
+        assert isinstance(result, set)
+
+    def test_rsi_still_produces_lint_warning_after_widening(self):
+        """AC-12: 'rsi' must still be a lint warning (not in KNOWN_INDICATOR_FNS).
+
+        The AC-3 widening adds 6 new fns; 'rsi' (abbreviation) must remain excluded.
+        """
+        m = _import_schema()
+        assert "rsi" not in m.KNOWN_INDICATOR_FNS, (
+            "AC-12: 'rsi' must NOT be added to KNOWN_INDICATOR_FNS by the AC-3 widening"
+        )
+
+    def test_make_asset_make_root_make_weight_equal_still_work(self):
+        """AC-12: Core flat constructors must still produce correct step values."""
+        m = _import_schema()
+        asset = m.make_asset("SPY")
+        assert asset["step"] == "asset"
+        wt_eq = m.make_weight_equal([asset])
+        assert wt_eq["step"] == "wt-cash-equal"
+        root = m.make_root("Regression", "daily", [wt_eq])
+        assert root["step"] == "root"
+        assert m.validate_tree(root) == []
+
+    def test_make_filter_still_works(self):
+        """AC-12: make_filter must still work correctly after the grammar-foundation changes."""
+        m = _import_schema()
+        spy = m.make_asset("SPY")
+        qqq = m.make_asset("QQQ")
+        flt = m.make_filter("top", 1, "cumulative-return", [spy, qqq], window=20)
+        assert flt["step"] == "filter"
+        assert flt.get("select-fn") == "top"
+        assert flt.get("select-n") == 1
+        assert "sort-by-fn-params" in flt

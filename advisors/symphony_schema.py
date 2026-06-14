@@ -57,13 +57,16 @@ KNOWN_STEPS: frozenset[str] = frozenset(
     }
 )
 
-# The 7 confirmed indicator-fn strings. Source: grammar doc §4.1 (VERIFIED-LOCAL).
-# NOTE: the canonical RSI token is the full "relative-strength-index"; the
-# abbreviation "rsi" is intentionally absent (lint warns on it). Unknown fns
-# such as "standard-deviation-price" (seen 3x in the large fixture) are tolerated
-# by validate_tree and surfaced only as lint warnings (handoff amendment 2).
+# The 13 confirmed indicator-fn strings (7 original VERIFIED-LOCAL + 6 new corpus-verified).
+# Source: grammar doc §4.1. The canonical RSI token is the full
+# "relative-strength-index"; the abbreviation "rsi" is intentionally absent
+# (lint warns on it). AC-3 grammar-foundation: 6 new corpus-verified fns added:
+#   exponential-moving-average-price (n≈45,816), standard-deviation-price
+#   (n≈5,572, was lint-only before AC-3), percentage-price-oscillator,
+#   percentage-price-oscillator-signal, upper-bollinger, lower-bollinger.
 KNOWN_INDICATOR_FNS: frozenset[str] = frozenset(
     {
+        # Original 7 VERIFIED-LOCAL
         "relative-strength-index",
         "cumulative-return",
         "max-drawdown",
@@ -71,17 +74,27 @@ KNOWN_INDICATOR_FNS: frozenset[str] = frozenset(
         "standard-deviation-return",
         "moving-average-price",
         "moving-average-return",
+        # 6 new corpus-verified fns — AC-3 grammar-foundation
+        "exponential-moving-average-price",
+        "standard-deviation-price",
+        "percentage-price-oscillator",
+        "percentage-price-oscillator-signal",
+        "upper-bollinger",
+        "lower-bollinger",
     }
 )
 
 # Confirmed comparators. Source: grammar doc §8. "gt"/"lt" VERIFIED-LOCAL,
-# "lte" VERIFIED-COMMUNITY. "gte"/"eq" are OQ-2 unconfirmed and excluded — they
-# are hard errors until observed in a local fixture.
-KNOWN_COMPARATORS: frozenset[str] = frozenset({"gt", "lt", "lte"})
+# "lte" VERIFIED-COMMUNITY. "gte" corpus-verified (n≈39,596 across 10,441 real
+# symphonies — AC-1 grammar-foundation). "eq"/"neq" absent from corpus, excluded.
+KNOWN_COMPARATORS: frozenset[str] = frozenset({"gt", "lt", "gte", "lte"})
 
 # Confirmed rebalance cadences. Source: grammar doc §6. "daily" VERIFIED-LOCAL;
 # "none"/"weekly"/"monthly" VERIFIED-COMMUNITY (2026-05-31 swagger enum).
-KNOWN_REBALANCE: frozenset[str] = frozenset({"daily", "none", "weekly", "monthly"})
+# "quarterly" (n≈58) and "yearly" (n≈27) corpus-verified — AC-2 grammar-foundation.
+KNOWN_REBALANCE: frozenset[str] = frozenset(
+    {"daily", "none", "weekly", "monthly", "quarterly", "yearly"}
+)
 
 # Construction-side size ceilings. Source: grammar doc OQ-7 (conservative <500
 # node bound for SYNTHETIC trees) + handoff amendment 1. These gate the
@@ -92,6 +105,22 @@ MAX_TOTAL_NODES: int = 500
 # Depth ceiling chosen comfortably below Python's default recursion limit; a
 # lint threshold only. Source: handoff amendment 1 (construction-side constant).
 MAX_TREE_DEPTH: int = 100
+
+# Compound condition-type values. Source: grammar doc §7 (corpus-verified).
+# validate_tree checks these when a true-branch if-child carries a `condition`
+# block; unknown condition-type strings are hard errors (AC-10).
+_KNOWN_CONDITION_TYPES: frozenset[str] = frozenset({"binary", "binary-compound", "compound"})
+
+# Compound condition operator values. Source: grammar doc §7.
+# operator ∈ {any, all} only; "or"/"and"/"xor" are hard errors (AC-10).
+_KNOWN_OPERATORS: frozenset[str] = frozenset({"any", "all"})
+
+# Maximum depth when walking a compound condition block during validation.
+# Prevents a pathologically deep (e.g. 5000-level) input from blowing the
+# iterative stack budget. A depth-cap error is emitted when exceeded. Chosen
+# to comfortably contain the real corpus depth-230 while bounding runaway
+# inputs. Source: AC-10 grammar-foundation.
+MAX_CONDITION_DEPTH: int = 400
 
 # The standard weight denominator. Source: grammar doc §5.1 ("den is always the
 # integer 100 in every observed instance"). Constructors emit the int form; the
@@ -316,15 +345,17 @@ def _validate_if_child(node: dict, node_id) -> list[str]:
 
     Only the flat-condition true branch is hard-gated for lhs-fn presence and a
     known comparator. Else branches carry no condition. Compound `condition`
-    blocks (amendment 6) are tolerated without a hard error.
+    blocks (amendment 6) are validated via _validate_condition_block (AC-10).
     """
     errs: list[str] = []
     if node.get("is-else-condition?"):
         return errs
     # A compound-condition if-child carries its predicate in a nested
-    # `condition` block instead of flat lhs-fn/comparator (amendment 6); don't
-    # demand the flat fields in that case.
-    if isinstance(node.get("condition"), dict):
+    # `condition` block instead of flat lhs-fn/comparator (amendment 6).
+    # Run the compound block validator (AC-10) and skip the flat-field checks.
+    condition = node.get("condition")
+    if isinstance(condition, dict):
+        errs.extend(_validate_condition_block(condition, node_id))
         return errs
     if "lhs-fn" not in node:
         errs.append(f"true-branch if-child missing required field 'lhs-fn' (id={node_id!r})")
@@ -344,6 +375,73 @@ def _validate_if_child(node: dict, node_id) -> list[str]:
             f"true-branch if-child with rhs-fixed-value?=False missing required "
             f"field 'rhs-fn' (id={node_id!r})"
         )
+    return errs
+
+
+def _validate_condition_block(condition: dict, node_id) -> list[str]:
+    """Validate a compound condition block embedded in a true-branch if-child.
+
+    Iterative DFS bounded by MAX_CONDITION_DEPTH so a 5000-deep pathological
+    input never blows the stack. Hard errors (AC-10):
+      * unknown condition-type string (not in _KNOWN_CONDITION_TYPES)
+      * bad operator (not in _KNOWN_OPERATORS) on compound / binary-compound blocks
+      * compound block missing the 'conditions' key
+      * binary-compound block missing the 'tickers' key
+    Absent condition-type is tolerated (raw binary leaf — valid grammar); None
+    elements in conditions[] are skipped gracefully.
+    """
+    errs: list[str] = []
+    # Stack entries: (cond_dict, depth). Depth 0 = the top-level condition block.
+    stack: list[tuple] = [(condition, 0)]
+    while stack:
+        cond, depth = stack.pop()
+        if not isinstance(cond, dict):
+            continue
+        if depth > MAX_CONDITION_DEPTH:
+            errs.append(
+                f"condition block on if-child id={node_id!r} exceeds MAX_CONDITION_DEPTH "
+                f"({MAX_CONDITION_DEPTH}); truncating validation"
+            )
+            # Stop descending this branch — do not recurse into deeper levels.
+            continue
+        cond_type = cond.get("condition-type")
+        # Absent condition-type is a raw binary leaf: tolerated, skip checks.
+        if cond_type is None:
+            continue
+        # Unknown condition-type is a hard error.
+        if cond_type not in _KNOWN_CONDITION_TYPES:
+            errs.append(
+                f"unknown condition-type {cond_type!r} on if-child id={node_id!r}; "
+                f"allowed: {sorted(_KNOWN_CONDITION_TYPES)}"
+            )
+            continue
+        # compound and binary-compound both require a known operator.
+        if cond_type in ("compound", "binary-compound"):
+            operator = cond.get("operator")
+            if operator not in _KNOWN_OPERATORS:
+                errs.append(
+                    f"condition block on if-child id={node_id!r} has bad operator "
+                    f"{operator!r}; allowed: {sorted(_KNOWN_OPERATORS)}"
+                )
+        # compound requires a 'conditions' key.
+        if cond_type == "compound":
+            if "conditions" not in cond:
+                errs.append(
+                    f"compound condition block on if-child id={node_id!r} missing "
+                    f"required key 'conditions'"
+                )
+            else:
+                # Recurse into sub-conditions.
+                for sub in (cond.get("conditions") or []):
+                    if isinstance(sub, dict):
+                        stack.append((sub, depth + 1))
+        # binary-compound requires a 'tickers' key.
+        if cond_type == "binary-compound":
+            if "tickers" not in cond:
+                errs.append(
+                    f"binary-compound condition block on if-child id={node_id!r} missing "
+                    f"required key 'tickers'"
+                )
     return errs
 
 
@@ -489,6 +587,10 @@ def extract_tickers(tree) -> set[str]:
 
     Iterative traversal; returns an empty set for a tree with no assets; never
     raises; read-only.
+
+    AC-9: The binary-compound lhs emits ticker='%' as a grammar placeholder;
+    '%' is not a real ticker and is excluded from the result. Real tickers in
+    a binary-compound's top-level 'tickers' list are included.
     """
     tickers: set[str] = set()
     if not isinstance(tree, dict):
@@ -498,12 +600,39 @@ def extract_tickers(tree) -> set[str]:
         node = stack.pop()
         if not isinstance(node, dict):
             continue
+        # Collect node-level ticker (skip the '%' binary-compound placeholder).
         ticker = node.get("ticker")
-        if isinstance(ticker, str) and ticker:
+        if isinstance(ticker, str) and ticker and ticker != "%":
             tickers.add(ticker)
+        # Walk condition block's tickers list for binary-compound nodes (AC-9).
+        condition = node.get("condition")
+        if isinstance(condition, dict):
+            _collect_condition_tickers(condition, tickers)
         for child in _iter_children(node):
             stack.append(child)
     return tickers
+
+
+def _collect_condition_tickers(condition: dict, tickers: set) -> None:
+    """Walk a compound condition block and collect real tickers into ``tickers``.
+
+    Skips the '%' placeholder. Handles binary, binary-compound, and nested
+    compound blocks. Iterative (explicit stack) to avoid recursion depth limits.
+    """
+    stack: list = [condition]
+    while stack:
+        cond = stack.pop()
+        if not isinstance(cond, dict):
+            continue
+        # binary-compound: collect from the top-level tickers list (real tickers)
+        # and skip the lhs ticker which is '%'.
+        for t in (cond.get("tickers") or []):
+            if isinstance(t, str) and t and t != "%":
+                tickers.add(t)
+        # compound: recurse into sub-conditions.
+        for sub in (cond.get("conditions") or []):
+            if isinstance(sub, dict):
+                stack.append(sub)
 
 
 # ---------------------------------------------------------------------------
@@ -570,9 +699,17 @@ def _render_node_line(node: dict, depth: int) -> str:
 
 
 def _render_if_child_line(node: dict, indent: str) -> str:
-    """Render an if-child branch as a readable condition / else line."""
+    """Render an if-child branch as a readable condition / else line.
+
+    AC-9: when the if-child carries a compound 'condition' block (binary-compound
+    or compound), renders the gate type (ANY/all) and the condition fn/tickers
+    instead of the flat lhs-fn/comparator fields.
+    """
     if node.get("is-else-condition?"):
         return f"{indent}ELSE"
+    condition = node.get("condition")
+    if isinstance(condition, dict):
+        return _render_compound_condition_line(condition, indent)
     lhs_fn = node.get("lhs-fn", "")
     lhs_val = node.get("lhs-val", "")
     comparator = node.get("comparator", "")
@@ -583,6 +720,47 @@ def _render_if_child_line(node: dict, indent: str) -> str:
         rhs_val = node.get("rhs-val", "")
         rhs = f"{rhs_fn}({rhs_val})" if rhs_fn else rhs_val
     return f"{indent}WHEN {lhs_fn}({lhs_val}) {comparator} {rhs}"
+
+
+def _render_compound_condition_line(condition: dict, indent: str) -> str:
+    """Render a compound condition block as a human-readable WHEN line.
+
+    Surfaces the gate type (ANY / all), the indicator fn, the tickers, and the
+    comparator+rhs so an operator reading the output understands the semantics.
+    """
+    cond_type = condition.get("condition-type", "")
+    operator = condition.get("operator", "")
+    comparator = condition.get("comparator", "")
+    # Render the rhs (constant or nested operand).
+    rhs_obj = condition.get("rhs") or {}
+    if isinstance(rhs_obj, dict) and "constant" in rhs_obj:
+        rhs_str = str(rhs_obj["constant"])
+    else:
+        rhs_str = str(condition.get("rhs-val", ""))
+    if cond_type == "binary-compound":
+        lhs = condition.get("lhs") or {}
+        fn = lhs.get("fn", "")
+        tickers = condition.get("tickers") or []
+        tickers_str = ", ".join(str(t) for t in tickers if t != "%")
+        gate = operator.upper() if operator else "ANY"
+        return f"{indent}WHEN {gate}([{tickers_str}]) {fn} {comparator} {rhs_str}"
+    if cond_type == "compound":
+        gate = operator.upper() if operator else "ANY"
+        sub_conds = condition.get("conditions") or []
+        # Collect all real tickers from nested binary-compound sub-conditions so
+        # that render_rules_text mentions every ticker present in the tree (AC-9,
+        # golden fixture contract). Use the same iterative walk as extract_tickers.
+        all_tickers: set[str] = set()
+        _collect_condition_tickers(condition, all_tickers)
+        tickers_part = (
+            f" [{', '.join(sorted(all_tickers))}]" if all_tickers else ""
+        )
+        return f"{indent}WHEN {gate}({len(sub_conds)} conditions){tickers_part}"
+    # binary leaf or unknown: render minimally
+    lhs = condition.get("lhs") or {}
+    fn = lhs.get("fn", "")
+    ticker = lhs.get("ticker", "")
+    return f"{indent}WHEN {fn}({ticker}) {comparator} {rhs_str}"
 
 
 # ---------------------------------------------------------------------------
@@ -767,6 +945,177 @@ def _numeric_rhs_str(rhs) -> str:
     if isinstance(rhs, float) and rhs == int(rhs):
         return str(int(rhs))
     return str(rhs)
+
+
+def make_condition_operand(fn: str, ticker: str, *, window: int) -> dict:
+    """Build a condition operand for use in compound condition constructors.
+
+    Returns the grammar §7 compound-operand shape:
+    ``{"fn": fn, "ticker": ticker, "params": {"window": window}}``.
+
+    This is distinct from ``make_indicator`` (which emits the flat if-child
+    shape ``fn-params`` / ``val``). Use ``make_condition_operand`` when building
+    compound conditions via ``make_binary_condition`` / ``make_binary_compound_condition``.
+
+    The ticker='%' placeholder is faithfully emitted when passed (used internally
+    by ``make_binary_compound_condition`` for the broadcast lhs operand).
+    Each call returns an independent dict; no shared mutable state.
+    """
+    return {
+        "fn": fn,
+        "ticker": ticker,
+        "params": {"window": window},
+    }
+
+
+def make_constant_rhs(value) -> dict:
+    """Build a constant rhs descriptor for use in compound condition constructors.
+
+    Returns ``{"constant": value}``. The value is stored as-is (int, float, or
+    any JSON-compatible scalar); no coercion is applied.
+    """
+    return {"constant": value}
+
+
+def make_binary_condition(lhs_operand: dict, comparator: str, rhs) -> dict:
+    """Build a binary leaf condition (grammar §7 condition-type='binary').
+
+    Args:
+        lhs_operand: A ``make_condition_operand(...)`` dict.
+        comparator: One of the KNOWN_COMPARATORS strings.
+        rhs: Either a ``make_constant_rhs(...)`` dict or another
+            ``make_condition_operand(...)`` dict for ticker comparisons.
+
+    Returns a ``{"condition-type": "binary", "lhs": ..., "comparator": ..., "rhs": ...}``
+    dict with the lhs and rhs deep-copied so the caller's originals remain independent.
+    """
+    return {
+        "condition-type": "binary",
+        "lhs": copy.deepcopy(lhs_operand),
+        "comparator": comparator,
+        "rhs": copy.deepcopy(rhs),
+    }
+
+
+def make_binary_compound_condition(
+    fn: str,
+    tickers: list,
+    comparator: str,
+    rhs,
+    *,
+    window: int,
+    operator: str = "any",
+) -> dict:
+    """Build a binary-compound condition (grammar §7 condition-type='binary-compound').
+
+    The frontrunner primitive: broadcast one predicate (``fn(%) comparator rhs``)
+    over a list of tickers with any/all semantics. The lhs ticker is the grammar
+    §7 placeholder ``"%"``; the real watched tickers live in the top-level
+    ``tickers`` list.
+
+    Args:
+        fn: Indicator fn string (e.g. ``"relative-strength-index"``).
+        tickers: Non-empty list of ticker strings to broadcast over.
+        comparator: One of the KNOWN_COMPARATORS strings.
+        rhs: A ``make_constant_rhs(...)`` dict (or any rhs descriptor).
+        window: Indicator window passed to the broadcast lhs operand.
+        operator: Gate semantics — ``"any"`` (OR) or ``"all"`` (AND). Defaults
+            to ``"any"``. Raises ValueError if not in ``{"any", "all"}``.
+
+    Raises:
+        ValueError: If ``operator`` is not in ``{"any", "all"}`` or if
+            ``tickers`` is empty.
+    """
+    if operator not in _KNOWN_OPERATORS:
+        raise ValueError(
+            f"make_binary_compound_condition: operator must be one of "
+            f"{sorted(_KNOWN_OPERATORS)!r}; got {operator!r}"
+        )
+    if not tickers:
+        raise ValueError(
+            "make_binary_compound_condition: tickers must be a non-empty list"
+        )
+    lhs = make_condition_operand(fn, "%", window=window)
+    return {
+        "condition-type": "binary-compound",
+        "operator": operator,
+        "lhs": lhs,
+        "tickers": list(tickers),  # shallow copy — strings are immutable
+        "comparator": comparator,
+        "rhs": copy.deepcopy(rhs),
+    }
+
+
+def make_compound_condition(operator: str, conditions: list) -> dict:
+    """Build a compound condition (grammar §7 condition-type='compound').
+
+    Joins N sub-conditions with ``any`` (OR) or ``all`` (AND) semantics.
+    Sub-conditions can be binary leaves, binary-compound blocks, or other
+    compound blocks (nestable).
+
+    Args:
+        operator: ``"any"`` or ``"all"``. Raises ValueError if invalid.
+        conditions: Non-empty list of condition dicts. Raises ValueError if empty.
+
+    Each sub-condition is deep-copied into the result.
+    """
+    if operator not in _KNOWN_OPERATORS:
+        raise ValueError(
+            f"make_compound_condition: operator must be one of "
+            f"{sorted(_KNOWN_OPERATORS)!r}; got {operator!r}"
+        )
+    if not conditions:
+        raise ValueError(
+            "make_compound_condition: conditions must be a non-empty list"
+        )
+    return {
+        "condition-type": "compound",
+        "operator": operator,
+        "conditions": [copy.deepcopy(c) for c in conditions],
+    }
+
+
+def make_if_compound(
+    condition_block: dict,
+    *,
+    then_children: list,
+    else_children: list,
+) -> dict:
+    """Build an if node whose true-branch if-child carries a compound condition block.
+
+    Unlike ``make_if`` (which extracts flat lhs-fn/comparator fields from a
+    ``make_condition(...)`` descriptor), ``make_if_compound`` stores the
+    authoritative ``condition`` block dict directly on the true-branch if-child.
+    The validate_tree compound-block path (Amendment 6, AC-10) recognises this
+    and skips the flat-field requirements.
+
+    Args:
+        condition_block: A compound condition dict (binary, binary-compound, or
+            compound) built via the ``make_*_condition`` constructors.
+        then_children: Allocation nodes for the true branch.
+        else_children: Allocation nodes for the else branch.
+
+    All inputs are deep-copied. Fresh uuid4 ids are assigned to the if node and
+    both if-child nodes.
+    """
+    true_child: dict = {
+        "step": "if-child",
+        "is-else-condition?": False,
+        "condition": copy.deepcopy(condition_block),
+        "id": _fresh_id(),
+        "children": [copy.deepcopy(child) for child in then_children],
+    }
+    else_child: dict = {
+        "step": "if-child",
+        "is-else-condition?": True,
+        "id": _fresh_id(),
+        "children": [copy.deepcopy(child) for child in else_children],
+    }
+    return {
+        "step": "if",
+        "id": _fresh_id(),
+        "children": [true_child, else_child],
+    }
 
 
 def make_if(condition: dict, *, then_children: list, else_children: list) -> dict:

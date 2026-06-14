@@ -1,0 +1,19 @@
+{
+  "_comment": "Golden fixture for make_binary_compound_condition — AC-6. The frontrunner primitive: 'RSI of ANY([SPY,QQQ,TLT]) > 80'. Source: feature-plans/symphony-grammar-foundation.md §Grammar ground truth.",
+  "input": {
+    "fn": "relative-strength-index",
+    "tickers": ["SPY", "QQQ", "TLT"],
+    "comparator": "gt",
+    "rhs_constant": 80,
+    "window": 10,
+    "operator": "any"
+  },
+  "expected_shape": {
+    "condition-type": "binary-compound",
+    "operator": "any",
+    "lhs_ticker_placeholder": "%",
+    "required_keys": ["condition-type", "operator", "tickers"],
+    "tickers_count": 3
+  },
+  "notes": "binary-compound broadcasts one predicate over tickers list. lhs must carry ticker='%' as the placeholder. operator in {any, all}. tickers=[...] at top level."
+}
