@@ -167,8 +167,9 @@ def load_community_strategies(
         cursor = collection.find({}, _PROJECTION)
         if limit is not None:
             # Prefer cursor.limit() (pymongo native — bounds the query server-side).
-            # Fall back to slicing for plain-list iterables (e.g. test mocks that
-            # return a list directly from find()).
+            # Fall back to slicing when the cursor lacks a .limit() method (a raw
+            # list returned by a minimalist test mock); real pymongo cursors always
+            # have .limit().
             if hasattr(cursor, "limit"):
                 cursor = cursor.limit(limit)
             else:
@@ -267,8 +268,12 @@ def load_community_strategies(
 
     final_candidates = list(best_by_hash.values())
 
-    # valid counts post-dedup survivors so the sum invariant holds:
-    # pulled == valid + deduped + missing_edn_string + parse_failed + validate_rejected
+    # valid counts post-dedup survivors so the sum invariant holds exactly when
+    # min_oos_sharpe is None:
+    #   pulled == valid + deduped + missing_edn_string + parse_failed + validate_rejected
+    # When min_oos_sharpe is set, docs excluded by the sharpe filter are not counted
+    # in any drop key, so pulled may exceed the sum (slice-2 adds a sharpe_filtered
+    # counter to close that gap).
     return {
         "available": True,
         "candidates": final_candidates,
