@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: feature-plans/atlas-cache.md
 Branch: team/atlas-cache
-Phase: red
+Phase: green
 
 ## Test Files
 - `tests/advisors/test_atlas_cache.py` — 24 tests
@@ -36,3 +36,16 @@ N/A — no UI surface.
 ## Status Log
 - [2026-06-14] test-writer: Starting RED phase
 - [2026-06-14] test-writer: RED complete — 24 tests (23 failing on NotImplementedError from stub, 1 passing structural import check), 1 stub created, 1 fixture file written. Committed fcd543f on team/atlas-cache.
+- [2026-06-14] implementer: GREEN complete — 24/24 tests passing on committed tree d05670c. No test bugs documented. Typecheck N/A (stdlib only). Lint: no ruff violations in atlas_cache.py.
+
+## Implementation Notes
+- `ttl_days` uses a sentinel default (`_ENV_DEFAULT`) so the function can distinguish "caller supplied 7" from "caller omitted, read env". When omitted, reads `ATLAS_CACHE_TTL_DAYS` env then falls back to 7.
+- TTL comparison uses `total_seconds() < ttl_seconds` (strict less-than) — `>=` is stale per AC-6.
+- Corrupt row (JSONDecodeError on payload): treated as read failure, falls through to live fetch. The row is NOT deleted — a subsequent fetch will upsert over it via INSERT OR REPLACE.
+- Write failure path: `chmod(0o444)` on the DB file causes `sqlite3.OperationalError`; caught, logged, fetched payload returned without raising.
+- fetch_fn raises + stale row: the stale `(fetched_at_str, payload_obj)` tuple is in `cached_row`; returned directly.
+- fetch_fn raises + no row: `cached_row is None`, returns `None` sentinel.
+- `init_atlas_cache()` opens a connection, issues `PRAGMA journal_mode=WAL` and `CREATE TABLE IF NOT EXISTS`, commits, closes. Idempotent by construction.
+
+## Test File Issues (for test-writer to fix)
+None.
