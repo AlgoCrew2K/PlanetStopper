@@ -89,7 +89,9 @@ KNOWN_COMPARATORS: frozenset[str] = frozenset({"gt", "lt", "lte", "gte"})
 # Confirmed rebalance cadences. Source: grammar doc §6. "daily" VERIFIED-LOCAL;
 # "none"/"weekly"/"monthly" VERIFIED-COMMUNITY swagger enum; "quarterly" VERIFIED-CORPUS
 # n=58 §6; "yearly" VERIFIED-CORPUS n=27 §6.
-KNOWN_REBALANCE: frozenset[str] = frozenset({"daily", "none", "weekly", "monthly", "quarterly", "yearly"})
+KNOWN_REBALANCE: frozenset[str] = frozenset(
+    {"daily", "none", "weekly", "monthly", "quarterly", "yearly"}
+)
 
 # Construction-side size ceilings. Source: grammar doc OQ-7 (conservative <500
 # node bound for SYNTHETIC trees) + handoff amendment 1. These gate the
@@ -100,6 +102,16 @@ MAX_TOTAL_NODES: int = 500
 # Depth ceiling chosen comfortably below Python's default recursion limit; a
 # lint threshold only. Source: handoff amendment 1 (construction-side constant).
 MAX_TREE_DEPTH: int = 100
+
+# Maximum nesting depth for compound condition blocks validated by
+# _validate_condition_block. Real corpus condition trees are shallow (observed
+# depth ≤ 3); 500 is comfortably above any realistic nesting (the AC-6 test
+# suite uses depth=200 as its "valid deep" probe) while providing a hard bound
+# so pathologically-deep inputs (e.g. 5000 levels) stop early. The traversal is
+# ITERATIVE so this cap guards against excessive CPU work, not stack overflow.
+# Blocks deeper than this cap emit one hard error and are not traversed further.
+# Source: DE-SYMPH-001 [PM-ASSUMED].
+MAX_CONDITION_DEPTH: int = 500
 
 # The standard weight denominator. Source: grammar doc §5.1 ("den is always the
 # integer 100 in every observed instance"). Constructors emit the int form; the
@@ -324,47 +336,89 @@ _KNOWN_OPERATORS: frozenset[str] = frozenset({"any", "all"})
 
 
 def _validate_condition_block(condition: dict, parent_node_id) -> list[str]:
-    """Validate the structure of a compound condition block (AC-8).
+    """Validate the structure of a compound condition block and all nested sub-blocks.
 
-    Checks the top-level condition block only (not sub-conditions). Hard errors:
+    Traversal is iterative (explicit stack with depth counter) so pathologically-deep
+    inputs (e.g. 5000-level nesting) never trigger RecursionError. Blocks nested
+    beyond MAX_CONDITION_DEPTH emit a single hard error and are not traversed further.
+
+    Hard errors checked at every level of nesting:
       * condition-type not in {binary, binary-compound, compound}
       * operator not in {any, all} (on compound or binary-compound)
       * compound missing 'conditions' key
       * binary-compound missing 'tickers' key
+      * condition block nesting depth exceeds MAX_CONDITION_DEPTH
 
-    Never raises: malformed inputs are handled gracefully — the outer
-    never-raising contract is preserved.
+    Non-dict items in a compound's conditions[] list are skipped gracefully —
+    they do not raise and do not produce an error.
+
+    Never raises: malformed inputs (None, non-dict, cyclically-deep structures
+    stopped by the depth cap) are handled gracefully — the outer never-raising
+    contract is preserved.
     """
     errs: list[str] = []
     if not isinstance(condition, dict):
         return errs
-    ct = condition.get("condition-type")
-    if ct not in _KNOWN_CONDITION_TYPES:
-        errs.append(
-            f"condition block has unknown condition-type {ct!r} "
-            f"(parent if-child id={parent_node_id!r}); "
-            f"allowed: {sorted(_KNOWN_CONDITION_TYPES)}"
-        )
-        return errs
-    if ct in ("compound", "binary-compound"):
-        op = condition.get("operator")
-        if op not in _KNOWN_OPERATORS:
+
+    # Iterative DFS. Each stack entry is (cond_dict, depth).
+    # depth=0 is the top-level block passed in by the caller.
+    stack: list = [(condition, 0)]
+    while stack:
+        cond, depth = stack.pop()
+        if not isinstance(cond, dict):
+            # Non-dict item in conditions[] — skip gracefully.
+            continue
+
+        if depth > MAX_CONDITION_DEPTH:
             errs.append(
-                f"condition block ({ct}) has invalid operator {op!r} "
-                f"(parent if-child id={parent_node_id!r}); "
-                f"allowed: {sorted(_KNOWN_OPERATORS)}"
+                f"condition block exceeds max nesting depth (MAX_CONDITION_DEPTH="
+                f"{MAX_CONDITION_DEPTH}) (parent if-child id={parent_node_id!r})"
             )
-    if ct == "compound":
-        if "conditions" not in condition:
+            # Do not traverse deeper — this is the depth-cap exit.
+            continue
+
+        ct = cond.get("condition-type")
+        # Sub-blocks with no condition-type key (None) are tolerated gracefully —
+        # they represent raw binary predicates in an older/alternative corpus form
+        # (Amendment 6). Only explicitly-present but unrecognised string tokens
+        # are hard errors.
+        if ct is None:
+            continue
+        if ct not in _KNOWN_CONDITION_TYPES:
             errs.append(
-                f"compound condition block missing required 'conditions' key "
+                f"condition block has unknown condition-type {ct!r} "
+                f"(parent if-child id={parent_node_id!r}); "
+                f"allowed: {sorted(_KNOWN_CONDITION_TYPES)}"
+            )
+            # Unknown type: do not descend (no valid 'conditions' to recurse into).
+            continue
+
+        if ct in ("compound", "binary-compound"):
+            op = cond.get("operator")
+            if op not in _KNOWN_OPERATORS:
+                errs.append(
+                    f"condition block ({ct}) has invalid operator {op!r} "
+                    f"(parent if-child id={parent_node_id!r}); "
+                    f"allowed: {sorted(_KNOWN_OPERATORS)}"
+                )
+
+        if ct == "compound":
+            if "conditions" not in cond:
+                errs.append(
+                    f"compound condition block missing required 'conditions' key "
+                    f"(parent if-child id={parent_node_id!r})"
+                )
+            else:
+                sub_conditions = cond.get("conditions")
+                if isinstance(sub_conditions, list):
+                    for sub in sub_conditions:
+                        stack.append((sub, depth + 1))
+        elif ct == "binary-compound" and "tickers" not in cond:
+            errs.append(
+                f"binary-compound condition block missing required 'tickers' key "
                 f"(parent if-child id={parent_node_id!r})"
             )
-    elif ct == "binary-compound" and "tickers" not in condition:
-        errs.append(
-            f"binary-compound condition block missing required 'tickers' key "
-            f"(parent if-child id={parent_node_id!r})"
-        )
+
     return errs
 
 
@@ -976,13 +1030,10 @@ def make_binary_compound_condition(
     """
     if operator not in _KNOWN_OPERATORS:
         raise ValueError(
-            f"make_binary_compound_condition: operator must be 'any' or 'all', "
-            f"got {operator!r}"
+            f"make_binary_compound_condition: operator must be 'any' or 'all', got {operator!r}"
         )
     if not tickers:
-        raise ValueError(
-            "make_binary_compound_condition: tickers must not be empty"
-        )
+        raise ValueError("make_binary_compound_condition: tickers must not be empty")
     return {
         "condition-type": "binary-compound",
         "operator": operator,
@@ -1009,13 +1060,10 @@ def make_compound_condition(operator: str, conditions: list) -> dict:
     """
     if operator not in _KNOWN_OPERATORS:
         raise ValueError(
-            f"make_compound_condition: operator must be 'any' or 'all', "
-            f"got {operator!r}"
+            f"make_compound_condition: operator must be 'any' or 'all', got {operator!r}"
         )
     if not conditions:
-        raise ValueError(
-            "make_compound_condition: conditions must not be empty"
-        )
+        raise ValueError("make_compound_condition: conditions must not be empty")
     return {
         "condition-type": "compound",
         "operator": operator,

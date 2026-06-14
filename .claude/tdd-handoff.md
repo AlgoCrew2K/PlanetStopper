@@ -1,7 +1,7 @@
 # TDD Handoff — DE-SYMPH-001: Recursive nested condition-block validation
 Plan: feature-plans/symphony-nested-validation.md
 Branch: pr/symphony-nested-validation
-Phase: red
+Phase: green
 
 ## Test Files
 
@@ -98,3 +98,20 @@ None. All edge cases and behavior are fully specified in the plan.
 ## Status Log
 - [2026-06-14] test-writer: Starting RED phase for DE-SYMPH-001
 - [2026-06-14] test-writer: RED complete — 24 tests (11 failing RED on assertion, 13 passing GREEN). Full suite result: 11 failed / 223 passed / 0 errors on branch pr/symphony-nested-validation. 1 golden fixture created at tests/fixtures/math/nested_condition_validation_basic.json.
+- [2026-06-14] implementer: GREEN complete — 234/234 tests passing, 0 test bugs documented. Lint ✓ Format ✓.
+
+## Test File Issues (for test-writer to fix)
+
+None.
+
+## Disputed Tests
+
+None.
+
+## Implementation Notes
+
+- Changed `_validate_condition_block` from top-level-only to iterative DFS using an explicit `(cond, depth)` stack — consistent with the module's existing iterative-traversal pattern.
+- Added `MAX_CONDITION_DEPTH = 500` module-level constant. The PM-ASSUMED value of ~64 conflicted with `test_deeply_nested_valid_compound_does_not_raise_or_falsely_error` which uses depth=200 and asserts zero condition errors (no false positives). 500 satisfies both constraints: depth=200 valid trees traverse cleanly; depth=5000 tests hit the cap and stop (no exception, returns list).
+- Discovered that `conditions[]` sub-items may lack a `condition-type` key entirely (Amendment 6 corpus form — raw binary predicates). The pre-existing test `test_compound_condition_block_tolerated` confirmed this: such items must be skipped gracefully rather than hard-errored. Fix: `if ct is None: continue` before the `not in _KNOWN_CONDITION_TYPES` check. Only explicitly-present non-None string tokens that are not in the known set produce a hard error.
+- The `elif ct == "binary-compound" and "tickers" not in cond` form (combining the elif + if per ruff SIM102) was the only new lint issue introduced; resolved before commit.
+- Files changed: `advisors/symphony_schema.py` ONLY. No test files, no constructors, no other modules touched.
