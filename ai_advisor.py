@@ -55,9 +55,8 @@ _OPTUNA_SEARCH_SPACE_KEYS = frozenset(
 # Model + SDK configuration.
 # ---------------------------------------------------------------------------
 
-# Opus 4.8 default — analytical reasoning over quant data (claude-api-mechanics.md §2).
-# Override at runtime via ADVISOR_LLM_MODEL env var (C1: env-configurable model).
-_CLAUDE_MODEL: str = os.environ.get("ADVISOR_LLM_MODEL", "claude-opus-4-8")
+# Opus 4.7 — analytical reasoning over quant data (claude-api-mechanics.md §2).
+_CLAUDE_MODEL = "claude-opus-4-7"
 _MAX_TOKENS = 2048
 # Explicit client-side timeout — never rely on the SDK/urllib3 default.
 _REQUEST_TIMEOUT_SECONDS = 30.0
@@ -276,23 +275,6 @@ def _build_volatility_regime(autotune_run: dict | None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Market-breadth proxy basket for the technicals lens (market-level regime read).
-# Broad indices + all 11 SPDR sector ETFs give a representative cross-section of
-# the US equity market without requiring portfolio-specific tickers.  This is a
-# deliberate market-level read, not a per-portfolio read — the technicals lens
-# answers "what is the broad market doing?" for the Market Prism context.
-# Source: SPDR sector ETF list (State Street Global Advisors) + standard US
-# broad-market benchmark indices.
-# ---------------------------------------------------------------------------
-_MARKET_PROXY_UNIVERSE: list[str] = [
-    "SPY", "QQQ", "IWM",   # broad-market benchmarks (large-cap, tech-heavy, small-cap)
-    "XLK", "XLF", "XLE",   # technology, financials, energy
-    "XLV", "XLI", "XLP",   # health care, industrials, consumer staples
-    "XLY", "XLU", "XLB",   # consumer discretionary, utilities, materials
-    "XLRE", "XLC",          # real estate, communication services
-]
-
-# ---------------------------------------------------------------------------
 # Cycle-2 multi-lens producers — GDELT sentiment, SEC EDGAR fundamentals,
 # FRED macro.  Each replaces its Cycle-1 stub with a real fetcher that:
 #   - makes HTTP calls with explicit timeouts,
@@ -301,10 +283,7 @@ _MARKET_PROXY_UNIVERSE: list[str] = [
 #     type(exc).__name__, never str(exc) which may contain keys/URLs),
 #   - returns available=True with real payload + citation-validated sources on
 #     success.
-# Technicals (B2, advisors/lens_technicals.py) and derivatives
-# (advisors/lens_options_proxy.py, FRED VIX term structure) are both real
-# producers now.  No cycle-1 stub lenses remain (sentiment/macro/fundamentals
-# were promoted in Cycle-2).
+# Technicals + derivatives remain cycle-1 stubs (Cycle-2b).
 # ---------------------------------------------------------------------------
 
 # Maximum total wall-clock seconds the retry loop will wait across all
@@ -464,28 +443,17 @@ def _fetch_with_backoff(
 
 
 def _build_technicals_section(_data: object = None) -> dict:
-    """Technicals lens block — SMA posture, breadth, momentum (B2 real producer).
+    """Technicals lens block — cycle-1 stub (Cycle-2b deliverable).
 
-    Lazy-imports ``advisors.lens_technicals`` (CC-2 boundary: no module-level
-    import of advisor producers inside ai_advisor.py).  Uses
-    ``_MARKET_PROXY_UNIVERSE`` — the fixed broad-market basket of indices and
-    SPDR sector ETFs — to produce a market-level regime/breadth read for the
-    Market Prism.  This is an intentional market-level read, not per-portfolio.
+    Honest availability: Alpaca IEX / Alpha Vantage indicator source not yet
+    connected.  Returns available=False with an informative reason.
     """
-    import advisors.lens_technicals as _lt  # CC-2: lazy import
-
-    payload = _lt._fetch_technicals(universe=_MARKET_PROXY_UNIVERSE)
-    available = payload.get("available", False)
     return {
         "lens": "technicals",
-        "available": available,
-        "reason": payload.get("reason"),
-        "payload": payload if available else None,
-        "sources": (
-            [{"source": payload["source"], "lens": "technicals"}]
-            if payload.get("source")
-            else []
-        ),
+        "available": False,
+        "reason": "technicals source not connected — cycle-2b deliverable",
+        "payload": None,
+        "sources": [],
     }
 
 
@@ -552,31 +520,17 @@ def _build_sentiment_section(_data: object = None) -> dict:
 
 
 def _build_derivatives_section(_data: object = None) -> dict:
-    """Derivatives / volatility lens block — FRED VIXCLS/VXVCLS producer (real).
+    """Derivatives / options lens block — cycle-1 stub (Cycle-2b deliverable).
 
-    Lazy-imports ``advisors.lens_options_proxy`` (CC-2 boundary: no module-level
-    import of advisor producers inside ai_advisor.py).  This is an INDEX-LEVEL
-    lens (VIX term structure) — no universe argument is passed to the producer.
-    Classifies the VIX term-structure regime (contango / backwardation / flat)
-    and derives a directional risk read (risk-on / risk-off / neutral).
-
-    D-1: error reason passes through the producer's type(exc).__name__ string;
-    never str(exc) or any raw exception message.
+    Honest availability: CBOE put/call + Alpaca IV source not yet connected.
+    Returns available=False with an informative reason.
     """
-    import advisors.lens_options_proxy as _lop  # CC-2: lazy import
-
-    payload = _lop._fetch_options_proxy()
-    available = payload.get("available", False)
     return {
         "lens": "derivatives",
-        "available": available,
-        "reason": payload.get("reason"),
-        "payload": payload if available else None,
-        "sources": (
-            [{"source": payload["source"], "lens": "derivatives"}]
-            if payload.get("source")
-            else []
-        ),
+        "available": False,
+        "reason": "derivatives source not connected — cycle-2b deliverable",
+        "payload": None,
+        "sources": [],
     }
 
 
@@ -1223,11 +1177,10 @@ def assemble_advisor_context(
         "risk_invariants": _RISK_INVARIANTS,
         # P2 — condensed symphony logic / composition.
         "symphony_logic": condensed_logic,
-        # Multi-lens context — 5 lens blocks, all real producers:
-        # technicals (B2), derivatives (FRED VIX term structure), and
-        # sentiment/macro/fundamentals (Cycle-2). No cycle-1 stub lenses remain.
-        # Honest degradation: any lens that cannot fetch returns available=False
-        # and never fabricates analytical context (CC-3 data-wall, GATE-1-AC §1).
+        # Cycle-1 multi-lens scaffold — 5 stub lens blocks.
+        # Each is available=False until the fast-follow producer connects its
+        # free-data source.  Honest degradation: never fabricates analytical
+        # context (CC-3 data-wall, GATE-1-AC §1).
         "technicals": _build_technicals_section(),
         "sentiment": _build_sentiment_section(),
         "derivatives": _build_derivatives_section(),

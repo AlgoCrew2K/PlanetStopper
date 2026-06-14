@@ -1,7 +1,5 @@
 # Composer Symphony `raw_value` Decision-Tree Grammar Reference
 
-> ⚠️ **SUPERSEDED (2026-06-14) by `strategy-builder-composer-grammar-v2.md`** — the v2 reference is corpus-validated against 10,441 real Composer symphonies and resolves 9 of the 11 OPEN questions below (incl. `gte`, `quarterly`/`yearly`, EMA-price, and the ANY/ALL `operator` encoding). This v1 doc (built from 2 local fixtures) is retained as a historical snapshot; **use v2 for all current grammar truth.**
-
 **Author:** composer-api-researcher
 **Date:** 2026-06-11
 **Confidence Summary:** High confidence on core vocabulary (root/asset/if/if-child/filter/group/wt-cash-equal/wt-cash-specified confirmed from local fixtures). Medium confidence on extended step types (wt-inverse-vol confirmed local-large-fixture; wt-market-cap community only). Open questions clearly marked.
