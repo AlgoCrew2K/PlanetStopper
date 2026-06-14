@@ -57,11 +57,12 @@ KNOWN_STEPS: frozenset[str] = frozenset(
     }
 )
 
-# The 7 confirmed indicator-fn strings. Source: grammar doc §4.1 (VERIFIED-LOCAL).
-# NOTE: the canonical RSI token is the full "relative-strength-index"; the
-# abbreviation "rsi" is intentionally absent (lint warns on it). Unknown fns
-# such as "standard-deviation-price" (seen 3x in the large fixture) are tolerated
-# by validate_tree and surfaced only as lint warnings (handoff amendment 2).
+# The 13 confirmed indicator-fn strings. Source: grammar doc §4 (VERIFIED-LOCAL) +
+# v2 corpus additions (VERIFIED-CORPUS): exponential-moving-average-price n=45,816 §4;
+# standard-deviation-price n=5,572 §4; percentage-price-oscillator n=? §4;
+# percentage-price-oscillator-signal n=? §4; upper-bollinger n=? §4;
+# lower-bollinger n=? §4. Canonical RSI token is full "relative-strength-index";
+# abbreviation "rsi" is intentionally absent (lint warns on it).
 KNOWN_INDICATOR_FNS: frozenset[str] = frozenset(
     {
         "relative-strength-index",
@@ -71,17 +72,24 @@ KNOWN_INDICATOR_FNS: frozenset[str] = frozenset(
         "standard-deviation-return",
         "moving-average-price",
         "moving-average-return",
+        "exponential-moving-average-price",
+        "standard-deviation-price",
+        "percentage-price-oscillator",
+        "percentage-price-oscillator-signal",
+        "upper-bollinger",
+        "lower-bollinger",
     }
 )
 
 # Confirmed comparators. Source: grammar doc §8. "gt"/"lt" VERIFIED-LOCAL,
-# "lte" VERIFIED-COMMUNITY. "gte"/"eq" are OQ-2 unconfirmed and excluded — they
-# are hard errors until observed in a local fixture.
-KNOWN_COMPARATORS: frozenset[str] = frozenset({"gt", "lt", "lte"})
+# "lte" VERIFIED-COMMUNITY. "gte" VERIFIED-CORPUS n=39,596 §8. "eq"/"neq"
+# have 0 corpus occurrences and remain permanent hard errors.
+KNOWN_COMPARATORS: frozenset[str] = frozenset({"gt", "lt", "lte", "gte"})
 
 # Confirmed rebalance cadences. Source: grammar doc §6. "daily" VERIFIED-LOCAL;
-# "none"/"weekly"/"monthly" VERIFIED-COMMUNITY (2026-05-31 swagger enum).
-KNOWN_REBALANCE: frozenset[str] = frozenset({"daily", "none", "weekly", "monthly"})
+# "none"/"weekly"/"monthly" VERIFIED-COMMUNITY swagger enum; "quarterly" VERIFIED-CORPUS
+# n=58 §6; "yearly" VERIFIED-CORPUS n=27 §6.
+KNOWN_REBALANCE: frozenset[str] = frozenset({"daily", "none", "weekly", "monthly", "quarterly", "yearly"})
 
 # Construction-side size ceilings. Source: grammar doc OQ-7 (conservative <500
 # node bound for SYNTHETIC trees) + handoff amendment 1. These gate the
