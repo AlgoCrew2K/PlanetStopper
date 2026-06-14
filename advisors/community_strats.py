@@ -84,7 +84,13 @@ def _connect_mongo():
     resolver.nameservers = ["8.8.8.8", "1.1.1.1"]
     dns.resolver.default_resolver = resolver
 
-    client = pymongo.MongoClient(os.environ["MONGO_URI"])
+    # Fail fast (~10s) on a slow or unreachable Atlas cluster instead of
+    # blocking for the ~30s urllib3 default.
+    client = pymongo.MongoClient(
+        os.environ["MONGO_URI"],
+        serverSelectionTimeoutMS=10_000,
+        connectTimeoutMS=10_000,
+    )
     return client["captplanet"]["strategies"]
 
 
