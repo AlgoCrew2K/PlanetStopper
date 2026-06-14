@@ -138,7 +138,14 @@ def load_community_strategies(
         available (bool), candidates (list), stats (dict), source (str),
         and optionally reason (str) when available is False.
     """
-    _EMPTY_STATS = {"pulled": 0, "valid": 0, "invalid": 0, "deduped": 0}
+    _EMPTY_STATS = {
+        "pulled": 0,
+        "valid": 0,
+        "missing_edn_string": 0,
+        "parse_failed": 0,
+        "validate_rejected": 0,
+        "deduped": 0,
+    }
 
     # --- Resolve collection ---------------------------------------------------
     if client is not None:
@@ -187,27 +194,30 @@ def load_community_strategies(
         }
 
     pulled = len(raw_docs)
-    invalid = 0
+    missing_edn_string = 0
+    parse_failed = 0
+    validate_rejected = 0
     valid_candidates: list[dict] = []
 
     # --- Parse and validate each document ------------------------------------
     for doc in raw_docs:
-        # Missing required fields
-        if "edn_string" not in doc or "sid" not in doc:
-            invalid += 1
+        # Missing or empty edn_string field — no payload to parse.
+        edn = doc.get("edn_string")
+        if "sid" not in doc or not edn:
+            missing_edn_string += 1
             continue
 
-        # Parse edn_string (which is actually JSON per the contract)
+        # Parse edn_string (which is actually JSON per the contract).
         try:
-            tree = json.loads(doc["edn_string"])
+            tree = json.loads(edn)
         except (json.JSONDecodeError, TypeError, ValueError):
-            invalid += 1
+            parse_failed += 1
             continue
 
-        # Structural validation
+        # Structural validation — HARD errors only.
         errors = symphony_schema.validate_tree(tree)
         if errors:
-            invalid += 1
+            validate_rejected += 1
             continue
 
         # Ticker extraction
@@ -216,7 +226,7 @@ def load_community_strategies(
         # OOS metrics pass-through
         oos_metrics = doc.get("oos_metrics")
 
-        # min_oos_sharpe filter — docs lacking the metric are KEPT
+        # min_oos_sharpe filter — docs lacking the metric are KEPT.
         if min_oos_sharpe is not None:
             if (
                 oos_metrics is not None
@@ -224,7 +234,7 @@ def load_community_strategies(
                 and "sharpe" in oos_metrics
                 and oos_metrics["sharpe"] < min_oos_sharpe
             ):
-                # filtered out — NOT counted as invalid
+                # filtered out — NOT a drop-accounting event
                 continue
 
         comp_hash = _composition_hash(tree)
@@ -239,8 +249,6 @@ def load_community_strategies(
                 "composition_hash": comp_hash,
             }
         )
-
-    valid_count = len(valid_candidates)
 
     # --- Deduplication by composition hash ------------------------------------
     # For each hash group, retain the candidate with the highest OOS sharpe.
@@ -259,13 +267,17 @@ def load_community_strategies(
 
     final_candidates = list(best_by_hash.values())
 
+    # valid counts post-dedup survivors so the sum invariant holds:
+    # pulled == valid + deduped + missing_edn_string + parse_failed + validate_rejected
     return {
         "available": True,
         "candidates": final_candidates,
         "stats": {
             "pulled": pulled,
-            "valid": valid_count,
-            "invalid": invalid,
+            "valid": len(final_candidates),
+            "missing_edn_string": missing_edn_string,
+            "parse_failed": parse_failed,
+            "validate_rejected": validate_rejected,
             "deduped": deduped_count,
         },
         "source": "captplanet",
