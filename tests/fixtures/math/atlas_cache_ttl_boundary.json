@@ -1,0 +1,34 @@
+{
+  "_comment": "Golden fixture for atlas_cache TTL boundary contract (AC-6). Pins the exact semantics: age strictly < ttl_days is FRESH (HIT, no fetch); age >= ttl_days is STALE (MISS, fetch called). Rows are pre-seeded with a fetched_at in ISO-8601 UTC. Tests derive their clock from the fixture, never hardcoding producer values.",
+  "ttl_days": 7,
+  "cases": [
+    {
+      "id": "one_second_under_boundary",
+      "description": "age is (ttl_days * 86400 - 1) seconds — strictly less than ttl_days — must be FRESH",
+      "age_seconds": 604799,
+      "expected_hit": true,
+      "expected_fetch_calls": 0
+    },
+    {
+      "id": "exactly_at_boundary",
+      "description": "age is exactly ttl_days * 86400 seconds — must be STALE",
+      "age_seconds": 604800,
+      "expected_hit": false,
+      "expected_fetch_calls": 1
+    },
+    {
+      "id": "one_second_over_boundary",
+      "description": "age is (ttl_days * 86400 + 1) seconds — strictly greater than ttl_days — must be STALE",
+      "age_seconds": 604801,
+      "expected_hit": false,
+      "expected_fetch_calls": 1
+    },
+    {
+      "id": "zero_age",
+      "description": "row just written (age 0 seconds) — must be FRESH",
+      "age_seconds": 0,
+      "expected_hit": true,
+      "expected_fetch_calls": 0
+    }
+  ]
+}
