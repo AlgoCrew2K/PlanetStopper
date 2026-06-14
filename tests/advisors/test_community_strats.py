@@ -992,3 +992,369 @@ class TestAC8BoundaryAssertions:
             "_connect_mongo must be defined as an internal function"
         )
         assert callable(cs._connect_mongo), "_connect_mongo must be callable"
+
+
+# ---------------------------------------------------------------------------
+# AC-9: Query efficiency — bounded fetch and field projection
+#
+# The live Mongo functional check revealed that `list(collection.find({}))[:limit]`
+# pulls ALL 8,339 docs (edn_strings up to 150 KB + multi-MB backtest/quantstats
+# arrays) into memory before slicing.  Against a real Atlas cluster this hangs.
+#
+# The mock tests in AC-1..AC-5 used `col.find.return_value = docs` (a plain
+# list), so they never observed whether find() was called with a limit or
+# projection — the mock accepted any call signature and returned the same list.
+#
+# These tests use a cursor mock whose .limit() is trackable, so they are RED
+# against the pull-all-then-slice implementation that never calls .limit()
+# on the cursor, and RED against an implementation that omits the projection.
+#
+# Asserting cursor-chain (.limit) rather than find(limit=N kwarg) because:
+#   - pymongo's canonical pattern is collection.find(filter, projection).limit(N)
+#   - both call forms are valid fixes; the cursor-chain form is the most common
+#   - the test accepts EITHER form (limit in find kwargs OR cursor.limit called)
+#     so it does not over-constrain the implementer's choice.
+# ---------------------------------------------------------------------------
+
+
+def _make_cursor_mock(docs: list[dict]) -> "MagicMock":
+    """Return a MagicMock cursor whose .limit() returns itself (chainable) and iterates docs.
+
+    This mirrors a real pymongo cursor: iterable, and .limit() returns the same
+    cursor.  The mock records all calls so tests can assert .limit(N) was called.
+    """
+    cursor = MagicMock()
+    # __iter__ makes the cursor iterable — necessary so the loader can do
+    # `for doc in cursor` or `list(cursor)` after chaining .limit().
+    cursor.__iter__ = MagicMock(return_value=iter(docs))
+    # .limit() must return the cursor itself (chainable) and also be iterable.
+    limit_cursor = MagicMock()
+    limit_cursor.__iter__ = MagicMock(return_value=iter(docs))
+    cursor.limit.return_value = limit_cursor
+    return cursor
+
+
+def _make_collection_with_cursor(docs: list[dict]) -> "tuple[MagicMock, MagicMock]":
+    """Return (collection_mock, cursor_mock) where find() returns the cursor mock.
+
+    Distinct from _make_mock_collection which returns a plain list.  Use this
+    helper when you need to assert cursor interaction (limit, projection).
+    """
+    cursor = _make_cursor_mock(docs)
+    col = MagicMock()
+    col.find.return_value = cursor
+    return col, cursor
+
+
+def _make_client_with_cursor(docs: list[dict]) -> "tuple[MagicMock, MagicMock, MagicMock]":
+    """Return (client_mock, collection_mock, cursor_mock)."""
+    col, cursor = _make_collection_with_cursor(docs)
+    client = MagicMock()
+    client.__getitem__.return_value.__getitem__.return_value = col
+    client.captplanet.strategies = col
+    return client, col, cursor
+
+
+class TestAC9QueryEfficiency:
+    """Loader applies limit and projection at the query level — not post-fetch slice.
+
+    These are RED against the pull-all-then-slice implementation that does:
+        raw_docs = list(collection.find({}))
+        if limit is not None:
+            raw_docs = raw_docs[:limit]
+    because that pattern never calls cursor.limit() and never passes a projection.
+    """
+
+    def _five_distinct_docs(self) -> list[dict]:
+        """Five valid docs with distinct single-asset trees."""
+        docs = []
+        for i in range(5):
+            ticker = f"TICK{i:03d}"
+            tree = make_root(f"S{i}", "daily", [make_weight_equal([make_asset(ticker)])])
+            docs.append(_doc(f"sid-{i}", f"Strat{i}", tree, {"sharpe": float(i)}))
+        return docs
+
+    # ------------------------------------------------------------------
+    # Limit applied at query level (cursor.limit or find(limit=N))
+    # ------------------------------------------------------------------
+
+    def test_limit_applied_via_cursor_limit_or_find_kwarg(self):
+        """When limit=N is supplied, the loader must bound the query — not slice after full fetch.
+
+        Acceptable implementations:
+          (A) collection.find(filter, projection).limit(N)  → cursor.limit called with N
+          (B) collection.find(filter, projection, limit=N)  → find called with limit kwarg == N
+          (C) collection.find({limit: N, ...})              → find called with limit in first arg
+
+        The current buggy implementation does neither:
+          raw_docs = list(collection.find({})); raw_docs = raw_docs[:limit]
+
+        This test is RED against (buggy) because cursor.limit is never called and
+        find() receives no limit kwarg.
+        """
+        from advisors.community_strats import load_community_strategies
+
+        docs = self._five_distinct_docs()
+        client, col, cursor = _make_client_with_cursor(docs)
+
+        load_community_strategies(client=client, limit=3)
+
+        # Either cursor.limit(3) was called, OR find() was called with limit=3.
+        # Inspect both paths and accept if either is satisfied.
+        cursor_limit_called_with_3 = (
+            cursor.limit.called
+            and any(
+                (args == (3,) or kwargs.get("limit") == 3)
+                for args, kwargs in cursor.limit.call_args_list
+            )
+        )
+        find_limit_kwarg = any(
+            call.kwargs.get("limit") == 3
+            for call in col.find.call_args_list
+        )
+        # Also check if limit was passed as the third positional arg to find
+        # (pymongo: find(filter, projection, limit))
+        find_limit_positional = any(
+            len(call.args) >= 3 and call.args[2] == 3
+            for call in col.find.call_args_list
+        )
+
+        assert cursor_limit_called_with_3 or find_limit_kwarg or find_limit_positional, (
+            "limit=3 must be applied at the query level — loader must call cursor.limit(3) "
+            "OR pass limit=3 to find(). Current implementation does list(find({}))[:3] "
+            "which fetches all docs before slicing."
+        )
+
+    def test_limit_one_applied_at_query_not_sliced(self):
+        """limit=1 edge case: single-doc bound must hit the cursor, not post-fetch slice."""
+        from advisors.community_strats import load_community_strategies
+
+        docs = self._five_distinct_docs()
+        client, col, cursor = _make_client_with_cursor(docs)
+
+        load_community_strategies(client=client, limit=1)
+
+        cursor_limit_called = cursor.limit.called and any(
+            args == (1,) or kwargs.get("limit") == 1
+            for args, kwargs in cursor.limit.call_args_list
+        )
+        find_limit_kwarg = any(
+            call.kwargs.get("limit") == 1 for call in col.find.call_args_list
+        )
+
+        assert cursor_limit_called or find_limit_kwarg, (
+            "limit=1 must be applied at the query level via cursor.limit(1) or find(limit=1)"
+        )
+
+    def test_no_limit_does_not_call_cursor_limit(self):
+        """When limit=None (default), the loader must NOT artificially cap the cursor.
+
+        This is a correctness guard in the opposite direction: limit=None must fetch
+        all docs, so cursor.limit() must not be called with a restrictive value.
+        (It's fine if cursor.limit is never called at all, or called with 0 which
+        pymongo treats as 'no limit'.)
+        """
+        from advisors.community_strats import load_community_strategies
+
+        docs = self._five_distinct_docs()
+        client, col, cursor = _make_client_with_cursor(docs)
+
+        load_community_strategies(client=client, limit=None)
+
+        # cursor.limit must NOT have been called with a positive integer bound
+        if cursor.limit.called:
+            for call in cursor.limit.call_args_list:
+                args, kwargs = call
+                bound = args[0] if args else kwargs.get("limit", 0)
+                assert bound == 0 or bound is None, (
+                    f"limit=None must not restrict the cursor; cursor.limit called with {bound!r}"
+                )
+
+    # ------------------------------------------------------------------
+    # Projection restricts fetched fields
+    # ------------------------------------------------------------------
+
+    def test_find_called_with_projection_dict(self):
+        """find() must be called with a projection dict to suppress large unused fields.
+
+        The current buggy implementation calls collection.find({}) with no projection,
+        which fetches every field including backtest and quantstats_metrics arrays
+        that can be multiple MB per document.
+
+        This test is RED against the buggy implementation because find() receives
+        only one argument (the filter), never a projection dict.
+        """
+        from advisors.community_strats import load_community_strategies
+
+        docs = self._five_distinct_docs()
+        client, col, cursor = _make_client_with_cursor(docs)
+
+        load_community_strategies(client=client)
+
+        # find() must have been called with at least two arguments, the second of
+        # which is the projection dict — OR with a projection= keyword argument.
+        assert col.find.called, "collection.find() must be called"
+
+        call = col.find.call_args
+        positional_projection = call.args[1] if len(call.args) >= 2 else None
+        kwarg_projection = call.kwargs.get("projection")
+        projection = positional_projection if positional_projection is not None else kwarg_projection
+
+        assert projection is not None, (
+            "find() must be called with a projection dict (second positional arg or "
+            "projection= kwarg) to avoid fetching multi-MB backtest/quantstats arrays. "
+            "Current implementation: collection.find({}) with no projection."
+        )
+        assert isinstance(projection, dict), (
+            f"projection must be a dict, got {type(projection).__name__!r}"
+        )
+
+    def test_projection_includes_edn_string(self):
+        """The projection must include 'edn_string' — the loader's primary payload field."""
+        from advisors.community_strats import load_community_strategies
+
+        docs = self._five_distinct_docs()
+        client, col, cursor = _make_client_with_cursor(docs)
+
+        load_community_strategies(client=client)
+
+        call = col.find.call_args
+        positional_projection = call.args[1] if len(call.args) >= 2 else None
+        projection = (
+            positional_projection
+            if positional_projection is not None
+            else call.kwargs.get("projection")
+        )
+
+        # If no projection at all this will be caught by test_find_called_with_projection_dict;
+        # here we guard that the required field is included when a projection IS present.
+        if projection is None:
+            pytest.fail(
+                "find() was called with no projection — 'edn_string' cannot be included. "
+                "Fix: pass a projection dict that includes 'edn_string'."
+            )
+
+        assert "edn_string" in projection, (
+            f"projection must include 'edn_string'; got projection={projection!r}"
+        )
+
+    def test_projection_includes_sid(self):
+        """The projection must include 'sid' — required field checked before parse."""
+        from advisors.community_strats import load_community_strategies
+
+        docs = self._five_distinct_docs()
+        client, col, cursor = _make_client_with_cursor(docs)
+
+        load_community_strategies(client=client)
+
+        call = col.find.call_args
+        positional_projection = call.args[1] if len(call.args) >= 2 else None
+        projection = (
+            positional_projection
+            if positional_projection is not None
+            else call.kwargs.get("projection")
+        )
+
+        if projection is None:
+            pytest.fail("find() was called with no projection — 'sid' cannot be included.")
+
+        assert "sid" in projection, (
+            f"projection must include 'sid'; got projection={projection!r}"
+        )
+
+    def test_projection_includes_oos_metrics(self):
+        """The projection must include 'oos_metrics' — surfaced on every candidate."""
+        from advisors.community_strats import load_community_strategies
+
+        docs = self._five_distinct_docs()
+        client, col, cursor = _make_client_with_cursor(docs)
+
+        load_community_strategies(client=client)
+
+        call = col.find.call_args
+        positional_projection = call.args[1] if len(call.args) >= 2 else None
+        projection = (
+            positional_projection
+            if positional_projection is not None
+            else call.kwargs.get("projection")
+        )
+
+        if projection is None:
+            pytest.fail("find() was called with no projection — 'oos_metrics' cannot be included.")
+
+        assert "oos_metrics" in projection, (
+            f"projection must include 'oos_metrics'; got projection={projection!r}"
+        )
+
+    def test_projection_excludes_backtest(self):
+        """The projection must NOT request the 'backtest' field.
+
+        'backtest' contains the full backtest time-series array — potentially MB per doc.
+        Including it in the projection (or omitting an exclusion when using an inclusion
+        projection) defeats the entire purpose of projecting.
+
+        In MongoDB, an INCLUSION projection lists only the fields you want — fields not
+        listed are automatically excluded.  So this test asserts that 'backtest' is NOT
+        a key with value 1 (or True) in the projection dict.
+        """
+        from advisors.community_strats import load_community_strategies
+
+        docs = self._five_distinct_docs()
+        client, col, cursor = _make_client_with_cursor(docs)
+
+        load_community_strategies(client=client)
+
+        call = col.find.call_args
+        positional_projection = call.args[1] if len(call.args) >= 2 else None
+        projection = (
+            positional_projection
+            if positional_projection is not None
+            else call.kwargs.get("projection")
+        )
+
+        if projection is None:
+            # No projection means all fields fetched — backtest IS included.
+            pytest.fail(
+                "find() was called with no projection — 'backtest' field will be fetched. "
+                "Pass an inclusion projection that omits 'backtest'."
+            )
+
+        # In an inclusion projection, a field is included only if its value is truthy (1/True).
+        # If 'backtest' is in the projection with a truthy value, it will be fetched.
+        backtest_included = projection.get("backtest", 0)
+        assert not backtest_included, (
+            f"projection must NOT include 'backtest' (fetching it bloats memory); "
+            f"got projection={projection!r}"
+        )
+
+    def test_projection_excludes_quantstats_metrics(self):
+        """The projection must NOT request 'quantstats_metrics'.
+
+        'quantstats_metrics' is another large nested object in the corpus docs.
+        Same logic as test_projection_excludes_backtest.
+        """
+        from advisors.community_strats import load_community_strategies
+
+        docs = self._five_distinct_docs()
+        client, col, cursor = _make_client_with_cursor(docs)
+
+        load_community_strategies(client=client)
+
+        call = col.find.call_args
+        positional_projection = call.args[1] if len(call.args) >= 2 else None
+        projection = (
+            positional_projection
+            if positional_projection is not None
+            else call.kwargs.get("projection")
+        )
+
+        if projection is None:
+            pytest.fail(
+                "find() was called with no projection — 'quantstats_metrics' will be fetched. "
+                "Pass an inclusion projection that omits 'quantstats_metrics'."
+            )
+
+        qm_included = projection.get("quantstats_metrics", 0)
+        assert not qm_included, (
+            f"projection must NOT include 'quantstats_metrics'; got projection={projection!r}"
+        )

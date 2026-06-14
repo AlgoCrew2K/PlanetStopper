@@ -1,10 +1,10 @@
 # TDD Handoff
 Plan: feature-plans/community-strats-loader.md
 Branch: pr/community-strats-loader
-Phase: green
+Phase: red
 
 ## Test Files
-- `tests/advisors/test_community_strats.py` — 52 tests (45 RED, 7 already-GREEN)
+- `tests/advisors/test_community_strats.py` — 61 tests (8 RED / 53 already-GREEN)
 
 ## Behavioral Test Plan
 N/A — no UI surface. This is a read-only data loader, off-execution-path, advisory-only.
@@ -62,6 +62,15 @@ No e2e spec required (no Flask route, no browser interaction).
 | AC-8 | load_community_strategies is callable | TestAC8BoundaryAssertions | test_load_community_strategies_is_the_public_entrypoint | GREEN (stub satisfies) |
 | AC-8 | all params are keyword-only | TestAC8BoundaryAssertions | test_load_community_strategies_accepts_keyword_only_params | GREEN (stub satisfies) |
 | AC-8 | _connect_mongo is defined and callable | TestAC8BoundaryAssertions | test_connect_mongo_is_internal | GREEN (stub satisfies) |
+| AC-9 | limit=N applied at query level (cursor.limit or find kwarg) | TestAC9QueryEfficiency | test_limit_applied_via_cursor_limit_or_find_kwarg | RED |
+| AC-9 | limit=1 edge case applied at query level | TestAC9QueryEfficiency | test_limit_one_applied_at_query_not_sliced | RED |
+| AC-9 | limit=None does not impose a cursor restriction | TestAC9QueryEfficiency | test_no_limit_does_not_call_cursor_limit | GREEN (correct; buggy impl also passes this) |
+| AC-9 | find() called with a projection dict | TestAC9QueryEfficiency | test_find_called_with_projection_dict | RED |
+| AC-9 | projection includes edn_string | TestAC9QueryEfficiency | test_projection_includes_edn_string | RED |
+| AC-9 | projection includes sid | TestAC9QueryEfficiency | test_projection_includes_sid | RED |
+| AC-9 | projection includes oos_metrics | TestAC9QueryEfficiency | test_projection_includes_oos_metrics | RED |
+| AC-9 | projection excludes backtest | TestAC9QueryEfficiency | test_projection_excludes_backtest | RED |
+| AC-9 | projection excludes quantstats_metrics | TestAC9QueryEfficiency | test_projection_excludes_quantstats_metrics | RED |
 
 ## Already-GREEN (7 tests — all AC-8 boundary assertions)
 
@@ -157,6 +166,7 @@ Each candidate: `{sid, name, tree (validated raw_value dict), tickers (set/list 
 - [2026-06-14] test-writer: Starting RED phase (community-strats-loader)
 - [2026-06-14] test-writer: RED complete — 45 tests RED (all fail on NotImplementedError from stub), 7 tests GREEN (AC-8 static boundary guards). 2 fixtures written. 1 stub created. Failure mode confirmed: NotImplementedError, not syntax/import errors.
 - [2026-06-14] implementer: GREEN complete — 52/52 tests passing, 0 test bugs documented. Typecheck N/A (no separate mypy step). Lint not run (no ruff in worktree isolation; no new magic-number issues introduced).
+- [2026-06-14] test-writer: AC-9 RED added — 8 new failing tests for query-efficiency bug found in live Mongo functional check. Total suite now 61 tests: 8 RED / 53 GREEN. Failure mode: AssertionError on interaction assertions (cursor.limit not called; find() called with no projection). Bug confirmed: `list(collection.find({}))[:limit]` pulls all 8,339 docs before slicing.
 
 ## Test File Issues (for test-writer to fix)
 None.
@@ -171,3 +181,27 @@ None.
 - Composition hash strips `id` fields recursively before sha256 so two trees built from the same `symphony_schema` constructors (with different uuid4 node ids) hash identically when their structure and ticker content are the same.
 - `_oos_sharpe()` returns `-inf` for candidates lacking oos_metrics or the `sharpe` key, ensuring metric-bearing candidates always win dedup ties over metric-absent ones.
 - `min_oos_sharpe` filter is applied post-validate, pre-dedup; excluded docs are not counted as `invalid` (they are filtered, not malformed).
+
+## AC-9 Fix Required (implementer)
+
+**Bug:** `raw_docs = list(collection.find({}))` pulls all docs before slicing — confirmed to hang against 8,339 real Atlas docs.
+
+**Required changes to `load_community_strategies` fetch block:**
+
+```python
+# BUGGY (current):
+raw_docs = list(collection.find({}))
+if limit is not None:
+    raw_docs = raw_docs[:limit]
+
+# CORRECT — apply limit and projection at the query:
+_PROJECTION = {"sid": 1, "name": 1, "edn_string": 1, "oos_metrics": 1}
+cursor = collection.find({}, _PROJECTION)
+if limit is not None:
+    cursor = cursor.limit(limit)
+raw_docs = list(cursor)
+```
+
+The tests accept both `cursor.limit(N)` and `find({}, projection, limit=N)` forms. The projection must be an inclusion projection (fields set to 1) listing only the fields the loader uses: `sid`, `name`, `edn_string`, `oos_metrics`. `_id` is fine to include or exclude. `backtest` and `quantstats_metrics` must NOT be present with a truthy value.
+
+`test_no_limit_does_not_call_cursor_limit` is already GREEN against the buggy impl and must stay GREEN after the fix — it asserts that limit=None does not artificially restrict the cursor (cursor.limit not called, or called with 0).
