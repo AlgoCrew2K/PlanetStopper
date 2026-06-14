@@ -1,7 +1,7 @@
 # TDD Handoff — community-strats-loader
 Plan: feature-plans/community-strats-loader.md
 Branch: team/community-strats
-Phase: red
+Phase: green
 
 ## Test Files
 - tests/advisors/test_community_strats.py
@@ -34,6 +34,10 @@ N/A — no UI surface. All tests are unit tests.
 ## Status Log
 - [2026-06-14] test-writer: Starting RED phase for community-strats-loader (AC-1..AC-9)
 - [2026-06-14] test-writer: RED complete — 32 tests total (24 failing on stub, 7 green security/invariant guards, 1 skipped pending pymongo call). Stub created at advisors/community_strats.py. Committed at c1bca14 on team/community-strats.
+- [2026-06-14] test-writer: REVIEW — found 1 test bug (_raise side_effect TypeError masking D-1 test) + added 6 integration-specialist tests (S1-C plumbing, S2-B cache pipeline, S2-C stats invariant). Fixed bug. 38/38 GREEN at 3fbb650. APPROVED — all AC-1..AC-9 covered, 38 passed / 0 failed / 0 skipped. Ready for doc-writer then PM gate.
+
+## Test File Issues (for test-writer to fix)
+None remaining. Fixed: zero-arg `_raise` callable used as side_effect in 3 D-1 tests — mock forwarded call args causing TypeError. Fixed by using exception instances as side_effect.
 
 ## Implementation Notes for Implementer
 - edn_string wire format: implement as json.loads (safest, no eval). parse_failed on any ValueError/JSONDecodeError.
