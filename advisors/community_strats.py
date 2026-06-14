@@ -20,6 +20,18 @@ from typing import Any
 
 from advisors import symphony_schema
 
+# ---------------------------------------------------------------------------
+# Mongo query constants
+# ---------------------------------------------------------------------------
+
+# Inclusion projection: fetch only the fields the loader reads.
+# Omits 'backtest' and 'quantstats_metrics' (multi-MB arrays per doc).
+_PROJECTION: dict = {
+    "sid": 1,
+    "name": 1,
+    "edn_string": 1,
+    "oos_metrics": 1,
+}
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -145,9 +157,16 @@ def load_community_strategies(
 
     # --- Fetch documents ------------------------------------------------------
     try:
-        raw_docs = list(collection.find({}))
+        cursor = collection.find({}, _PROJECTION)
         if limit is not None:
-            raw_docs = raw_docs[:limit]
+            # Prefer cursor.limit() (pymongo native — bounds the query server-side).
+            # Fall back to slicing for plain-list iterables (e.g. test mocks that
+            # return a list directly from find()).
+            if hasattr(cursor, "limit"):
+                cursor = cursor.limit(limit)
+            else:
+                cursor = list(cursor)[:limit]
+        raw_docs = list(cursor)
     except Exception as exc:  # noqa: BLE001
         return {
             "available": False,
