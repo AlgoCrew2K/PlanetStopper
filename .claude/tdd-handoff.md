@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: feature-plans/community-strats-loader.md
 Branch: pr/community-strats-loader
-Phase: red
+Phase: green
 
 ## Test Files
 - `tests/advisors/test_community_strats.py` — 52 tests (45 RED, 7 already-GREEN)
@@ -156,3 +156,18 @@ Each candidate: `{sid, name, tree (validated raw_value dict), tickers (set/list 
 ## Status Log
 - [2026-06-14] test-writer: Starting RED phase (community-strats-loader)
 - [2026-06-14] test-writer: RED complete — 45 tests RED (all fail on NotImplementedError from stub), 7 tests GREEN (AC-8 static boundary guards). 2 fixtures written. 1 stub created. Failure mode confirmed: NotImplementedError, not syntax/import errors.
+- [2026-06-14] implementer: GREEN complete — 52/52 tests passing, 0 test bugs documented. Typecheck N/A (no separate mypy step). Lint not run (no ruff in worktree isolation; no new magic-number issues introduced).
+
+## Test File Issues (for test-writer to fix)
+None.
+
+## Disputed Tests
+None.
+
+## Implementation Notes
+- `advisors/community_strats.py` is the only file touched.
+- `limit` is enforced by slicing `list(collection.find({}))` after fetch, not by passing `limit=` to `find()`. The mock's `.find()` ignores keyword arguments; slicing is the only approach that makes both the mock and a real pymongo cursor work correctly.
+- Module docstring originally contained the string "LIVE_EXECUTION" in a "no X" clause. Removed — the AC-8 text-scan test flags ANY occurrence of the string, including negations. Replaced with "no execution flags."
+- Composition hash strips `id` fields recursively before sha256 so two trees built from the same `symphony_schema` constructors (with different uuid4 node ids) hash identically when their structure and ticker content are the same.
+- `_oos_sharpe()` returns `-inf` for candidates lacking oos_metrics or the `sharpe` key, ensuring metric-bearing candidates always win dedup ties over metric-absent ones.
+- `min_oos_sharpe` filter is applied post-validate, pre-dedup; excluded docs are not counted as `invalid` (they are filtered, not malformed).
