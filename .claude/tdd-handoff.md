@@ -7,7 +7,7 @@ Phase: red
 - tests/advisors/test_community_strats.py
 
 ## Fixture Files
-- tests/fixtures/advisors/community_strats_basic_doc.json
+None — fixtures are built inline via symphony_schema constructors in test helpers.
 
 ## A/C Coverage Matrix
 | A/C ID | Description | Test File | Test Name(s) | Status |
@@ -33,3 +33,13 @@ N/A — no UI surface. All tests are unit tests.
 
 ## Status Log
 - [2026-06-14] test-writer: Starting RED phase for community-strats-loader (AC-1..AC-9)
+- [2026-06-14] test-writer: RED complete — 32 tests total (24 failing on stub, 7 green security/invariant guards, 1 skipped pending pymongo call). Stub created at advisors/community_strats.py. Committed at c1bca14 on team/community-strats.
+
+## Implementation Notes for Implementer
+- edn_string wire format: implement as json.loads (safest, no eval). parse_failed on any ValueError/JSONDecodeError.
+- atlas_cache.cached_pull collection name: "captplanet.strategies" (matches AC-1/AC-2 spy tests).
+- The 7 security invariant tests (PASSED) are not to be broken — they assert things that must hold on both stub and real implementation.
+- The 1 skipped projection test activates once find() is called with a projection arg.
+- Trees must be deserialised from edn_string then passed through validate_tree ([] = keep; errors = validate_rejected++).
+- Dedup: use database.compute_composition_hash on tickers list from extract_tickers(tree). Keep doc with higher oos_metrics.get('sharpe', -inf) when hashes collide.
+- Missing sharpe: treat as -inf for dedup comparison only; keep doc regardless of min_oos_sharpe floor.
