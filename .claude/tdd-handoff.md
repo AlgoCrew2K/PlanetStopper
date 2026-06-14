@@ -1,7 +1,7 @@
 # TDD Handoff
 Plan: feature-plans/symphony-compound-construction.md
 Branch: pr/symphony-compound-construction
-Phase: red
+Phase: green
 
 ## Test Files
 - tests/advisors/test_symphony_schema.py — Section 12 "COMPOUND ANY/ALL CONSTRUCTION — Cycle B"
@@ -310,6 +310,59 @@ the test only asserts "any" appears in the output for a binary-compound ANY gate
 ## Test File Issues (for test-writer to fix)
 None — all 72 tests are syntactically correct and have been run to confirm RED/GREEN status.
 
+## Test File Issues (for test-writer to fix)
+
+### 1. TestGoldenFixtureSmall::test_small_fixture_extract_tickers_matches_reference_walk
+
+**File:** `tests/advisors/test_symphony_schema.py` line ~182
+
+**What the test expects:** `result == expected` where `expected = _ref_collect_tickers(raw_small)`.
+The `_ref_collect_tickers` reference walker only traverses `children` arrays and collects any
+dict's `ticker` field. It does NOT walk into `condition` blocks, and it does NOT collect from
+`condition.tickers[]` lists.
+
+**What correct code produces (AC-7):** `extract_tickers` now also walks `condition.tickers[]`
+from binary-compound condition blocks (per AC-7 requirement: watched tickers must be returned).
+The small golden fixture (`sample_score_small.json`) contains one binary-compound condition block
+with `tickers=['DWX', 'IXP', 'IWS', 'MGV', 'PTH', 'DEW', 'SCHG', 'XNTK', 'DNL', 'TILT']` —
+10 tickers that are now included in `extract_tickers` output but NOT in the reference walker output.
+
+**Root cause:** The oracle (`_ref_collect_tickers`) was accurate for the old `extract_tickers`
+behavior but does NOT reflect the new AC-7 behavior. The old and new behaviors conflict on the
+real fixture.
+
+**Suggested fix for test-writer:** Update `_ref_collect_tickers` to also walk `condition.tickers[]`
+lists (add handling for `current.get("tickers")` as a list), OR change the assertion from
+`result == expected` to `expected.issubset(result)` (all tickers the reference walker finds must
+be in the result, but result may be a superset). The existing AC-7 tests
+(`test_frontrunner_overlay_extract_tickers_includes_watched_tickers`) explicitly verify the new
+superset behavior is correct.
+
+## Disputed Tests
+None.
+
+## Implementation Notes
+
+- Only modified `advisors/symphony_schema.py` — no other files touched.
+- Six new constructors appended: `make_condition_operand`, `make_constant_rhs`,
+  `make_binary_condition`, `make_binary_compound_condition`, `make_compound_condition`,
+  `make_if_compound`.
+- Two new constants: `_KNOWN_CONDITION_TYPES`, `_KNOWN_OPERATORS` (used by `_validate_condition_block`).
+- New helpers: `_validate_condition_block` (AC-8), `_extract_tickers_from_condition` (AC-7),
+  `_render_condition_block` (AC-7 render extension).
+- `_validate_condition_block` validates TOP-LEVEL condition block only (does not recurse into
+  sub-conditions). Recursion was avoided because the pre-existing `test_compound_condition_block_tolerated`
+  (amendment-6 test) has sub-conditions that lack `condition-type` — recursing into them would
+  break that pre-existing passing test while none of the 4 AC-8 RED tests require nested recursion.
+- `extract_tickers` now returns a strict superset of the old behavior for trees with condition
+  blocks. This is correct per AC-7 but breaks the golden-fixture exact-match test (documented above).
+- `make_binary_compound_condition`: `tickers` is stored as `list(tickers)` — shallow copy is
+  sufficient because list elements are strings (immutable). Deep-copy of the list itself is done
+  by Python's `list()` call.
+- KNOWN_INDICATOR_FNS comment: filled in `n=?` placeholders per AC-11:
+  `percentage-price-oscillator n=99`, `percentage-price-oscillator-signal n=100`,
+  `upper-bollinger n=1`, `lower-bollinger n=1`.
+
 ## Status Log
 - [2026-06-14] test-writer: Starting RED phase (Cycle B — symphony-compound-construction)
 - [2026-06-14] test-writer: RED complete — 60 tests failing (all on AttributeError for
@@ -318,3 +371,9 @@ None — all 72 tests are syntactically correct and have been run to confirm RED
   0 import stubs created (new constructors appended to existing module).
   Failure mode confirmed: AttributeError: module 'advisors.symphony_schema' has no
   attribute 'make_condition_operand' (all 60 fail on attribute access, not syntax/import).
+- [2026-06-14] implementer: GREEN complete — 210/211 tests passing. All 60 previously-RED
+  Cycle B tests now GREEN. All 12 pre-existing Cycle B GREEN guards still GREEN. 1 pre-existing
+  Cycle A test (TestGoldenFixtureSmall::test_small_fixture_extract_tickers_matches_reference_walk)
+  now fails due to the AC-7 extract_tickers extension — documented as test file issue above.
+  Only advisors/symphony_schema.py was modified. Typecheck N/A (stdlib only, no type-checker
+  configured for this module). Lint: no ruff violations on the new code.
