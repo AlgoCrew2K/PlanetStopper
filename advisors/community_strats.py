@@ -144,6 +144,7 @@ def load_community_strategies(
         "missing_edn_string": 0,
         "parse_failed": 0,
         "validate_rejected": 0,
+        "sharpe_filtered": 0,
         "deduped": 0,
     }
 
@@ -198,6 +199,7 @@ def load_community_strategies(
     missing_edn_string = 0
     parse_failed = 0
     validate_rejected = 0
+    sharpe_filtered = 0
     valid_candidates: list[dict] = []
 
     # --- Parse and validate each document ------------------------------------
@@ -235,7 +237,7 @@ def load_community_strategies(
                 and "sharpe" in oos_metrics
                 and oos_metrics["sharpe"] < min_oos_sharpe
             ):
-                # filtered out — NOT a drop-accounting event
+                sharpe_filtered += 1
                 continue
 
         comp_hash = _composition_hash(tree)
@@ -268,12 +270,8 @@ def load_community_strategies(
 
     final_candidates = list(best_by_hash.values())
 
-    # valid counts post-dedup survivors so the sum invariant holds exactly when
-    # min_oos_sharpe is None:
-    #   pulled == valid + deduped + missing_edn_string + parse_failed + validate_rejected
-    # When min_oos_sharpe is set, docs excluded by the sharpe filter are not counted
-    # in any drop key, so pulled may exceed the sum (slice-2 adds a sharpe_filtered
-    # counter to close that gap).
+    # pulled == valid + deduped + missing_edn_string + parse_failed
+    #          + validate_rejected + sharpe_filtered
     return {
         "available": True,
         "candidates": final_candidates,
@@ -283,6 +281,7 @@ def load_community_strategies(
             "missing_edn_string": missing_edn_string,
             "parse_failed": parse_failed,
             "validate_rejected": validate_rejected,
+            "sharpe_filtered": sharpe_filtered,
             "deduped": deduped_count,
         },
         "source": "captplanet",
