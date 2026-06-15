@@ -1,7 +1,7 @@
 # TDD Handoff — lens-data-gdelt-sentiment
 Plan: feature-plans/lens-data-gdelt-sentiment.md
 Branch: feat/lens-gdelt-tone
-Phase: done
+Phase: phase2-red
 
 ## Test Files
 - tests/ai_advisor/test_lens_gdelt.py (RED — comprehensive coverage)
@@ -77,3 +77,4 @@ None.
 - [2026-06-15] test-writer: review-round gaps found — Gap 1: inter-request sleep never called (defined but unused); Gap 2: non-429 HTTP errors returned 'HTTPError' instead of named label 'gdelt_fetch_failed'. Added 3 RED tests in TestReviewRoundGaps class (commit bfc7b44).
 - [2026-06-15] test-writer: confirmed both gaps already fixed in implementer's 71c917b. Re-ran suite; Hypothesis deadline failure found (time.sleep(6.0) fires during property test). Fixed: patch time.sleep + deadline=None in both property tests (commit 21181ba).
 - [2026-06-15] test-writer: FULL GREEN — 47 passed / 0 failed / 2 deselected (live). Phase: done. Notifying reviewer and doc-writer.
+- [2026-06-15] test-writer: PHASE 2 RED — PM dispatched Phase 2: wire lens_gdelt._fetch_gdelt_sentiment into ai_advisor._build_sentiment_section. Added _make_tone_result() helper + TestPhase2GdeltToneWiring class (8 tests) to test_cycle2_lens_producers.py. Updated all 7 existing TestGdeltSentimentProducer tests for forward-compatibility. RED confirmed: 4 wiring tests failing, 42 existing passing, 1 pre-existing fail (test_derivatives_stub_still_returns_available_false — present at fork-point ed4a901). Commit 5d0d8bc. Handing off to implementer.
