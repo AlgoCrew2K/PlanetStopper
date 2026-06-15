@@ -529,8 +529,9 @@ def _build_derivatives_section(_data: object = None) -> dict:
 
     Lazy-imports advisors.lens_options_proxy inside the function body (CC-2
     boundary) — never at module level.  D-1: reason is always
-    type(exc).__name__ only (enforced by the proxy; this function propagates
-    verbatim).
+    type(exc).__name__ only (enforced by the proxy; this function adds a
+    defense-in-depth try/except so any unexpected raise from the proxy or
+    the import itself also degrades cleanly).
 
     Args:
         _data: unused; reserved for caller pre-injection.
@@ -540,8 +541,24 @@ def _build_derivatives_section(_data: object = None) -> dict:
         {lens, available, reason, payload, sources} on failure.
     """
     _lens = "derivatives"
-    from advisors import lens_options_proxy as _proxy_mod  # CC-2: lazy import
-    result = _proxy_mod._fetch_options_proxy()
+    try:
+        from advisors import lens_options_proxy as _proxy_mod  # CC-2: lazy import
+        result = _proxy_mod._fetch_options_proxy()
+    except Exception as exc:  # noqa: BLE001
+        # Defense-in-depth: proxy contract guarantees never-raise, but guard
+        # against import errors or future regressions. D-1: type name only —
+        # str(exc) may contain FRED_API_KEY embedded in a request URL.
+        exc_type = type(exc).__name__
+        logger.warning(
+            "Derivatives lens unavailable (caller guard): %s", exc_type
+        )
+        return {
+            "lens": _lens,
+            "available": False,
+            "reason": exc_type,
+            "payload": None,
+            "sources": [],
+        }
 
     if not result.get("available"):
         return {

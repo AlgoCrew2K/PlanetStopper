@@ -1038,3 +1038,142 @@ class TestAssembleAdvisorContextCallSiteGuard:
                     f"The call-site at ai_advisor.py:1208 has no try/except guard. "
                     f"RED: fails until the implementer adds the exception guard."
                 )
+
+
+# ---------------------------------------------------------------------------
+# Defense-in-depth: exception isolation — _build_derivatives_section caller guard
+# ---------------------------------------------------------------------------
+
+_FAKE_SECRET = "api_key=SECRET_TOKEN_12345"
+
+_EXCEPTION_CLASSES = [
+    RuntimeError,
+    ValueError,
+    OSError,
+    ConnectionError,
+]
+
+
+def _make_raising_proxy(exc_class: type, secret: str = _FAKE_SECRET):
+    """Return a callable that raises exc_class with a message containing secret."""
+    def _raise():
+        raise exc_class(f"Request failed: {secret}")
+    return _raise
+
+
+class TestDerivativesSectionExceptionIsolation:
+    """_build_derivatives_section must degrade gracefully when proxy raises.
+
+    These tests assert:
+
+    1. When _fetch_options_proxy RAISES (monkeypatched), _build_derivatives_section
+       returns available=False with an informative reason that contains ONLY
+       type(exc).__name__ — never str(exc) and never any secret embedded in the
+       exception message.
+
+    2. The secret string embedded in the exception is NEVER present in the returned
+       reason (D-1 hard rule: no credential leakage even from exception payloads).
+
+    3. The returned dict has the full honest-unavailable shape:
+       {lens, available, reason, payload, sources} matching the existing contract.
+
+    4. The exception does NOT propagate — _build_derivatives_section catches it
+       internally.
+
+    No network. No live FRED calls. No DB.
+    """
+
+    @pytest.mark.parametrize("exc_class", _EXCEPTION_CLASSES)
+    def test_returns_available_false_when_proxy_raises(self, exc_class):
+        """available=False returned (not raised) when _fetch_options_proxy raises."""
+        import ai_advisor
+
+        with patch(
+            "advisors.lens_options_proxy._fetch_options_proxy",
+            side_effect=_make_raising_proxy(exc_class),
+        ):
+            result = ai_advisor._build_derivatives_section()
+
+        assert isinstance(result, dict), (
+            "_build_derivatives_section must return dict, never propagate"
+        )
+        assert result.get("available") is False, (
+            f"available must be False when proxy raises, got {result.get('available')!r}"
+        )
+
+    @pytest.mark.parametrize("exc_class", _EXCEPTION_CLASSES)
+    def test_reason_is_exc_type_name_only(self, exc_class):
+        """reason contains ONLY type(exc).__name__ — not str(exc), not the secret."""
+        import ai_advisor
+
+        with patch(
+            "advisors.lens_options_proxy._fetch_options_proxy",
+            side_effect=_make_raising_proxy(exc_class),
+        ):
+            result = ai_advisor._build_derivatives_section()
+
+        reason = result.get("reason", "")
+        assert isinstance(reason, str) and reason, (
+            f"reason must be a non-empty string, got {reason!r}"
+        )
+        # D-1: reason must be the bare class name
+        assert reason == exc_class.__name__, (
+            f"reason must equal type(exc).__name__ == {exc_class.__name__!r}, "
+            f"got {reason!r}"
+        )
+
+    @pytest.mark.parametrize("exc_class", _EXCEPTION_CLASSES)
+    def test_reason_never_contains_secret(self, exc_class):
+        """Secret embedded in str(exc) must NEVER appear in the returned reason."""
+        import ai_advisor
+
+        with patch(
+            "advisors.lens_options_proxy._fetch_options_proxy",
+            side_effect=_make_raising_proxy(exc_class, secret=_FAKE_SECRET),
+        ):
+            result = ai_advisor._build_derivatives_section()
+
+        reason = result.get("reason", "")
+        assert _FAKE_SECRET not in reason, (
+            f"Secret string leaked into reason: {reason!r}"
+        )
+
+    @pytest.mark.parametrize("exc_class", _EXCEPTION_CLASSES)
+    def test_returned_shape_matches_honest_unavailable_contract(self, exc_class):
+        """Returned dict has all required keys in the honest-unavailable shape."""
+        import ai_advisor
+
+        with patch(
+            "advisors.lens_options_proxy._fetch_options_proxy",
+            side_effect=_make_raising_proxy(exc_class),
+        ):
+            result = ai_advisor._build_derivatives_section()
+
+        assert result.get("lens") == "derivatives", (
+            f"lens key must be 'derivatives', got {result.get('lens')!r}"
+        )
+        assert result.get("available") is False
+        assert "reason" in result, "reason key must be present on available=False"
+        assert result.get("payload") is None, (
+            f"payload must be None when available=False, got {result.get('payload')!r}"
+        )
+        assert result.get("sources") == [], (
+            f"sources must be [] when available=False, got {result.get('sources')!r}"
+        )
+
+    def test_exception_does_not_propagate(self):
+        """Exception from proxy must not propagate out of _build_derivatives_section."""
+        import ai_advisor
+
+        with patch(
+            "advisors.lens_options_proxy._fetch_options_proxy",
+            side_effect=_make_raising_proxy(RuntimeError),
+        ):
+            # If this raises, the test fails — that's the assertion.
+            try:
+                ai_advisor._build_derivatives_section()
+            except Exception as exc:  # noqa: BLE001
+                pytest.fail(
+                    f"_build_derivatives_section propagated an exception "
+                    f"instead of degrading to available=False: {exc!r}"
+                )
