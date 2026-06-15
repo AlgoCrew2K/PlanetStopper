@@ -33,9 +33,11 @@ signal and an `artlist` request for source citations. The tone signal is the mea
 `AvgTone` across timeline data points, normalized from GDELT's `[-100, 100]`
 native scale to `[-1.0, 1.0]`.
 
-The module is off-execution-path (never imported at the module level in
-`alpha_bot_execution.py`) and uses `lazy import` at the call site in
-`ai_advisor._build_sentiment_section` (CC-2 import-boundary invariant).
+The module is off-execution-path and has no production caller yet -- it is
+scaffolded infrastructure (analogous to `advisors/lens_warehouse.py`). The
+intended wiring is a lazy import inside `ai_advisor._build_sentiment_section`
+(CC-2 import-boundary invariant), deferred to a follow-on cycle; the current
+`_build_sentiment_section` still uses an older inline GDELT artlist fetch.
 
 **Prior bug fixed in this cycle (gdelt-diagnosis.md §1):** The original
 implementation read `entry.get("value")` from the series-wrapper object
@@ -148,3 +150,7 @@ GDELT `AvgTone` is in `[-100, 100]`. Dividing by 100 maps to `[-1, 1]`.
   (≥ 6 s/ticker). Deferred to v2.
 - **No artlist retry.** Artlist failures yield `sources=[]` silently. A future
   improvement could retry artlist on 429 with the same bounded-backoff logic.
+- **No production caller yet.** `_fetch_gdelt_sentiment` is not imported by any
+  production module on this branch. The wiring into `ai_advisor._build_sentiment_section`
+  is deferred. Do not reference `advisors/lens_gdelt.py` from production code until
+  the caller is wired in a follow-on cycle.
