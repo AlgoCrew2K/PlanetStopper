@@ -88,12 +88,7 @@ import pytest
 
 import math_engine
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "vwap_bleed_arm"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "vwap_bleed_arm"
 
 # Tolerance: see module docstring. rel=1e-9 catches algorithm errors by
 # seven+ orders of magnitude; abs=1e-12 anchors zero-magnitude comparisons.
@@ -142,8 +137,7 @@ def test_vwap_bleed_arm_threshold_matches_derived_expected(
     """
     func_name = fixture["function"]
     assert func_name == "compute_vwap_bleed_arm_threshold", (
-        f"{fixture_name}: only compute_vwap_bleed_arm_threshold is in scope "
-        f"for this cycle"
+        f"{fixture_name}: only compute_vwap_bleed_arm_threshold is in scope for this cycle"
     )
 
     inputs = fixture["inputs"]
@@ -169,26 +163,24 @@ def test_vwap_bleed_arm_threshold_matches_derived_expected(
     [
         # Range chosen to span: deep negative raw (clamped low), in-window
         # raw, raw near zero / above upper clamp, and degenerate negatives.
-        (0.0,    0.0),
-        (0.0,    1.5),
-        (0.05,   1.0),   # raw = -0.05, above upper clamp
-        (0.3,    1.0),   # raw = -0.3, above upper clamp
-        (0.5,    1.0),   # raw = -0.5, on upper clamp
-        (0.7,    1.0),   # raw = -0.7, in-window
-        (1.0,    1.5),   # raw = -1.5, in-window
-        (1.5,    1.5),   # raw = -2.25, in-window
-        (2.0,    1.5),   # raw = -3.0, on lower clamp
-        (3.0,    1.5),   # raw = -4.5, below lower clamp
-        (10.0,   5.0),   # raw = -50.0, far below lower clamp
-        (-1.0,   1.5),   # degenerate: raw > 0
-        (-100.0, 100.0), # degenerate large: raw > 0
-        (1e-12,  1.0),   # tiny positive vol
-        (1e9,    1e-9),  # huge vol, tiny multiplier, raw = -1.0 in-window
+        (0.0, 0.0),
+        (0.0, 1.5),
+        (0.05, 1.0),  # raw = -0.05, above upper clamp
+        (0.3, 1.0),  # raw = -0.3, above upper clamp
+        (0.5, 1.0),  # raw = -0.5, on upper clamp
+        (0.7, 1.0),  # raw = -0.7, in-window
+        (1.0, 1.5),  # raw = -1.5, in-window
+        (1.5, 1.5),  # raw = -2.25, in-window
+        (2.0, 1.5),  # raw = -3.0, on lower clamp
+        (3.0, 1.5),  # raw = -4.5, below lower clamp
+        (10.0, 5.0),  # raw = -50.0, far below lower clamp
+        (-1.0, 1.5),  # degenerate: raw > 0
+        (-100.0, 100.0),  # degenerate large: raw > 0
+        (1e-12, 1.0),  # tiny positive vol
+        (1e9, 1e-9),  # huge vol, tiny multiplier, raw = -1.0 in-window
     ],
 )
-def test_output_is_always_within_clamp_window(
-    symphony_vol: float, bleed_multiplier: float
-) -> None:
+def test_output_is_always_within_clamp_window(symphony_vol: float, bleed_multiplier: float) -> None:
     """
     Invariant: for ANY input, the output is in the closed interval
     [VWAP_BLEED_ARM_MIN, VWAP_BLEED_ARM_MAX] = [-3.0, -0.5]. Sweeps
@@ -218,15 +210,13 @@ def test_output_is_always_within_clamp_window(
         (0.0, 1.5),
         (1.0, 1.5),
         (5.0, 5.0),
-        (-1.0, 1.5),     # degenerate
-        (1.0, -1.5),     # degenerate
-        (-1.0, -1.5),    # degenerate
+        (-1.0, 1.5),  # degenerate
+        (1.0, -1.5),  # degenerate
+        (-1.0, -1.5),  # degenerate
         (1e-15, 1e-15),  # near-zero
     ],
 )
-def test_output_is_always_non_positive(
-    symphony_vol: float, bleed_multiplier: float
-) -> None:
+def test_output_is_always_non_positive(symphony_vol: float, bleed_multiplier: float) -> None:
     """
     Invariant: output <= 0 for ALL inputs (a bleed threshold is a drop
     measured in percentage points; positive thresholds would be
@@ -269,14 +259,24 @@ def test_monotone_non_increasing_in_vol_for_fixed_positive_multiplier() -> None:
     """
     multiplier = 1.5  # fixed, strictly positive
     vols = [
-        0.0, 0.1, 0.2, 0.3, 0.33,    # tiny: raw above MAX -> all == -0.5
-        0.5, 0.7, 1.0, 1.2, 1.5,     # mid: raw in-window -> linear
-        2.0, 2.5, 3.0, 5.0, 100.0,   # large: raw below MIN -> all == -3.0
+        0.0,
+        0.1,
+        0.2,
+        0.3,
+        0.33,  # tiny: raw above MAX -> all == -0.5
+        0.5,
+        0.7,
+        1.0,
+        1.2,
+        1.5,  # mid: raw in-window -> linear
+        2.0,
+        2.5,
+        3.0,
+        5.0,
+        100.0,  # large: raw below MIN -> all == -3.0
     ]
     results = [
-        math_engine.compute_vwap_bleed_arm_threshold(
-            symphony_vol=v, bleed_multiplier=multiplier
-        )
+        math_engine.compute_vwap_bleed_arm_threshold(symphony_vol=v, bleed_multiplier=multiplier)
         for v in vols
     ]
     for i in range(1, len(results)):
@@ -339,9 +339,7 @@ def test_function_is_pure_repeat_call_returns_identical_result(
         (0.0, 0.0),
     ],
 )
-def test_return_type_contract_plain_float(
-    symphony_vol: float, bleed_multiplier: float
-) -> None:
+def test_return_type_contract_plain_float(symphony_vol: float, bleed_multiplier: float) -> None:
     """
     Contract: returns EXACTLY a plain Python float on every code path.
     Strict `type() is float` check because:
@@ -433,10 +431,7 @@ def test_named_clamp_constants_exist_with_source_comments() -> None:
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.Assign):
             for tgt in node.targets:
-                if (
-                    isinstance(tgt, ast.Name)
-                    and tgt.id in expected_constants
-                ):
+                if isinstance(tgt, ast.Name) and tgt.id in expected_constants:
                     found_linenos[tgt.id] = node.lineno
 
     for name in expected_constants:
@@ -481,10 +476,7 @@ def test_no_bare_clamp_literals_in_function_body() -> None:
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_vwap_bleed_arm_threshold"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_vwap_bleed_arm_threshold":
             target = node
             break
     assert target is not None, (
@@ -496,9 +488,7 @@ def test_no_bare_clamp_literals_in_function_body() -> None:
     for sub in ast.walk(target):
         if isinstance(sub, ast.Assign):
             for tgt in sub.targets:
-                if isinstance(tgt, ast.Name) and isinstance(
-                    sub.value, ast.Constant
-                ):
+                if isinstance(tgt, ast.Name) and isinstance(sub.value, ast.Constant):
                     named_literal_lines.add(sub.value.lineno)
 
     def line_has_comment(lineno: int) -> bool:
@@ -512,9 +502,7 @@ def test_no_bare_clamp_literals_in_function_body() -> None:
 
     offenders: list[tuple[int, Any]] = []
     for sub in ast.walk(target):
-        if isinstance(sub, ast.Constant) and isinstance(
-            sub.value, (int, float)
-        ):
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, (int, float)):
             val = sub.value
             if isinstance(val, bool):
                 continue

@@ -55,11 +55,14 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _WORKTREE = pathlib.Path(__file__).parent.parent.parent
-_STATIC_JS  = _WORKTREE / "static" / "index.js"
+_STATIC_JS = _WORKTREE / "static" / "index.js"
 _INDEX_HTML = _WORKTREE / "templates" / "index.html"
 _FIXTURE_PATH = (
     pathlib.Path(__file__).parent.parent
-    / "fixtures" / "dashboard" / "cards_live" / "card_consistency_bot_state.json"
+    / "fixtures"
+    / "dashboard"
+    / "cards_live"
+    / "card_consistency_bot_state.json"
 )
 
 # Size of the function body window used for JS text searches.
@@ -85,14 +88,14 @@ def _update_cards_body(src: str) -> str:
     """Extract the updateCards function body (from signature through closing brace)."""
     start = src.find("function updateCards(")
     assert start != -1, "function updateCards not found in static/index.js"
-    return src[start: start + _UPDATE_CARDS_WINDOW]
+    return src[start : start + _UPDATE_CARDS_WINDOW]
 
 
 def _update_dashboard_body(src: str) -> str:
     """Extract the updateDashboard function body."""
     start = src.find("function updateDashboard(")
     assert start != -1, "function updateDashboard not found in static/index.js"
-    return src[start: start + _UPDATE_DASHBOARD_WINDOW]
+    return src[start : start + _UPDATE_DASHBOARD_WINDOW]
 
 
 # ---------------------------------------------------------------------------
@@ -139,9 +142,7 @@ def flask_client():
     with patch.object(app_module, "analytics", analytics_mock):
         with patch.object(app_module, "database") as db_mock:
             db_mock.load_state.return_value = bot_state
-            db_mock.normalize_name.side_effect = (
-                lambda n: (n or "").lower().replace(" ", "_")
-            )
+            db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_shadow_divergence.return_value = {
                 "by_symphony": {},
                 "portfolio_today": None,
@@ -188,9 +189,7 @@ class TestGuardAlphaInSymphoniesPayload:
     in the DOM; updateCards must show/update it using guard_alpha from symphonies.
     """
 
-    def test_triggered_symphony_carries_guard_alpha_in_symphonies(
-        self, flask_client
-    ):
+    def test_triggered_symphony_carries_guard_alpha_in_symphonies(self, flask_client):
         """
         CC-1a: a symphony with triggered=True and a guard_alpha value in bot_state
         must have that guard_alpha present in the 'symphonies' payload.
@@ -200,9 +199,7 @@ class TestGuardAlphaInSymphoniesPayload:
 
         # sym_exiting is triggered=True and has guard_alpha=1.30 in the fixture.
         exiting = sym_map.get("sym_exiting")
-        assert exiting is not None, (
-            "CC-1a FAIL: sym_exiting not found in symphonies payload"
-        )
+        assert exiting is not None, "CC-1a FAIL: sym_exiting not found in symphonies payload"
         assert exiting.get("triggered") is True, (
             "CC-1a FAIL: sym_exiting must show triggered=True in symphonies"
         )
@@ -218,9 +215,7 @@ class TestGuardAlphaInSymphoniesPayload:
             f"CC-1a FAIL: guard_alpha must be numeric; got {type(ga).__name__}: {ga!r}"
         )
 
-    def test_non_triggered_symphony_guard_alpha_absent_or_none(
-        self, flask_client
-    ):
+    def test_non_triggered_symphony_guard_alpha_absent_or_none(self, flask_client):
         """
         CC-1b: a non-triggered symphony must NOT carry a meaningful guard_alpha
         (must be absent or None) — a non-zero guard_alpha on an armed/standby card
@@ -241,9 +236,7 @@ class TestGuardAlphaInSymphoniesPayload:
             "This would cause updateCards to show a spurious outcome banner on an armed card."
         )
 
-    def test_symphonies_payload_guard_alpha_matches_bot_state_value(
-        self, flask_client
-    ):
+    def test_symphonies_payload_guard_alpha_matches_bot_state_value(self, flask_client):
         """
         CC-1c: the guard_alpha in symphonies must come from bot_state, not be
         independently computed. It must match the fixture value (guard_alpha=1.30)
@@ -296,9 +289,7 @@ class TestStopTriggerInSymphoniesPayload:
             f"CC-2a FAIL: stop_trigger must be numeric; got {type(st).__name__}: {st!r}"
         )
 
-    def test_standby_symphony_carries_stop_trigger_none_or_absent(
-        self, flask_client
-    ):
+    def test_standby_symphony_carries_stop_trigger_none_or_absent(self, flask_client):
         """
         CC-2b: a standby symphony with stop_trigger=null in the fixture must
         carry None (or be absent) in the symphonies payload — not a default 0
@@ -345,7 +336,7 @@ class TestQuerySelectorAllForDuplicatedDataFields:
         body = _update_cards_body(src)
 
         # querySelectorAll for data-field tc-bot must appear inside updateCards.
-        assert re.search(r'querySelectorAll\(.*?data-field.*?tc-bot', body), (
+        assert re.search(r"querySelectorAll\(.*?data-field.*?tc-bot", body), (
             "CC-3 FAIL: static/index.js updateCards does not use querySelectorAll "
             "for '[data-field=\"tc-bot\"]'. Using querySelector only updates the FIRST "
             "matching span — the headline shows the new value but the footer stays stale. "
@@ -363,7 +354,7 @@ class TestQuerySelectorAllForDuplicatedDataFields:
 
         # Any singular querySelector for tc-bot (not querySelectorAll) is a failure.
         singular_matches = re.findall(
-            r'(?<![A-Za-z])querySelector(?!All)\(.*?data-field.*?tc-bot',
+            r"(?<![A-Za-z])querySelector(?!All)\(.*?data-field.*?tc-bot",
             body,
         )
         assert not singular_matches, (
@@ -381,7 +372,7 @@ class TestQuerySelectorAllForDuplicatedDataFields:
         src = _js()
         body = _update_cards_body(src)
 
-        assert re.search(r'querySelectorAll\(.*?data-field.*?tc-held', body), (
+        assert re.search(r"querySelectorAll\(.*?data-field.*?tc-held", body), (
             "CC-4a FAIL: static/index.js updateCards does not use querySelectorAll "
             "for '[data-field=\"tc-held\"]'. Both the headline held span and the footer "
             "held span must be updated from the same source on each poll."
@@ -392,7 +383,7 @@ class TestQuerySelectorAllForDuplicatedDataFields:
         src = _js()
         body = _update_cards_body(src)
 
-        assert re.search(r'querySelectorAll\(.*?data-field.*?cr-bot', body), (
+        assert re.search(r"querySelectorAll\(.*?data-field.*?cr-bot", body), (
             "CC-4b FAIL: static/index.js updateCards does not use querySelectorAll "
             "for '[data-field=\"cr-bot\"]'. Use querySelectorAll to ensure all matching "
             "spans in the card are updated."
@@ -403,7 +394,7 @@ class TestQuerySelectorAllForDuplicatedDataFields:
         src = _js()
         body = _update_cards_body(src)
 
-        assert re.search(r'querySelectorAll\(.*?data-field.*?mdd-bot', body), (
+        assert re.search(r"querySelectorAll\(.*?data-field.*?mdd-bot", body), (
             "CC-4c FAIL: static/index.js updateCards does not use querySelectorAll "
             "for '[data-field=\"mdd-bot\"]'. Use querySelectorAll to ensure all matching "
             "spans in the card are updated."
@@ -460,14 +451,12 @@ class TestTriggeredVerdictAlwaysRendered:
         # check the 300 chars preceding it for a bare {% if ... triggered ... %} block
         # with no closing tag between the if and the div.
         for m in re.finditer(r'data-testid=["\']triggered-verdict["\']', html):
-            preceding = html[max(0, m.start() - 300): m.start()]
+            preceding = html[max(0, m.start() - 300) : m.start()]
             # Does the preceding window contain an unclosed {% if ...triggered... %} block?
             # Count if-blocks vs endif-blocks in the window — if there's an unmatched if
             # for triggered, the element IS inside that conditional.
-            if_triggered = len(re.findall(
-                r'\{%\s*if\s+sym\.get\(["\']triggered["\']\)', preceding
-            ))
-            endif_count = len(re.findall(r'\{%\s*endif\s*%\}', preceding))
+            if_triggered = len(re.findall(r'\{%\s*if\s+sym\.get\(["\']triggered["\']\)', preceding))
+            endif_count = len(re.findall(r"\{%\s*endif\s*%\}", preceding))
             # If there are more if-triggered blocks than endifs in the window, the
             # triggered-verdict div is inside an unclosed if block — fail.
             if if_triggered > endif_count:
@@ -566,10 +555,7 @@ class TestOutcomeBannerTextFromGuardAlpha:
         src = _js()
         body = _update_cards_body(src)
 
-        has_guard_alpha_read = (
-            "sym.guard_alpha" in body
-            or 'sym["guard_alpha"]' in body
-        )
+        has_guard_alpha_read = "sym.guard_alpha" in body or 'sym["guard_alpha"]' in body
         assert has_guard_alpha_read, (
             "CC-6 FAIL: static/index.js updateCards does not read sym.guard_alpha. "
             "The outcome banner text ('Good call · saved +X%α' / 'Early exit · gave "
@@ -577,9 +563,7 @@ class TestOutcomeBannerTextFromGuardAlpha:
             "server-rendered content that is frozen at page load."
         )
 
-    def test_api_state_symphonies_guard_alpha_is_numeric_for_triggered(
-        self, flask_client
-    ):
+    def test_api_state_symphonies_guard_alpha_is_numeric_for_triggered(self, flask_client):
         """
         CC-6b: the guard_alpha value in the symphonies payload must be a number,
         not a string or None, for a triggered symphony — the JS formats it with
@@ -629,7 +613,7 @@ class TestHeroMiniStatsLiveUpdate:
         src = _js()
         start = src.find("function updateMiniStats(")
         assert start != -1, "function updateMiniStats not found in static/index.js"
-        body = src[start: start + 500]
+        body = src[start : start + 500]
 
         assert "hero-tracked" in body, (
             "CC-7b FAIL: updateMiniStats does not reference 'hero-tracked'. "
@@ -644,14 +628,10 @@ class TestHeroMiniStatsLiveUpdate:
         src = _js()
         start = src.find("function updateMiniStats(")
         assert start != -1
-        body = src[start: start + 500]
+        body = src[start : start + 500]
 
-        assert "meta.armed" in body, (
-            "CC-7c FAIL: updateMiniStats does not read meta.armed."
-        )
-        assert "meta.triggered" in body, (
-            "CC-7c FAIL: updateMiniStats does not read meta.triggered."
-        )
+        assert "meta.armed" in body, "CC-7c FAIL: updateMiniStats does not read meta.armed."
+        assert "meta.triggered" in body, "CC-7c FAIL: updateMiniStats does not read meta.triggered."
 
     def test_api_state_meta_carries_tracked_armed_triggered(self, flask_client):
         """
@@ -711,7 +691,7 @@ class TestMarketStateAndStripChipsUpdate:
         src = _js()
         start = src.find("function updateStatusStrip(")
         assert start != -1, "function updateStatusStrip not found in static/index.js"
-        body = src[start: start + 500]
+        body = src[start : start + 500]
 
         assert "market_state_label" in body, (
             "CC-8c FAIL: updateStatusStrip does not read meta.market_state_label."
@@ -779,7 +759,7 @@ class TestRegressionGuards:
             assert m is None, (
                 "CC-10c FAIL: static/index.js assigns data.html to innerHTML — "
                 "the prior broken pattern that injected the dark table. "
-                f"Found: {src[max(0, m.start()-40):m.end()+40]!r}"
+                f"Found: {src[max(0, m.start() - 40) : m.end() + 40]!r}"
             )
 
     @pytest.mark.parametrize(
@@ -849,16 +829,14 @@ class TestAlphaBadgeDataField:
         """CC-11b: the Cum α badge must have data-field='cr-alpha-badge'."""
         html = _html()
         assert re.search(r'data-field=["\']cr-alpha-badge["\']', html), (
-            "CC-11b FAIL: templates/index.html Cum α badge missing "
-            "data-field='cr-alpha-badge'."
+            "CC-11b FAIL: templates/index.html Cum α badge missing data-field='cr-alpha-badge'."
         )
 
     def test_mdd_alpha_badge_has_data_field(self):
         """CC-11c: the Max DD α badge must have data-field='mdd-alpha-badge'."""
         html = _html()
         assert re.search(r'data-field=["\']mdd-alpha-badge["\']', html), (
-            "CC-11c FAIL: templates/index.html Max DD α badge missing "
-            "data-field='mdd-alpha-badge'."
+            "CC-11c FAIL: templates/index.html Max DD α badge missing data-field='mdd-alpha-badge'."
         )
 
     def test_update_cards_updates_tc_alpha_badge(self):

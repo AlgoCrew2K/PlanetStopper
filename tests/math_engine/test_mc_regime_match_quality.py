@@ -139,10 +139,7 @@ import pytest
 import math_engine
 
 FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "mc_regime_match_quality"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "mc_regime_match_quality"
 )
 
 
@@ -566,8 +563,7 @@ def test_chi2_threshold_constant_is_named_and_has_correct_value() -> None:
     )
     threshold = math_engine.MC_REGIME_MATCH_CHI2_THRESHOLD
     assert isinstance(threshold, float), (
-        f"MC_REGIME_MATCH_CHI2_THRESHOLD is type {type(threshold).__name__!r}; "
-        f"must be float."
+        f"MC_REGIME_MATCH_CHI2_THRESHOLD is type {type(threshold).__name__!r}; must be float."
     )
     # chi2(2)_{0.99} = 9.21034037197618 (scipy.stats.chi2.ppf(0.99, df=2)).
     # rel=1e-6 because the published value is precise to ~12 sig figs and any
@@ -596,9 +592,7 @@ def test_neighbor_k_constant_is_named() -> None:
         "named constant."
     )
     k = direct if direct is not None else fallback
-    assert isinstance(k, int) and k > 0, (
-        f"Resolved K is {k!r}; must be a positive int."
-    )
+    assert isinstance(k, int) and k > 0, f"Resolved K is {k!r}; must be a positive int."
 
 
 def test_helper_source_contains_zero_magic_numbers() -> None:
@@ -779,9 +773,7 @@ def test_helper_does_not_compute_signed_cvar_divergence() -> None:
     if cls is None:
         pytest.fail("RegimeMatchAssessment missing; cannot scan its fields.")
     forbidden_pattern = re.compile(r"(?:divergence|cvar_div)", re.IGNORECASE)
-    offenders = [
-        f.name for f in dataclasses.fields(cls) if forbidden_pattern.search(f.name)
-    ]
+    offenders = [f.name for f in dataclasses.fields(cls) if forbidden_pattern.search(f.name)]
     assert not offenders, (
         f"RegimeMatchAssessment declares fields {offenders!r} that look like "
         f"CVaR-divergence quantities. The CVaR-divergence REJECT wall "

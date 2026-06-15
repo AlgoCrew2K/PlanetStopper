@@ -88,12 +88,30 @@ def test_advisor_observations_route_uses_single_query_symphony_filter(flask_clie
     """
     # Build a row that should be returned by the new accessor.
     expected_rows = [
-        _make_row(1, role="OVERFITTING_CONSCIENCE", subject_type="autotune_run",
-                  subject_id="7", verdict="CLEAR", symphony_id="DefensiveAlpha"),
-        _make_row(2, role="SPEC_CRITIC", subject_type="spec_bundle",
-                  subject_id="bundle-hash-abc", verdict="CLEAR", symphony_id="DefensiveAlpha"),
-        _make_row(3, role="DIVERGENCE_EXPLAINER", subject_type="autotune_run",
-                  subject_id="7", verdict="NOT_APPLICABLE", symphony_id="DefensiveAlpha"),
+        _make_row(
+            1,
+            role="OVERFITTING_CONSCIENCE",
+            subject_type="autotune_run",
+            subject_id="7",
+            verdict="CLEAR",
+            symphony_id="DefensiveAlpha",
+        ),
+        _make_row(
+            2,
+            role="SPEC_CRITIC",
+            subject_type="spec_bundle",
+            subject_id="bundle-hash-abc",
+            verdict="CLEAR",
+            symphony_id="DefensiveAlpha",
+        ),
+        _make_row(
+            3,
+            role="DIVERGENCE_EXPLAINER",
+            subject_type="autotune_run",
+            subject_id="7",
+            verdict="NOT_APPLICABLE",
+            symphony_id="DefensiveAlpha",
+        ),
     ]
 
     # Patch both candidate accessor names — the implementer's choice is OK; we
@@ -116,8 +134,7 @@ def test_advisor_observations_route_uses_single_query_symphony_filter(flask_clie
     # Patch whichever names exist.  Both names are accepted; at least one
     # should be the active accessor.
     patches = []
-    for name in ("get_advisor_observations_for_symphony",
-                 "get_advisor_observations_by_symphony"):
+    for name in ("get_advisor_observations_for_symphony", "get_advisor_observations_by_symphony"):
         if hasattr(db_module, name):
             patches.append(patch.object(db_module, name, side_effect=fake_new_accessor))
 
@@ -127,8 +144,7 @@ def test_advisor_observations_route_uses_single_query_symphony_filter(flask_clie
         "single-query accessor must be added for S3-AUDIT-004."
     )
 
-    with patch.object(db_module, "get_advisor_observations_for_subject",
-                      side_effect=fake_legacy):
+    with patch.object(db_module, "get_advisor_observations_for_subject", side_effect=fake_legacy):
         # Apply all candidate patches.
         for p in patches:
             p.start()
@@ -160,18 +176,36 @@ def test_advisor_observations_route_uses_single_query_symphony_filter(flask_clie
 def test_advisor_observations_route_returns_all_matching_symphony_rows(flask_client):
     """The route must return ALL rows whose symphony_id matches — not a subset."""
     rows = [
-        _make_row(1, role="OVERFITTING_CONSCIENCE", subject_type="autotune_run",
-                  subject_id="7", verdict="CLEAR", symphony_id="DefensiveAlpha"),
-        _make_row(2, role="SPEC_CRITIC", subject_type="spec_bundle",
-                  subject_id="bundle-hash-abc", verdict="CLEAR", symphony_id="DefensiveAlpha"),
-        _make_row(3, role="DIVERGENCE_EXPLAINER", subject_type="autotune_run",
-                  subject_id="7", verdict="NOT_APPLICABLE", symphony_id="DefensiveAlpha"),
+        _make_row(
+            1,
+            role="OVERFITTING_CONSCIENCE",
+            subject_type="autotune_run",
+            subject_id="7",
+            verdict="CLEAR",
+            symphony_id="DefensiveAlpha",
+        ),
+        _make_row(
+            2,
+            role="SPEC_CRITIC",
+            subject_type="spec_bundle",
+            subject_id="bundle-hash-abc",
+            verdict="CLEAR",
+            symphony_id="DefensiveAlpha",
+        ),
+        _make_row(
+            3,
+            role="DIVERGENCE_EXPLAINER",
+            subject_type="autotune_run",
+            subject_id="7",
+            verdict="NOT_APPLICABLE",
+            symphony_id="DefensiveAlpha",
+        ),
     ]
 
     import database as db_module
+
     patches = []
-    for name in ("get_advisor_observations_for_symphony",
-                 "get_advisor_observations_by_symphony"):
+    for name in ("get_advisor_observations_for_symphony", "get_advisor_observations_by_symphony"):
         if hasattr(db_module, name):
             patches.append(patch.object(db_module, name, return_value=list(rows)))
 

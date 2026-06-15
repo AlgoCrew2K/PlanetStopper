@@ -72,12 +72,16 @@ def _make_trial(idx: int, value: float, returns_pct: list) -> object:
     daily_returns stored as raw PERCENT values (e.g. 5.0 for 5%), matching
     production's autotuner.py:1855-1859 (T5 provenance contract).
     """
-    return type("FakeTrial", (), {
-        "value": value,
-        "user_attrs": {"daily_returns": returns_pct},
-        "params": {"TRIGGER_THRESHOLD_PCT": 10.0 + idx},
-        "number": idx,
-    })()
+    return type(
+        "FakeTrial",
+        (),
+        {
+            "value": value,
+            "user_attrs": {"daily_returns": returns_pct},
+            "params": {"TRIGGER_THRESHOLD_PCT": 10.0 + idx},
+            "number": idx,
+        },
+    )()
 
 
 # ===========================================================================
@@ -222,8 +226,12 @@ def test_tstat_fn_swap_changes_gate_outcome():
     autotuner = importlib.import_module("autotuner")
     q = fixture["harvey_liu_fdr_q"]
 
-    trial_0 = _make_trial(0, sc["trial_0"]["trial_value_not_sentinel"], sc["trial_0"]["daily_returns_pct"])
-    trial_1 = _make_trial(1, sc["trial_1"]["trial_value_not_sentinel"], sc["trial_1"]["daily_returns_pct"])
+    trial_0 = _make_trial(
+        0, sc["trial_0"]["trial_value_not_sentinel"], sc["trial_0"]["daily_returns_pct"]
+    )
+    trial_1 = _make_trial(
+        1, sc["trial_1"]["trial_value_not_sentinel"], sc["trial_1"]["daily_returns_pct"]
+    )
 
     winner_crra, p_adj_crra, tstat_crra = autotuner._haircut_select(
         [trial_0, trial_1],
@@ -286,8 +294,12 @@ def test_crra_tstat_values_match_u_transformed_fixture():
     sc = fixture["scenario_2_two_trial_winner_discriminator"]
     autotuner = importlib.import_module("autotuner")
 
-    trial_0 = _make_trial(0, sc["trial_0"]["trial_value_not_sentinel"], sc["trial_0"]["daily_returns_pct"])
-    trial_1 = _make_trial(1, sc["trial_1"]["trial_value_not_sentinel"], sc["trial_1"]["daily_returns_pct"])
+    trial_0 = _make_trial(
+        0, sc["trial_0"]["trial_value_not_sentinel"], sc["trial_0"]["daily_returns_pct"]
+    )
+    trial_1 = _make_trial(
+        1, sc["trial_1"]["trial_value_not_sentinel"], sc["trial_1"]["daily_returns_pct"]
+    )
 
     winner_trial, winner_p_adj, winner_tstat = autotuner._haircut_select(
         [trial_0, trial_1],
@@ -311,8 +323,7 @@ def test_crra_tstat_values_match_u_transformed_fixture():
 
     expected_p_adj = sc["with_crra_eu_tstat_fn_u_transformed"]["p_adj_trial_1"]
     assert winner_p_adj == pytest.approx(expected_p_adj, rel=1e-9), (
-        f"winner_p_adj={winner_p_adj!r} does not match the CRRA oracle p_adj "
-        f"({expected_p_adj!r})."
+        f"winner_p_adj={winner_p_adj!r} does not match the CRRA oracle p_adj ({expected_p_adj!r})."
     )
 
 
@@ -345,7 +356,10 @@ def test_crra_branch_applies_u_transform_not_raw_pct():
     Tolerance: rel=1e-9 for the positive-identity assertion.
     """
     import json as _json
-    u_transform_fixture = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "crra_haircut_u_transform_contract.json"
+
+    u_transform_fixture = (
+        _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "crra_haircut_u_transform_contract.json"
+    )
     sc = _json.loads(u_transform_fixture.read_text(encoding="utf-8"))["scenario_contract"]
     autotuner = importlib.import_module("autotuner")
 
@@ -401,8 +415,12 @@ def test_sortino_tstat_fn_produces_deterministic_results():
     sc = fixture["scenario_2_two_trial_winner_discriminator"]
     autotuner = importlib.import_module("autotuner")
 
-    trial_0 = _make_trial(0, sc["trial_0"]["trial_value_not_sentinel"], sc["trial_0"]["daily_returns_pct"])
-    trial_1 = _make_trial(1, sc["trial_1"]["trial_value_not_sentinel"], sc["trial_1"]["daily_returns_pct"])
+    trial_0 = _make_trial(
+        0, sc["trial_0"]["trial_value_not_sentinel"], sc["trial_0"]["daily_returns_pct"]
+    )
+    trial_1 = _make_trial(
+        1, sc["trial_1"]["trial_value_not_sentinel"], sc["trial_1"]["daily_returns_pct"]
+    )
 
     result_a = autotuner._haircut_select(
         [trial_0, trial_1],
@@ -422,9 +440,7 @@ def test_sortino_tstat_fn_produces_deterministic_results():
         f"{result_a[2]!r} vs {result_b[2]!r}.\n"
         "  seed=trial_idx contract must be preserved in the Sortino branch."
     )
-    assert result_a[1] == result_b[1], (
-        f"winner_p_adj differs: {result_a[1]!r} vs {result_b[1]!r}."
-    )
+    assert result_a[1] == result_b[1], f"winner_p_adj differs: {result_a[1]!r} vs {result_b[1]!r}."
 
 
 def test_crra_eu_tstat_fn_called_without_seed_does_not_raise():

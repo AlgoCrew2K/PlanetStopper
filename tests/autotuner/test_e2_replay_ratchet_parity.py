@@ -58,12 +58,7 @@ HWM_HOLD_TICKS_THRESHOLD: int = math_engine.HWM_HOLD_TICKS_THRESHOLD
 APPROX_REL = 1e-9
 APPROX_ABS = 1e-12
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "autotuner"
-    / "e2_replay_parity"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "autotuner" / "e2_replay_parity"
 
 
 def _load_fixture(name: str) -> dict:
@@ -105,12 +100,8 @@ def _compute_breakeven_update_call_sites(filename: str) -> list[ast.Call]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             func = node.func
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr == "compute_breakeven_update"
-            ) or (
-                isinstance(func, ast.Name)
-                and func.id == "compute_breakeven_update"
+            if (isinstance(func, ast.Attribute) and func.attr == "compute_breakeven_update") or (
+                isinstance(func, ast.Name) and func.id == "compute_breakeven_update"
             ):
                 calls.append(node)
     return calls
@@ -303,9 +294,7 @@ def test_replay_and_live_produce_identical_stop_trajectories() -> None:
             expected = max(tick["base_stop_level"], 0.0)
         else:
             expected = tick["base_stop_level"]
-        assert replay_stops[i] == pytest.approx(
-            expected, rel=APPROX_REL, abs=APPROX_ABS
-        ), (
+        assert replay_stops[i] == pytest.approx(expected, rel=APPROX_REL, abs=APPROX_ABS), (
             f"tick {i}: replay stop {replay_stops[i]} != HWM-anchored "
             f"expected {expected}. No cross-tick clamp may be applied."
         )
@@ -325,10 +314,15 @@ def test_replay_is_deterministic() -> None:
     """
     vol = 1.0
     ticks = [
-        {"current_return": 1.5, "symphony_vol": vol, "base_stop_level": -0.5, "is_triggered": False},
-        {"current_return": 1.6, "symphony_vol": vol, "base_stop_level":  0.5, "is_triggered": False},
-        {"current_return": 1.7, "symphony_vol": vol, "base_stop_level":  2.0, "is_triggered": False},
-        {"current_return": 2.0, "symphony_vol": vol, "base_stop_level":  0.5, "is_triggered": False},
+        {
+            "current_return": 1.5,
+            "symphony_vol": vol,
+            "base_stop_level": -0.5,
+            "is_triggered": False,
+        },
+        {"current_return": 1.6, "symphony_vol": vol, "base_stop_level": 0.5, "is_triggered": False},
+        {"current_return": 1.7, "symphony_vol": vol, "base_stop_level": 2.0, "is_triggered": False},
+        {"current_return": 2.0, "symphony_vol": vol, "base_stop_level": 0.5, "is_triggered": False},
     ]
     assert _simulate_ticks(ticks) == _simulate_ticks(ticks), (
         "Non-deterministic replay — compute_breakeven_update must be pure."

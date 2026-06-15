@@ -95,15 +95,22 @@ def test_compute_suggestion_gates_returns_canonical_gate_keys():
     # The function reads three live dependencies — mock to keep the contract
     # test focused on the KEY NAMING of the returned dict, not the truth of
     # any individual gate.
-    with patch.object(
-        app.ai_advisor, "enforce_suggestion_allowlist",
-        return_value=([suggestion], []),
-    ), patch.object(
-        app.ai_advisor, "check_risk_direction_agreement",
-        return_value={"agrees": True},
-    ), patch.object(
-        app.ai_advisor, "_read_current_strategy",
-        return_value=({}, set()),
+    with (
+        patch.object(
+            app.ai_advisor,
+            "enforce_suggestion_allowlist",
+            return_value=([suggestion], []),
+        ),
+        patch.object(
+            app.ai_advisor,
+            "check_risk_direction_agreement",
+            return_value={"agrees": True},
+        ),
+        patch.object(
+            app.ai_advisor,
+            "_read_current_strategy",
+            return_value=({}, set()),
+        ),
     ):
         gates = app._compute_suggestion_gates(suggestion, symphony_id="test-symphony")
 
@@ -160,15 +167,22 @@ def test_js_gate_labels_match_python_producer_keys():
     js_labels = _parse_js_gate_labels()
 
     suggestion = _build_suggestion(oos_status="passed")
-    with patch.object(
-        app.ai_advisor, "enforce_suggestion_allowlist",
-        return_value=([suggestion], []),
-    ), patch.object(
-        app.ai_advisor, "check_risk_direction_agreement",
-        return_value={"agrees": True},
-    ), patch.object(
-        app.ai_advisor, "_read_current_strategy",
-        return_value=({}, set()),
+    with (
+        patch.object(
+            app.ai_advisor,
+            "enforce_suggestion_allowlist",
+            return_value=([suggestion], []),
+        ),
+        patch.object(
+            app.ai_advisor,
+            "check_risk_direction_agreement",
+            return_value={"agrees": True},
+        ),
+        patch.object(
+            app.ai_advisor,
+            "_read_current_strategy",
+            return_value=({}, set()),
+        ),
     ):
         py_keys = list(
             app._compute_suggestion_gates(suggestion, symphony_id="test-symphony").keys()
@@ -222,15 +236,22 @@ def test_dev_advisor_fixture_and_real_producer_use_same_gate_keys():
         fixture_keys.update(verdict.keys())
 
     suggestion = _build_suggestion(oos_status="passed")
-    with patch.object(
-        app.ai_advisor, "enforce_suggestion_allowlist",
-        return_value=([suggestion], []),
-    ), patch.object(
-        app.ai_advisor, "check_risk_direction_agreement",
-        return_value={"agrees": True},
-    ), patch.object(
-        app.ai_advisor, "_read_current_strategy",
-        return_value=({}, set()),
+    with (
+        patch.object(
+            app.ai_advisor,
+            "enforce_suggestion_allowlist",
+            return_value=([suggestion], []),
+        ),
+        patch.object(
+            app.ai_advisor,
+            "check_risk_direction_agreement",
+            return_value={"agrees": True},
+        ),
+        patch.object(
+            app.ai_advisor,
+            "_read_current_strategy",
+            return_value=({}, set()),
+        ),
     ):
         producer_keys = set(
             app._compute_suggestion_gates(suggestion, symphony_id="test-symphony").keys()
@@ -271,15 +292,22 @@ def test_oos_frozen_eval_gate_value_reflects_oos_status(oos_status, expected_gat
     import app
 
     suggestion = _build_suggestion(oos_status=oos_status)
-    with patch.object(
-        app.ai_advisor, "enforce_suggestion_allowlist",
-        return_value=([suggestion], []),
-    ), patch.object(
-        app.ai_advisor, "check_risk_direction_agreement",
-        return_value={"agrees": True},
-    ), patch.object(
-        app.ai_advisor, "_read_current_strategy",
-        return_value=({}, set()),
+    with (
+        patch.object(
+            app.ai_advisor,
+            "enforce_suggestion_allowlist",
+            return_value=([suggestion], []),
+        ),
+        patch.object(
+            app.ai_advisor,
+            "check_risk_direction_agreement",
+            return_value={"agrees": True},
+        ),
+        patch.object(
+            app.ai_advisor,
+            "_read_current_strategy",
+            return_value=({}, set()),
+        ),
     ):
         gates = app._compute_suggestion_gates(suggestion, symphony_id="test-symphony")
 

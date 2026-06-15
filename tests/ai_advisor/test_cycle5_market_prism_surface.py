@@ -280,8 +280,10 @@ def test_market_prism_block_present_when_limited_inputs(client, monkeypatch):
     html = resp.data.decode("utf-8", errors="replace")
 
     # The block must render — "limited-inputs" or the rationale text must appear.
-    assert "limited" in html.lower() or "insufficient" in html.lower() or (
-        "All lenses unavailable" in html
+    assert (
+        "limited" in html.lower()
+        or "insufficient" in html.lower()
+        or ("All lenses unavailable" in html)
     ), (
         "Market Prism block must render even for a limited-inputs row. "
         "The template must handle overall_sentiment='limited-inputs' gracefully."
@@ -660,10 +662,10 @@ def test_market_prism_block_has_no_accept_execute_button(client, monkeypatch):
         prism_html = prism_section_match.group(1).lower()
         # Check no trade action buttons in the prism block.
         trade_affordances = [
-            "onclick=\"accept",
-            "data-action=\"accept\"",
-            "data-action=\"execute\"",
-            "data-action=\"trade\"",
+            'onclick="accept',
+            'data-action="accept"',
+            'data-action="execute"',
+            'data-action="trade"',
         ]
         for affordance in trade_affordances:
             assert affordance not in prism_html, (
@@ -690,7 +692,7 @@ def test_market_prism_block_marked_advisory_only(client, monkeypatch):
     html = resp.data.decode("utf-8", errors="replace")
 
     # The template must include a Market Prism section with a testable identifier.
-    assert 'market-prism' in html.lower() or 'data-testid="market' in html.lower(), (
+    assert "market-prism" in html.lower() or 'data-testid="market' in html.lower(), (
         "The Market Prism block must be identifiable in the rendered HTML — "
         "e.g., data-testid='market-prism-block' or class='market-prism-*'. "
         "This enables the ux-expert visual gate to locate the block."

@@ -51,12 +51,7 @@ import regime_classifier  # noqa: E402  (imported after test docstring)
 # ---------------------------------------------------------------------------
 
 # Path to golden fixtures for this layer.
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math"
-    / "regime_classifier"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "regime_classifier"
 
 # Valid regime label set (coarse 3-state taxonomy from PHASE3_DECISIONS.md).
 # Source: 00-ADAPTIVE-RECOMMENDATION.md §1A — "~3 states: mean-reverting, trending, high-vol/stressed".
@@ -81,6 +76,7 @@ STABILITY_PERTURBATION = 1e-7
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_fixture(name: str) -> dict:
     path = FIXTURE_DIR / name
@@ -154,13 +150,17 @@ def test_regime_returns_sentinel_on_insufficient_data(fixture_name: str) -> None
 # Graceful-degradation edge cases (not covered by fixtures alone)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("bad_input", [
-    None,
-    "not a list",
-    [None, None, None],
-    [float("nan")] * 5,
-    [float("inf"), -float("inf"), 0.02],
-])
+
+@pytest.mark.parametrize(
+    "bad_input",
+    [
+        None,
+        "not a list",
+        [None, None, None],
+        [float("nan")] * 5,
+        [float("inf"), -float("inf"), 0.02],
+    ],
+)
 def test_classify_regime_does_not_raise_on_degenerate_inputs(bad_input) -> None:
     """
     classify_regime must NEVER raise on bad/degenerate inputs — it must
@@ -199,6 +199,7 @@ def test_classify_regime_returns_valid_label_or_sentinel_on_normal_input() -> No
 # ---------------------------------------------------------------------------
 # Label-stability tests (no flip-flopping on small perturbations)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("fixture_name", _GOLDEN_FIXTURES)
 def test_label_stable_under_tiny_perturbation(fixture_name: str) -> None:
@@ -247,6 +248,7 @@ def test_label_is_deterministic_on_repeated_calls() -> None:
 # Offline / architecture guard: classifier must NOT appear on the live path
 # ---------------------------------------------------------------------------
 
+
 def test_classifier_not_imported_by_execution_path() -> None:
     """
     regime_classifier must NOT be imported by alpha_bot_execution.py.
@@ -260,8 +262,7 @@ def test_classifier_not_imported_by_execution_path() -> None:
     execution_path = worktree_root / "alpha_bot_execution.py"
 
     assert execution_path.exists(), (
-        "alpha_bot_execution.py not found — guard cannot run. "
-        f"Expected at {execution_path}"
+        f"alpha_bot_execution.py not found — guard cannot run. Expected at {execution_path}"
     )
 
     source = execution_path.read_text(encoding="utf-8")
@@ -289,9 +290,7 @@ def test_classifier_not_imported_by_math_engine() -> None:
     worktree_root = pathlib.Path(__file__).parent.parent.parent
     math_engine_path = worktree_root / "math_engine.py"
 
-    assert math_engine_path.exists(), (
-        f"math_engine.py not found at {math_engine_path}"
-    )
+    assert math_engine_path.exists(), f"math_engine.py not found at {math_engine_path}"
 
     source = math_engine_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -301,27 +300,23 @@ def test_classifier_not_imported_by_math_engine() -> None:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if "regime_classifier" in alias.name:
-                    bad_imports.append(
-                        f"line {node.lineno}: import {alias.name}"
-                    )
+                    bad_imports.append(f"line {node.lineno}: import {alias.name}")
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if "regime_classifier" in module:
-                bad_imports.append(
-                    f"line {node.lineno}: from {module} import ..."
-                )
+                bad_imports.append(f"line {node.lineno}: from {module} import ...")
 
     assert not bad_imports, (
         "math_engine.py MUST NOT import regime_classifier. "
         "math_engine.py is on the live execution path; regime_classifier "
-        "must remain offline/diagnostic only. Found: "
-        + ", ".join(bad_imports)
+        "must remain offline/diagnostic only. Found: " + ", ".join(bad_imports)
     )
 
 
 # ---------------------------------------------------------------------------
 # No forecast language in module docstring / code
 # ---------------------------------------------------------------------------
+
 
 def test_no_forecast_language_in_module_docstring() -> None:
     """
@@ -351,10 +346,7 @@ def test_no_forecast_language_in_module_docstring() -> None:
     module_doc = inspect.getdoc(regime_classifier) or ""
     module_doc_lower = module_doc.lower()
 
-    offenders = [
-        term for term in BANNED_FORECAST_TERMS
-        if term in module_doc_lower
-    ]
+    offenders = [term for term in BANNED_FORECAST_TERMS if term in module_doc_lower]
 
     assert not offenders, (
         f"regime_classifier module docstring contains forecast-claiming language: "
@@ -382,10 +374,7 @@ def test_no_forecast_language_in_classify_regime_docstring() -> None:
     fn_doc = inspect.getdoc(fn) or ""
     fn_doc_lower = fn_doc.lower()
 
-    offenders = [
-        term for term in BANNED_FORECAST_TERMS
-        if term in fn_doc_lower
-    ]
+    offenders = [term for term in BANNED_FORECAST_TERMS if term in fn_doc_lower]
 
     assert not offenders, (
         f"classify_regime docstring contains forecast-claiming language: {offenders}. "
@@ -396,6 +385,7 @@ def test_no_forecast_language_in_classify_regime_docstring() -> None:
 # ---------------------------------------------------------------------------
 # Named constants for thresholds (no magic numbers)
 # ---------------------------------------------------------------------------
+
 
 def test_named_constants_for_thresholds_present_in_module() -> None:
     """
@@ -420,7 +410,8 @@ def test_named_constants_for_thresholds_present_in_module() -> None:
     module_attrs = dir(regime_classifier)
 
     has_min_constant = any(
-        "MIN" in name.upper() for name in module_attrs
+        "MIN" in name.upper()
+        for name in module_attrs
         if not name.startswith("_") and name.isupper()
     )
     has_ac_constant = any(
@@ -444,6 +435,7 @@ def test_named_constants_for_thresholds_present_in_module() -> None:
 # ---------------------------------------------------------------------------
 # Synthetic-row exclusion guard (data hygiene, per research recommendation)
 # ---------------------------------------------------------------------------
+
 
 def test_fit_excludes_synthetic_rows() -> None:
     """
@@ -528,9 +520,7 @@ def test_fit_excludes_synthetic_rows() -> None:
 
     # Tolerance: 1e-6 relative. If synthetic rows leaked in, the difference
     # would be ~50x (from 0.01 to 0.50 returns), not 1e-6.
-    assert thresholds_mixed[vol_key] == pytest.approx(
-        thresholds_real[vol_key], rel=1e-6
-    ), (
+    assert thresholds_mixed[vol_key] == pytest.approx(thresholds_real[vol_key], rel=1e-6), (
         f"fit_regime_classifier threshold '{vol_key}' differs when synthetic rows "
         f"are included: mixed={thresholds_mixed[vol_key]}, real_only={thresholds_real[vol_key]}. "
         "Synthetic rows must be excluded before fitting thresholds "
@@ -542,6 +532,7 @@ def test_fit_excludes_synthetic_rows() -> None:
 # ---------------------------------------------------------------------------
 # Property tests: monotonicity + bounded output
 # ---------------------------------------------------------------------------
+
 
 def test_higher_vol_series_never_downgrades_to_non_high_vol_when_already_high() -> None:
     """
@@ -633,6 +624,7 @@ def test_output_always_in_valid_label_set_or_sentinel_for_varied_series() -> Non
 
 # --- Req 2: No look-ahead / causal (filtered) label only -------------------
 
+
 def test_label_at_time_t_is_identical_whether_or_not_future_data_present() -> None:
     """
     Causality (Req 2) via cross-call statelessness — no look-ahead contamination.
@@ -719,6 +711,7 @@ def test_label_at_time_t_is_identical_whether_or_not_future_data_present() -> No
 
 # --- Req 4: State count ≤ 3, fixed constant, not a tuned hyperparameter ---
 
+
 def test_regime_state_count_is_small_fixed_constant() -> None:
     """
     The classifier must use a coarse 2-3 state taxonomy, not an arbitrarily
@@ -741,12 +734,12 @@ def test_regime_state_count_is_small_fixed_constant() -> None:
     # Run classify_regime on a sweep of series and collect all distinct non-sentinel
     # labels returned. The set must not exceed 3.
     series_sweep = [
-        [0.02 if i % 2 == 0 else -0.02 for i in range(30)],      # mean-reverting
-        [0.01 if i < 15 else -0.01 for i in range(30)],           # trending
-        [0.08 if i % 2 == 0 else -0.09 for i in range(30)],       # high-vol
-        [0.005 if i % 2 == 0 else -0.005 for i in range(30)],     # low-vol alternating
-        [0.03 if i < 15 else -0.03 for i in range(30)],           # moderate trending
-        [0.10 if i % 3 == 0 else -0.05 for i in range(30)],       # irregular high-vol
+        [0.02 if i % 2 == 0 else -0.02 for i in range(30)],  # mean-reverting
+        [0.01 if i < 15 else -0.01 for i in range(30)],  # trending
+        [0.08 if i % 2 == 0 else -0.09 for i in range(30)],  # high-vol
+        [0.005 if i % 2 == 0 else -0.005 for i in range(30)],  # low-vol alternating
+        [0.03 if i < 15 else -0.03 for i in range(30)],  # moderate trending
+        [0.10 if i % 3 == 0 else -0.05 for i in range(30)],  # irregular high-vol
     ]
 
     observed_labels: set[str] = set()
@@ -798,6 +791,7 @@ def test_regime_state_count_is_small_fixed_constant() -> None:
 #   (b) Assert that a GENUINE boundary-straddling series DOES oscillate —
 #       documenting the known behavior, not hiding it.
 # Source: regime-methodologist requirement 5 review, 2026-05-31.
+
 
 def test_snapshot_waiver_is_documented_in_module_docstring() -> None:
     """
@@ -863,9 +857,9 @@ def test_boundary_straddling_series_oscillates_as_documented() -> None:
     series = alternating_20 + trending_20 + alternating_20  # 60 days
 
     # Classify the three non-overlapping 20-day windows.
-    label_window1 = regime_classifier.classify_regime(series[0:20])    # alternating
-    label_window2 = regime_classifier.classify_regime(series[20:40])   # trending
-    label_window3 = regime_classifier.classify_regime(series[40:60])   # alternating again
+    label_window1 = regime_classifier.classify_regime(series[0:20])  # alternating
+    label_window2 = regime_classifier.classify_regime(series[20:40])  # trending
+    label_window3 = regime_classifier.classify_regime(series[40:60])  # alternating again
 
     # Window 1 and 3 should be mean-reverting (AC ≈ -1.0).
     # Window 2 should be trending (AC ≈ +0.85).
@@ -890,6 +884,7 @@ def test_boundary_straddling_series_oscillates_as_documented() -> None:
 
 
 # --- Req 6: No covert response knob — classifier emits label only ----------
+
 
 def test_classifier_module_has_no_write_path_into_engine_or_exit_params() -> None:
     """
@@ -943,8 +938,7 @@ def test_classifier_module_has_no_write_path_into_engine_or_exit_params() -> Non
                     import_offenders.append(alias.name)
         elif isinstance(node, ast.ImportFrom):
             if node.module and any(
-                node.module == mod or node.module.startswith(mod + ".")
-                for mod in FORBIDDEN_IMPORTS
+                node.module == mod or node.module.startswith(mod + ".") for mod in FORBIDDEN_IMPORTS
             ):
                 import_offenders.append(node.module)
 
@@ -955,10 +949,7 @@ def test_classifier_module_has_no_write_path_into_engine_or_exit_params() -> Non
     )
 
     # Check for forbidden write patterns.
-    write_offenders = [
-        pattern for pattern in FORBIDDEN_WRITE_PATTERNS
-        if pattern in source
-    ]
+    write_offenders = [pattern for pattern in FORBIDDEN_WRITE_PATTERNS if pattern in source]
 
     assert not write_offenders, (
         f"regime_classifier source contains write-to-engine patterns: {write_offenders}. "
@@ -989,6 +980,7 @@ def test_classify_regime_return_type_is_string_or_none_not_a_tuple_or_dict() -> 
 
 # --- Advisory A1: fixed-threshold claim documented in classify_regime docstring ---
 
+
 def test_classify_regime_docstring_states_fixed_threshold_not_fitted() -> None:
     """
     Advisory A1 resolution: classify_regime uses HIGH_VOL_DAILY_THRESHOLD
@@ -1012,9 +1004,8 @@ def test_classify_regime_docstring_states_fixed_threshold_not_fitted() -> None:
     fn_doc = (inspect.getdoc(fn) or "").lower()
 
     # The function docstring must name the fixed threshold constant.
-    names_the_constant = (
-        "high_vol_daily_threshold" in fn_doc
-        or ("fixed" in fn_doc and "threshold" in fn_doc)
+    names_the_constant = "high_vol_daily_threshold" in fn_doc or (
+        "fixed" in fn_doc and "threshold" in fn_doc
     )
     assert names_the_constant, (
         "classify_regime docstring does not state that it uses HIGH_VOL_DAILY_THRESHOLD "
@@ -1034,6 +1025,7 @@ def test_classify_regime_docstring_states_fixed_threshold_not_fitted() -> None:
 
 
 # --- rev-3a BLOCK: HIGH_VOL_DAILY_THRESHOLD comment + unit contract --------
+
 
 def test_high_vol_threshold_comment_does_not_claim_fit_supersedes_it() -> None:
     """
@@ -1092,9 +1084,7 @@ def test_high_vol_threshold_comment_does_not_claim_fit_supersedes_it() -> None:
         if line.strip().startswith("HIGH_VOL_DAILY_THRESHOLD = "):
             assignment_lineno = i
             break
-    assert assignment_lineno is not None, (
-        "HIGH_VOL_DAILY_THRESHOLD constant not found in source"
-    )
+    assert assignment_lineno is not None, "HIGH_VOL_DAILY_THRESHOLD constant not found in source"
     # Collect comment lines immediately above the assignment.
     comment_lines: list[str] = []
     for j in range(assignment_lineno - 1, -1, -1):

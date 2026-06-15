@@ -52,12 +52,7 @@ import pytest
 # Fixture loading
 # ---------------------------------------------------------------------------
 
-_FIXTURES = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "engine"
-    / "fleet_alert_state"
-)
+_FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures" / "engine" / "fleet_alert_state"
 
 
 def _load(name: str) -> dict:
@@ -67,6 +62,7 @@ def _load(name: str) -> dict:
 # ---------------------------------------------------------------------------
 # In-memory DB helper for isolation
 # ---------------------------------------------------------------------------
+
 
 def _make_in_memory_conn() -> sqlite3.Connection:
     """Return an in-memory SQLite connection with the fleet_alert_state table created."""
@@ -100,9 +96,7 @@ class TestMigration009Schema:
         """migrations/009_fleet_alert_state.sql must exist."""
         fixture = _load("table_schema.json")
         migration_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "migrations"
-            / "009_fleet_alert_state.sql"
+            pathlib.Path(__file__).parent.parent.parent / "migrations" / "009_fleet_alert_state.sql"
         )
         assert migration_path.exists(), (
             f"Migration file migrations/009_fleet_alert_state.sql does not exist. "
@@ -135,8 +129,7 @@ class TestMigration009Schema:
 
         for col_name in fixture["columns"]:
             assert col_name in cols, (
-                f"fleet_alert_state must have column '{col_name}'. "
-                f"Present columns: {sorted(cols)}"
+                f"fleet_alert_state must have column '{col_name}'. Present columns: {sorted(cols)}"
             )
 
     def test_check_id_equals_1_rejects_second_row(self):
@@ -186,14 +179,10 @@ class TestMigration009Schema:
             "VALUES (1, '2026-05-17T10:33:00', 'Trailing Stop', 6, 10, NULL)"
         )
         conn.commit()
-        row = conn.execute(
-            "SELECT dismissed_at_et FROM fleet_alert_state WHERE id = 1"
-        ).fetchone()
+        row = conn.execute("SELECT dismissed_at_et FROM fleet_alert_state WHERE id = 1").fetchone()
         conn.close()
         assert row is not None
-        assert row[0] is None, (
-            f"dismissed_at_et must accept NULL. Got: {row[0]!r}"
-        )
+        assert row[0] is None, f"dismissed_at_et must accept NULL. Got: {row[0]!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +199,7 @@ class TestHelperSignatures:
     def _import_db(self):
         try:
             import database
+
             return database
         except ImportError:
             pytest.fail("database module not importable.")
@@ -218,8 +208,7 @@ class TestHelperSignatures:
         """database.read_fleet_alert must exist as a module-level function."""
         db = self._import_db()
         assert hasattr(db, "read_fleet_alert"), (
-            "database.read_fleet_alert not found. "
-            "Implement: read_fleet_alert() -> dict | None"
+            "database.read_fleet_alert not found. Implement: read_fleet_alert() -> dict | None"
         )
 
     def test_write_fleet_alert_exists(self):
@@ -234,8 +223,7 @@ class TestHelperSignatures:
         """database.clear_fleet_alert must exist as a module-level function."""
         db = self._import_db()
         assert hasattr(db, "clear_fleet_alert"), (
-            "database.clear_fleet_alert not found. "
-            "Implement: clear_fleet_alert() -> None"
+            "database.clear_fleet_alert not found. Implement: clear_fleet_alert() -> None"
         )
 
     def test_write_fleet_alert_accepts_payload_dict(self):
@@ -254,9 +242,7 @@ class TestHelperSignatures:
         db = self._import_db()
         for name in ("read_fleet_alert", "write_fleet_alert", "clear_fleet_alert"):
             fn = getattr(db, name, None)
-            assert callable(fn), (
-                f"database.{name} must be callable (got {type(fn).__name__})."
-            )
+            assert callable(fn), f"database.{name} must be callable (got {type(fn).__name__})."
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +265,7 @@ class TestHelperRoundTrip:
         call conn.close() (as they must) without destroying the database between calls.
         """
         import uuid
+
         self._db_name = f"file:testdb_{uuid.uuid4().hex}?mode=memory&cache=shared"
 
         def _make_shared_conn():
@@ -290,6 +277,7 @@ class TestHelperRoundTrip:
 
         try:
             import database
+
             self._db = database
         except ImportError:
             pytest.fail("database module not importable.")
@@ -372,7 +360,9 @@ class TestHelperRoundTrip:
         """read_fleet_alert returns tripped_at_et as the same string that was written."""
         self._seed_table()
         fixture = _load("alert_lifecycle.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "initial_trip_writes_to_fleet_alert_state")
+        case = next(
+            c for c in fixture["cases"] if c["label"] == "initial_trip_writes_to_fleet_alert_state"
+        )
         payload = {k: v for k, v in case["write_payload"].items() if v is not None}
         self._db.write_fleet_alert(payload)
         result = self._db.read_fleet_alert()
@@ -399,9 +389,7 @@ class TestHelperRoundTrip:
         self._db.write_fleet_alert(payload_a)
         self._db.write_fleet_alert(payload_b)
         conn = self._make_conn()
-        row_count = conn.execute(
-            "SELECT COUNT(*) FROM fleet_alert_state"
-        ).fetchone()[0]
+        row_count = conn.execute("SELECT COUNT(*) FROM fleet_alert_state").fetchone()[0]
         conn.close()
         assert row_count == 1, (
             f"write_fleet_alert must upsert to a single row. Got {row_count} rows."
@@ -437,7 +425,9 @@ class TestHelperRoundTrip:
         """write_fleet_alert with dismissed_at_et set → read returns non-null dismissed_at_et."""
         self._seed_table()
         fixture = _load("alert_lifecycle.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "dismiss_sets_dismissed_at_et_non_null")
+        case = next(
+            c for c in fixture["cases"] if c["label"] == "dismiss_sets_dismissed_at_et_non_null"
+        )
         dismiss_time = case["dismiss_time_et"]
 
         payload = {
@@ -464,17 +454,23 @@ class TestHelperRoundTrip:
         """
         self._seed_table()
         fixture = _load("alert_lifecycle.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "re_trip_after_dismiss_nulls_dismissed_at_et")
+        case = next(
+            c
+            for c in fixture["cases"]
+            if c["label"] == "re_trip_after_dismiss_nulls_dismissed_at_et"
+        )
 
         # First: write a dismissed row
         dismissed_row = case["pre_trip_dismissed_row"]
-        self._db.write_fleet_alert({
-            "tripped_at_et": dismissed_row["tripped_at_et"],
-            "triggered_reason": dismissed_row["triggered_reason"],
-            "tripped_count": dismissed_row["tripped_count"],
-            "active_count": dismissed_row["active_count"],
-            "dismissed_at_et": dismissed_row["dismissed_at_et"],
-        })
+        self._db.write_fleet_alert(
+            {
+                "tripped_at_et": dismissed_row["tripped_at_et"],
+                "triggered_reason": dismissed_row["triggered_reason"],
+                "tripped_count": dismissed_row["tripped_count"],
+                "active_count": dismissed_row["active_count"],
+                "dismissed_at_et": dismissed_row["dismissed_at_et"],
+            }
+        )
 
         # Then: write new trip payload (dismissed_at_et absent / None = cleared)
         new_payload = case["new_trip_payload"]
@@ -532,8 +528,10 @@ class TestEngineWritesToFleetAlertState:
         )
 
         bot_state: dict = {}
-        with patch("database.write_fleet_alert") as mock_write, \
-             patch("database.get_triggers", return_value=[]):
+        with (
+            patch("database.write_fleet_alert") as mock_write,
+            patch("database.get_triggers", return_value=[]),
+        ):
             if fn.__name__ == "set_fleet_correlation_alert":
                 fn(
                     bot_state=bot_state,
@@ -543,11 +541,17 @@ class TestEngineWritesToFleetAlertState:
                     active_count=10,
                 )
             else:
-                with patch("database.get_triggers", return_value=[
-                    {"symphony_id": f"s{i}", "triggered_reason": "Trailing Stop",
-                     "ts_et": "2026-05-17T10:32:00"}
-                    for i in range(6)
-                ]):
+                with patch(
+                    "database.get_triggers",
+                    return_value=[
+                        {
+                            "symphony_id": f"s{i}",
+                            "triggered_reason": "Trailing Stop",
+                            "ts_et": "2026-05-17T10:32:00",
+                        }
+                        for i in range(6)
+                    ],
+                ):
                     alpha_bot_execution.check_fleet_correlation_and_update_state(
                         bot_state=bot_state,
                         active_symphony_count=10,
@@ -612,11 +616,13 @@ class TestEngineWritesToFleetAlertState:
 
         bot_state: dict = {}
 
-        with patch("database.read_fleet_alert", return_value=stale_row) as mock_read, \
-             patch("database.clear_fleet_alert") as mock_clear, \
-             patch("database.write_fleet_alert") as mock_write, \
-             patch("database.get_triggers", return_value=[]), \
-             patch.object(alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", 30):
+        with (
+            patch("database.read_fleet_alert", return_value=stale_row) as mock_read,
+            patch("database.clear_fleet_alert") as mock_clear,
+            patch("database.write_fleet_alert") as mock_write,
+            patch("database.get_triggers", return_value=[]),
+            patch.object(alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", 30),
+        ):
             alpha_bot_execution.check_fleet_correlation_and_update_state(
                 bot_state=bot_state,
                 active_symphony_count=10,
@@ -653,11 +659,13 @@ class TestEngineWritesToFleetAlertState:
 
         bot_state: dict = {}
 
-        with patch("database.read_fleet_alert", return_value=stale_row), \
-             patch("database.clear_fleet_alert") as mock_clear, \
-             patch("database.write_fleet_alert"), \
-             patch("database.get_triggers", return_value=[]), \
-             patch.object(alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", 30):
+        with (
+            patch("database.read_fleet_alert", return_value=stale_row),
+            patch("database.clear_fleet_alert") as mock_clear,
+            patch("database.write_fleet_alert"),
+            patch("database.get_triggers", return_value=[]),
+            patch.object(alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", 30),
+        ):
             alpha_bot_execution.check_fleet_correlation_and_update_state(
                 bot_state=bot_state,
                 active_symphony_count=10,
@@ -696,11 +704,13 @@ class TestEngineWritesToFleetAlertState:
         bot_state: dict = {"some_symphony": {"triggered": False}}
         original_keys = set(bot_state.keys())
 
-        with patch("database.read_fleet_alert", return_value=stale_row), \
-             patch("database.clear_fleet_alert"), \
-             patch("database.write_fleet_alert"), \
-             patch("database.get_triggers", return_value=[]), \
-             patch.object(alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", 30):
+        with (
+            patch("database.read_fleet_alert", return_value=stale_row),
+            patch("database.clear_fleet_alert"),
+            patch("database.write_fleet_alert"),
+            patch("database.get_triggers", return_value=[]),
+            patch.object(alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", 30),
+        ):
             alpha_bot_execution.check_fleet_correlation_and_update_state(
                 bot_state=bot_state,
                 active_symphony_count=10,
@@ -747,17 +757,28 @@ class TestApiStateReadsFromFleetAlertTable:
     def test_api_state_calls_read_fleet_alert(self, flask_client):
         """GET /api/state must call database.read_fleet_alert() (not only database.load_state)."""
         fixture = _load("api_state_exposure.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "alert_visible_when_dismissed_at_et_is_null")
+        case = next(
+            c
+            for c in fixture["cases"]
+            if c["label"] == "alert_visible_when_dismissed_at_et_is_null"
+        )
 
-        with patch("database.load_state", return_value={"date": "2026-05-17"}), \
-             patch("database.read_fleet_alert", return_value=case["read_fleet_alert_returns"]) as mock_read, \
-             patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
-             patch("database.get_triggers", return_value=[]), \
-             patch("market_calendar.get_market_state", return_value="open"), \
-             patch("analytics.get_portfolio_today_change", return_value={}), \
-             patch("analytics.get_portfolio_cumulative_return", return_value={}), \
-             patch("analytics.get_portfolio_max_drawdown", return_value={}), \
-             patch("app.render_template", return_value=""):
+        with (
+            patch("database.load_state", return_value={"date": "2026-05-17"}),
+            patch(
+                "database.read_fleet_alert", return_value=case["read_fleet_alert_returns"]
+            ) as mock_read,
+            patch(
+                "database.get_shadow_divergence",
+                return_value={"by_symphony": {}, "portfolio_today": None},
+            ),
+            patch("database.get_triggers", return_value=[]),
+            patch("market_calendar.get_market_state", return_value="open"),
+            patch("analytics.get_portfolio_today_change", return_value={}),
+            patch("analytics.get_portfolio_cumulative_return", return_value={}),
+            patch("analytics.get_portfolio_max_drawdown", return_value={}),
+            patch("app.render_template", return_value=""),
+        ):
             resp = flask_client.get("/api/state")
 
         assert resp.status_code == 200
@@ -769,17 +790,26 @@ class TestApiStateReadsFromFleetAlertTable:
     def test_api_state_returns_alert_when_dismissed_at_et_is_null(self, flask_client):
         """When read_fleet_alert returns row with dismissed_at_et=None, /api/state includes the alert object."""
         fixture = _load("api_state_exposure.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "alert_visible_when_dismissed_at_et_is_null")
+        case = next(
+            c
+            for c in fixture["cases"]
+            if c["label"] == "alert_visible_when_dismissed_at_et_is_null"
+        )
 
-        with patch("database.load_state", return_value={"date": "2026-05-17"}), \
-             patch("database.read_fleet_alert", return_value=case["read_fleet_alert_returns"]), \
-             patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
-             patch("database.get_triggers", return_value=[]), \
-             patch("market_calendar.get_market_state", return_value="open"), \
-             patch("analytics.get_portfolio_today_change", return_value={}), \
-             patch("analytics.get_portfolio_cumulative_return", return_value={}), \
-             patch("analytics.get_portfolio_max_drawdown", return_value={}), \
-             patch("app.render_template", return_value=""):
+        with (
+            patch("database.load_state", return_value={"date": "2026-05-17"}),
+            patch("database.read_fleet_alert", return_value=case["read_fleet_alert_returns"]),
+            patch(
+                "database.get_shadow_divergence",
+                return_value={"by_symphony": {}, "portfolio_today": None},
+            ),
+            patch("database.get_triggers", return_value=[]),
+            patch("market_calendar.get_market_state", return_value="open"),
+            patch("analytics.get_portfolio_today_change", return_value={}),
+            patch("analytics.get_portfolio_cumulative_return", return_value={}),
+            patch("analytics.get_portfolio_max_drawdown", return_value={}),
+            patch("app.render_template", return_value=""),
+        ):
             resp = flask_client.get("/api/state")
 
         data = resp.get_json()
@@ -799,17 +829,24 @@ class TestApiStateReadsFromFleetAlertTable:
     def test_api_state_returns_none_when_alert_dismissed(self, flask_client):
         """When read_fleet_alert returns row with dismissed_at_et set, /api/state returns None."""
         fixture = _load("api_state_exposure.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "alert_hidden_when_dismissed_at_et_is_set")
+        case = next(
+            c for c in fixture["cases"] if c["label"] == "alert_hidden_when_dismissed_at_et_is_set"
+        )
 
-        with patch("database.load_state", return_value={"date": "2026-05-17"}), \
-             patch("database.read_fleet_alert", return_value=case["read_fleet_alert_returns"]), \
-             patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
-             patch("database.get_triggers", return_value=[]), \
-             patch("market_calendar.get_market_state", return_value="open"), \
-             patch("analytics.get_portfolio_today_change", return_value={}), \
-             patch("analytics.get_portfolio_cumulative_return", return_value={}), \
-             patch("analytics.get_portfolio_max_drawdown", return_value={}), \
-             patch("app.render_template", return_value=""):
+        with (
+            patch("database.load_state", return_value={"date": "2026-05-17"}),
+            patch("database.read_fleet_alert", return_value=case["read_fleet_alert_returns"]),
+            patch(
+                "database.get_shadow_divergence",
+                return_value={"by_symphony": {}, "portfolio_today": None},
+            ),
+            patch("database.get_triggers", return_value=[]),
+            patch("market_calendar.get_market_state", return_value="open"),
+            patch("analytics.get_portfolio_today_change", return_value={}),
+            patch("analytics.get_portfolio_cumulative_return", return_value={}),
+            patch("analytics.get_portfolio_max_drawdown", return_value={}),
+            patch("app.render_template", return_value=""),
+        ):
             resp = flask_client.get("/api/state")
 
         data = resp.get_json()
@@ -823,15 +860,20 @@ class TestApiStateReadsFromFleetAlertTable:
         fixture = _load("api_state_exposure.json")
         case = next(c for c in fixture["cases"] if c["label"] == "alert_hidden_when_no_row")
 
-        with patch("database.load_state", return_value={"date": "2026-05-17"}), \
-             patch("database.read_fleet_alert", return_value=None), \
-             patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
-             patch("database.get_triggers", return_value=[]), \
-             patch("market_calendar.get_market_state", return_value="open"), \
-             patch("analytics.get_portfolio_today_change", return_value={}), \
-             patch("analytics.get_portfolio_cumulative_return", return_value={}), \
-             patch("analytics.get_portfolio_max_drawdown", return_value={}), \
-             patch("app.render_template", return_value=""):
+        with (
+            patch("database.load_state", return_value={"date": "2026-05-17"}),
+            patch("database.read_fleet_alert", return_value=None),
+            patch(
+                "database.get_shadow_divergence",
+                return_value={"by_symphony": {}, "portfolio_today": None},
+            ),
+            patch("database.get_triggers", return_value=[]),
+            patch("market_calendar.get_market_state", return_value="open"),
+            patch("analytics.get_portfolio_today_change", return_value={}),
+            patch("analytics.get_portfolio_cumulative_return", return_value={}),
+            patch("analytics.get_portfolio_max_drawdown", return_value={}),
+            patch("app.render_template", return_value=""),
+        ):
             resp = flask_client.get("/api/state")
 
         data = resp.get_json()
@@ -867,14 +909,19 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
 
     def test_dismiss_route_returns_200(self, flask_client):
         """POST /api/fleet-alert/dismiss must return 200."""
-        with patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value={
-                 "tripped_at_et": "2026-05-17T10:33:00",
-                 "triggered_reason": "Trailing Stop",
-                 "tripped_count": 6,
-                 "active_count": 10,
-                 "dismissed_at_et": None,
-             }):
+        with (
+            patch("database.write_fleet_alert"),
+            patch(
+                "database.read_fleet_alert",
+                return_value={
+                    "tripped_at_et": "2026-05-17T10:33:00",
+                    "triggered_reason": "Trailing Stop",
+                    "tripped_count": 6,
+                    "active_count": 10,
+                    "dismissed_at_et": None,
+                },
+            ),
+        ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
         assert resp.status_code == 200, (
             f"POST /api/fleet-alert/dismiss must return 200. Got {resp.status_code}."
@@ -905,15 +952,22 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
             future.set_result(None)
             return future
 
-        with patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_capture_submit) as mock_submit, \
-             patch("database.write_fleet_alert") as mock_write, \
-             patch("database.read_fleet_alert", return_value={
-                 "tripped_at_et": "2026-05-17T10:33:00",
-                 "triggered_reason": "Trailing Stop",
-                 "tripped_count": 6,
-                 "active_count": 10,
-                 "dismissed_at_et": None,
-             }):
+        with (
+            patch.object(
+                flask_app._DISMISS_EXECUTOR, "submit", side_effect=_capture_submit
+            ) as mock_submit,
+            patch("database.write_fleet_alert") as mock_write,
+            patch(
+                "database.read_fleet_alert",
+                return_value={
+                    "tripped_at_et": "2026-05-17T10:33:00",
+                    "triggered_reason": "Trailing Stop",
+                    "tripped_count": 6,
+                    "active_count": 10,
+                    "dismissed_at_et": None,
+                },
+            ),
+        ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
         assert resp.status_code == 200, (
@@ -967,9 +1021,11 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
             "dismissed_at_et": None,
         }
 
-        with patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_capture_only), \
-             patch("database.write_fleet_alert") as mock_write, \
-             patch("database.read_fleet_alert", return_value=dict(alert_row)):
+        with (
+            patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_capture_only),
+            patch("database.write_fleet_alert") as mock_write,
+            patch("database.read_fleet_alert", return_value=dict(alert_row)),
+        ):
             flask_client.post("/api/fleet-alert/dismiss")
 
             assert len(submitted_callables) == 1, (
@@ -1008,16 +1064,21 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
             future.set_result(None)
             return future
 
-        with patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_capture_only), \
-             patch("database.write_fleet_alert", side_effect=OSError("DB locked")), \
-             patch("database.read_fleet_alert", return_value={
-                 "tripped_at_et": "2026-05-17T10:33:00",
-                 "triggered_reason": "Trailing Stop",
-                 "tripped_count": 6,
-                 "active_count": 10,
-                 "dismissed_at_et": None,
-             }), \
-             patch("logging.error") as mock_log_error:
+        with (
+            patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_capture_only),
+            patch("database.write_fleet_alert", side_effect=OSError("DB locked")),
+            patch(
+                "database.read_fleet_alert",
+                return_value={
+                    "tripped_at_et": "2026-05-17T10:33:00",
+                    "triggered_reason": "Trailing Stop",
+                    "tripped_count": 6,
+                    "active_count": 10,
+                    "dismissed_at_et": None,
+                },
+            ),
+            patch("logging.error") as mock_log_error,
+        ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
             assert resp.status_code == 200, (
@@ -1066,9 +1127,11 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
             "dismissed_at_et": None,
         }
 
-        with patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_count_submits), \
-             patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value=dict(alert_row)):
+        with (
+            patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_count_submits),
+            patch("database.write_fleet_alert"),
+            patch("database.read_fleet_alert", return_value=dict(alert_row)),
+        ):
             resp_1 = flask_client.post("/api/fleet-alert/dismiss")
             resp_2 = flask_client.post("/api/fleet-alert/dismiss")
 
@@ -1131,19 +1194,26 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
         """
         fixture = _load("dismiss_race_isolation.json")
 
-        with patch("database.load_state") as mock_load, \
-             patch("database.save_state") as mock_save, \
-             patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value={
-                 "tripped_at_et": "2026-05-17T10:33:00",
-                 "triggered_reason": "Trailing Stop",
-                 "tripped_count": 6,
-                 "active_count": 10,
-                 "dismissed_at_et": None,
-             }):
+        with (
+            patch("database.load_state") as mock_load,
+            patch("database.save_state") as mock_save,
+            patch("database.write_fleet_alert"),
+            patch(
+                "database.read_fleet_alert",
+                return_value={
+                    "tripped_at_et": "2026-05-17T10:33:00",
+                    "triggered_reason": "Trailing Stop",
+                    "tripped_count": 6,
+                    "active_count": 10,
+                    "dismissed_at_et": None,
+                },
+            ),
+        ):
             flask_client.post("/api/fleet-alert/dismiss")
 
-        expected_load_calls = fixture["invariants"]["dismiss_never_touches_bot_state"]["expected_calls_to_load_state"]
+        expected_load_calls = fixture["invariants"]["dismiss_never_touches_bot_state"][
+            "expected_calls_to_load_state"
+        ]
         assert mock_load.call_count == expected_load_calls, (
             f"POST /api/fleet-alert/dismiss must NOT call database.load_state(). "
             f"Called {mock_load.call_count} time(s). "
@@ -1157,19 +1227,26 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
         """
         fixture = _load("dismiss_race_isolation.json")
 
-        with patch("database.load_state") as mock_load, \
-             patch("database.save_state") as mock_save, \
-             patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value={
-                 "tripped_at_et": "2026-05-17T10:33:00",
-                 "triggered_reason": "Trailing Stop",
-                 "tripped_count": 6,
-                 "active_count": 10,
-                 "dismissed_at_et": None,
-             }):
+        with (
+            patch("database.load_state") as mock_load,
+            patch("database.save_state") as mock_save,
+            patch("database.write_fleet_alert"),
+            patch(
+                "database.read_fleet_alert",
+                return_value={
+                    "tripped_at_et": "2026-05-17T10:33:00",
+                    "triggered_reason": "Trailing Stop",
+                    "tripped_count": 6,
+                    "active_count": 10,
+                    "dismissed_at_et": None,
+                },
+            ),
+        ):
             flask_client.post("/api/fleet-alert/dismiss")
 
-        expected_save_calls = fixture["invariants"]["dismiss_never_touches_bot_state"]["expected_calls_to_save_state"]
+        expected_save_calls = fixture["invariants"]["dismiss_never_touches_bot_state"][
+            "expected_calls_to_save_state"
+        ]
         assert mock_save.call_count == expected_save_calls, (
             f"POST /api/fleet-alert/dismiss must NOT call database.save_state(). "
             f"Called {mock_save.call_count} time(s). "
@@ -1178,20 +1255,24 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
 
     def test_dismiss_route_returns_status_ok_json(self, flask_client):
         """Dismiss route must return JSON with at least {'status': 'ok'}."""
-        with patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value=None):
+        with (
+            patch("database.write_fleet_alert"),
+            patch("database.read_fleet_alert", return_value=None),
+        ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
         data = resp.get_json()
         assert data is not None, "dismiss route must return JSON."
         assert data.get("status") == "ok", (
-            f"dismiss route must return {{\"status\": \"ok\"}}. Got: {data!r}"
+            f'dismiss route must return {{"status": "ok"}}. Got: {data!r}'
         )
 
     def test_dismiss_route_idempotent_when_no_row(self, flask_client):
         """POST /api/fleet-alert/dismiss must return 200 even when no alert row exists."""
-        with patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value=None):
+        with (
+            patch("database.write_fleet_alert"),
+            patch("database.read_fleet_alert", return_value=None),
+        ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
         assert resp.status_code == 200, (
             f"Dismiss route must be idempotent when no alert row exists. Got {resp.status_code}."
@@ -1280,9 +1361,7 @@ class TestMigration009IsAdditive:
     def test_migration_009_does_not_drop_bot_state(self):
         """Migration 009 SQL must not contain DROP TABLE or ALTER TABLE for bot_state."""
         migration_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "migrations"
-            / "009_fleet_alert_state.sql"
+            pathlib.Path(__file__).parent.parent.parent / "migrations" / "009_fleet_alert_state.sql"
         )
         if not migration_path.exists():
             pytest.fail(
@@ -1299,19 +1378,13 @@ class TestMigration009IsAdditive:
     def test_migration_009_creates_fleet_alert_state_table(self):
         """Migration 009 SQL must create fleet_alert_state."""
         migration_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "migrations"
-            / "009_fleet_alert_state.sql"
+            pathlib.Path(__file__).parent.parent.parent / "migrations" / "009_fleet_alert_state.sql"
         )
         if not migration_path.exists():
             pytest.fail("migrations/009_fleet_alert_state.sql does not exist.")
         sql = migration_path.read_text(encoding="utf-8").lower()
-        assert "fleet_alert_state" in sql, (
-            "Migration 009 must CREATE TABLE fleet_alert_state."
-        )
-        assert "create table" in sql, (
-            "Migration 009 must contain a CREATE TABLE statement."
-        )
+        assert "fleet_alert_state" in sql, "Migration 009 must CREATE TABLE fleet_alert_state."
+        assert "create table" in sql, "Migration 009 must contain a CREATE TABLE statement."
 
     def test_bot_state_table_still_exists_after_migration(self):
         """Running migration 009 against a DB that has bot_state must leave bot_state intact."""

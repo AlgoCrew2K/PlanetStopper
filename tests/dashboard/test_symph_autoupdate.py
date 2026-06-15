@@ -138,16 +138,11 @@ class TestSectionContainerTestidsReferenced:
         """
         js = _js()
         # Must contain the container testid (not the count badge variant).
-        has_container_ref = (
-            'data-testid="active-section"' in js
-            and 'active-section"' in js
-        )
+        has_container_ref = 'data-testid="active-section"' in js and 'active-section"' in js
         # Disallow satisfying this test with only the count badge reference.
         # The container testid is "active-section"; the badge is "active-section-count".
         # Check the non-count form specifically.
-        container_pattern = re.search(
-            r'data-testid=["\']active-section["\']', js
-        )
+        container_pattern = re.search(r'data-testid=["\']active-section["\']', js)
         assert container_pattern is not None, (
             "AC-SA.2a FAIL: static/index.js does not reference the active section "
             "container testid ('data-testid=\"active-section\"'). "
@@ -165,9 +160,7 @@ class TestSectionContainerTestidsReferenced:
         This test is RED on current code.
         """
         js = _js()
-        container_pattern = re.search(
-            r'data-testid=["\']standby-section["\']', js
-        )
+        container_pattern = re.search(r'data-testid=["\']standby-section["\']', js)
         assert container_pattern is not None, (
             "AC-SA.2b FAIL: static/index.js does not reference the standby section "
             "container testid ('data-testid=\"standby-section\"'). "
@@ -185,11 +178,13 @@ class TestSectionContainerTestidsReferenced:
         js = _js()
         lines = js.splitlines()
         active_lines = [
-            i for i, line in enumerate(lines)
+            i
+            for i, line in enumerate(lines)
             if re.search(r'data-testid=["\']active-section["\']', line)
         ]
         standby_lines = [
-            i for i, line in enumerate(lines)
+            i
+            for i, line in enumerate(lines)
             if re.search(r'data-testid=["\']standby-section["\']', line)
         ]
         assert active_lines and standby_lines, (
@@ -197,9 +192,7 @@ class TestSectionContainerTestidsReferenced:
             f"active-section refs at lines: {active_lines or 'NONE'}; "
             f"standby-section refs at lines: {standby_lines or 'NONE'}."
         )
-        min_gap = min(
-            abs(a - b) for a in active_lines for b in standby_lines
-        )
+        min_gap = min(abs(a - b) for a in active_lines for b in standby_lines)
         assert min_gap <= 500, (
             f"AC-SA.2c FAIL: the section container testid references are {min_gap} "
             "lines apart — they appear to be in unrelated code, not co-located in "
@@ -271,12 +264,12 @@ class TestAppendChildInCardUpdateContext:
         start = js.find("function updateCards")
         assert start != -1, "updateCards function must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 5000]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 5000]
 
         # Forbid innerHTML assignment referencing data.html in updateCards.
         has_html_inject = bool(
-            re.search(r'\.innerHTML\s*=\s*.*?\bdata\.html\b', body)
-            or re.search(r'\bdata\.html\b.*?\.innerHTML\s*=', body)
+            re.search(r"\.innerHTML\s*=\s*.*?\bdata\.html\b", body)
+            or re.search(r"\bdata\.html\b.*?\.innerHTML\s*=", body)
         )
         assert not has_html_inject, (
             "AC-SA.5 FAIL: updateCards injects data.html as innerHTML. "
@@ -315,7 +308,7 @@ class TestActiveSectionPredicateMatchesSsr:
         idx = js.find('active-section"')
         if idx == -1:
             return ""
-        return js[max(0, idx - 300): idx + 2000]
+        return js[max(0, idx - 300) : idx + 2000]
 
     def test_js_active_predicate_includes_all_four_flags_in_card_move_context(self):
         """
@@ -346,7 +339,7 @@ class TestActiveSectionPredicateMatchesSsr:
 
         missing = []
         for flag in ("armed", "tp_armed", "para_armed", "triggered"):
-            if not re.search(r'\b' + re.escape(flag) + r'\b', context):
+            if not re.search(r"\b" + re.escape(flag) + r"\b", context):
                 missing.append(flag)
 
         assert not missing, (
@@ -376,8 +369,8 @@ class TestActiveSectionPredicateMatchesSsr:
 
         has_or_predicate = bool(
             re.search(
-                r'(sym\.)?(armed|triggered|tp_armed|para_armed).{0,80}\|\|.{0,80}(sym\.)?(armed|triggered|tp_armed|para_armed)',
-                context
+                r"(sym\.)?(armed|triggered|tp_armed|para_armed).{0,80}\|\|.{0,80}(sym\.)?(armed|triggered|tp_armed|para_armed)",
+                context,
             )
         )
         assert has_or_predicate, (
@@ -407,6 +400,7 @@ class TestApiStateSymphoniesBooleans:
     @pytest.fixture
     def client(self):
         import app as app_module
+
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as c:
             yield c
@@ -430,31 +424,53 @@ class TestApiStateSymphoniesBooleans:
 
         bot_state = {
             armed_sym_id: {
-                "name": "Armed Sym", "account": "ACC1",
-                "armed": True, "tp_armed": False, "para_armed": False, "triggered": False,
+                "name": "Armed Sym",
+                "account": "ACC1",
+                "armed": True,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
             },
             triggered_sym_id: {
-                "name": "Triggered Sym", "account": "ACC1",
-                "armed": False, "tp_armed": False, "para_armed": False, "triggered": True,
+                "name": "Triggered Sym",
+                "account": "ACC1",
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": True,
                 "triggered_reason": "Stop Hit",
             },
             tp_armed_sym_id: {
-                "name": "TP Sym", "account": "ACC1",
-                "armed": False, "tp_armed": True, "para_armed": False, "triggered": False,
+                "name": "TP Sym",
+                "account": "ACC1",
+                "armed": False,
+                "tp_armed": True,
+                "para_armed": False,
+                "triggered": False,
             },
             para_armed_sym_id: {
-                "name": "Para Sym", "account": "ACC1",
-                "armed": False, "tp_armed": False, "para_armed": True, "triggered": False,
+                "name": "Para Sym",
+                "account": "ACC1",
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": True,
+                "triggered": False,
             },
             standby_sym_id: {
-                "name": "Standby Sym", "account": "ACC1",
-                "armed": False, "tp_armed": False, "para_armed": False, "triggered": False,
+                "name": "Standby Sym",
+                "account": "ACC1",
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
             },
         }
 
-        with patch.object(app_module.database, "load_state", return_value=bot_state), \
-             patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}), \
-             patch.object(app_module, "render_template", lambda *_a, **_k: ""):
+        with (
+            patch.object(app_module.database, "load_state", return_value=bot_state),
+            patch.object(app_module, "dotenv_values", lambda *_a, **_k: {}),
+            patch.object(app_module, "render_template", lambda *_a, **_k: ""),
+        ):
             resp = client.get("/api/state")
 
         assert resp.status_code == 200
@@ -469,11 +485,36 @@ class TestApiStateSymphoniesBooleans:
 
         # Every symphony must carry all four boolean fields.
         for sym_id, expected_flags in {
-            armed_sym_id:    {"armed": True,  "tp_armed": False, "para_armed": False, "triggered": False},
-            triggered_sym_id: {"armed": False, "tp_armed": False, "para_armed": False, "triggered": True},
-            tp_armed_sym_id:  {"armed": False, "tp_armed": True,  "para_armed": False, "triggered": False},
-            para_armed_sym_id: {"armed": False, "tp_armed": False, "para_armed": True,  "triggered": False},
-            standby_sym_id:  {"armed": False,  "tp_armed": False, "para_armed": False, "triggered": False},
+            armed_sym_id: {
+                "armed": True,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
+            },
+            triggered_sym_id: {
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": True,
+            },
+            tp_armed_sym_id: {
+                "armed": False,
+                "tp_armed": True,
+                "para_armed": False,
+                "triggered": False,
+            },
+            para_armed_sym_id: {
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": True,
+                "triggered": False,
+            },
+            standby_sym_id: {
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
+            },
         }.items():
             assert sym_id in sym_by_id, (
                 f"AC-SA.6 FAIL: symphony '{sym_id}' not found in data.symphonies. "
@@ -514,7 +555,7 @@ class TestSectionCountBadgeNonRegression:
         start = js.find("function updateSectionMeta")
         assert start != -1, "updateSectionMeta must exist in index.js"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 800]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
         assert "active-section-count" in body, (
             "AC-SA.7a FAIL: updateSectionMeta no longer references "
             "'active-section-count'. The section-partition fix must not regress "
@@ -529,7 +570,7 @@ class TestSectionCountBadgeNonRegression:
         start = js.find("function updateSectionMeta")
         assert start != -1, "updateSectionMeta must exist in index.js"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 800]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
         assert "standby-section-count" in body, (
             "AC-SA.7b FAIL: updateSectionMeta no longer references "
             "'standby-section-count'. The section-partition fix must not regress "
@@ -560,7 +601,7 @@ class TestStatusPillUpdateNonRegression:
         start = js.find("function updateCards")
         assert start != -1, "updateCards must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 5000]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 5000]
         assert "status-pill" in body, (
             "AC-SA.NR.1 FAIL: updateCards no longer references 'status-pill'. "
             "The section-partition fix must be ADDITIVE — it adds node movement, "

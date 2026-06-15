@@ -240,7 +240,7 @@ def test_flush_state_lock_is_released_before_composer_resync(client):
     executor is blocked inside load_state (inside the lock if correct, or with
     lock already released if not).  No scheduling-dependent false GREENs.
     """
-    load_gate = threading.Event()       # blocks background load_state until released
+    load_gate = threading.Event()  # blocks background load_state until released
     phase3_checked = threading.Event()  # fires after Phase-3 spy records lock state
     lock_state_during_phase3: list[bool] = []
     write_completed = threading.Event()
@@ -291,7 +291,7 @@ def test_flush_state_lock_is_released_before_composer_resync(client):
             app_module._FLUSH_STATE_LOCK.release()
             lock_state_during_phase3.append(False)  # lock was NOT held by any thread
         else:
-            lock_state_during_phase3.append(True)   # lock IS held (by executor, correct)
+            lock_state_during_phase3.append(True)  # lock IS held (by executor, correct)
         phase3_checked.set()
         # Unblock the executor now that we've observed the lock state.
         load_gate.set()
@@ -660,9 +660,7 @@ def test_flush_state_lock_comment_does_not_claim_subprocess_acquires_lock():
 
     # Locate app.py relative to the app module — works in any worktree.
     app_source_path = inspect.getfile(app_module)
-    assert os.path.exists(app_source_path), (
-        f"Cannot locate app.py source at {app_source_path!r}."
-    )
+    assert os.path.exists(app_source_path), f"Cannot locate app.py source at {app_source_path!r}."
     with open(app_source_path, encoding="utf-8") as fh:
         app_source = fh.read()
 
@@ -671,8 +669,7 @@ def test_flush_state_lock_comment_does_not_claim_subprocess_acquires_lock():
     # We search the 10 lines immediately preceding the definition.
     lines = app_source.splitlines()
     lock_def_indices = [
-        i for i, line in enumerate(lines)
-        if "_FLUSH_STATE_LOCK = threading.Lock()" in line
+        i for i, line in enumerate(lines) if "_FLUSH_STATE_LOCK = threading.Lock()" in line
     ]
     assert lock_def_indices, (
         "Could not find '_FLUSH_STATE_LOCK = threading.Lock()' in app.py.  "

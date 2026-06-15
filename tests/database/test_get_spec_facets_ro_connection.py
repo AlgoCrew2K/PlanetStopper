@@ -36,6 +36,7 @@ import database as db_module
 # Helper: sentinel that blows up if called
 # ---------------------------------------------------------------------------
 
+
 def _write_connection_forbidden(*args, **kwargs):
     """Stand-in for get_connection() — fails the test if called from a read-only accessor."""
     raise AssertionError(
@@ -48,6 +49,7 @@ def _write_connection_forbidden(*args, **kwargs):
 # ===========================================================================
 # F-1 — get_spec_facets_for_bundle must use get_ro_connection, not get_connection
 # ===========================================================================
+
 
 def test_get_spec_facets_for_bundle_does_not_call_get_connection(tmp_path, monkeypatch):
     """get_spec_facets_for_bundle(bundle_hash) must not call get_connection().
@@ -76,12 +78,8 @@ def test_get_spec_facets_for_bundle_does_not_call_get_connection(tmp_path, monke
         # get_ro_connection still works normally (not patched).
         result = db_module.get_spec_facets_for_bundle(bundle_hash)
 
-    assert isinstance(result, list), (
-        "get_spec_facets_for_bundle must return a list"
-    )
-    assert len(result) == 1, (
-        f"get_spec_facets_for_bundle returned {len(result)} rows; expected 1"
-    )
+    assert isinstance(result, list), "get_spec_facets_for_bundle must return a list"
+    assert len(result) == 1, f"get_spec_facets_for_bundle returned {len(result)} rows; expected 1"
     assert result[0]["facet_name"] == "gamma"
 
 
@@ -135,6 +133,7 @@ def test_get_spec_facets_for_bundle_returns_empty_for_unknown_bundle(tmp_path, m
 # Source-inspection guard (belt-and-suspenders)
 # ===========================================================================
 
+
 def test_get_spec_facets_for_bundle_source_uses_ro_connection():
     """Source-inspection: get_spec_facets_for_bundle function body must reference
     get_ro_connection, not a bare get_connection call.
@@ -145,10 +144,7 @@ def test_get_spec_facets_for_bundle_source_uses_ro_connection():
     import inspect
 
     source = inspect.getsource(db_module.get_spec_facets_for_bundle)
-    non_comment_lines = [
-        line for line in source.splitlines()
-        if not line.lstrip().startswith("#")
-    ]
+    non_comment_lines = [line for line in source.splitlines() if not line.lstrip().startswith("#")]
     non_comment = "\n".join(non_comment_lines)
 
     assert "get_ro_connection" in non_comment, (
@@ -159,7 +155,8 @@ def test_get_spec_facets_for_bundle_source_uses_ro_connection():
     # Ensure no bare get_connection() call remains (get_ro_connection contains
     # the substring 'get_connection' so we must check for the bare form).
     bare_calls = [
-        line for line in non_comment_lines
+        line
+        for line in non_comment_lines
         if "get_connection()" in line and "get_ro_connection()" not in line
     ]
     assert not bare_calls, (

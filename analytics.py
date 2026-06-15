@@ -446,11 +446,7 @@ def compute_portfolio_annualized_vol(
     by 100 to fraction scale before the std. Returns None when fewer than
     _MIN_QUANTSTATS_OBSERVATIONS finite observations remain.
     """
-    fracs = [
-        v / 100.0
-        for v in portfolio_daily_returns_pct
-        if _is_finite_number(v)
-    ]
+    fracs = [v / 100.0 for v in portfolio_daily_returns_pct if _is_finite_number(v)]
     if len(fracs) < _MIN_QUANTSTATS_OBSERVATIONS:
         return None
 
@@ -1161,6 +1157,7 @@ def get_portfolio_daily_returns_from_shadow(
 
     # Group by trading_day → {symphony_id: (shadow_return, current_return)}
     from collections import defaultdict
+
     day_map: dict = defaultdict(dict)
     for trading_day, symphony_id, shadow_return, current_return in rows:
         day_map[trading_day][symphony_id] = (
@@ -1366,9 +1363,7 @@ def _get_windowed_divergence_trajectory(
 
     cutoff_iso = cutoff.isoformat() if cutoff is not None else None
     # String compare is valid: trading_day is ISO "YYYY-MM-DD" (lexicographic == chronological).
-    in_window = [
-        r for r in rows if cutoff_iso is None or str(r[0]) >= cutoff_iso
-    ]
+    in_window = [r for r in rows if cutoff_iso is None or str(r[0]) >= cutoff_iso]
     if len(in_window) < 2:
         return None
 
@@ -1489,9 +1484,7 @@ def compute_windowed_portfolio_strip(
             continue
         alpha_wsum += sym_alpha * w
         weight_sum += w
-    windowed_alpha: float | None = (
-        alpha_wsum / weight_sum if weight_sum > 0.0 else None
-    )
+    windowed_alpha: float | None = alpha_wsum / weight_sum if weight_sum > 0.0 else None
 
     # Anchor the windowed CR dry_run on the windowed guard alpha so the headline value
     # re-windows (cumulative_return.dry_run − if_held == windowed guard alpha).
@@ -1574,7 +1567,9 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
                 day_alpha += alpha
                 if alpha > 0:
                     stats["wins"] += 1
-                br = stats["by_reason"].setdefault(reason, {"alpha": 0.0, "count": 0, "wins": 0, "dollars": 0.0})
+                br = stats["by_reason"].setdefault(
+                    reason, {"alpha": 0.0, "count": 0, "wins": 0, "dollars": 0.0}
+                )
                 br["alpha"] += alpha
                 br["count"] += 1
                 br["dollars"] += dollars
@@ -1615,19 +1610,17 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
         for t in today_data.get("triggers", []):
             # Post-mortem entries key on symphony_name (the producer field name);
             # symphony_id is a secondary fallback for DB-sourced entries (D-DAT-R05).
-            sym_id = (
-                t.get("symphony_id")
-                or t.get("symphony_name")
-                or t.get("symphony", "")
-            )
+            sym_id = t.get("symphony_id") or t.get("symphony_name") or t.get("symphony", "")
             sym_name = _name_map.get(sym_id) or t.get("symphony_name") or sym_id
-            todays_exits.append({
-                "ts": t.get("timestamp", t.get("ts", "")),
-                "symphony_id": sym_id,
-                "symphony_name": sym_name,
-                "reason": t.get("exit_reason", t.get("reason", "")),
-                "detail": t.get("detail", t.get("saved_pct_guard_alpha", "")),
-            })
+            todays_exits.append(
+                {
+                    "ts": t.get("timestamp", t.get("ts", "")),
+                    "symphony_id": sym_id,
+                    "symphony_name": sym_name,
+                    "reason": t.get("exit_reason", t.get("reason", "")),
+                    "detail": t.get("detail", t.get("saved_pct_guard_alpha", "")),
+                }
+            )
     except (FileNotFoundError, KeyError, _json.JSONDecodeError):
         pass
     stats["todays_exits"] = todays_exits

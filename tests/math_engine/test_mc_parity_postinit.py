@@ -240,9 +240,7 @@ def test_mc_parity_columns_round_trip_via_accessor(isolated_db) -> None:
     # Mahalanobis-style distance (storage round-trip through IEEE 754 double
     # SQLite REAL); strict equality is acceptable but pytest.approx documents
     # the intent that this is a storage fidelity test, not a math invariant.
-    assert row["mc_regime_match_mean_dist2"] == pytest.approx(
-        written_mean_dist2, rel=1e-9
-    ), (
+    assert row["mc_regime_match_mean_dist2"] == pytest.approx(written_mean_dist2, rel=1e-9), (
         f"mc_regime_match_mean_dist2 round-trip mismatch: "
         f"wrote {written_mean_dist2!r}, read back "
         f"{row['mc_regime_match_mean_dist2']!r}."

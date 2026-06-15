@@ -61,17 +61,13 @@ import pytest
 
 import math_engine
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "mc_fallbacks"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "mc_fallbacks"
 
 
 # ---------------------------------------------------------------------------
 # History builder (handles spec kinds used in this module's fixtures)
 # ---------------------------------------------------------------------------
+
 
 def _date_key(i: int) -> str:
     """ISO date string for synthetic day index i (lexicographic sort only)."""
@@ -144,6 +140,7 @@ def _build_history(spec: dict[str, Any]) -> dict[str, dict[str, dict[str, float]
 # Fixture loader
 # ---------------------------------------------------------------------------
 
+
 def _load_fixture(filename: str) -> dict[str, Any]:
     path = FIXTURE_DIR / filename
     with path.open("r", encoding="utf-8") as fh:
@@ -190,6 +187,7 @@ def _run_from_fixture(fixture: dict[str, Any]) -> float:
 # Test 1 — Short-history input returns the out-of-band insufficient sentinel
 # ---------------------------------------------------------------------------
 
+
 def test_short_history_spy_vol_fallback_returns_sentinel_and_is_finite() -> None:
     """
     15 days of SPY history is below MC_MIN_HISTORY_DAYS (20).
@@ -227,6 +225,7 @@ def test_short_history_spy_vol_fallback_returns_sentinel_and_is_finite() -> None
 # Test 2 — Long-history input runs the full MC path (negative control)
 # ---------------------------------------------------------------------------
 
+
 def test_long_history_normal_path_returns_finite_float_in_range() -> None:
     """
     50 days of SPY history is well above MC_MIN_HISTORY_DAYS (20) and
@@ -244,9 +243,7 @@ def test_long_history_normal_path_returns_finite_float_in_range() -> None:
     assert math.isfinite(actual), (
         f"run_monte_carlo returned non-finite value {actual!r} for 50-day history."
     )
-    assert 0.0 <= actual <= 100.0, (
-        f"run_monte_carlo returned {actual!r} outside [0, 100]."
-    )
+    assert 0.0 <= actual <= 100.0, f"run_monte_carlo returned {actual!r} outside [0, 100]."
     # Regression pin: tight relative tolerance because fixed-seed MC must be
     # deterministic to at least 9 significant figures. If this fires it means
     # floating-point operations were reordered, which must be justified.
@@ -274,12 +271,10 @@ def test_long_history_result_differs_from_short_history_sentinel() -> None:
     long_result = _run_from_fixture_raw(long_fixture)
 
     assert short_result is None, (
-        f"15-day history must return the insufficient sentinel (None); "
-        f"got {short_result!r}."
+        f"15-day history must return the insufficient sentinel (None); got {short_result!r}."
     )
     assert long_result is not None, (
-        f"50-day history must return a real MC probability, not the "
-        f"insufficient sentinel."
+        f"50-day history must return a real MC probability, not the insufficient sentinel."
     )
     assert short_result != long_result, (
         f"Short-history sentinel ({short_result!r}) equals long-history MC "
@@ -291,6 +286,7 @@ def test_long_history_result_differs_from_short_history_sentinel() -> None:
 # ---------------------------------------------------------------------------
 # Test 3 — Missing-ticker SPY substitution fires, result is valid
 # ---------------------------------------------------------------------------
+
 
 def test_missing_ticker_spy_substitution_returns_finite_float_in_range() -> None:
     """
@@ -322,6 +318,7 @@ def test_missing_ticker_spy_substitution_returns_finite_float_in_range() -> None
 # ---------------------------------------------------------------------------
 # Test 4 — Ticker present in all days takes normal branch (negative control)
 # ---------------------------------------------------------------------------
+
 
 def test_present_ticker_takes_own_returns_and_differs_from_spy_substitution() -> None:
     """
@@ -374,6 +371,7 @@ def test_present_ticker_takes_own_returns_and_differs_from_spy_substitution() ->
 # Property: every fixture returns either a bounded finite probability or the
 # out-of-band insufficient-history sentinel
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "fixture_filename",

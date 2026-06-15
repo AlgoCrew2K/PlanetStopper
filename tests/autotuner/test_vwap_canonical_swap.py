@@ -294,9 +294,7 @@ def test_inline_vwap_state_mutations_are_removed() -> None:
                         offending.append((tgt.id, node.lineno))
                     # Tuple-target: (vwap_ticks, vwap_bleed_ticks, ...) = ...
                     if isinstance(tgt, ast.Tuple):
-                        names_in_target = {
-                            e.id for e in tgt.elts if isinstance(e, ast.Name)
-                        }
+                        names_in_target = {e.id for e in tgt.elts if isinstance(e, ast.Name)}
                         hit = names_in_target & INLINE_VWAP_STATE_NAMES
                         if hit and not _is_tuple_unpack_of_canonical_call(node.value):
                             for n in hit:
@@ -320,8 +318,7 @@ def test_inline_vwap_state_mutations_are_removed() -> None:
     # functions already guarantees this (it selects functions that call it),
     # but assert explicitly so the no-mutations result is never vacuous.
     canonical_calls_in_run_sim = [
-        n for f in vwap_funcs for n in ast.walk(f)
-        if _is_compute_vwap_breakdown_call(n)
+        n for f in vwap_funcs for n in ast.walk(f) if _is_compute_vwap_breakdown_call(n)
     ]
     assert canonical_calls_in_run_sim, (
         "No call to math_engine.compute_vwap_breakdown_update found in the "
@@ -362,8 +359,7 @@ def test_canonical_call_includes_all_required_kwargs() -> None:
         "required kwargs from the cycle-10 signature. Every kwarg must be "
         "passed by name:\n"
         + "\n".join(
-            f"  - line {lineno}: missing {sorted(missing)}"
-            for lineno, missing in missing_by_call
+            f"  - line {lineno}: missing {sorted(missing)}" for lineno, missing in missing_by_call
         )
         + f"\nFull required kwarg set: {sorted(REQUIRED_KWARGS)}."
     )

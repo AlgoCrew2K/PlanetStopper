@@ -32,6 +32,7 @@ import database as db_module
 # Helper: sentinel that blows up if called
 # ---------------------------------------------------------------------------
 
+
 def _write_connection_forbidden(*args, **kwargs):
     """Stand-in for get_connection() — fails the test if called."""
     raise AssertionError(
@@ -43,6 +44,7 @@ def _write_connection_forbidden(*args, **kwargs):
 # ===========================================================================
 # F-1a — get_spec_bundle must use get_ro_connection, not get_connection
 # ===========================================================================
+
 
 def test_get_spec_bundle_does_not_call_get_connection(tmp_path, monkeypatch):
     """get_spec_bundle(bundle_hash) must not call get_connection().
@@ -63,9 +65,7 @@ def test_get_spec_bundle_does_not_call_get_connection(tmp_path, monkeypatch):
         # get_ro_connection still works normally (not patched).
         result = db_module.get_spec_bundle(bundle_hash)
 
-    assert result is not None, (
-        "get_spec_bundle must return the inserted bundle row"
-    )
+    assert result is not None, "get_spec_bundle must return the inserted bundle row"
     assert result["bundle_hash"] == bundle_hash
 
 
@@ -102,6 +102,7 @@ def test_get_spec_bundle_uses_ro_connection(tmp_path, monkeypatch):
 # F-1b — get_spec_bundle_by_id must use get_ro_connection, not get_connection
 # ===========================================================================
 
+
 def test_get_spec_bundle_by_id_does_not_call_get_connection(tmp_path, monkeypatch):
     """get_spec_bundle_by_id(id) must not call get_connection().
 
@@ -127,9 +128,7 @@ def test_get_spec_bundle_by_id_does_not_call_get_connection(tmp_path, monkeypatc
     with patch.object(db_module, "get_connection", side_effect=_write_connection_forbidden):
         result = db_module.get_spec_bundle_by_id(bundle_id)
 
-    assert result is not None, (
-        "get_spec_bundle_by_id must return the inserted bundle row"
-    )
+    assert result is not None, "get_spec_bundle_by_id must return the inserted bundle row"
     assert result["bundle_hash"] == bundle_hash
 
 
@@ -169,6 +168,7 @@ def test_get_spec_bundle_by_id_uses_ro_connection(tmp_path, monkeypatch):
 # Source-inspection guard (belt-and-suspenders)
 # ===========================================================================
 
+
 def test_get_spec_bundle_source_uses_ro_connection():
     """Source-inspection: the get_spec_bundle function body must reference
     get_ro_connection, not get_connection.
@@ -182,8 +182,7 @@ def test_get_spec_bundle_source_uses_ro_connection():
 
     source = inspect.getsource(db_module.get_spec_bundle)
     non_comment = "\n".join(
-        line for line in source.splitlines()
-        if not line.lstrip().startswith("#")
+        line for line in source.splitlines() if not line.lstrip().startswith("#")
     )
     assert "get_ro_connection" in non_comment, (
         "get_spec_bundle must call get_ro_connection() — not found in function source. "
@@ -203,8 +202,7 @@ def test_get_spec_bundle_by_id_source_uses_ro_connection():
 
     source = inspect.getsource(db_module.get_spec_bundle_by_id)
     non_comment = "\n".join(
-        line for line in source.splitlines()
-        if not line.lstrip().startswith("#")
+        line for line in source.splitlines() if not line.lstrip().startswith("#")
     )
     assert "get_ro_connection" in non_comment, (
         "get_spec_bundle_by_id must call get_ro_connection() — not found in function source. "

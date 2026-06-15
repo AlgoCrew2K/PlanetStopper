@@ -439,16 +439,11 @@ class TestStalenessBadgeMarkupInIndexHtml:
             resp = client.get("/")
 
         html = resp.data.decode("utf-8")
-        match = re.search(
-            r'id="engine-status-label"[^>]*>([^<]*)<', html
-        )
-        assert match is not None, (
-            'id="engine-status-label" element not found in rendered HTML.'
-        )
+        match = re.search(r'id="engine-status-label"[^>]*>([^<]*)<', html)
+        assert match is not None, 'id="engine-status-label" element not found in rendered HTML.'
         label_text = match.group(1).strip()
         assert label_text in ("Live", "Stale", "Closed"), (
-            f"#engine-status-label initial text must be Live, Stale, or Closed; "
-            f"got {label_text!r}"
+            f"#engine-status-label initial text must be Live, Stale, or Closed; got {label_text!r}"
         )
 
 
@@ -469,9 +464,7 @@ class TestStalenessBadgeJsWiring:
         static/chrome.js must reference 'last_successful_cycle_at' to compute
         the stale threshold (> 2 min since last cycle → Stale state).
         """
-        chrome_js = (
-            pathlib.Path(__file__).parent.parent.parent / "static" / "chrome.js"
-        )
+        chrome_js = pathlib.Path(__file__).parent.parent.parent / "static" / "chrome.js"
         content = chrome_js.read_text(encoding="utf-8")
         assert "last_successful_cycle_at" in content, (
             "static/chrome.js must reference 'last_successful_cycle_at' in "
@@ -483,9 +476,7 @@ class TestStalenessBadgeJsWiring:
         static/chrome.js must reference 'engine-status-label' — the element
         whose textContent is set to Live / Stale / Closed.
         """
-        chrome_js = (
-            pathlib.Path(__file__).parent.parent.parent / "static" / "chrome.js"
-        )
+        chrome_js = pathlib.Path(__file__).parent.parent.parent / "static" / "chrome.js"
         content = chrome_js.read_text(encoding="utf-8")
         assert "engine-status-label" in content, (
             "static/chrome.js must reference 'engine-status-label' to update "
@@ -523,7 +514,10 @@ class TestCumulativeReturnPercentScaling:
     # Load fixture at class level to avoid repeated file I/O
     _FIXTURE_PATH = (
         pathlib.Path(__file__).parent.parent.parent
-        / "tests" / "fixtures" / "composer" / "symphony_stats_meta.json"
+        / "tests"
+        / "fixtures"
+        / "composer"
+        / "symphony_stats_meta.json"
     )
 
     @pytest.fixture(scope="class")
@@ -542,12 +536,10 @@ class TestCumulativeReturnPercentScaling:
         from if_held and causing false failures.
         """
         import sqlite3
+
         db_file = tmp_path_factory.mktemp("cr_scaling") / "empty_state.db"
         with sqlite3.connect(str(db_file)) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS bot_state "
-                "(id INTEGER PRIMARY KEY, data TEXT)"
-            )
+            conn.execute("CREATE TABLE IF NOT EXISTS bot_state (id INTEGER PRIMARY KEY, data TEXT)")
         return str(db_file)
 
     @pytest.fixture(scope="class")
@@ -571,7 +563,9 @@ class TestCumulativeReturnPercentScaling:
         """
         from analytics import get_symphony_cumulative_return
 
-        result = get_symphony_cumulative_return(normal_symphony, bot_state_entry=None, db_path=empty_db)
+        result = get_symphony_cumulative_return(
+            normal_symphony, bot_state_entry=None, db_path=empty_db
+        )
 
         raw = normal_symphony["simple_return"]  # 0.65976
         expected_pct = raw * 100  # 65.976
@@ -595,7 +589,9 @@ class TestCumulativeReturnPercentScaling:
         """
         from analytics import get_symphony_cumulative_return
 
-        result = get_symphony_cumulative_return(normal_symphony, bot_state_entry=None, db_path=empty_db)
+        result = get_symphony_cumulative_return(
+            normal_symphony, bot_state_entry=None, db_path=empty_db
+        )
 
         raw = normal_symphony["simple_return"]
         expected_pct = raw * 100
@@ -623,7 +619,9 @@ class TestCumulativeReturnPercentScaling:
             "fixture assumption violated: twr_symphony.net_deposits must be 0.0"
         )
 
-        result = get_symphony_cumulative_return(twr_symphony, bot_state_entry=None, db_path=empty_db)
+        result = get_symphony_cumulative_return(
+            twr_symphony, bot_state_entry=None, db_path=empty_db
+        )
 
         raw_twr = twr_symphony["time_weighted_return"]  # 3.13212
         expected_pct = raw_twr * 100  # 313.212

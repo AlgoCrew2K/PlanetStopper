@@ -60,8 +60,7 @@ def test_backoff_429_terminates_within_max_attempts():
 
     # Patch time.sleep to avoid any real waits during this test — the test
     # verifies termination logic, not timing.
-    with patch("ai_advisor.requests.get", side_effect=always_429), \
-         patch("ai_advisor.time.sleep"):
+    with patch("ai_advisor.requests.get", side_effect=always_429), patch("ai_advisor.time.sleep"):
         resp = ai_advisor._fetch_with_backoff("https://test.example/")
 
     assert call_count <= ai_advisor._FETCH_MAX_ATTEMPTS, (
@@ -87,8 +86,7 @@ def test_backoff_429_call_count_is_strictly_positive():
         call_count += 1
         return _make_resp(429)
 
-    with patch("ai_advisor.requests.get", side_effect=always_429), \
-         patch("ai_advisor.time.sleep"):
+    with patch("ai_advisor.requests.get", side_effect=always_429), patch("ai_advisor.time.sleep"):
         ai_advisor._fetch_with_backoff("https://test.example/")
 
     assert call_count >= 1, "At least one GET attempt must be made."
@@ -119,8 +117,10 @@ def test_backoff_connection_error_terminates_within_max_attempts():
         call_count += 1
         raise requests_lib.exceptions.ConnectionError("simulated connection refused")
 
-    with patch("ai_advisor.requests.get", side_effect=always_conn_error), \
-         patch("ai_advisor.time.sleep"):
+    with (
+        patch("ai_advisor.requests.get", side_effect=always_conn_error),
+        patch("ai_advisor.time.sleep"),
+    ):
         with pytest.raises(requests_lib.exceptions.ConnectionError):
             ai_advisor._fetch_with_backoff("https://test.example/")
 
@@ -143,8 +143,10 @@ def test_backoff_timeout_error_terminates_within_max_attempts():
         call_count += 1
         raise requests_lib.exceptions.Timeout("simulated read timeout")
 
-    with patch("ai_advisor.requests.get", side_effect=always_timeout), \
-         patch("ai_advisor.time.sleep"):
+    with (
+        patch("ai_advisor.requests.get", side_effect=always_timeout),
+        patch("ai_advisor.time.sleep"),
+    ):
         with pytest.raises(requests_lib.exceptions.Timeout):
             ai_advisor._fetch_with_backoff("https://test.example/")
 
@@ -163,8 +165,10 @@ def test_backoff_success_on_first_attempt_makes_exactly_one_call():
     """A 200 response on the first attempt: no retry, exactly one GET call."""
     import ai_advisor
 
-    with patch("ai_advisor.requests.get", return_value=_make_resp(200)) as mock_get, \
-         patch("ai_advisor.time.sleep") as mock_sleep:
+    with (
+        patch("ai_advisor.requests.get", return_value=_make_resp(200)) as mock_get,
+        patch("ai_advisor.time.sleep") as mock_sleep,
+    ):
         resp = ai_advisor._fetch_with_backoff("https://test.example/")
 
     mock_get.assert_called_once()
@@ -176,8 +180,10 @@ def test_backoff_non_429_error_code_is_returned_immediately():
     """A non-429 non-200 response (e.g. 500) is returned immediately, no retry."""
     import ai_advisor
 
-    with patch("ai_advisor.requests.get", return_value=_make_resp(500)) as mock_get, \
-         patch("ai_advisor.time.sleep") as mock_sleep:
+    with (
+        patch("ai_advisor.requests.get", return_value=_make_resp(500)) as mock_get,
+        patch("ai_advisor.time.sleep") as mock_sleep,
+    ):
         resp = ai_advisor._fetch_with_backoff("https://test.example/")
 
     mock_get.assert_called_once()
@@ -191,8 +197,10 @@ def test_backoff_429_then_200_retries_and_succeeds():
 
     responses = iter([_make_resp(429), _make_resp(200)])
 
-    with patch("ai_advisor.requests.get", side_effect=lambda *a, **kw: next(responses)) as mock_get, \
-         patch("ai_advisor.time.sleep") as mock_sleep:
+    with (
+        patch("ai_advisor.requests.get", side_effect=lambda *a, **kw: next(responses)) as mock_get,
+        patch("ai_advisor.time.sleep") as mock_sleep,
+    ):
         resp = ai_advisor._fetch_with_backoff("https://test.example/")
 
     assert mock_get.call_count == 2, (
@@ -206,8 +214,10 @@ def test_backoff_headers_and_params_forwarded():
     """headers and params keyword arguments are forwarded to requests.get."""
     import ai_advisor
 
-    with patch("ai_advisor.requests.get", return_value=_make_resp(200)) as mock_get, \
-         patch("ai_advisor.time.sleep"):
+    with (
+        patch("ai_advisor.requests.get", return_value=_make_resp(200)) as mock_get,
+        patch("ai_advisor.time.sleep"),
+    ):
         ai_advisor._fetch_with_backoff(
             "https://test.example/",
             headers={"X-Test": "value"},
@@ -235,12 +245,8 @@ def test_fetch_max_attempts_constant_exists_and_is_positive_int():
     assert hasattr(ai_advisor, "_FETCH_MAX_ATTEMPTS"), (
         "_FETCH_MAX_ATTEMPTS constant is missing from ai_advisor.py"
     )
-    assert isinstance(ai_advisor._FETCH_MAX_ATTEMPTS, int), (
-        "_FETCH_MAX_ATTEMPTS must be an int"
-    )
-    assert ai_advisor._FETCH_MAX_ATTEMPTS > 0, (
-        "_FETCH_MAX_ATTEMPTS must be positive"
-    )
+    assert isinstance(ai_advisor._FETCH_MAX_ATTEMPTS, int), "_FETCH_MAX_ATTEMPTS must be an int"
+    assert ai_advisor._FETCH_MAX_ATTEMPTS > 0, "_FETCH_MAX_ATTEMPTS must be positive"
 
 
 def test_fetch_max_backoff_total_wait_constant_exists():

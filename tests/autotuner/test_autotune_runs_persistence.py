@@ -79,6 +79,7 @@ import pytest
 # Mirrors the pattern in tests/database/test_chart_aggregates.py.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path, monkeypatch):
     """
@@ -99,6 +100,7 @@ def isolated_db(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Re-use the same minimal history / bot_state helpers as the OOS tests.
 # ---------------------------------------------------------------------------
+
 
 def _build_bot_state(symphony_name: str = "Test Symphony A") -> dict:
     """Single-symphony bot_state — minimum needed for run_autotuner to iterate."""
@@ -156,8 +158,7 @@ def _no_trigger_vwap_side_effect(**kwargs):
 
 
 @contextlib.contextmanager
-def _autotuner_patches(best_params: dict, fallback: dict,
-                       vwap_side_effect=None):
+def _autotuner_patches(best_params: dict, fallback: dict, vwap_side_effect=None):
     """
     Wire the mocks needed for one run_autotuner invocation.
 
@@ -178,17 +179,19 @@ def _autotuner_patches(best_params: dict, fallback: dict,
 
     history = _build_history(n_days=5)
 
-    with patch("autotuner.optuna.create_study", return_value=fake_study), \
-         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value=history), \
-         patch("autotuner.database.load_chart_history", return_value={}), \
-         patch("autotuner.database.save_chart_archive"), \
-         patch("autotuner.database.get_symphony_strategy",
-               return_value={"params": fallback.copy(), "locked_vars": []}), \
-         patch("autotuner.database.DEFAULT_STRATEGY", database.DEFAULT_STRATEGY.copy()), \
-         patch("autotuner.math_engine.compute_vwap_breakdown_update",
-               side_effect=vwap_side_effect):
+    with (
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": fallback.copy(), "locked_vars": []},
+        ),
+        patch("autotuner.database.DEFAULT_STRATEGY", database.DEFAULT_STRATEGY.copy()),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update", side_effect=vwap_side_effect),
+    ):
         yield {"fake_study": fake_study}
 
 
@@ -212,6 +215,7 @@ def _make_phase1_spec_bundle() -> int:
     _db.insert_spec_bundle(bundle_hash=bundle_hash, facets_json=canonical_json)
 
     import sqlite3
+
     conn = _db.get_connection()
     bundle_id = conn.execute(
         "SELECT id FROM spec_bundles WHERE bundle_hash = ?", (bundle_hash,)
@@ -245,8 +249,7 @@ def _run_autotuner_via_patches(best_params, fallback, vwap_side_effect=None):
     sig = inspect.signature(autotuner.run_autotuner)
     extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
 
-    with _autotuner_patches(best_params, fallback,
-                             vwap_side_effect=vwap_side_effect):
+    with _autotuner_patches(best_params, fallback, vwap_side_effect=vwap_side_effect):
         with contextlib.redirect_stdout(buf):
             result = autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **extra)
     return result, buf.getvalue()
@@ -255,6 +258,7 @@ def _run_autotuner_via_patches(best_params, fallback, vwap_side_effect=None):
 # ===========================================================================
 # Test 1 — autotune_runs table exists after init_db
 # ===========================================================================
+
 
 def test_autotune_runs_table_exists_after_init_db(isolated_db):
     """
@@ -274,9 +278,7 @@ def test_autotune_runs_table_exists_after_init_db(isolated_db):
     cursor = conn.cursor()
 
     # Verify the table exists at all — sqlite_master lookup.
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='autotune_runs'"
-    )
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='autotune_runs'")
     row = cursor.fetchone()
     assert row is not None, (
         "autotune_runs table must exist after init_db(); "
@@ -309,6 +311,7 @@ def test_autotune_runs_table_exists_after_init_db(isolated_db):
 # ===========================================================================
 # Test 2 — migration file 002_autotune_runs.sql is well-formed
 # ===========================================================================
+
 
 def test_migration_002_creates_autotune_runs_table_idempotently(tmp_path):
     """
@@ -370,9 +373,7 @@ def test_migration_002_creates_autotune_runs_table_idempotently(tmp_path):
             f"application: {exc}. The SQL must be syntactically valid."
         )
 
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='autotune_runs'"
-    )
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='autotune_runs'")
     assert cursor.fetchone() is not None, (
         "After applying 002_autotune_runs.sql, autotune_runs table must exist."
     )
@@ -392,6 +393,7 @@ def test_migration_002_creates_autotune_runs_table_idempotently(tmp_path):
 # ===========================================================================
 # Test 3 — run_autotuner writes one row per (run, symphony) to autotune_runs
 # ===========================================================================
+
 
 def test_run_autotuner_inserts_one_row_per_symphony_per_run(isolated_db):
     """
@@ -427,10 +429,15 @@ def test_run_autotuner_inserts_one_row_per_symphony_per_run(isolated_db):
         "run_autotuner must INSERT one row per symphony per invocation."
     )
 
-    (run_timestamp, symphony_id,
-     oos_alpha, train_alpha,
-     baseline_decision,
-     fallback_oos_alpha, default_oos_alpha) = rows[0]
+    (
+        run_timestamp,
+        symphony_id,
+        oos_alpha,
+        train_alpha,
+        baseline_decision,
+        fallback_oos_alpha,
+        default_oos_alpha,
+    ) = rows[0]
 
     assert run_timestamp is not None, "run_timestamp must be non-NULL"
     assert symphony_id is not None, "symphony_id must be non-NULL"
@@ -440,9 +447,7 @@ def test_run_autotuner_inserts_one_row_per_symphony_per_run(isolated_db):
     assert oos_alpha is not None, (
         "oos_alpha must be persisted; it is the primary Claude confidence signal"
     )
-    assert train_alpha is not None, (
-        "train_alpha (best_alpha_train) must be persisted"
-    )
+    assert train_alpha is not None, "train_alpha (best_alpha_train) must be persisted"
     assert baseline_decision is not None, (
         "baseline_decision string must be persisted; "
         "Claude needs it to determine whether to defer to or supplement Optuna"
@@ -476,6 +481,7 @@ def test_run_autotuner_inserts_one_row_per_symphony_per_run(isolated_db):
 # ===========================================================================
 # Test 4 — get_latest_autotune_run accessor returns the most-recent row
 # ===========================================================================
+
 
 def test_get_latest_autotune_run_returns_most_recent_row_for_symphony(isolated_db):
     """
@@ -561,6 +567,7 @@ def test_get_latest_autotune_run_returns_most_recent_row_for_symphony(isolated_d
 # Test 5 — round-trip fidelity: values written == values read, no float drift
 # ===========================================================================
 
+
 def test_autotune_run_round_trip_no_precision_loss(isolated_db):
     """
     Float metrics written via ``save_autotune_run`` must come back unchanged
@@ -617,9 +624,10 @@ def test_autotune_run_round_trip_no_precision_loss(isolated_db):
         f"read back {result['train_alpha']}."
     )
     assert result["fallback_oos_alpha"] == pytest.approx(
-        written_fallback_oos_alpha, rel=1e-3  # rel tolerance is large because value is near zero;
-                                              # abs tolerance comment: ~1e-8 at this magnitude,
-                                              # well within any quant-meaningful threshold
+        written_fallback_oos_alpha,
+        rel=1e-3,  # rel tolerance is large because value is near zero;
+        # abs tolerance comment: ~1e-8 at this magnitude,
+        # well within any quant-meaningful threshold
     ), (
         f"fallback_oos_alpha round-trip mismatch: wrote {written_fallback_oos_alpha}, "
         f"read back {result['fallback_oos_alpha']}."
@@ -644,6 +652,7 @@ def test_autotune_run_round_trip_no_precision_loss(isolated_db):
 # ===========================================================================
 # Test 6 — get_latest_autotune_run returns None for an unknown symphony
 # ===========================================================================
+
 
 def test_get_latest_autotune_run_returns_none_for_unknown_symphony(isolated_db):
     """

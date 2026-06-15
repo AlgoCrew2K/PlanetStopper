@@ -62,24 +62,26 @@ import database as database_module
 # Denylist: database mutator symbols forbidden in route call paths
 # ---------------------------------------------------------------------------
 
-_DB_MUTATOR_DENYLIST: frozenset[str] = frozenset({
-    # State writes
-    "save_state",
-    "wipe_transient_state",
-    # Record helpers — engine-only side effects
-    "record_exit_trigger",
-    "record_shadow_observation",
-    "record_autotune_run",
-    "record_llm_suggestion",
-    # Schema mutations
-    "init_db",
-    "run_migrations",
-    # H4 telemetry path
-    "write_telemetry_row",
-    "record_cvar_diagnostic",
-    # Fleet-alert write
-    "write_fleet_alert",
-})
+_DB_MUTATOR_DENYLIST: frozenset[str] = frozenset(
+    {
+        # State writes
+        "save_state",
+        "wipe_transient_state",
+        # Record helpers — engine-only side effects
+        "record_exit_trigger",
+        "record_shadow_observation",
+        "record_autotune_run",
+        "record_llm_suggestion",
+        # Schema mutations
+        "init_db",
+        "run_migrations",
+        # H4 telemetry path
+        "write_telemetry_row",
+        "record_cvar_diagnostic",
+        # Fleet-alert write
+        "write_fleet_alert",
+    }
+)
 
 # Substrings that identify mutator patterns (prefix match on function names)
 _DB_MUTATOR_PREFIXES: tuple[str, ...] = ("wipe_", "record_", "save_")
@@ -88,27 +90,27 @@ _DB_MUTATOR_PREFIXES: tuple[str, ...] = ("wipe_", "record_", "save_")
 # are PERMITTED writes — the "save_" prefix is over-broad and catches intentional
 # operator-approval config writes.  Pairs here are excluded from denylist checks.
 # See module docstring for the rationale for each entry.
-_ALLOWED_ROUTE_WRITE_PAIRS: frozenset[tuple[str, str]] = frozenset({
-    # Operator-approval config write — four safety gates, not a trade action.
-    # Pinned as the only permitted write in test_dashboard_advisor_render_is_read_only.py.
-    ("ai_advisor_accept", "save_symphony_strategy"),
-    # AC-5: /accept and /reject persist the operator decision to the immutable
-    # llm_suggestions audit trail — this is an operator-decision write, not an
-    # engine-state write.  Both routes are action paths (not render paths).
-    ("ai_advisor_accept", "record_llm_suggestion"),
-    ("ai_advisor_reject", "record_llm_suggestion"),
-    # Operator settings write — same rationale; config write, not engine state.
-    ("save_settings", "save_symphony_strategy"),
-    # Chart history writes — persisted display data, not live engine state.
-    ("save_chart_history_endpoint", "save_chart_history"),
-    ("save_chart_archive_endpoint", "save_chart_archive"),
-})
+_ALLOWED_ROUTE_WRITE_PAIRS: frozenset[tuple[str, str]] = frozenset(
+    {
+        # Operator-approval config write — four safety gates, not a trade action.
+        # Pinned as the only permitted write in test_dashboard_advisor_render_is_read_only.py.
+        ("ai_advisor_accept", "save_symphony_strategy"),
+        # AC-5: /accept and /reject persist the operator decision to the immutable
+        # llm_suggestions audit trail — this is an operator-decision write, not an
+        # engine-state write.  Both routes are action paths (not render paths).
+        ("ai_advisor_accept", "record_llm_suggestion"),
+        ("ai_advisor_reject", "record_llm_suggestion"),
+        # Operator settings write — same rationale; config write, not engine state.
+        ("save_settings", "save_symphony_strategy"),
+        # Chart history writes — persisted display data, not live engine state.
+        ("save_chart_history_endpoint", "save_chart_history"),
+        ("save_chart_archive_endpoint", "save_chart_archive"),
+    }
+)
 
 # Symbols that are permitted writes (derived from _ALLOWED_ROUTE_WRITE_PAIRS)
 # and must be excluded from the prefix-based denylist expansion.
-_PERMITTED_WRITE_SYMBOLS: frozenset[str] = frozenset(
-    sym for _, sym in _ALLOWED_ROUTE_WRITE_PAIRS
-)
+_PERMITTED_WRITE_SYMBOLS: frozenset[str] = frozenset(sym for _, sym in _ALLOWED_ROUTE_WRITE_PAIRS)
 
 
 def _all_db_mutators() -> frozenset[str]:
@@ -250,10 +252,7 @@ class TestRouteBodiesNoMutatorSymbols:
             names = _parse_route_body_names(func_name, self._source)
             matched = names & record_names
             # Filter out (route, symbol) pairs explicitly permitted by the allowlist.
-            matched = {
-                sym for sym in matched
-                if (func_name, sym) not in _ALLOWED_ROUTE_WRITE_PAIRS
-            }
+            matched = {sym for sym in matched if (func_name, sym) not in _ALLOWED_ROUTE_WRITE_PAIRS}
             if matched:
                 violators.append(f"{func_name} ({route_path}): {matched}")
         assert not violators, (

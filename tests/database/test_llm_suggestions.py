@@ -249,25 +249,27 @@ def _count_rows(db_path: str) -> int:
 # CANARY: This is the authoritative column set as of task P3 (2026-05-14).
 # Any addition, removal, or rename to llm_suggestions MUST update this set —
 # that is the purpose of this test.
-_EXPECTED_COLUMNS: frozenset[str] = frozenset({
-    "id",
-    "session_id",
-    "created_at",
-    "symphony_name",
-    "operator_identity",
-    "prompt_inputs",
-    "model_id",
-    "generation_settings",
-    "raw_response",
-    "validation_results",
-    "param_name",
-    "operator_decision",
-    "decision_at",
-    "operator_note",
-    "before_value",
-    "after_value",
-    "oos_revalidation",
-})
+_EXPECTED_COLUMNS: frozenset[str] = frozenset(
+    {
+        "id",
+        "session_id",
+        "created_at",
+        "symphony_name",
+        "operator_identity",
+        "prompt_inputs",
+        "model_id",
+        "generation_settings",
+        "raw_response",
+        "validation_results",
+        "param_name",
+        "operator_decision",
+        "decision_at",
+        "operator_note",
+        "before_value",
+        "after_value",
+        "oos_revalidation",
+    }
+)
 
 
 def test_llm_suggestions_table_exists_after_init_db(isolated_db):
@@ -284,8 +286,7 @@ def test_llm_suggestions_table_exists_after_init_db(isolated_db):
     conn.close()
 
     assert columns_info, (
-        "llm_suggestions table does not exist after init_db(); "
-        "PRAGMA table_info returned no rows"
+        "llm_suggestions table does not exist after init_db(); PRAGMA table_info returned no rows"
     )
 
     actual_columns = frozenset(row[1] for row in columns_info)
@@ -356,9 +357,7 @@ def test_llm_suggestions_nullable_and_default_columns(isolated_db):
 # Test 2: migration file exists, is idempotent, and is well-formed SQL
 # ---------------------------------------------------------------------------
 
-_MIGRATION_PATH = (
-    Path(__file__).parents[2] / "migrations" / "003_llm_suggestions.sql"
-)
+_MIGRATION_PATH = Path(__file__).parents[2] / "migrations" / "003_llm_suggestions.sql"
 
 
 def test_migration_003_file_exists():
@@ -367,8 +366,7 @@ def test_migration_003_file_exists():
     If it is missing, the GREEN implementer hasn't created it yet.
     """
     assert _MIGRATION_PATH.is_file(), (
-        f"Migration file not found: {_MIGRATION_PATH}. "
-        "Create migrations/003_llm_suggestions.sql."
+        f"Migration file not found: {_MIGRATION_PATH}. Create migrations/003_llm_suggestions.sql."
     )
 
 
@@ -477,15 +475,9 @@ def test_record_accepted_suggestion_inserts_row(isolated_db):
     assert row is not None, f"Row with id={row_id} not found after insert"
     decision, before, after, oos = row
 
-    assert decision == "accepted", (
-        f"Stored operator_decision must be 'accepted'; got {decision!r}"
-    )
-    assert before is not None, (
-        "before_value must not be NULL for an accepted record"
-    )
-    assert after is not None, (
-        "after_value must not be NULL for an accepted record"
-    )
+    assert decision == "accepted", f"Stored operator_decision must be 'accepted'; got {decision!r}"
+    assert before is not None, "before_value must not be NULL for an accepted record"
+    assert after is not None, "after_value must not be NULL for an accepted record"
     assert oos is not None, (
         "oos_revalidation must not be NULL for an accepted record that passed OOS gate"
     )
@@ -549,18 +541,14 @@ def test_record_rejected_suggestion_inserts_row(isolated_db):
     assert row is not None, f"Row with id={row_id} not found after insert"
     decision, before, after, oos = row
 
-    assert decision == "rejected", (
-        f"Stored operator_decision must be 'rejected'; got {decision!r}"
-    )
+    assert decision == "rejected", f"Stored operator_decision must be 'rejected'; got {decision!r}"
     assert before is None, (
         "before_value must be NULL for a rejected record (no config change applied)"
     )
     assert after is None, (
         "after_value must be NULL for a rejected record (no config change applied)"
     )
-    assert oos is None, (
-        "oos_revalidation must be NULL for a rejected record"
-    )
+    assert oos is None, "oos_revalidation must be NULL for a rejected record"
 
 
 def test_record_multiple_suggestions_same_session(isolated_db):
@@ -590,9 +578,7 @@ def test_record_multiple_suggestions_same_session(isolated_db):
     sessions = [r[0] for r in cursor.fetchall()]
     conn.close()
 
-    assert all(s == session_id for s in sessions), (
-        "Both rows must carry the shared session_id"
-    )
+    assert all(s == session_id for s in sessions), "Both rows must carry the shared session_id"
 
 
 # ---------------------------------------------------------------------------
@@ -620,12 +606,8 @@ def test_get_suggestions_for_symphony_returns_matching_rows(isolated_db):
     assert isinstance(results_a, list), (
         f"get_suggestions_for_symphony must return a list; got {type(results_a)}"
     )
-    assert len(results_a) == 2, (
-        f"Expected 2 rows for {sym_a!r}; got {len(results_a)}"
-    )
-    assert len(results_b) == 1, (
-        f"Expected 1 row for {sym_b!r}; got {len(results_b)}"
-    )
+    assert len(results_a) == 2, f"Expected 2 rows for {sym_a!r}; got {len(results_a)}"
+    assert len(results_b) == 1, f"Expected 1 row for {sym_b!r}; got {len(results_b)}"
 
     for row in results_a:
         assert isinstance(row, dict), (
@@ -648,9 +630,7 @@ def test_get_suggestions_for_symphony_returns_empty_list_for_unknown(isolated_db
     assert isinstance(result, list), (
         f"get_suggestions_for_symphony must return a list for unknown symphony; got {type(result)}"
     )
-    assert result == [], (
-        f"Expected empty list for unknown symphony; got {result!r}"
-    )
+    assert result == [], f"Expected empty list for unknown symphony; got {result!r}"
 
 
 def test_get_suggestions_for_symphony_contains_required_keys(isolated_db):
@@ -695,12 +675,8 @@ def test_get_suggestions_for_session_returns_rows_for_session(isolated_db):
     results_x = get_suggestions_for_session(sess_x)
     results_y = get_suggestions_for_session(sess_y)
 
-    assert len(results_x) == 2, (
-        f"Expected 2 rows for session {sess_x!r}; got {len(results_x)}"
-    )
-    assert len(results_y) == 1, (
-        f"Expected 1 row for session {sess_y!r}; got {len(results_y)}"
-    )
+    assert len(results_x) == 2, f"Expected 2 rows for session {sess_x!r}; got {len(results_x)}"
+    assert len(results_y) == 1, f"Expected 1 row for session {sess_y!r}; got {len(results_y)}"
 
     for row in results_x:
         assert row.get("session_id") == sess_x, (
@@ -878,8 +854,7 @@ def test_generation_settings_round_trip_exactly(isolated_db):
         stored = json.loads(stored)
 
     assert stored == _GENERATION_SETTINGS, (
-        "generation_settings did not round-trip; "
-        f"expected {_GENERATION_SETTINGS!r}, got {stored!r}"
+        f"generation_settings did not round-trip; expected {_GENERATION_SETTINGS!r}, got {stored!r}"
     )
 
 
@@ -893,7 +868,7 @@ def test_before_and_after_value_round_trip_for_accepted(isolated_db):
 
     kwargs = _make_accepted_kwargs(session_id="sess-before-after")
     expected_before = kwargs["before_value"]  # 5.0
-    expected_after = kwargs["after_value"]    # 4.5
+    expected_after = kwargs["after_value"]  # 4.5
     record_llm_suggestion(**kwargs)
 
     results = get_suggestions_for_session("sess-before-after")

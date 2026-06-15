@@ -100,9 +100,12 @@ _API_STATE_ACTIVE = {
         "market_state_label": "Market open",
         "clock_et": "10:00:00 AM ET",
         "portfolio": {
-            "tc": 0.61, "tc_if_held": 0.45,
-            "cr": 15.8, "cr_if_held": 12.3,
-            "mdd": -3.1, "mdd_if_held": -4.2,
+            "tc": 0.61,
+            "tc_if_held": 0.45,
+            "cr": 15.8,
+            "cr_if_held": 12.3,
+            "mdd": -3.1,
+            "mdd_if_held": -4.2,
             "hist_dates": ["2025-01-01", "2025-02-01", "2025-03-01"],
             "hist_bot": [0.0, 5.2, 15.8],
             "hist_held": [0.0, 4.1, 12.3],
@@ -117,6 +120,7 @@ _API_STATE_ACTIVE = {
 @pytest.fixture
 def dashboard_client():
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with patch.object(app_module, "get_api_state_dict", return_value=_API_STATE_ACTIVE):
         with app_module.app.test_client() as c:
@@ -142,7 +146,7 @@ def test_dashboard_has_guard_alpha_headline(dashboard_client):
     """Hero section must contain the Guard Alpha headline landmark."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="guard-alpha-headline"' in html, (
-        "Dashboard must render <element data-testid=\"guard-alpha-headline\"> "
+        'Dashboard must render <element data-testid="guard-alpha-headline"> '
         "containing the Bot-minus-If-Held cumulative alpha value. "
         "Design: studio.jsx Hero section, large alpha figure."
     )
@@ -152,7 +156,7 @@ def test_dashboard_has_hero_section(dashboard_client):
     """Hero section landmark must be present."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="hero-section"' in html, (
-        "Dashboard must render <section data-testid=\"hero-section\"> "
+        'Dashboard must render <section data-testid="hero-section"> '
         "wrapping the Guard Alpha headline, window selector, cumulative chart, "
         "and Bot-vs-Held comparison rows."
     )
@@ -162,7 +166,7 @@ def test_dashboard_hero_has_window_selector(dashboard_client):
     """Hero section must include a time-window selector."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="window-selector"' in html, (
-        "Hero section must contain data-testid=\"window-selector\" for "
+        'Hero section must contain data-testid="window-selector" for '
         "selecting 30d / 60d / 90d / 125d / YTD / 1Y windows. "
         "Design: studio.jsx SegControl inside Hero."
     )
@@ -172,7 +176,7 @@ def test_dashboard_hero_has_cumulative_chart(dashboard_client):
     """Hero section must include the Bot-vs-Held cumulative chart."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="cum-chart"' in html, (
-        "Hero section must contain data-testid=\"cum-chart\" — the 60d "
+        'Hero section must contain data-testid="cum-chart" — the 60d '
         "Bot-vs-Held cumulative return chart. "
         "Design: studio.jsx CumChart component."
     )
@@ -193,7 +197,7 @@ def test_dashboard_hero_has_vs_rows(dashboard_client):
     html = dashboard_client.get("/").data.decode("utf-8")
     vs_rows = re.findall(r'data-testid="vs-row"', html)
     assert len(vs_rows) == 4, (
-        f"Hero section must contain 4 data-testid=\"vs-row\" elements after Phase 2 "
+        f'Hero section must contain 4 data-testid="vs-row" elements after Phase 2 '
         f"(Today / Cumulative / Max DD / Ann. Vol). Found: {len(vs_rows)}. "
         "Source: ux-design-deliverable.md §Change 4 — add volatility vs-row."
     )
@@ -218,7 +222,7 @@ def test_dashboard_has_active_section(dashboard_client):
     """Dashboard must render an Active symphonies section."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="active-section"' in html, (
-        "Dashboard must render <section data-testid=\"active-section\"> "
+        'Dashboard must render <section data-testid="active-section"> '
         "containing armed/triggered symphony cards. "
         "Design: studio.jsx active cards grid."
     )
@@ -228,7 +232,7 @@ def test_dashboard_has_standby_section(dashboard_client):
     """Dashboard must render a Standby symphonies section."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="standby-section"' in html, (
-        "Dashboard must render <section data-testid=\"standby-section\"> "
+        'Dashboard must render <section data-testid="standby-section"> '
         "containing non-armed, non-triggered symphony cards. "
         "Design: studio.jsx standby cards grid."
     )
@@ -239,7 +243,7 @@ def test_dashboard_active_section_has_cards(dashboard_client):
     html = dashboard_client.get("/").data.decode("utf-8")
     cards = re.findall(r'data-testid="sym-card"', html)
     assert len(cards) >= 1, (
-        "Dashboard must render at least one data-testid=\"sym-card\" element. "
+        'Dashboard must render at least one data-testid="sym-card" element. '
         "Design: studio.jsx SymphonyCard."
     )
 
@@ -264,7 +268,7 @@ def test_dashboard_cards_have_status_pill(dashboard_client):
     html = dashboard_client.get("/").data.decode("utf-8")
     pills = re.findall(r'data-testid="status-pill"', html)
     assert len(pills) >= 1, (
-        "Symphony cards must contain data-testid=\"status-pill\" showing "
+        'Symphony cards must contain data-testid="status-pill" showing '
         "ARMED / TP-ARMED / PARA-ARMED / TRAILING STOP / TAKE-PROFIT / STANDBY. "
         "Design: studio.jsx statusInfo() → pill."
     )
@@ -274,7 +278,7 @@ def test_dashboard_triggered_card_has_verdict(dashboard_client):
     """Triggered symphony card must show good-call/early-exit verdict."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="triggered-verdict"' in html, (
-        "A triggered symphony card must include data-testid=\"triggered-verdict\" "
+        'A triggered symphony card must include data-testid="triggered-verdict" '
         "showing the good-call / early-exit assessment. "
         "Design: studio.jsx triggered card verdict row."
     )
@@ -285,7 +289,7 @@ def test_dashboard_cards_have_dual_value_headline(dashboard_client):
     html = dashboard_client.get("/").data.decode("utf-8")
     headlines = re.findall(r'data-testid="dual-value-headline"', html)
     assert len(headlines) >= 1, (
-        "Symphony cards must contain data-testid=\"dual-value-headline\" "
+        'Symphony cards must contain data-testid="dual-value-headline" '
         "showing Bot and If-Held cumulative returns side by side. "
         "Design: studio.jsx card dual-value block."
     )
@@ -295,7 +299,7 @@ def test_dashboard_active_cards_have_cash_now_button(dashboard_client):
     """Active (armed/triggered) symphony cards must have a Cash Now button."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="cash-now-btn"' in html, (
-        "Active symphony cards must contain data-testid=\"cash-now-btn\". "
+        'Active symphony cards must contain data-testid="cash-now-btn". '
         "Button is present but 0-click (no wiring in cycle 2). "
         "Design: studio.jsx card top-right Cash Now button."
     )
@@ -310,7 +314,7 @@ def test_dashboard_has_detail_panel(dashboard_client):
     """Dashboard must include the detail slide-over panel element."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="detail-panel"' in html, (
-        "Dashboard must render data-testid=\"detail-panel\" — the 760px "
+        'Dashboard must render data-testid="detail-panel" — the 760px '
         "slide-over that opens when a symphony card is clicked. "
         "Design: detail-panel.jsx DetailPanel component."
     )
@@ -320,7 +324,7 @@ def test_detail_panel_has_sticky_stats_row(dashboard_client):
     """Detail panel must contain the sticky 4-stat row."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="detail-stats-row"' in html, (
-        "Detail panel must contain data-testid=\"detail-stats-row\" — "
+        'Detail panel must contain data-testid="detail-stats-row" — '
         "sticky row with 4 key stats at the top of the panel. "
         "Design: detail-panel.jsx sticky header stats."
     )
@@ -330,7 +334,7 @@ def test_detail_panel_has_intraday_chart(dashboard_client):
     """Detail panel must contain the intraday tape chart."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="intraday-chart"' in html, (
-        "Detail panel must contain data-testid=\"intraday-chart\" — "
+        'Detail panel must contain data-testid="intraday-chart" — '
         "the intraday tape with live/shadow/stop/breakeven/VWAP overlays. "
         "Design: detail-panel.jsx intraday chart area."
     )
@@ -340,7 +344,7 @@ def test_detail_panel_has_events_timeline(dashboard_client):
     """Detail panel must contain today's events timeline."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="events-timeline"' in html, (
-        "Detail panel must contain data-testid=\"events-timeline\" — "
+        'Detail panel must contain data-testid="events-timeline" — '
         "today's decision events list. "
         "Design: detail-panel.jsx events section."
     )
@@ -350,7 +354,7 @@ def test_detail_panel_has_vars_section(dashboard_client):
     """Detail panel must contain the .env/SQLite vars section."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="vars-section"' in html, (
-        "Detail panel must contain data-testid=\"vars-section\" showing "
+        'Detail panel must contain data-testid="vars-section" showing '
         "all .env and SQLite variables with locked-from-autotuner icon and Edit. "
         "Design: detail-panel.jsx vars panel."
     )
@@ -360,7 +364,7 @@ def test_detail_panel_has_close_mechanism(dashboard_client):
     """Detail panel must be closeable (ESC key or close button)."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="detail-close"' in html, (
-        "Detail panel must contain data-testid=\"detail-close\" — "
+        'Detail panel must contain data-testid="detail-close" — '
         "a close button (ESC handler wired in JS). "
         "Design: detail-panel.jsx close/scrim pattern."
     )
@@ -403,9 +407,7 @@ def test_index_html_no_tailwind_cdn(dashboard_client):
 def test_index_html_loads_tokens_css(dashboard_client):
     """index.html must load tokens.css."""
     html = dashboard_client.get("/").data.decode("utf-8")
-    assert "tokens.css" in html, (
-        "Dashboard must include tokens.css for --studio-* CSS variables."
-    )
+    assert "tokens.css" in html, "Dashboard must include tokens.css for --studio-* CSS variables."
 
 
 def test_index_html_loads_tweaks_js(dashboard_client):
@@ -424,11 +426,13 @@ def test_index_html_loads_tweaks_js(dashboard_client):
 def test_api_state_meta_portfolio_present():
     """'/api/state' active response must include meta.portfolio with hist_ chart data."""
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with patch.object(app_module, "get_api_state_dict", return_value=_API_STATE_ACTIVE):
         with app_module.app.test_client() as c:
             resp = c.get("/api/state")
     import json
+
     data = json.loads(resp.data)
     assert "meta" in data, "'/api/state' must include top-level 'meta' key"
     meta = data["meta"]
@@ -437,8 +441,17 @@ def test_api_state_meta_portfolio_present():
         "for the Hero cumulative chart."
     )
     portfolio = meta["portfolio"]
-    for field in ["hist_dates", "hist_bot", "hist_held", "tc", "tc_if_held",
-                  "cr", "cr_if_held", "mdd", "mdd_if_held"]:
+    for field in [
+        "hist_dates",
+        "hist_bot",
+        "hist_held",
+        "tc",
+        "tc_if_held",
+        "cr",
+        "cr_if_held",
+        "mdd",
+        "mdd_if_held",
+    ]:
         assert field in portfolio, (
             f"meta.portfolio must include '{field}' for Hero chart and VsRow binding. "
             "Design: studio.jsx Hero uses data.meta.portfolio.*"
@@ -448,16 +461,20 @@ def test_api_state_meta_portfolio_present():
 def test_api_state_meta_portfolio_hist_lists_same_length():
     """meta.portfolio hist_dates, hist_bot, hist_held must be same length."""
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with patch.object(app_module, "get_api_state_dict", return_value=_API_STATE_ACTIVE):
         with app_module.app.test_client() as c:
             resp = c.get("/api/state")
     import json
+
     data = json.loads(resp.data)
     portfolio = data.get("meta", {}).get("portfolio", {})
     if not all(k in portfolio for k in ["hist_dates", "hist_bot", "hist_held"]):
         pytest.skip("meta.portfolio hist fields not present yet")
-    assert len(portfolio["hist_dates"]) == len(portfolio["hist_bot"]) == len(portfolio["hist_held"]), (
+    assert (
+        len(portfolio["hist_dates"]) == len(portfolio["hist_bot"]) == len(portfolio["hist_held"])
+    ), (
         "meta.portfolio hist_dates, hist_bot, hist_held must have equal lengths "
         "for the chart to render correctly."
     )
@@ -473,7 +490,7 @@ def test_dashboard_includes_chrome(dashboard_client):
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="studio-nav"' in html, (
         "Dashboard must render the Studio chrome nav via {% include '_chrome.html' %}. "
-        "data-testid=\"studio-nav\" must be present."
+        'data-testid="studio-nav" must be present.'
     )
 
 
@@ -481,7 +498,7 @@ def test_dashboard_active_route_is_dashboard(dashboard_client):
     """Dashboard route must mark the Dashboard nav link as active."""
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'aria-current="page"' in html, (
-        "Dashboard route must set aria-current=\"page\" on the active nav link."
+        'Dashboard route must set aria-current="page" on the active nav link.'
     )
 
 
@@ -499,6 +516,7 @@ def test_api_state_still_responds(dashboard_client):
 def test_api_state_preserves_existing_keys(dashboard_client):
     """/api/state must preserve all existing top-level keys."""
     import json
+
     resp = dashboard_client.get("/api/state")
     data = json.loads(resp.data)
     for key in ["status", "live_mode", "bot_state", "portfolio_strip"]:
@@ -526,10 +544,10 @@ def test_triggered_verdict_shows_computed_label(dashboard_client):
     html = dashboard_client.get("/").data.decode("utf-8")
     verdict_elem = re.search(r'data-testid="triggered-verdict"[^>]*>(.*?)</[^>]+>', html, re.DOTALL)
     assert verdict_elem is not None, (
-        "data-testid=\"triggered-verdict\" must be present for triggered symphonies."
+        'data-testid="triggered-verdict" must be present for triggered symphonies.'
     )
     verdict_text = verdict_elem.group(0)
-    assert ("Good call" in verdict_text or "Early exit" in verdict_text), (
+    assert "Good call" in verdict_text or "Early exit" in verdict_text, (
         "triggered-verdict must contain 'Good call' or 'Early exit' computed label. "
         "Raw triggered_reason string is not acceptable. "
         "Derive from guard_alpha: positive = Good call, negative/zero = Early exit."
@@ -551,7 +569,7 @@ def test_vs_rows_have_bar_elements(dashboard_client):
     html = dashboard_client.get("/").data.decode("utf-8")
     bars = re.findall(r'data-testid="vs-bar"', html)
     assert len(bars) >= 3, (
-        f"Each VsRow must contain at least one data-testid=\"vs-bar\" element "
+        f'Each VsRow must contain at least one data-testid="vs-bar" element '
         f"(proportional bar track). Expected >= 3 (one per row minimum), found {len(bars)}. "
         "Design: studio.jsx VsRow bar tracks."
     )
@@ -567,8 +585,8 @@ def test_hero_has_two_column_layout(dashboard_client):
     """
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="hero-left"' in html and 'data-testid="hero-right"' in html, (
-        "Hero section must have separate data-testid=\"hero-left\" and "
-        "data-testid=\"hero-right\" columns in a two-column grid layout. "
+        'Hero section must have separate data-testid="hero-left" and '
+        'data-testid="hero-right" columns in a two-column grid layout. '
         "Design: studio.jsx Hero grid-template-columns: 1.15fr 1fr."
     )
 
@@ -583,14 +601,14 @@ def test_hero_has_mini_stats(dashboard_client):
     """
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="mini-stats"' in html, (
-        "Hero section must contain data-testid=\"mini-stats\" with "
+        'Hero section must contain data-testid="mini-stats" with '
         "Tracked / Armed / Triggered count items. "
         "Design: studio.jsx Hero right column mini-stats block."
     )
     # At least 3 stat items
     stat_items = re.findall(r'data-testid="mini-stat"', html)
     assert len(stat_items) >= 3, (
-        f"mini-stats must contain at least 3 data-testid=\"mini-stat\" items "
+        f'mini-stats must contain at least 3 data-testid="mini-stat" items '
         f"(Tracked, Armed, Triggered). Found {len(stat_items)}."
     )
 
@@ -609,8 +627,8 @@ def test_dashboard_has_status_strip(dashboard_client):
     has_status = (
         'data-testid="status-strip"' in html
         or 'data-testid="system-online-dot"' in html
-        or 'system-online' in html
-        or 'next-run' in html
+        or "system-online" in html
+        or "next-run" in html
     )
     assert has_status, (
         "Dashboard must render a system status indicator. "
@@ -618,7 +636,13 @@ def test_dashboard_has_status_strip(dashboard_client):
         "Neither a status-strip nor inline status indicators are present."
     )
     # Must contain a market state label
-    assert "Market" in html or "market" in html or "ONLINE" in html or "OFFLINE" in html or "CLOSED" in html, (
+    assert (
+        "Market" in html
+        or "market" in html
+        or "ONLINE" in html
+        or "OFFLINE" in html
+        or "CLOSED" in html
+    ), (
         "Dashboard must contain market/system state label text. "
         "Bind to meta.market_state_label from _build_meta()."
     )
@@ -635,7 +659,7 @@ def test_hero_chart_has_legend(dashboard_client):
     """
     html = dashboard_client.get("/").data.decode("utf-8")
     assert 'data-testid="chart-legend"' in html, (
-        "Hero cumulative chart must be followed by data-testid=\"chart-legend\" "
+        'Hero cumulative chart must be followed by data-testid="chart-legend" '
         "legend strip. "
         "Design: studio.jsx Legend items below CumChart."
     )

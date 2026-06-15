@@ -67,8 +67,11 @@ def _numeric_constants_in(node: ast.AST) -> list[float]:
     """All numeric literal constants appearing in an AST subtree."""
     out: list[float] = []
     for n in ast.walk(node):
-        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) \
-                and not isinstance(n.value, bool):
+        if (
+            isinstance(n, ast.Constant)
+            and isinstance(n.value, (int, float))
+            and not isinstance(n.value, bool)
+        ):
             out.append(float(n.value))
     return out
 
@@ -151,9 +154,7 @@ def test_both_replay_functions_reach_compute_exit_confirmation() -> None:
     for func_name in ("_collect_sim_returns", "run_simulation"):
         func = _function_node(func_name)
         calls_directly = bool(_calls_in(func, "compute_exit_confirmation"))
-        calls_shared_core = any(
-            _calls_in(func, core_name) for core_name in shared_cores
-        )
+        calls_shared_core = any(_calls_in(func, core_name) for core_name in shared_cores)
         assert calls_directly or calls_shared_core, (
             f"autotuner.{func_name} neither calls compute_exit_confirmation "
             f"directly nor delegates to a shared per-tick exit core that "
@@ -183,9 +184,7 @@ def test_replay_machinery_has_no_open_coded_exit_literals() -> None:
     leaked: dict[str, dict[str, float]] = {}
     for func in _replay_machinery_nodes():
         consts = _numeric_constants_in(func)
-        hits = {
-            name: value for name, value in forbidden.items() if value in consts
-        }
+        hits = {name: value for name, value in forbidden.items() if value in consts}
         if hits:
             leaked[func.name] = hits
     assert not leaked, (
@@ -258,9 +257,7 @@ def test_replay_trailing_exit_tracks_retuned_mc_breakdown_threshold(
     (rename + operator flip) they pass.
     """
     if not hasattr(autotuner, "replay_exit_sequence"):
-        pytest.fail(
-            "autotuner.replay_exit_sequence missing — AC-6 helper required."
-        )
+        pytest.fail("autotuner.replay_exit_sequence missing — AC-6 helper required.")
 
     default_threshold = math_engine.MC_BREAKDOWN_THRESHOLD
     raised_threshold = default_threshold + 20.0  # 80.0 with the stock 60.0
@@ -272,9 +269,9 @@ def test_replay_trailing_exit_tracks_retuned_mc_breakdown_threshold(
     params = {
         "TRIGGER_THRESHOLD_PCT": 15.0,
         "TAKE_PROFIT_MC_PCT": 5.0,
-        "VWAP_CROSS_HWM_PCT": 99.0,   # so far above any return VWAP never arms
+        "VWAP_CROSS_HWM_PCT": 99.0,  # so far above any return VWAP never arms
         "VWAP_BLEED_MULTIPLIER": 1.5,
-        "VWAP_BLEED_TICKS": 999,      # bleed never confirms
+        "VWAP_BLEED_TICKS": 999,  # bleed never confirms
         "PARABOLIC_VELOCITY_THRESHOLD": 99.0,
         "MAX_PARABOLIC_SQUEEZE": 0.5,
     }
@@ -283,12 +280,22 @@ def test_replay_trailing_exit_tracks_retuned_mc_breakdown_threshold(
     # the stop for well over EXIT_CONFIRM_TICKS ticks, mc held at mc_between.
     # valid_vwap_weight 0 so the VWAP gate never evaluates.
     arm_tick = {
-        "time": "09:30", "return": 5.0, "mc_prob": 10.0, "vol": 0.5,
-        "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0,
+        "time": "09:30",
+        "return": 5.0,
+        "mc_prob": 10.0,
+        "vol": 0.5,
+        "vwap_diff": 0.0,
+        "base_atr_pct": 0.5,
+        "valid_vwap_weight": 0.0,
     }
     drop_tick = {
-        "time": "09:31", "return": -50.0, "mc_prob": mc_between, "vol": 0.5,
-        "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0,
+        "time": "09:31",
+        "return": -50.0,
+        "mc_prob": mc_between,
+        "vol": 0.5,
+        "vwap_diff": 0.0,
+        "base_atr_pct": 0.5,
+        "valid_vwap_weight": 0.0,
     }
     ticks = [arm_tick] + [dict(drop_tick) for _ in range(8)]
 

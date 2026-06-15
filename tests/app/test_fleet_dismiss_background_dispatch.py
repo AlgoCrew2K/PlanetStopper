@@ -123,8 +123,10 @@ class TestDismissHandlerReturnsBeforeBackgroundWrite:
             # Hold the write until the test releases it — proves handler didn't wait.
             write_may_proceed.wait(timeout=2)
 
-        with patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert", side_effect=_slow_write):
+        with (
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert", side_effect=_slow_write),
+        ):
             start = time.monotonic()
             resp = flask_client.post("/api/fleet-alert/dismiss")
             elapsed_ms = (time.monotonic() - start) * 1000
@@ -132,9 +134,7 @@ class TestDismissHandlerReturnsBeforeBackgroundWrite:
         # Allow write to complete so the test thread doesn't leak.
         write_may_proceed.set()
 
-        assert resp.status_code == 200, (
-            f"Dismiss handler must return 200. Got {resp.status_code}."
-        )
+        assert resp.status_code == 200, f"Dismiss handler must return 200. Got {resp.status_code}."
         assert elapsed_ms < max_ms, (
             f"Handler must return in < {max_ms} ms (fixture ceiling). "
             f"Elapsed: {elapsed_ms:.1f} ms. "
@@ -151,8 +151,10 @@ class TestDismissHandlerReturnsBeforeBackgroundWrite:
         """
         max_ms = _FIXTURE["handler_latency_ms"]["max_ms"]
 
-        with patch("database.read_fleet_alert", return_value=None), \
-             patch("database.write_fleet_alert") as mock_write:
+        with (
+            patch("database.read_fleet_alert", return_value=None),
+            patch("database.write_fleet_alert") as mock_write,
+        ):
             start = time.monotonic()
             resp = flask_client.post("/api/fleet-alert/dismiss")
             elapsed_ms = (time.monotonic() - start) * 1000
@@ -197,8 +199,10 @@ class TestDismissDispatchesToBackgroundThread:
             write_thread_ids.append(threading.current_thread().ident)
             write_completed.set()
 
-        with patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert", side_effect=_capture_thread):
+        with (
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert", side_effect=_capture_thread),
+        ):
             flask_client.post("/api/fleet-alert/dismiss")
             # Wait inside the patch context so the mock is still active when the
             # executor's worker thread picks up the task and calls write_fleet_alert.
@@ -240,8 +244,10 @@ class TestDismissDispatchesToBackgroundThread:
                 call_order.append("write_before_return")
             write_called.set()
 
-        with patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert", side_effect=_write_with_order):
+        with (
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert", side_effect=_write_with_order),
+        ):
             flask_client.post("/api/fleet-alert/dismiss")
             # Mark that the handler has returned BEFORE waiting for background write.
             handler_returned.set()
@@ -289,8 +295,10 @@ class TestDismissBackgroundWriteCompletesWithDismissedTimestamp:
             written_payloads.append(dict(payload))
             write_completed.set()
 
-        with patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert", side_effect=_capture_payload):
+        with (
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert", side_effect=_capture_payload),
+        ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
             # Wait inside the patch context so the mock is still active when the
             # executor's worker thread picks up the task and calls write_fleet_alert.
@@ -327,8 +335,10 @@ class TestDismissBackgroundWriteCompletesWithDismissedTimestamp:
             written_payloads.append(dict(payload))
             write_completed.set()
 
-        with patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert", side_effect=_capture):
+        with (
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert", side_effect=_capture),
+        ):
             flask_client.post("/api/fleet-alert/dismiss")
             # Wait inside the patch context — executor worker runs after handler returns.
             write_completed.wait(timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"])
@@ -355,8 +365,10 @@ class TestDismissBackgroundWriteCompletesWithDismissedTimestamp:
             written_payloads.append(dict(payload))
             write_completed.set()
 
-        with patch("database.read_fleet_alert", return_value=original_row), \
-             patch("database.write_fleet_alert", side_effect=_capture):
+        with (
+            patch("database.read_fleet_alert", return_value=original_row),
+            patch("database.write_fleet_alert", side_effect=_capture),
+        ):
             flask_client.post("/api/fleet-alert/dismiss")
             # Wait inside the patch context — executor worker runs after handler returns.
             write_completed.wait(timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"])
@@ -385,9 +397,7 @@ class TestDismissSideEffectBanOnRequestThread:
     verify it was NOT called during the synchronous portion of the handler.
     """
 
-    def test_write_fleet_alert_not_called_synchronously_on_flask_request_thread(
-        self, flask_client
-    ):
+    def test_write_fleet_alert_not_called_synchronously_on_flask_request_thread(self, flask_client):
         """app.database.write_fleet_alert must not be invoked directly by the handler.
 
         We intercept the call at the import-level so any synchronous call from
@@ -407,8 +417,10 @@ class TestDismissSideEffectBanOnRequestThread:
                 calls_before_return[0] += 1
             original_mock(payload)
 
-        with patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert", side_effect=_spy):
+        with (
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert", side_effect=_spy),
+        ):
             flask_client.post("/api/fleet-alert/dismiss")
             # Capture the call count immediately after handler returns — before
             # the background thread has a chance to run.
@@ -428,10 +440,12 @@ class TestDismissSideEffectBanOnRequestThread:
 
         AC-6 / R1: dismiss writes ONLY to fleet_alert_state.
         """
-        with patch("database.load_state") as mock_load, \
-             patch("database.save_state"), \
-             patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert"):
+        with (
+            patch("database.load_state") as mock_load,
+            patch("database.save_state"),
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert"),
+        ):
             flask_client.post("/api/fleet-alert/dismiss")
 
         # Allow any background threads to complete.
@@ -447,10 +461,12 @@ class TestDismissSideEffectBanOnRequestThread:
 
         AC-6 / R1: dismiss must never write to bot_state.
         """
-        with patch("database.load_state"), \
-             patch("database.save_state") as mock_save, \
-             patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert"):
+        with (
+            patch("database.load_state"),
+            patch("database.save_state") as mock_save,
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert"),
+        ):
             flask_client.post("/api/fleet-alert/dismiss")
 
         time.sleep(0.05)
@@ -484,14 +500,18 @@ class TestDismissHandlerResilientToWriteFailure:
         def _write_raises(_payload):
             raise OSError("DB locked: simulated transient write failure")
 
-        with patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert", side_effect=_write_raises):
+        with (
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert", side_effect=_write_raises),
+        ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
         # Allow background thread to run and raise.
         time.sleep(0.1)
 
-        assert resp.status_code == _FIXTURE["error_resilience"]["expected_status_on_write_failure"], (
+        assert (
+            resp.status_code == _FIXTURE["error_resilience"]["expected_status_on_write_failure"]
+        ), (
             f"Handler must return 200 even when the background write raises. "
             f"Got {resp.status_code}. "
             "A raised exception in the background thread must not propagate to the Flask handler."
@@ -503,8 +523,10 @@ class TestDismissHandlerResilientToWriteFailure:
         def _write_raises(_payload):
             raise RuntimeError("Simulated disk full")
 
-        with patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert", side_effect=_write_raises):
+        with (
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert", side_effect=_write_raises),
+        ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
         time.sleep(0.1)
@@ -540,8 +562,10 @@ class TestDismissIdempotencyUnderRapidRequests:
                 all_written.set()
 
         responses = []
-        with patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert", side_effect=_capture):
+        with (
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert", side_effect=_capture),
+        ):
             for _ in range(rapid_count):
                 resp = flask_client.post("/api/fleet-alert/dismiss")
                 responses.append(resp.status_code)
@@ -570,8 +594,10 @@ class TestDismissIdempotencyUnderRapidRequests:
         def _write(_payload):
             write_gate.wait(timeout=1)
 
-        with patch("database.read_fleet_alert", return_value=_active_row()), \
-             patch("database.write_fleet_alert", side_effect=_write):
+        with (
+            patch("database.read_fleet_alert", return_value=_active_row()),
+            patch("database.write_fleet_alert", side_effect=_write),
+        ):
             for i in range(post_count):
                 start = time.monotonic()
                 resp = flask_client.post("/api/fleet-alert/dismiss")
@@ -615,8 +641,10 @@ class TestExistingSideEffectBanInvariantsPreserved:
 
     def test_dismiss_route_returns_200_regression(self, _fleet_client):
         """Regression: POST /api/fleet-alert/dismiss must return 200 (existing assertion)."""
-        with patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value=_active_row()):
+        with (
+            patch("database.write_fleet_alert"),
+            patch("database.read_fleet_alert", return_value=_active_row()),
+        ):
             resp = _fleet_client.post("/api/fleet-alert/dismiss")
 
         assert resp.status_code == 200, (
@@ -625,10 +653,12 @@ class TestExistingSideEffectBanInvariantsPreserved:
 
     def test_dismiss_route_does_not_call_load_state_regression(self, _fleet_client):
         """Regression: dismiss must NOT call database.load_state() (AC-6 isolation)."""
-        with patch("database.load_state") as mock_load, \
-             patch("database.save_state"), \
-             patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value=_active_row()):
+        with (
+            patch("database.load_state") as mock_load,
+            patch("database.save_state"),
+            patch("database.write_fleet_alert"),
+            patch("database.read_fleet_alert", return_value=_active_row()),
+        ):
             _fleet_client.post("/api/fleet-alert/dismiss")
 
         time.sleep(0.05)  # Allow background thread to complete.
@@ -640,10 +670,12 @@ class TestExistingSideEffectBanInvariantsPreserved:
 
     def test_dismiss_route_does_not_call_save_state_regression(self, _fleet_client):
         """Regression: dismiss must NOT call database.save_state() (AC-6 isolation)."""
-        with patch("database.load_state"), \
-             patch("database.save_state") as mock_save, \
-             patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value=_active_row()):
+        with (
+            patch("database.load_state"),
+            patch("database.save_state") as mock_save,
+            patch("database.write_fleet_alert"),
+            patch("database.read_fleet_alert", return_value=_active_row()),
+        ):
             _fleet_client.post("/api/fleet-alert/dismiss")
 
         time.sleep(0.05)
@@ -655,20 +687,24 @@ class TestExistingSideEffectBanInvariantsPreserved:
 
     def test_dismiss_route_returns_status_ok_json_regression(self, _fleet_client):
         """Regression: dismiss must return JSON {'status': 'ok'} (existing assertion)."""
-        with patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value=None):
+        with (
+            patch("database.write_fleet_alert"),
+            patch("database.read_fleet_alert", return_value=None),
+        ):
             resp = _fleet_client.post("/api/fleet-alert/dismiss")
 
         data = resp.get_json()
         assert data is not None, "Regression: dismiss route must return JSON."
         assert data.get("status") == "ok", (
-            f"Regression: dismiss route must return {{\"status\": \"ok\"}}. Got: {data!r}."
+            f'Regression: dismiss route must return {{"status": "ok"}}. Got: {data!r}.'
         )
 
     def test_dismiss_route_idempotent_when_no_alert_row_regression(self, _fleet_client):
         """Regression: dismiss returns 200 even when no alert row exists (idempotent)."""
-        with patch("database.write_fleet_alert"), \
-             patch("database.read_fleet_alert", return_value=None):
+        with (
+            patch("database.write_fleet_alert"),
+            patch("database.read_fleet_alert", return_value=None),
+        ):
             resp = _fleet_client.post("/api/fleet-alert/dismiss")
 
         assert resp.status_code == 200, (

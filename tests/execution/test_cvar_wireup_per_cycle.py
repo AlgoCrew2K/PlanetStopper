@@ -69,6 +69,7 @@ import math_engine
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
     _FIXED_ET = datetime(2025, 5, 14, 11, 30, 0, tzinfo=_ET)  # Wed 11:30 ET
 except Exception:  # pragma: no cover -- tzdata missing
@@ -141,32 +142,32 @@ def _seed_state():
 @pytest.fixture
 def patched_environment():
     """Network + DB + clock patched per test_main_pipeline.py template."""
-    with patch.object(alpha_bot_execution, "database") as mock_db, \
-         patch.object(alpha_bot_execution, "reporting") as mock_reporting, \
-         patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym, \
-         patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist, \
-         patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap, \
-         patch.object(alpha_bot_execution, "get_current_et", return_value=_FIXED_ET), \
-         patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-         patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"), \
-         patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-         patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-         patch.object(alpha_bot_execution.time, "sleep"), \
-         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting") as mock_reporting,
+        patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym,
+        patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist,
+        patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap,
+        patch.object(alpha_bot_execution, "get_current_et", return_value=_FIXED_ET),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+    ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = _seed_state()
         mock_db.load_chart_history.return_value = {
-            "date": _FIXED_ET.strftime("%Y-%m-%d"), "symphonies": {}
+            "date": _FIXED_ET.strftime("%Y-%m-%d"),
+            "symphonies": {},
         }
         mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
         mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
         mock_db.wipe_transient_state.side_effect = lambda s: s
 
         mock_fetch_sym.return_value = [_make_symphony_payload()]
-        mock_fetch_hist.return_value = _make_minimal_history(
-            _FIXED_ET.strftime("%Y-%m-%d")
-        )
+        mock_fetch_hist.return_value = _make_minimal_history(_FIXED_ET.strftime("%Y-%m-%d"))
         mock_fetch_vwap.return_value = _make_vwap_payload()
 
         yield {
@@ -269,8 +270,7 @@ class TestComputePortfolioCvarInvokedPerCycle:
 
         assert holdings is not None, "holdings must be passed to compute_portfolio_cvar"
         assert isinstance(holdings, list), (
-            f"holdings must be a list (the symphony's holdings list); got "
-            f"{type(holdings).__name__}"
+            f"holdings must be a list (the symphony's holdings list); got {type(holdings).__name__}"
         )
         assert len(holdings) >= 1, "holdings must contain at least one row"
         # Each row is a dict with at minimum 'ticker' and 'allocation' — shape.
@@ -289,9 +289,7 @@ class TestComputePortfolioCvarInvokedPerCycle:
             "spy_today_return must be passed to compute_portfolio_cvar — it is "
             "the kNN today-feature input"
         )
-        assert isinstance(spy_today_return, (int, float)), (
-            "spy_today_return must be numeric"
-        )
+        assert isinstance(spy_today_return, (int, float)), "spy_today_return must be numeric"
 
         assert cycle_id is not None, (
             "cycle_id must be passed to compute_portfolio_cvar — it is the "
@@ -323,7 +321,7 @@ class TestRecordCvarDiagnosticReceivesComputedValues:
         # write site preserves it (not what value compute_portfolio_cvar
         # computes from real history — that is pinned in tests/engine/).
         stub_cvar_pct = -2.5  # any non-None value the stub returns
-        stub_tail_count = 8   # any non-zero count
+        stub_tail_count = 8  # any non-zero count
         # stderr is any positive finite float — the value is not asserted
         # here; only the delegation of cvar_pct + tail count is pinned.
         # Per the CVaRAssessment fail-safe pairing, a finite cvar_pct REQUIRES
@@ -370,9 +368,7 @@ class TestRecordCvarDiagnosticReceivesComputedValues:
             "per-cycle write site is hard-coded to write Nones (vision-audit Critical #1)."
         )
 
-    def test_insufficient_data_sentinel_is_preserved_through_the_write(
-        self, patched_environment
-    ):
+    def test_insufficient_data_sentinel_is_preserved_through_the_write(self, patched_environment):
         """The fail-safe contract: when compute_portfolio_cvar returns an
         insufficient-data CVaRAssessment (cvar_pct=None, tail_obs_count=0),
         the per-cycle write records None — not an invented value. The
@@ -422,7 +418,11 @@ class TestRecordCvarDiagnosticReceivesComputedValues:
         """
         env = patched_environment
         insufficient = math_engine.CVaRAssessment(
-            cvar_pct=None, breach=False, tail_obs_count=0, stderr=None, insufficient_reason="x",
+            cvar_pct=None,
+            breach=False,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason="x",
         )
         with patch.object(
             alpha_bot_execution.math_engine,
@@ -444,9 +444,7 @@ class TestRecordCvarDiagnosticReceivesComputedValues:
                     f"args={call.args!r}, kwargs={call.kwargs!r}"
                 )
             else:
-                assert mode in ("live", "replay"), (
-                    f"mode must be 'live' or 'replay'; got {mode!r}"
-                )
+                assert mode in ("live", "replay"), f"mode must be 'live' or 'replay'; got {mode!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +466,7 @@ class TestCvarRemainsDiagnosticOnly:
         binding violation of the diagnostic-only constraint.
         """
         import inspect
+
         sig = inspect.signature(math_engine.resolve_trigger_priority)
         params = list(sig.parameters.keys())
         expected = [

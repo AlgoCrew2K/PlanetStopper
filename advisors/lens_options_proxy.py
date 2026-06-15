@@ -63,8 +63,8 @@ logger = logging.getLogger(__name__)
 _FRED_BASE_URL: str = "https://api.stlouisfed.org/fred/series/observations"
 
 # FRED series IDs (free, no subscription required)
-_SERIES_VIXCLS: str = "VIXCLS"   # CBOE Volatility Index: spot (1-month implied)
-_SERIES_VXVCLS: str = "VXVCLS"   # CBOE 3-Month Volatility Index
+_SERIES_VIXCLS: str = "VIXCLS"  # CBOE Volatility Index: spot (1-month implied)
+_SERIES_VXVCLS: str = "VXVCLS"  # CBOE 3-Month Volatility Index
 
 # FRED "not available" marker — observations with this value must be skipped.
 _FRED_NA_VALUE: str = "."
@@ -171,13 +171,16 @@ def _fetch_fred_series(series_id: str, api_key: str) -> dict[str, Any]:
             if resp.status_code in _RETRYABLE_HTTP_STATUSES:
                 if attempt < _OPTIONS_PROXY_MAX_ATTEMPTS - 1:
                     sleep_s = min(
-                        _OPTIONS_PROXY_BACKOFF_BASE_S * (2 ** attempt),
+                        _OPTIONS_PROXY_BACKOFF_BASE_S * (2**attempt),
                         _OPTIONS_PROXY_BACKOFF_CAP_S,
                     )
                     logger.debug(
                         "FRED %s returned %d; retrying in %.1fs (attempt %d/%d)",
-                        series_id, resp.status_code, sleep_s,
-                        attempt + 1, _OPTIONS_PROXY_MAX_ATTEMPTS,
+                        series_id,
+                        resp.status_code,
+                        sleep_s,
+                        attempt + 1,
+                        _OPTIONS_PROXY_MAX_ATTEMPTS,
                     )
                     time.sleep(sleep_s)
                     continue
@@ -194,13 +197,16 @@ def _fetch_fred_series(series_id: str, api_key: str) -> dict[str, Any]:
             last_exc = exc
             if attempt < _OPTIONS_PROXY_MAX_ATTEMPTS - 1:
                 sleep_s = min(
-                    _OPTIONS_PROXY_BACKOFF_BASE_S * (2 ** attempt),
+                    _OPTIONS_PROXY_BACKOFF_BASE_S * (2**attempt),
                     _OPTIONS_PROXY_BACKOFF_CAP_S,
                 )
                 logger.debug(
                     "FRED %s transport error %s; retrying in %.1fs (attempt %d/%d)",
-                    series_id, type(exc).__name__, sleep_s,
-                    attempt + 1, _OPTIONS_PROXY_MAX_ATTEMPTS,
+                    series_id,
+                    type(exc).__name__,
+                    sleep_s,
+                    attempt + 1,
+                    _OPTIONS_PROXY_MAX_ATTEMPTS,
                 )
                 time.sleep(sleep_s)
                 continue
@@ -332,7 +338,11 @@ def _fetch_options_proxy() -> dict[str, Any]:
 
         logger.info(
             "FRED derivatives lens: VIX=%.2f VXVCLS=%.2f regime=%s risk_read=%s as_of=%s",
-            spot_vix, term_3m, regime, risk_read, as_of_date,
+            spot_vix,
+            term_3m,
+            regime,
+            risk_read,
+            as_of_date,
         )
 
         return {
@@ -353,9 +363,7 @@ def _fetch_options_proxy() -> dict[str, Any]:
     except Exception as exc:
         # D-1: only type(exc).__name__ in the returned reason; never str(exc).
         exc_type = type(exc).__name__
-        logger.warning(
-            "Derivatives lens unavailable: %s (series=VIXCLS/VXVCLS)", exc_type
-        )
+        logger.warning("Derivatives lens unavailable: %s (series=VIXCLS/VXVCLS)", exc_type)
         return {
             "available": False,
             "reason": exc_type,

@@ -104,6 +104,7 @@ def _read_production(filename: str) -> str:
 # 6. Consumer map document exists (fast guard — put first so failures are clear)
 # ---------------------------------------------------------------------------
 
+
 def test_run_monte_carlo_consumer_map_document_exists() -> None:
     """
     The consumer-map document is a plan deliverable (deliverable 1). It must
@@ -123,6 +124,7 @@ def test_run_monte_carlo_consumer_map_document_exists() -> None:
 # ---------------------------------------------------------------------------
 # 1. Direct call count per file matches the Phase-1 baseline
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("filename", _PRODUCTION_FILES)
 def test_run_monte_carlo_call_count_matches_baseline(filename: str) -> None:
@@ -155,6 +157,7 @@ def test_run_monte_carlo_call_count_matches_baseline(filename: str) -> None:
 # 2. Every file with a direct call has a sentinel guard
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("filename", ["alpha_bot_execution.py", "synthetic_history.py"])
 def test_files_with_direct_calls_have_is_not_none_guard(filename: str) -> None:
     """
@@ -182,6 +185,7 @@ def test_files_with_direct_calls_have_is_not_none_guard(filename: str) -> None:
 # 3. alpha_bot_execution.py: canonical mc_available guard present
 # ---------------------------------------------------------------------------
 
+
 def test_alpha_bot_execution_has_mc_available_sentinel_guard() -> None:
     """
     The canonical sentinel guard in alpha_bot_execution.py is (post H1 rename):
@@ -196,9 +200,7 @@ def test_alpha_bot_execution_has_mc_available_sentinel_guard() -> None:
     """
     source = _read_production("alpha_bot_execution.py")
     # The exact canonical form (whitespace-flexible), NEW metric name.
-    guard_pattern = re.compile(
-        r"mc_available\s*=\s*prob_underperforming\s+is\s+not\s+None"
-    )
+    guard_pattern = re.compile(r"mc_available\s*=\s*prob_underperforming\s+is\s+not\s+None")
     assert guard_pattern.search(source), (
         "alpha_bot_execution.py is missing the canonical sentinel guard "
         "'mc_available = prob_underperforming is not None'. "
@@ -211,6 +213,7 @@ def test_alpha_bot_execution_has_mc_available_sentinel_guard() -> None:
 # ---------------------------------------------------------------------------
 # 4. autotuner.py: canonical mc_available guard present
 # ---------------------------------------------------------------------------
+
 
 def test_autotuner_has_mc_available_sentinel_guard() -> None:
     """
@@ -309,6 +312,7 @@ def test_new_prob_underperforming_name_present_in_core_consumers() -> None:
 #    prob_beating or mc_prob outside a prior is-not-None context
 # ---------------------------------------------------------------------------
 
+
 def test_reporting_uses_pre_guarded_variable_for_prob_beating_format() -> None:
     """
     reporting.py had two bare ``f"{prob_beating:.1f}%"`` format sites before
@@ -330,9 +334,7 @@ def test_reporting_uses_pre_guarded_variable_for_prob_beating_format() -> None:
     source = _read_production("reporting.py")
 
     # (a) The guarded assignment must exist (post H1 rename: prob_underperforming).
-    guarded_pattern = re.compile(
-        r'mc_prob_text\s*=.+if\s+prob_underperforming\s+is\s+not\s+None'
-    )
+    guarded_pattern = re.compile(r"mc_prob_text\s*=.+if\s+prob_underperforming\s+is\s+not\s+None")
     assert guarded_pattern.search(source), (
         "reporting.py is missing the sentinel-safe 'mc_prob_text = ... if "
         "prob_underperforming is not None else ...' assignment. All "
@@ -347,7 +349,7 @@ def test_reporting_uses_pre_guarded_variable_for_prob_beating_format() -> None:
     lines = source.splitlines()
     violations = []
     for lineno, line in enumerate(lines, start=1):
-        if re.search(r'\{prob_underperforming\s*:', line):
+        if re.search(r"\{prob_underperforming\s*:", line):
             # Safe iff this line is the guarded mc_prob_text assignment — i.e.
             # the same line also contains the "is not None" guard.
             if "is not None" not in line:
@@ -395,7 +397,7 @@ def test_alpha_bot_execution_prob_beating_format_sites_are_guarded() -> None:
     # Pinning the count ensures any addition is caught. The rename is value-
     # preserving so the COUNT is unchanged by H1 — only the identifier changes.
     _BASELINE_FORMAT_COUNT = 4
-    live_count = len(re.findall(r'\{prob_underperforming\s*:', source))
+    live_count = len(re.findall(r"\{prob_underperforming\s*:", source))
 
     assert live_count == _BASELINE_FORMAT_COUNT, (
         f"alpha_bot_execution.py has {live_count} prob_underperforming format "
@@ -413,6 +415,6 @@ def test_alpha_bot_execution_prob_beating_format_sites_are_guarded() -> None:
     )
     assert ternary_guard.search(source), (
         "alpha_bot_execution.py is missing the canonical sentinel-safe ternary "
-        "format 'f\"...{prob_underperforming:...}...\" if mc_available else "
-        "\"N/A\"'. This pattern must be present as the model for new format sites."
+        'format \'f"...{prob_underperforming:...}..." if mc_available else '
+        '"N/A"\'. This pattern must be present as the model for new format sites.'
     )

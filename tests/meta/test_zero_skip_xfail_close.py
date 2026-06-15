@@ -105,9 +105,7 @@ _FILE_MC_CONSUMERS = (
 _FILE_CVAR_CONTRACT = (
     _PROJECT_ROOT / "tests" / "math_engine" / "test_cvar_assessment_dataclass_contract.py"
 )
-_FILE_PORT_DISPATCH = (
-    _PROJECT_ROOT / "tests" / "execution" / "test_port_dispatch_removal.py"
-)
+_FILE_PORT_DISPATCH = _PROJECT_ROOT / "tests" / "execution" / "test_port_dispatch_removal.py"
 _FILE_CVAR_FAILSAFE = (
     _PROJECT_ROOT / "tests" / "math_engine" / "test_cvar_assessment_fail_safe_invariant.py"
 )
@@ -372,7 +370,9 @@ def test_phase2_monotonicity_placeholder_deleted() -> None:
     """
     tree = _ast(_FILE_CVAR_FAILSAFE)
     names = _toplevel_function_names(tree)
-    assert "test_property_deeper_tail_loss_never_has_fewer_observations_xfail_phase1" not in names, (
+    assert (
+        "test_property_deeper_tail_loss_never_has_fewer_observations_xfail_phase1" not in names
+    ), (
         f"{_FILE_CVAR_FAILSAFE.name} still defines the Phase-2 monotonicity "
         f"xfail placeholder. Phase 2 (simulate_forward_paths) is FORBIDDEN per "
         f"the decision-science binding decisions; the placeholder is permanent "

@@ -50,18 +50,22 @@ import database
 # Phase-1 THEORY facets that must be present in any valid spec bundle.
 # council synthesis §2.5: gamma, utility_family, wealth_argument are the
 # three canonical Phase-1 THEORY dimensions.
-PHASE1_REQUIRED_FACETS: frozenset = frozenset({
-    "gamma",
-    "utility_family",
-    "wealth_argument",
-})
+PHASE1_REQUIRED_FACETS: frozenset = frozenset(
+    {
+        "gamma",
+        "utility_family",
+        "wealth_argument",
+    }
+)
 
 # Phase-2 facets that must not appear in a Phase-1 bundle ("phase scope leak").
 # Sprint 3 dispatch brief; council synthesis §2.5 Phase-2 facets.
-PHASE2_FACET_NAMES: frozenset = frozenset({
-    "lambda",
-    "hysteresis-threshold",
-})
+PHASE2_FACET_NAMES: frozenset = frozenset(
+    {
+        "lambda",
+        "hysteresis-threshold",
+    }
+)
 
 # Age threshold (inclusive): facets frozen exactly this many days ago or earlier
 # trigger WATCH (spec age risk advisory).
@@ -72,19 +76,22 @@ SPEC_AGE_WATCH_THRESHOLD_DAYS: int = 90
 # Default-deny: any freeze_discipline NOT in this set (including BACKTEST_SELECTION
 # and unknown forward-compat values) triggers BREACH (I-2 defense-in-depth).
 # council synthesis §2.5; Sprint 3 dispatch brief.
-_ACCEPTABLE_DISCIPLINES: frozenset = frozenset({
-    "THEORY",
-    "MANDATE",
-    "STYLIZED_FACT",
-    "POLITIS_WHITE",
-    "CADENCE",
-    "CALIBRATION",
-})
+_ACCEPTABLE_DISCIPLINES: frozenset = frozenset(
+    {
+        "THEORY",
+        "MANDATE",
+        "STYLIZED_FACT",
+        "POLITIS_WHITE",
+        "CADENCE",
+        "CALIBRATION",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Pure computation
 # ---------------------------------------------------------------------------
+
 
 def compute_spec_critic_observation(
     spec_bundle_id: str,
@@ -127,8 +134,7 @@ def compute_spec_critic_observation(
 
     # --- I-2: All freeze_disciplines recognised (default-deny) ---
     unrecognised_disciplines = [
-        r for r in rows
-        if r.get("freeze_discipline") not in _ACCEPTABLE_DISCIPLINES
+        r for r in rows if r.get("freeze_discipline") not in _ACCEPTABLE_DISCIPLINES
     ]
 
     # --- I-3: Spec age — oldest frozen_at across all facets ---
@@ -167,9 +173,7 @@ def compute_spec_critic_observation(
     # --- raw_response ---
     if verdict == "CLEAR":
         raw_response: dict = {
-            "note": (
-                "all 3 facets present, all THEORY, frozen<90d"
-            ),
+            "note": ("all 3 facets present, all THEORY, frozen<90d"),
         }
     else:
         raw_response = {}
@@ -187,8 +191,7 @@ def compute_spec_critic_observation(
             raw_response["phase2_scope_leak"] = phase2_leaks
         if stale and not breach:
             raw_response["stale_note"] = (
-                f"facet frozen_at >= {SPEC_AGE_WATCH_THRESHOLD_DAYS} days old; "
-                "spec age advisory"
+                f"facet frozen_at >= {SPEC_AGE_WATCH_THRESHOLD_DAYS} days old; spec age advisory"
             )
 
     return {
@@ -205,6 +208,7 @@ def compute_spec_critic_observation(
 # ---------------------------------------------------------------------------
 # Integration entry point
 # ---------------------------------------------------------------------------
+
 
 def run_spec_critic(
     spec_bundle_id: str,

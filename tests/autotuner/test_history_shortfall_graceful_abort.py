@@ -66,6 +66,7 @@ def _spec_bundle_kwarg() -> dict:
     if "spec_bundle_id" not in sig.parameters:
         return {}
     from tests.autotuner.conftest import make_phase1_theory_bundle
+
     return {"spec_bundle_id": make_phase1_theory_bundle()}
 
 
@@ -137,8 +138,17 @@ def test_fetch_daily_bars_with_floor_raises_the_named_shortfall_type() -> None:
         emitted = 0
         while emitted < required - 30:
             if d.weekday() < 5:
-                bars.append({"t": f"{d.isoformat()}T00:00:00Z", "c": 1.0,
-                             "h": 1.0, "l": 1.0, "o": 1.0, "v": 1, "vw": 1.0})
+                bars.append(
+                    {
+                        "t": f"{d.isoformat()}T00:00:00Z",
+                        "c": 1.0,
+                        "h": 1.0,
+                        "l": 1.0,
+                        "o": 1.0,
+                        "v": 1,
+                        "vw": 1.0,
+                    }
+                )
                 emitted += 1
             d -= _dt.timedelta(days=1)
         return {"SPY": list(reversed(bars))}
@@ -258,9 +268,7 @@ def test_run_autotuner_abort_carries_the_shortfall_reason(monkeypatch) -> None:
                 break
         # also accept the whole dict stringified if it carries the text
         if reason_str is None:
-            joined = " ".join(
-                str(v) for v in result.values() if isinstance(v, str)
-            )
+            joined = " ".join(str(v) for v in result.values() if isinstance(v, str))
             if joined:
                 reason_str = joined
     elif isinstance(result, str):
@@ -280,8 +288,7 @@ def test_run_autotuner_abort_carries_the_shortfall_reason(monkeypatch) -> None:
     )
     low = reason_str.lower()
     assert any(
-        token in low
-        for token in ("shortfall", "history", "trading day", "trading-day", "floor")
+        token in low for token in ("shortfall", "history", "trading day", "trading-day", "floor")
     ), (
         f"run_autotuner's shortfall-abort reason ({reason_str!r}) does not "
         f"name the history shortfall. The operator-facing message must "
@@ -362,9 +369,7 @@ def test_run_autotuner_catch_of_shortfall_is_narrow_not_bare_except() -> None:
     generate_synthetic_history call in run_autotuner; assert its handler
     catches a specific named exception, not bare Exception/BaseException.
     """
-    tree = ast.parse(
-        _AUTOTUNER_PATH.read_text(encoding="utf-8"), filename=str(_AUTOTUNER_PATH)
-    )
+    tree = ast.parse(_AUTOTUNER_PATH.read_text(encoding="utf-8"), filename=str(_AUTOTUNER_PATH))
 
     # Find every Try whose body references generate_synthetic_history.
     shortfall_tries: list[ast.Try] = []
@@ -372,18 +377,12 @@ def test_run_autotuner_catch_of_shortfall_is_narrow_not_bare_except() -> None:
         if not isinstance(node, ast.Try):
             continue
         for sub in ast.walk(node):
-            if (
-                isinstance(sub, ast.Call)
-                and (
-                    (
-                        isinstance(sub.func, ast.Attribute)
-                        and sub.func.attr == "generate_synthetic_history"
-                    )
-                    or (
-                        isinstance(sub.func, ast.Name)
-                        and sub.func.id == "generate_synthetic_history"
-                    )
+            if isinstance(sub, ast.Call) and (
+                (
+                    isinstance(sub.func, ast.Attribute)
+                    and sub.func.attr == "generate_synthetic_history"
                 )
+                or (isinstance(sub.func, ast.Name) and sub.func.id == "generate_synthetic_history")
             ):
                 shortfall_tries.append(node)
                 break
@@ -411,9 +410,7 @@ def test_run_autotuner_catch_of_shortfall_is_narrow_not_bare_except() -> None:
                     caught_names.add(t.id)
                 elif isinstance(t, ast.Attribute):
                     caught_names.add(t.attr)
-            assert not (
-                caught_names & {"Exception", "BaseException"}
-            ), (
+            assert not (caught_names & {"Exception", "BaseException"}), (
                 f"autotuner.run_autotuner's try/except around "
                 f"generate_synthetic_history catches the over-broad "
                 f"{caught_names & {'Exception', 'BaseException'}} — it must "
@@ -456,15 +453,10 @@ def test_intraday_shortfall_guard_raises_consistently_with_the_daily_axis() -> N
 
     gen = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "generate_synthetic_history"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "generate_synthetic_history":
             gen = node
             break
-    assert gen is not None, (
-        "synthetic_history.generate_synthetic_history not found."
-    )
+    assert gen is not None, "synthetic_history.generate_synthetic_history not found."
 
     # Find an `if` whose test is a len()-vs-floor comparison on the intraday
     # slice, and assert its body raises the shortfall exception.
@@ -495,9 +487,7 @@ def test_intraday_shortfall_guard_raises_consistently_with_the_daily_axis() -> N
             if isinstance(sub, ast.Raise) and sub.exc is not None:
                 exc = sub.exc
                 raised = exc.func if isinstance(exc, ast.Call) else exc
-                if (
-                    isinstance(raised, ast.Name) and raised.id == exc_name
-                ) or (
+                if (isinstance(raised, ast.Name) and raised.id == exc_name) or (
                     isinstance(raised, ast.Attribute) and raised.attr == exc_name
                 ):
                     intraday_guard_raises = True
@@ -559,9 +549,7 @@ def test_abort_marker_does_not_reach_the_symphony_selection_stats_augmentation()
     ``augment(autotuner_changes)`` with no abort guard on either side fails.
     """
     abe_path = _REPO_ROOT / "alpha_bot_execution.py"
-    abe_tree = ast.parse(
-        abe_path.read_text(encoding="utf-8"), filename=str(abe_path)
-    )
+    abe_tree = ast.parse(abe_path.read_text(encoding="utf-8"), filename=str(abe_path))
 
     augment_name = "augment_optimization_results_with_selection_stats"
 
@@ -575,15 +563,9 @@ def test_abort_marker_does_not_reach_the_symphony_selection_stats_augmentation()
             if not isinstance(node, ast.If):
                 continue
             for sub in ast.walk(node):
-                if (
-                    isinstance(sub, ast.Call)
-                    and (
-                        (isinstance(sub.func, ast.Name) and sub.func.id == call_func_name)
-                        or (
-                            isinstance(sub.func, ast.Attribute)
-                            and sub.func.attr == call_func_name
-                        )
-                    )
+                if isinstance(sub, ast.Call) and (
+                    (isinstance(sub.func, ast.Name) and sub.func.id == call_func_name)
+                    or (isinstance(sub.func, ast.Attribute) and sub.func.attr == call_func_name)
                 ):
                     yield node.test
                     break
@@ -623,9 +605,7 @@ def test_abort_marker_does_not_reach_the_symphony_selection_stats_augmentation()
     )
 
 
-def test_eod_post_renders_the_abort_reason_as_an_operator_notice(
-    monkeypatch, tmp_path
-) -> None:
+def test_eod_post_renders_the_abort_reason_as_an_operator_notice(monkeypatch, tmp_path) -> None:
     """send_eod_discord_post given an abort marker must RENDER the abort reason
     as an operator-visible notice — not iterate it as optimization_results.
 
@@ -717,9 +697,7 @@ def test_eod_post_renders_the_abort_reason_as_an_operator_notice(
     )
 
 
-def test_eod_post_does_not_iterate_an_abort_marker_as_symphonies(
-    monkeypatch, tmp_path
-) -> None:
+def test_eod_post_does_not_iterate_an_abort_marker_as_symphonies(monkeypatch, tmp_path) -> None:
     """send_eod_discord_post must not treat the abort marker's structural keys
     as symphony names.
 
@@ -786,7 +764,8 @@ def test_eod_post_does_not_iterate_an_abort_marker_as_symphonies(
     # The marker's structural keys must not surface as per-symphony
     # "<Name> Optimization" embeds.
     offenders = [
-        t for t in titles
+        t
+        for t in titles
         if ("aborted" in t.lower() and "optimization" in t.lower())
         or ("reason" in t.lower() and "optimization" in t.lower())
     ]

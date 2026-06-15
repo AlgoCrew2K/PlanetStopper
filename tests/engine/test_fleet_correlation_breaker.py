@@ -49,12 +49,7 @@ import pytest
 # Fixture loading
 # ---------------------------------------------------------------------------
 
-_FIXTURES = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "engine"
-    / "fleet_correlation"
-)
+_FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures" / "engine" / "fleet_correlation"
 
 
 def _load(name: str) -> dict:
@@ -67,9 +62,11 @@ def _load(name: str) -> dict:
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 except Exception:
     from datetime import timezone
+
     _ET = timezone(timedelta(hours=-4))
 
 
@@ -104,6 +101,7 @@ class TestDetectFleetCorrelationSignature:
     def _import_helper(self):
         try:
             from alpha_bot_execution import detect_fleet_correlation
+
             self._fn = detect_fleet_correlation
         except ImportError:
             self._fn = None
@@ -177,6 +175,7 @@ class TestDetectFleetCorrelationLogic:
     def _import_helper(self):
         try:
             from alpha_bot_execution import detect_fleet_correlation
+
             self._fn = detect_fleet_correlation
         except ImportError:
             self._fn = None
@@ -197,9 +196,7 @@ class TestDetectFleetCorrelationLogic:
             case["active_symphonies"],
             fixture["pct_threshold"],
         )
-        assert tripped is True, (
-            f"Case '{case['label']}': expected tripped=True. {case['note']}"
-        )
+        assert tripped is True, f"Case '{case['label']}': expected tripped=True. {case['note']}"
         assert reason == case["expected_reason"], (
             f"Case '{case['label']}': expected reason={case['expected_reason']!r}, got {reason!r}"
         )
@@ -229,15 +226,14 @@ class TestDetectFleetCorrelationLogic:
             case["active_symphonies"],
             fixture["pct_threshold"],
         )
-        assert tripped is False, (
-            f"Case '{case['label']}': 30% must not trip. {case['note']}"
-        )
+        assert tripped is False, f"Case '{case['label']}': 30% must not trip. {case['note']}"
 
     def test_different_reasons_all_at_threshold_does_not_trip(self):
         """Multiple reasons each at 40% — none exceeds 50% — no trip."""
         fixture = _load("detection_basic.json")
         case = next(
-            c for c in fixture["cases"]
+            c
+            for c in fixture["cases"]
             if c["label"] == "different_reasons_all_above_threshold_individually_no_trip"
         )
         tripped, reason = self._call(
@@ -249,9 +245,7 @@ class TestDetectFleetCorrelationLogic:
             f"Case '{case['label']}': mixed reasons must not trip even if combined > 50%. "
             f"{case['note']}"
         )
-        assert reason is None, (
-            "When not tripped, reason must be None."
-        )
+        assert reason is None, "When not tripped, reason must be None."
 
     def test_empty_window_does_not_trip(self):
         """Zero triggers in window → no trip."""
@@ -290,16 +284,18 @@ class TestDetectFleetCorrelationLogic:
             fixture["pct_threshold"],
         )
         assert tripped is False
-        assert reason is None, (
-            f"reason must be None when not tripped, got {reason!r}"
-        )
+        assert reason is None, f"reason must be None when not tripped, got {reason!r}"
 
     def test_helper_is_deterministic_and_pure(self):
         """Calling detect_fleet_correlation twice with same args returns same result."""
         fixture = _load("detection_basic.json")
         case = next(c for c in fixture["cases"] if c["expected_tripped"])
-        r1 = self._call(case["triggers_in_window"], case["active_symphonies"], fixture["pct_threshold"])
-        r2 = self._call(case["triggers_in_window"], case["active_symphonies"], fixture["pct_threshold"])
+        r1 = self._call(
+            case["triggers_in_window"], case["active_symphonies"], fixture["pct_threshold"]
+        )
+        r2 = self._call(
+            case["triggers_in_window"], case["active_symphonies"], fixture["pct_threshold"]
+        )
         assert r1 == r2, "detect_fleet_correlation must be deterministic."
 
 
@@ -319,6 +315,7 @@ class TestDetectFleetCorrelationWindowBoundary:
     def _import_helper(self):
         try:
             from alpha_bot_execution import detect_fleet_correlation
+
             self._fn = detect_fleet_correlation
         except ImportError:
             self._fn = None
@@ -337,8 +334,7 @@ class TestDetectFleetCorrelationWindowBoundary:
         # Filter triggers to only those inside the window relative to now_et
         window_s = fixture["window_minutes"] * 60
         triggers_in_window = [
-            t for t in case["triggers"]
-            if (now_et - _et_at(t["ts_et"])).total_seconds() < window_s
+            t for t in case["triggers"] if (now_et - _et_at(t["ts_et"])).total_seconds() < window_s
         ]
 
         tripped, reason = self._call(
@@ -354,14 +350,15 @@ class TestDetectFleetCorrelationWindowBoundary:
     def test_trigger_at_exact_3min_boundary_excluded_from_window(self):
         """Event at exactly now - 3:00 is OUTSIDE the window — only 2 of 4 inside → no trip."""
         fixture = _load("window_boundary.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "oldest_at_exactly_boundary_excluded")
+        case = next(
+            c for c in fixture["cases"] if c["label"] == "oldest_at_exactly_boundary_excluded"
+        )
         now_et = _et_at(fixture["base_et"])
 
         window_s = fixture["window_minutes"] * 60
         # Strict less-than: events at exactly boundary distance are excluded
         triggers_in_window = [
-            t for t in case["triggers"]
-            if (now_et - _et_at(t["ts_et"])).total_seconds() < window_s
+            t for t in case["triggers"] if (now_et - _et_at(t["ts_et"])).total_seconds() < window_s
         ]
 
         assert len(triggers_in_window) == case["expected_count_in_window"], (
@@ -374,9 +371,7 @@ class TestDetectFleetCorrelationWindowBoundary:
             fixture["active_symphonies"],
             fixture["pct_threshold"],
         )
-        assert tripped is False, (
-            f"Case '{case['label']}': {case['note_on_boundary']}"
-        )
+        assert tripped is False, f"Case '{case['label']}': {case['note_on_boundary']}"
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +390,7 @@ class TestFleetAlertStateShape:
         """Resolve the function that persists the fleet alert."""
         try:
             from alpha_bot_execution import set_fleet_correlation_alert
+
             return set_fleet_correlation_alert
         except ImportError:
             return None
@@ -510,7 +506,11 @@ class TestFleetAlertObservationalOnly:
 
         fixture = _load("trigger_side_effects_passthrough.json")
         triggers = [
-            {"symphony_id": f"s{i}", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:32:00"}
+            {
+                "symphony_id": f"s{i}",
+                "triggered_reason": "Trailing Stop",
+                "ts_et": "2026-05-16T10:32:00",
+            }
             for i in range(6)
         ]
         original_length = len(triggers)
@@ -571,7 +571,12 @@ class TestFleetAlertObservationalOnly:
             pytest.fail("detect_fleet_correlation not found — implement per AC-V3.1.")
 
         fn_src = inspect.getsource(alpha_bot_execution.detect_fleet_correlation)
-        db_write_patterns = ["database.save_state", "database.record_", "conn.execute", "conn.commit"]
+        db_write_patterns = [
+            "database.save_state",
+            "database.record_",
+            "conn.execute",
+            "conn.commit",
+        ]
         for pattern in db_write_patterns:
             assert pattern not in fn_src, (
                 f"detect_fleet_correlation must not contain DB write calls (found '{pattern}'). "
@@ -686,6 +691,7 @@ class TestFleetCorrelationConfigurableThresholds:
     def test_fleet_correlation_pct_default_is_point_five(self):
         """Default FLEET_CORRELATION_PCT must be 0.50 (float)."""
         import alpha_bot_execution
+
         val = alpha_bot_execution.FLEET_CORRELATION_PCT
         assert isinstance(val, float), (
             f"FLEET_CORRELATION_PCT must be a float, got {type(val).__name__}"
@@ -709,6 +715,7 @@ class TestFleetCorrelationConfigurableThresholds:
     def test_fleet_correlation_window_minutes_default_is_3(self):
         """Default FLEET_CORRELATION_WINDOW_MINUTES must be 3 (int)."""
         import alpha_bot_execution
+
         val = alpha_bot_execution.FLEET_CORRELATION_WINDOW_MINUTES
         assert isinstance(val, int), (
             f"FLEET_CORRELATION_WINDOW_MINUTES must be int, got {type(val).__name__}"
@@ -729,6 +736,7 @@ class TestFleetCorrelationConfigurableThresholds:
     def test_fleet_correlation_clear_minutes_default_is_30(self):
         """Default FLEET_CORRELATION_CLEAR_MINUTES must be 30 (int)."""
         import alpha_bot_execution
+
         val = alpha_bot_execution.FLEET_CORRELATION_CLEAR_MINUTES
         assert isinstance(val, int), (
             f"FLEET_CORRELATION_CLEAR_MINUTES must be int, got {type(val).__name__}"
@@ -743,16 +751,24 @@ class TestFleetCorrelationConfigurableThresholds:
             pytest.fail("detect_fleet_correlation not found.")
 
         fixture = _load("configurable_thresholds.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "custom_pct_threshold_0_75_not_tripped_at_70pct")
+        case = next(
+            c
+            for c in fixture["cases"]
+            if c["label"] == "custom_pct_threshold_0_75_not_tripped_at_70pct"
+        )
 
         triggers = [
-            {"symphony_id": f"s{i}", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:00"}
+            {
+                "symphony_id": f"s{i}",
+                "triggered_reason": "Trailing Stop",
+                "ts_et": "2026-05-16T10:31:00",
+            }
             for i in range(case["same_reason_count"])
         ]
-        tripped, _ = detect_fleet_correlation(triggers, case["active_symphonies"], case["pct_threshold"])
-        assert tripped is False, (
-            f"Case '{case['label']}': {case['note']}"
+        tripped, _ = detect_fleet_correlation(
+            triggers, case["active_symphonies"], case["pct_threshold"]
         )
+        assert tripped is False, f"Case '{case['label']}': {case['note']}"
 
     def test_custom_pct_threshold_0_75_trips_at_80pct(self):
         """With pct_threshold=0.75, 8 of 10 (80%) > 75% — trips."""
@@ -762,21 +778,28 @@ class TestFleetCorrelationConfigurableThresholds:
             pytest.fail("detect_fleet_correlation not found.")
 
         fixture = _load("configurable_thresholds.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "custom_pct_threshold_0_75_trips_at_80pct")
+        case = next(
+            c for c in fixture["cases"] if c["label"] == "custom_pct_threshold_0_75_trips_at_80pct"
+        )
 
         triggers = [
-            {"symphony_id": f"s{i}", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:00"}
+            {
+                "symphony_id": f"s{i}",
+                "triggered_reason": "Trailing Stop",
+                "ts_et": "2026-05-16T10:31:00",
+            }
             for i in range(case["same_reason_count"])
         ]
-        tripped, reason = detect_fleet_correlation(triggers, case["active_symphonies"], case["pct_threshold"])
-        assert tripped is True, (
-            f"Case '{case['label']}': {case['note']}"
+        tripped, reason = detect_fleet_correlation(
+            triggers, case["active_symphonies"], case["pct_threshold"]
         )
+        assert tripped is True, f"Case '{case['label']}': {case['note']}"
         assert reason == "Trailing Stop"
 
     def test_constants_are_patchable_via_patch_object(self):
         """All three constants must be patchable for test isolation."""
         import alpha_bot_execution
+
         with patch.object(alpha_bot_execution, "FLEET_CORRELATION_PCT", 0.75):
             assert alpha_bot_execution.FLEET_CORRELATION_PCT == pytest.approx(0.75, abs=1e-9)
         with patch.object(alpha_bot_execution, "FLEET_CORRELATION_WINDOW_MINUTES", 5):
@@ -813,7 +836,9 @@ class TestFleetAlertAutoClear:
             )
 
         fixture = _load("auto_clear.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "alert_clears_after_30_min_no_new_events")
+        case = next(
+            c for c in fixture["cases"] if c["label"] == "alert_clears_after_30_min_no_new_events"
+        )
 
         # R1: alert state lives in fleet_alert_state, not bot_state.
         # Seed via read_fleet_alert mock (not bot_state).
@@ -827,11 +852,15 @@ class TestFleetAlertAutoClear:
         bot_state: dict = {}
         check_time = _et_at(case["check_time_et"])
 
-        with patch("database.get_triggers", return_value=[]), \
-             patch("database.read_fleet_alert", return_value=stale_alert), \
-             patch("database.clear_fleet_alert") as mock_clear, \
-             patch("database.write_fleet_alert"):
-            with patch.object(alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", fixture["clear_minutes"]):
+        with (
+            patch("database.get_triggers", return_value=[]),
+            patch("database.read_fleet_alert", return_value=stale_alert),
+            patch("database.clear_fleet_alert") as mock_clear,
+            patch("database.write_fleet_alert"),
+        ):
+            with patch.object(
+                alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", fixture["clear_minutes"]
+            ):
                 alpha_bot_execution.check_fleet_correlation_and_update_state(
                     bot_state=bot_state,
                     active_symphony_count=10,
@@ -854,7 +883,9 @@ class TestFleetAlertAutoClear:
             pytest.fail("check_fleet_correlation_and_update_state not found.")
 
         fixture = _load("auto_clear.json")
-        case = next(c for c in fixture["cases"] if c["label"] == "alert_persists_before_30_min_elapsed")
+        case = next(
+            c for c in fixture["cases"] if c["label"] == "alert_persists_before_30_min_elapsed"
+        )
 
         bot_state: dict = {
             "fleet_correlation_alert": {
@@ -868,7 +899,9 @@ class TestFleetAlertAutoClear:
         check_time = _et_at(case["check_time_et"])
 
         with patch("database.get_triggers", return_value=[]):
-            with patch.object(alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", fixture["clear_minutes"]):
+            with patch.object(
+                alpha_bot_execution, "FLEET_CORRELATION_CLEAR_MINUTES", fixture["clear_minutes"]
+            ):
                 alpha_bot_execution.check_fleet_correlation_and_update_state(
                     bot_state=bot_state,
                     active_symphony_count=10,
@@ -976,6 +1009,7 @@ class TestDetectFleetCorrelationProperties:
     def _import_fn(self):
         try:
             from alpha_bot_execution import detect_fleet_correlation
+
             self._fn = detect_fleet_correlation
         except ImportError:
             self._fn = None
@@ -985,22 +1019,31 @@ class TestDetectFleetCorrelationProperties:
             pytest.fail("detect_fleet_correlation not found.")
         return self._fn(triggers, active, pct)
 
-    @pytest.mark.parametrize("active_symphonies,same_count,pct_threshold,expected_tripped", [
-        (10, 6, 0.50, True),   # 60% > 50%
-        (10, 5, 0.50, False),  # 50% not > 50%
-        (10, 4, 0.50, False),  # 40% < 50%
-        (4,  3, 0.50, True),   # 75% > 50%
-        (4,  2, 0.50, False),  # 50% not > 50%
-        (2,  2, 0.50, True),   # 100% > 50%
-        (1,  1, 0.50, True),   # 100% > 50% (single symphony)
-    ])
-    def test_threshold_monotonicity(self, active_symphonies, same_count, pct_threshold, expected_tripped):
+    @pytest.mark.parametrize(
+        "active_symphonies,same_count,pct_threshold,expected_tripped",
+        [
+            (10, 6, 0.50, True),  # 60% > 50%
+            (10, 5, 0.50, False),  # 50% not > 50%
+            (10, 4, 0.50, False),  # 40% < 50%
+            (4, 3, 0.50, True),  # 75% > 50%
+            (4, 2, 0.50, False),  # 50% not > 50%
+            (2, 2, 0.50, True),  # 100% > 50%
+            (1, 1, 0.50, True),  # 100% > 50% (single symphony)
+        ],
+    )
+    def test_threshold_monotonicity(
+        self, active_symphonies, same_count, pct_threshold, expected_tripped
+    ):
         """
         For a given active count, increasing same_count monotonically through the threshold
         must flip tripped from False to True at the strict > boundary.
         """
         triggers = [
-            {"symphony_id": f"s{i}", "triggered_reason": "Trailing Stop", "ts_et": "2026-05-16T10:31:00"}
+            {
+                "symphony_id": f"s{i}",
+                "triggered_reason": "Trailing Stop",
+                "ts_et": "2026-05-16T10:31:00",
+            }
             for i in range(same_count)
         ]
         tripped, _ = self._call(triggers, active_symphonies, pct_threshold)
@@ -1013,7 +1056,11 @@ class TestDetectFleetCorrelationProperties:
     def test_tripped_false_iff_reason_is_none(self):
         """tripped=False iff reason=None; tripped=True iff reason is a non-empty string."""
         triggers_trip = [
-            {"symphony_id": f"s{i}", "triggered_reason": "VWAP Breakdown", "ts_et": "2026-05-16T10:31:00"}
+            {
+                "symphony_id": f"s{i}",
+                "triggered_reason": "VWAP Breakdown",
+                "ts_et": "2026-05-16T10:31:00",
+            }
             for i in range(6)
         ]
         tripped_t, reason_t = self._call(triggers_trip, 10, 0.50)
@@ -1022,12 +1069,14 @@ class TestDetectFleetCorrelationProperties:
         )
 
         triggers_no = [
-            {"symphony_id": "s1", "triggered_reason": "VWAP Breakdown", "ts_et": "2026-05-16T10:31:00"}
+            {
+                "symphony_id": "s1",
+                "triggered_reason": "VWAP Breakdown",
+                "ts_et": "2026-05-16T10:31:00",
+            }
         ]
         tripped_f, reason_f = self._call(triggers_no, 10, 0.50)
-        assert tripped_f is False and reason_f is None, (
-            "When tripped=False, reason must be None."
-        )
+        assert tripped_f is False and reason_f is None, "When tripped=False, reason must be None."
 
     def test_zero_active_symphonies_does_not_raise(self):
         """Edge: active_symphonies=0 must not raise ZeroDivisionError or similar."""

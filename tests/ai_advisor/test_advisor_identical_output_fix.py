@@ -69,6 +69,7 @@ def ground_truth() -> dict:
 def oc():
     """Import the Overfitting Conscience producer fresh each test."""
     import advisors.overfitting_conscience as module
+
     return importlib.reload(module)
 
 
@@ -141,9 +142,9 @@ def test_oc_compute_null_s_count_yields_same_S_and_verdict_as_zero(oc, ground_tr
     """
     row = ground_truth["autotune_runs_with_null_s_count"][0]
 
-    run_none = _run_from_fixture(row)            # s_count = None
+    run_none = _run_from_fixture(row)  # s_count = None
     run_zero = _run_from_fixture(row)
-    run_zero["s_count"] = 0                       # explicit zero
+    run_zero["s_count"] = 0  # explicit zero
 
     obs_none = oc.compute_overfitting_conscience_observation(run_none, [])
     obs_zero = oc.compute_overfitting_conscience_observation(run_zero, [])

@@ -29,9 +29,7 @@ import pytest
 # Fixture loading (provenance-clear; no inline construction of producer values)
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "calibration" / "v1"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "calibration" / "v1"
 
 
 @pytest.fixture(scope="module")
@@ -89,7 +87,11 @@ def _make_day_ticks(n: int = 5) -> list[dict]:
     ticks = []
     for i in range(n):
         ret = 0.1 * (i + 1)
-        ticks.append(_make_tick(return_=ret if False else None) if False else _make_tick(**{"return": 0.1 * (i + 1)}))
+        ticks.append(
+            _make_tick(return_=ret if False else None)
+            if False
+            else _make_tick(**{"return": 0.1 * (i + 1)})
+        )
     # Overwrite tick 1 with a velocity spike so PARABOLIC_VELOCITY_THRESHOLD is exercised
     ticks[1] = _make_tick(**{"return": 3.5})
     return ticks
@@ -137,15 +139,18 @@ def deviation_dict():
 # Helper: import autotuner without triggering optuna.logging or DB side effects
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def autotuner_module():
     import autotuner as _at
+
     return _at
 
 
 # ---------------------------------------------------------------------------
 # 1. INTERFACE — run_calibration_sweep exists with the right signature
 # ---------------------------------------------------------------------------
+
 
 class TestCalibrationSweepInterface:
     def test_run_calibration_sweep_is_callable(self, autotuner_module):
@@ -162,8 +167,13 @@ class TestCalibrationSweepInterface:
         """
         sig = inspect.signature(autotuner_module.run_calibration_sweep)
         params = set(sig.parameters.keys())
-        required = {"history_data", "current_params", "current_date_str",
-                    "deviation_dict", "random_state"}
+        required = {
+            "history_data",
+            "current_params",
+            "current_date_str",
+            "deviation_dict",
+            "random_state",
+        }
         missing = required - params
         assert not missing, f"run_calibration_sweep missing parameters: {missing}"
 
@@ -186,6 +196,7 @@ class TestCalibrationSweepInterface:
 # ---------------------------------------------------------------------------
 # 2. SEARCH SPACE — only PARA velocity + VWAP HWM tuned; others excluded
 # ---------------------------------------------------------------------------
+
 
 class TestCalibrationSearchSpace:
     def test_search_space_contains_only_tuned_params(
@@ -253,9 +264,7 @@ class TestCalibrationSearchSpace:
         finally:
             monkeypatch_target.optuna.create_study = original_create
 
-        tuned_param_names = {
-            p["name"] for p in search_space_contract["tuned_params"]
-        }
+        tuned_param_names = {p["name"] for p in search_space_contract["tuned_params"]}
         assert suggested_names == tuned_param_names, (
             f"Calibration sweep suggested unexpected params.\n"
             f"  Expected: {tuned_param_names}\n"
@@ -264,8 +273,12 @@ class TestCalibrationSearchSpace:
         )
 
     def test_prohibited_params_not_in_report(
-        self, autotuner_module, single_sym_history, deviation_dict,
-        search_space_contract, calibration_report_schema
+        self,
+        autotuner_module,
+        single_sym_history,
+        deviation_dict,
+        search_space_contract,
+        calibration_report_schema,
     ):
         """
         Report rows must only contain PARABOLIC_VELOCITY_THRESHOLD and
@@ -282,9 +295,7 @@ class TestCalibrationSearchSpace:
         reported_params = {row["param_name"] for row in result}
         prohibited = set(calibration_report_schema["prohibited_params"])
         violations = reported_params & prohibited
-        assert not violations, (
-            f"Report contains prohibited param_name values: {violations}"
-        )
+        assert not violations, f"Report contains prohibited param_name values: {violations}"
 
     def test_vwap_break_confirm_ticks_not_suggested(
         self, autotuner_module, single_sym_history, deviation_dict, search_space_contract
@@ -295,7 +306,9 @@ class TestCalibrationSearchSpace:
         """
         # This is also covered by test_search_space_contains_only_tuned_params but
         # explicit single-param assertion makes failures easier to diagnose.
-        prohibited_in_fixture = search_space_contract["hand_set_must_not_be_tuned_by_calibration_sweep"]
+        prohibited_in_fixture = search_space_contract[
+            "hand_set_must_not_be_tuned_by_calibration_sweep"
+        ]
         assert "VWAP_BREAK_CONFIRM_TICKS" in prohibited_in_fixture, (
             "Fixture contract must list VWAP_BREAK_CONFIRM_TICKS as prohibited"
         )
@@ -304,6 +317,7 @@ class TestCalibrationSearchSpace:
 # ---------------------------------------------------------------------------
 # 3. PURGE + EMBARGO (O1) — fold boundaries correctly applied
 # ---------------------------------------------------------------------------
+
 
 class TestPurgeEmbargoO1:
     def test_calibration_sweep_applies_purge_and_embargo_at_train_val_boundary(
@@ -345,6 +359,7 @@ class TestPurgeEmbargoO1:
             assert "trading_day_end" in row
             # Both must be valid ISO dates
             import datetime
+
             datetime.date.fromisoformat(row["trading_day_start"])
             datetime.date.fromisoformat(row["trading_day_end"])
 
@@ -352,6 +367,7 @@ class TestPurgeEmbargoO1:
 # ---------------------------------------------------------------------------
 # 4. OBJECTIVE (O5 Sortino) — calibration sweep uses Sortino, not 5-magic composite
 # ---------------------------------------------------------------------------
+
 
 class TestSortinoObjectiveO5:
     def test_compute_sortino_ratio_present_in_autotuner(self, autotuner_module):
@@ -396,6 +412,7 @@ class TestSortinoObjectiveO5:
 # ---------------------------------------------------------------------------
 # 5. STUDY NAMES (O3) — timestamped, load_if_exists=False
 # ---------------------------------------------------------------------------
+
 
 class TestStudyNamingO3:
     def test_calibration_sweep_study_name_matches_timestamp_pattern(
@@ -452,6 +469,7 @@ class TestStudyNamingO3:
 # ---------------------------------------------------------------------------
 # 6. BEST TRIAL SELECTION (O2) — deflated Sharpe re-ranking
 # ---------------------------------------------------------------------------
+
 
 class TestHarveyLiuHaircutD3:
     """
@@ -571,8 +589,7 @@ class TestHaircutOutcomeSurfacing:
     def _run_sweep(self, autotuner_module, single_sym_history, deviation_dict):
         return autotuner_module.run_calibration_sweep(
             history_data=single_sym_history,
-            current_params={"PARABOLIC_VELOCITY_THRESHOLD": 2.0,
-                            "VWAP_CROSS_HWM_PCT": 1.0},
+            current_params={"PARABOLIC_VELOCITY_THRESHOLD": 2.0, "VWAP_CROSS_HWM_PCT": 1.0},
             current_date_str="2024-03-01",
             deviation_dict=deviation_dict,
             random_state=42,
@@ -621,8 +638,7 @@ class TestHaircutOutcomeSurfacing:
             )
             outcome = row["haircut_outcome"]
             assert outcome in self._VALID_OUTCOMES, (
-                f"haircut_outcome={outcome!r} is not one of "
-                f"{sorted(self._VALID_OUTCOMES)}."
+                f"haircut_outcome={outcome!r} is not one of {sorted(self._VALID_OUTCOMES)}."
             )
             tstat = row.get("selection_tstat")
             if outcome == "cleared":
@@ -659,8 +675,7 @@ class TestHaircutOutcomeSurfacing:
 
         autotuner_module.benjamini_hochberg_adjust = _reject_all
         try:
-            result = self._run_sweep(autotuner_module, single_sym_history,
-                                     deviation_dict)
+            result = self._run_sweep(autotuner_module, single_sym_history, deviation_dict)
         finally:
             autotuner_module.benjamini_hochberg_adjust = orig_bhy
 
@@ -698,8 +713,7 @@ class TestHaircutOutcomeSurfacing:
 
         autotuner_module.benjamini_hochberg_adjust = _clear_all
         try:
-            result = self._run_sweep(autotuner_module, single_sym_history,
-                                     deviation_dict)
+            result = self._run_sweep(autotuner_module, single_sym_history, deviation_dict)
         finally:
             autotuner_module.benjamini_hochberg_adjust = orig_bhy
 
@@ -716,14 +730,14 @@ class TestHaircutOutcomeSurfacing:
             if row.get("haircut_outcome") == "cleared":
                 tstat = row.get("selection_tstat")
                 assert tstat is not None and math.isfinite(tstat), (
-                    f"A 'cleared' row must carry a finite selection_tstat; "
-                    f"got {tstat!r}."
+                    f"A 'cleared' row must carry a finite selection_tstat; got {tstat!r}."
                 )
 
 
 # ---------------------------------------------------------------------------
 # 7. FROZEN EVAL (O6) — held-out fold consumed exactly once, post-selection
 # ---------------------------------------------------------------------------
+
 
 class TestFrozenEvalO6:
     def test_report_exposes_frozen_eval_alpha(
@@ -791,6 +805,7 @@ class TestFrozenEvalO6:
         orig_optimize_factory = None
 
         import optuna as _optuna
+
         orig_create = _optuna.create_study
 
         def _marking_study(*a, **kw):
@@ -832,10 +847,9 @@ class TestFrozenEvalO6:
 # 8. E1 VELOCITY CONTRACT — cycle-1 velocity uses None sentinel (zero baseline)
 # ---------------------------------------------------------------------------
 
+
 class TestE1VelocityContract:
-    def test_sim_loops_initialize_prev_return_as_none(
-        self, autotuner_module, e1_velocity_contract
-    ):
+    def test_sim_loops_initialize_prev_return_as_none(self, autotuner_module, e1_velocity_contract):
         """
         E1: the replay's per-day transient state must initialize
         prev_return = None (the cycle-1-velocity-zero sentinel), not 0.0.
@@ -930,6 +944,7 @@ class TestE1VelocityContract:
 # ---------------------------------------------------------------------------
 # 9. REPORT SCHEMA — all required fields present and typed correctly
 # ---------------------------------------------------------------------------
+
 
 class TestReportSchema:
     def test_all_required_fields_present_in_every_row(
@@ -1045,6 +1060,7 @@ class TestReportSchema:
 # 10. NO FLEET-WIDE FLIP (AC-V1.3) — report is read-only, no atomic mutation
 # ---------------------------------------------------------------------------
 
+
 class TestNoFleetWideFlipACV13:
     def test_run_calibration_sweep_does_not_call_save_symphony_strategy(
         self, autotuner_module, single_sym_history, deviation_dict
@@ -1104,6 +1120,7 @@ class TestNoFleetWideFlipACV13:
 # ---------------------------------------------------------------------------
 # 11. DETERMINISM — same fixture + same seed => same recommendations
 # ---------------------------------------------------------------------------
+
 
 class TestDeterminism:
     def test_same_seed_produces_same_proposed_values(
@@ -1175,6 +1192,7 @@ class TestDeterminism:
         # This test is best-effort only and is NOT marked as a hard assertion.
         if all_same and result_seed_1:
             import warnings
+
             warnings.warn(
                 "Different seeds produced identical proposed_values — "
                 "either the seed is not wired or the objective is degenerate.",
@@ -1185,6 +1203,7 @@ class TestDeterminism:
 # ---------------------------------------------------------------------------
 # Revise R1 — gaps found during Red/Green/Revise review of GREEN at 9ef38c6
 # ---------------------------------------------------------------------------
+
 
 class TestReviseR1:
     def test_proposed_value_is_float_not_raw_optuna_float(
@@ -1272,14 +1291,16 @@ class TestReviseR1:
                 date_str = (base_date + datetime.timedelta(days=d)).strftime("%Y-%m-%d")
                 ticks = []
                 for i in range(10):
-                    ticks.append({
-                        "return": 0.4 + i * 0.05,    # rises to ~0.85 — above 0.3 threshold
-                        "mc_prob": 10.0,
-                        "vol": 1.0,
-                        "vwap_diff": -0.5,            # negative: gate passes
-                        "base_atr_pct": 1.0,
-                        "valid_vwap_weight": 0.9,      # > 0.5: gate passes
-                    })
+                    ticks.append(
+                        {
+                            "return": 0.4 + i * 0.05,  # rises to ~0.85 — above 0.3 threshold
+                            "mc_prob": 10.0,
+                            "vol": 1.0,
+                            "vwap_diff": -0.5,  # negative: gate passes
+                            "base_atr_pct": 1.0,
+                            "valid_vwap_weight": 0.9,  # > 0.5: gate passes
+                        }
+                    )
                 history["sym_trigger_test"][date_str] = ticks
             return history
 
@@ -1317,6 +1338,7 @@ class TestReviseR1:
             # If validation fold is too small for any triggers, we can't distinguish —
             # warn but don't fail (the no-hardcode guarantee is best-effort on sparse data)
             import warnings
+
             warnings.warn(
                 "expected_trigger_freq_change is 0.0 for all inputs — "
                 "validation fold may be too sparse to produce triggers. "
@@ -1366,6 +1388,7 @@ class TestReviseR1:
 # ---------------------------------------------------------------------------
 # 12. V1-SPECIFIC SEARCH SPACE BOUNDS — named constants, not magic numbers
 # ---------------------------------------------------------------------------
+
 
 class TestV1SearchSpaceBounds:
     def test_v1_vwap_cross_hwm_lower_bound_named_constant_exists(self, autotuner_module):
@@ -1421,6 +1444,7 @@ class TestV1SearchSpaceBounds:
 # 13. SYSTEM A 3-TICK CONFIRM GATE — single-tick VWAP cross at lower bound does not trigger
 # ---------------------------------------------------------------------------
 
+
 class TestSystemAThreeTickGate:
     def test_single_vwap_cross_tick_at_lower_bound_does_not_fire_system_a(self):
         """
@@ -1444,14 +1468,14 @@ class TestSystemAThreeTickGate:
         new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = (
             _me.compute_vwap_breakdown_update(
                 is_triggered=False,
-                valid_vwap_weight=0.9,       # > VWAP_WEIGHT_THRESHOLD (0.5): gate passes
-                weighted_vwap_diff=-0.1,     # < 0: gate passes
+                valid_vwap_weight=0.9,  # > VWAP_WEIGHT_THRESHOLD (0.5): gate passes
+                weighted_vwap_diff=-0.1,  # < 0: gate passes
                 safe_hwm=safe_hwm,
                 current_return=current_return,
                 vwap_cross_hwm_pct=vwap_cross_hwm_pct,
-                vwap_bleed_arm_pct=-1.0,     # bleed arm well below current_return: System B does not fire
+                vwap_bleed_arm_pct=-1.0,  # bleed arm well below current_return: System B does not fire
                 vwap_bleed_ticks_threshold=3,
-                current_vwap_ticks=0,        # fresh start: tick count = 0 before this call
+                current_vwap_ticks=0,  # fresh start: tick count = 0 before this call
                 current_vwap_bleed_ticks=0,
             )
         )

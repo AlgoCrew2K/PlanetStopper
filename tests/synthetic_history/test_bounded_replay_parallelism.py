@@ -23,6 +23,7 @@ environment runs the replay single-process while production stays all-core.
 These guards pin the fix so a future edit can't silently re-introduce the bare
 ``Parallel(n_jobs=-1)`` or drop the env throttle.
 """
+
 from __future__ import annotations
 
 import ast

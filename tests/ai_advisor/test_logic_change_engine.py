@@ -86,11 +86,14 @@ import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FIXTURE_PATH = (
-    _REPO_ROOT / "tests" / "fixtures" / "ai_advisor" / "m4"
-    / "logic_change_proposals_basic.json"
+    _REPO_ROOT / "tests" / "fixtures" / "ai_advisor" / "m4" / "logic_change_proposals_basic.json"
 )
 _OBJ_DIRECTED_FIXTURE_PATH = (
-    _REPO_ROOT / "tests" / "fixtures" / "ai_advisor" / "m4"
+    _REPO_ROOT
+    / "tests"
+    / "fixtures"
+    / "ai_advisor"
+    / "m4"
     / "logic_change_objective_directed_basic.json"
 )
 
@@ -123,9 +126,7 @@ def _parse_source(relpath: str) -> ast.Module:
 # ---------------------------------------------------------------------------
 
 
-def _make_synthetic_returns_pct(
-    n: int = 500, seed: int = 42, mean_pct: float = 0.05
-) -> list:
+def _make_synthetic_returns_pct(n: int = 500, seed: int = 42, mean_pct: float = 0.05) -> list:
     """Deterministic pseudo-random daily returns in percent.
 
     Values roughly in [-2%, +2%] — realistic for a diversified ETF portfolio.
@@ -198,9 +199,7 @@ def _make_mock_backtest_result(
     if status_code == 200:
         mock.error = None
         # The client stores daily_returns as log-returns (divide by 100 to convert from pct).
-        mock.daily_returns = {
-            str(19000 + i): r / 100.0 for i, r in enumerate(returns_pct)
-        }
+        mock.daily_returns = {str(19000 + i): r / 100.0 for i, r in enumerate(returns_pct)}
         mock.stats = {
             "sharpe_ratio": None,
             "sortino_ratio": None,
@@ -267,9 +266,7 @@ def m4_fixture() -> dict:
 @pytest.fixture(scope="module")
 def obj_directed_fixture() -> dict:
     """Load the objective-directed logic-change fixture."""
-    assert _OBJ_DIRECTED_FIXTURE_PATH.exists(), (
-        f"Fixture not found: {_OBJ_DIRECTED_FIXTURE_PATH}."
-    )
+    assert _OBJ_DIRECTED_FIXTURE_PATH.exists(), f"Fixture not found: {_OBJ_DIRECTED_FIXTURE_PATH}."
     with _OBJ_DIRECTED_FIXTURE_PATH.open(encoding="utf-8") as f:
         return json.load(f)
 
@@ -381,8 +378,7 @@ class TestModuleContract:
             "advisors.logic_change_engine must expose NO_SURVIVORS_MESSAGE constant."
         )
         assert "no logic change cleared the gate" in msg.lower(), (
-            f"NO_SURVIVORS_MESSAGE must contain 'no logic change cleared the gate'. "
-            f"Got: {msg!r}."
+            f"NO_SURVIVORS_MESSAGE must contain 'no logic change cleared the gate'. Got: {msg!r}."
         )
 
     def test_module_exposes_advise_only_apply_template_constant(self):
@@ -455,8 +451,7 @@ class TestTreeManipulation:
         assert result is not None, "apply_logic_tweak must not return None for a valid tweak."
         target = result["children"][0]
         assert target["window"] == 16, (
-            f"apply_logic_tweak must change window from 20 to 16. "
-            f"Got {target['window']!r}."
+            f"apply_logic_tweak must change window from 20 to 16. Got {target['window']!r}."
         )
 
     def test_apply_logic_tweak_returns_none_when_old_value_mismatch(self, score_tree):
@@ -575,9 +570,7 @@ class TestFDRMonotonicity:
             for i in range(19)
         ]
         batch_n20 = gate.evaluate_candidate_batch([cand_strong] + weak_cands)
-        result_n20 = next(
-            r for r in batch_n20.results if r.candidate_id == "strong-cand"
-        )
+        result_n20 = next(r for r in batch_n20.results if r.candidate_id == "strong-cand")
         p_adj_n20 = result_n20.winner_p_adj
 
         assert batch_n20.n_candidates == 20, (
@@ -606,10 +599,7 @@ class TestFDRMonotonicity:
         """
         gate = _import_gate_engine()
 
-        returns_list = [
-            _make_synthetic_returns_pct(500, seed=i, mean_pct=0.10)
-            for i in range(5)
-        ]
+        returns_list = [_make_synthetic_returns_pct(500, seed=i, mean_pct=0.10) for i in range(5)]
         candidates = [
             gate.BacktestCandidate(
                 candidate_id=f"c{i}",
@@ -633,10 +623,7 @@ class TestFDRMonotonicity:
 
         joint_p_adjs = [r.winner_p_adj for r in batch_joint.results]
 
-        all_equal = all(
-            abs(joint - solo) < 1e-12
-            for joint, solo in zip(joint_p_adjs, solo_p_adjs)
-        )
+        all_equal = all(abs(joint - solo) < 1e-12 for joint, solo in zip(joint_p_adjs, solo_p_adjs))
         assert not all_equal, (
             "Joint-batch FDR correction must produce different p_adj values than "
             "N individual single-candidate calls (Yekutieli c(N) differs for N=5 vs N=1). "
@@ -658,9 +645,7 @@ class TestBatchDispatchContract:
     the FDR correction mandated by AC-3.2.
     """
 
-    def test_operator_mode_submits_single_batch_to_gate(
-        self, score_tree, logic_objective
-    ):
+    def test_operator_mode_submits_single_batch_to_gate(self, score_tree, logic_objective):
         """propose_operator_logic_change must call evaluate_candidate_batch exactly once.
 
         For a single operator-initiated tweak, the batch has at most N=1 candidate.
@@ -705,9 +690,7 @@ class TestBatchDispatchContract:
             "defeating the FDR correction (AC-3.2)."
         )
 
-    def test_advisor_suggested_mode_submits_all_candidates_in_one_batch(
-        self, score_tree
-    ):
+    def test_advisor_suggested_mode_submits_all_candidates_in_one_batch(self, score_tree):
         """suggest_logic_changes must submit ALL backtested candidates as ONE batch.
 
         When N > 1 candidates are generated, they must be submitted in a SINGLE
@@ -780,15 +763,11 @@ class TestBatchDispatchContract:
         engine = _import_engine()
 
         # generate_objective_directed_logic_candidates takes score_tree directly.
-        drawdown_obj = _make_logic_objective(
-            objective_type="reduce_drawdown", measured_value=-0.25
-        )
+        drawdown_obj = _make_logic_objective(objective_type="reduce_drawdown", measured_value=-0.25)
         risk_adj_obj = _make_logic_objective(
             objective_type="lift_risk_adjusted", measured_value=0.72
         )
-        turnover_obj = _make_logic_objective(
-            objective_type="reduce_turnover", measured_value=5.0
-        )
+        turnover_obj = _make_logic_objective(objective_type="reduce_turnover", measured_value=5.0)
 
         cands_drawdown = engine.generate_objective_directed_logic_candidates(
             symphony_id="sym-gen-test",
@@ -920,10 +899,7 @@ class TestPreCorrectionPassersNotSurfaced:
         gate = _import_gate_engine()
 
         marginal_returns = _make_synthetic_returns_pct(500, seed=77, mean_pct=0.04)
-        weak_returns_list = [
-            _make_noisy_returns_pct(500, seed=200 + i)
-            for i in range(50)
-        ]
+        weak_returns_list = [_make_noisy_returns_pct(500, seed=200 + i) for i in range(50)]
 
         marginal_cand = gate.BacktestCandidate(
             candidate_id="marginal",
@@ -951,9 +927,7 @@ class TestPreCorrectionPassersNotSurfaced:
 
         # Large batch run — same marginal candidate + 50 weak ones.
         large_batch = gate.evaluate_candidate_batch([marginal_cand] + weak_cands)
-        marginal_in_large = next(
-            r for r in large_batch.results if r.candidate_id == "marginal"
-        )
+        marginal_in_large = next(r for r in large_batch.results if r.candidate_id == "marginal")
         large_p_adj = marginal_in_large.winner_p_adj
 
         # Precondition: FDR tightened (large batch is strictly harder).
@@ -1005,9 +979,7 @@ class TestSurvivorCaveatsPresent:
             )
             caveat_text = " ".join(result.caveats).lower()
             assert (
-                "overfit" in caveat_text
-                or "gate" in caveat_text
-                or "selection" in caveat_text
+                "overfit" in caveat_text or "gate" in caveat_text or "selection" in caveat_text
             ), (
                 f"ADOPT_CANDIDATE caveats must mention overfitting / gate risk. "
                 f"Got: {result.caveats}."
@@ -1050,14 +1022,9 @@ class TestSurvivorCaveatsPresent:
                 or "gate" in caveat_text
                 or "selection" in caveat_text
                 or "backtest" in caveat_text
-            ), (
-                f"Survivor caveats must reference overfitting / gate risk. "
-                f"Got: {proposal.caveats}."
-            )
+            ), f"Survivor caveats must reference overfitting / gate risk. Got: {proposal.caveats}."
 
-    def test_logic_change_survivor_winner_p_adj_is_finite_float(
-        self, score_tree, logic_objective
-    ):
+    def test_logic_change_survivor_winner_p_adj_is_finite_float(self, score_tree, logic_objective):
         """Survivors must expose winner_p_adj as a finite float for operator audit (AC-3.3)."""
         engine = _import_engine()
         strong_returns = _make_synthetic_returns_pct(600, seed=11, mean_pct=0.20)
@@ -1098,9 +1065,7 @@ class TestSurvivorCaveatsPresent:
 class TestAdvisoryOnlyContract:
     """The engine never auto-applies; survivors write an advisory_observation only (AC-3.4)."""
 
-    def test_persisted_observations_are_advisory_only_1(
-        self, score_tree, logic_objective
-    ):
+    def test_persisted_observations_are_advisory_only_1(self, score_tree, logic_objective):
         """Every persisted observation must carry is_advisory_only=1 (AC-X3 / AC-3.4).
 
         is_advisory_only=1 is structural, not optional — the advisor never moves money.
@@ -1154,9 +1119,7 @@ class TestAdvisoryOnlyContract:
                 f"observation_type must contain 'logic_change'. Got: {obs_type!r}."
             )
 
-    def test_apply_guidance_is_plain_text_not_a_write_call(
-        self, score_tree, logic_objective
-    ):
+    def test_apply_guidance_is_plain_text_not_a_write_call(self, score_tree, logic_objective):
         """apply_guidance must be a plain-text string — never a write endpoint call (AC-3.4)."""
         engine = _import_engine()
         returns = _make_synthetic_returns_pct(500, seed=8, mean_pct=0.10)
@@ -1260,9 +1223,7 @@ class TestAdvisoryOnlyContract:
 class TestArchitectureConstraints:
     """AC-X1/X2/X4 — advise-only, off-live-path, no write endpoints."""
 
-    def test_alpha_bot_execution_does_not_import_logic_change_engine(
-        self, m4_fixture
-    ):
+    def test_alpha_bot_execution_does_not_import_logic_change_engine(self, m4_fixture):
         """AC-X2: alpha_bot_execution.py must not import from advisors.logic_change_engine."""
         guard = m4_fixture["live_path_guard"]
         assert guard["alpha_bot_execution_imports_logic_change"] is False, (
@@ -1303,9 +1264,7 @@ class TestArchitectureConstraints:
                         "Local imports inside functions are permitted."
                     )
 
-    def test_no_api_key_operator_mode_returns_no_api_key_true(
-        self, score_tree, logic_objective
-    ):
+    def test_no_api_key_operator_mode_returns_no_api_key_true(self, score_tree, logic_objective):
         """AC-X4: absent Composer API key → no_api_key=True + 'advisor unavailable' message."""
         engine = _import_engine()
 
@@ -1333,9 +1292,7 @@ class TestArchitectureConstraints:
             f"Got: {result.message!r}."
         )
         assert len(result.survivors) == 0
-        assert len(insert_calls) == 0, (
-            "No-API-key run must write nothing (AC-X4)."
-        )
+        assert len(insert_calls) == 0, "No-API-key run must write nothing (AC-X4)."
 
     def test_no_api_key_suggest_mode_returns_no_api_key_true(self, score_tree):
         """AC-X4: suggest_logic_changes with absent key → no_api_key=True + no persistence."""
@@ -1385,9 +1342,7 @@ class TestArchitectureConstraints:
 class TestBacktestFailureIsolation:
     """One candidate's backtest failure must not abort the batch (AC-X5)."""
 
-    def test_backtest_error_on_variant_does_not_raise(
-        self, score_tree, logic_objective
-    ):
+    def test_backtest_error_on_variant_does_not_raise(self, score_tree, logic_objective):
         """A backtest error must set backtest_error on the proposal, never raise.
 
         AC-X5: backtest failure → failure marker on the proposal; result is returned.
@@ -1421,9 +1376,9 @@ class TestBacktestFailureIsolation:
         # Any failed candidates must have backtest_error set (not None).
         for proposal in result.proposals:
             if proposal.backtest_error is not None:
-                assert isinstance(proposal.backtest_error, str) and len(proposal.backtest_error) > 0, (
-                    "backtest_error must be a non-empty string describing the failure."
-                )
+                assert (
+                    isinstance(proposal.backtest_error, str) and len(proposal.backtest_error) > 0
+                ), "backtest_error must be a non-empty string describing the failure."
 
     def test_unparseable_change_description_yields_backtest_error_not_raise(
         self, score_tree, logic_objective
@@ -1471,13 +1426,11 @@ class TestBacktestFailureIsolation:
         # Any failed proposals must have backtest_error set (not None).
         for proposal in result.proposals:
             if proposal.backtest_error is not None:
-                assert isinstance(proposal.backtest_error, str) and len(proposal.backtest_error) > 0, (
-                    "backtest_error must be a non-empty string describing the failure."
-                )
+                assert (
+                    isinstance(proposal.backtest_error, str) and len(proposal.backtest_error) > 0
+                ), "backtest_error must be a non-empty string describing the failure."
 
-    def test_one_failure_in_suggest_mode_does_not_abort_other_candidates(
-        self, score_tree
-    ):
+    def test_one_failure_in_suggest_mode_does_not_abort_other_candidates(self, score_tree):
         """In suggest mode, one structurally-invalid tweak does not abort other candidates (AC-X5).
 
         We use apply_logic_tweak returning None (invalid tree) for the FIRST generated
@@ -1559,9 +1512,7 @@ class TestBacktestFailureIsolation:
 class TestZeroSurvivorsIsValid:
     """Zero survivors is a valid, non-error outcome."""
 
-    def test_zero_survivors_returns_no_survivors_message(
-        self, score_tree, logic_objective
-    ):
+    def test_zero_survivors_returns_no_survivors_message(self, score_tree, logic_objective):
         """When no candidate survives, the result message must contain NO_SURVIVORS_MESSAGE."""
         engine = _import_engine()
         bad_returns = _make_noisy_returns_pct(80, seed=1)
@@ -1586,13 +1537,10 @@ class TestZeroSurvivorsIsValid:
         if not result.survivors:
             no_survivors_msg = engine.NO_SURVIVORS_MESSAGE
             assert no_survivors_msg.lower() in result.message.lower(), (
-                f"Zero-survivors result must contain NO_SURVIVORS_MESSAGE. "
-                f"Got: {result.message!r}."
+                f"Zero-survivors result must contain NO_SURVIVORS_MESSAGE. Got: {result.message!r}."
             )
 
-    def test_gate_batch_is_non_none_even_with_zero_survivors(
-        self, score_tree, logic_objective
-    ):
+    def test_gate_batch_is_non_none_even_with_zero_survivors(self, score_tree, logic_objective):
         """gate_batch must be present even when no survivors (for audit trail)."""
         engine = _import_engine()
         bad_returns = _make_noisy_returns_pct(80, seed=2)
@@ -1616,12 +1564,8 @@ class TestZeroSurvivorsIsValid:
         assert result.gate_batch is not None, (
             "LogicChangeRunResult.gate_batch must be non-None even with zero survivors."
         )
-        assert isinstance(result.gate_batch.fdr_q, float), (
-            "gate_batch.fdr_q must be a float."
-        )
-        assert math.isfinite(result.gate_batch.fdr_q), (
-            "gate_batch.fdr_q must be a finite float."
-        )
+        assert isinstance(result.gate_batch.fdr_q, float), "gate_batch.fdr_q must be a float."
+        assert math.isfinite(result.gate_batch.fdr_q), "gate_batch.fdr_q must be a finite float."
 
 
 # ===========================================================================
@@ -1655,19 +1599,22 @@ class TestOperatorInitiatedMode:
                 objective=logic_objective,
             )
 
-        for field in ("gate_batch", "proposals", "survivors", "rejected_candidates",
-                      "message", "objective", "no_api_key"):
-            assert hasattr(result, field), (
-                f"LogicChangeRunResult must have '{field}' field."
-            )
+        for field in (
+            "gate_batch",
+            "proposals",
+            "survivors",
+            "rejected_candidates",
+            "message",
+            "objective",
+            "no_api_key",
+        ):
+            assert hasattr(result, field), f"LogicChangeRunResult must have '{field}' field."
         assert isinstance(result.proposals, list)
         assert isinstance(result.survivors, list)
         assert isinstance(result.rejected_candidates, list)
         assert result.no_api_key is False
 
-    def test_proposal_carries_tweak_and_objective(
-        self, score_tree, logic_objective
-    ):
+    def test_proposal_carries_tweak_and_objective(self, score_tree, logic_objective):
         """Each LogicChangeProposalResult must carry the tweak and objective (AC-3.3)."""
         engine = _import_engine()
         returns = _make_synthetic_returns_pct(500, seed=10, mean_pct=0.10)
@@ -1692,9 +1639,7 @@ class TestOperatorInitiatedMode:
             "propose_operator_logic_change must produce at least one proposal."
         )
         for proposal in result.proposals:
-            assert hasattr(proposal, "tweak"), (
-                "LogicChangeProposalResult must have 'tweak' field."
-            )
+            assert hasattr(proposal, "tweak"), "LogicChangeProposalResult must have 'tweak' field."
             assert hasattr(proposal, "objective"), (
                 "LogicChangeProposalResult must have 'objective' field."
             )
@@ -1732,17 +1677,13 @@ class TestOperatorInitiatedMode:
             if proposal.backtest_error:
                 continue
             assert isinstance(proposal.baseline_stats, dict), (
-                f"baseline_stats must be a dict. "
-                f"Got {type(proposal.baseline_stats).__name__!r}."
+                f"baseline_stats must be a dict. Got {type(proposal.baseline_stats).__name__!r}."
             )
             assert isinstance(proposal.variant_stats, dict), (
-                f"variant_stats must be a dict. "
-                f"Got {type(proposal.variant_stats).__name__!r}."
+                f"variant_stats must be a dict. Got {type(proposal.variant_stats).__name__!r}."
             )
 
-    def test_n_candidates_equals_1_for_single_operator_tweak(
-        self, score_tree, logic_objective
-    ):
+    def test_n_candidates_equals_1_for_single_operator_tweak(self, score_tree, logic_objective):
         """For a single operator tweak, gate_batch.n_candidates must equal 1 (or 0 if failed).
 
         The FDR denominator must equal the actual candidate count submitted.
@@ -1801,8 +1742,15 @@ class TestAdvisorSuggestedMode:
                 objective=objective,
             )
 
-        for field in ("gate_batch", "proposals", "survivors", "rejected_candidates",
-                      "message", "objective", "no_api_key"):
+        for field in (
+            "gate_batch",
+            "proposals",
+            "survivors",
+            "rejected_candidates",
+            "message",
+            "objective",
+            "no_api_key",
+        ):
             assert hasattr(result, field), (
                 f"LogicChangeRunResult from suggest_logic_changes must have '{field}'."
             )
@@ -1897,9 +1845,7 @@ class TestFixtureContract:
         assert "batch_dispatch_contract" in fdr
         assert "n_raises_bar_contract" in fdr
 
-    def test_proposals_fixture_encodes_persistence_with_is_advisory_only_1(
-        self, m4_fixture
-    ):
+    def test_proposals_fixture_encodes_persistence_with_is_advisory_only_1(self, m4_fixture):
         """Fixture must encode is_advisory_only=1 in the persistence contract (AC-X3)."""
         persist = m4_fixture.get("persistence_contract")
         assert persist is not None, "Fixture must have persistence_contract section."
@@ -1937,9 +1883,7 @@ class TestFixtureContract:
             f"apply_logic_tweak returned None for tweak {tweak!r}."
         )
 
-    def test_objective_directed_fixture_invalid_tweak_cannot_be_applied(
-        self, obj_directed_fixture
-    ):
+    def test_objective_directed_fixture_invalid_tweak_cannot_be_applied(self, obj_directed_fixture):
         """The sample_tweak_invalid must return None from apply_logic_tweak (structural guard)."""
         engine = _import_engine()
         tree = obj_directed_fixture["sample_score_tree_for_tests"]

@@ -41,12 +41,8 @@ import database
 # Constants
 # ---------------------------------------------------------------------------
 
-_TEMPLATES_DIR = (
-    __import__("pathlib").Path(__file__).parent.parent.parent / "templates"
-)
-_STATIC_DIR = (
-    __import__("pathlib").Path(__file__).parent.parent.parent / "static"
-)
+_TEMPLATES_DIR = __import__("pathlib").Path(__file__).parent.parent.parent / "templates"
+_STATIC_DIR = __import__("pathlib").Path(__file__).parent.parent.parent / "static"
 
 # The 6 autotuner-owned tuning parameters shown read-only in the modal.
 _TUNING_PARAMS = [
@@ -84,8 +80,8 @@ def mock_db_one_symphony(monkeypatch):
                 "mc_prob": 0.65,
             }
         }
-        db_mock.normalize_name.side_effect = (
-            lambda n: (n or "").lower().replace(" ", "_").replace("-", "_")
+        db_mock.normalize_name.side_effect = lambda n: (
+            (n or "").lower().replace(" ", "_").replace("-", "_")
         )
         db_mock.get_symphony_strategy.return_value = {
             "params": {k: 1.0 for k in database.DEFAULT_STRATEGY},
@@ -109,8 +105,8 @@ def mock_db_live_symphony(monkeypatch):
                 "mc_prob": 0.65,
             }
         }
-        db_mock.normalize_name.side_effect = (
-            lambda n: (n or "").lower().replace(" ", "_").replace("-", "_")
+        db_mock.normalize_name.side_effect = lambda n: (
+            (n or "").lower().replace(" ", "_").replace("-", "_")
         )
         db_mock.get_symphony_strategy.return_value = {
             "params": {k: 1.0 for k in database.DEFAULT_STRATEGY},
@@ -151,9 +147,7 @@ def _disable_csrf(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_dashboard_renders_gear_icon_on_symphony_card(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_dashboard_renders_gear_icon_on_symphony_card(client, mock_db_one_symphony, monkeypatch):
     """AC-1: index.html must include a gear icon/button that opens the per-symphony modal.
 
     The gear icon must be present on the symphony card (or table row) so the
@@ -183,9 +177,7 @@ def test_dashboard_renders_gear_icon_on_symphony_card(
     )
 
 
-def test_dashboard_gear_icon_carries_symphony_id(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_dashboard_gear_icon_carries_symphony_id(client, mock_db_one_symphony, monkeypatch):
     """AC-1: Each gear button must carry a data attribute referencing the symphony id.
 
     Without this the JS cannot tell which symphony was opened — a modal that
@@ -216,9 +208,7 @@ def test_dashboard_gear_icon_carries_symphony_id(
 # ---------------------------------------------------------------------------
 
 
-def test_get_symphony_settings_returns_live_mode_key(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_get_symphony_settings_returns_live_mode_key(client, mock_db_one_symphony, monkeypatch):
     """AC-2: GET /api/symphony-settings/<sym> must return a `live_mode` key.
 
     The effective-mode badge computation in the JS modal depends on both
@@ -240,9 +230,7 @@ def test_get_symphony_settings_returns_live_mode_key(
     )
 
 
-def test_get_symphony_settings_live_mode_is_bool(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_get_symphony_settings_live_mode_is_bool(client, mock_db_one_symphony, monkeypatch):
     """AC-2: `live_mode` in symphony-settings response must be a boolean (or 0/1 int).
 
     The JS modal evaluates `live_mode` as a truthy flag; a string "False" would
@@ -261,9 +249,7 @@ def test_get_symphony_settings_live_mode_is_bool(
     )
 
 
-def test_get_symphony_settings_returns_global_live_key(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_get_symphony_settings_returns_global_live_key(client, mock_db_one_symphony, monkeypatch):
     """AC-2: GET /api/symphony-settings/<sym> must return `global_live` (LIVE_EXECUTION env).
 
     The 3-way effective-mode computation requires both the per-symphony flag
@@ -282,9 +268,7 @@ def test_get_symphony_settings_returns_global_live_key(
     )
 
 
-def test_effective_mode_live_when_both_on(
-    client, mock_db_live_symphony, monkeypatch
-):
+def test_effective_mode_live_when_both_on(client, mock_db_live_symphony, monkeypatch):
     """AC-2: Effective mode = Live when global_live=True AND live_mode=True."""
     _mock_env(monkeypatch, live_execution="True")
     resp = client.get("/api/symphony-settings/alpha_momentum")
@@ -298,9 +282,7 @@ def test_effective_mode_live_when_both_on(
     )
 
 
-def test_effective_mode_dry_run_when_global_off(
-    client, mock_db_live_symphony, monkeypatch
-):
+def test_effective_mode_dry_run_when_global_off(client, mock_db_live_symphony, monkeypatch):
     """AC-2: Effective mode = Dry-run (global off) when LIVE_EXECUTION=False even if live_mode=True."""
     _mock_env(monkeypatch, live_execution="False")
     resp = client.get("/api/symphony-settings/alpha_momentum")
@@ -392,9 +374,7 @@ def test_post_live_mode_true_with_confirm_flag_calls_set_live(
     )
 
 
-def test_post_live_mode_false_does_not_require_confirm(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_post_live_mode_false_does_not_require_confirm(client, mock_db_one_symphony, monkeypatch):
     """AC-3: Toggling OFF (live_mode=False) is immediate — no confirm dialog required.
 
     ON→OFF is safe (disables real orders) so it must never require confirmation.
@@ -429,9 +409,7 @@ def test_post_live_mode_false_does_not_require_confirm(
 # ---------------------------------------------------------------------------
 
 
-def test_live_mode_change_writes_audit_log_row(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_live_mode_change_writes_audit_log_row(client, mock_db_one_symphony, monkeypatch):
     """AC-9: POST live_mode change must produce a config_audit_log row via set_symphony_live_mode.
 
     set_symphony_live_mode already encapsulates the audit write — this test
@@ -466,9 +444,7 @@ def test_live_mode_change_writes_audit_log_row(
     )
 
 
-def test_audit_log_operator_field_populated(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_audit_log_operator_field_populated(client, mock_db_one_symphony, monkeypatch):
     """AC-9: set_symphony_live_mode must be called with a non-empty operator string.
 
     The audit log is useless if every row has operator=''.  The route must pass
@@ -546,9 +522,7 @@ def test_post_settings_accepts_live_mode_in_symphony_payload(
     )
 
 
-def test_post_settings_rejects_live_execution_in_globals(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_post_settings_rejects_live_execution_in_globals(client, mock_db_one_symphony, monkeypatch):
     """AC-10: POST /api/settings MUST reject LIVE_EXECUTION in the globals payload.
 
     LIVE_EXECUTION is explicitly excluded from _SETTINGS_WRITE_ALLOWLIST.
@@ -593,9 +567,7 @@ def test_post_settings_rejects_arbitrary_non_allowlisted_global_key(
     )
 
 
-def test_post_settings_csrf_enforced_without_token(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_post_settings_csrf_enforced_without_token(client, mock_db_one_symphony, monkeypatch):
     """AC-10: POST /api/settings without a valid X-CSRF-Token must return 403.
 
     CSRF is enforced by @before_request on all POST routes.  A symphonies modal
@@ -617,9 +589,7 @@ def test_post_settings_csrf_enforced_without_token(
     )
 
 
-def test_post_symphony_settings_csrf_enforced(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_post_symphony_settings_csrf_enforced(client, mock_db_one_symphony, monkeypatch):
     """AC-10: POST /api/symphony-settings without CSRF token must return 403.
 
     The per-symphony settings route (new route) must also be covered by the
@@ -645,9 +615,7 @@ def test_post_symphony_settings_csrf_enforced(
 # ---------------------------------------------------------------------------
 
 
-def test_new_symphony_defaults_to_dry_run(
-    client, monkeypatch
-):
+def test_new_symphony_defaults_to_dry_run(client, monkeypatch):
     """AC-11: A symphony with no row in symphony_strategies must default to live_mode=False.
 
     Arch rule 4: is_live=True is explicit, never by omission.  get_symphony_strategy
@@ -656,8 +624,8 @@ def test_new_symphony_defaults_to_dry_run(
     """
     _mock_env(monkeypatch)
     with patch.object(app_module, "database") as db_mock:
-        db_mock.normalize_name.side_effect = (
-            lambda n: (n or "").lower().replace(" ", "_").replace("-", "_")
+        db_mock.normalize_name.side_effect = lambda n: (
+            (n or "").lower().replace(" ", "_").replace("-", "_")
         )
         # Simulate no existing row — function returns the default dict with live_mode=False
         db_mock.get_symphony_strategy.return_value = {
@@ -698,9 +666,7 @@ def test_settings_write_allowlist_excludes_live_execution():
 # ---------------------------------------------------------------------------
 
 
-def test_post_symphony_settings_persists_locked_vars(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_post_symphony_settings_persists_locked_vars(client, mock_db_one_symphony, monkeypatch):
     """AC-6: POST /api/symphony-settings must persist locked_vars via save_symphony_strategy.
 
     The locked-vars checklist changes (not live_mode) go through save_symphony_strategy.
@@ -804,8 +770,16 @@ def test_modal_js_no_edit_input_for_autotuner_params():
             ctx = source[ctx_start:ctx_end].lower()
             is_near_params = any(
                 label in ctx
-                for label in ["trail_pct", "tp_target", "vwap_bleed", "vol_scale",
-                               "mc_prob", "para_ratchet", "tuning", "parameter"]
+                for label in [
+                    "trail_pct",
+                    "tp_target",
+                    "vwap_bleed",
+                    "vol_scale",
+                    "mc_prob",
+                    "para_ratchet",
+                    "tuning",
+                    "parameter",
+                ]
             )
             assert not is_near_params, (
                 "AC-7: settings-modal.js must NOT render an editable <input> near the "
@@ -819,16 +793,14 @@ def test_modal_js_no_edit_input_for_autotuner_params():
 # ---------------------------------------------------------------------------
 
 
-def test_symphony_settings_response_includes_advisor_observations(
-    client, monkeypatch
-):
+def test_symphony_settings_response_includes_advisor_observations(client, monkeypatch):
     """AC-8: GET /api/symphony-settings must return 'advisor_observations' for the modal's
     AI-advisor section.
     """
     _mock_env(monkeypatch)
     with patch.object(app_module, "database") as db_mock:
-        db_mock.normalize_name.side_effect = (
-            lambda n: (n or "").lower().replace(" ", "_").replace("-", "_")
+        db_mock.normalize_name.side_effect = lambda n: (
+            (n or "").lower().replace(" ", "_").replace("-", "_")
         )
         db_mock.get_symphony_strategy.return_value = {
             "params": database.DEFAULT_STRATEGY.copy(),
@@ -897,7 +869,7 @@ def test_modal_js_advisor_section_has_no_apply_button():
     # Strategy: look for 'apply' within 200 chars of 'advisor' card rendering.
     advisor_idx = lower.find("advisor")
     while advisor_idx != -1:
-        ctx = lower[advisor_idx: advisor_idx + 600]
+        ctx = lower[advisor_idx : advisor_idx + 600]
         assert "apply" not in ctx, (
             "AC-8: The advisor section in settings-modal.js must not contain an 'apply' "
             "button or 'apply' action.  Advisor cards are display-only — AC spec says "
@@ -906,9 +878,7 @@ def test_modal_js_advisor_section_has_no_apply_button():
         advisor_idx = lower.find("advisor", advisor_idx + 1)
 
 
-def test_modal_html_advisor_section_has_no_apply_button(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_modal_html_advisor_section_has_no_apply_button(client, mock_db_one_symphony, monkeypatch):
     """AC-8: The rendered modal HTML (via /api/symphony-settings) must not contain an 'apply'
     action in the advisor section.
 
@@ -926,7 +896,7 @@ def test_modal_html_advisor_section_has_no_apply_button(
         # Find the advisor section and verify no apply button
         advisor_idx = html.lower().find("advisor")
         if advisor_idx != -1:
-            ctx = html[advisor_idx: advisor_idx + 800].lower()
+            ctx = html[advisor_idx : advisor_idx + 800].lower()
             assert "apply" not in ctx, (
                 "AC-8: The advisor section must not have an 'apply' button. "
                 "Display-only means no actionable controls."
@@ -1012,9 +982,7 @@ def test_both_live_flags_true_in_symphony_settings_response(
     if resp.status_code != 200:
         pytest.skip("Route not yet implemented")
     body = resp.get_json()
-    assert body.get("global_live"), (
-        "AC-5: global_live must be True when LIVE_EXECUTION=True"
-    )
+    assert body.get("global_live"), "AC-5: global_live must be True when LIVE_EXECUTION=True"
     assert body.get("live_mode"), (
         "AC-5: live_mode must be True for the mock_db_live_symphony fixture"
     )
@@ -1025,9 +993,7 @@ def test_both_live_flags_true_in_symphony_settings_response(
 # ---------------------------------------------------------------------------
 
 
-def test_get_symphony_settings_route_exists(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_get_symphony_settings_route_exists(client, mock_db_one_symphony, monkeypatch):
     """GET /api/symphony-settings/<sym> route must be registered (404 means missing route)."""
     _mock_env(monkeypatch)
     resp = client.get("/api/symphony-settings/alpha_momentum")
@@ -1037,9 +1003,7 @@ def test_get_symphony_settings_route_exists(
     )
 
 
-def test_post_symphony_settings_route_exists(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_post_symphony_settings_route_exists(client, mock_db_one_symphony, monkeypatch):
     """POST /api/symphony-settings/<sym> route must be registered."""
     _disable_csrf(monkeypatch)
     _mock_env(monkeypatch)
@@ -1154,6 +1118,7 @@ def test_settings_modal_js_has_no_syntax_errors():
     Any exit code other than 0 means the file will not load in the browser.
     """
     import subprocess
+
     js_path = _STATIC_DIR / "settings-modal.js"
     assert js_path.exists(), "static/settings-modal.js must exist"
 
@@ -1235,18 +1200,15 @@ def test_modal_js_badge_container_receives_dom_write():
     )
 
     # Check 200 chars around the badge div for modeBadge reference
-    badge_ctx = source[max(0, badge_div_idx - 50): badge_div_idx + 200]
+    badge_ctx = source[max(0, badge_div_idx - 50) : badge_div_idx + 200]
     badge_in_template = "modeBadge" in badge_ctx
 
     # Pattern B: post-render DOM write to the badge container
     # querySelector('sym-settings-mode-badge') or getElementById then .innerHTML = modeBadge
-    post_render_write = (
-        ("sym-settings-mode-badge" in source and ".innerHTML" in source)
-        and any(
-            # Find a .innerHTML assignment that is within 200 chars of "modeBadge"
-            abs(m.start() - source.find("modeBadge", m.start() - 300))  < 300
-            for m in [type('M', (), {'start': lambda self: source.find("sym-settings-mode-badge")})()]
-        )
+    post_render_write = ("sym-settings-mode-badge" in source and ".innerHTML" in source) and any(
+        # Find a .innerHTML assignment that is within 200 chars of "modeBadge"
+        abs(m.start() - source.find("modeBadge", m.start() - 300)) < 300
+        for m in [type("M", (), {"start": lambda self: source.find("sym-settings-mode-badge")})()]
     )
 
     # Actually just check: is there any code that writes modeBadge into the badge container?
@@ -1254,16 +1216,15 @@ def test_modal_js_badge_container_receives_dom_write():
     # contains the badge div id, OR there must be a querySelector/getElementById for
     # the badge id followed by a property assignment that references modeBadge.
     import re as _re
+
     # Check for querySelector/getElementById for badge id, followed by modeBadge within 200 chars
     badge_id_selector = _re.search(
-        r'(querySelector|getElementById|sym-settings-mode-badge)[^\n]{0,200}modeBadge',
+        r"(querySelector|getElementById|sym-settings-mode-badge)[^\n]{0,200}modeBadge",
         source,
-        _re.DOTALL
+        _re.DOTALL,
     )
     or_badge_in_string = _re.search(
-        r'modeBadge[^\n]{0,200}sym-settings-mode-badge',
-        source,
-        _re.DOTALL
+        r"modeBadge[^\n]{0,200}sym-settings-mode-badge", source, _re.DOTALL
     )
 
     assert badge_in_template or badge_id_selector or or_badge_in_string, (
@@ -1337,7 +1298,7 @@ def test_modal_js_toggle_click_handler_updates_render():
         pytest.skip("Could not locate toggle handler — syntax error may prevent parsing")
 
     # Within 600 chars of the toggle handler, a render call must appear
-    ctx = source[toggle_handler_idx: toggle_handler_idx + 600]
+    ctx = source[toggle_handler_idx : toggle_handler_idx + 600]
     has_render_call = (
         "_renderModal" in ctx
         or "renderModal" in ctx
@@ -1373,9 +1334,7 @@ def test_modal_js_esc_handler_checks_confirm_dialog_visibility():
 
     # Find the _onKeyDown function body
     onkeydown_idx = source.find("_onKeyDown")
-    assert onkeydown_idx != -1, (
-        "Finding 4: _onKeyDown not found in settings-modal.js"
-    )
+    assert onkeydown_idx != -1, "Finding 4: _onKeyDown not found in settings-modal.js"
 
     # Find the function definition (not just the addEventListener reference)
     fn_def_idx = source.find("function _onKeyDown")
@@ -1385,7 +1344,7 @@ def test_modal_js_esc_handler_checks_confirm_dialog_visibility():
         fn_def_idx = onkeydown_idx
 
     # Extract the function body — up to 300 chars from the definition
-    fn_body = source[fn_def_idx: fn_def_idx + 300]
+    fn_body = source[fn_def_idx : fn_def_idx + 300]
 
     # The ESC branch must reference the confirm dialog element OR a close-confirm function
     # A bare `_closeModal()` with no confirm check is the failure case.
@@ -1427,10 +1386,7 @@ def test_modal_js_has_focus_trap_logic():
 
     has_tab_trap = (
         "Tab" in source
-        and (
-            "shiftKey" in source
-            or "shift" in source.lower()
-        )
+        and ("shiftKey" in source or "shift" in source.lower())
         and (
             "focusable" in source.lower()
             or "querySelectorAll" in source
@@ -1461,7 +1417,10 @@ def test_modal_js_confirm_dialog_receives_focus_on_open():
 
     # Find the confirm dialog show function
     confirm_show_markers = [
-        "_showConfirmDialog", "showConfirm", "confirmDialog", "sym-settings-confirm"
+        "_showConfirmDialog",
+        "showConfirm",
+        "confirmDialog",
+        "sym-settings-confirm",
     ]
     confirm_idx = -1
     for marker in confirm_show_markers:
@@ -1475,7 +1434,7 @@ def test_modal_js_confirm_dialog_receives_focus_on_open():
     )
 
     # Within 500 chars of the confirm dialog open, a focus() call must appear
-    ctx = source[confirm_idx: confirm_idx + 500]
+    ctx = source[confirm_idx : confirm_idx + 500]
     has_focus_call = ".focus()" in ctx or ".focus(" in ctx
     assert has_focus_call, (
         "Finding 5: _showConfirmDialog must call .focus() on an element inside the "
@@ -1529,8 +1488,12 @@ def test_modal_js_does_not_use_wrong_tuning_aliases():
     source = js_path.read_text(encoding="utf-8")
 
     wrong_aliases = [
-        "trail_pct", "tp_target", "vwap_bleed_mult",
-        "vol_scale", "mc_prob_floor", "para_ratchet_acc",
+        "trail_pct",
+        "tp_target",
+        "vwap_bleed_mult",
+        "vol_scale",
+        "mc_prob_floor",
+        "para_ratchet_acc",
     ]
     # These must not appear as TUNING_ORDER member strings in the JS.
     # (They may appear in comments, but not as key lookups.)
@@ -1538,7 +1501,7 @@ def test_modal_js_does_not_use_wrong_tuning_aliases():
     tuning_order_idx = source.find("TUNING_ORDER")
     if tuning_order_idx == -1:
         return  # Can't locate — skip rather than false-positive
-    tuning_ctx = source[tuning_order_idx: tuning_order_idx + 400]
+    tuning_ctx = source[tuning_order_idx : tuning_order_idx + 400]
     for alias in wrong_aliases:
         assert f"'{alias}'" not in tuning_ctx and f'"{alias}"' not in tuning_ctx, (
             f"Finding 6: Wrong alias '{alias}' found in TUNING_ORDER. "
@@ -1569,7 +1532,7 @@ def test_confirm_dialog_has_aria_labelledby():
     if confirm_idx == -1:
         pytest.skip("Confirm dialog container not found — cannot check aria attribute")
 
-    ctx = source[confirm_idx: confirm_idx + 600]
+    ctx = source[confirm_idx : confirm_idx + 600]
     has_label = "aria-labelledby" in ctx or "aria-label" in ctx
     assert has_label, (
         "Minor Finding 7: The confirm dialog must have aria-labelledby or aria-label "
@@ -1592,9 +1555,7 @@ def test_confirm_dialog_has_aria_labelledby():
 # rows were never touched this cycle.
 
 
-def test_table_partial_rows_have_gear_button(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_table_partial_rows_have_gear_button(client, mock_db_one_symphony, monkeypatch):
     """F7: The HTMX table-partial route must render a gear button on each symphony row.
 
     AC-1 requires the gear icon on BOTH cards (index.html) AND table rows
@@ -1634,9 +1595,7 @@ def test_table_partial_rows_have_gear_button(
     )
 
 
-def test_table_partial_gear_button_carries_symphony_id(
-    client, mock_db_one_symphony, monkeypatch
-):
+def test_table_partial_gear_button_carries_symphony_id(client, mock_db_one_symphony, monkeypatch):
     """F7: The gear button in table_partial.html must carry the symphony id.
 
     Without data-symphony-id (or equivalent), the JS modal cannot tell which
@@ -1707,10 +1666,7 @@ def test_post_symphony_settings_rejects_out_of_range_int_live_mode(
         # If somehow 200, set_symphony_live_mode must not have been called
         # AND the response must not claim success
         body = resp.get_json() or {}
-        silent_success = (
-            body.get("status") == "success"
-            and len(set_live_calls) == 0
-        )
+        silent_success = body.get("status") == "success" and len(set_live_calls) == 0
         assert not silent_success, (
             "F8: POST /api/symphony-settings with live_mode=2 returned 200 "
             "{'status': 'success'} with no DB call — a silent no-op on a "

@@ -58,26 +58,20 @@ import pytest
 
 import math_engine
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "mc_rng_seeding"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "mc_rng_seeding"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_fixture(filename: str) -> dict[str, Any]:
     with (FIXTURE_DIR / filename).open("r", encoding="utf-8") as fh:
         return json.load(fh)
 
 
-def _generate_trading_year_cycle_ids(
-    year_start: datetime.date, num_trading_days: int
-) -> list[str]:
+def _generate_trading_year_cycle_ids(year_start: datetime.date, num_trading_days: int) -> list[str]:
     """
     Generate the full set of YYYYMMDD_HHMM cycle_ids for ``num_trading_days``
     weekday trading days starting at ``year_start``, one per market minute
@@ -114,6 +108,7 @@ def _generate_trading_year_cycle_ids(
 # 2. THE FIX PROOF — a full trading year maps to entirely distinct seeds
 # ---------------------------------------------------------------------------
 
+
 def test_full_trading_year_cycle_ids_produce_distinct_seeds() -> None:
     """
     AC-3 fix proof. derive_cycle_mc_seed must map every cycle_id of a full
@@ -126,9 +121,7 @@ def test_full_trading_year_cycle_ids_produce_distinct_seeds() -> None:
     fx = _load_fixture("04_seed_collision_full_year.json")
     gen = fx["cycle_id_generation"]
     year_start = datetime.date.fromisoformat(gen["calendar_year_start"])
-    cycle_ids = _generate_trading_year_cycle_ids(
-        year_start, gen["num_trading_days"]
-    )
+    cycle_ids = _generate_trading_year_cycle_ids(year_start, gen["num_trading_days"])
 
     seeds = [math_engine.derive_cycle_mc_seed(cid) for cid in cycle_ids]
     unique_seeds = set(seeds)
@@ -156,6 +149,7 @@ def test_full_trading_year_cycle_ids_produce_distinct_seeds() -> None:
 # 3. Seed space is at least 2**64 wide
 # ---------------------------------------------------------------------------
 
+
 def test_seed_space_is_at_least_64_bits_wide() -> None:
     """
     AC-3: the seed space must be at least 2**64 wide so the birthday bound at
@@ -182,9 +176,7 @@ def test_seed_space_is_at_least_64_bits_wide() -> None:
     fx = _load_fixture("04_seed_collision_full_year.json")
     gen = fx["cycle_id_generation"]
     year_start = datetime.date.fromisoformat(gen["calendar_year_start"])
-    cycle_ids = _generate_trading_year_cycle_ids(
-        year_start, gen["num_trading_days"]
-    )
+    cycle_ids = _generate_trading_year_cycle_ids(year_start, gen["num_trading_days"])
     seeds = [math_engine.derive_cycle_mc_seed(cid) for cid in cycle_ids]
     max_seed = max(seeds)
     assert max_seed >= 2**32, (
@@ -198,6 +190,7 @@ def test_seed_space_is_at_least_64_bits_wide() -> None:
 # 4. Determinism preserved
 # ---------------------------------------------------------------------------
 
+
 def test_derive_cycle_mc_seed_remains_deterministic_after_widening() -> None:
     """
     AC-3 must not regress determinism: derive_cycle_mc_seed is a pure function —
@@ -207,9 +200,7 @@ def test_derive_cycle_mc_seed_remains_deterministic_after_widening() -> None:
     fx = _load_fixture("04_seed_collision_full_year.json")
     gen = fx["cycle_id_generation"]
     year_start = datetime.date.fromisoformat(gen["calendar_year_start"])
-    cycle_ids = _generate_trading_year_cycle_ids(
-        year_start, gen["num_trading_days"]
-    )
+    cycle_ids = _generate_trading_year_cycle_ids(year_start, gen["num_trading_days"])
     # Sample every 500th cycle_id to keep the determinism check fast.
     for cid in cycle_ids[::500]:
         seed_a = math_engine.derive_cycle_mc_seed(cid)
@@ -227,6 +218,7 @@ def test_derive_cycle_mc_seed_remains_deterministic_after_widening() -> None:
 # ---------------------------------------------------------------------------
 # 5. The inaccurate seed-modulus comment is corrected
 # ---------------------------------------------------------------------------
+
 
 def test_seed_modulus_comment_no_longer_claims_no_collisions_at_2_31() -> None:
     """
@@ -250,6 +242,7 @@ def test_seed_modulus_comment_no_longer_claims_no_collisions_at_2_31() -> None:
 # 6. Regression guard — the 64-bit seed must only be consumed via default_rng
 # ---------------------------------------------------------------------------
 
+
 def test_mc_seed_is_consumed_only_via_default_rng_not_legacy_rng() -> None:
     """
     AC-3 regression guard. The widened 64-bit seed is safe ONLY because
@@ -267,9 +260,7 @@ def test_mc_seed_is_consumed_only_via_default_rng_not_legacy_rng() -> None:
     protects the AC-3 widening — a 64-bit seed through a legacy RNG is a hard
     crash, not a silent degradation.
     """
-    tree = ast.parse(
-        pathlib.Path(math_engine.__file__).read_text(encoding="utf-8")
-    )
+    tree = ast.parse(pathlib.Path(math_engine.__file__).read_text(encoding="utf-8"))
 
     default_rng_calls = 0
     legacy_rng_calls: list[str] = []

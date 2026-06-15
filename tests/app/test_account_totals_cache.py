@@ -29,9 +29,7 @@ import app as app_module
 # Golden fixture
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    Path(__file__).parent.parent / "fixtures" / "composer" / "reconcile-2026-05-20"
-)
+_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "composer" / "reconcile-2026-05-20"
 
 
 @pytest.fixture(scope="module")
@@ -106,9 +104,7 @@ class TestComputePortfolioStripCachePopulated:
 
         bot_state = _minimal_bot_state(2)
         per_symphony_sum = sum(
-            v.get("current_value") or 0.0
-            for v in bot_state.values()
-            if isinstance(v, dict)
+            v.get("current_value") or 0.0 for v in bot_state.values() if isinstance(v, dict)
         )
         # Confirm the fixture value differs from the per-symphony sum so the
         # test is actually discriminating.
@@ -133,9 +129,7 @@ class TestComputePortfolioStripCachePopulated:
         portfolio_cr (Composer simple_return * 100).
         """
         cached_cr = total_stats_fixture["simple_return"] * 100.0
-        app_module._account_totals_cache["portfolio_value"] = total_stats_fixture[
-            "portfolio_value"
-        ]
+        app_module._account_totals_cache["portfolio_value"] = total_stats_fixture["portfolio_value"]
         app_module._account_totals_cache["portfolio_cr"] = cached_cr
 
         bot_state = _minimal_bot_state(2)
@@ -186,9 +180,7 @@ class TestComputePortfolioStripCacheEmpty:
         # cache is empty (cleared by autouse fixture)
         bot_state = _minimal_bot_state(3)
         per_symphony_sum = sum(
-            v.get("current_value") or 0.0
-            for v in bot_state.values()
-            if isinstance(v, dict)
+            v.get("current_value") or 0.0 for v in bot_state.values() if isinstance(v, dict)
         )
 
         result = app_module._compute_portfolio_strip(bot_state)
@@ -235,9 +227,7 @@ class TestComputePortfolioStripCacheEmpty:
 
         bot_state = _minimal_bot_state(2)
         per_symphony_sum = sum(
-            v.get("current_value") or 0.0
-            for v in bot_state.values()
-            if isinstance(v, dict)
+            v.get("current_value") or 0.0 for v in bot_state.values() if isinstance(v, dict)
         )
 
         result = app_module._compute_portfolio_strip(bot_state)
@@ -401,9 +391,7 @@ class TestRefreshAccountTotals:
             app_module._refresh_account_totals()
 
         assert mock_get.called, "_refresh_account_totals must call requests.get"
-        called_url = mock_get.call_args[0][0] if mock_get.call_args[0] else str(
-            mock_get.call_args
-        )
+        called_url = mock_get.call_args[0][0] if mock_get.call_args[0] else str(mock_get.call_args)
         assert "total-stats" in called_url, (
             f"_refresh_account_totals must GET the Composer 'total-stats' endpoint; "
             f"called URL was: {called_url}"

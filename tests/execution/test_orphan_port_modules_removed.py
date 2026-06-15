@@ -65,11 +65,7 @@ def _production_py_files(root: pathlib.Path):
     """
     for p in root.rglob("*.py"):
         parts = p.relative_to(root).parts
-        if (
-            "tests" not in parts
-            and "__pycache__" not in parts
-            and ".claude" not in parts
-        ):
+        if "tests" not in parts and "__pycache__" not in parts and ".claude" not in parts:
             yield p
 
 
@@ -147,8 +143,7 @@ class TestMultiCycleModuleRemoved:
             pytest.skip("engine package itself not importable")
         for sym in ("multi_cycle", "multi_cycle_loop", "run_multi_cycle"):
             assert not hasattr(engine_pkg, sym), (
-                f"engine package must not re-export {sym!r} after multi_cycle.py "
-                "deletion"
+                f"engine package must not re-export {sym!r} after multi_cycle.py deletion"
             )
 
 
@@ -173,8 +168,7 @@ class TestPortSelectorModuleRemoved:
         """The physical file port_selector.py must be deleted."""
         candidate = _project_root() / "port_selector.py"
         assert not candidate.exists(), (
-            f"port_selector.py still exists at {candidate}; "
-            "S3-AUDIT-005 requires deletion"
+            f"port_selector.py still exists at {candidate}; S3-AUDIT-005 requires deletion"
         )
 
     def test_select_symphony_with_mc_gate_not_accessible(self):
@@ -222,8 +216,7 @@ class TestPortAggregatorModuleRemoved:
         """The physical file port_aggregator.py must be deleted."""
         candidate = _project_root() / "port_aggregator.py"
         assert not candidate.exists(), (
-            f"port_aggregator.py still exists at {candidate}; "
-            "S3-AUDIT-005 requires deletion"
+            f"port_aggregator.py still exists at {candidate}; S3-AUDIT-005 requires deletion"
         )
 
     def test_aggregate_to_port_not_accessible(self):
@@ -352,7 +345,7 @@ class TestNoSurvivingTestImportsOrphanModules:
 
     EXCLUDED_TEST_FILES = {
         "test_orphan_port_modules_removed.py",  # this file
-        "test_port_dispatch_removal.py",         # houses xfail tripwires
+        "test_port_dispatch_removal.py",  # houses xfail tripwires
     }
 
     @pytest.fixture(scope="class")
@@ -438,6 +431,7 @@ class TestPortStateDisplaySurfaceUnchanged:
         monkeypatch.setenv("DB_PATH", str(db_path))
 
         import database
+
         # init_db is chatty; silence logging during the test to keep stdout clean
         _prior = logging.getLogger().level
         logging.getLogger().setLevel(logging.CRITICAL)
@@ -448,10 +442,7 @@ class TestPortStateDisplaySurfaceUnchanged:
 
         with sqlite3.connect(str(db_path)) as conn:
             cur = conn.cursor()
-            cur.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='port_state'"
-            )
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='port_state'")
             row = cur.fetchone()
         assert row is not None, (
             "port_state table must exist in a fresh state DB per "
@@ -477,6 +468,7 @@ class TestPortStateDisplaySurfaceUnchanged:
         monkeypatch.setenv("EXIT_AUTHORITY", "per_symphony")
 
         import database
+
         _prior = logging.getLogger().level
         logging.getLogger().setLevel(logging.CRITICAL)
         try:
@@ -485,6 +477,7 @@ class TestPortStateDisplaySurfaceUnchanged:
             logging.getLogger().setLevel(_prior)
 
         import app as app_module
+
         result = app_module.get_api_state_dict()
         assert "port_state" in result, (
             "get_api_state_dict() must include 'port_state' in its return "
@@ -529,15 +522,8 @@ class TestRetainedPortmodeTestsStillCollect:
     """
 
     def test_test_api_state_route_additive_fields_collects(self):
-        target = (
-            _project_root()
-            / "tests"
-            / "portmode"
-            / "test_api_state_route_additive_fields.py"
-        )
-        assert target.exists(), (
-            f"{target} must remain in the suite (Sprint-3-manifest §6 KEEP)"
-        )
+        target = _project_root() / "tests" / "portmode" / "test_api_state_route_additive_fields.py"
+        assert target.exists(), f"{target} must remain in the suite (Sprint-3-manifest §6 KEEP)"
         result = subprocess.run(
             ["python", "-m", "pytest", "--collect-only", "-q", str(target)],
             cwd=str(_project_root()),
@@ -552,12 +538,8 @@ class TestRetainedPortmodeTestsStillCollect:
         )
 
     def test_test_port_state_schema_collects(self):
-        target = (
-            _project_root() / "tests" / "portmode" / "test_port_state_schema.py"
-        )
-        assert target.exists(), (
-            f"{target} must remain in the suite (Sprint-3-manifest §6 KEEP)"
-        )
+        target = _project_root() / "tests" / "portmode" / "test_port_state_schema.py"
+        assert target.exists(), f"{target} must remain in the suite (Sprint-3-manifest §6 KEEP)"
         result = subprocess.run(
             ["python", "-m", "pytest", "--collect-only", "-q", str(target)],
             cwd=str(_project_root()),

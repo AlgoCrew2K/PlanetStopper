@@ -56,12 +56,8 @@ import pytest
 import autotuner
 
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "autotuner"
-    / "replay_parity"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "autotuner" / "replay_parity"
+
 
 def _replay_grace() -> int:
     """The VWAP open-window grace value the replay uses internally.
@@ -111,9 +107,7 @@ def _shared_core_exits(ticks: list[dict], params: dict) -> bool:
     returns resolve internally via autotuner._replay_grace_minutes(), so the
     comparison against those two paths is apples-to-apples.
     """
-    seq = autotuner.replay_exit_sequence(
-        ticks, params, grace_minutes=_replay_grace()
-    )
+    seq = autotuner.replay_exit_sequence(ticks, params, grace_minutes=_replay_grace())
     return any(d["exit_reason"] for d in seq)
 
 
@@ -136,9 +130,7 @@ def test_collect_sim_returns_in_lockstep_with_shared_core(fixture_name: str) -> 
     history = {"sym-A": {"2026-04-06": ticks}}
 
     shared_exits = _shared_core_exits(ticks, params)
-    daily_returns = autotuner._collect_sim_returns(
-        params, history, ["sym-A"], "2026-05-10", {}
-    )
+    daily_returns = autotuner._collect_sim_returns(params, history, ["sym-A"], "2026-05-10", {})
     collect_exits = len(daily_returns) > 0
 
     assert collect_exits == shared_exits, (
@@ -178,9 +170,7 @@ def test_run_simulation_in_lockstep_with_shared_core(fixture_name: str) -> None:
     history = {"sym-A": {"2026-04-06": ticks}}
 
     shared_exits = _shared_core_exits(ticks, params)
-    guard_alpha = autotuner.run_simulation(
-        params, history, ["sym-A"], "2026-05-10", {}
-    )
+    guard_alpha = autotuner.run_simulation(params, history, ["sym-A"], "2026-05-10", {})
     run_sim_exits = guard_alpha != 0.0
 
     assert run_sim_exits == shared_exits, (
@@ -213,14 +203,10 @@ def test_all_three_replay_paths_agree_on_every_parity_fixture() -> None:
         history = {"sym-A": {"2026-04-06": ticks}}
 
         shared = _shared_core_exits(ticks, params)
-        collect = len(
-            autotuner._collect_sim_returns(
-                params, history, ["sym-A"], "2026-05-10", {}
-            )
-        ) > 0
-        run_sim = autotuner.run_simulation(
-            params, history, ["sym-A"], "2026-05-10", {}
-        ) != 0.0
+        collect = (
+            len(autotuner._collect_sim_returns(params, history, ["sym-A"], "2026-05-10", {})) > 0
+        )
+        run_sim = autotuner.run_simulation(params, history, ["sym-A"], "2026-05-10", {}) != 0.0
 
         if not (shared == collect == run_sim):
             disagreements.append(
@@ -299,12 +285,9 @@ def test_replay_function_builds_day_state_via_canonical_constructor(
         rhs = node.value
         if isinstance(rhs, ast.Dict):
             offenders.append(f"line {node.lineno}: inline dict literal")
-        elif (
-            isinstance(rhs, ast.Call)
-            and (
-                (isinstance(rhs.func, ast.Name) and rhs.func.id == "_fresh_replay_state")
-                or (isinstance(rhs.func, ast.Attribute) and rhs.func.attr == "_fresh_replay_state")
-            )
+        elif isinstance(rhs, ast.Call) and (
+            (isinstance(rhs.func, ast.Name) and rhs.func.id == "_fresh_replay_state")
+            or (isinstance(rhs.func, ast.Attribute) and rhs.func.attr == "_fresh_replay_state")
         ):
             calls_constructor = True
 
@@ -340,9 +323,17 @@ def test_replay_function_has_no_dead_per_day_state_locals(func_name: str) -> Non
     func = _autotuner_function_node(func_name)
 
     dead_state_names = {
-        "hwm", "armed", "tp_armed", "para_armed", "breakeven_locked",
-        "prev_return", "hwm_hold_ticks", "below_stop_count",
-        "above_tp_count", "vwap_ticks", "vwap_bleed_ticks",
+        "hwm",
+        "armed",
+        "tp_armed",
+        "para_armed",
+        "breakeven_locked",
+        "prev_return",
+        "hwm_hold_ticks",
+        "below_stop_count",
+        "above_tp_count",
+        "vwap_ticks",
+        "vwap_bleed_ticks",
     }
     offenders: list[str] = []
     for node in ast.walk(func):

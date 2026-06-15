@@ -369,17 +369,19 @@ def test_autotuner_module_importable_without_port_mode_names() -> None:
 # at module load time.  Scan the worktree for such imports.
 # ===========================================================================
 
-_REMOVED_SYMBOLS = frozenset({
-    "PORT_TRAIN_RATIO",
-    "PORT_VALIDATION_RATIO",
-    "PORT_FROZEN_EVAL_RATIO",
-    "MODE_SPECIFIC_PARAMS",
-    "MODE_INVARIANT_PARAMS",
-    "build_port_study_name",
-    "get_port_mode_search_space",
-    "validate_port_mode_params_available",
-    "warn_port_mode_replay_blind_spot",
-})
+_REMOVED_SYMBOLS = frozenset(
+    {
+        "PORT_TRAIN_RATIO",
+        "PORT_VALIDATION_RATIO",
+        "PORT_FROZEN_EVAL_RATIO",
+        "MODE_SPECIFIC_PARAMS",
+        "MODE_INVARIANT_PARAMS",
+        "build_port_study_name",
+        "get_port_mode_search_space",
+        "validate_port_mode_params_available",
+        "warn_port_mode_replay_blind_spot",
+    }
+)
 
 
 def _file_imports_autotuner_symbol(src: str, symbol: str) -> bool:
@@ -419,11 +421,7 @@ def _file_imports_autotuner_symbol(src: str, symbol: str) -> bool:
         # `getattr(autotuner, "X", ...)` — e.g. in test_c3_port_level_replay_guard.py
         if isinstance(node, ast.Call):
             fn = node.func
-            if (
-                isinstance(fn, ast.Name)
-                and fn.id == "getattr"
-                and len(node.args) >= 2
-            ):
+            if isinstance(fn, ast.Name) and fn.id == "getattr" and len(node.args) >= 2:
                 first = node.args[0]
                 second = node.args[1]
                 if (
@@ -460,7 +458,8 @@ def test_no_other_module_imports_removed_port_mode_symbols() -> None:
     # Exclude `.claude/` to skip git worktree + audit-worktree stale snapshots from
     # prior sessions — see project memory project_blast_radius_scanner_worktree_interaction.
     py_files = [
-        p for p in _WORKTREE_ROOT.rglob("*.py")
+        p
+        for p in _WORKTREE_ROOT.rglob("*.py")
         if "__pycache__" not in p.parts
         and ".claude" not in p.parts
         and p.resolve() != _AUTOTUNER_PATH.resolve()

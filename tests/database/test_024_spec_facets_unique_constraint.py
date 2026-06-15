@@ -140,10 +140,11 @@ def test_migration_024_present_and_after_023():
     idx_023 = next((i for i, f in enumerate(files) if "023" in f), None)
     idx_024 = next((i for i, f in enumerate(files) if "024" in f), None)
     assert idx_023 is not None, "023_autotune_runs_s_count.sql missing from _MIGRATION_FILES"
-    assert idx_024 is not None, "024_spec_facets_unique_constraint.sql missing from _MIGRATION_FILES"
+    assert idx_024 is not None, (
+        "024_spec_facets_unique_constraint.sql missing from _MIGRATION_FILES"
+    )
     assert idx_024 > idx_023, (
-        f"024 (position {idx_024}) must come after 023 (position {idx_023}) "
-        "in _MIGRATION_FILES."
+        f"024 (position {idx_024}) must come after 023 (position {idx_023}) in _MIGRATION_FILES."
     )
 
 

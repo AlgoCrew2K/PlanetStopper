@@ -44,10 +44,7 @@ import database as db
 # ---------------------------------------------------------------------------
 
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parents[1]
-    / "fixtures"
-    / "math"
-    / "telemetry_helper_write_basic.json"
+    pathlib.Path(__file__).parents[1] / "fixtures" / "math" / "telemetry_helper_write_basic.json"
 )
 
 
@@ -59,6 +56,7 @@ def telemetry_fixture() -> dict:
 # ---------------------------------------------------------------------------
 # Helpers — create the target table in the isolated test DB
 # ---------------------------------------------------------------------------
+
 
 def _create_cvar_diagnostics(conn: sqlite3.Connection) -> None:
     """Create a minimal cvar_diagnostics table for write tests.
@@ -103,9 +101,7 @@ def db_with_cvar_table(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_live_mode_swallows_operational_error_returns_none(
-    db_with_cvar_table, telemetry_fixture
-):
+def test_live_mode_swallows_operational_error_returns_none(db_with_cvar_table, telemetry_fixture):
     """Live mode: write to a non-existent table raises OperationalError internally;
     write_telemetry_row swallows it and returns None — cycle must never fail
     on telemetry (architecture constraint 1 + H4 live-swallow contract).
@@ -120,8 +116,7 @@ def test_live_mode_swallows_operational_error_returns_none(
     )
 
     assert result is None, (
-        "write_telemetry_row in live mode must return None on swallowed error; "
-        f"got {result!r}"
+        f"write_telemetry_row in live mode must return None on swallowed error; got {result!r}"
     )
 
 
@@ -143,9 +138,7 @@ def test_live_mode_swallows_error_does_not_raise(db_with_cvar_table, telemetry_f
 # ---------------------------------------------------------------------------
 
 
-def test_live_mode_logs_warning_once_on_error(
-    db_with_cvar_table, telemetry_fixture, caplog
-):
+def test_live_mode_logs_warning_once_on_error(db_with_cvar_table, telemetry_fixture, caplog):
     """Live mode: on a swallowed error, exactly one WARNING record is emitted.
 
     Gate 7 (no payload leak): the log message contains table_name and the
@@ -189,9 +182,9 @@ def test_live_mode_log_does_not_leak_row_payload_values(
     row = {
         "cycle_id": "CYCLE_LEAK_TEST_001",
         "symphony_id": "SYM_LEAK_TEST",
-        "cvar_5pct": 0.0314159,        # distinctive float — must NOT appear in log
+        "cvar_5pct": 0.0314159,  # distinctive float — must NOT appear in log
         "cvar_5pct_stderr": 0.0271828,  # distinctive float — must NOT appear in log
-        "cvar_n_tail": 7,               # distinctive int — must NOT appear in log
+        "cvar_n_tail": 7,  # distinctive int — must NOT appear in log
         "cvar_5pct_long": None,
         "cvar_n_tail_long": None,
     }
@@ -228,9 +221,7 @@ def test_replay_mode_raises_on_db_error(db_with_cvar_table, telemetry_fixture):
         db.write_telemetry_row("nonexistent_table", row, mode="replay")
 
 
-def test_replay_mode_raises_on_db_integrity_error(
-    db_with_cvar_table, telemetry_fixture
-):
+def test_replay_mode_raises_on_db_integrity_error(db_with_cvar_table, telemetry_fixture):
     """Replay mode: sqlite3.IntegrityError propagates for a bad write to an
     allowlisted table that exists in the DB.
 
@@ -239,7 +230,7 @@ def test_replay_mode_raises_on_db_integrity_error(
     errors (distinct from allowlist ValueError) also propagate in replay mode.
     """
     row = {
-        "cycle_id": None,        # NOT NULL violation → IntegrityError
+        "cycle_id": None,  # NOT NULL violation → IntegrityError
         "symphony_id": "SYM_REPLAY_ERR_001",
         "cvar_5pct": None,
         "cvar_5pct_stderr": None,
@@ -252,9 +243,7 @@ def test_replay_mode_raises_on_db_integrity_error(
         db.write_telemetry_row("cvar_diagnostics", row, mode="replay")
 
 
-def test_replay_mode_does_not_log_swallow_warning(
-    db_with_cvar_table, telemetry_fixture, caplog
-):
+def test_replay_mode_does_not_log_swallow_warning(db_with_cvar_table, telemetry_fixture, caplog):
     """Replay mode: on error, NO warning is logged before the exception escapes.
 
     The live-mode swallow emits a WARNING; the replay-mode raise must not
@@ -271,7 +260,8 @@ def test_replay_mode_does_not_log_swallow_warning(
             db.write_telemetry_row("nonexistent_table", row, mode="replay")
 
     swallow_warnings = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno == logging.WARNING and "nonexistent_table" in r.getMessage()
     ]
     assert len(swallow_warnings) == 0, (
@@ -285,9 +275,7 @@ def test_replay_mode_does_not_log_swallow_warning(
 # ---------------------------------------------------------------------------
 
 
-def test_live_mode_successful_write_inserts_one_row(
-    db_with_cvar_table, telemetry_fixture
-):
+def test_live_mode_successful_write_inserts_one_row(db_with_cvar_table, telemetry_fixture):
     """Live mode success path: one row is inserted into the target table.
 
     Shape assertion only — we do not assert specific column values (those
@@ -299,10 +287,7 @@ def test_live_mode_successful_write_inserts_one_row(
 
     result = db.write_telemetry_row(table, row, mode="live")
 
-    assert result is None, (
-        "write_telemetry_row success path must return None; "
-        f"got {result!r}"
-    )
+    assert result is None, f"write_telemetry_row success path must return None; got {result!r}"
 
     # Verify the row landed
     conn = sqlite3.connect(db_with_cvar_table)
@@ -315,9 +300,7 @@ def test_live_mode_successful_write_inserts_one_row(
     finally:
         conn.close()
 
-    assert len(rows) == 1, (
-        f"Expected 1 row for cycle_id={row['cycle_id']!r}; found {len(rows)}"
-    )
+    assert len(rows) == 1, f"Expected 1 row for cycle_id={row['cycle_id']!r}; found {len(rows)}"
     inserted = dict(rows[0])
     assert isinstance(inserted["id"], int) and inserted["id"] > 0, (
         "Inserted row must have a positive integer id"
@@ -327,9 +310,7 @@ def test_live_mode_successful_write_inserts_one_row(
     )
 
 
-def test_replay_mode_successful_write_inserts_one_row(
-    db_with_cvar_table, telemetry_fixture
-):
+def test_replay_mode_successful_write_inserts_one_row(db_with_cvar_table, telemetry_fixture):
     """Replay mode success path: one row is inserted (replay write does not block).
 
     Uses a distinct cycle_id to avoid interference with the live-mode test.
@@ -352,9 +333,7 @@ def test_replay_mode_successful_write_inserts_one_row(
     finally:
         conn.close()
 
-    assert len(rows) == 1, (
-        f"Expected 1 row for cycle_id={row['cycle_id']!r}; found {len(rows)}"
-    )
+    assert len(rows) == 1, f"Expected 1 row for cycle_id={row['cycle_id']!r}; found {len(rows)}"
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +357,7 @@ def test_replay_mode_never_opens_socket(db_with_cvar_table, telemetry_fixture):
 
     class _BombSocket:
         """Raises immediately if instantiated — proves no socket was opened."""
+
         def __init__(self, *args, **kwargs):
             raise AssertionError(
                 "write_telemetry_row(mode='replay') must not open a network socket"
@@ -401,9 +381,7 @@ def test_live_mode_never_opens_socket(db_with_cvar_table, telemetry_fixture):
 
     class _BombSocket:
         def __init__(self, *args, **kwargs):
-            raise AssertionError(
-                "write_telemetry_row(mode='live') must not open a network socket"
-            )
+            raise AssertionError("write_telemetry_row(mode='live') must not open a network socket")
 
     with patch.object(socket, "socket", _BombSocket):
         db.write_telemetry_row(table, row, mode="live")

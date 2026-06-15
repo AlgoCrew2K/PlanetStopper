@@ -113,10 +113,7 @@ import pytest
 import math_engine
 
 FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "active_trailing_stop"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "active_trailing_stop"
 )
 
 # --- Tolerance --------------------------------------------------------------
@@ -164,8 +161,7 @@ def test_active_trailing_stop_matches_derived_expected(
     """
     func_name = fixture["function"]
     assert func_name == "compute_active_trailing_stop", (
-        f"{fixture_name}: only compute_active_trailing_stop is in scope for "
-        f"this cycle"
+        f"{fixture_name}: only compute_active_trailing_stop is in scope for this cycle"
     )
 
     inputs = fixture["inputs"]
@@ -419,9 +415,7 @@ def test_return_type_is_python_float() -> None:
         breakeven_locked=False,
         parabolic_squeeze_multiplier=0.5,
     )
-    assert isinstance(out, float), (
-        f"Output must be a Python float, got {type(out).__name__}"
-    )
+    assert isinstance(out, float), f"Output must be a Python float, got {type(out).__name__}"
     # Strict type check: numpy scalars are NOT acceptable.
     assert type(out) is float, (
         f"Output must be EXACTLY float, got {type(out).__name__} "
@@ -469,9 +463,7 @@ def test_int_in_place_of_bool_still_works_as_documentary_stress() -> None:
         breakeven_locked=False,
         parabolic_squeeze_multiplier=sq,
     )
-    assert out_int_true == pytest.approx(
-        out_bool_true, rel=APPROX_REL, abs=APPROX_ABS
-    ), (
+    assert out_int_true == pytest.approx(out_bool_true, rel=APPROX_REL, abs=APPROX_ABS), (
         f"int(1) should be truthy-equivalent to True (Python `or` semantics). "
         f"Got int-form {out_int_true} vs bool-form {out_bool_true}."
     )
@@ -493,9 +485,7 @@ def test_int_in_place_of_bool_still_works_as_documentary_stress() -> None:
         breakeven_locked=False,
         parabolic_squeeze_multiplier=sq,
     )
-    assert out_int_false == pytest.approx(
-        out_bool_false, rel=APPROX_REL, abs=APPROX_ABS
-    ), (
+    assert out_int_false == pytest.approx(out_bool_false, rel=APPROX_REL, abs=APPROX_ABS), (
         f"int(0) should be falsy-equivalent to False. "
         f"Got int-form {out_int_false} vs bool-form {out_bool_false}."
     )
@@ -567,9 +557,9 @@ def test_no_unnamed_magic_numbers_in_active_trailing_stop_path() -> None:
     # only retains one representative of each value -- listing both forms is
     # cosmetic. We list the canonical forms used in math_engine source.
     STRUCTURAL = {
-        0,    # comparison threshold for `symphony_vol > 0`; universal zero
-        1,    # likely unused in this function body, harmless if present
-        -1,   # unlikely but harmless
+        0,  # comparison threshold for `symphony_vol > 0`; universal zero
+        1,  # likely unused in this function body, harmless if present
+        -1,  # unlikely but harmless
     }
     # NOTE on 1.0: 1.0 is the value of VOL_FALLBACK. A bare 1.0 literal
     # INSIDE the function body would slip past this structural whitelist if
@@ -580,10 +570,7 @@ def test_no_unnamed_magic_numbers_in_active_trailing_stop_path() -> None:
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_active_trailing_stop"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_active_trailing_stop":
             target = node
             break
     assert target is not None, (
@@ -655,26 +642,18 @@ def test_vol_fallback_is_named_constant_not_bare_literal_in_function_body() -> N
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_active_trailing_stop"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_active_trailing_stop":
             target = node
             break
     assert target is not None, (
-        "compute_active_trailing_stop not found in math_engine.py "
-        "(expected RED state)"
+        "compute_active_trailing_stop not found in math_engine.py (expected RED state)"
     )
 
     bare_ones: list[int] = []
     for sub in ast.walk(target):
         # bool is not a float subclass in Python (bool subclasses int), so
         # the isinstance(..., float) check correctly excludes True/False.
-        if (
-            isinstance(sub, ast.Constant)
-            and isinstance(sub.value, float)
-            and sub.value == 1.0
-        ):
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, float) and sub.value == 1.0:
             bare_ones.append(sub.lineno)
 
     assert not bare_ones, (

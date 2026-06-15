@@ -781,12 +781,12 @@ def test_get_symphony_cumulative_return_uses_anchored_chain_link_of_last_row_per
 
     expected = fixture["expected"]["SYM_ALPHA"]
     # EOD shadow returns per day — derived from fixture keys (PA-18: no bare literals).
-    shadow_r1 = expected["chain_link_cr_day1_r"]     # day-1 EOD shadow_return = 3.5
-    shadow_r2 = expected["chain_link_cr_day2_r"]     # day-2 EOD shadow_return = 1.2
+    shadow_r1 = expected["chain_link_cr_day1_r"]  # day-1 EOD shadow_return = 3.5
+    shadow_r2 = expected["chain_link_cr_day2_r"]  # day-2 EOD shadow_return = 1.2
     # EOD current returns per day — from fixture expected block.
-    current_r1 = expected["eod_day1_current_return"] # day-1 EOD current_return = 1.8
+    current_r1 = expected["eod_day1_current_return"]  # day-1 EOD current_return = 1.8
     # Day-2 is untriggered: current_return == shadow_return (same value in fixture rows).
-    current_r2 = shadow_r2                           # 1.2 == 1.2
+    current_r2 = shadow_r2  # 1.2 == 1.2
 
     # CORRECTED divergence formula: (prod_shadow - prod_current) * 100
     prod_shadow = (1 + shadow_r1 / 100.0) * (1 + shadow_r2 / 100.0)

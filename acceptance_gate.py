@@ -141,10 +141,7 @@ def _compute_panel_score(stability_score: float, prior_anchor_score: float) -> f
     A weighted average of sub-scores in [0, 1] with weights summing to 1.0 is
     itself in [0, 1] (the panel_score-bounded invariant).
     """
-    return (
-        PANEL_WEIGHT_STABILITY * stability_score
-        + PANEL_WEIGHT_PRIOR_ANCHOR * prior_anchor_score
-    )
+    return PANEL_WEIGHT_STABILITY * stability_score + PANEL_WEIGHT_PRIOR_ANCHOR * prior_anchor_score
 
 
 def evaluate_acceptance_gate(

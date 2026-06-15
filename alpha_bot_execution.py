@@ -112,6 +112,7 @@ HISTORY_CACHE_FILE = "history_cache.json"
 # Used by the data-phase loop to detect a per-symphony zero -> positive
 # holdings transition (the intraday-rotation reset trigger).
 
+
 # Per risk-engine-specialist's B3 strict-positivity semantic: a symphony is
 # "in a holdings-positive state" iff the holdings list has at least one
 # entry AND at least one entry's allocation/amount is strictly > 0. No
@@ -150,6 +151,7 @@ def has_positive_holdings(holdings) -> bool:
                     continue
                 break
     return False
+
 
 COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
 ALPACA_BASE_URL = "https://data.alpaca.markets/v2"
@@ -213,7 +215,8 @@ def _resolve_bot_state_key(bot_state: dict, composer_id: str, name: str) -> str 
     if len(composer_id) >= _SYMPHONY_ID_PREFIX_LEN:
         prefix = composer_id[:_SYMPHONY_ID_PREFIX_LEN]
         prefix_candidates = [
-            k for k in bot_state
+            k
+            for k in bot_state
             if isinstance(bot_state[k], dict) and k[:_SYMPHONY_ID_PREFIX_LEN] == prefix
         ]
         if len(prefix_candidates) == 1:
@@ -235,7 +238,8 @@ def _resolve_bot_state_key(bot_state: dict, composer_id: str, name: str) -> str 
     # 3. Name match — last resort; requires a unique, non-empty name.
     if name:
         name_candidates = [
-            k for k in bot_state
+            k
+            for k in bot_state
             if isinstance(bot_state[k], dict) and bot_state[k].get("name") == name
         ]
         if len(name_candidates) == 1:
@@ -569,10 +573,7 @@ def check_fleet_correlation_and_update_state(
         for _t in tripped_triggers:
             _sid = _t.get("symphony_id") or ""
             _sym_entry = bot_state.get(_sid) if _sid else None
-            _name = (
-                (_sym_entry.get("name") if isinstance(_sym_entry, dict) else None)
-                or _sid
-            )
+            _name = (_sym_entry.get("name") if isinstance(_sym_entry, dict) else None) or _sid
             if _name and _name not in seen:
                 seen.add(_name)
                 tripped_names.append(_name)
@@ -813,21 +814,14 @@ def main():
                         # signal — reset does NOT fire — the trailing-stop sell-
                         # to-cash path proceeds normally on the same-cycle-as-
                         # trigger surface.
-                        current_holdings_positive = has_positive_holdings(
-                            sym.get("holdings", [])
-                        )
+                        current_holdings_positive = has_positive_holdings(sym.get("holdings", []))
                         prior_marker = bot_state[s_id].get("last_holdings_positive")
                         prior_value = bot_state[s_id].get("current_value")
                         try:
-                            prior_value_zero = (
-                                prior_value is not None
-                                and float(prior_value) <= 0.0
-                            )
+                            prior_value_zero = prior_value is not None and float(prior_value) <= 0.0
                         except (TypeError, ValueError):
                             prior_value_zero = False
-                        prior_zero_signal = (
-                            prior_marker is False or prior_value_zero
-                        )
+                        prior_zero_signal = prior_marker is False or prior_value_zero
                         if prior_zero_signal and current_holdings_positive:
                             # Reset transient fields in place — same canonical
                             # field set the trigger block writes, with the
@@ -944,8 +938,8 @@ def main():
                     # detect_zero_to_positive_holdings_transition sees an
                     # accurate prior_state. Computed from this cycle's
                     # Composer fetch — same source the reset detection used.
-                    bot_state[s_id]["last_holdings_positive"] = (
-                        has_positive_holdings(sym.get("holdings", []))
+                    bot_state[s_id]["last_holdings_positive"] = has_positive_holdings(
+                        sym.get("holdings", [])
                     )
 
             # Only persist here on pre-gate cycles; the action phase terminal save_state
@@ -1113,7 +1107,10 @@ def main():
                     f"  -> {'Weekend/Force' if current_et.weekday() >= 5 else 'Friday'} Detected. Starting autotune..."
                 )
                 autotuner_changes = autotuner.run_autotuner(
-                    bot_state, current_date_str, ACCOUNT_UUIDS, is_forced=force_run,
+                    bot_state,
+                    current_date_str,
+                    ACCOUNT_UUIDS,
+                    is_forced=force_run,
                     spec_bundle_id=database.get_or_create_phase1_theory_bundle_id(),
                 )
                 # run_autotuner returns a reason-carrying abort marker on a
@@ -1122,10 +1119,11 @@ def main():
                 # the per-symphony selection-stats augmentation, which expects
                 # genuine optimization results.
                 if autotuner_changes and not (
-                    isinstance(autotuner_changes, dict)
-                    and autotuner_changes.get("aborted")
+                    isinstance(autotuner_changes, dict) and autotuner_changes.get("aborted")
                 ):
-                    autotuner_changes = augment_optimization_results_with_selection_stats(autotuner_changes)
+                    autotuner_changes = augment_optimization_results_with_selection_stats(
+                        autotuner_changes
+                    )
             else:
                 print(f"  -> Day is {current_et.strftime('%A')}. Skipping weekly autotune.")
 
@@ -1317,7 +1315,10 @@ def main():
                 # to None (unprecedented regime); both paths converge here.
                 mc_available = prob_underperforming is not None
 
-                if mc_available and acc_TAKE_PROFIT_MC_PCT <= prob_underperforming < acc_TRIGGER_THRESHOLD_PCT:
+                if (
+                    mc_available
+                    and acc_TAKE_PROFIT_MC_PCT <= prob_underperforming < acc_TRIGGER_THRESHOLD_PCT
+                ):
                     should_arm = True
                     arm_reason = f"MC Prob {prob_underperforming:.1f}%"
                 elif not mc_available:
@@ -1502,9 +1503,7 @@ def main():
                     elif new_above_tp_count == 0 and prev_above_tp_count > 0:
                         print(f"  📉 {symphony_name[:35]} TP signal vanished. Still cranking.")
                 elif prev_tp_armed and not new_tp_armed:
-                    print(
-                        f"  *** {symphony_name} TP-DISARMED (MC Rose but Return <= 0) ***"
-                    )
+                    print(f"  *** {symphony_name} TP-DISARMED (MC Rose but Return <= 0) ***")
 
                 # Check 3: True VWAP Breakdown
                 new_vwap_ticks, new_vwap_bleed_ticks, is_vwap_broken, is_vwap_bleed_broken = (
@@ -1602,9 +1601,7 @@ def main():
                         "base_atr_pct": 0.0,
                         "dynamic_multiplier": 1.0,
                         "breakeven": (
-                            BREAKEVEN_RETURN_AXIS_VALUE
-                            if new_breakeven_locked
-                            else None
+                            BREAKEVEN_RETURN_AXIS_VALUE if new_breakeven_locked else None
                         ),
                         "vwap": current_return - (weighted_vwap_diff * 100),
                     }
@@ -1640,7 +1637,9 @@ def main():
                         neighbor_k=CVAR_LONG_NEIGHBOR_K,
                     )
                     _cvar_5pct_long = _cvar_long.cvar_pct
-                    _cvar_n_tail_long = _cvar_long.tail_obs_count if _cvar_long.cvar_pct is not None else None
+                    _cvar_n_tail_long = (
+                        _cvar_long.tail_obs_count if _cvar_long.cvar_pct is not None else None
+                    )
                 database.record_cvar_diagnostic(
                     cycle_id=current_et.isoformat(),
                     symphony_id=symphony_id,

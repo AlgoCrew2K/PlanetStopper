@@ -71,7 +71,7 @@ PCT_SCALAR = 100.0  # decimal return -> percentage points (math layer normalizes
 # Journal of Computational Finance 20(4), DOI 10.21314/JCF.2014.005.
 # ---------------------------------------------------------------------------
 _CSCV_TOP_K: int = 20  # top-K PRE-BHY configs fed into compute_pbo (selection-process robustness)
-_CSCV_S: int = 8       # number of contiguous chronological blocks for the IS/OOS partition
+_CSCV_S: int = 8  # number of contiguous chronological blocks for the IS/OOS partition
 # Reject threshold: derived — random config selection implies PBO=0.5 (IS-best ranks
 # uniformly over 1..K on OOS, so lambda<=0 with probability 0.5). PBO>0.5 means the
 # IS-best performs WORSE-than-random on OOS — definitive evidence of backtest overfitting.
@@ -329,9 +329,7 @@ def compute_time_squeeze_decay(time_ratio: float) -> tuple[float, float]:
     """
     _reject_non_finite(time_ratio=time_ratio)
     if time_ratio < 0.0 or time_ratio > 1.0:
-        raise ValueError(
-            f"time_ratio must be in the range [0, 1]; got {time_ratio!r}"
-        )
+        raise ValueError(f"time_ratio must be in the range [0, 1]; got {time_ratio!r}")
     decay_curve = 1.0 - math.sqrt(1.0 - time_ratio)
     dynamic_multiplier = float(MULT_OPEN - (MULT_OPEN - MULT_CLOSE) * decay_curve)
     dynamic_min_stop = float(MIN_STOP_OPEN - (MIN_STOP_OPEN - MIN_STOP_CLOSE) * decay_curve)
@@ -375,8 +373,7 @@ def compute_active_trailing_stop(
     )
     if parabolic_squeeze_multiplier <= 0:
         raise ValueError(
-            f"parabolic_squeeze_multiplier must be > 0; got "
-            f"{parabolic_squeeze_multiplier!r}"
+            f"parabolic_squeeze_multiplier must be > 0; got {parabolic_squeeze_multiplier!r}"
         )
     safe_vol = symphony_vol if symphony_vol > 0 else VOL_FALLBACK
     active = max(safe_vol * dynamic_multiplier, dynamic_min_stop)
@@ -552,9 +549,7 @@ def compute_exit_confirmation(
     # MC breakdown gate: unavailable (None) -> pass (fail-safe); otherwise a real
     # confirmed-high underperformance (>= MC_BREAKDOWN_THRESHOLD) ALLOWS the exit,
     # while a low reading vetoes it (the MC second opinion says this dip is normal).
-    mc_breakdown_ok = (
-        prob_underperforming is None or prob_underperforming >= MC_BREAKDOWN_THRESHOLD
-    )
+    mc_breakdown_ok = prob_underperforming is None or prob_underperforming >= MC_BREAKDOWN_THRESHOLD
     below_stop_condition = (
         current_return <= (stop_trigger_level - MAGNITUDE_FLOOR_PCT)
     ) and mc_breakdown_ok
@@ -653,7 +648,9 @@ def apply_regime_exit_adjustment(regime_label: str | None, base_ticks: int) -> i
 
 
 # Take-profit confirmation constant (gates the take-profit trigger)
-TP_CONFIRM_TICKS = 2  # consecutive above-threshold ticks (with return > 0) needed to confirm a take-profit exit
+TP_CONFIRM_TICKS = (
+    2  # consecutive above-threshold ticks (with return > 0) needed to confirm a take-profit exit
+)
 
 
 def compute_tp_confirmation(
@@ -785,8 +782,12 @@ def compute_vwap_signals(
 
 
 # VWAP bleed-arm constants (dynamic exit threshold for VWAP-bleed system; always negative)
-VWAP_BLEED_ARM_MIN = -3.0  # most-negative clamp; deepest bleed threshold allowed (further drops do not arm any sooner)
-VWAP_BLEED_ARM_MAX = -0.5  # least-negative clamp; arm threshold must be at least this deep (shallower drops never arm)
+VWAP_BLEED_ARM_MIN = (
+    -3.0
+)  # most-negative clamp; deepest bleed threshold allowed (further drops do not arm any sooner)
+VWAP_BLEED_ARM_MAX = (
+    -0.5
+)  # least-negative clamp; arm threshold must be at least this deep (shallower drops never arm)
 
 
 def compute_vwap_bleed_arm_threshold(
@@ -820,7 +821,9 @@ def compute_vwap_bleed_arm_threshold(
 
 # VWAP breakdown constants (gates the VWAP exit state machine)
 VWAP_WEIGHT_THRESHOLD = 0.5  # minimum allocation coverage to evaluate VWAP signals; below this, the weighted diff is too unreliable
-VWAP_BREAK_CONFIRM_TICKS = 3  # consecutive qualifying ticks for System A (profit-protection break) to flip is_vwap_broken
+VWAP_BREAK_CONFIRM_TICKS = (
+    3  # consecutive qualifying ticks for System A (profit-protection break) to flip is_vwap_broken
+)
 
 
 def compute_vwap_breakdown_update(
@@ -1134,7 +1137,7 @@ def _compute_rolling_spy_vol(spy_returns: np.ndarray) -> np.ndarray:
         cs2 = np.cumsum(spy_returns[:grow_end] ** 2)
         k_vals = np.arange(2, grow_end + 1, dtype=float)
         means = cs[1:] / k_vals
-        var = cs2[1:] / k_vals - means ** 2
+        var = cs2[1:] / k_vals - means**2
         result[1:grow_end] = np.sqrt(np.maximum(var, 0.0))
 
     return result
@@ -1227,9 +1230,7 @@ def run_monte_carlo(
     today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
 
     # Euclidean distance across 2 standardized dimensions
-    distances = np.sqrt(
-        (cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2
-    )
+    distances = np.sqrt((cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2)
 
     # 2. Get top K indices (into the candidate pool)
     if len(distances) <= neighbor_k:
@@ -1619,6 +1620,7 @@ def compute_portfolio_cvar(
         )
         if mode is not None:
             import database as _db  # lazy import — math_engine is pure-math at module level
+
             _db.record_cvar_diagnostic(
                 cycle_id=cycle_id,
                 symphony_id="",
@@ -1663,9 +1665,7 @@ def compute_portfolio_cvar(
     today_ret_z = 0.0 if ret_std == 0.0 else (spy_today_ret_dec - ret_mean) / ret_std
     today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
 
-    distances = np.sqrt(
-        (cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2
-    )
+    distances = np.sqrt((cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2)
 
     if len(distances) <= neighbor_k:
         nearest_pool_indices = np.arange(len(distances))
@@ -1711,6 +1711,7 @@ def compute_portfolio_cvar(
 
     if mode is not None:
         import database as _db  # lazy import — math_engine is pure-math at module level
+
         _db.record_cvar_diagnostic(
             cycle_id=cycle_id,
             symphony_id="",
@@ -1821,7 +1822,9 @@ def compute_regime_match_quality(
             _reject_non_finite_in_records([ticker_data], "daily_ret")
     # Operator-overridable threshold (env var beats module-level default).
     _env_override = os.environ.get("MC_REGIME_MATCH_CHI2_THRESHOLD")
-    threshold = float(_env_override) if _env_override is not None else MC_REGIME_MATCH_CHI2_THRESHOLD
+    threshold = (
+        float(_env_override) if _env_override is not None else MC_REGIME_MATCH_CHI2_THRESHOLD
+    )
 
     # K for the kNN test statistic — reuses the canonical MC default constant.
     k = MC_DEFAULT_NEIGHBOR_K

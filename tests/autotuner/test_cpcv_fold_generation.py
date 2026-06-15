@@ -35,6 +35,7 @@ Citations:
   docs/research/optuna/sources.md — CPCV/Purged-Embargoed CV section
   feature-plans/walk-forward-overhaul.md — Phase 2 AC-1 through AC-5
 """
+
 from __future__ import annotations
 
 import ast
@@ -63,6 +64,7 @@ _BHY_TOL = 1e-9
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_fold_fixture() -> dict:
     return json.loads(
         (_FIXTURE_DIR / "cpcv_fold_generation_basic.json").read_text(encoding="utf-8")
@@ -77,6 +79,7 @@ def _load_multiplicity_fixture() -> dict:
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -113,8 +116,8 @@ def _make_fake_trial(value: float, daily_returns: list[float]):
 # Precondition: fixture files exist and are well-formed
 # ===========================================================================
 
-class TestFixturesPrecondition:
 
+class TestFixturesPrecondition:
     def test_fold_fixture_exists_and_parses(self):
         """The golden fold fixture must exist and be valid JSON before math tests run."""
         path = _FIXTURE_DIR / "cpcv_fold_generation_basic.json"
@@ -141,10 +144,12 @@ class TestFixturesPrecondition:
     def test_fold_fixture_split_count_matches_formula(self):
         """Fixture must record C(6,2)=15 splits — derived constant, not a literal."""
         fix = _load_fold_fixture()
-        expected = int(math.comb(
-            fix["parameters"]["n_groups"],
-            fix["parameters"]["k_test_groups"],
-        ))
+        expected = int(
+            math.comb(
+                fix["parameters"]["n_groups"],
+                fix["parameters"]["k_test_groups"],
+            )
+        )
         assert fix["derived_constants"]["n_splits"] == expected, (
             f"Fixture n_splits={fix['derived_constants']['n_splits']} does not match "
             f"C({fix['parameters']['n_groups']},{fix['parameters']['k_test_groups']})={expected}."
@@ -169,6 +174,7 @@ class TestFixturesPrecondition:
 # ===========================================================================
 # AC-1 — Named constants + function signature
 # ===========================================================================
+
 
 class TestAC1NamedConstants:
     """
@@ -215,8 +221,7 @@ class TestAC1NamedConstants:
         """_CPCV_N_SPLITS must be derived via math.comb(N,k), not a raw literal 15."""
         src = _parse_autotuner_source()
         assert "_CPCV_N_SPLITS" in src, (
-            "autotuner.py must define _CPCV_N_SPLITS (AC-1). "
-            "RED until added."
+            "autotuner.py must define _CPCV_N_SPLITS (AC-1). RED until added."
         )
         # The source must reference math.comb (not just '= 15')
         # Find the assignment line and check it is a computed expression.
@@ -270,8 +275,7 @@ class TestAC1NamedConstants:
             "autotuner._CPCV_N_PATHS not found — RED until implementer adds it."
         )
         expected = int(
-            (autotuner._CPCV_K_TEST_GROUPS / autotuner._CPCV_N_GROUPS)
-            * autotuner._CPCV_N_SPLITS
+            (autotuner._CPCV_K_TEST_GROUPS / autotuner._CPCV_N_GROUPS) * autotuner._CPCV_N_SPLITS
         )
         assert autotuner._CPCV_N_PATHS == expected, (
             f"_CPCV_N_PATHS={autotuner._CPCV_N_PATHS}; expected "
@@ -283,8 +287,7 @@ class TestAC1NamedConstants:
         src = _parse_autotuner_source()
         lines = src.splitlines()
         n_groups_lines = [
-            (i, l) for i, l in enumerate(lines)
-            if re.search(r"\b_CPCV_N_GROUPS\b\s*=", l)
+            (i, l) for i, l in enumerate(lines) if re.search(r"\b_CPCV_N_GROUPS\b\s*=", l)
         ]
         assert n_groups_lines, "_CPCV_N_GROUPS assignment not found."
         lineno, _ = n_groups_lines[0]
@@ -292,7 +295,7 @@ class TestAC1NamedConstants:
         start = lineno
         while start > 0 and lines[start - 1].lstrip().startswith("#"):
             start -= 1
-        comment_block = "\n".join(lines[start:lineno + 1])
+        comment_block = "\n".join(lines[start : lineno + 1])
         has_ldp = bool(re.search(r"[Ll][óo]pez de Prado|LdP", comment_block))
         has_ch7 = "7.4" in comment_block or "Ch. 7" in comment_block
         assert has_ldp and has_ch7, (
@@ -308,9 +311,8 @@ class TestAC1NamedConstants:
             "k_test, purge_days, embargo_days) (AC-1). RED until added."
         )
         import inspect
-        assert callable(autotuner._generate_cpcv_folds), (
-            "_generate_cpcv_folds must be callable."
-        )
+
+        assert callable(autotuner._generate_cpcv_folds), "_generate_cpcv_folds must be callable."
 
     def test_aggregate_cpcv_paths_function_exists(self):
         """autotuner.py must expose _aggregate_cpcv_paths as a callable (AC-2)."""
@@ -318,14 +320,13 @@ class TestAC1NamedConstants:
         assert hasattr(autotuner, "_aggregate_cpcv_paths"), (
             "autotuner must expose _aggregate_cpcv_paths(...) (AC-2). RED until added."
         )
-        assert callable(autotuner._aggregate_cpcv_paths), (
-            "_aggregate_cpcv_paths must be callable."
-        )
+        assert callable(autotuner._aggregate_cpcv_paths), "_aggregate_cpcv_paths must be callable."
 
 
 # ===========================================================================
 # AC-1 — _generate_cpcv_folds output shape
 # ===========================================================================
+
 
 class TestAC1FoldGenerationShape:
     """
@@ -405,6 +406,7 @@ class TestAC1FoldGenerationShape:
 # AC-3 — Leakage-free: train ∩ test = ∅ for EVERY split
 # ===========================================================================
 
+
 class TestAC3LeakageFreeAllSplits:
     """
     AC-3: No train date may appear in the test set for any of the 15 splits.
@@ -477,6 +479,7 @@ class TestAC3LeakageFreeAllSplits:
 # ===========================================================================
 # AC-3 — Embargo gap ≥ EMBARGO_DAYS on every seam
 # ===========================================================================
+
 
 class TestAC3EmbargoGapAllSeams:
     """
@@ -613,7 +616,7 @@ class TestAC3EmbargoGapAllSeams:
                         failures.append(
                             f"Split {i}: train date {train_d} (idx={t_idx}) has "
                             f"feature lookback reaching test date at idx={ti} "
-                            f"(purge_window=[{t_idx}, {t_idx+purge}]). "
+                            f"(purge_window=[{t_idx}, {t_idx + purge}]). "
                             "Purge must remove this train date."
                         )
                         break
@@ -630,6 +633,7 @@ class TestAC3EmbargoGapAllSeams:
 # ===========================================================================
 # AC-2 — _aggregate_cpcv_paths assembles phi[6,2]=5 paths
 # ===========================================================================
+
 
 class TestAC2PathAggregation:
     """
@@ -745,6 +749,7 @@ class TestAC2PathAggregation:
 # AC-4 — Objective scores on CPCV aggregate per trial (NOT 15 per trial)
 # ===========================================================================
 
+
 class TestAC4ObjectiveScoredOnAggregate:
     """
     AC-4: The Optuna objective must score each trial on the MEAN across the 5
@@ -783,15 +788,16 @@ class TestAC4ObjectiveScoredOnAggregate:
             "_CPCV_N_SPLITS not found — this test requires AC-1 to be implemented first."
         )
         n_splits = autotuner._CPCV_N_SPLITS
-        assert n_trials != n_trials * n_splits, (
-            f"Sanity: {n_trials} != {n_trials * n_splits}."
-        )
+        assert n_trials != n_trials * n_splits, f"Sanity: {n_trials} != {n_trials * n_splits}."
         # The production trial count must remain as-is (500); it was set for
         # statistical stability, not for CPCV expansion.
         # The existing test_optuna_n_trials_named.py guards the exact value via
         # tests/fixtures/autotuner/optuna_n_trials_pin_contract.json.
         pin_fixture = (
-            _WORKTREE_ROOT / "tests" / "fixtures" / "autotuner"
+            _WORKTREE_ROOT
+            / "tests"
+            / "fixtures"
+            / "autotuner"
             / "optuna_n_trials_pin_contract.json"
         )
         assert pin_fixture.exists(), (
@@ -803,6 +809,7 @@ class TestAC4ObjectiveScoredOnAggregate:
 # ===========================================================================
 # AC-5 — compute_n_effective is UNCHANGED by CPCV (anti-double-count)
 # ===========================================================================
+
 
 class TestAC5MultiplicityUntouched:
     """
@@ -829,12 +836,8 @@ class TestAC5MultiplicityUntouched:
         single_scenario = fix["scenarios"]["single_path_n_effective"]
         five_scenario = fix["scenarios"]["five_path_n_effective"]
 
-        n_eff_single = autotuner.compute_n_effective(
-            single_scenario["n_optuna"], lambda: []
-        )
-        n_eff_five = autotuner.compute_n_effective(
-            five_scenario["n_optuna"], lambda: []
-        )
+        n_eff_single = autotuner.compute_n_effective(single_scenario["n_optuna"], lambda: [])
+        n_eff_five = autotuner.compute_n_effective(five_scenario["n_optuna"], lambda: [])
 
         assert n_eff_single == single_scenario["expected_n_effective"], (
             f"compute_n_effective with n_paths=1 and empty ledger should return "
@@ -856,6 +859,7 @@ class TestAC5MultiplicityUntouched:
         If such a parameter exists, the implementer likely inflates N by path count.
         """
         import inspect
+
         autotuner = _import_autotuner()
         assert hasattr(autotuner, "compute_n_effective"), (
             "compute_n_effective not found — prerequisite for AC-5 tests."
@@ -877,10 +881,9 @@ class TestAC5MultiplicityUntouched:
         paths are assembled — a category error.
         """
         import inspect
+
         autotuner = _import_autotuner()
-        assert hasattr(autotuner, "_haircut_select"), (
-            "_haircut_select not found."
-        )
+        assert hasattr(autotuner, "_haircut_select"), "_haircut_select not found."
         sig = inspect.signature(autotuner._haircut_select)
         cpcv_params = {p for p in sig.parameters if "cpcv" in p.lower() or "path" in p.lower()}
         # 'n_effective' is allowed (pre-existing); 'tstat_fn' and 'gamma' are allowed.
@@ -959,8 +962,7 @@ class TestAC5MultiplicityUntouched:
         # If inflation occurred, at least one adjusted p-value would be larger.
         # (This is always true since Yekutieli c(N) is monotone increasing.)
         found_increase = any(
-            p_adj_inflated[i] > p_adj_baseline[i] + _BHY_TOL
-            for i in range(len(p_values))
+            p_adj_inflated[i] > p_adj_baseline[i] + _BHY_TOL for i in range(len(p_values))
         )
         assert found_increase, (
             "BHY inflation should be detectable when N is multiplied by n_splits, "
@@ -971,6 +973,7 @@ class TestAC5MultiplicityUntouched:
 # ===========================================================================
 # AC-6 (partial) — No DSR machinery reintroduced (D3 tripwire)
 # ===========================================================================
+
 
 class TestAC6NoDSRReintroduced:
     """
@@ -987,7 +990,7 @@ class TestAC6NoDSRReintroduced:
         if start == -1:
             pytest.skip("_generate_cpcv_folds not yet implemented — skip DSR check.")
         next_def = src.find("\ndef ", start + 1)
-        func_body = src[start:next_def if next_def != -1 else len(src)]
+        func_body = src[start : next_def if next_def != -1 else len(src)]
         assert "compute_deflated_sharpe_ratio" not in func_body, (
             "_generate_cpcv_folds must not reference compute_deflated_sharpe_ratio. "
             "DSR was deleted under Decision D3 (test_c4_dsr_machinery_removed.py tripwire)."
@@ -1000,7 +1003,7 @@ class TestAC6NoDSRReintroduced:
         if start == -1:
             pytest.skip("_aggregate_cpcv_paths not yet implemented — skip DSR check.")
         next_def = src.find("\ndef ", start + 1)
-        func_body = src[start:next_def if next_def != -1 else len(src)]
+        func_body = src[start : next_def if next_def != -1 else len(src)]
         assert "compute_deflated_sharpe_ratio" not in func_body, (
             "_aggregate_cpcv_paths must not reference compute_deflated_sharpe_ratio. "
             "DSR was deleted under Decision D3."
@@ -1025,6 +1028,7 @@ class TestAC6NoDSRReintroduced:
 # Import boundary — alpha_bot_execution must never import CPCV
 # ===========================================================================
 
+
 class TestImportBoundary:
     """
     CPCV is a training-phase concern. alpha_bot_execution.py must never import
@@ -1038,8 +1042,14 @@ class TestImportBoundary:
         if not abe_path.exists():
             pytest.skip("alpha_bot_execution.py not found.")
         src = abe_path.read_text(encoding="utf-8")
-        for symbol in ("_generate_cpcv_folds", "_aggregate_cpcv_paths", "_CPCV_N_GROUPS",
-                        "_CPCV_K_TEST_GROUPS", "_CPCV_N_SPLITS", "_CPCV_N_PATHS"):
+        for symbol in (
+            "_generate_cpcv_folds",
+            "_aggregate_cpcv_paths",
+            "_CPCV_N_GROUPS",
+            "_CPCV_K_TEST_GROUPS",
+            "_CPCV_N_SPLITS",
+            "_CPCV_N_PATHS",
+        ):
             assert symbol not in src, (
                 f"alpha_bot_execution.py references CPCV symbol '{symbol}'. "
                 "CPCV is a training-phase concern; it must never appear on the live "
@@ -1050,6 +1060,7 @@ class TestImportBoundary:
 # ===========================================================================
 # Helpers (module-level, used by multiple test classes)
 # ===========================================================================
+
 
 def _call_generate_cpcv_folds(fix: dict) -> list:
     """Call _generate_cpcv_folds or pytest.fail with a RED message if not implemented."""
@@ -1068,9 +1079,7 @@ def _call_generate_cpcv_folds(fix: dict) -> list:
     )
 
 
-def _find_test_blocks(
-    test_sorted: list[str], date_to_idx: dict[str, int]
-) -> list[tuple[str, str]]:
+def _find_test_blocks(test_sorted: list[str], date_to_idx: dict[str, int]) -> list[tuple[str, str]]:
     """Identify contiguous blocks in a sorted list of test dates.
 
     Returns a list of (block_start, block_end) tuples where each block
@@ -1172,9 +1181,7 @@ class TestAC2CanonicalPathCompleteness:
         failures = []
         for i, path in enumerate(paths):
             path_dates = list(path) if not isinstance(path, list) else path
-            groups_covered = set(
-                date_to_group[d] for d in path_dates if d in date_to_group
-            )
+            groups_covered = set(date_to_group[d] for d in path_dates if d in date_to_group)
             if groups_covered != set(range(n_groups)):
                 missing = set(range(n_groups)) - groups_covered
                 extra = groups_covered - set(range(n_groups))
@@ -1182,8 +1189,7 @@ class TestAC2CanonicalPathCompleteness:
                     "path {}: covers groups {}, "
                     "missing={}, unexpected={}. "
                     "Path has {} dates.".format(
-                        i, sorted(groups_covered), sorted(missing),
-                        sorted(extra), len(path_dates)
+                        i, sorted(groups_covered), sorted(missing), sorted(extra), len(path_dates)
                     )
                 )
 
@@ -1266,8 +1272,9 @@ class TestAC2CanonicalPathCompleteness:
                     if path_dates[j] < path_dates[j - 1]
                 ][:3]
                 failures.append(
-                    "path {}: dates are NOT monotonically sorted. "
-                    "First violations: {}".format(i, out_of_order)
+                    "path {}: dates are NOT monotonically sorted. First violations: {}".format(
+                        i, out_of_order
+                    )
                 )
 
         assert not failures, (
@@ -1317,16 +1324,13 @@ class TestAC2CanonicalPathCompleteness:
 
         failures = []
         for split_idx, fold in enumerate(folds):
-            test_groups = tuple(sorted(set(
-                date_to_group[d] for d in fold["test_dates"]
-                if d in date_to_group
-            )))
+            test_groups = tuple(
+                sorted(set(date_to_group[d] for d in fold["test_dates"] if d in date_to_group))
+            )
             expected_paths = canonical.get(test_groups)
             if expected_paths is None:
                 failures.append(
-                    "split {}: test_groups={} not in canonical map.".format(
-                        split_idx, test_groups
-                    )
+                    "split {}: test_groups={} not in canonical map.".format(split_idx, test_groups)
                 )
                 continue
             actual_pm = sorted(set(fold["path_membership"]))
@@ -1373,10 +1377,9 @@ class TestAC2CanonicalPathCompleteness:
 
         failures = []
         for split_idx, fold in enumerate(folds):
-            test_groups = tuple(sorted(set(
-                date_to_group[d] for d in fold["test_dates"]
-                if d in date_to_group
-            )))
+            test_groups = tuple(
+                sorted(set(date_to_group[d] for d in fold["test_dates"] if d in date_to_group))
+            )
             if len(test_groups) == 2 and test_groups in adjacent_pairs:
                 unique_paths = sorted(set(fold["path_membership"]))
                 if len(unique_paths) != 1:
@@ -1384,15 +1387,13 @@ class TestAC2CanonicalPathCompleteness:
                         "split {} (adjacent pair {}): "
                         "path_membership={} has {} unique paths; must be exactly 1 "
                         "(both groups fill the same path in canonical algorithm).".format(
-                            split_idx, test_groups, list(fold["path_membership"]),
-                            len(unique_paths)
+                            split_idx, test_groups, list(fold["path_membership"]), len(unique_paths)
                         )
                     )
 
-        assert not failures, (
-            "Adjacent-pair single-membership violated on {} split(s):\n".format(len(failures))
-            + "\n".join(failures)
-        )
+        assert not failures, "Adjacent-pair single-membership violated on {} split(s):\n".format(
+            len(failures)
+        ) + "\n".join(failures)
 
     def test_nonadjacent_combos_have_two_path_membership(self, folds_and_paths):
         """
@@ -1418,10 +1419,9 @@ class TestAC2CanonicalPathCompleteness:
 
         failures = []
         for split_idx, fold in enumerate(folds):
-            test_groups = tuple(sorted(set(
-                date_to_group[d] for d in fold["test_dates"]
-                if d in date_to_group
-            )))
+            test_groups = tuple(
+                sorted(set(date_to_group[d] for d in fold["test_dates"] if d in date_to_group))
+            )
             if len(test_groups) == 2 and test_groups not in adjacent_pairs:
                 unique_paths = sorted(set(fold["path_membership"]))
                 if len(unique_paths) != 2:
@@ -1429,15 +1429,12 @@ class TestAC2CanonicalPathCompleteness:
                         "split {} (non-adjacent pair {}): "
                         "path_membership={} has {} unique paths; must be exactly 2 "
                         "(the two groups fill different paths in canonical algorithm).".format(
-                            split_idx, test_groups, list(fold["path_membership"]),
-                            len(unique_paths)
+                            split_idx, test_groups, list(fold["path_membership"]), len(unique_paths)
                         )
                     )
 
         assert not failures, (
-            "Non-adjacent-pair two-path membership violated on {} split(s):\n".format(
-                len(failures)
-            )
+            "Non-adjacent-pair two-path membership violated on {} split(s):\n".format(len(failures))
             + "\n".join(failures)
         )
 
@@ -1476,7 +1473,8 @@ class TestAC2CanonicalPathCompleteness:
                 )
 
         assert not failures, (
-            "Combos-per-path invariant FAILED:\n" + "\n".join(failures)
+            "Combos-per-path invariant FAILED:\n"
+            + "\n".join(failures)
             + "\nEach of the {} paths must receive contributions from "
             "exactly N-1={} combinations. "
             "Modulo round-robin gives 15/5=3 combos per path - wrong.".format(
@@ -1512,11 +1510,8 @@ class TestAC2CanonicalPathCompleteness:
             missing = expected_dates - path_dates
             if extra or missing:
                 failures.append(
-                    "path {}: extra={} dates, "
-                    "missing={} dates. "
-                    "Expected {}, got {}.".format(
-                        path_idx, len(extra), len(missing),
-                        len(expected_dates), len(path_dates)
+                    "path {}: extra={} dates, missing={} dates. Expected {}, got {}.".format(
+                        path_idx, len(extra), len(missing), len(expected_dates), len(path_dates)
                     )
                 )
 

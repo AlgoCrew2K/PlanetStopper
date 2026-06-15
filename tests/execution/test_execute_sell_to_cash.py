@@ -88,8 +88,10 @@ def sym_and_account():
 class TestHappyPath:
     def test_http_200_first_call_returns_true_and_posts_once(self, sym_and_account):
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep") as mock_sleep:
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep") as mock_sleep,
+        ):
             mock_post.return_value = _make_response(200)
             result = alpha_bot_execution.execute_sell_to_cash(sym, acct)
         assert result is True
@@ -101,8 +103,10 @@ class TestHappyPath:
     def test_2xx_family_treated_as_success(self, sym_and_account, ok_status):
         """Pins that 201 and 202 are treated as success, not only 200."""
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep"):
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
             mock_post.return_value = _make_response(ok_status)
             assert alpha_bot_execution.execute_sell_to_cash(sym, acct) is True
             assert mock_post.call_count == 1
@@ -110,8 +114,10 @@ class TestHappyPath:
     def test_posts_to_composer_go_to_cash_url(self, sym_and_account):
         """URL shape regression: ``/deploy/accounts/{acct}/symphonies/{sym}/go-to-cash``."""
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep"):
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
             mock_post.return_value = _make_response(200)
             alpha_bot_execution.execute_sell_to_cash(sym, acct)
         called_url = mock_post.call_args[0][0]
@@ -126,11 +132,15 @@ class TestHappyPath:
 # 2. 429 with Retry-After header — sleeps N seconds, then retries
 # -----------------------------------------------------------------------------
 class Test429RateLimit:
-    def test_429_with_retry_after_sleeps_header_value_then_retries_to_success(self, sym_and_account):
+    def test_429_with_retry_after_sleeps_header_value_then_retries_to_success(
+        self, sym_and_account
+    ):
         sym, acct = sym_and_account
         retry_after_value = 7  # arbitrary; verified to be the slept value
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep") as mock_sleep:
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep") as mock_sleep,
+        ):
             mock_post.side_effect = [
                 _make_response(429, headers={"Retry-After": str(retry_after_value)}),
                 _make_response(200),
@@ -146,8 +156,10 @@ class Test429RateLimit:
 
     def test_429_without_retry_after_falls_back_to_60s(self, sym_and_account):
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep") as mock_sleep:
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep") as mock_sleep,
+        ):
             mock_post.side_effect = [
                 _make_response(429, headers={}),  # no Retry-After
                 _make_response(200),
@@ -166,11 +178,11 @@ class Test429RateLimit:
         guarding it. After ``range(5)`` exhausts, the trailing
         ``return False`` fires. Five HTTP calls total."""
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep"):
-            mock_post.return_value = _make_response(
-                429, headers={"Retry-After": "1"}
-            )
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
+            mock_post.return_value = _make_response(429, headers={"Retry-After": "1"})
             result = alpha_bot_execution.execute_sell_to_cash(sym, acct)
         assert result is False
         # Loop body is range(len(backoff_intervals) + 1) == range(5).
@@ -187,8 +199,10 @@ class Test5xxRetryBackoff:
         branch is skipped (``attempt < 4`` is False), so it falls through to
         the rejection path (which sleeps 1.5 and returns False)."""
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep") as mock_sleep:
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep") as mock_sleep,
+        ):
             mock_post.return_value = _make_response(500)
             result = alpha_bot_execution.execute_sell_to_cash(sym, acct)
 
@@ -211,8 +225,10 @@ class Test5xxRetryBackoff:
         """Pins that the 5xx branch uses ``status_code >= 500`` (no whitelist).
         Mixed sequences should recover when the next call succeeds."""
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep") as mock_sleep:
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep") as mock_sleep,
+        ):
             mock_post.side_effect = [
                 _make_response(server_status),
                 _make_response(200),
@@ -228,8 +244,10 @@ class Test5xxRetryBackoff:
     def test_500_500_then_200_returns_true_with_backoff_1_then_2(self, sym_and_account):
         """Brief item 5: 500, 500, 200 → True; backoff [1, 2] honored."""
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep") as mock_sleep:
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep") as mock_sleep,
+        ):
             mock_post.side_effect = [
                 _make_response(500),
                 _make_response(500),
@@ -241,7 +259,7 @@ class Test5xxRetryBackoff:
         assert mock_post.call_count == 3
         slept = [c.args[0] for c in mock_sleep.call_args_list]
         # Backoffs [1, 2] must appear in order BEFORE the post-success sleep.
-        assert slept[: 2] == EXPECTED_BACKOFF_SEQUENCE[: 2], (
+        assert slept[:2] == EXPECTED_BACKOFF_SEQUENCE[:2], (
             f"Expected backoff prefix {EXPECTED_BACKOFF_SEQUENCE[:2]}; got {slept}"
         )
         assert slept[-1] == EXPECTED_POST_SUCCESS_SLEEP
@@ -256,8 +274,10 @@ class TestNetworkException:
         ``False``, no crash. REGRESSION PIN (vs. brief): the function actually
         RETRIES with backoff before giving up — 5 attempts total."""
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep") as mock_sleep:
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep") as mock_sleep,
+        ):
             mock_post.side_effect = requests.RequestException("boom")
             # Must not raise.
             result = alpha_bot_execution.execute_sell_to_cash(sym, acct)
@@ -273,8 +293,10 @@ class TestNetworkException:
 
     def test_transient_network_exception_then_success_returns_true(self, sym_and_account):
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep"):
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
             mock_post.side_effect = [
                 requests.RequestException("transient"),
                 _make_response(200),
@@ -294,8 +316,10 @@ class TestNonRetriable4xx:
         and the 5xx branch and hit the generic "rejected" return. One POST,
         one post-reject cooldown sleep, return False."""
         sym, acct = sym_and_account
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep") as mock_sleep:
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep") as mock_sleep,
+        ):
             mock_post.return_value = _make_response(client_status)
             result = alpha_bot_execution.execute_sell_to_cash(sym, acct)
         assert result is False
@@ -316,11 +340,11 @@ class TestSecretsHygiene:
         branch. Pinned per cycle #27 secrets-hygiene fix."""
         sym, acct = sym_and_account
         buf = io.StringIO()
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep"):
-            mock_post.return_value = _make_response(
-                status_code, text=self.SENTINEL_BODY
-            )
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
+            mock_post.return_value = _make_response(status_code, text=self.SENTINEL_BODY)
             with redirect_stdout(buf):
                 alpha_bot_execution.execute_sell_to_cash(sym, acct)
         captured = buf.getvalue()
@@ -335,8 +359,10 @@ class TestSecretsHygiene:
         for triage. This is the inverse of the secrets-hygiene assertion."""
         sym, acct = sym_and_account
         buf = io.StringIO()
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep"):
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
             mock_post.return_value = _make_response(
                 status_code, headers={"Retry-After": "1"} if status_code == 429 else None
             )
@@ -363,8 +389,10 @@ class TestSecretsHygiene:
         sym, acct = sym_and_account
         buf = io.StringIO()
         sentinel = "EXC_MSG_NOT_A_BODY"
-        with patch.object(alpha_bot_execution.requests, "post") as mock_post, \
-             patch.object(alpha_bot_execution.time, "sleep"):
+        with (
+            patch.object(alpha_bot_execution.requests, "post") as mock_post,
+            patch.object(alpha_bot_execution.time, "sleep"),
+        ):
             mock_post.side_effect = requests.RequestException(sentinel)
             with redirect_stdout(buf):
                 result = alpha_bot_execution.execute_sell_to_cash(sym, acct)
@@ -372,8 +400,7 @@ class TestSecretsHygiene:
         captured = buf.getvalue()
         # Positive pin: exception class name must appear for operator triage.
         assert "RequestException" in captured, (
-            f"Exception class name missing from stdout; operators need it. "
-            f"Captured: {captured!r}"
+            f"Exception class name missing from stdout; operators need it. Captured: {captured!r}"
         )
         # Negative pin (gate 7): exception message text must NOT appear —
         # it may carry account_id via URL or bearer token via auth header.

@@ -77,6 +77,7 @@ def _capture_stdout_stderr_and_logs(caplog, func, *args, **kwargs):
     sys.stderr = StringIO()
     try:
         import logging
+
         func(*args, **kwargs)
         stdout_text = sys.stdout.getvalue()
         stderr_text = sys.stderr.getvalue()
@@ -95,6 +96,7 @@ def _all_output(stdout: str, stderr: str, log_text: str) -> str:
 # ---------------------------------------------------------------------------
 # S1: fetch_symphony_stats error path must not print account_id
 # ---------------------------------------------------------------------------
+
 
 def test_fetch_symphony_stats_error_does_not_print_account_id(capsys, caplog):
     """Gate 7 S1: the fetch_symphony_stats error path must not print the
@@ -116,12 +118,15 @@ def test_fetch_symphony_stats_error_does_not_print_account_id(capsys, caplog):
     mock_response.status_code = 403
 
     import logging
+
     with patch("requests.get", return_value=mock_response):
         with caplog.at_level(logging.DEBUG):
             abe.fetch_symphony_stats(test_account_id)
 
     captured = capsys.readouterr()
-    all_output = _all_output(captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records))
+    all_output = _all_output(
+        captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records)
+    )
 
     assert test_account_id not in all_output, (
         f"Gate 7 S1 violation: account_id '{test_account_id}' found in operator output. "
@@ -138,6 +143,7 @@ def test_fetch_symphony_stats_error_does_not_print_account_id(capsys, caplog):
 # S2: fetch_symphony_stats RequestException must not print exception message
 #     when exception contains a bearer token
 # ---------------------------------------------------------------------------
+
 
 def test_fetch_symphony_stats_exception_with_bearer_does_not_print_token(capsys, caplog):
     """Gate 7 S2: when a RequestException message contains a Bearer token
@@ -156,12 +162,15 @@ def test_fetch_symphony_stats_exception_with_bearer_does_not_print_token(capsys,
     )
 
     import logging
+
     with patch("requests.get", side_effect=exception_with_token):
         with caplog.at_level(logging.DEBUG):
             abe.fetch_symphony_stats(test_account_id)
 
     captured = capsys.readouterr()
-    all_output = _all_output(captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records))
+    all_output = _all_output(
+        captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records)
+    )
 
     assert not _BEARER_FRAGMENT_PATTERN.search(all_output), (
         f"Gate 7 S2 violation: Bearer token fragment found in operator output. "
@@ -173,6 +182,7 @@ def test_fetch_symphony_stats_exception_with_bearer_does_not_print_token(capsys,
 # ---------------------------------------------------------------------------
 # S3: execute_sell_to_cash must not print account_id via str(e) on exception
 # ---------------------------------------------------------------------------
+
 
 def test_execute_sell_to_cash_exception_does_not_print_account_id(capsys, caplog):
     """Gate 7 S3: execute_sell_to_cash must not print the account_id in its
@@ -197,13 +207,16 @@ def test_execute_sell_to_cash_exception_does_not_print_account_id(capsys, caplog
         )
 
     import logging
+
     with patch("requests.post", side_effect=_exception_with_url):
         with patch("time.sleep"):  # prevent actual sleeps in retry loop
             with caplog.at_level(logging.DEBUG):
                 abe.execute_sell_to_cash(test_symphony_id, test_account_id)
 
     captured = capsys.readouterr()
-    all_output = _all_output(captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records))
+    all_output = _all_output(
+        captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records)
+    )
 
     assert test_account_id not in all_output, (
         f"Gate 7 S3 violation: account_id '{test_account_id}' found in operator output. "
@@ -219,6 +232,7 @@ def test_execute_sell_to_cash_exception_does_not_print_account_id(capsys, caplog
 # ---------------------------------------------------------------------------
 # S4: execute_sell_to_cash 4xx response must not echo response body
 # ---------------------------------------------------------------------------
+
 
 def test_execute_sell_to_cash_4xx_response_body_does_not_appear_in_output(capsys, caplog):
     """Gate 7 S4: a 4xx response from Composer must not cause the response
@@ -245,13 +259,16 @@ def test_execute_sell_to_cash_4xx_response_body_does_not_appear_in_output(capsys
     }
 
     import logging
+
     with patch("requests.post", return_value=mock_response):
         with patch("time.sleep"):
             with caplog.at_level(logging.DEBUG):
                 abe.execute_sell_to_cash(test_symphony_id, test_account_id)
 
     captured = capsys.readouterr()
-    all_output = _all_output(captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records))
+    all_output = _all_output(
+        captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records)
+    )
 
     # The response body account_id must not appear
     assert "ALP1122334455" not in all_output, (
@@ -271,6 +288,7 @@ def test_execute_sell_to_cash_4xx_response_body_does_not_appear_in_output(capsys
 # S5: fetch_alpaca_history JSON parse failure must not print response body
 # ---------------------------------------------------------------------------
 
+
 def test_fetch_alpaca_history_json_parse_error_does_not_print_response_body(capsys, caplog):
     """Gate 7 S5: when fetch_alpaca_history receives a response whose JSON
     cannot be parsed, the raw response content must not appear in output.
@@ -287,8 +305,7 @@ def test_fetch_alpaca_history_json_parse_error_does_not_print_response_body(caps
     # and the ValueError message may include the raw body fragment
     account_id_in_body = "ALP7766554433"
     raw_body_with_account = (
-        f'{{"bars": {{"SPY": []}}, "account_id": "{account_id_in_body}", '
-        f'"position_qty": "99999.99"'
+        f'{{"bars": {{"SPY": []}}, "account_id": "{account_id_in_body}", "position_qty": "99999.99"'
         # Intentionally missing closing brace — malformed JSON
     )
 
@@ -299,13 +316,16 @@ def test_fetch_alpaca_history_json_parse_error_does_not_print_response_body(caps
     )
 
     import logging
+
     with patch("requests.get", return_value=mock_response):
         with caplog.at_level(logging.DEBUG):
             # fetch_alpaca_history requires tickers and a date string
             abe.fetch_alpaca_history(["SPY"], "2026-05-24")
 
     captured = capsys.readouterr()
-    all_output = _all_output(captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records))
+    all_output = _all_output(
+        captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records)
+    )
 
     assert account_id_in_body not in all_output, (
         f"Gate 7 S5 violation: account_id from Alpaca response body found in output. "
@@ -321,6 +341,7 @@ def test_fetch_alpaca_history_json_parse_error_does_not_print_response_body(caps
 # ---------------------------------------------------------------------------
 # S6: get_composer_headers bearer token must not appear in any error output
 # ---------------------------------------------------------------------------
+
 
 def test_get_composer_headers_bearer_token_does_not_leak_on_request_exception(capsys, caplog):
     """Gate 7 S6: the bearer token in get_composer_headers() must not appear
@@ -348,6 +369,7 @@ def test_get_composer_headers_bearer_token_does_not_leak_on_request_exception(ca
     )
 
     import logging
+
     try:
         with patch("requests.get", side_effect=exception_with_headers):
             with caplog.at_level(logging.DEBUG):
@@ -357,7 +379,9 @@ def test_get_composer_headers_bearer_token_does_not_leak_on_request_exception(ca
         abe.COMPOSER_KEY_ID = original_key
 
     captured = capsys.readouterr()
-    all_output = _all_output(captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records))
+    all_output = _all_output(
+        captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records)
+    )
 
     assert fake_secret not in all_output, (
         f"Gate 7 S6 violation: COMPOSER_SECRET value found in operator output. "
@@ -374,6 +398,7 @@ def test_get_composer_headers_bearer_token_does_not_leak_on_request_exception(ca
 # S7: fetch_symphony_stats Composer JSON parse error must not print exception
 #     message (same gap as S5 for Alpaca, now closed for Composer path)
 # ---------------------------------------------------------------------------
+
 
 def test_fetch_symphony_stats_json_parse_error_does_not_print_exception_message(capsys, caplog):
     """Gate 7 S7 (REVISE): when fetch_symphony_stats receives a 200 response
@@ -393,8 +418,7 @@ def test_fetch_symphony_stats_json_parse_error_does_not_print_exception_message(
     """
     account_id_in_body = "a1b2c3d4-e5f6-7890-abcd-ef9988776655"  # Composer UUID format
     raw_body_with_account = (
-        f'{{"symphonies": [], "account_id": "{account_id_in_body}", '
-        f'"balance": "54321.99"'
+        f'{{"symphonies": [], "account_id": "{account_id_in_body}", "balance": "54321.99"'
         # intentionally malformed — missing closing brace
     )
 
@@ -405,12 +429,15 @@ def test_fetch_symphony_stats_json_parse_error_does_not_print_exception_message(
     )
 
     import logging
+
     with patch("requests.get", return_value=mock_response):
         with caplog.at_level(logging.DEBUG):
             abe.fetch_symphony_stats("ACCT_S7_TEST")
 
     captured = capsys.readouterr()
-    all_output = _all_output(captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records))
+    all_output = _all_output(
+        captured.out, captured.err, " | ".join(r.getMessage() for r in caplog.records)
+    )
 
     assert account_id_in_body not in all_output, (
         f"Gate 7 S7 violation: Composer account UUID from response body found in output. "

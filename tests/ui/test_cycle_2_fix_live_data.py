@@ -154,7 +154,10 @@ def mock_api_state_with_history(monkeypatch):
             db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            db_mock.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             db_mock.read_port_state.return_value = None
             yield db_mock
 
@@ -204,8 +207,9 @@ def test_api_state_hist_dates_populated_from_db(monkeypatch):
     """
     import analytics as analytics_module
 
-    with patch.object(analytics_module, "get_history_with_cache_invalidation",
-                      return_value=_CHART_ARCHIVE_STUB):
+    with patch.object(
+        analytics_module, "get_history_with_cache_invalidation", return_value=_CHART_ARCHIVE_STUB
+    ):
         # get_api_state_dict returns NO portfolio_strip (scheduler hasn't run)
         stub_no_strip = {
             "bot_state": {},
@@ -219,7 +223,10 @@ def test_api_state_hist_dates_populated_from_db(monkeypatch):
                 db_mock.load_state.return_value = {}
                 db_mock.get_ro_connection.return_value = MagicMock()
                 db_mock.read_fleet_alert.return_value = None
-                db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+                db_mock.get_shadow_divergence.return_value = {
+                    "by_symphony": {},
+                    "portfolio_today": None,
+                }
                 db_mock.read_port_state.return_value = None
 
                 app_module.app.config["TESTING"] = True
@@ -250,8 +257,9 @@ def test_api_state_hist_bot_held_parallel_and_nonzero(monkeypatch):
     """
     import analytics as analytics_module
 
-    with patch.object(analytics_module, "get_history_with_cache_invalidation",
-                      return_value=_CHART_ARCHIVE_STUB):
+    with patch.object(
+        analytics_module, "get_history_with_cache_invalidation", return_value=_CHART_ARCHIVE_STUB
+    ):
         stub_no_strip = {
             "bot_state": {},
             "is_locked": False,
@@ -264,7 +272,10 @@ def test_api_state_hist_bot_held_parallel_and_nonzero(monkeypatch):
                 db_mock.load_state.return_value = {}
                 db_mock.get_ro_connection.return_value = MagicMock()
                 db_mock.read_fleet_alert.return_value = None
-                db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+                db_mock.get_shadow_divergence.return_value = {
+                    "by_symphony": {},
+                    "portfolio_today": None,
+                }
                 db_mock.read_port_state.return_value = None
 
                 app_module.app.config["TESTING"] = True
@@ -298,9 +309,7 @@ def test_api_state_hist_bot_held_parallel_and_nonzero(monkeypatch):
         "hist_bot must contain at least one non-zero value; "
         "all zeros means returns are not being accumulated"
     )
-    assert any(v != 0.0 for v in hist_held), (
-        "hist_held must contain at least one non-zero value"
-    )
+    assert any(v != 0.0 for v in hist_held), "hist_held must contain at least one non-zero value"
 
 
 # ---------------------------------------------------------------------------
@@ -377,19 +386,22 @@ def test_api_state_has_bot_state_key_in_json(client):
             db_mock.load_state.return_value = {}
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            db_mock.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             db_mock.read_port_state.return_value = None
             resp = client.get("/api/state")
 
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.get_data(as_text=True)[:300]}"
+    assert resp.status_code == 200, (
+        f"Expected 200, got {resp.status_code}: {resp.get_data(as_text=True)[:300]}"
+    )
     body = resp.get_json()
     assert "bot_state" in body, (
         "/api/state JSON must include 'bot_state' key. "
         "The dashboard JS polls this endpoint and reads bot_state for symphony cards."
     )
-    assert isinstance(body["bot_state"], dict), (
-        "bot_state must be a dict, not null or a list."
-    )
+    assert isinstance(body["bot_state"], dict), "bot_state must be a dict, not null or a list."
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +423,7 @@ def test_index_html_has_setinterval_for_polling():
     )
 
     # Check via named constant: POLL_INTERVAL_MS must be defined and ≤ 60000
-    const_matches = re.findall(r'var\s+POLL_INTERVAL_MS\s*=\s*(\d+)', src)
+    const_matches = re.findall(r"var\s+POLL_INTERVAL_MS\s*=\s*(\d+)", src)
     if const_matches:
         min_interval = min(int(n) for n in const_matches)
         assert min_interval <= 60000, (
@@ -420,7 +432,7 @@ def test_index_html_has_setinterval_for_polling():
         )
     else:
         # Fall back to checking inline numeric literals
-        intervals = re.findall(r'setInterval\s*\([^,)]+,\s*(\d+)', src)
+        intervals = re.findall(r"setInterval\s*\([^,)]+,\s*(\d+)", src)
         assert len(intervals) > 0, (
             "setInterval found but no numeric interval argument detected. "
             "Must have setInterval(<fn>, <ms>) with ms ≤ 60000 or a POLL_INTERVAL_MS constant."
@@ -443,13 +455,13 @@ def test_index_html_setinterval_not_above_60s():
         pytest.fail("No setInterval found in static/index.js — dashboard must poll /api/state")
 
     # Check named constant first (preferred pattern)
-    const_matches = re.findall(r'var\s+POLL_INTERVAL_MS\s*=\s*(\d+)', src)
+    const_matches = re.findall(r"var\s+POLL_INTERVAL_MS\s*=\s*(\d+)", src)
     for n in const_matches:
         assert int(n) <= 60000, (
             f"POLL_INTERVAL_MS = {n} ms exceeds 60000 ms maximum for state poll."
         )
     # Also check any inline numeric setInterval calls
-    intervals = re.findall(r'setInterval\s*\([^,)]+,\s*(\d+)', src)
+    intervals = re.findall(r"setInterval\s*\([^,)]+,\s*(\d+)", src)
     for n in intervals:
         assert int(n) <= 60000, (
             f"setInterval interval {n} ms exceeds 60000 ms maximum for state poll."
@@ -474,9 +486,7 @@ def test_index_html_or_js_has_fetch_api_state():
     dashboard_js = _STATIC_DIR / "index.js"
     if dashboard_js.exists():
         js_src = dashboard_js.read_text(encoding="utf-8")
-        has_fetch = has_fetch or (
-            "fetch('/api/state'" in js_src or 'fetch("/api/state"' in js_src
-        )
+        has_fetch = has_fetch or ("fetch('/api/state'" in js_src or 'fetch("/api/state"' in js_src)
 
     assert has_fetch or has_xhr, (
         "Dashboard must contain fetch('/api/state') or XMLHttpRequest to /api/state. "
@@ -496,7 +506,9 @@ def test_index_html_or_js_fetches_api_chart():
     html = index_path.read_text(encoding="utf-8")
 
     has_chart_fetch = "/api/chart/" in html or "api/chart/" in html
-    has_template_literal = "`/api/chart/" in html or '"/api/chart/" +' in html or "'/api/chart/' +" in html
+    has_template_literal = (
+        "`/api/chart/" in html or '"/api/chart/" +' in html or "'/api/chart/' +" in html
+    )
 
     dashboard_js = _STATIC_DIR / "index.js"
     if dashboard_js.exists():
@@ -536,14 +548,14 @@ def test_index_html_chart_not_driven_by_jinja_baked_arrays():
 
     # The broken pattern: Jinja-rendered hist arrays directly in a JS var
     jinja_baked_pattern = re.search(
-        r'hist_dates\s*[|:]\s*tojson|hist_bot\s*[|:]\s*tojson|hist_held\s*[|:]\s*tojson',
+        r"hist_dates\s*[|:]\s*tojson|hist_bot\s*[|:]\s*tojson|hist_held\s*[|:]\s*tojson",
         html,
     )
     has_jinja_bake = jinja_baked_pattern is not None
 
     # Also check for the exact broken variable assignment pattern
     broken_var_pattern = re.search(
-        r'CUM_CHART_DATA\s*=\s*\{[^}]*\{\{[^}]*hist_',
+        r"CUM_CHART_DATA\s*=\s*\{[^}]*\{\{[^}]*hist_",
         html,
         re.DOTALL,
     )
@@ -568,12 +580,12 @@ def test_index_html_hero_chart_built_from_ajax_response():
 
     # Must reference the chart data source from API response
     has_api_driven_chart = (
-        ("hist_dates" in source and ("fetch(" in source or "then(" in source)) or
-        ("hist_bot" in source and "fetch(" in source) or
-        ("payload" in source and "hist" in source and "Chart(" in source) or
-        ("response" in source and "hist" in source and "Chart(" in source) or
-        ("data.meta" in source and "hist" in source) or
-        ("meta.portfolio" in source and "fetch(" in source)
+        ("hist_dates" in source and ("fetch(" in source or "then(" in source))
+        or ("hist_bot" in source and "fetch(" in source)
+        or ("payload" in source and "hist" in source and "Chart(" in source)
+        or ("response" in source and "hist" in source and "Chart(" in source)
+        or ("data.meta" in source and "hist" in source)
+        or ("meta.portfolio" in source and "fetch(" in source)
     )
 
     assert has_api_driven_chart, (
@@ -601,10 +613,10 @@ def test_index_html_sparkline_canvas_wired_to_chart_endpoint():
 
     # Must have canvas rendering code that references chart endpoint data
     has_sparkline_wiring = (
-        ("canvas" in source.lower() and "api/chart" in source) or
-        ("spark" in source.lower() and "api/chart" in source) or
-        ("data-symphony-spark" in source and "/api/chart" in source) or
-        ("getContext" in source and "/api/chart" in source)
+        ("canvas" in source.lower() and "api/chart" in source)
+        or ("spark" in source.lower() and "api/chart" in source)
+        or ("data-symphony-spark" in source and "/api/chart" in source)
+        or ("getContext" in source and "/api/chart" in source)
     )
 
     assert has_sparkline_wiring, (
@@ -632,9 +644,12 @@ def test_api_state_returns_updated_bot_state_on_second_call(client, monkeypatch)
         return {
             "bot_state": {
                 "sym_abc": {
-                    "id": "sym_abc", "name": "Alpha Symphony",
-                    "position": position, "simple_return": simple_return,
-                    "net_deposits": 0.0, "time_weighted_return": simple_return,
+                    "id": "sym_abc",
+                    "name": "Alpha Symphony",
+                    "position": position,
+                    "simple_return": simple_return,
+                    "net_deposits": 0.0,
+                    "time_weighted_return": simple_return,
                 }
             },
             "is_locked": False,
@@ -649,14 +664,21 @@ def test_api_state_returns_updated_bot_state_on_second_call(client, monkeypatch)
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            db_mock.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             db_mock.read_port_state.return_value = None
 
             resp1 = client.get("/api/state")
             resp2 = client.get("/api/state")
 
-    assert resp1.status_code == 200, f"First call: {resp1.status_code} {resp1.get_data(as_text=True)[:200]}"
-    assert resp2.status_code == 200, f"Second call: {resp2.status_code} {resp2.get_data(as_text=True)[:200]}"
+    assert resp1.status_code == 200, (
+        f"First call: {resp1.status_code} {resp1.get_data(as_text=True)[:200]}"
+    )
+    assert resp2.status_code == 200, (
+        f"Second call: {resp2.status_code} {resp2.get_data(as_text=True)[:200]}"
+    )
 
     assert call_count[0] >= 2, (
         f"/api/state must call get_api_state_dict() on every request — "
@@ -673,9 +695,7 @@ def test_api_state_returns_updated_bot_state_on_second_call(client, monkeypatch)
     )
 
 
-def test_api_state_portfolio_hist_reflects_fresh_analytics_on_each_call(
-    client, monkeypatch
-):
+def test_api_state_portfolio_hist_reflects_fresh_analytics_on_each_call(client, monkeypatch):
     """Each /api/state call must return meta.portfolio with hist arrays.
 
     This pins the contract that the dashboard poll loop always gets a portfolio section,
@@ -688,14 +708,21 @@ def test_api_state_portfolio_hist_reflects_fresh_analytics_on_each_call(
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            db_mock.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             db_mock.read_port_state.return_value = None
 
             resp1 = client.get("/api/state")
             resp2 = client.get("/api/state")
 
-    assert resp1.status_code == 200, f"First /api/state: {resp1.status_code} {resp1.get_data(as_text=True)[:200]}"
-    assert resp2.status_code == 200, f"Second /api/state: {resp2.status_code} {resp2.get_data(as_text=True)[:200]}"
+    assert resp1.status_code == 200, (
+        f"First /api/state: {resp1.status_code} {resp1.get_data(as_text=True)[:200]}"
+    )
+    assert resp2.status_code == 200, (
+        f"Second /api/state: {resp2.status_code} {resp2.get_data(as_text=True)[:200]}"
+    )
 
     body1 = resp1.get_json()
     body2 = resp2.get_json()
@@ -732,7 +759,7 @@ def test_history_js_has_setinterval():
         "Currently history.js is one-shot only — it loads data once and never refreshes."
     )
 
-    intervals = re.findall(r'setInterval\s*\([^,)]+,\s*(\d+)', src)
+    intervals = re.findall(r"setInterval\s*\([^,)]+,\s*(\d+)", src)
     assert len(intervals) > 0, (
         "setInterval found in history.js but no numeric interval argument detected. "
         "Must have setInterval(<fn>, <ms>) with ms ≤ 60000."
@@ -786,7 +813,7 @@ def test_performance_js_setinterval_targets_api_performance():
         "If the setInterval is only for animation (not data), the page shows stale data."
     )
 
-    intervals = re.findall(r'setInterval\s*\([^,)]+,\s*(\d+)', src)
+    intervals = re.findall(r"setInterval\s*\([^,)]+,\s*(\d+)", src)
     assert len(intervals) > 0, (
         "performance.js setInterval has no numeric interval — must be ≤ 60000 ms."
     )
@@ -816,8 +843,12 @@ def test_ai_advisor_js_setinterval_targets_live_endpoint():
     )
 
     live_endpoints = [
-        "api/state", "api/autotune-runs", "ai-advisor/suggest",
-        "ai-advisor/accept", "ai-advisor/reject", "api/performance",
+        "api/state",
+        "api/autotune-runs",
+        "ai-advisor/suggest",
+        "ai-advisor/accept",
+        "ai-advisor/reject",
+        "api/performance",
     ]
     # The setInterval callback must reference at least one live endpoint in the same scope
     # (we check at file level since the callback is named)
@@ -828,7 +859,7 @@ def test_ai_advisor_js_setinterval_targets_live_endpoint():
         "If the setInterval is only for a spinner/animation, the page shows stale data."
     )
 
-    intervals = re.findall(r'setInterval\s*\([^,)]+,\s*(\d+)', src)
+    intervals = re.findall(r"setInterval\s*\([^,)]+,\s*(\d+)", src)
     assert len(intervals) > 0, (
         "ai_advisor.js setInterval has no numeric interval — must be ≤ 60000 ms."
     )
@@ -862,8 +893,7 @@ def test_api_chart_response_includes_overlay_fields(client, monkeypatch):
     required_top_level = {"data", "status"}
     missing = required_top_level - set(body.keys())
     assert not missing, (
-        f"/api/chart/<sym> must have top-level keys {required_top_level}; "
-        f"missing: {missing}"
+        f"/api/chart/<sym> must have top-level keys {required_top_level}; missing: {missing}"
     )
 
     # With non-empty chart_history stub, data must be non-empty
@@ -914,8 +944,15 @@ def test_chrome_html_has_google_fonts_preconnect():
         "and fonts.gstatic.com for performance."
     )
 
-    required_fonts = ["Manrope", "Source+Serif+4", "Geist", "DM+Sans",
-                      "Plus+Jakarta+Sans", "IBM+Plex+Sans", "JetBrains+Mono"]
+    required_fonts = [
+        "Manrope",
+        "Source+Serif+4",
+        "Geist",
+        "DM+Sans",
+        "Plus+Jakarta+Sans",
+        "IBM+Plex+Sans",
+        "JetBrains+Mono",
+    ]
     missing_fonts = [f for f in required_fonts if f not in src]
     assert not missing_fonts, (
         f"_chrome.html Google Fonts link must include families: {missing_fonts}. "
@@ -944,21 +981,20 @@ def test_index_html_has_sparkline_elements():
 
     # Check for sparkline elements with identifying testids or class names
     has_spark_canvas = (
-        'data-testid="card-spark"' in html or
-        'data-testid="spark-canvas"' in html or
-        'class="spark-canvas"' in html or
-        'data-symphony-spark' in html
+        'data-testid="card-spark"' in html
+        or 'data-testid="spark-canvas"' in html
+        or 'class="spark-canvas"' in html
+        or "data-symphony-spark" in html
     )
     has_spark_svg = (
-        'class="spark"' in html or
-        'data-testid="micro-spark"' in html or
-        'class="micro-spark"' in html or
-        'class="sparkline"' in html
+        'class="spark"' in html
+        or 'data-testid="micro-spark"' in html
+        or 'class="micro-spark"' in html
+        or 'class="sparkline"' in html
     )
     has_js_sparklines = (
-        'sparkline' in html.lower() or
-        'spark' in html.lower()
-    ) and 'api/chart' in html
+        "sparkline" in html.lower() or "spark" in html.lower()
+    ) and "api/chart" in html
 
     assert has_spark_canvas or has_spark_svg or has_js_sparklines, (
         "index.html must have sparkline elements for per-symphony cards. "
@@ -987,14 +1023,15 @@ def test_standby_cards_have_cash_now_button():
     # Find the standby section and check for cash-now-btn within it
     standby_match = re.search(
         r'data-testid="standby-section".*?</section>',
-        html, re.DOTALL,
+        html,
+        re.DOTALL,
     )
     assert standby_match is not None, (
         "index.html must have [data-testid='standby-section'] element."
     )
 
     standby_html = standby_match.group(0)
-    assert 'cash-now-btn' in standby_html or 'Cash Now' in standby_html, (
+    assert "cash-now-btn" in standby_html or "Cash Now" in standby_html, (
         "Standby section cards must include a Cash Now button. "
         "PM requirement: 'Cash Now button on EVERY card — 0 clicks away from that button.' "
         "Currently Cash Now only appears on active/triggered cards."
@@ -1022,8 +1059,8 @@ def test_symphony_cards_have_sparkline_container():
         'class="spark',
         'class="micro-spark',
         'class="sparkline',
-        'data-symphony-spark',
-        'spark-container',
+        "data-symphony-spark",
+        "spark-container",
     ]
     has_spark = any(indicator in html for indicator in spark_indicators)
     assert has_spark, (
@@ -1052,13 +1089,15 @@ def test_active_cards_have_mc_dial_container():
     # Find the active section
     active_match = re.search(
         r'data-testid="active-section".*?data-testid="standby-section"',
-        html, re.DOTALL,
+        html,
+        re.DOTALL,
     )
     if active_match is None:
         # Try to find just active-section to end of section
         active_match = re.search(
             r'data-testid="active-section".*?</section>',
-            html, re.DOTALL,
+            html,
+            re.DOTALL,
         )
 
     dial_indicators = [
@@ -1066,8 +1105,8 @@ def test_active_cards_have_mc_dial_container():
         'data-testid="mc-gauge"',
         'class="mc-dial"',
         'class="dial"',
-        'mc_prob',
-        'mc-prob',
+        "mc_prob",
+        "mc-prob",
     ]
     has_dial_globally = any(indicator in html for indicator in dial_indicators)
 
@@ -1143,13 +1182,14 @@ def test_guard_alpha_headline_not_jinja_hardcoded_zero():
     # The Jinja-rendered pattern: {{ alpha | format_pct }} where alpha is 0 because
     # portfolio_strip.cumulative_return is empty
     guard_alpha_in_html = re.search(
-        r'guard-alpha[^>]*>\s*\+0\.00%\s*</|guard-alpha[^>]*>\s*\{[^\}]*\}\s*</|'
-        r'guard-alpha-headline[^>]*>[^<]*\{\{[^}]+\}\}',
+        r"guard-alpha[^>]*>\s*\+0\.00%\s*</|guard-alpha[^>]*>\s*\{[^\}]*\}\s*</|"
+        r"guard-alpha-headline[^>]*>[^<]*\{\{[^}]+\}\}",
         html,
     )
     guard_alpha_jinja = re.search(
-        r'guard-alpha.*\{\{.*alpha.*\}\}',
-        html, re.DOTALL,
+        r"guard-alpha.*\{\{.*alpha.*\}\}",
+        html,
+        re.DOTALL,
     )
 
     # If guard_alpha is Jinja-baked (not AJAX-driven), it will always be stale
@@ -1158,12 +1198,8 @@ def test_guard_alpha_headline_not_jinja_hardcoded_zero():
     # OR the value must be computed in JS from AJAX response
 
     js_path = _STATIC_DIR / "index.js"
-    js_computes_alpha = (
-        "guard_alpha" in source or
-        "guard-alpha" in source
-    ) and (
-        "fetch(" in source or
-        "cumulative" in source
+    js_computes_alpha = ("guard_alpha" in source or "guard-alpha" in source) and (
+        "fetch(" in source or "cumulative" in source
     )
 
     # If Jinja-baked AND no JS update, it will always be stale
@@ -1203,15 +1239,15 @@ def test_dashboard_verdict_driven_by_ajax_not_jinja():
     # Anti-pattern: guard_alpha read from Jinja context (set block OR direct expression)
     # Covers: {% set ga = sym.get("guard_alpha", ...) %} and {{ sym.guard_alpha }}
     jinja_guard_alpha_set = re.search(
-        r'\{%-?\s*set\s+\w+\s*=.*guard_alpha',
+        r"\{%-?\s*set\s+\w+\s*=.*guard_alpha",
         html,
     )
     jinja_guard_alpha_expr = re.search(
-        r'\{\{[^}]*guard_alpha[^}]*\}\}',
+        r"\{\{[^}]*guard_alpha[^}]*\}\}",
         html,
     )
     jinja_verdict_baked = re.search(
-        r'\{%-?\s*if[^%]*guard_alpha[^%]*%\}',
+        r"\{%-?\s*if[^%]*guard_alpha[^%]*%\}",
         html,
     )
 
@@ -1221,9 +1257,7 @@ def test_dashboard_verdict_driven_by_ajax_not_jinja():
         source += "\n" + js_path.read_text(encoding="utf-8")
 
     # The verdict must be AJAX-driven: JS reads guard_alpha from fetch response
-    js_drives_verdict = (
-        "guard_alpha" in source and "fetch(" in source
-    ) or (
+    js_drives_verdict = ("guard_alpha" in source and "fetch(" in source) or (
         "triggered_at_return" in source and "fetch(" in source
     )
 
@@ -1283,7 +1317,10 @@ def test_dashboard_route_enriches_symphonies_with_analytics_cr(monkeypatch):
             db_mock.get_symphony_strategy.return_value = {"params": {}, "locked_vars": []}
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            db_mock.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             db_mock.read_port_state.return_value = None
 
             # Capture render_template call to inspect the symphonies passed
@@ -1353,12 +1390,13 @@ def test_dashboard_js_fetches_chart_per_symphony():
     # Must have a per-symphony loop that fetches /api/chart/<id>
     has_per_sym_chart_fetch = (
         # Template literal with sym id
-        "`/api/chart/${" in source or
-        "'/api/chart/' +" in source or
-        '"/api/chart/" +' in source or
+        "`/api/chart/${" in source
+        or "'/api/chart/' +" in source
+        or '"/api/chart/" +' in source
+        or
         # forEach / for loop over symphonies + fetch
-        ("forEach" in source and "api/chart" in source) or
-        ("for " in source and "api/chart" in source and "bot_state" in source)
+        ("forEach" in source and "api/chart" in source)
+        or ("for " in source and "api/chart" in source and "bot_state" in source)
     )
 
     assert has_per_sym_chart_fetch, (
@@ -1447,12 +1485,15 @@ def test_performance_rendered_html_has_cumulative_chart_svg(client):
 
     # The cumulative returns chart: a <canvas> OR an SVG with chart-purpose attributes
     # Exclude nav arrow SVGs (small, no viewBox with large dimensions)
-    has_canvas = bool(re.search(r'<canvas[^>]*(?:id|data-testid)[^>]*>', html, re.I))
-    has_chart_svg = bool(re.search(
-        r'<svg[^>]*(?:data-testid="[^"]*chart[^"]*"|id="[^"]*chart[^"]*"|'
-        r'preserveAspectRatio="none"|viewBox="0 0 \d{3,})',
-        html, re.I,
-    ))
+    has_canvas = bool(re.search(r"<canvas[^>]*(?:id|data-testid)[^>]*>", html, re.I))
+    has_chart_svg = bool(
+        re.search(
+            r'<svg[^>]*(?:data-testid="[^"]*chart[^"]*"|id="[^"]*chart[^"]*"|'
+            r'preserveAspectRatio="none"|viewBox="0 0 \d{3,})',
+            html,
+            re.I,
+        )
+    )
 
     assert has_canvas or has_chart_svg, (
         "GET /performance rendered HTML must have a cumulative returns chart element "
@@ -1486,10 +1527,13 @@ def test_performance_rendered_html_has_metric_chart_elements(client):
 
     # Exclude nav/icon SVGs: small inline SVGs (width < 20, height < 20 or path-only)
     # Count only chart-purpose SVGs: those with viewBox, preserveAspectRatio, or large size
-    chart_svgs = len(re.findall(
-        r'<svg[^>]*(?:preserveAspectRatio|viewBox="0 0 \d{2,}|data-testid)',
-        html, re.I,
-    ))
+    chart_svgs = len(
+        re.findall(
+            r'<svg[^>]*(?:preserveAspectRatio|viewBox="0 0 \d{2,}|data-testid)',
+            html,
+            re.I,
+        )
+    )
     total_chart_elements = canvas_count + chart_svgs
 
     assert total_chart_elements >= 8, (
@@ -1546,9 +1590,9 @@ def test_history_rendered_html_has_daily_strip_chart(client):
     html = resp.data.decode("utf-8", errors="replace")
 
     has_daily_svg = (
-        'id="daily-chart-svg"' in html or
-        'data-testid="daily-strip"' in html or
-        bool(re.search(r'<svg[^>]*(?:daily|strip|chart)', html, re.I))
+        'id="daily-chart-svg"' in html
+        or 'data-testid="daily-strip"' in html
+        or bool(re.search(r"<svg[^>]*(?:daily|strip|chart)", html, re.I))
     )
     assert has_daily_svg, (
         "GET /history rendered HTML must have the daily alpha strip chart SVG. "
@@ -1574,10 +1618,13 @@ def test_history_rendered_html_has_per_reason_chart_elements(client):
 
     canvas_count = len(re.findall(r"<canvas", html, re.I))
     # Chart-purpose SVGs: large viewBox or preserveAspectRatio (excludes nav arrow icons)
-    chart_svgs = len(re.findall(
-        r'<svg[^>]*(?:preserveAspectRatio|viewBox="0 0 \d{2,}|data-testid)',
-        html, re.I,
-    ))
+    chart_svgs = len(
+        re.findall(
+            r'<svg[^>]*(?:preserveAspectRatio|viewBox="0 0 \d{2,}|data-testid)',
+            html,
+            re.I,
+        )
+    )
     total_chart_elements = canvas_count + chart_svgs
 
     assert total_chart_elements >= 5, (
@@ -1641,10 +1688,13 @@ def test_advisor_rendered_html_has_suggestion_chart_containers(client):
     # 2. Per-suggestion projected-impact mini-bar (canvas or SVG)
     # 3. Autotune sparklines on right rail
     # Minimum: at least 1 canvas or chart-purpose SVG container in the initial render
-    has_chart_container = canvas_count > 0 or bool(re.search(
-        r'<svg[^>]*(?:data-testid|preserveAspectRatio|viewBox="0 0 \d)',
-        html, re.I,
-    ))
+    has_chart_container = canvas_count > 0 or bool(
+        re.search(
+            r'<svg[^>]*(?:data-testid|preserveAspectRatio|viewBox="0 0 \d)',
+            html,
+            re.I,
+        )
+    )
     assert has_chart_container, (
         f"GET /ai-advisor rendered HTML must have at least one chart container element "
         f"(<canvas> or chart-purpose <svg>) for confidence rings, projected-impact bars, "
@@ -1773,8 +1823,7 @@ def test_advisor_route_returns_200(client):
     """
     resp = client.get("/ai-advisor")
     assert resp.status_code == 200, (
-        f"GET /ai-advisor returned {resp.status_code}; "
-        "route must be registered and return 200."
+        f"GET /ai-advisor returned {resp.status_code}; route must be registered and return 200."
     )
     html = resp.data.decode("utf-8", errors="replace")
     assert 'data-testid="advisor-page"' in html, (
@@ -1813,11 +1862,11 @@ def test_index_js_has_mc_dial_rendering_logic():
 
     # Must reference mc-dial containers
     has_mc_dial_ref = (
-        "mc-dial" in src or
-        "mc_dial" in src or
-        "mcDial" in src or
-        "renderMcDial" in src or
-        "renderMC" in src
+        "mc-dial" in src
+        or "mc_dial" in src
+        or "mcDial" in src
+        or "renderMcDial" in src
+        or "renderMC" in src
     )
     assert has_mc_dial_ref, (
         "static/index.js must reference MC dial containers to render MC probability. "
@@ -1829,11 +1878,7 @@ def test_index_js_has_mc_dial_rendering_logic():
 
     # Must reference an MC percentage field from the API
     has_mc_value_field = (
-        "mc_prob" in src or
-        "mc_pct" in src or
-        '"mc"' in src or
-        "'mc'" in src or
-        "mc_percent" in src
+        "mc_prob" in src or "mc_pct" in src or '"mc"' in src or "'mc'" in src or "mc_percent" in src
     )
     assert has_mc_value_field, (
         "static/index.js must read an MC percentage field from the API response "
@@ -1905,7 +1950,7 @@ def test_guard_alpha_headline_js_can_resolve_element():
 
     # Extract all getElementById calls that reference guard-alpha
     ga_ids = re.findall(
-        r'getElementById\([\'\"](guard-alpha[^\'\"]*)[\'\"]\)',
+        r"getElementById\([\'\"](guard-alpha[^\'\"]*)[\'\"]\)",
         js_src,
     )
     assert ga_ids, (
@@ -1917,10 +1962,12 @@ def test_guard_alpha_headline_js_can_resolve_element():
     # (not as a substring of data-testid= or similar compound attributes)
     for elem_id in ga_ids:
         escaped = re.escape(elem_id)
-        has_standalone_id = bool(re.search(
-            r'\bid\s*=\s*["\']' + escaped + r'["\']',
-            html,
-        ))
+        has_standalone_id = bool(
+            re.search(
+                r'\bid\s*=\s*["\']' + escaped + r'["\']',
+                html,
+            )
+        )
         assert has_standalone_id, (
             f"index.js calls getElementById('{elem_id}') but index.html has no "
             f"element with standalone id='{elem_id}'. The JS call always returns null, "
@@ -1952,8 +1999,9 @@ def test_chrome_html_density_select_defaults_to_balanced():
 
     # Find the density select section
     density_section = re.search(
-        r'density.*?</select>',
-        src, re.DOTALL | re.I,
+        r"density.*?</select>",
+        src,
+        re.DOTALL | re.I,
     )
     assert density_section is not None, (
         "_chrome.html must have a density select (tweaks panel). "
@@ -1962,11 +2010,13 @@ def test_chrome_html_density_select_defaults_to_balanced():
     density_html = density_section.group(0)
 
     # The 'balanced' option must have selected
-    balanced_selected = bool(re.search(
-        r'<option[^>]*value=[\'"]balanced[\'"][^>]*selected|'
-        r'<option[^>]*selected[^>]*value=[\'"]balanced[\'"]',
-        density_html,
-    ))
+    balanced_selected = bool(
+        re.search(
+            r'<option[^>]*value=[\'"]balanced[\'"][^>]*selected|'
+            r'<option[^>]*selected[^>]*value=[\'"]balanced[\'"]',
+            density_html,
+        )
+    )
     assert balanced_selected, (
         "_chrome.html density select must have 'selected' on the 'balanced' option. "
         "Currently 'selected' is on 'roomy'. "
@@ -1975,11 +2025,13 @@ def test_chrome_html_density_select_defaults_to_balanced():
     )
 
     # The 'roomy' option must NOT have selected
-    roomy_selected = bool(re.search(
-        r'<option[^>]*value=[\'"]roomy[\'"][^>]*selected|'
-        r'<option[^>]*selected[^>]*value=[\'"]roomy[\'"]',
-        density_html,
-    ))
+    roomy_selected = bool(
+        re.search(
+            r'<option[^>]*value=[\'"]roomy[\'"][^>]*selected|'
+            r'<option[^>]*selected[^>]*value=[\'"]roomy[\'"]',
+            density_html,
+        )
+    )
     assert not roomy_selected, (
         "_chrome.html density select must NOT have 'selected' on the 'roomy' option. "
         "Only the 'balanced' option should be selected by default."
@@ -2013,7 +2065,10 @@ def test_api_state_hist_dates_not_capped_when_db_has_more_data(client, monkeypat
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
-            db_mock.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            db_mock.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             db_mock.read_port_state.return_value = None
 
             resp = client.get("/api/state")
@@ -2059,8 +2114,10 @@ def test_api_history_daily_alpha_not_capped_when_db_has_more_data(client, monkey
 
     # Patch the analytics function that produces history data
     import analytics as analytics_module
-    with patch.object(analytics_module, "get_history_summary", return_value=mock_history_response,
-                      create=True):
+
+    with patch.object(
+        analytics_module, "get_history_summary", return_value=mock_history_response, create=True
+    ):
         with patch.object(app_module, "database") as db_mock:
             db_mock.get_ro_connection.return_value = MagicMock()
             resp = client.get("/api/history/30")
@@ -2144,7 +2201,7 @@ def test_history_js_render_reason_cards_emits_reason_bar_svg():
     assert "reason-bar" in fn_body, (
         "renderReasonCards in history.js must emit 'reason-bar' in the innerHTML it builds. "
         "Currently it rebuilds cards with text/grid layouts but no SVG bar elements. "
-        "Each reason card must include an SVG bar element with data-testid=\"reason-bar\" "
+        'Each reason card must include an SVG bar element with data-testid="reason-bar" '
         "whose rect width reflects the win-rate or alpha value for that reason."
     )
     assert re.search(r"<svg|svg[^>]*viewBox", fn_body, re.I), (
@@ -2266,7 +2323,9 @@ def test_history_js_render_reason_cards_emits_description_text():
     hist_js = _STATIC_DIR / "history.js"
     src = hist_js.read_text(encoding="utf-8")
 
-    match = re.search(r"function renderReasonCards\b.*?(?=\nfunction |\nwindow\.|\nvar |\Z)", src, re.S)
+    match = re.search(
+        r"function renderReasonCards\b.*?(?=\nfunction |\nwindow\.|\nvar |\Z)", src, re.S
+    )
     assert match, "history.js must define a renderReasonCards function"
     fn_body = match.group(0)
 
@@ -2290,7 +2349,9 @@ def test_history_js_render_reason_cards_emits_avg_per_exit():
     hist_js = _STATIC_DIR / "history.js"
     src = hist_js.read_text(encoding="utf-8")
 
-    match = re.search(r"function renderReasonCards\b.*?(?=\nfunction |\nwindow\.|\nvar |\Z)", src, re.S)
+    match = re.search(
+        r"function renderReasonCards\b.*?(?=\nfunction |\nwindow\.|\nvar |\Z)", src, re.S
+    )
     assert match, "history.js must define a renderReasonCards function"
     fn_body = match.group(0)
 
@@ -2331,9 +2392,7 @@ def test_dashboard_js_render_guard_alpha_reads_portfolio_strip_cumulative_return
     idx_js = _STATIC_DIR / "index.js"
     src = idx_js.read_text(encoding="utf-8")
 
-    match = re.search(
-        r"function renderGuardAlpha\b.*?(?=\nfunction |\nvar |\Z)", src, re.S
-    )
+    match = re.search(r"function renderGuardAlpha\b.*?(?=\nfunction |\nvar |\Z)", src, re.S)
     assert match, "index.js must define a renderGuardAlpha function"
     fn_body = match.group(0)
 
@@ -2382,16 +2441,27 @@ def test_api_state_meta_portfolio_cr_non_zero_when_portfolio_strip_has_data(monk
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
             db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             db_mock.read_port_state.return_value = None
-            with patch.object(analytics_module, "get_portfolio_today_change",
-                              return_value={"dry_run": 0.5, "if_held": 0.3}), \
-                 patch.object(analytics_module, "get_portfolio_cumulative_return",
-                              return_value={"dry_run": 1.41, "if_held": 68.6}), \
-                 patch.object(analytics_module, "get_portfolio_max_drawdown",
-                              return_value={"dry_run": -5.2, "if_held": -3.1}):
-
+            with (
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_today_change",
+                    return_value={"dry_run": 0.5, "if_held": 0.3},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_cumulative_return",
+                    return_value={"dry_run": 1.41, "if_held": 68.6},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_max_drawdown",
+                    return_value={"dry_run": -5.2, "if_held": -3.1},
+                ),
+            ):
                 app_module.app.config["TESTING"] = True
                 with app_module.app.test_client() as c:
                     resp = c.get("/api/state")
@@ -2467,18 +2537,29 @@ def test_api_state_bot_state_triggered_symphony_includes_guard_alpha(monkeypatch
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
             db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             db_mock.read_port_state.return_value = None
             # Simulate DB having guard_alpha = 2.7 for this symphony
             db_mock.get_guard_alpha_by_symphony.return_value = {"sym_abc": 2.7}
-            with patch.object(analytics_module, "get_portfolio_today_change",
-                              return_value={"dry_run": 0.0, "if_held": 0.0}), \
-                 patch.object(analytics_module, "get_portfolio_cumulative_return",
-                              return_value={"dry_run": 0.05, "if_held": 0.04}), \
-                 patch.object(analytics_module, "get_portfolio_max_drawdown",
-                              return_value={"dry_run": -0.02, "if_held": -0.01}):
-
+            with (
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_today_change",
+                    return_value={"dry_run": 0.0, "if_held": 0.0},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_cumulative_return",
+                    return_value={"dry_run": 0.05, "if_held": 0.04},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_max_drawdown",
+                    return_value={"dry_run": -0.02, "if_held": -0.01},
+                ),
+            ):
                 app_module.app.config["TESTING"] = True
                 with app_module.app.test_client() as c:
                     resp = c.get("/api/state")
@@ -2562,9 +2643,7 @@ def test_dashboard_js_comparison_rows_called_from_update_dashboard():
     idx_js = _STATIC_DIR / "index.js"
     src = idx_js.read_text(encoding="utf-8")
 
-    match = re.search(
-        r"function updateDashboard\b.*?(?=\nfunction |\nvar |\Z)", src, re.S
-    )
+    match = re.search(r"function updateDashboard\b.*?(?=\nfunction |\nvar |\Z)", src, re.S)
     assert match, "index.js must define updateDashboard"
     fn_body = match.group(0)
 
@@ -2605,9 +2684,7 @@ def test_index_js_updateComparisonRows_reads_all_three_portfolio_strip_keys():
     idx_js = _STATIC_DIR / "index.js"
     src = idx_js.read_text(encoding="utf-8")
 
-    match = re.search(
-        r"function updateComparisonRows\b.*?(?=\nfunction |\nvar |\Z)", src, re.S
-    )
+    match = re.search(r"function updateComparisonRows\b.*?(?=\nfunction |\nvar |\Z)", src, re.S)
     assert match, "index.js must define updateComparisonRows"
     fn_body = match.group(0)
 
@@ -2651,15 +2728,27 @@ def test_rendered_dashboard_has_comp_bar_elements(monkeypatch):
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
             db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             db_mock.read_port_state.return_value = None
-            with patch.object(analytics_module, "get_portfolio_today_change",
-                              return_value={"dry_run": 0.5, "if_held": 0.3}), \
-                 patch.object(analytics_module, "get_portfolio_cumulative_return",
-                              return_value={"dry_run": 1.41, "if_held": 68.6}), \
-                 patch.object(analytics_module, "get_portfolio_max_drawdown",
-                              return_value={"dry_run": -5.2, "if_held": -3.1}):
+            with (
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_today_change",
+                    return_value={"dry_run": 0.5, "if_held": 0.3},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_cumulative_return",
+                    return_value={"dry_run": 1.41, "if_held": 68.6},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_max_drawdown",
+                    return_value={"dry_run": -5.2, "if_held": -3.1},
+                ),
+            ):
                 app_module.app.config["TESTING"] = True
                 with app_module.app.test_client() as c:
                     resp = c.get("/")
@@ -2722,16 +2811,28 @@ def test_rendered_dashboard_has_comp_text_testids(monkeypatch):
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
             db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             db_mock.read_port_state.return_value = None
             db_mock.get_guard_alpha_by_symphony.return_value = {}
-            with patch.object(analytics_module, "get_portfolio_today_change",
-                              return_value={"dry_run": 1.15, "if_held": 68.80}), \
-                 patch.object(analytics_module, "get_portfolio_cumulative_return",
-                              return_value={"dry_run": 1.41, "if_held": 68.6}), \
-                 patch.object(analytics_module, "get_portfolio_max_drawdown",
-                              return_value={"dry_run": -0.28, "if_held": -0.19}):
+            with (
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_today_change",
+                    return_value={"dry_run": 1.15, "if_held": 68.80},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_cumulative_return",
+                    return_value={"dry_run": 1.41, "if_held": 68.6},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_max_drawdown",
+                    return_value={"dry_run": -0.28, "if_held": -0.19},
+                ),
+            ):
                 app_module.app.config["TESTING"] = True
                 with app_module.app.test_client() as c:
                     resp = c.get("/")
@@ -2748,11 +2849,11 @@ def test_rendered_dashboard_has_comp_text_testids(monkeypatch):
     ]
     for testid in required_testids:
         assert f'data-testid="{testid}"' in html, (
-            f"Rendered dashboard is missing data-testid=\"{testid}\" on the vs-val span. "
+            f'Rendered dashboard is missing data-testid="{testid}" on the vs-val span. '
             f"updateComparisonRows() queries this element via "
             f"document.querySelector('[data-testid=\"{testid}\"]') — if the attribute is "
             f"absent, querySelector returns null and textContent is never updated after polls. "
-            f"Fix: add data-testid=\"{testid}\" to the matching vs-val span in templates/index.html."
+            f'Fix: add data-testid="{testid}" to the matching vs-val span in templates/index.html.'
         )
 
 
@@ -2904,18 +3005,29 @@ def test_guard_alpha_is_triggered_at_return_minus_current_return(monkeypatch):
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
             db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             db_mock.read_port_state.return_value = None
             # exit_triggers at_return == triggered_at_return (5.0) — this is the raw DB value
             db_mock.get_guard_alpha_by_symphony.return_value = {"sym_ga_math": 5.0}
-            with patch.object(analytics_module, "get_portfolio_today_change",
-                              return_value={"dry_run": 0.0, "if_held": 0.0}), \
-                 patch.object(analytics_module, "get_portfolio_cumulative_return",
-                              return_value={"dry_run": 0.05, "if_held": 0.04}), \
-                 patch.object(analytics_module, "get_portfolio_max_drawdown",
-                              return_value={"dry_run": -0.01, "if_held": -0.01}):
-
+            with (
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_today_change",
+                    return_value={"dry_run": 0.0, "if_held": 0.0},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_cumulative_return",
+                    return_value={"dry_run": 0.05, "if_held": 0.04},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_max_drawdown",
+                    return_value={"dry_run": -0.01, "if_held": -0.01},
+                ),
+            ):
                 app_module.app.config["TESTING"] = True
                 with app_module.app.test_client() as c:
                     resp = c.get("/api/state")
@@ -2926,8 +3038,7 @@ def test_guard_alpha_is_triggered_at_return_minus_current_return(monkeypatch):
     sym_entry = bot_state.get("sym_ga_math", {})
 
     assert "guard_alpha" in sym_entry, (
-        "bot_state['sym_ga_math'] must include 'guard_alpha'. "
-        f"Got keys: {list(sym_entry.keys())!r}"
+        f"bot_state['sym_ga_math'] must include 'guard_alpha'. Got keys: {list(sym_entry.keys())!r}"
     )
 
     ga = sym_entry["guard_alpha"]
@@ -2968,21 +3079,25 @@ def test_api_state_portfolio_strip_today_change_is_dict_not_float(monkeypatch):
     """
     import analytics as analytics_module
 
-    with patch.object(app_module, "get_api_state_dict", return_value={
-        "bot_state": _BOT_STATE_STUB.copy(),
-        "is_locked": False,
-        "port_state": {},
-        "exit_authority": "per_symphony",
-        "daemon_started_at": "2026-05-19T00:00:00Z",
-        "portfolio_strip": {
-            "today_change": {"dry_run": 0.653, "if_held": 0.712},
-            "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
-            "max_drawdown": {"dry_run": -0.28, "if_held": -0.19},
-            "hist_dates": _THIRTY_FIVE_DAYS[:],
-            "hist_bot": [0.001 * (i + 1) for i in range(35)],
-            "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with patch.object(
+        app_module,
+        "get_api_state_dict",
+        return_value={
+            "bot_state": _BOT_STATE_STUB.copy(),
+            "is_locked": False,
+            "port_state": {},
+            "exit_authority": "per_symphony",
+            "daemon_started_at": "2026-05-19T00:00:00Z",
+            "portfolio_strip": {
+                "today_change": {"dry_run": 0.653, "if_held": 0.712},
+                "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
+                "max_drawdown": {"dry_run": -0.28, "if_held": -0.19},
+                "hist_dates": _THIRTY_FIVE_DAYS[:],
+                "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+            },
         },
-    }):
+    ):
         with patch.object(app_module, "database") as db_mock:
             db_mock.load_state.return_value = _BOT_STATE_STUB.copy()
             db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
@@ -2991,16 +3106,28 @@ def test_api_state_portfolio_strip_today_change_is_dict_not_float(monkeypatch):
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
             db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             db_mock.read_port_state.return_value = None
             db_mock.get_guard_alpha_by_symphony.return_value = {}
-            with patch.object(analytics_module, "get_portfolio_today_change",
-                              return_value={"dry_run": 0.653, "if_held": 0.712}), \
-                 patch.object(analytics_module, "get_portfolio_cumulative_return",
-                              return_value={"dry_run": 1.41, "if_held": 68.6}), \
-                 patch.object(analytics_module, "get_portfolio_max_drawdown",
-                              return_value={"dry_run": -0.28, "if_held": -0.19}):
+            with (
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_today_change",
+                    return_value={"dry_run": 0.653, "if_held": 0.712},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_cumulative_return",
+                    return_value={"dry_run": 1.41, "if_held": 68.6},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_max_drawdown",
+                    return_value={"dry_run": -0.28, "if_held": -0.19},
+                ),
+            ):
                 app_module.app.config["TESTING"] = True
                 with app_module.app.test_client() as c:
                     resp = c.get("/api/state")
@@ -3083,13 +3210,11 @@ def test_template_cash_now_button_uses_token_not_bare_hex():
     # Button must be present with data-testid
     assert 'data-testid="cash-now-btn"' in src, (
         "templates/index.html must contain a Cash Now button with "
-        "data-testid=\"cash-now-btn\". The button was not found."
+        'data-testid="cash-now-btn". The button was not found.'
     )
 
     # Extract the .cash-now-btn CSS block
-    css_block_match = re.search(
-        r"\.cash-now-btn\s*\{([^}]+)\}", src, re.S
-    )
+    css_block_match = re.search(r"\.cash-now-btn\s*\{([^}]+)\}", src, re.S)
     assert css_block_match, (
         "templates/index.html must define a .cash-now-btn CSS rule block. Not found."
     )
@@ -3140,21 +3265,25 @@ def test_rendered_dashboard_card_spark_has_non_empty_data_sym_id(monkeypatch):
         }
     }
 
-    with patch.object(app_module, "get_api_state_dict", return_value={
-        "bot_state": bot_state_no_id,
-        "is_locked": False,
-        "port_state": {},
-        "exit_authority": "per_symphony",
-        "daemon_started_at": "2026-05-19T00:00:00Z",
-        "portfolio_strip": {
-            "today_change": {"dry_run": 0.5, "if_held": 0.3},
-            "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
-            "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
-            "hist_dates": _THIRTY_FIVE_DAYS[:],
-            "hist_bot": [0.001 * (i + 1) for i in range(35)],
-            "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with patch.object(
+        app_module,
+        "get_api_state_dict",
+        return_value={
+            "bot_state": bot_state_no_id,
+            "is_locked": False,
+            "port_state": {},
+            "exit_authority": "per_symphony",
+            "daemon_started_at": "2026-05-19T00:00:00Z",
+            "portfolio_strip": {
+                "today_change": {"dry_run": 0.5, "if_held": 0.3},
+                "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
+                "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
+                "hist_dates": _THIRTY_FIVE_DAYS[:],
+                "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+            },
         },
-    }):
+    ):
         with patch.object(app_module, "database") as db_mock:
             db_mock.load_state.return_value = bot_state_no_id.copy()
             db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
@@ -3163,15 +3292,27 @@ def test_rendered_dashboard_card_spark_has_non_empty_data_sym_id(monkeypatch):
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
             db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             db_mock.read_port_state.return_value = None
-            with patch.object(analytics_module, "get_portfolio_today_change",
-                              return_value={"dry_run": 0.5, "if_held": 0.3}), \
-                 patch.object(analytics_module, "get_portfolio_cumulative_return",
-                              return_value={"dry_run": 1.41, "if_held": 68.6}), \
-                 patch.object(analytics_module, "get_portfolio_max_drawdown",
-                              return_value={"dry_run": -5.2, "if_held": -3.1}):
+            with (
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_today_change",
+                    return_value={"dry_run": 0.5, "if_held": 0.3},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_cumulative_return",
+                    return_value={"dry_run": 1.41, "if_held": 68.6},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_max_drawdown",
+                    return_value={"dry_run": -5.2, "if_held": -3.1},
+                ),
+            ):
                 app_module.app.config["TESTING"] = True
                 with app_module.app.test_client() as c:
                     resp = c.get("/")
@@ -3179,9 +3320,13 @@ def test_rendered_dashboard_card_spark_has_non_empty_data_sym_id(monkeypatch):
                     html = resp.data.decode("utf-8")
 
     # Find all data-sym-id values on card-spark canvases
-    sym_ids = re.findall(r'data-testid=["\']card-spark["\'][^>]*data-sym-id=["\']([^"\']*)["\']', html)
+    sym_ids = re.findall(
+        r'data-testid=["\']card-spark["\'][^>]*data-sym-id=["\']([^"\']*)["\']', html
+    )
     # Also check reversed attribute order
-    sym_ids += re.findall(r'data-sym-id=["\']([^"\']*)["\'][^>]*data-testid=["\']card-spark["\']', html)
+    sym_ids += re.findall(
+        r'data-sym-id=["\']([^"\']*)["\'][^>]*data-testid=["\']card-spark["\']', html
+    )
 
     assert len(sym_ids) > 0, (
         "No [data-testid='card-spark'] canvases found in rendered HTML. "
@@ -3190,7 +3335,7 @@ def test_rendered_dashboard_card_spark_has_non_empty_data_sym_id(monkeypatch):
 
     empty_ids = [v for v in sym_ids if not v.strip()]
     assert not empty_ids, (
-        f"Found {len(empty_ids)} card-spark canvas(es) with empty data-sym-id=\"\". "
+        f'Found {len(empty_ids)} card-spark canvas(es) with empty data-sym-id="". '
         "renderSparkline() selects canvas via [data-sym-id='<symId>'] — an empty value "
         "means all sparkline fetches select no element and draw nothing. "
         "Fix: inject sym['id'] = k before template render in dashboard() route, or "
@@ -3251,8 +3396,9 @@ def test_cash_now_button_css_is_outlined_not_solid_fill():
     css_block = css_block_match.group(1)
 
     # Background must NOT be a solid color in default state (must be transparent)
-    assert re.search(r"background\s*:\s*transparent", css_block) or \
-           not re.search(r"background\s*:", css_block), (
+    assert re.search(r"background\s*:\s*transparent", css_block) or not re.search(
+        r"background\s*:", css_block
+    ), (
         f"Cash Now button default background must be transparent (outlined style). "
         f"Current CSS has a solid background fill. "
         f"Design spec: transparent bg in default, solid fill only on :hover. "
@@ -3356,12 +3502,14 @@ def test_cash_now_button_triggered_card_has_disabled_state_css():
     src = template_path.read_text(encoding="utf-8")
 
     # Must have either :disabled pseudo-class rule or a triggered-state variant
-    has_disabled_rule = bool(re.search(
-        r"\.cash-now-btn\s*:\s*disabled|\.cash-now-btn\[disabled\]|"
-        r"\.triggered\s+\.cash-now-btn|\.cash-now-btn--disabled|"
-        r"\.cash-now-btn\s*\.\s*disabled",
-        src
-    ))
+    has_disabled_rule = bool(
+        re.search(
+            r"\.cash-now-btn\s*:\s*disabled|\.cash-now-btn\[disabled\]|"
+            r"\.triggered\s+\.cash-now-btn|\.cash-now-btn--disabled|"
+            r"\.cash-now-btn\s*\.\s*disabled",
+            src,
+        )
+    )
     assert has_disabled_rule, (
         "templates/index.html must define a CSS rule for the disabled/triggered state "
         "of .cash-now-btn. Design spec: triggered cards show a faint outlined button "
@@ -3402,21 +3550,25 @@ def test_rendered_dashboard_triggered_card_cash_now_btn_has_disabled_attr(monkey
         }
     }
 
-    with patch.object(app_module, "get_api_state_dict", return_value={
-        "bot_state": triggered_bot_state,
-        "is_locked": False,
-        "port_state": {},
-        "exit_authority": "per_symphony",
-        "daemon_started_at": "2026-05-19T00:00:00Z",
-        "portfolio_strip": {
-            "today_change": {"dry_run": 0.5, "if_held": 0.3},
-            "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
-            "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
-            "hist_dates": _THIRTY_FIVE_DAYS[:],
-            "hist_bot": [0.001 * (i + 1) for i in range(35)],
-            "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with patch.object(
+        app_module,
+        "get_api_state_dict",
+        return_value={
+            "bot_state": triggered_bot_state,
+            "is_locked": False,
+            "port_state": {},
+            "exit_authority": "per_symphony",
+            "daemon_started_at": "2026-05-19T00:00:00Z",
+            "portfolio_strip": {
+                "today_change": {"dry_run": 0.5, "if_held": 0.3},
+                "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
+                "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
+                "hist_dates": _THIRTY_FIVE_DAYS[:],
+                "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+            },
         },
-    }):
+    ):
         with patch.object(app_module, "database") as db_mock:
             db_mock.load_state.return_value = triggered_bot_state.copy()
             db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
@@ -3425,15 +3577,27 @@ def test_rendered_dashboard_triggered_card_cash_now_btn_has_disabled_attr(monkey
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
             db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             db_mock.read_port_state.return_value = None
-            with patch.object(analytics_module, "get_portfolio_today_change",
-                              return_value={"dry_run": 0.5, "if_held": 0.3}), \
-                 patch.object(analytics_module, "get_portfolio_cumulative_return",
-                              return_value={"dry_run": 1.41, "if_held": 68.6}), \
-                 patch.object(analytics_module, "get_portfolio_max_drawdown",
-                              return_value={"dry_run": -5.2, "if_held": -3.1}):
+            with (
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_today_change",
+                    return_value={"dry_run": 0.5, "if_held": 0.3},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_cumulative_return",
+                    return_value={"dry_run": 1.41, "if_held": 68.6},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_max_drawdown",
+                    return_value={"dry_run": -5.2, "if_held": -3.1},
+                ),
+            ):
                 app_module.app.config["TESTING"] = True
                 with app_module.app.test_client() as c:
                     resp = c.get("/")
@@ -3441,10 +3605,7 @@ def test_rendered_dashboard_triggered_card_cash_now_btn_has_disabled_attr(monkey
                     html = resp.data.decode("utf-8")
 
     # Find all Cash Now buttons
-    cash_now_buttons = re.findall(
-        r'<button[^>]*data-testid=["\']cash-now-btn["\'][^>]*>',
-        html
-    )
+    cash_now_buttons = re.findall(r'<button[^>]*data-testid=["\']cash-now-btn["\'][^>]*>', html)
     assert len(cash_now_buttons) > 0, (
         "No [data-testid='cash-now-btn'] buttons found in rendered HTML for triggered symphony. "
         "The dashboard must render Cash Now buttons for each symphony card."
@@ -3455,7 +3616,8 @@ def test_rendered_dashboard_triggered_card_cash_now_btn_has_disabled_attr(monkey
     assert not buttons_without_disabled, (
         f"Found {len(buttons_without_disabled)} Cash Now button(s) without the `disabled` "
         f"HTML attribute in a triggered-card render:\n"
-        + "\n".join(f"  {b}" for b in buttons_without_disabled) + "\n"
+        + "\n".join(f"  {b}" for b in buttons_without_disabled)
+        + "\n"
         "The CSS `.cash-now-btn:disabled {{ opacity: 0.4 }}` rule only fires when the "
         "element has the `disabled` attribute set. Without it, triggered cards look "
         "identical to armed cards.\n"
@@ -3483,21 +3645,25 @@ def test_rendered_dashboard_armed_card_cash_now_btn_does_not_have_disabled_attr(
         }
     }
 
-    with patch.object(app_module, "get_api_state_dict", return_value={
-        "bot_state": armed_bot_state,
-        "is_locked": False,
-        "port_state": {},
-        "exit_authority": "per_symphony",
-        "daemon_started_at": "2026-05-19T00:00:00Z",
-        "portfolio_strip": {
-            "today_change": {"dry_run": 0.5, "if_held": 0.3},
-            "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
-            "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
-            "hist_dates": _THIRTY_FIVE_DAYS[:],
-            "hist_bot": [0.001 * (i + 1) for i in range(35)],
-            "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with patch.object(
+        app_module,
+        "get_api_state_dict",
+        return_value={
+            "bot_state": armed_bot_state,
+            "is_locked": False,
+            "port_state": {},
+            "exit_authority": "per_symphony",
+            "daemon_started_at": "2026-05-19T00:00:00Z",
+            "portfolio_strip": {
+                "today_change": {"dry_run": 0.5, "if_held": 0.3},
+                "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
+                "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
+                "hist_dates": _THIRTY_FIVE_DAYS[:],
+                "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+            },
         },
-    }):
+    ):
         with patch.object(app_module, "database") as db_mock:
             db_mock.load_state.return_value = armed_bot_state.copy()
             db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
@@ -3506,25 +3672,34 @@ def test_rendered_dashboard_armed_card_cash_now_btn_does_not_have_disabled_attr(
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
             db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             db_mock.read_port_state.return_value = None
-            with patch.object(analytics_module, "get_portfolio_today_change",
-                              return_value={"dry_run": 0.5, "if_held": 0.3}), \
-                 patch.object(analytics_module, "get_portfolio_cumulative_return",
-                              return_value={"dry_run": 1.41, "if_held": 68.6}), \
-                 patch.object(analytics_module, "get_portfolio_max_drawdown",
-                              return_value={"dry_run": -5.2, "if_held": -3.1}):
+            with (
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_today_change",
+                    return_value={"dry_run": 0.5, "if_held": 0.3},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_cumulative_return",
+                    return_value={"dry_run": 1.41, "if_held": 68.6},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_max_drawdown",
+                    return_value={"dry_run": -5.2, "if_held": -3.1},
+                ),
+            ):
                 app_module.app.config["TESTING"] = True
                 with app_module.app.test_client() as c:
                     resp = c.get("/")
                     assert resp.status_code == 200
                     html = resp.data.decode("utf-8")
 
-    cash_now_buttons = re.findall(
-        r'<button[^>]*data-testid=["\']cash-now-btn["\'][^>]*>',
-        html
-    )
+    cash_now_buttons = re.findall(r'<button[^>]*data-testid=["\']cash-now-btn["\'][^>]*>', html)
     assert len(cash_now_buttons) > 0, (
         "No [data-testid='cash-now-btn'] buttons found in rendered HTML for armed symphony."
     )
@@ -3599,9 +3774,7 @@ def test_api_state_guard_alpha_populated_from_real_db_exit_triggers(tmp_path, mo
         ("sym_beta", "Beta Symphony", 7.25, "2026-05-19T10:00:00Z"),
     )
     # Minimal stubs for other tables the route queries
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS chart_history (id INTEGER PRIMARY KEY, data TEXT)"
-    )
+    conn.execute("CREATE TABLE IF NOT EXISTS chart_history (id INTEGER PRIMARY KEY, data TEXT)")
     conn.execute("INSERT INTO chart_history VALUES (1, ?)", (_json.dumps({"symphonies": {}}),))
     conn.execute(
         "CREATE TABLE IF NOT EXISTS strategies "
@@ -3613,35 +3786,46 @@ def test_api_state_guard_alpha_populated_from_real_db_exit_triggers(tmp_path, mo
     monkeypatch.setattr(db_module, "DB_FILE", db_path)
     monkeypatch.setenv("DB_PATH", db_path)
 
-    with patch.object(app_module, "get_api_state_dict", return_value={
-        "bot_state": triggered_state,
-        "is_locked": False,
-        "port_state": {},
-        "exit_authority": "per_symphony",
-        "daemon_started_at": "2026-05-19T00:00:00Z",
-        "portfolio_strip": {
-            "today_change": {"dry_run": 0.0, "if_held": 0.0},
-            "cumulative_return": {"dry_run": 0.08, "if_held": 0.05},
-            "max_drawdown": {"dry_run": -0.01, "if_held": -0.01},
-            "hist_dates": _THIRTY_FIVE_DAYS[:],
-            "hist_bot": [0.001 * (i + 1) for i in range(35)],
-            "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with patch.object(
+        app_module,
+        "get_api_state_dict",
+        return_value={
+            "bot_state": triggered_state,
+            "is_locked": False,
+            "port_state": {},
+            "exit_authority": "per_symphony",
+            "daemon_started_at": "2026-05-19T00:00:00Z",
+            "portfolio_strip": {
+                "today_change": {"dry_run": 0.0, "if_held": 0.0},
+                "cumulative_return": {"dry_run": 0.08, "if_held": 0.05},
+                "max_drawdown": {"dry_run": -0.01, "if_held": -0.01},
+                "hist_dates": _THIRTY_FIVE_DAYS[:],
+                "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+            },
         },
-    }):
+    ):
         # Patch only the functions that would fail without a full DB schema;
         # do NOT mock get_guard_alpha_by_symphony — that is the function under test.
-        with patch.object(db_module, "load_state", return_value=triggered_state), \
-             patch.object(db_module, "load_chart_history",
-                          return_value={"symphonies": {}}), \
-             patch.object(db_module, "normalize_name",
-                          side_effect=lambda n: (n or "").lower().replace(" ", "_")), \
-             patch.object(db_module, "get_symphony_strategy",
-                          return_value={"params": {}, "locked_vars": []}), \
-             patch.object(db_module, "read_fleet_alert", return_value=None), \
-             patch.object(db_module, "get_shadow_divergence",
-                          return_value={"by_symphony": {}, "portfolio_today": None}), \
-             patch.object(db_module, "read_port_state", return_value=None):
-
+        with (
+            patch.object(db_module, "load_state", return_value=triggered_state),
+            patch.object(db_module, "load_chart_history", return_value={"symphonies": {}}),
+            patch.object(
+                db_module,
+                "normalize_name",
+                side_effect=lambda n: (n or "").lower().replace(" ", "_"),
+            ),
+            patch.object(
+                db_module, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
+            ),
+            patch.object(db_module, "read_fleet_alert", return_value=None),
+            patch.object(
+                db_module,
+                "get_shadow_divergence",
+                return_value={"by_symphony": {}, "portfolio_today": None},
+            ),
+            patch.object(db_module, "read_port_state", return_value=None),
+        ):
             app_module.app.config["TESTING"] = True
             with app_module.app.test_client() as c:
                 resp = c.get("/api/state")
@@ -3707,21 +3891,25 @@ def test_rendered_dashboard_triggered_card_guard_alpha_absent_shows_degraded_not
         }
     }
 
-    with patch.object(app_module, "get_api_state_dict", return_value={
-        "bot_state": triggered_no_ga,
-        "is_locked": False,
-        "port_state": {},
-        "exit_authority": "per_symphony",
-        "daemon_started_at": "2026-05-19T00:00:00Z",
-        "portfolio_strip": {
-            "today_change": {"dry_run": 0.5, "if_held": 0.3},
-            "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
-            "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
-            "hist_dates": _THIRTY_FIVE_DAYS[:],
-            "hist_bot": [0.001 * (i + 1) for i in range(35)],
-            "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with patch.object(
+        app_module,
+        "get_api_state_dict",
+        return_value={
+            "bot_state": triggered_no_ga,
+            "is_locked": False,
+            "port_state": {},
+            "exit_authority": "per_symphony",
+            "daemon_started_at": "2026-05-19T00:00:00Z",
+            "portfolio_strip": {
+                "today_change": {"dry_run": 0.5, "if_held": 0.3},
+                "cumulative_return": {"dry_run": 1.41, "if_held": 68.6},
+                "max_drawdown": {"dry_run": -5.2, "if_held": -3.1},
+                "hist_dates": _THIRTY_FIVE_DAYS[:],
+                "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+            },
         },
-    }):
+    ):
         with patch.object(app_module, "database") as db_mock:
             db_mock.load_state.return_value = triggered_no_ga.copy()
             db_mock.load_chart_history.return_value = _CHART_HISTORY_STUB.copy()
@@ -3730,15 +3918,27 @@ def test_rendered_dashboard_triggered_card_guard_alpha_absent_shows_degraded_not
             db_mock.get_ro_connection.return_value = MagicMock()
             db_mock.read_fleet_alert.return_value = None
             db_mock.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             db_mock.read_port_state.return_value = None
-            with patch.object(analytics_module, "get_portfolio_today_change",
-                              return_value={"dry_run": 0.5, "if_held": 0.3}), \
-                 patch.object(analytics_module, "get_portfolio_cumulative_return",
-                              return_value={"dry_run": 1.41, "if_held": 68.6}), \
-                 patch.object(analytics_module, "get_portfolio_max_drawdown",
-                              return_value={"dry_run": -5.2, "if_held": -3.1}):
+            with (
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_today_change",
+                    return_value={"dry_run": 0.5, "if_held": 0.3},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_cumulative_return",
+                    return_value={"dry_run": 1.41, "if_held": 68.6},
+                ),
+                patch.object(
+                    analytics_module,
+                    "get_portfolio_max_drawdown",
+                    return_value={"dry_run": -5.2, "if_held": -3.1},
+                ),
+            ):
                 app_module.app.config["TESTING"] = True
                 with app_module.app.test_client() as c:
                     resp = c.get("/")
@@ -3748,13 +3948,11 @@ def test_rendered_dashboard_triggered_card_guard_alpha_absent_shows_degraded_not
     # Must NOT render "0.0%α" or any numeric-zero-percent variant in the verdict area
     # Find the triggered-verdict section
     verdict_matches = re.findall(
-        r'data-testid=["\']triggered-verdict["\'][^>]*>.*?</div>',
-        html,
-        re.DOTALL
+        r'data-testid=["\']triggered-verdict["\'][^>]*>.*?</div>', html, re.DOTALL
     )
 
     # Broad check: no "0.0%α" or "0%α" anywhere in verdict sections
-    zero_alpha_pattern = re.compile(r'0\.0\s*%.*?alpha|0\.0%α|gave up 0\.0%', re.IGNORECASE)
+    zero_alpha_pattern = re.compile(r"0\.0\s*%.*?alpha|0\.0%α|gave up 0\.0%", re.IGNORECASE)
     for v in verdict_matches:
         assert not zero_alpha_pattern.search(v), (
             "Triggered card verdict must NOT show '0.0%α' when guard_alpha is absent — "
@@ -3774,7 +3972,9 @@ def test_rendered_dashboard_triggered_card_guard_alpha_absent_shows_degraded_not
     )
 
 
-def test_api_state_guard_alpha_absent_when_no_exit_triggers_returns_none_or_missing(tmp_path, monkeypatch):
+def test_api_state_guard_alpha_absent_when_no_exit_triggers_returns_none_or_missing(
+    tmp_path, monkeypatch
+):
     """When exit_triggers has no rows for a triggered symphony, /api/state must return
     guard_alpha as None or omit the key — NOT return 0.0 (which is indistinguishable
     from a real zero-alpha exit).
@@ -3820,9 +4020,7 @@ def test_api_state_guard_alpha_absent_when_no_exit_triggers_returns_none_or_miss
         )"""
     )
     # NOTE: deliberately no rows for sym_no_trigger — simulates dev DB state
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS chart_history (id INTEGER PRIMARY KEY, data TEXT)"
-    )
+    conn.execute("CREATE TABLE IF NOT EXISTS chart_history (id INTEGER PRIMARY KEY, data TEXT)")
     conn.execute("INSERT INTO chart_history VALUES (1, ?)", (_json.dumps({"symphonies": {}}),))
     conn.execute(
         "CREATE TABLE IF NOT EXISTS strategies "
@@ -3836,33 +4034,44 @@ def test_api_state_guard_alpha_absent_when_no_exit_triggers_returns_none_or_miss
     monkeypatch.setattr(db_module, "DB_FILE", db_path)
     monkeypatch.setenv("DB_PATH", db_path)
 
-    with patch.object(app_module, "get_api_state_dict", return_value={
-        "bot_state": triggered_state,
-        "is_locked": False,
-        "port_state": {},
-        "exit_authority": "per_symphony",
-        "daemon_started_at": "2026-05-19T00:00:00Z",
-        "portfolio_strip": {
-            "today_change": {"dry_run": 0.0, "if_held": 0.0},
-            "cumulative_return": {"dry_run": 0.03, "if_held": 0.05},
-            "max_drawdown": {"dry_run": -0.01, "if_held": -0.01},
-            "hist_dates": _THIRTY_FIVE_DAYS[:],
-            "hist_bot": [0.001 * (i + 1) for i in range(35)],
-            "hist_held": [0.0008 * (i + 1) for i in range(35)],
+    with patch.object(
+        app_module,
+        "get_api_state_dict",
+        return_value={
+            "bot_state": triggered_state,
+            "is_locked": False,
+            "port_state": {},
+            "exit_authority": "per_symphony",
+            "daemon_started_at": "2026-05-19T00:00:00Z",
+            "portfolio_strip": {
+                "today_change": {"dry_run": 0.0, "if_held": 0.0},
+                "cumulative_return": {"dry_run": 0.03, "if_held": 0.05},
+                "max_drawdown": {"dry_run": -0.01, "if_held": -0.01},
+                "hist_dates": _THIRTY_FIVE_DAYS[:],
+                "hist_bot": [0.001 * (i + 1) for i in range(35)],
+                "hist_held": [0.0008 * (i + 1) for i in range(35)],
+            },
         },
-    }):
-        with patch.object(db_module, "load_state", return_value=triggered_state), \
-             patch.object(db_module, "load_chart_history",
-                          return_value={"symphonies": {}}), \
-             patch.object(db_module, "normalize_name",
-                          side_effect=lambda n: (n or "").lower().replace(" ", "_")), \
-             patch.object(db_module, "get_symphony_strategy",
-                          return_value={"params": {}, "locked_vars": []}), \
-             patch.object(db_module, "read_fleet_alert", return_value=None), \
-             patch.object(db_module, "get_shadow_divergence",
-                          return_value={"by_symphony": {}, "portfolio_today": None}), \
-             patch.object(db_module, "read_port_state", return_value=None):
-
+    ):
+        with (
+            patch.object(db_module, "load_state", return_value=triggered_state),
+            patch.object(db_module, "load_chart_history", return_value={"symphonies": {}}),
+            patch.object(
+                db_module,
+                "normalize_name",
+                side_effect=lambda n: (n or "").lower().replace(" ", "_"),
+            ),
+            patch.object(
+                db_module, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
+            ),
+            patch.object(db_module, "read_fleet_alert", return_value=None),
+            patch.object(
+                db_module,
+                "get_shadow_divergence",
+                return_value={"by_symphony": {}, "portfolio_today": None},
+            ),
+            patch.object(db_module, "read_port_state", return_value=None),
+        ):
             app_module.app.config["TESTING"] = True
             with app_module.app.test_client() as c:
                 resp = c.get("/api/state")

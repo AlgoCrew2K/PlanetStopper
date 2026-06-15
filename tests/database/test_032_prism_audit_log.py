@@ -70,6 +70,7 @@ _REQUIRED_COLUMNS = {"id", "run_id", "agent_role", "phase", "content", "created_
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -103,12 +104,12 @@ def _index_covers_column(conn: sqlite3.Connection, index_name: str, column_name:
 # AC-1  Migration file checks
 # ---------------------------------------------------------------------------
 
+
 class TestMigrationFile:
     def test_migration_file_exists(self):
         # The SQL file must exist before green implementation touches database.py.
         assert _MIGRATION_PATH.exists(), (
-            f"{_MIGRATION_FILENAME} not found under migrations/ — "
-            "implementer must create it"
+            f"{_MIGRATION_FILENAME} not found under migrations/ — implementer must create it"
         )
 
     def test_migration_uses_create_if_not_exists(self):
@@ -148,9 +149,7 @@ class TestMigrationFile:
         try:
             cols = _column_names(conn, "prism_audit_log")
             missing = _REQUIRED_COLUMNS - cols
-            assert not missing, (
-                f"prism_audit_log is missing columns: {sorted(missing)}"
-            )
+            assert not missing, f"prism_audit_log is missing columns: {sorted(missing)}"
         finally:
             conn.close()
 
@@ -159,13 +158,9 @@ class TestMigrationFile:
         try:
             indexes = _index_names_for_table(conn, "prism_audit_log")
             # At least one index must cover the run_id column.
-            covering = [
-                idx for idx in indexes
-                if _index_covers_column(conn, idx, "run_id")
-            ]
+            covering = [idx for idx in indexes if _index_covers_column(conn, idx, "run_id")]
             assert covering, (
-                "prism_audit_log must have at least one index on run_id; "
-                f"found indexes: {indexes}"
+                f"prism_audit_log must have at least one index on run_id; found indexes: {indexes}"
             )
         finally:
             conn.close()
@@ -180,6 +175,7 @@ class TestMigrationFile:
 # AC-2  Public accessor surface
 # ---------------------------------------------------------------------------
 
+
 class TestInsertPrismAuditEntry:
     def test_insert_returns_positive_int(self):
         row_id = db_module.insert_prism_audit_entry(
@@ -188,12 +184,8 @@ class TestInsertPrismAuditEntry:
             phase="initial_read",
             content="Volatility is elevated.",
         )
-        assert isinstance(row_id, int), (
-            "insert_prism_audit_entry must return an int row id"
-        )
-        assert row_id > 0, (
-            f"insert_prism_audit_entry must return a positive row id; got {row_id}"
-        )
+        assert isinstance(row_id, int), "insert_prism_audit_entry must return an int row id"
+        assert row_id > 0, f"insert_prism_audit_entry must return a positive row id; got {row_id}"
 
     def test_insert_returns_actual_rowid(self):
         # The returned id must be the ACTUAL SQLite rowid — verify by querying.
@@ -205,9 +197,7 @@ class TestInsertPrismAuditEntry:
         )
         conn = db_module.get_connection()
         try:
-            row = conn.execute(
-                "SELECT id FROM prism_audit_log WHERE id = ?", (row_id,)
-            ).fetchone()
+            row = conn.execute("SELECT id FROM prism_audit_log WHERE id = ?", (row_id,)).fetchone()
         finally:
             conn.close()
         assert row is not None, (
@@ -233,9 +223,7 @@ class TestInsertPrismAuditEntry:
 class TestGetPrismAuditForRun:
     def test_returns_empty_list_when_no_rows(self):
         result = db_module.get_prism_audit_for_run("nonexistent-run-id")
-        assert result == [], (
-            "get_prism_audit_for_run must return [] for an unknown run_id"
-        )
+        assert result == [], "get_prism_audit_for_run must return [] for an unknown run_id"
 
     def test_returns_list_of_dicts(self):
         db_module.insert_prism_audit_entry(
@@ -260,9 +248,7 @@ class TestGetPrismAuditForRun:
         assert result, "Expected at least one entry"
         entry = result[0]
         for key in _REQUIRED_COLUMNS:
-            assert key in entry, (
-                f"Returned dict is missing key {key!r}; got keys: {sorted(entry)}"
-            )
+            assert key in entry, f"Returned dict is missing key {key!r}; got keys: {sorted(entry)}"
 
     def test_created_at_is_non_empty_string(self):
         db_module.insert_prism_audit_entry(
@@ -274,9 +260,7 @@ class TestGetPrismAuditForRun:
         result = db_module.get_prism_audit_for_run("run-ts-001")
         assert result
         created_at = result[0]["created_at"]
-        assert isinstance(created_at, str) and created_at, (
-            "created_at must be a non-empty string"
-        )
+        assert isinstance(created_at, str) and created_at, "created_at must be a non-empty string"
 
     def test_ordering_is_by_id_ascending(self):
         # Insert 3 entries for the same run in sequence; get must preserve id order.
@@ -298,9 +282,7 @@ class TestGetPrismAuditForRun:
             f"Entries not ordered by id ascending; got ids: {returned_ids}"
         )
         # Verify the ids in the result match what was inserted.
-        assert returned_ids == ids, (
-            f"Returned ids {returned_ids} do not match inserted ids {ids}"
-        )
+        assert returned_ids == ids, f"Returned ids {returned_ids} do not match inserted ids {ids}"
 
     def test_run_id_grouping_isolates_across_two_runs(self):
         # Insert entries under two different run_ids; each get call must return
@@ -324,25 +306,20 @@ class TestGetPrismAuditForRun:
         result_a = db_module.get_prism_audit_for_run(run_a)
         result_b = db_module.get_prism_audit_for_run(run_b)
 
-        assert len(result_a) == 1, (
-            f"run_id={run_a!r} should return 1 entry; got {len(result_a)}"
-        )
-        assert len(result_b) == 1, (
-            f"run_id={run_b!r} should return 1 entry; got {len(result_b)}"
-        )
+        assert len(result_a) == 1, f"run_id={run_a!r} should return 1 entry; got {len(result_a)}"
+        assert len(result_b) == 1, f"run_id={run_b!r} should return 1 entry; got {len(result_b)}"
         assert result_a[0]["id"] == id_a
         assert result_b[0]["id"] == id_b
         # Ensure no cross-contamination.
         a_ids = {e["id"] for e in result_a}
         b_ids = {e["id"] for e in result_b}
-        assert a_ids.isdisjoint(b_ids), (
-            f"run_id grouping leaked: a_ids={a_ids}, b_ids={b_ids}"
-        )
+        assert a_ids.isdisjoint(b_ids), f"run_id grouping leaked: a_ids={a_ids}, b_ids={b_ids}"
 
 
 # ---------------------------------------------------------------------------
 # AC-3  SQL-injection-shaped inputs stored verbatim
 # ---------------------------------------------------------------------------
+
 
 class TestParameterizedStorage:
     @pytest.mark.parametrize(
@@ -350,9 +327,9 @@ class TestParameterizedStorage:
         [
             "'; DROP TABLE prism_audit_log; --",
             "SELECT * FROM prism_audit_log; DELETE FROM prism_audit_log",
-            'He said "hello"; she said \'goodbye\'',
+            "He said \"hello\"; she said 'goodbye'",
             "Line 1\nLine 2\nLine 3",  # multiline
-            "\x00null\x00byte",         # embedded null
+            "\x00null\x00byte",  # embedded null
         ],
         ids=[
             "sql_injection_classic",
@@ -375,9 +352,7 @@ class TestParameterizedStorage:
         assert matching, f"Row id={row_id} not found in get result"
         stored = matching[0]["content"]
         assert stored == content, (
-            f"Content was not stored verbatim.\n"
-            f"  Expected: {content!r}\n"
-            f"  Got:      {stored!r}"
+            f"Content was not stored verbatim.\n  Expected: {content!r}\n  Got:      {stored!r}"
         )
 
     def test_run_id_with_special_chars_stores_verbatim(self):
@@ -399,21 +374,16 @@ class TestParameterizedStorage:
 # AC-4  No update/delete accessors (append-only contract)
 # ---------------------------------------------------------------------------
 
+
 class TestAppendOnlyContract:
     def test_no_update_prism_symbol_exported(self):
-        update_symbols = [
-            name for name in dir(db_module)
-            if name.startswith("update_prism")
-        ]
+        update_symbols = [name for name in dir(db_module) if name.startswith("update_prism")]
         assert not update_symbols, (
             f"prism_audit_log must be append-only; found update symbols: {update_symbols}"
         )
 
     def test_no_delete_prism_symbol_exported(self):
-        delete_symbols = [
-            name for name in dir(db_module)
-            if name.startswith("delete_prism")
-        ]
+        delete_symbols = [name for name in dir(db_module) if name.startswith("delete_prism")]
         assert not delete_symbols, (
             f"prism_audit_log must be append-only; found delete symbols: {delete_symbols}"
         )

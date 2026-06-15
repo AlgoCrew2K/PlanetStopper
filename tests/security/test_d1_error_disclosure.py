@@ -82,6 +82,7 @@ def test_post_settings_does_not_echo_raw_exception_to_client(client, monkeypatch
         raise RuntimeError(internal_detail)
 
     from unittest.mock import MagicMock, patch
+
     db_mock = MagicMock()
     db_mock.save_symphony_strategy.side_effect = _exploding_save_symphony_strategy
     monkeypatch.setattr(app_module, "database", db_mock)
@@ -92,7 +93,9 @@ def test_post_settings_does_not_echo_raw_exception_to_client(client, monkeypatch
     with patch.object(app_module, "dotenv_values", return_value={"LIVE_EXECUTION": "False"}):
         payload = {
             "globals": {},
-            "symphonies": {"test_symphony": {"params": {"TRIGGER_THRESHOLD_PCT": "0.5"}, "locked_vars": []}},
+            "symphonies": {
+                "test_symphony": {"params": {"TRIGGER_THRESHOLD_PCT": "0.5"}, "locked_vars": []}
+            },
         }
         resp = client.post("/api/settings", json=payload)
 
@@ -138,12 +141,10 @@ def test_get_logs_does_not_echo_raw_exception_to_client(client, monkeypatch):
     Injecting a DB exception with an internal path/table detail must not
     result in that detail appearing in the response body.
     """
-    internal_detail = (
-        "no such table: symphony_decision_log "
-        "at /var/lib/alphabot/alphabot_state.db"
-    )
+    internal_detail = "no such table: symphony_decision_log at /var/lib/alphabot/alphabot_state.db"
 
     from unittest.mock import MagicMock
+
     db_mock = MagicMock()
     db_mock.get_ro_connection.return_value = MagicMock()
     db_mock.get_symphony_logs.side_effect = RuntimeError(internal_detail)
@@ -169,9 +170,7 @@ def test_get_logs_does_not_echo_raw_exception_to_client(client, monkeypatch):
     # Must still signal an error.
     assert resp.status_code in (400, 500) or (
         isinstance(resp.get_json(), dict) and "error" in (resp.get_json() or {})
-    ), (
-        f"GET /api/logs/<id> must return an error indication; got {resp.status_code}"
-    )
+    ), f"GET /api/logs/<id> must return an error indication; got {resp.status_code}"
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +197,7 @@ def test_ai_advisor_suggest_does_not_echo_raw_exception_to_client(client, monkey
     )
 
     from unittest.mock import patch
+
     with patch.object(app_module, "ai_advisor") as mock_advisor:
         mock_advisor.assemble_advisor_context.side_effect = RuntimeError(internal_detail)
         # DEV_ADVISOR_FIXTURE must be unset so the real code path runs.
@@ -227,10 +227,17 @@ def test_ai_advisor_suggest_does_not_echo_raw_exception_to_client(client, monkey
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("route,method,payload", [
-    ("/api/settings", "POST", {"globals": {}, "symphonies": {"x": {"params": {"BAD": "x"}, "locked_vars": []}}}),
-    ("/api/logs/nonexistent_symphony_999", "GET", None),
-])
+@pytest.mark.parametrize(
+    "route,method,payload",
+    [
+        (
+            "/api/settings",
+            "POST",
+            {"globals": {}, "symphonies": {"x": {"params": {"BAD": "x"}, "locked_vars": []}}},
+        ),
+        ("/api/logs/nonexistent_symphony_999", "GET", None),
+    ],
+)
 def test_error_response_contains_generic_non_empty_message(
     route, method, payload, client, monkeypatch
 ):
@@ -245,6 +252,7 @@ def test_error_response_contains_generic_non_empty_message(
     Not acceptable: "" (empty), null, or any verbatim exception text.
     """
     from unittest.mock import MagicMock
+
     db_mock = MagicMock()
     db_mock.save_symphony_strategy.side_effect = RuntimeError("INJECTED_INTERNAL_DETAIL")
     db_mock.get_symphony_logs.side_effect = RuntimeError("INJECTED_INTERNAL_DETAIL")
@@ -254,6 +262,7 @@ def test_error_response_contains_generic_non_empty_message(
     monkeypatch.setattr(app_module, "set_key", lambda *a, **kw: (True, a[1], a[2]))
     monkeypatch.setattr(app_module, "ENV_FILE_PATH", "/fake/.env")
     from unittest.mock import patch
+
     with patch.object(app_module, "dotenv_values", return_value={"LIVE_EXECUTION": "False"}):
         if method == "POST":
             resp = client.post(route, json=payload)

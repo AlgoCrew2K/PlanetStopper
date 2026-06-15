@@ -39,10 +39,7 @@ import pytest
 # Fixture loader
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures" / "autotuner" / "sortino_examples"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "autotuner" / "sortino_examples"
 
 
 def _load_fixture(filename: str) -> dict:
@@ -55,18 +52,22 @@ def _load_fixture(filename: str) -> dict:
 # Lazy autotuner import (avoid import-time Optuna side effects on Windows).
 # ---------------------------------------------------------------------------
 
+
 def _import_autotuner():
     import autotuner  # noqa: PLC0415
+
     return autotuner
 
 
 def _spec_bundle_kwarg() -> dict:
     """Return {spec_bundle_id: <id>} if run_autotuner accepts that parameter."""
     import autotuner as _at
+
     sig = _inspect.signature(_at.run_autotuner)
     if "spec_bundle_id" not in sig.parameters:
         return {}
     from tests.autotuner.conftest import make_phase1_theory_bundle
+
     return {"spec_bundle_id": make_phase1_theory_bundle()}
 
 
@@ -147,8 +148,7 @@ def test_objective_uses_sortino_formula_single_negative():
     result = autotuner.compute_sortino_ratio(returns, target=0.0)
 
     assert result == pytest.approx(expected, abs=1e-9), (
-        f"Sortino formula mismatch on single-negative fixture.\n"
-        f"  expected={expected}, got={result}"
+        f"Sortino formula mismatch on single-negative fixture.\n  expected={expected}, got={result}"
     )
 
 
@@ -306,18 +306,12 @@ def test_no_bare_decay_rate_in_collect_sim_returns():
         if isinstance(node, ast.Call):
             func = node.func
             # p.get("KEY", default) — the default is the second positional arg
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr == "get"
-            ):
+            if isinstance(func, ast.Attribute) and func.attr == "get":
                 for arg in node.args:
                     if isinstance(arg, ast.Constant):
                         exempt_positions.add((arg.lineno, arg.col_offset))
             # trial.suggest_*() — all positional args are search bounds
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr.startswith("suggest_")
-            ):
+            if isinstance(func, ast.Attribute) and func.attr.startswith("suggest_"):
                 for arg in node.args:
                     if isinstance(arg, ast.Constant):
                         exempt_positions.add((arg.lineno, arg.col_offset))
@@ -416,9 +410,9 @@ def test_downside_deviation_excludes_above_target_returns():
 
     # Confirm the denominator is non-zero (only -0.01 contributed, so it
     # should be sqrt(0.0001/3) ≈ 0.00577, not 0).
-    assert expected_downside_std == pytest.approx(
-        math.sqrt(0.0001 / 3), abs=1e-12
-    ), "Fixture self-consistency check failed (fixture 05 downside_std)."
+    assert expected_downside_std == pytest.approx(math.sqrt(0.0001 / 3), abs=1e-12), (
+        "Fixture self-consistency check failed (fixture 05 downside_std)."
+    )
 
     # Additional property: verify population denominator using a non-zero-mean
     # case. With returns [-0.02, 0.0, 0.01], mean = -0.003333..., only -0.02
@@ -501,12 +495,26 @@ def test_objective_signature_compat_with_optuna_trial():
     # so the VWAP breakdown stub can fire).
     history = {
         "sym-A": {
-            "2026-04-01": [{"return": 2.0, "mc_prob": 50.0, "vol": 1.0,
-                            "vwap_diff": -2.0, "base_atr_pct": 1.0,
-                            "valid_vwap_weight": 1.0}],
-            "2026-04-02": [{"return": 2.0, "mc_prob": 50.0, "vol": 1.0,
-                            "vwap_diff": -2.0, "base_atr_pct": 1.0,
-                            "valid_vwap_weight": 1.0}],
+            "2026-04-01": [
+                {
+                    "return": 2.0,
+                    "mc_prob": 50.0,
+                    "vol": 1.0,
+                    "vwap_diff": -2.0,
+                    "base_atr_pct": 1.0,
+                    "valid_vwap_weight": 1.0,
+                }
+            ],
+            "2026-04-02": [
+                {
+                    "return": 2.0,
+                    "mc_prob": 50.0,
+                    "vol": 1.0,
+                    "vwap_diff": -2.0,
+                    "base_atr_pct": 1.0,
+                    "valid_vwap_weight": 1.0,
+                }
+            ],
         }
     }
 
@@ -517,26 +525,35 @@ def test_objective_signature_compat_with_optuna_trial():
     with (
         patch("autotuner.optuna.create_study", return_value=fake_study),
         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
-        patch("autotuner.synthetic_history.generate_synthetic_history",
-              return_value=history),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
         patch("autotuner.database.load_chart_history", return_value={}),
         patch("autotuner.database.save_chart_archive"),
-        patch("autotuner.database.get_symphony_strategy",
-              return_value={"params": default_params.copy(), "locked_vars": []}),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": default_params.copy(), "locked_vars": []},
+        ),
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", default_params),
-        patch("autotuner.math_engine.compute_para_arm_decision",
-              side_effect=lambda **kw: (0.0, False)),
-        patch("autotuner.math_engine.compute_time_squeeze_decay",
-              side_effect=lambda tr: (1.5, 0.5)),
-        patch("autotuner.math_engine.compute_active_trailing_stop",
-              side_effect=lambda *a, **kw: 5.0),
-        patch("autotuner.math_engine.compute_breakeven_update",
-              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
-        patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-              side_effect=lambda *a, **kw: -10.0),
-        patch("autotuner.math_engine.compute_vwap_breakdown_update",
-              side_effect=vwap_always_triggers),
+        patch(
+            "autotuner.math_engine.compute_para_arm_decision", side_effect=lambda **kw: (0.0, False)
+        ),
+        patch(
+            "autotuner.math_engine.compute_time_squeeze_decay", side_effect=lambda tr: (1.5, 0.5)
+        ),
+        patch(
+            "autotuner.math_engine.compute_active_trailing_stop", side_effect=lambda *a, **kw: 5.0
+        ),
+        patch(
+            "autotuner.math_engine.compute_breakeven_update",
+            side_effect=lambda *a, **kw: (a[3], a[4], a[2]),
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+            side_effect=lambda *a, **kw: -10.0,
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_breakdown_update", side_effect=vwap_always_triggers
+        ),
         contextlib.redirect_stdout(buf),
     ):
         autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
@@ -619,10 +636,7 @@ def test_named_constants_have_source_comments():
 
     # The constant must have a comment on the same or immediately preceding line.
     lineno = module_assigns["SORTINO_TARGET_RETURN"]
-    has_comment = (
-        lineno in comments_by_line
-        or (lineno - 1) in comments_by_line
-    )
+    has_comment = lineno in comments_by_line or (lineno - 1) in comments_by_line
     assert has_comment, (
         f"SORTINO_TARGET_RETURN at line {lineno} has no source-citation comment "
         f"on its definition line or the immediately preceding line.\n"
@@ -652,9 +666,7 @@ def test_compute_sortino_ratio_all_positive_returns_is_positive():
     # Must not raise
     result = autotuner.compute_sortino_ratio(returns, target=0.0)
 
-    assert result > 0, (
-        f"All-positive returns must yield a positive Sortino value; got {result}"
-    )
+    assert result > 0, f"All-positive returns must yield a positive Sortino value; got {result}"
     # Must be finite so Optuna TPE can model it (inf is allowed here at the
     # helper level; the objective layer is responsible for clamping to finite).
     # We only assert positivity — the sentinel choice is implementation-defined.
@@ -712,9 +724,7 @@ def test_compute_sortino_ratio_single_element_no_downside():
 
     result = autotuner.compute_sortino_ratio([0.01], target=0.0)
 
-    assert result > 0, (
-        f"Single positive return must yield a positive Sortino value; got {result!r}"
-    )
+    assert result > 0, f"Single positive return must yield a positive Sortino value; got {result!r}"
     assert math.isfinite(result), (
         f"Single positive return must yield a finite Sortino value; got {result!r}. "
         f"Implementation must not return float('inf') — Optuna TPE requires finite values."
@@ -774,12 +784,26 @@ def test_optuna_study_direction_is_maximize():
 
     history = {
         "sym-A": {
-            "2026-04-01": [{"return": 1.0, "mc_prob": 50.0, "vol": 1.0,
-                            "vwap_diff": 0.0, "base_atr_pct": 1.0,
-                            "valid_vwap_weight": 1.0}],
-            "2026-04-02": [{"return": 1.0, "mc_prob": 50.0, "vol": 1.0,
-                            "vwap_diff": 0.0, "base_atr_pct": 1.0,
-                            "valid_vwap_weight": 1.0}],
+            "2026-04-01": [
+                {
+                    "return": 1.0,
+                    "mc_prob": 50.0,
+                    "vol": 1.0,
+                    "vwap_diff": 0.0,
+                    "base_atr_pct": 1.0,
+                    "valid_vwap_weight": 1.0,
+                }
+            ],
+            "2026-04-02": [
+                {
+                    "return": 1.0,
+                    "mc_prob": 50.0,
+                    "vol": 1.0,
+                    "vwap_diff": 0.0,
+                    "base_atr_pct": 1.0,
+                    "valid_vwap_weight": 1.0,
+                }
+            ],
         }
     }
 
@@ -787,33 +811,42 @@ def test_optuna_study_direction_is_maximize():
     with (
         patch("autotuner.optuna.create_study", side_effect=capturing_create_study),
         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
-        patch("autotuner.synthetic_history.generate_synthetic_history",
-              return_value=history),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
         patch("autotuner.database.load_chart_history", return_value={}),
         patch("autotuner.database.save_chart_archive"),
-        patch("autotuner.database.get_symphony_strategy",
-              return_value={"params": default_params.copy(), "locked_vars": []}),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": default_params.copy(), "locked_vars": []},
+        ),
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", default_params),
-        patch("autotuner.math_engine.compute_para_arm_decision",
-              side_effect=lambda **kw: (0.0, False)),
-        patch("autotuner.math_engine.compute_time_squeeze_decay",
-              side_effect=lambda tr: (1.5, 0.5)),
-        patch("autotuner.math_engine.compute_active_trailing_stop",
-              side_effect=lambda *a, **kw: 5.0),
-        patch("autotuner.math_engine.compute_breakeven_update",
-              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
-        patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-              side_effect=lambda *a, **kw: -10.0),
-        patch("autotuner.math_engine.compute_vwap_breakdown_update",
-              side_effect=lambda **kw: (0, 0, False, False)),
+        patch(
+            "autotuner.math_engine.compute_para_arm_decision", side_effect=lambda **kw: (0.0, False)
+        ),
+        patch(
+            "autotuner.math_engine.compute_time_squeeze_decay", side_effect=lambda tr: (1.5, 0.5)
+        ),
+        patch(
+            "autotuner.math_engine.compute_active_trailing_stop", side_effect=lambda *a, **kw: 5.0
+        ),
+        patch(
+            "autotuner.math_engine.compute_breakeven_update",
+            side_effect=lambda *a, **kw: (a[3], a[4], a[2]),
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+            side_effect=lambda *a, **kw: -10.0,
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_breakdown_update",
+            side_effect=lambda **kw: (0, 0, False, False),
+        ),
         contextlib.redirect_stdout(buf),
     ):
         autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
     assert len(create_study_calls) == 1, (
-        f"Expected exactly one create_study call per symphony; "
-        f"got {len(create_study_calls)}"
+        f"Expected exactly one create_study call per symphony; got {len(create_study_calls)}"
     )
 
     call_kwargs = create_study_calls[0]["kwargs"]
@@ -879,12 +912,26 @@ def test_train_alpha_log_line_does_not_label_sortino_as_percent():
 
     history = {
         "sym-A": {
-            "2026-04-01": [{"return": 1.0, "mc_prob": 50.0, "vol": 1.0,
-                            "vwap_diff": 0.0, "base_atr_pct": 1.0,
-                            "valid_vwap_weight": 1.0}],
-            "2026-04-02": [{"return": 1.0, "mc_prob": 50.0, "vol": 1.0,
-                            "vwap_diff": 0.0, "base_atr_pct": 1.0,
-                            "valid_vwap_weight": 1.0}],
+            "2026-04-01": [
+                {
+                    "return": 1.0,
+                    "mc_prob": 50.0,
+                    "vol": 1.0,
+                    "vwap_diff": 0.0,
+                    "base_atr_pct": 1.0,
+                    "valid_vwap_weight": 1.0,
+                }
+            ],
+            "2026-04-02": [
+                {
+                    "return": 1.0,
+                    "mc_prob": 50.0,
+                    "vol": 1.0,
+                    "vwap_diff": 0.0,
+                    "base_atr_pct": 1.0,
+                    "valid_vwap_weight": 1.0,
+                }
+            ],
         }
     }
 
@@ -892,26 +939,36 @@ def test_train_alpha_log_line_does_not_label_sortino_as_percent():
     with (
         patch("autotuner.optuna.create_study", return_value=fake_study),
         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
-        patch("autotuner.synthetic_history.generate_synthetic_history",
-              return_value=history),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
         patch("autotuner.database.load_chart_history", return_value={}),
         patch("autotuner.database.save_chart_archive"),
-        patch("autotuner.database.get_symphony_strategy",
-              return_value={"params": default_params.copy(), "locked_vars": []}),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": default_params.copy(), "locked_vars": []},
+        ),
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", default_params),
-        patch("autotuner.math_engine.compute_para_arm_decision",
-              side_effect=lambda **kw: (0.0, False)),
-        patch("autotuner.math_engine.compute_time_squeeze_decay",
-              side_effect=lambda tr: (1.5, 0.5)),
-        patch("autotuner.math_engine.compute_active_trailing_stop",
-              side_effect=lambda *a, **kw: 5.0),
-        patch("autotuner.math_engine.compute_breakeven_update",
-              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
-        patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-              side_effect=lambda *a, **kw: -10.0),
-        patch("autotuner.math_engine.compute_vwap_breakdown_update",
-              side_effect=lambda **kw: (0, 0, False, False)),
+        patch(
+            "autotuner.math_engine.compute_para_arm_decision", side_effect=lambda **kw: (0.0, False)
+        ),
+        patch(
+            "autotuner.math_engine.compute_time_squeeze_decay", side_effect=lambda tr: (1.5, 0.5)
+        ),
+        patch(
+            "autotuner.math_engine.compute_active_trailing_stop", side_effect=lambda *a, **kw: 5.0
+        ),
+        patch(
+            "autotuner.math_engine.compute_breakeven_update",
+            side_effect=lambda *a, **kw: (a[3], a[4], a[2]),
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+            side_effect=lambda *a, **kw: -10.0,
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_breakdown_update",
+            side_effect=lambda **kw: (0, 0, False, False),
+        ),
         contextlib.redirect_stdout(buf),
     ):
         autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
@@ -920,7 +977,8 @@ def test_train_alpha_log_line_does_not_label_sortino_as_percent():
 
     # Find the completion log line.
     completion_lines = [
-        line for line in stdout.splitlines()
+        line
+        for line in stdout.splitlines()
         if "Train Alpha" in line or "Optimization completed" in line
     ]
     assert completion_lines, (

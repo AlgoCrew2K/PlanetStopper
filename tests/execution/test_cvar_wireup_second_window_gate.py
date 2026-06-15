@@ -55,6 +55,7 @@ import math_engine
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
     _FIXED_ET = datetime(2025, 5, 14, 11, 30, 0, tzinfo=_ET)
 except Exception:  # pragma: no cover
@@ -114,9 +115,11 @@ def patched_env_factory():
     """Returns a context-manager-like factory so individual tests can
     set environment-flag values before main() runs.
     """
+
     def _enter(second_window_flag: "str | None"):
         cm = _PatchedEnv(second_window_flag)
         return cm
+
     return _enter
 
 
@@ -128,6 +131,7 @@ class _PatchedEnv:
 
     def __enter__(self):
         import os
+
         # Apply the env-flag manipulation FIRST.
         self._prev_flag = os.environ.get("SECOND_WINDOW_CVAR_ENABLED")
         if self._second_window_flag is None:
@@ -152,21 +156,22 @@ class _PatchedEnv:
         self._started = [p.start() for p in patches]
         self._patches = patches
 
-        mock_db, mock_reporting, mock_fetch_sym, mock_fetch_hist, mock_fetch_vwap, *_ = self._started
+        mock_db, mock_reporting, mock_fetch_sym, mock_fetch_hist, mock_fetch_vwap, *_ = (
+            self._started
+        )
 
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = _seed_state()
         mock_db.load_chart_history.return_value = {
-            "date": _FIXED_ET.strftime("%Y-%m-%d"), "symphonies": {}
+            "date": _FIXED_ET.strftime("%Y-%m-%d"),
+            "symphonies": {},
         }
         mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
         mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
         mock_db.wipe_transient_state.side_effect = lambda s: s
 
         mock_fetch_sym.return_value = [_make_symphony_payload()]
-        mock_fetch_hist.return_value = _make_minimal_history(
-            _FIXED_ET.strftime("%Y-%m-%d")
-        )
+        mock_fetch_hist.return_value = _make_minimal_history(_FIXED_ET.strftime("%Y-%m-%d"))
         mock_fetch_vwap.return_value = {_TICKER: {"vwap": 500.0, "last_price": 500.0}}
 
         self.env = {
@@ -180,6 +185,7 @@ class _PatchedEnv:
 
     def __exit__(self, exc_type, exc, tb):
         import os
+
         for p in self._patches:
             p.stop()
         if self._prev_flag is None:
@@ -199,16 +205,21 @@ class TestSecondWindowFlagOff:
     """
 
     @pytest.mark.parametrize("flag_value", [None, "0"])
-    def test_long_window_columns_are_none_when_flag_off(
-        self, patched_env_factory, flag_value
-    ):
+    def test_long_window_columns_are_none_when_flag_off(self, patched_env_factory, flag_value):
         insufficient = math_engine.CVaRAssessment(
-            cvar_pct=None, breach=False, tail_obs_count=0, stderr=None, insufficient_reason="x",
+            cvar_pct=None,
+            breach=False,
+            tail_obs_count=0,
+            stderr=None,
+            insufficient_reason="x",
         )
-        with patched_env_factory(flag_value) as env, patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_portfolio_cvar",
-            return_value=insufficient,
+        with (
+            patched_env_factory(flag_value) as env,
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_portfolio_cvar",
+                return_value=insufficient,
+            ),
         ):
             alpha_bot_execution.main()
 
@@ -249,19 +260,30 @@ class TestSecondWindowFlagOn:
         # the pairing rule (finite cvar_pct REQUIRES finite stderr) is what
         # the constructor enforces.
         short = math_engine.CVaRAssessment(
-            cvar_pct=-1.5, breach=False, tail_obs_count=8, stderr=0.001, insufficient_reason=None,
+            cvar_pct=-1.5,
+            breach=False,
+            tail_obs_count=8,
+            stderr=0.001,
+            insufficient_reason=None,
         )
         long_ = math_engine.CVaRAssessment(
-            cvar_pct=-3.25, breach=False, tail_obs_count=12, stderr=0.002, insufficient_reason=None,
+            cvar_pct=-3.25,
+            breach=False,
+            tail_obs_count=12,
+            stderr=0.002,
+            insufficient_reason=None,
         )
         # Return distinct values by call count.
         side_effects = [short, long_, short, long_, short, long_]  # generous
 
-        with patched_env_factory("1") as env, patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_portfolio_cvar",
-            side_effect=side_effects,
-        ) as mock_cvar:
+        with (
+            patched_env_factory("1") as env,
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_portfolio_cvar",
+                side_effect=side_effects,
+            ) as mock_cvar,
+        ):
             alpha_bot_execution.main()
 
         # The math function must be called at least twice when the flag is on
@@ -313,22 +335,42 @@ class TestNoSignedDivergenceEverComputed:
 
     def test_record_cvar_diagnostic_kwargs_never_carry_a_divergence_key(self, patched_env_factory):
         short = math_engine.CVaRAssessment(
-            cvar_pct=-1.0, breach=False, tail_obs_count=5, stderr=0.001, insufficient_reason=None,
+            cvar_pct=-1.0,
+            breach=False,
+            tail_obs_count=5,
+            stderr=0.001,
+            insufficient_reason=None,
         )
         long_ = math_engine.CVaRAssessment(
-            cvar_pct=-2.5, breach=False, tail_obs_count=7, stderr=0.002, insufficient_reason=None,
+            cvar_pct=-2.5,
+            breach=False,
+            tail_obs_count=7,
+            stderr=0.002,
+            insufficient_reason=None,
         )
-        with patched_env_factory("1") as env, patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_portfolio_cvar",
-            side_effect=[short, long_, short, long_],
+        with (
+            patched_env_factory("1") as env,
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_portfolio_cvar",
+                side_effect=[short, long_, short, long_],
+            ),
         ):
             alpha_bot_execution.main()
 
         forbidden_keys = {
-            "divergence", "signed_divergence", "cvar_divergence", "cvar_diff",
-            "cvar_delta", "window_divergence", "divergence_pct", "delta",
-            "spread", "gap", "difference", "diff",
+            "divergence",
+            "signed_divergence",
+            "cvar_divergence",
+            "cvar_diff",
+            "cvar_delta",
+            "window_divergence",
+            "divergence_pct",
+            "delta",
+            "spread",
+            "gap",
+            "difference",
+            "diff",
         }
         for call in env["db"].record_cvar_diagnostic.call_args_list:
             for key in call.kwargs.keys():

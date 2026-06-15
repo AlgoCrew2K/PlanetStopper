@@ -81,16 +81,17 @@ def mock_db_empty(monkeypatch):
     with patch.object(app_module, "database") as db_mock:
         db_mock.load_state.return_value = {}
         db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
-        db_mock.get_symphony_strategy.return_value = {"params": database.DEFAULT_STRATEGY.copy(), "locked_vars": ["TRIGGER_THRESHOLD_PCT"]}
+        db_mock.get_symphony_strategy.return_value = {
+            "params": database.DEFAULT_STRATEGY.copy(),
+            "locked_vars": ["TRIGGER_THRESHOLD_PCT"],
+        }
         yield db_mock
 
 
 @pytest.fixture
 def mock_db_with_symphony(monkeypatch):
     with patch.object(app_module, "database") as db_mock:
-        db_mock.load_state.return_value = {
-            "sym_abc": {"name": "My Symphony", "position": 0.5}
-        }
+        db_mock.load_state.return_value = {"sym_abc": {"name": "My Symphony", "position": 0.5}}
         db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
         db_mock.get_symphony_strategy.return_value = {
             "params": {"TRIGGER_THRESHOLD_PCT": 20.0, "TAKE_PROFIT_MC_PCT": 5.0},
@@ -122,20 +123,20 @@ def _mock_env(monkeypatch, extra=None):
 
 def _extract_js_function(source: str, fn_name: str) -> str:
     """Brace-counting function body extractor — same pattern as prior cycles."""
-    stripped = re.sub(r'//[^\n]*', '', source)
-    start = re.search(r'function\s+' + re.escape(fn_name) + r'\s*\(', stripped)
+    stripped = re.sub(r"//[^\n]*", "", source)
+    start = re.search(r"function\s+" + re.escape(fn_name) + r"\s*\(", stripped)
     if start is None:
         return ""
-    brace_start = stripped.index('{', start.end())
+    brace_start = stripped.index("{", start.end())
     depth = 0
     i = brace_start
     while i < len(stripped):
-        if stripped[i] == '{':
+        if stripped[i] == "{":
             depth += 1
-        elif stripped[i] == '}':
+        elif stripped[i] == "}":
             depth -= 1
             if depth == 0:
-                return stripped[brace_start + 1:i]
+                return stripped[brace_start + 1 : i]
         i += 1
     return ""
 
@@ -150,8 +151,7 @@ def test_settings_route_exists(client, mock_db_empty, monkeypatch):
     _mock_env(monkeypatch)
     resp = client.get("/settings")
     assert resp.status_code == 200, (
-        f"GET /settings must return 200; got {resp.status_code}. "
-        "Route is missing from app.py."
+        f"GET /settings must return 200; got {resp.status_code}. Route is missing from app.py."
     )
 
 
@@ -235,8 +235,7 @@ def test_api_settings_param_meta_has_all_algo_keys(client, mock_db_empty, monkey
     param_meta = resp.get_json().get("param_meta", {})
     for key in PARAM_META_KEYS:
         assert key in param_meta, (
-            f"param_meta must include '{key}'; missing. "
-            "All 8 DEFAULT_STRATEGY keys need metadata."
+            f"param_meta must include '{key}'; missing. All 8 DEFAULT_STRATEGY keys need metadata."
         )
 
 
@@ -246,7 +245,9 @@ def test_api_settings_param_meta_entries_have_help_and_unit(client, mock_db_empt
     resp = client.get("/api/settings")
     assert resp.status_code == 200
     body = resp.get_json()
-    assert "param_meta" in body, "Response must have 'param_meta' key for this test to be meaningful"
+    assert "param_meta" in body, (
+        "Response must have 'param_meta' key for this test to be meaningful"
+    )
     param_meta = body["param_meta"]
     assert len(param_meta) > 0, "param_meta must be non-empty (must include algorithm param keys)"
     for key in PARAM_META_KEYS:
@@ -293,12 +294,8 @@ def test_api_settings_symphony_overrides_has_params_and_locked_vars(
         "(mock_db_with_symphony provides one)"
     )
     for sym_name, data in overrides.items():
-        assert "params" in data, (
-            f"symphony_overrides.{sym_name} must have 'params' field"
-        )
-        assert "locked_vars" in data, (
-            f"symphony_overrides.{sym_name} must have 'locked_vars' field"
-        )
+        assert "params" in data, f"symphony_overrides.{sym_name} must have 'params' field"
+        assert "locked_vars" in data, f"symphony_overrides.{sym_name} must have 'locked_vars' field"
         assert isinstance(data["locked_vars"], list), (
             f"symphony_overrides.{sym_name}.locked_vars must be a list"
         )
@@ -343,8 +340,15 @@ def test_settings_html_has_vertical_sidenav(client, mock_db_empty, monkeypatch):
     resp = client.get("/settings")
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert "data-testid=\"settings-sidenav\"" in html or "settings-nav" in html or (
-        "Master" in html and "Algorithm" in html and "Credentials" in html and "Symphony" in html
+    assert (
+        'data-testid="settings-sidenav"' in html
+        or "settings-nav" in html
+        or (
+            "Master" in html
+            and "Algorithm" in html
+            and "Credentials" in html
+            and "Symphony" in html
+        )
     ), (
         "settings.html must render a vertical side nav with Master / Algorithm / "
         "Credentials / Symphony sections."
@@ -358,9 +362,7 @@ def test_settings_html_sidenav_has_four_sections(client, mock_db_empty, monkeypa
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     for label in ["Master", "Algorithm", "Credentials", "Symphony"]:
-        assert label in html, (
-            f"settings.html side nav must include '{label}' section label."
-        )
+        assert label in html, f"settings.html side nav must include '{label}' section label."
 
 
 # ---------------------------------------------------------------------------
@@ -428,8 +430,7 @@ def test_settings_js_file_exists():
     """static/settings.js must exist."""
     js_path = _STATIC_DIR / "settings.js"
     assert js_path.exists(), (
-        f"static/settings.js must be created for Cycle-6 Settings. "
-        f"File not found at: {js_path}"
+        f"static/settings.js must be created for Cycle-6 Settings. File not found at: {js_path}"
     )
 
 
@@ -546,7 +547,7 @@ def test_chrome_settings_nav_link_active_on_settings_route(client, mock_db_empty
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     # aria-current="page" must be on the Settings link, not just anywhere
-    settings_block = html[html.find('/settings'):]
+    settings_block = html[html.find("/settings") :]
     assert 'aria-current="page"' in settings_block[:300], (
         "The /settings nav link must carry aria-current='page' when active_route='settings'."
     )
@@ -567,7 +568,7 @@ def test_chrome_history_nav_link_active_on_history_route(client, mock_db_empty, 
         resp = client.get("/history")
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    history_block = html[html.find('/history'):]
+    history_block = html[html.find("/history") :]
     assert 'aria-current="page"' in history_block[:300], (
         "The /history nav link must carry aria-current='page' when active_route='history'."
     )
@@ -605,7 +606,9 @@ def test_api_settings_param_meta_entries_have_kind_field(client, mock_db_empty, 
     resp = client.get("/api/settings")
     assert resp.status_code == 200
     body = resp.get_json()
-    assert "param_meta" in body, "Response must have 'param_meta' key for this test to be meaningful"
+    assert "param_meta" in body, (
+        "Response must have 'param_meta' key for this test to be meaningful"
+    )
     param_meta = body["param_meta"]
     assert len(param_meta) > 0, "param_meta must be non-empty"
     valid_kinds = {"pct", "mult", "int", "decimal"}
@@ -665,7 +668,10 @@ def test_settings_js_algorithm_section_iterates_param_meta():
     )
     # At minimum it should render a card per key — check for map/forEach/keys pattern
     assert (
-        ".map(" in source or "forEach(" in source or "Object.keys(" in source or "Object.entries(" in source
+        ".map(" in source
+        or "forEach(" in source
+        or "Object.keys(" in source
+        or "Object.entries(" in source
     ), (
         "settings.js Algorithm section must use map/forEach/Object.keys/entries to iterate "
         "param_meta keys — not hardcoded per-param branches."
@@ -722,8 +728,8 @@ def test_settings_html_no_bare_hex_colours(client, mock_db_empty, monkeypatch):
     html = resp.get_data(as_text=True)
     # Strip script/style blocks inserted by js — only check template HTML
     # (allow #fff and #000 which are canonical in tweaks.css thumb; flag everything else)
-    stripped = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
-    stripped = re.sub(r'<!--.*?-->', '', stripped, flags=re.DOTALL)
+    stripped = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
+    stripped = re.sub(r"<!--.*?-->", "", stripped, flags=re.DOTALL)
     matches = _BARE_HEX_RE.findall(stripped)
     allowed = {"#fff", "#000", "#ffffff", "#000000"}
     violations = [m for m in matches if m.lower() not in allowed]

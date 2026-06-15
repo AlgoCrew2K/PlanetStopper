@@ -28,12 +28,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-_FLEET_FIXTURES = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "engine"
-    / "fleet_correlation"
-)
+_FLEET_FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures" / "engine" / "fleet_correlation"
 
 
 def _load(name: str) -> dict:
@@ -43,6 +38,7 @@ def _load(name: str) -> dict:
 # ---------------------------------------------------------------------------
 # Flask test client fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def flask_client():
@@ -79,15 +75,20 @@ class TestApiStateExposesFleetCorrelationAlert:
         alert_payload = dict(fixture["example"])
         alert_payload["dismissed_at_et"] = None  # active — not dismissed
 
-        with patch("database.load_state", return_value={"date": "2026-05-17"}), \
-             patch("database.read_fleet_alert", return_value=alert_payload), \
-             patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
-             patch("database.get_triggers", return_value=[]), \
-             patch("market_calendar.get_market_state", return_value="open"), \
-             patch("analytics.get_portfolio_today_change", return_value={}), \
-             patch("analytics.get_portfolio_cumulative_return", return_value={}), \
-             patch("analytics.get_portfolio_max_drawdown", return_value={}), \
-             patch("app.render_template", return_value=""):
+        with (
+            patch("database.load_state", return_value={"date": "2026-05-17"}),
+            patch("database.read_fleet_alert", return_value=alert_payload),
+            patch(
+                "database.get_shadow_divergence",
+                return_value={"by_symphony": {}, "portfolio_today": None},
+            ),
+            patch("database.get_triggers", return_value=[]),
+            patch("market_calendar.get_market_state", return_value="open"),
+            patch("analytics.get_portfolio_today_change", return_value={}),
+            patch("analytics.get_portfolio_cumulative_return", return_value={}),
+            patch("analytics.get_portfolio_max_drawdown", return_value={}),
+            patch("app.render_template", return_value=""),
+        ):
             resp = flask_client.get("/api/state")
 
         assert resp.status_code == 200, f"/api/state returned {resp.status_code}"
@@ -116,14 +117,19 @@ class TestApiStateExposesFleetCorrelationAlert:
         # Non-empty state with no fleet_correlation_alert — triggers active path, not waiting path
         active_state: dict = {"date": "2026-05-16"}
 
-        with patch("database.load_state", return_value=active_state), \
-             patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
-             patch("database.get_triggers", return_value=[]), \
-             patch("market_calendar.get_market_state", return_value="open"), \
-             patch("analytics.get_portfolio_today_change", return_value={}), \
-             patch("analytics.get_portfolio_cumulative_return", return_value={}), \
-             patch("analytics.get_portfolio_max_drawdown", return_value={}), \
-             patch("app.render_template", return_value=""):
+        with (
+            patch("database.load_state", return_value=active_state),
+            patch(
+                "database.get_shadow_divergence",
+                return_value={"by_symphony": {}, "portfolio_today": None},
+            ),
+            patch("database.get_triggers", return_value=[]),
+            patch("market_calendar.get_market_state", return_value="open"),
+            patch("analytics.get_portfolio_today_change", return_value={}),
+            patch("analytics.get_portfolio_cumulative_return", return_value={}),
+            patch("analytics.get_portfolio_max_drawdown", return_value={}),
+            patch("app.render_template", return_value=""),
+        ):
             resp = flask_client.get("/api/state")
 
         assert resp.status_code == 200
@@ -169,8 +175,10 @@ class TestApiStateAllPathsExposeFleetAlert:
             },
         }
 
-        with patch("database.load_state", return_value=snapshot_state), \
-             patch("market_calendar.get_market_state", return_value="closed_frozen"):
+        with (
+            patch("database.load_state", return_value=snapshot_state),
+            patch("market_calendar.get_market_state", return_value="closed_frozen"),
+        ):
             resp = flask_client.get("/api/state")
 
         assert resp.status_code == 200
@@ -186,9 +194,14 @@ class TestApiStateAllPathsExposeFleetAlert:
         Waiting path (no state_data) must include fleet_correlation_alert (None).
         JS must be able to clear a banner that was visible before the daemon restarted.
         """
-        with patch("database.load_state", return_value={}), \
-             patch("database.get_shadow_divergence", return_value={"by_symphony": {}, "portfolio_today": None}), \
-             patch("market_calendar.get_market_state", return_value="open"):
+        with (
+            patch("database.load_state", return_value={}),
+            patch(
+                "database.get_shadow_divergence",
+                return_value={"by_symphony": {}, "portfolio_today": None},
+            ),
+            patch("market_calendar.get_market_state", return_value="open"),
+        ):
             resp = flask_client.get("/api/state")
 
         assert resp.status_code == 200
@@ -226,8 +239,10 @@ class TestFleetAlertDismissRoute:
             }
         }
 
-        with patch("database.load_state", return_value=alert_state), \
-             patch("database.save_state") as mock_save:
+        with (
+            patch("database.load_state", return_value=alert_state),
+            patch("database.save_state") as mock_save,
+        ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
         assert resp.status_code == 200, (
@@ -257,8 +272,10 @@ class TestFleetAlertDismissRoute:
         def _write_and_signal(payload):
             write_completed.set()
 
-        with patch("database.read_fleet_alert", return_value=existing_row), \
-             patch("database.write_fleet_alert", side_effect=_write_and_signal) as mock_write:
+        with (
+            patch("database.read_fleet_alert", return_value=existing_row),
+            patch("database.write_fleet_alert", side_effect=_write_and_signal) as mock_write,
+        ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
             # Wait inside the patch context so the mock remains active while
             # the background thread runs.  Timeout of 2 s is well above the
@@ -288,22 +305,20 @@ class TestFleetAlertDismissRoute:
             }
         }
 
-        with patch("database.load_state", return_value=alert_state), \
-             patch("database.save_state"):
+        with patch("database.load_state", return_value=alert_state), patch("database.save_state"):
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
         data = resp.get_json()
         assert data is not None, "dismiss route must return JSON"
         assert data.get("status") == "ok", (
-            f"dismiss route must return {{\"status\": \"ok\"}}, got {data!r}"
+            f'dismiss route must return {{"status": "ok"}}, got {data!r}'
         )
 
     def test_dismiss_route_idempotent_when_no_alert(self, flask_client):
         """POST /api/fleet-alert/dismiss returns 200 even when no alert is active."""
         empty_state: dict = {}
 
-        with patch("database.load_state", return_value=empty_state), \
-             patch("database.save_state"):
+        with patch("database.load_state", return_value=empty_state), patch("database.save_state"):
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
         assert resp.status_code == 200, (
@@ -325,9 +340,7 @@ class TestFleetBannerTemplate:
 
     @pytest.fixture(autouse=True)
     def _load_template(self):
-        template_path = (
-            pathlib.Path(__file__).parent.parent.parent / "templates" / "index.html"
-        )
+        template_path = pathlib.Path(__file__).parent.parent.parent / "templates" / "index.html"
         if not template_path.exists():
             pytest.skip("templates/index.html not found — skip template structural tests.")
         self._template_src = template_path.read_text(encoding="utf-8")
@@ -347,7 +360,7 @@ class TestFleetBannerTemplate:
         assert idx >= 0, "fleet-correlation-banner not found — see previous test."
 
         # Look in a 500-char window around the element for 'hidden'
-        window = self._template_src[max(0, idx - 50):idx + 400]
+        window = self._template_src[max(0, idx - 50) : idx + 400]
         assert "hidden" in window, (
             "fleet-correlation-banner must include 'hidden' attribute or class by default "
             "so it does not render when no alert is active. "

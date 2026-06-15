@@ -44,6 +44,7 @@ def _html() -> str:
 # Template — the picker buttons, incl the new All-Time option
 # ---------------------------------------------------------------------------
 
+
 class TestPickerButtonsPresent:
     def test_template_has_window_all_button(self):
         html = _html()
@@ -58,13 +59,14 @@ class TestPickerButtonsPresent:
         html = _html()
         assert f'data-window="{token}"' in html, (
             f"AC-3 FAIL: templates/index.html picker is missing the '{token}' window option "
-            f"(data-window=\"{token}\"). The picker must expose 30d/60d/90d/125d/YTD/1Y/All-Time."
+            f'(data-window="{token}"). The picker must expose 30d/60d/90d/125d/YTD/1Y/All-Time.'
         )
 
 
 # ---------------------------------------------------------------------------
 # index.js — the picker maps every token and re-windows the VALUE on click
 # ---------------------------------------------------------------------------
+
 
 class TestPickerJsReWindowsValue:
     @pytest.mark.parametrize("token", _WINDOW_TOKENS)
@@ -109,14 +111,13 @@ class TestPickerJsReWindowsValue:
 # Parse guard — the picker wiring must actually be runnable
 # ---------------------------------------------------------------------------
 
+
 class TestIndexJsParses:
     def test_node_check_passes(self):
         node = shutil.which("node")
         if node is None:
             pytest.skip("node not available — JS parse guard requires node")
-        result = subprocess.run(
-            [node, "--check", str(_JS_PATH)], capture_output=True, text=True
-        )
+        result = subprocess.run([node, "--check", str(_JS_PATH)], capture_output=True, text=True)
         assert result.returncode == 0, (
             "static/index.js failed `node --check`. A parse error makes the picker wiring "
             f"never run while every server test still passes. stderr:\n{result.stderr}"

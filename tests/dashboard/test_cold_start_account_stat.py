@@ -137,7 +137,7 @@ class TestDedicatedAccountRendererExists:
         if start == -1:
             pytest.fail("renderGuardAlpha function not found in static/index.js")
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 800]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
 
         assert "account-all-time-cr" not in body and "account_all_time_cr" not in body, (
             "AC-CS.1/AC-CS.5 FAIL: the account-all-time-cr reference is inside "
@@ -158,7 +158,7 @@ class TestDedicatedAccountRendererExists:
         if start == -1:
             pytest.fail("updateComparisonRows function not found in static/index.js")
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 3000]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 3000]
 
         # A querySelector call AND a textContent write together = a DOM write.
         has_testid = "account-all-time-cr" in body
@@ -250,12 +250,10 @@ class TestDedicatedRendererCreatesMissingElement:
             )
 
         # Widen the window to capture the full function (±1500 chars from the testid reference).
-        context = js[max(0, idx - 1500): idx + 1500]
+        context = js[max(0, idx - 1500) : idx + 1500]
 
         has_create = (
-            "createElement" in context
-            or "insertAdjacentHTML" in context
-            or "innerHTML" in context
+            "createElement" in context or "insertAdjacentHTML" in context or "innerHTML" in context
         )
         assert has_create, (
             "AC-CS.3 FAIL: the account-all-time-cr renderer does not contain a "
@@ -293,7 +291,7 @@ class TestDedicatedRendererWiredIntoDashboard:
         start = js.find("function updateDashboard")
         assert start != -1, "updateDashboard function must exist in static/index.js"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 2000]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 2000]
         body_lower = body.lower()
 
         has_call = (
@@ -335,7 +333,7 @@ class TestGuardAlphaRenderBasisNonRegression:
         if start == -1:
             pytest.fail("renderGuardAlpha function not found in static/index.js")
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 800]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
 
         assert "ps.guard_alpha" in body or ".guard_alpha" in body, (
             "NON-REGRESSION FAIL: renderGuardAlpha no longer reads a .guard_alpha "
@@ -356,14 +354,13 @@ class TestGuardAlphaRenderBasisNonRegression:
         if start == -1:
             pytest.fail("renderGuardAlpha function not found in static/index.js")
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 800]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
 
         # Forbid the exact subtraction pattern that caused the original bug.
         # Strip comment lines (lines starting with optional whitespace + //) to avoid
         # matching the explanatory comment "Do NOT derive ... dry_run - ... if_held".
         non_comment_lines = "\n".join(
-            line for line in body.splitlines()
-            if not line.lstrip().startswith("//")
+            line for line in body.splitlines() if not line.lstrip().startswith("//")
         )
         has_subtraction = bool(
             re.search(r"\bcr\s*-\s*crHeld\b", non_comment_lines)

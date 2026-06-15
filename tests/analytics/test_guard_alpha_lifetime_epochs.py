@@ -70,9 +70,7 @@ from analytics import get_symphony_cumulative_return, get_symphony_max_drawdown
 # Fixture
 # ---------------------------------------------------------------------------
 
-_FIXTURE = (
-    Path(__file__).parent.parent / "fixtures" / "math" / "guard_alpha_lifetime_epochs.json"
-)
+_FIXTURE = Path(__file__).parent.parent / "fixtures" / "math" / "guard_alpha_lifetime_epochs.json"
 
 
 @pytest.fixture(scope="module")
@@ -161,6 +159,7 @@ def _sym(sym_id: str, if_held_pct: float, max_dd_pct: float = 8.0) -> dict:
 # market returns" — verified by the implementer (risk-engine) and adopted on the record.
 # ---------------------------------------------------------------------------
 
+
 def _epoch_groups(rows: list[dict]) -> list[list[dict]]:
     """Group rows into contiguous position-epoch segments, preserving order.
 
@@ -231,6 +230,7 @@ def _lifetime_bot_equity_mdd(rows: list[dict], if_held_pct: float) -> float:
 # KILLER ANCHOR — never-triggered symphony has lifetime Guard Alpha == 0 exactly
 # ===========================================================================
 
+
 class TestNeverTriggeredLifetimeAlphaIsExactlyZero:
     """The anchor that any cross-epoch fix MUST preserve.
 
@@ -288,6 +288,7 @@ class TestNeverTriggeredLifetimeAlphaIsExactlyZero:
 # ===========================================================================
 # CROSS-EPOCH RED — triggered-in-a-prior-epoch shows its REAL saved %, not 0.00%
 # ===========================================================================
+
 
 class TestTriggeredInPriorEpochShowsLifetimeAlpha:
     """The C-1 RED: a symphony whose only divergence lives in an OLD epoch must show
@@ -350,9 +351,7 @@ class TestTriggeredInPriorEpochShowsLifetimeAlpha:
         latest_rows = _latest_epoch_rows(rows, latest_label)
         # The captured latest epoch is a single post-reset day -> buggy scope yields
         # trajectory None -> dry_run == if_held -> latest-epoch alpha == 0.
-        latest_only_alpha = (
-            _lifetime_divergence_pct(latest_rows) if len(latest_rows) >= 2 else 0.0
-        )
+        latest_only_alpha = _lifetime_divergence_pct(latest_rows) if len(latest_rows) >= 2 else 0.0
         lifetime_alpha = _lifetime_divergence_pct(rows)
 
         assert abs(lifetime_alpha - latest_only_alpha) > 1e-3, (
@@ -377,6 +376,7 @@ class TestTriggeredInPriorEpochShowsLifetimeAlpha:
 # ===========================================================================
 # if_held BASELINE — divergence spans epochs but if_held does NOT absorb old returns
 # ===========================================================================
+
 
 class TestLifetimeIfHeldBaselineIsUnchanged:
     """The user's explicit constraint: chain the GUARD's divergence across epochs WITHOUT
@@ -430,6 +430,7 @@ class TestLifetimeIfHeldBaselineIsUnchanged:
 # ===========================================================================
 # MDD CROSS-EPOCH — bot drawdown spans the lifetime divergence chain
 # ===========================================================================
+
 
 class TestLifetimeMddSpansEpochs:
     """The bot-equity MDD must be peak-to-trough over the LIFETIME divergence equity path,

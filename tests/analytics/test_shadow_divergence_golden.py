@@ -56,12 +56,7 @@ from analytics import get_symphony_cumulative_return, get_symphony_max_drawdown
 # Fixture loading
 # ---------------------------------------------------------------------------
 
-_FIXTURE = (
-    Path(__file__).parent.parent
-    / "fixtures"
-    / "math"
-    / "shadow_divergence_golden.json"
-)
+_FIXTURE = Path(__file__).parent.parent / "fixtures" / "math" / "shadow_divergence_golden.json"
 
 
 def _load() -> dict:
@@ -222,9 +217,24 @@ class TestNeverTriggeredAlphaIsExactlyZero:
         Tests if_held ∈ {−5.0%, 0.0%, 15.0%, 50.0%} with the same shadow trajectory.
         """
         rows = [
-            {"trading_day": "2026-01-05", "shadow_return": -1.5, "current_return": -1.5, "ts_utc": "2026-01-05T21:00:00Z"},
-            {"trading_day": "2026-01-06", "shadow_return":  2.3, "current_return":  2.3, "ts_utc": "2026-01-06T21:00:00Z"},
-            {"trading_day": "2026-01-07", "shadow_return":  0.4, "current_return":  0.4, "ts_utc": "2026-01-07T21:00:00Z"},
+            {
+                "trading_day": "2026-01-05",
+                "shadow_return": -1.5,
+                "current_return": -1.5,
+                "ts_utc": "2026-01-05T21:00:00Z",
+            },
+            {
+                "trading_day": "2026-01-06",
+                "shadow_return": 2.3,
+                "current_return": 2.3,
+                "ts_utc": "2026-01-06T21:00:00Z",
+            },
+            {
+                "trading_day": "2026-01-07",
+                "shadow_return": 0.4,
+                "current_return": 0.4,
+                "ts_utc": "2026-01-07T21:00:00Z",
+            },
         ]
 
         for i, if_held_test in enumerate([-5.0, 0.0, 15.0, 50.0]):
@@ -357,9 +367,24 @@ class TestMddOnBotEquityPath:
         The invariant is specifically about the shadow-window bot path.
         """
         rows = [
-            {"trading_day": "2026-01-05", "shadow_return":  1.0, "current_return":  1.0, "ts_utc": "2026-01-05T21:00:00Z"},
-            {"trading_day": "2026-01-06", "shadow_return": -2.0, "current_return": -2.0, "ts_utc": "2026-01-06T21:00:00Z"},
-            {"trading_day": "2026-01-07", "shadow_return":  0.5, "current_return":  0.5, "ts_utc": "2026-01-07T21:00:00Z"},
+            {
+                "trading_day": "2026-01-05",
+                "shadow_return": 1.0,
+                "current_return": 1.0,
+                "ts_utc": "2026-01-05T21:00:00Z",
+            },
+            {
+                "trading_day": "2026-01-06",
+                "shadow_return": -2.0,
+                "current_return": -2.0,
+                "ts_utc": "2026-01-06T21:00:00Z",
+            },
+            {
+                "trading_day": "2026-01-07",
+                "shadow_return": 0.5,
+                "current_return": 0.5,
+                "ts_utc": "2026-01-07T21:00:00Z",
+            },
         ]
         sym_id = "sym_mdd_untriggered"
         db_file = _make_db(tmp_path, sym_id, rows)
@@ -391,22 +416,72 @@ class TestMddOnBotEquityPath:
         scenarios = [
             # Rising market — absolute shadow MDD would be near 0 (benign baseline)
             [
-                {"trading_day": "2026-01-05", "shadow_return":  2.0, "current_return":  2.0, "ts_utc": "2026-01-05T21:00:00Z"},
-                {"trading_day": "2026-01-06", "shadow_return":  1.5, "current_return":  1.5, "ts_utc": "2026-01-06T21:00:00Z"},
-                {"trading_day": "2026-01-07", "shadow_return":  0.8, "current_return":  0.8, "ts_utc": "2026-01-07T21:00:00Z"},
+                {
+                    "trading_day": "2026-01-05",
+                    "shadow_return": 2.0,
+                    "current_return": 2.0,
+                    "ts_utc": "2026-01-05T21:00:00Z",
+                },
+                {
+                    "trading_day": "2026-01-06",
+                    "shadow_return": 1.5,
+                    "current_return": 1.5,
+                    "ts_utc": "2026-01-06T21:00:00Z",
+                },
+                {
+                    "trading_day": "2026-01-07",
+                    "shadow_return": 0.8,
+                    "current_return": 0.8,
+                    "ts_utc": "2026-01-07T21:00:00Z",
+                },
             ],
             # Volatile market — absolute shadow MDD would be non-trivially non-zero
             [
-                {"trading_day": "2026-01-05", "shadow_return":  3.0, "current_return":  3.0, "ts_utc": "2026-01-05T21:00:00Z"},
-                {"trading_day": "2026-01-06", "shadow_return": -4.5, "current_return": -4.5, "ts_utc": "2026-01-06T21:00:00Z"},
-                {"trading_day": "2026-01-07", "shadow_return":  2.1, "current_return":  2.1, "ts_utc": "2026-01-07T21:00:00Z"},
-                {"trading_day": "2026-01-08", "shadow_return": -1.8, "current_return": -1.8, "ts_utc": "2026-01-08T21:00:00Z"},
+                {
+                    "trading_day": "2026-01-05",
+                    "shadow_return": 3.0,
+                    "current_return": 3.0,
+                    "ts_utc": "2026-01-05T21:00:00Z",
+                },
+                {
+                    "trading_day": "2026-01-06",
+                    "shadow_return": -4.5,
+                    "current_return": -4.5,
+                    "ts_utc": "2026-01-06T21:00:00Z",
+                },
+                {
+                    "trading_day": "2026-01-07",
+                    "shadow_return": 2.1,
+                    "current_return": 2.1,
+                    "ts_utc": "2026-01-07T21:00:00Z",
+                },
+                {
+                    "trading_day": "2026-01-08",
+                    "shadow_return": -1.8,
+                    "current_return": -1.8,
+                    "ts_utc": "2026-01-08T21:00:00Z",
+                },
             ],
             # Falling market — absolute shadow MDD would be its largest
             [
-                {"trading_day": "2026-01-05", "shadow_return": -1.0, "current_return": -1.0, "ts_utc": "2026-01-05T21:00:00Z"},
-                {"trading_day": "2026-01-06", "shadow_return": -2.0, "current_return": -2.0, "ts_utc": "2026-01-06T21:00:00Z"},
-                {"trading_day": "2026-01-07", "shadow_return": -0.5, "current_return": -0.5, "ts_utc": "2026-01-07T21:00:00Z"},
+                {
+                    "trading_day": "2026-01-05",
+                    "shadow_return": -1.0,
+                    "current_return": -1.0,
+                    "ts_utc": "2026-01-05T21:00:00Z",
+                },
+                {
+                    "trading_day": "2026-01-06",
+                    "shadow_return": -2.0,
+                    "current_return": -2.0,
+                    "ts_utc": "2026-01-06T21:00:00Z",
+                },
+                {
+                    "trading_day": "2026-01-07",
+                    "shadow_return": -0.5,
+                    "current_return": -0.5,
+                    "ts_utc": "2026-01-07T21:00:00Z",
+                },
             ],
         ]
 

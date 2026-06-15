@@ -49,9 +49,7 @@ _MIGRATION_022_PATH = (
     pathlib.Path(__file__).parents[2] / "migrations" / "022_spec_bundles_add_id.sql"
 )
 
-_MIGRATION_016_PATH = (
-    pathlib.Path(__file__).parents[2] / "migrations" / "016_spec_bundles.sql"
-)
+_MIGRATION_016_PATH = pathlib.Path(__file__).parents[2] / "migrations" / "016_spec_bundles.sql"
 
 # ---------------------------------------------------------------------------
 # Shared DB fixture (full migration stack)
@@ -229,8 +227,7 @@ def test_022_sql_does_not_add_not_null_column():
     on deployment if the SQL is written naively.
     """
     assert _MIGRATION_022_PATH.is_file(), (
-        f"Migration file not found: {_MIGRATION_022_PATH}. "
-        "Create it before this test can pass."
+        f"Migration file not found: {_MIGRATION_022_PATH}. Create it before this test can pass."
     )
     sql_upper = _MIGRATION_022_PATH.read_text(encoding="utf-8").upper()
 
@@ -239,6 +236,7 @@ def test_022_sql_does_not_add_not_null_column():
     # We look for the dangerous pattern: ADD COLUMN ... NOT NULL
     # A safe pattern is: ADD COLUMN id INTEGER (nullable, backfilled separately).
     import re  # noqa: PLC0415
+
     add_column_match = re.search(r"ADD\s+COLUMN\s+ID\s+\S+\s+NOT\s+NULL", sql_upper)
     assert add_column_match is None, (
         "022_spec_bundles_add_id.sql adds id as NOT NULL, which SQLite rejects "

@@ -68,6 +68,7 @@ def _import_cvar_assessment():
 # P1. Exhaustive: cvar_pct=None ALWAYS implies breach=False
 # ---------------------------------------------------------------------------
 
+
 @_requires_hypothesis
 @given(
     tail_obs_count=st.integers(min_value=0, max_value=0),  # 0 is the only valid count for None
@@ -115,6 +116,7 @@ def test_property_none_cvar_pct_always_implies_breach_false(
 # P2. Exhaustive: cvar_pct=None ALWAYS implies tail_obs_count is 0
 # ---------------------------------------------------------------------------
 
+
 @_requires_hypothesis
 @given(
     insufficient_reason=st.one_of(
@@ -151,6 +153,7 @@ def test_property_none_cvar_pct_always_has_zero_tail_obs_count(
 # ---------------------------------------------------------------------------
 # P3. Valid float cvar_pct round-trips without silent mutation
 # ---------------------------------------------------------------------------
+
 
 @_requires_hypothesis
 @given(
@@ -201,5 +204,3 @@ def test_property_valid_float_cvar_pct_round_trips(
     )
     assert obj.breach is breach
     assert obj.tail_obs_count == tail_obs_count
-
-

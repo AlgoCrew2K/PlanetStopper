@@ -9,6 +9,7 @@ Run under the job cap so a runaway is contained:
     python job_cap_harness.py 3 -- --leak-probe
 (the harness has no hook for this; instead run directly AFTER importing the cap)
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -36,6 +37,7 @@ import time as _time  # noqa: E402
 if os.environ.get("LOAD_ENV") == "1":
     try:
         from dotenv import load_dotenv
+
         load_dotenv(os.path.join(_REPO_ROOT, ".env"))
         print("[leak-probe] .env loaded", flush=True)
     except Exception as exc:  # noqa: BLE001
@@ -43,16 +45,16 @@ if os.environ.get("LOAD_ENV") == "1":
 
 
 def _time_producers():
-    for name in ("_build_sentiment_section", "_build_macro_section",
-                 "_build_fundamentals_section"):
+    for name in ("_build_sentiment_section", "_build_macro_section", "_build_fundamentals_section"):
         fn = getattr(ai_advisor, name)
         t0 = _time.perf_counter()
         fn()
-        print(f"    {name}: {_time.perf_counter()-t0:.2f}s", flush=True)
+        print(f"    {name}: {_time.perf_counter() - t0:.2f}s", flush=True)
 
 
 def _committed_mb() -> float:
     """Current process committed (private) bytes via GetProcessMemoryInfo."""
+
     class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
         _fields_ = [
             ("cb", ctypes.c_ulong),
@@ -67,13 +69,12 @@ def _committed_mb() -> float:
             ("PeakPagefileUsage", ctypes.c_size_t),
             ("PrivateUsage", ctypes.c_size_t),
         ]
+
     psapi = ctypes.WinDLL("psapi")
     kernel32 = ctypes.WinDLL("kernel32")
     counters = PROCESS_MEMORY_COUNTERS_EX()
     counters.cb = ctypes.sizeof(counters)
-    psapi.GetProcessMemoryInfo(
-        kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
-    )
+    psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb)
     return counters.PrivateUsage / 1024 / 1024
 
 
@@ -100,19 +101,25 @@ tracemalloc.start(25)
 prev_snap = None
 
 for i in range(N):
-    with patch.object(ai_advisor.database, "get_latest_autotune_run",
-                      return_value=fake_autotune_run), \
-         patch.object(ai_advisor.symphony_logic, "get_condensed_logic",
-                      return_value=fake_condensed_logic):
-        ai_advisor.assemble_advisor_context(scope="symphony",
-                                            symphony_id="test-symphony-a")
+    with (
+        patch.object(
+            ai_advisor.database, "get_latest_autotune_run", return_value=fake_autotune_run
+        ),
+        patch.object(
+            ai_advisor.symphony_logic, "get_condensed_logic", return_value=fake_condensed_logic
+        ),
+    ):
+        ai_advisor.assemble_advisor_context(scope="symphony", symphony_id="test-symphony-a")
     if os.environ.get("TIME_PRODUCERS") == "1":
         _time_producers()
     gc.collect()
     snap = tracemalloc.take_snapshot()
-    print(f"\n=== iter {i}: committed={_committed_mb():.1f}MB "
-          f"handles={_handle_count()} threads={threading.active_count()} "
-          f"gc_objs={len(gc.get_objects())} ===", flush=True)
+    print(
+        f"\n=== iter {i}: committed={_committed_mb():.1f}MB "
+        f"handles={_handle_count()} threads={threading.active_count()} "
+        f"gc_objs={len(gc.get_objects())} ===",
+        flush=True,
+    )
     if prev_snap is not None:
         diffs = snap.compare_to(prev_snap, "lineno")[:8]
         for d in diffs:

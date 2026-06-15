@@ -54,12 +54,7 @@ import pytest
 import autotuner
 
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "autotuner"
-    / "replay_parity"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "autotuner" / "replay_parity"
 
 
 def _load_fixture(name: str) -> dict:
@@ -71,7 +66,7 @@ def _default_params() -> dict:
     return {
         "TRIGGER_THRESHOLD_PCT": 15.0,
         "TAKE_PROFIT_MC_PCT": 5.0,
-        "VWAP_CROSS_HWM_PCT": 99.0,   # VWAP never arms — isolate the TP path
+        "VWAP_CROSS_HWM_PCT": 99.0,  # VWAP never arms — isolate the TP path
         "VWAP_BLEED_MULTIPLIER": 1.5,
         "VWAP_BLEED_TICKS": 999,
         "PARABOLIC_VELOCITY_THRESHOLD": 99.0,
@@ -85,9 +80,7 @@ def _replay_seq(ticks: list[dict], params: dict, grace_minutes: int = 0) -> list
             "autotuner.replay_exit_sequence missing — required for AC-3/AC-6 "
             "exit-decision parity tests."
         )
-    return autotuner.replay_exit_sequence(
-        ticks, params, grace_minutes=grace_minutes
-    )
+    return autotuner.replay_exit_sequence(ticks, params, grace_minutes=grace_minutes)
 
 
 # ===========================================================================
@@ -156,9 +149,7 @@ def test_replay_does_not_confirm_tp_on_the_mc_unavailable_tick_itself() -> None:
     params = fx.get("params") or _default_params()
 
     # Locate the MC-unavailable tick(s) in the fixture by null mc_prob.
-    null_tick_indices = [
-        i for i, t in enumerate(ticks) if t.get("mc_prob") is None
-    ]
+    null_tick_indices = [i for i, t in enumerate(ticks) if t.get("mc_prob") is None]
     assert null_tick_indices, (
         "Fixture parity_tp_rearm_dip.json must contain at least one "
         "mc_prob=null tick to exercise the MC-unavailable TP path."
@@ -204,12 +195,33 @@ def test_replay_tp_exit_still_fires_on_consecutive_above_threshold() -> None:
     """
     params = _default_params()
     ticks = [
-        {"time": "09:30", "return": 3.0, "mc_prob": 2.0, "vol": 0.5,
-         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-        {"time": "09:31", "return": 3.0, "mc_prob": 8.0, "vol": 0.5,
-         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-        {"time": "09:32", "return": 3.0, "mc_prob": 8.0, "vol": 0.5,
-         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+        {
+            "time": "09:30",
+            "return": 3.0,
+            "mc_prob": 2.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        },
+        {
+            "time": "09:31",
+            "return": 3.0,
+            "mc_prob": 8.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        },
+        {
+            "time": "09:32",
+            "return": 3.0,
+            "mc_prob": 8.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        },
     ]
     seq = _replay_seq(ticks, params)
     exits = [d for d in seq if d["exit_reason"]]
@@ -240,19 +252,45 @@ def test_replay_tp_sub_threshold_dip_matches_production_no_special_reset() -> No
     """
     params = _default_params()
     ticks = [
-        {"time": "09:30", "return": 3.0, "mc_prob": 2.0, "vol": 0.5,
-         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-        {"time": "09:31", "return": 3.0, "mc_prob": 8.0, "vol": 0.5,
-         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-        {"time": "09:32", "return": 3.0, "mc_prob": 3.0, "vol": 0.5,
-         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-        {"time": "09:33", "return": 3.0, "mc_prob": 8.0, "vol": 0.5,
-         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+        {
+            "time": "09:30",
+            "return": 3.0,
+            "mc_prob": 2.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        },
+        {
+            "time": "09:31",
+            "return": 3.0,
+            "mc_prob": 8.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        },
+        {
+            "time": "09:32",
+            "return": 3.0,
+            "mc_prob": 3.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        },
+        {
+            "time": "09:33",
+            "return": 3.0,
+            "mc_prob": 8.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        },
     ]
     seq = _replay_seq(ticks, params)
-    tp_exits = [
-        d for d in seq if d["exit_reason"] and "Take-Profit" in d["exit_reason"]
-    ]
+    tp_exits = [d for d in seq if d["exit_reason"] and "Take-Profit" in d["exit_reason"]]
     assert tp_exits, (
         "A sub-threshold MC dip while MC is AVAILABLE must NOT reset the TP "
         "counter — production keeps it, so mc=[2,8,3,8] confirms a TP exit "
@@ -276,17 +314,36 @@ def test_replay_tp_disarm_on_above_threshold_with_nonpositive_return() -> None:
     """
     params = _default_params()
     ticks = [
-        {"time": "09:30", "return": 3.0, "mc_prob": 2.0, "vol": 0.5,
-         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-        {"time": "09:31", "return": 3.0, "mc_prob": 8.0, "vol": 0.5,
-         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
-        {"time": "09:32", "return": -1.0, "mc_prob": 8.0, "vol": 0.5,
-         "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0},
+        {
+            "time": "09:30",
+            "return": 3.0,
+            "mc_prob": 2.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        },
+        {
+            "time": "09:31",
+            "return": 3.0,
+            "mc_prob": 8.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        },
+        {
+            "time": "09:32",
+            "return": -1.0,
+            "mc_prob": 8.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
+        },
     ]
     seq = _replay_seq(ticks, params)
-    tp_exits = [
-        d for d in seq if d["exit_reason"] and "Take-Profit" in d["exit_reason"]
-    ]
+    tp_exits = [d for d in seq if d["exit_reason"] and "Take-Profit" in d["exit_reason"]]
     assert not tp_exits, (
         "A 2nd above-threshold tick with return <= 0 must DISARM take-profit "
         "(no exit), matching production's TP-DISARMED branch — not confirm "
@@ -312,8 +369,9 @@ def _calls_compute_tp(module_path: pathlib.Path) -> bool:
     for node in _ast.walk(tree):
         if isinstance(node, _ast.Call):
             f = node.func
-            if (isinstance(f, _ast.Attribute) and f.attr == "compute_tp_confirmation") \
-                    or (isinstance(f, _ast.Name) and f.id == "compute_tp_confirmation"):
+            if (isinstance(f, _ast.Attribute) and f.attr == "compute_tp_confirmation") or (
+                isinstance(f, _ast.Name) and f.id == "compute_tp_confirmation"
+            ):
                 return True
     return False
 
@@ -384,9 +442,7 @@ def test_tp_confirm_count_is_a_named_constant_not_a_literal() -> None:
     candidates = [
         name
         for name in dir(math_engine)
-        if name.isupper()
-        and ("TP" in name or "TAKE_PROFIT" in name)
-        and "CONFIRM" in name
+        if name.isupper() and ("TP" in name or "TAKE_PROFIT" in name) and "CONFIRM" in name
     ]
     assert candidates, (
         "math_engine exposes no named take-profit confirm-count constant "
@@ -398,8 +454,7 @@ def test_tp_confirm_count_is_a_named_constant_not_a_literal() -> None:
     for name in candidates:
         value = getattr(math_engine, name)
         assert isinstance(value, int) and not isinstance(value, bool) and value > 0, (
-            f"math_engine.{name} must be a positive int confirm-count; "
-            f"got {value!r}."
+            f"math_engine.{name} must be a positive int confirm-count; got {value!r}."
         )
 
 
@@ -429,15 +484,12 @@ def test_autotuner_has_no_open_coded_tp_confirm_literal() -> None:
 
     RED: pre-fix the replay contains `above_tp_count >= 2`.
     """
-    autotuner_tree = _ast.parse(
-        pathlib.Path(autotuner.__file__).read_text(encoding="utf-8")
-    )
+    autotuner_tree = _ast.parse(pathlib.Path(autotuner.__file__).read_text(encoding="utf-8"))
 
     machinery = [
         node
         for node in _ast.walk(autotuner_tree)
-        if isinstance(node, _ast.FunctionDef)
-        and node.name in _REPLAY_MACHINERY_NAMES
+        if isinstance(node, _ast.FunctionDef) and node.name in _REPLAY_MACHINERY_NAMES
     ]
 
     offenders: list[str] = []
@@ -447,13 +499,9 @@ def test_autotuner_has_no_open_coded_tp_confirm_literal() -> None:
                 # left operand an above_tp* name, a comparator the literal 2
                 left = node.left
                 names = [left] + list(node.comparators)
-                has_above_tp = any(
-                    isinstance(n, _ast.Name) and "above_tp" in n.id
-                    for n in names
-                )
+                has_above_tp = any(isinstance(n, _ast.Name) and "above_tp" in n.id for n in names)
                 has_literal_2 = any(
-                    isinstance(n, _ast.Constant) and n.value == 2
-                    for n in node.comparators
+                    isinstance(n, _ast.Constant) and n.value == 2 for n in node.comparators
                 )
                 if has_above_tp and has_literal_2:
                     offenders.append(f"{func.name}:line {node.lineno}")

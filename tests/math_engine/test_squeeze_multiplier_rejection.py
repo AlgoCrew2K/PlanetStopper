@@ -85,9 +85,7 @@ def _call(inputs: dict[str, Any]) -> float:
     REJECT_CASES,
     ids=[c["label"] for c in REJECT_CASES],
 )
-def test_non_positive_squeeze_multiplier_raises_value_error(
-    case: dict[str, Any]
-) -> None:
+def test_non_positive_squeeze_multiplier_raises_value_error(case: dict[str, Any]) -> None:
     """
     AC-5 (M-2): compute_active_trailing_stop must raise ValueError when
     parabolic_squeeze_multiplier <= 0 — at entry, before any arithmetic.
@@ -155,9 +153,7 @@ def test_squeeze_multiplier_negative_does_not_place_stop_above_hwm() -> None:
     VALID_CASES,
     ids=[c["label"] for c in VALID_CASES],
 )
-def test_positive_squeeze_multiplier_yields_strictly_positive_stop(
-    case: dict[str, Any]
-) -> None:
+def test_positive_squeeze_multiplier_yields_strictly_positive_stop(case: dict[str, Any]) -> None:
     """
     AC-5: for parabolic_squeeze_multiplier in (0, 1] the function must NOT
     raise, and the returned stop distance must be a strictly positive float.

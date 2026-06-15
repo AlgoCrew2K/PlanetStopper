@@ -52,6 +52,7 @@ try:
         THIN_DATA_THRESHOLD,
         compute_pairwise_correlations,
     )
+
     _IMPORT_OK = True
 except ImportError:
     _IMPORT_OK = False
@@ -66,9 +67,7 @@ pytestmark = pytest.mark.skipif(
 # Fixture helpers
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "math"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math"
 
 
 def _load_fixture(name: str) -> dict:
@@ -195,9 +194,7 @@ def test_pairwise_correlations_all_three_pairs_present():
 
     results = compute_pairwise_correlations(series)
 
-    assert len(results) == 3, (
-        f"3 symphonies → 3 pairs expected, got {len(results)}"
-    )
+    assert len(results) == 3, f"3 symphonies → 3 pairs expected, got {len(results)}"
 
 
 def test_pairwise_correlations_pairs_are_lexically_ordered():
@@ -289,7 +286,9 @@ def test_thin_data_not_flagged_at_exactly_30_obs():
     r = results[0]
 
     assert r.n_obs == expected["n_obs"], f"expected n_obs={expected['n_obs']}, got {r.n_obs}"
-    assert r.thin_data is False, "n_obs=30 equals threshold; thin_data must be False (not strictly thin)"
+    assert r.thin_data is False, (
+        "n_obs=30 equals threshold; thin_data must be False (not strictly thin)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -305,9 +304,7 @@ def test_single_symphony_returns_empty_list():
     """
     results = compute_pairwise_correlations({"only_one": [0.01, 0.02, -0.01]})
 
-    assert results == [], (
-        f"single symphony → no pairs; expected [], got {results!r}"
-    )
+    assert results == [], f"single symphony → no pairs; expected [], got {results!r}"
 
 
 def test_empty_portfolio_returns_empty_list():
@@ -383,9 +380,7 @@ def test_single_overlapping_observation_returns_none_correlation():
     assert len(results) == 1
     r = results[0]
     assert r.n_obs == 1
-    assert r.correlation is None, (
-        "n_obs=1 is insufficient for Pearson r; correlation must be None"
-    )
+    assert r.correlation is None, "n_obs=1 is insufficient for Pearson r; correlation must be None"
 
 
 def test_zero_variance_series_does_not_raise_and_returns_none():
@@ -427,14 +422,10 @@ def test_nan_values_in_series_are_excluded_from_n_obs():
 
     assert len(results) == 1
     r = results[0]
-    assert r.n_obs == 3, (
-        f"2 NaN values in series_a → 3 valid overlapping obs; got n_obs={r.n_obs}"
-    )
+    assert r.n_obs == 3, f"2 NaN values in series_a → 3 valid overlapping obs; got n_obs={r.n_obs}"
     # Correlation must be a finite float or None (if < 2 obs), never NaN.
     if r.correlation is not None:
-        assert math.isfinite(r.correlation), (
-            "correlation must be a finite float, not NaN or inf"
-        )
+        assert math.isfinite(r.correlation), "correlation must be a finite float, not NaN or inf"
 
 
 def test_correlation_is_always_bounded_in_minus_one_to_plus_one():
@@ -595,7 +586,9 @@ def test_correlation_with_shifted_series_is_strictly_less_than_identical():
     assert r.correlation < 1.0, (
         "a perturbed series is not identical to the base; correlation must be < 1.0"
     )
-    assert r.correlation > -1.0, "correlation must be > -1.0 for a non-perfectly-anti-correlated pair"
+    assert r.correlation > -1.0, (
+        "correlation must be > -1.0 for a non-perfectly-anti-correlated pair"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -663,10 +656,16 @@ def test_window_is_populated_for_date_keyed_series():
     # Window must express both endpoints — assert it is either a tuple/list of
     # two date strings or a string containing the first and last date.
     if isinstance(r.window, (tuple, list)):
-        assert len(r.window) == 2, "window tuple/list must have exactly 2 elements (first, last date)"
+        assert len(r.window) == 2, (
+            "window tuple/list must have exactly 2 elements (first, last date)"
+        )
         first, last = r.window
-        assert "2026-01-02" in str(first), f"window first date must include '2026-01-02', got {first!r}"
-        assert "2026-01-06" in str(last), f"window last date must include '2026-01-06', got {last!r}"
+        assert "2026-01-02" in str(first), (
+            f"window first date must include '2026-01-02', got {first!r}"
+        )
+        assert "2026-01-06" in str(last), (
+            f"window last date must include '2026-01-06', got {last!r}"
+        )
     else:
         # String form — must contain both endpoints
         assert "2026-01-02" in str(r.window), (
@@ -737,7 +736,9 @@ def test_no_bare_numeric_literals_in_correlation_diagnostic():
     import ast
     import pathlib
 
-    diag_path = pathlib.Path(__file__).parent.parent.parent / "advisors" / "correlation_diagnostic.py"
+    diag_path = (
+        pathlib.Path(__file__).parent.parent.parent / "advisors" / "correlation_diagnostic.py"
+    )
     if not diag_path.exists():
         pytest.skip("advisors/correlation_diagnostic.py not yet created (RED state)")
 

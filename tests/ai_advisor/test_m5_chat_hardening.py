@@ -54,9 +54,7 @@ def client():
 def csrf_token(client):
     """Obtain a valid CSRF token from the daemon endpoint."""
     resp = client.get("/api/csrf-token")
-    assert resp.status_code == 200, (
-        f"GET /api/csrf-token must return 200; got {resp.status_code}"
-    )
+    assert resp.status_code == 200, f"GET /api/csrf-token must return 200; got {resp.status_code}"
     return resp.get_json()["csrf_token"]
 
 
@@ -89,9 +87,12 @@ def _reset_rate_limiter():
         limiter.clear()
 
 
-def _make_fake_explain_response(answer="This gate verdict means the candidate passed the BHY threshold."):
+def _make_fake_explain_response(
+    answer="This gate verdict means the candidate passed the BHY threshold.",
+):
     """Fake explain_artifact result — a successful ChatResponse-like object."""
     from types import SimpleNamespace
+
     return SimpleNamespace(answer=answer, error=None)
 
 
@@ -161,6 +162,7 @@ class TestAC1CsrfFlow:
         brute-force.  This confirms a random 64-char hex token is rejected.
         """
         import secrets
+
         fake_token = secrets.token_hex(32)  # not the real _CSRF_TOKEN
 
         resp = client.post(
@@ -207,7 +209,9 @@ class TestAC1CsrfFlow:
         """
         with patch(
             _EXPLAIN_ARTIFACT_PATCH_TARGET,
-            return_value=_make_fake_explain_response("The gate passed because the BHY-adjusted p-value cleared the threshold."),
+            return_value=_make_fake_explain_response(
+                "The gate passed because the BHY-adjusted p-value cleared the threshold."
+            ),
         ):
             resp = client.post(
                 "/ai-advisor/chat/send",
@@ -237,11 +241,8 @@ class TestAC1CsrfFlow:
         A JS that never calls /api/csrf-token cannot be attaching the token.
         """
         import pathlib
-        js_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "static"
-            / "ai_advisor_chat.js"
-        )
+
+        js_path = pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor_chat.js"
         assert js_path.exists(), f"ai_advisor_chat.js not found at {js_path}"
 
         source = js_path.read_text(encoding="utf-8")
@@ -261,11 +262,8 @@ class TestAC1CsrfFlow:
         still 403s.
         """
         import pathlib
-        js_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "static"
-            / "ai_advisor_chat.js"
-        )
+
+        js_path = pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor_chat.js"
         assert js_path.exists(), f"ai_advisor_chat.js not found at {js_path}"
 
         source = js_path.read_text(encoding="utf-8")
@@ -973,12 +971,13 @@ class TestAC3ArtifactScoping:
         mocked independently.
         """
         import pathlib
+
         advisor_chat_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "advisors"
-            / "advisor_chat.py"
+            pathlib.Path(__file__).parent.parent.parent / "advisors" / "advisor_chat.py"
         )
-        assert advisor_chat_path.exists(), f"advisors/advisor_chat.py not found at {advisor_chat_path}"
+        assert advisor_chat_path.exists(), (
+            f"advisors/advisor_chat.py not found at {advisor_chat_path}"
+        )
 
         source = advisor_chat_path.read_text(encoding="utf-8")
         assert "def validate_artifact" in source, (
@@ -996,8 +995,8 @@ class TestAC3ArtifactScoping:
         import advisors.advisor_chat as ac
 
         required = [
-            "CHAT_ARTIFACT_ALLOWED_FIELDS",   # set or frozenset of permitted top-level field names
-            "CHAT_ARTIFACT_MAX_DEPTH",         # max nesting depth
+            "CHAT_ARTIFACT_ALLOWED_FIELDS",  # set or frozenset of permitted top-level field names
+            "CHAT_ARTIFACT_MAX_DEPTH",  # max nesting depth
             "CHAT_ARTIFACT_MAX_FIELD_VALUE_CHARS",  # max chars per string field value
         ]
         missing = [name for name in required if not hasattr(ac, name)]
@@ -1077,10 +1076,12 @@ class TestGuardOrdering:
         """
         # Build a large body — content doesn't matter, size does.
         max_bytes = getattr(app_module, "CHAT_MAX_REQUEST_BODY_BYTES", 65536)
-        large_body_json = json.dumps({
-            "message": "A" * (max_bytes + 1),
-            "artifact": _MINIMAL_ARTIFACT,
-        }).encode()
+        large_body_json = json.dumps(
+            {
+                "message": "A" * (max_bytes + 1),
+                "artifact": _MINIMAL_ARTIFACT,
+            }
+        ).encode()
 
         resp = client.post(
             "/ai-advisor/chat/send",
@@ -1136,11 +1137,8 @@ class TestAC1SiblingJsCsrfFix:
         operator-critical mutating routes that need the same fix.
         """
         import pathlib
-        js_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "static"
-            / "settings.js"
-        )
+
+        js_path = pathlib.Path(__file__).parent.parent.parent / "static" / "settings.js"
         assert js_path.exists(), f"settings.js not found at {js_path}"
 
         source = js_path.read_text(encoding="utf-8")
@@ -1159,11 +1157,8 @@ class TestAC1SiblingJsCsrfFix:
         mutation path — particularly important to protect.
         """
         import pathlib
-        js_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "static"
-            / "ai_advisor.js"
-        )
+
+        js_path = pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js"
         assert js_path.exists(), f"ai_advisor.js not found at {js_path}"
 
         source = js_path.read_text(encoding="utf-8")
@@ -1181,11 +1176,8 @@ class TestAC1SiblingJsCsrfFix:
         chrome.js:180-183 (/api/sell_account) both lack the header.
         """
         import pathlib
-        js_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "static"
-            / "chrome.js"
-        )
+
+        js_path = pathlib.Path(__file__).parent.parent.parent / "static" / "chrome.js"
         assert js_path.exists(), f"chrome.js not found at {js_path}"
 
         source = js_path.read_text(encoding="utf-8")
@@ -1202,10 +1194,9 @@ class TestAC1SiblingJsCsrfFix:
         (/ai-advisor/asset-swaps/evaluate) lacks the header.
         """
         import pathlib
+
         js_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "static"
-            / "ai_advisor_asset_swaps.js"
+            pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor_asset_swaps.js"
         )
         assert js_path.exists(), f"ai_advisor_asset_swaps.js not found at {js_path}"
 
@@ -1223,10 +1214,9 @@ class TestAC1SiblingJsCsrfFix:
         (/ai-advisor/logic-changes/evaluate) lacks the header.
         """
         import pathlib
+
         js_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "static"
-            / "ai_advisor_logic_changes.js"
+            pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor_logic_changes.js"
         )
         assert js_path.exists(), f"ai_advisor_logic_changes.js not found at {js_path}"
 
@@ -1243,11 +1233,8 @@ class TestAC1SiblingJsCsrfFix:
         flask-specialist confirmed index.js:352-355 (/api/sell_account) lacks the header.
         """
         import pathlib
-        js_path = (
-            pathlib.Path(__file__).parent.parent.parent
-            / "static"
-            / "index.js"
-        )
+
+        js_path = pathlib.Path(__file__).parent.parent.parent / "static" / "index.js"
         assert js_path.exists(), f"index.js not found at {js_path}"
 
         source = js_path.read_text(encoding="utf-8")
@@ -1264,6 +1251,7 @@ class TestAC1SiblingJsCsrfFix:
         one sibling route (/api/trigger is a safe canary — it exists and is POST).
         """
         from unittest.mock import patch as _patch
+
         # /api/trigger posts a market-trigger — stub out its implementation
         # to avoid side effects; we only care about the CSRF guard passing.
         with _patch.object(app_module, "_daemon_log"):
@@ -1314,18 +1302,16 @@ class TestB1RequestBodySizeCap:
 
         # Check option B: in-route content_length check in source
         import pathlib
-        app_source = (
-            pathlib.Path(__file__).parent.parent.parent / "app.py"
-        ).read_text(encoding="utf-8")
+
+        app_source = (pathlib.Path(__file__).parent.parent.parent / "app.py").read_text(
+            encoding="utf-8"
+        )
 
         chat_route_idx = app_source.find("def ai_advisor_chat_send")
         assert chat_route_idx != -1, "ai_advisor_chat_send not found in app.py"
 
-        route_window = app_source[chat_route_idx: chat_route_idx + 3000]
-        has_check = (
-            "content_length" in route_window
-            or "MAX_CONTENT_LENGTH" in route_window
-        )
+        route_window = app_source[chat_route_idx : chat_route_idx + 3000]
+        has_check = "content_length" in route_window or "MAX_CONTENT_LENGTH" in route_window
 
         assert flask_limit is not None or has_check, (
             f"CHAT_MAX_REQUEST_BODY_BYTES={max_body} is defined but never enforced. "
@@ -1337,9 +1323,7 @@ class TestB1RequestBodySizeCap:
             f"return jsonify(...), 400` at the top of ai_advisor_chat_send()."
         )
 
-    def test_body_exceeding_max_bytes_is_rejected_before_explain_artifact(
-        self, client, csrf_token
-    ):
+    def test_body_exceeding_max_bytes_is_rejected_before_explain_artifact(self, client, csrf_token):
         """A request body larger than CHAT_MAX_REQUEST_BODY_BYTES must return 400/413
         and must NOT reach explain_artifact.
 
@@ -1361,7 +1345,7 @@ class TestB1RequestBodySizeCap:
             pytest.skip(
                 f"CHAT_MAX_REQUEST_BODY_BYTES={max_body} <= "
                 f"CHAT_MAX_MESSAGE_CHARS + CHAT_MAX_ARTIFACT_BYTES + overhead "
-                f"({max_msg}+{max_artifact}+{overhead}=={max_msg+max_artifact+overhead}) — "
+                f"({max_msg}+{max_artifact}+{overhead}=={max_msg + max_artifact + overhead}) — "
                 "individual-field caps already enforce the body cap."
             )
 
@@ -1449,9 +1433,7 @@ class TestB2RateLimiterBoundedGrowth:
         """
         max_ips = getattr(app_module, "CHAT_RATE_LIMITER_MAX_TRACKED_IPS", None)
         if max_ips is None:
-            pytest.skip(
-                "CHAT_RATE_LIMITER_MAX_TRACKED_IPS not defined — GREEN adds it"
-            )
+            pytest.skip("CHAT_RATE_LIMITER_MAX_TRACKED_IPS not defined — GREEN adds it")
 
         limiter = getattr(app_module, "_CHAT_RATE_LIMITER", None)
         if limiter is None:

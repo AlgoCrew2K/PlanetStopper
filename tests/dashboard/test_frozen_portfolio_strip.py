@@ -48,10 +48,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "dashboard"
-    / "frozen_portfolio_strip"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "frozen_portfolio_strip"
 )
 
 
@@ -62,6 +59,7 @@ def _load(name: str) -> dict:
 # ---------------------------------------------------------------------------
 # Flask test-client fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def flask_client():
@@ -74,10 +72,16 @@ def flask_client():
         patch.object(app_module, "schedule"),
     ):
         mock_analytics.get_portfolio_today_change.return_value = {"if_held": 1.5, "dry_run": 1.3}
-        mock_analytics.get_portfolio_cumulative_return.return_value = {"if_held": 12.0, "dry_run": 11.5}
+        mock_analytics.get_portfolio_cumulative_return.return_value = {
+            "if_held": 12.0,
+            "dry_run": 11.5,
+        }
         mock_analytics.get_portfolio_max_drawdown.return_value = {"if_held": -5.2, "dry_run": -4.9}
         mock_analytics.get_symphony_today_change.return_value = {"if_held": 1.5, "dry_run": 1.3}
-        mock_analytics.get_symphony_cumulative_return.return_value = {"if_held": 12.0, "dry_run": 11.5}
+        mock_analytics.get_symphony_cumulative_return.return_value = {
+            "if_held": 12.0,
+            "dry_run": 11.5,
+        }
         mock_analytics.get_symphony_max_drawdown.return_value = {"if_held": -5.2, "dry_run": -4.9}
         with app_module.app.test_client() as client:
             yield client, app_module
@@ -86,6 +90,7 @@ def flask_client():
 # ===========================================================================
 # AC-PS.1: closed_frozen + snapshot with populated portfolio_strip → non-None values
 # ===========================================================================
+
 
 class TestFrozenPortfolioStripPopulated:
     """
@@ -98,9 +103,7 @@ class TestFrozenPortfolioStripPopulated:
     and the frozen path will surface them correctly.
     """
 
-    def test_frozen_portfolio_strip_passthrough_today_change(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_portfolio_strip_passthrough_today_change(self, flask_client, monkeypatch):
         """
         AC-PS.1: /api/state frozen path passes through snapshot.portfolio_strip verbatim.
         Uses 'populated' fixture to confirm non-None values survive the route.
@@ -115,7 +118,10 @@ class TestFrozenPortfolioStripPopulated:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -132,18 +138,14 @@ class TestFrozenPortfolioStripPopulated:
         assert ps is not None, (
             "/api/state.portfolio_strip must not be None when snapshot has populated data."
         )
-        assert isinstance(ps, dict), (
-            f"portfolio_strip must be a dict, got {type(ps).__name__!r}"
-        )
+        assert isinstance(ps, dict), f"portfolio_strip must be a dict, got {type(ps).__name__!r}"
         assert ps.get("today_change") is not None, (
             f"portfolio_strip.today_change must not be None when snapshot.portfolio_strip "
             f"has real values. Got: {ps!r}. "
             "Frozen route must pass through snapshot values; EOD capture must store real analytics."
         )
 
-    def test_frozen_portfolio_strip_passthrough_cumulative_return(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_portfolio_strip_passthrough_cumulative_return(self, flask_client, monkeypatch):
         """AC-PS.1: cumulative_return passes through from snapshot to /api/state."""
         client, app_module = flask_client
         fx = _load("frozen_portfolio_strip_populated")
@@ -155,7 +157,10 @@ class TestFrozenPortfolioStripPopulated:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -172,9 +177,7 @@ class TestFrozenPortfolioStripPopulated:
             f"Got portfolio_strip={ps!r}"
         )
 
-    def test_frozen_portfolio_strip_passthrough_max_drawdown(
-        self, flask_client, monkeypatch
-    ):
+    def test_frozen_portfolio_strip_passthrough_max_drawdown(self, flask_client, monkeypatch):
         """AC-PS.1: max_drawdown passes through from snapshot to /api/state."""
         client, app_module = flask_client
         fx = _load("frozen_portfolio_strip_populated")
@@ -186,7 +189,10 @@ class TestFrozenPortfolioStripPopulated:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -208,6 +214,7 @@ class TestFrozenPortfolioStripPopulated:
 # AC-PS.2 (revised): snapshot with portfolio_strip=None → recompute from
 #                    accounts_map; no crash; response is not all-None
 # ===========================================================================
+
 
 class TestFrozenPortfolioStripNullRecomputed:
     """
@@ -237,7 +244,10 @@ class TestFrozenPortfolioStripNullRecomputed:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = bot_state
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -267,6 +277,7 @@ class TestFrozenPortfolioStripNullRecomputed:
 # AC-PS.3: no snapshot → existing notice preserved (no regression)
 # ===========================================================================
 
+
 class TestNoSnapshotNoticePreserved:
     """
     AC-PS.3: Fresh deploy (no snapshot) — existing "No closing snapshot yet" notice
@@ -279,7 +290,10 @@ class TestNoSnapshotNoticePreserved:
 
         with patch.object(app_module, "database") as mock_db:
             mock_db.load_state.return_value = {}
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
@@ -301,15 +315,14 @@ class TestNoSnapshotNoticePreserved:
 # AC-PS.4: live path (market open) → portfolio_strip unaffected (no regression)
 # ===========================================================================
 
+
 class TestOpenMarketPortfolioStripNoRegression:
     """
     AC-PS.4: market_state='open' must still compute portfolio_strip via analytics
     (live path). The fix must not touch the live branch.
     """
 
-    def test_open_market_portfolio_strip_is_computed(
-        self, flask_client, monkeypatch
-    ):
+    def test_open_market_portfolio_strip_is_computed(self, flask_client, monkeypatch):
         """AC-PS.4: open market → portfolio_strip present and not all-None."""
         client, app_module = flask_client
 
@@ -332,28 +345,28 @@ class TestOpenMarketPortfolioStripNoRegression:
             patch.object(app_module, "render_template", return_value=""),
         ):
             mock_db.load_state.return_value = dict(live_state)
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
-            monkeypatch.setattr(
-                app_module, "get_market_state", lambda dt: "open", raising=False
-            )
+            monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open", raising=False)
 
             resp = client.get("/api/state")
 
         assert resp.status_code == 200
         body = resp.get_json()
         ps = body.get("portfolio_strip")
-        assert ps is not None, (
-            "Live path portfolio_strip must not be None. No regression allowed."
-        )
+        assert ps is not None, "Live path portfolio_strip must not be None. No regression allowed."
         assert body.get("frozen_at") is None, "frozen_at must be null when market is open"
 
 
 # ===========================================================================
 # AC-PS.5: EOD capture site populates portfolio_strip (engine-side test)
 # ===========================================================================
+
 
 class TestEodCapturePopulatesPortfolioStrip:
     """
@@ -380,6 +393,7 @@ class TestEodCapturePopulatesPortfolioStrip:
         Without this import, the EOD analytics calls would NameError.
         """
         import alpha_bot_execution as abe_module
+
         assert hasattr(abe_module, "analytics"), (
             "alpha_bot_execution must import analytics for EOD portfolio_strip computation. "
             "Add 'import analytics' to alpha_bot_execution.py."
@@ -417,10 +431,11 @@ class TestEodCapturePopulatesPortfolioStrip:
                 "triggered": False,
             }
 
-        with patch.object(analytics_module, "get_symphony_today_change") as mock_tc, \
-             patch.object(analytics_module, "get_symphony_cumulative_return") as mock_cr, \
-             patch.object(analytics_module, "get_symphony_max_drawdown") as mock_mdd:
-
+        with (
+            patch.object(analytics_module, "get_symphony_today_change") as mock_tc,
+            patch.object(analytics_module, "get_symphony_cumulative_return") as mock_cr,
+            patch.object(analytics_module, "get_symphony_max_drawdown") as mock_mdd,
+        ):
             mock_tc.return_value = {"if_held": 1.5, "dry_run": 1.3}
             mock_cr.return_value = {"if_held": 12.0, "dry_run": 11.5}
             mock_mdd.return_value = {"if_held": -5.2, "dry_run": -4.9}

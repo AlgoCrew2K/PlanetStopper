@@ -63,11 +63,13 @@ class TestIndexRoutePassesSessionCloseDisplay:
         # Stub DB
         monkeypatch.setattr(app_module.database, "load_state", lambda: {})
         monkeypatch.setattr(
-            app_module.database, "load_chart_history",
+            app_module.database,
+            "load_chart_history",
             lambda: {"date": "2025-05-14", "symphonies": {}},
         )
         monkeypatch.setattr(
-            app_module.database, "get_advisor_observations_for_symphony",
+            app_module.database,
+            "get_advisor_observations_for_symphony",
             lambda *a, **kw: [],
         )
 
@@ -75,9 +77,7 @@ class TestIndexRoutePassesSessionCloseDisplay:
         self._mc_module = mc_module
         self._client_obj = app_module.app.test_client()
 
-    def test_index_route_passes_session_close_display_regular_day(
-        self, monkeypatch
-    ) -> None:
+    def test_index_route_passes_session_close_display_regular_day(self, monkeypatch) -> None:
         """
         On a regular trading day (session_close returns 16:00), the index route
         must pass `session_close_display = "16:00 ET"` to render_template.
@@ -85,9 +85,7 @@ class TestIndexRoutePassesSessionCloseDisplay:
         RED: the current route does not pass session_close_display at all.
         """
         # Patch session_close to return a regular-day close (16:00)
-        monkeypatch.setattr(
-            self._mc_module, "session_close", lambda d: dt_time(16, 0)
-        )
+        monkeypatch.setattr(self._mc_module, "session_close", lambda d: dt_time(16, 0))
 
         self._client_obj.get("/")
 
@@ -102,9 +100,7 @@ class TestIndexRoutePassesSessionCloseDisplay:
             f"got {self._render_kwargs.get('session_close_display')!r}"
         )
 
-    def test_index_route_passes_session_close_display_half_day(
-        self, monkeypatch
-    ) -> None:
+    def test_index_route_passes_session_close_display_half_day(self, monkeypatch) -> None:
         """
         On a half-day (session_close returns 13:00), the index route must pass
         `session_close_display = "13:00 ET"` to render_template.
@@ -113,9 +109,7 @@ class TestIndexRoutePassesSessionCloseDisplay:
         session_close output would fail here.
         """
         # Patch session_close to return half-day close (13:00)
-        monkeypatch.setattr(
-            self._mc_module, "session_close", lambda d: dt_time(13, 0)
-        )
+        monkeypatch.setattr(self._mc_module, "session_close", lambda d: dt_time(13, 0))
 
         self._client_obj.get("/")
 
@@ -164,12 +158,8 @@ class TestTemplateDoesNotHardcodeCloseTime:
         other sections). This test only fails if "16:00 ET" appears within 10
         lines of the "1-minute resolution" label — scoped to the subtitle area.
         """
-        template_path = (
-            pathlib.Path(__file__).parent.parent.parent / "templates" / "index.html"
-        )
-        assert template_path.exists(), (
-            f"templates/index.html not found at {template_path}"
-        )
+        template_path = pathlib.Path(__file__).parent.parent.parent / "templates" / "index.html"
+        assert template_path.exists(), f"templates/index.html not found at {template_path}"
 
         source = template_path.read_text(encoding="utf-8")
         lines = source.splitlines()

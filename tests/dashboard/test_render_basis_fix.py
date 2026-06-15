@@ -123,16 +123,12 @@ class TestRenderGuardAlphaReadsGuardAlphaField:
         )
         # Slice up to the next top-level function declaration.
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 600]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
 
         # The function must read guard_alpha from the payload — either from
         # portfolio_strip.guard_alpha or meta.portfolio.guard_alpha.
-        reads_guard_alpha_field = (
-            "guard_alpha" in body
-            and (
-                "ps.guard_alpha" in body
-                or ".guard_alpha" in body
-            )
+        reads_guard_alpha_field = "guard_alpha" in body and (
+            "ps.guard_alpha" in body or ".guard_alpha" in body
         )
         assert reads_guard_alpha_field, (
             "RENDER-BASIS FAIL: renderGuardAlpha does not read a `.guard_alpha` "
@@ -152,7 +148,7 @@ class TestRenderGuardAlphaReadsGuardAlphaField:
         start = js.find("function renderGuardAlpha")
         assert start != -1, "renderGuardAlpha function must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 600]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
 
         # The buggy arithmetic: cr - crHeld.
         # Accept any of the common re-derivation patterns.
@@ -208,7 +204,7 @@ class TestWindowedStripFetchFeedsGuardAlphaField:
         end_marker = js.find("\n        function ", start + 1)
         if end_marker == -1:
             end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 600]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
 
         # The wrapper must assign the full strip to portfolio_strip.
         assert "portfolio_strip: strip" in body or "portfolio_strip:strip" in body, (
@@ -229,7 +225,7 @@ class TestWindowedStripFetchFeedsGuardAlphaField:
         end_marker = js.find("\n        function ", start + 1)
         if end_marker == -1:
             end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 600]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
 
         assert "renderGuardAlpha" in body, (
             "RENDER-BASIS FAIL: fetchWindowedStrip does not call renderGuardAlpha. "
@@ -277,7 +273,7 @@ class TestCumulativeRowHeldIsWindowedVw:
         start = js.find("function updateComparisonRows")
         assert start != -1, "updateComparisonRows function must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 3000]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 3000]
 
         # The function must NOT substitute account_all_time_cr or cr_if_held
         # into the cumulative row Held (that is the bug pattern).
@@ -301,7 +297,7 @@ class TestCumulativeRowHeldIsWindowedVw:
         start = js.find("function updateComparisonRows")
         assert start != -1, "updateComparisonRows function must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 3000]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 3000]
 
         # The row definition for 'cumulative' must reference ps.cumulative_return.
         assert "cumulative_return" in body, (
@@ -330,7 +326,7 @@ class TestAccountAllTimeCrNotWrittenByJs:
         start = js.find("function renderGuardAlpha")
         assert start != -1, "renderGuardAlpha function must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 600]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
 
         assert "account-all-time" not in body and "account_all_time" not in body, (
             "RENDER-BASIS FAIL: renderGuardAlpha references account-all-time-cr. "
@@ -345,7 +341,7 @@ class TestAccountAllTimeCrNotWrittenByJs:
         start = js.find("function updateComparisonRows")
         assert start != -1, "updateComparisonRows function must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 3000]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 3000]
 
         # Forbid textContent assignment targeting the account-all-time-cr element.
         # A querySelector + textContent write is the only way to modify it.
@@ -382,7 +378,7 @@ class TestAccountAllTimeCrNotWrittenByJs:
         rga_start = js.find("function renderGuardAlpha")
         if rga_start != -1:
             rga_end = js.find("\n    function ", rga_start + 1)
-            rga_body = js[rga_start:rga_end] if rga_end != -1 else js[rga_start:rga_start + 800]
+            rga_body = js[rga_start:rga_end] if rga_end != -1 else js[rga_start : rga_start + 800]
             assert "account-all-time-cr" not in rga_body, (
                 "RENDER-BASIS FAIL: renderGuardAlpha references 'account-all-time-cr'. "
                 "The windowed guard-alpha renderer must not touch the account stat."
@@ -392,7 +388,7 @@ class TestAccountAllTimeCrNotWrittenByJs:
         ucr_start = js.find("function updateComparisonRows")
         if ucr_start != -1:
             ucr_end = js.find("\n    function ", ucr_start + 1)
-            ucr_body = js[ucr_start:ucr_end] if ucr_end != -1 else js[ucr_start:ucr_start + 3000]
+            ucr_body = js[ucr_start:ucr_end] if ucr_end != -1 else js[ucr_start : ucr_start + 3000]
             has_testid = "account-all-time-cr" in ucr_body
             has_write = "textContent" in ucr_body
             assert not (has_testid and has_write), (
@@ -474,7 +470,7 @@ class TestZeroOracleInRenderGuardAlpha:
         start = js.find("function renderGuardAlpha")
         assert start != -1, "renderGuardAlpha must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 600]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
 
         # The function must contain the direct guard_alpha read (from Invariant 1).
         # When guard_alpha == 0, fmtPct(0) == "+0.00%" — correct.
@@ -498,7 +494,7 @@ class TestZeroOracleInRenderGuardAlpha:
         start = js.find("function renderGuardAlpha")
         assert start != -1, "renderGuardAlpha must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 600]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
 
         # The function must NOT coerce a missing guard_alpha to 0 via `|| 0` or `|| 0.0`
         # on the guard_alpha read itself (the cumulative_return path did this and fabricated
@@ -537,7 +533,7 @@ class TestCumulativeDeltaSelfConsistency:
         start = js.find("function updateComparisonRows")
         assert start != -1, "updateComparisonRows must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 3000]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 3000]
 
         # The delta must be computed from the row's own bot/held values (inside the
         # rows.forEach loop), not from a separate account-level field. We assert the
@@ -584,7 +580,7 @@ class TestUpdateComparisonRowsPrefersWindowedCumulativeReturn:
         start = js.find("function updateComparisonRows")
         assert start != -1, "updateComparisonRows must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 3000]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 3000]
 
         assert "windowed_cumulative_return" in body, (
             "RENDER-BASIS FAIL: updateComparisonRows does not reference "
@@ -606,7 +602,7 @@ class TestUpdateComparisonRowsPrefersWindowedCumulativeReturn:
         start = js.find("function updateComparisonRows")
         assert start != -1, "updateComparisonRows must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 3000]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 3000]
 
         # Both field names must co-exist in the rows definition — the windowed field
         # as the preferred source and cumulative_return as the fallback.
@@ -625,9 +621,9 @@ class TestUpdateComparisonRowsPrefersWindowedCumulativeReturn:
         the strip dict. Without the server-side field the JS can never read it.
         Source-level: the field name must appear in app.py near the windowed strip logic.
         """
-        app_py = (
-            pathlib.Path(__file__).parent.parent.parent / "app.py"
-        ).read_text(encoding="utf-8")
+        app_py = (pathlib.Path(__file__).parent.parent.parent / "app.py").read_text(
+            encoding="utf-8"
+        )
 
         assert "windowed_cumulative_return" in app_py, (
             "RENDER-BASIS FAIL: app.py does not contain `windowed_cumulative_return`. "
@@ -689,7 +685,7 @@ class TestClosedFrozenFallbackFetchesStrip:
         start = js.find("function renderGuardAlpha")
         assert start != -1, "renderGuardAlpha must exist"
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 800]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
 
         # renderGuardAlpha must call fetchWindowedStrip when guard_alpha is null.
         # The fallback can be inline: `if (guard_alpha == null) { fetchWindowedStrip('30d'); return; }`
@@ -722,8 +718,9 @@ class TestClosedFrozenFallbackFetchesStrip:
         # Strategy: find all matches of fetchWindowedStrip( and exclude the declaration.
         all_matches = [(m.start(), m.end()) for m in re.finditer(r"fetchWindowedStrip\s*\(", js)]
         call_sites = [
-            pos for pos, end in all_matches
-            if not js[max(0, pos - 10):pos].rstrip().endswith("function")
+            pos
+            for pos, end in all_matches
+            if not js[max(0, pos - 10) : pos].rstrip().endswith("function")
         ]
 
         assert len(call_sites) >= 2, (
@@ -788,9 +785,9 @@ class TestFrozenPortfolioStripGuardAlpha:
         This test passes if EITHER path is wired. It fails only if NEITHER is present,
         which would leave the headline showing '--' on closed_frozen permanently.
         """
-        app_py = (
-            pathlib.Path(__file__).parent.parent.parent / "app.py"
-        ).read_text(encoding="utf-8")
+        app_py = (pathlib.Path(__file__).parent.parent.parent / "app.py").read_text(
+            encoding="utf-8"
+        )
         js = _js()
 
         # Path A: server adds guard_alpha to the frozen strip.
@@ -798,7 +795,9 @@ class TestFrozenPortfolioStripGuardAlpha:
         # is set anywhere in the frozen path block (between the frozen snapshot path
         # and the return jsonify at ~line 1304).
         frozen_block_start = app_py.find("# On-the-fly portfolio_strip recompute")
-        frozen_block_end = app_py.find("return jsonify", frozen_block_start) if frozen_block_start != -1 else -1
+        frozen_block_end = (
+            app_py.find("return jsonify", frozen_block_start) if frozen_block_start != -1 else -1
+        )
         server_has_frozen_guard_alpha = (
             frozen_block_start != -1
             and frozen_block_end != -1
@@ -809,8 +808,9 @@ class TestFrozenPortfolioStripGuardAlpha:
         # Count CALL sites only (exclude function declaration).
         all_fws = [(m.start(), m.end()) for m in re.finditer(r"fetchWindowedStrip\s*\(", js)]
         fws_calls = [
-            pos for pos, end in all_fws
-            if not js[max(0, pos - 10):pos].rstrip().endswith("function")
+            pos
+            for pos, end in all_fws
+            if not js[max(0, pos - 10) : pos].rstrip().endswith("function")
         ]
         js_has_initial_strip_fallback = len(fws_calls) >= 2
 
@@ -969,7 +969,7 @@ class TestRenderGuardAlphaNoInfiniteLoop:
         start = js.find("function renderGuardAlpha")
         assert start != -1, "renderGuardAlpha must exist"
         sig_end = js.find(")", start)
-        sig = js[start:sig_end + 1]
+        sig = js[start : sig_end + 1]
 
         # The signature must have a second parameter (anything after the first comma).
         has_second_param = sig.count(",") >= 1
@@ -977,7 +977,7 @@ class TestRenderGuardAlphaNoInfiniteLoop:
         # Check 2: the fetchWindowedStrip call inside renderGuardAlpha is conditional,
         # not unconditional. Must not be bare `fetchWindowedStrip('30d');` without a guard.
         end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 800]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
 
         # The fetchWindowedStrip call must be inside an `if` that checks something —
         # a bare call with no condition is the infinite-loop pattern.
@@ -985,7 +985,7 @@ class TestRenderGuardAlphaNoInfiniteLoop:
         has_guarded_call = False
         if fws_pos != -1:
             # Look back up to 80 chars for an `if` keyword guarding this call.
-            pre = body[max(0, fws_pos - 80):fws_pos]
+            pre = body[max(0, fws_pos - 80) : fws_pos]
             has_guarded_call = "if (" in pre or "if(" in pre
 
         assert has_second_param or has_guarded_call, (
@@ -998,7 +998,7 @@ class TestRenderGuardAlphaNoInfiniteLoop:
             "AND pass `true` as the second arg from inside fetchWindowedStrip: "
             "  `renderGuardAlpha(wrapped, true);` "
             f"Current signature: `{sig}`. "
-            f"fetchWindowedStrip call context: `{body[max(0,fws_pos-80):fws_pos+30]}`"
+            f"fetchWindowedStrip call context: `{body[max(0, fws_pos - 80) : fws_pos + 30]}`"
         )
 
     def test_fetch_windowed_strip_passes_from_strip_flag_to_render_guard_alpha(self):
@@ -1017,7 +1017,7 @@ class TestRenderGuardAlphaNoInfiniteLoop:
         end_marker = js.find("\nfunction ", start + 1)
         if end_marker == -1:
             end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start:start + 600]
+        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
 
         # Find `renderGuardAlpha(` inside the body and check it has a second argument.
         rga_pos = body.find("renderGuardAlpha(")
@@ -1027,7 +1027,7 @@ class TestRenderGuardAlphaNoInfiniteLoop:
         )
 
         # Extract the call up to the closing paren.
-        call_snippet = body[rga_pos:rga_pos + 60]
+        call_snippet = body[rga_pos : rga_pos + 60]
         has_second_arg = "," in call_snippet.split(")")[0]
 
         assert has_second_arg, (
@@ -1123,20 +1123,24 @@ class TestFrozenPathAccountAllTimeCr:
         ):
             mock_db.load_state.return_value = bot_state
             mock_db.get_shadow_divergence.return_value = {
-                "by_symphony": {}, "portfolio_today": None
+                "by_symphony": {},
+                "portfolio_today": None,
             }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
 
             mock_analytics.get_portfolio_today_change.return_value = {
-                "if_held": 0.2, "dry_run": 0.1
+                "if_held": 0.2,
+                "dry_run": 0.1,
             }
             mock_analytics.get_portfolio_cumulative_return.return_value = {
-                "if_held": 63.95, "dry_run": 27.56
+                "if_held": 63.95,
+                "dry_run": 27.56,
             }
             mock_analytics.get_portfolio_max_drawdown.return_value = {
-                "if_held": -8.1, "dry_run": -5.3
+                "if_held": -8.1,
+                "dry_run": -5.3,
             }
             mock_analytics.compute_windowed_portfolio_strip.return_value = {
                 "guard_alpha": 0.904,
@@ -1152,9 +1156,7 @@ class TestFrozenPathAccountAllTimeCr:
             with app_module.app.test_client() as client:
                 yield client
 
-    def test_frozen_api_state_portfolio_strip_has_account_all_time_cr(
-        self, frozen_client
-    ):
+    def test_frozen_api_state_portfolio_strip_has_account_all_time_cr(self, frozen_client):
         """GET /api/state on the closed_frozen path must include account_all_time_cr
         in portfolio_strip. Without it, _build_meta sets meta.portfolio.account_all_time_cr
         to None and the template omits the element entirely.
@@ -1185,9 +1187,7 @@ class TestFrozenPathAccountAllTimeCr:
             f"Got portfolio_strip keys: {sorted(ps.keys()) if isinstance(ps, dict) else ps!r}"
         )
 
-    def test_frozen_api_state_portfolio_strip_account_all_time_cr_value(
-        self, frozen_client
-    ):
+    def test_frozen_api_state_portfolio_strip_account_all_time_cr_value(self, frozen_client):
         """The account_all_time_cr in portfolio_strip must equal the value from
         _account_totals_cache['portfolio_cr'] — the Composer account-lifetime CR.
         It must be a float, not None or a string.
@@ -1211,9 +1211,7 @@ class TestFrozenPathAccountAllTimeCr:
             "The frozen path must read the value from the cache, not fabricate it."
         )
 
-    def test_frozen_api_state_meta_portfolio_has_account_all_time_cr(
-        self, frozen_client
-    ):
+    def test_frozen_api_state_meta_portfolio_has_account_all_time_cr(self, frozen_client):
         """meta.portfolio.account_all_time_cr must be present and numeric on the
         closed_frozen path. This is what the SSR template reads to render the
         `account-all-time-cr` element. When absent, the element is silently omitted.
@@ -1244,9 +1242,7 @@ class TestFrozenPathAccountAllTimeCr:
             "Expected a float matching _account_totals_cache['portfolio_cr']."
         )
 
-    def test_frozen_path_account_all_time_cr_does_not_regress_open_path(
-        self, monkeypatch
-    ):
+    def test_frozen_path_account_all_time_cr_does_not_regress_open_path(self, monkeypatch):
         """The fix to the frozen path must not regress the live (open) path.
         On market open, _compute_portfolio_strip already sets account_all_time_cr —
         that path must continue to work.
@@ -1254,15 +1250,16 @@ class TestFrozenPathAccountAllTimeCr:
         Source contract: app.py must contain `account_all_time_cr` in the context
         of both the live portfolio strip AND the frozen path enrichment.
         """
-        app_py = (
-            pathlib.Path(__file__).parent.parent.parent / "app.py"
-        ).read_text(encoding="utf-8")
+        app_py = (pathlib.Path(__file__).parent.parent.parent / "app.py").read_text(
+            encoding="utf-8"
+        )
 
         # The live path already sets this (line 835):
         #   _strip["account_all_time_cr"] = _acct_cr
         # After the fix, there must be a SECOND assignment on the frozen path.
         # Count assignments to account_all_time_cr (excluding comments and docstrings).
         import re as _re
+
         assignments = _re.findall(
             r'["\'_]account_all_time_cr["\']\s*\]\s*=',
             app_py,

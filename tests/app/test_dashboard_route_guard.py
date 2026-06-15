@@ -13,6 +13,7 @@ Acceptance criteria:
   AC-DRG.2: vars_locked_count still correctly counts only symphony entries.
   AC-DRG.3: non-dict entries are silently skipped (no exception propagates).
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch, MagicMock
@@ -23,6 +24,7 @@ import pytest
 @pytest.fixture()
 def flask_client():
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         yield client, app_module
@@ -100,8 +102,7 @@ class TestVarsLockedCountAccuracy:
         mock_db.load_state.return_value = mixed_state
         mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
         mock_db.get_symphony_strategy.side_effect = lambda name: (
-            {"locked_vars": ["TRIGGER_THRESHOLD_PCT", "MC_FLOOR"]} if "alpha" in name
-            else None
+            {"locked_vars": ["TRIGGER_THRESHOLD_PCT", "MC_FLOOR"]} if "alpha" in name else None
         )
 
         with patch.object(app_module, "database", mock_db):

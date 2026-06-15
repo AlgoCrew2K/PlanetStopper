@@ -153,7 +153,9 @@ class TestDiscordEmbedIncludesDSR:
         path.write_text(json.dumps(report), encoding="utf-8")
         return str(path)
 
-    def _build_optimization_results_with_selection_stats(self, symphony_id: str, selection_stats: dict) -> dict:
+    def _build_optimization_results_with_selection_stats(
+        self, symphony_id: str, selection_stats: dict
+    ) -> dict:
         """
         Build the optimization_results dict that send_eod_discord_post receives.
 
@@ -734,8 +736,12 @@ class TestAiAdvisorRecentRunsPanel:
             "static/ai_advisor.js must reference 'selection_tstat' to render the "
             "Harvey & Liu selection statistic in autotune run cards. AC-4 / D3."
         )
-        accurate_labels = ["sel t-stat", "selection t-stat", "selection tstat",
-                           "selection statistic"]
+        accurate_labels = [
+            "sel t-stat",
+            "selection t-stat",
+            "selection tstat",
+            "selection statistic",
+        ]
         assert any(lbl in js_lower for lbl in accurate_labels), (
             f"static/ai_advisor.js must render an accurate operator label for "
             f"the selection statistic (one of: {accurate_labels}). AC-4 / D3."

@@ -168,32 +168,21 @@ def _run_cycle_and_capture_ts_et(frozen_et: datetime, utc_instant: datetime) -> 
         def __getattr__(self, name):  # pragma: no cover - attribute proxy
             return getattr(real_datetime, name)
 
-    with patch.object(alpha_bot_execution, "database") as mock_db, patch.object(
-        alpha_bot_execution, "reporting"
-    ), patch.object(
-        alpha_bot_execution, "fetch_symphony_stats"
-    ) as mock_fetch_sym, patch.object(
-        alpha_bot_execution, "fetch_alpaca_history"
-    ) as mock_fetch_hist, patch.object(
-        alpha_bot_execution, "fetch_intraday_vwaps"
-    ) as mock_fetch_vwap, patch.object(
-        alpha_bot_execution, "get_current_et", return_value=frozen_et
-    ), patch.object(
-        alpha_bot_execution, "datetime", _FrozenDatetime()
-    ), patch.object(
-        alpha_bot_execution, "EXECUTION_START_TIME", _EXECUTION_START
-    ), patch.object(
-        alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]
-    ), patch.object(
-        alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"
-    ), patch.object(
-        alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"
-    ), patch.object(
-        alpha_bot_execution, "LIVE_EXECUTION", False
-    ), patch.object(
-        alpha_bot_execution.time, "sleep"
-    ), patch.object(
-        alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting"),
+        patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym,
+        patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist,
+        patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap,
+        patch.object(alpha_bot_execution, "get_current_et", return_value=frozen_et),
+        patch.object(alpha_bot_execution, "datetime", _FrozenDatetime()),
+        patch.object(alpha_bot_execution, "EXECUTION_START_TIME", _EXECUTION_START),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
     ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = _seed_state(date_str)

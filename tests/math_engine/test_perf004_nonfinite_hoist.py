@@ -199,8 +199,7 @@ def _build_atr_history(num_days: int = _ATR_NUM_DAYS) -> dict:
 def _assert_nan_value_error(exc_info: pytest.ExceptionInfo) -> None:
     """Mirrors the A3 scalar rejection contract — message must contain 'NaN'."""
     assert "NaN" in str(exc_info.value), (
-        f"Expected ValueError naming 'NaN' (A3 scalar contract); "
-        f"got: {exc_info.value!r}"
+        f"Expected ValueError naming 'NaN' (A3 scalar contract); got: {exc_info.value!r}"
     )
 
 
@@ -273,9 +272,7 @@ def test_run_monte_carlo_rejects_nan_when_called_directly(bad: float) -> None:
     history = _build_mc_history()
     first_date = sorted(history.keys())[0]
     history[first_date][_TICKER]["daily_ret"] = bad
-    holdings = [
-        {"ticker": _TICKER, "allocation": 1.0, "last_percent_change": 0.01}
-    ]
+    holdings = [{"ticker": _TICKER, "allocation": 1.0, "last_percent_change": 0.01}]
     with pytest.raises(ValueError) as exc_info:
         math_engine.run_monte_carlo(
             holdings=holdings,
@@ -302,9 +299,7 @@ def test_calculate_20d_vol_rejects_nan_when_called_directly(bad: float) -> None:
 
 @pytest.mark.parametrize("bad", NON_FINITE)
 @pytest.mark.parametrize("field", ["high", "low", "close"])
-def test_calculate_14d_atr_pct_rejects_nan_when_called_directly(
-    bad: float, field: str
-) -> None:
+def test_calculate_14d_atr_pct_rejects_nan_when_called_directly(bad: float, field: str) -> None:
     """calculate_14d_atr_pct must reject NaN in any of high/low/close even
     when the history dict was constructed in-process."""
     history = _build_atr_history()
@@ -378,9 +373,7 @@ def test_compute_portfolio_cvar_rejects_nan_when_called_directly(bad: float) -> 
     history = _build_mc_history()
     first_date = sorted(history.keys())[0]
     history[first_date][_TICKER]["daily_ret"] = bad
-    holdings = [
-        {"ticker": _TICKER, "allocation": 1.0, "last_percent_change": 0.01}
-    ]
+    holdings = [{"ticker": _TICKER, "allocation": 1.0, "last_percent_change": 0.01}]
     with pytest.raises(ValueError) as exc_info:
         math_engine.compute_portfolio_cvar(
             cycle_id="20260528_1000",
@@ -403,9 +396,7 @@ def test_hot_path_happy_path_remains_finite_for_clean_inputs() -> None:
     scan accidentally breaks the happy path, this test surfaces it as a
     cross-check on the rejection tests above."""
     history = _build_mc_history()
-    holdings_mc = [
-        {"ticker": _TICKER, "allocation": 1.0, "last_percent_change": 0.01}
-    ]
+    holdings_mc = [{"ticker": _TICKER, "allocation": 1.0, "last_percent_change": 0.01}]
     np.random.seed(42)
     mc = math_engine.run_monte_carlo(
         holdings=holdings_mc,
@@ -419,15 +410,11 @@ def test_hot_path_happy_path_remains_finite_for_clean_inputs() -> None:
     vol_history = _build_vol_history()
     holdings_vol = [{"ticker": _TICKER, "allocation": 1.0}]
     vol = math_engine.calculate_20d_vol(holdings_vol, vol_history)
-    assert math.isfinite(vol) and vol >= 0.0, (
-        f"calculate_20d_vol returned {vol!r}"
-    )
+    assert math.isfinite(vol) and vol >= 0.0, f"calculate_20d_vol returned {vol!r}"
 
     atr_history = _build_atr_history()
     atr = math_engine.calculate_14d_atr_pct(holdings_vol, atr_history)
-    assert math.isfinite(atr) and atr >= 0.0, (
-        f"calculate_14d_atr_pct returned {atr!r}"
-    )
+    assert math.isfinite(atr) and atr >= 0.0, f"calculate_14d_atr_pct returned {atr!r}"
 
     cvar = math_engine.compute_portfolio_cvar(
         cycle_id="20260528_1000",
@@ -450,8 +437,7 @@ def test_hot_path_happy_path_remains_finite_for_clean_inputs() -> None:
     assert hasattr(cvar, "tail_obs_count"), f"expected CVaRAssessment, got {cvar!r}"
     if cvar.cvar_pct is not None:
         assert math.isfinite(cvar.cvar_pct), (
-            f"compute_portfolio_cvar.cvar_pct = {cvar.cvar_pct!r} — non-None "
-            f"path must be finite."
+            f"compute_portfolio_cvar.cvar_pct = {cvar.cvar_pct!r} — non-None path must be finite."
         )
     else:
         assert cvar.insufficient_reason is not None, (
@@ -522,6 +508,5 @@ def test_perf004_verdict_pinned_in_this_file() -> None:
         "that the hoist hypothesis was verified and rejected."
     )
     assert "Hoist is UNSAFE" in src, (
-        "PERF-004 verdict statement 'Hoist is UNSAFE' missing from this "
-        "file's docstring."
+        "PERF-004 verdict statement 'Hoist is UNSAFE' missing from this file's docstring."
     )

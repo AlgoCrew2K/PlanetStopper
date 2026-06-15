@@ -55,6 +55,7 @@ def _build_history(n_days: int = 5) -> dict:
 
 def _fallback_params() -> dict:
     import database
+
     return database.DEFAULT_STRATEGY.copy()
 
 
@@ -119,17 +120,19 @@ def _autotuner_patches(best_params, fallback, vwap_side_effect=None):
 
     history = _build_history(n_days=5)
 
-    with patch("autotuner.optuna.create_study", return_value=fake_study), \
-         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value=history), \
-         patch("autotuner.database.load_chart_history", return_value={}), \
-         patch("autotuner.database.save_chart_archive"), \
-         patch("autotuner.database.get_symphony_strategy",
-               return_value={"params": fallback.copy(), "locked_vars": []}), \
-         patch("autotuner.database.DEFAULT_STRATEGY", database.DEFAULT_STRATEGY.copy()), \
-         patch("autotuner.math_engine.compute_vwap_breakdown_update",
-               side_effect=vwap_side_effect):
+    with (
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": fallback.copy(), "locked_vars": []},
+        ),
+        patch("autotuner.database.DEFAULT_STRATEGY", database.DEFAULT_STRATEGY.copy()),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update", side_effect=vwap_side_effect),
+    ):
         yield {"fake_study": fake_study}
 
 
@@ -152,6 +155,7 @@ def _run_autotuner(symphony_name: str = "DefensiveAlpha"):
 def _fetch_autotune_runs_for_symphony(symphony_name: str) -> list[tuple]:
     import os
     import database as _db
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     rows = conn.execute(
@@ -187,7 +191,8 @@ def test_oc_producer_failure_is_logged_at_visible_severity(caplog):
 
     # There must be at least one record about the failure.
     oc_records = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if "overfitting" in r.getMessage().lower()
         or "OVERFITTING" in r.getMessage()
         or "advisory" in r.getMessage().lower()
@@ -197,10 +202,7 @@ def test_oc_producer_failure_is_logged_at_visible_severity(caplog):
         "swallowed silently — AC-3 requires the failure to be surfaced."
     )
     # At least one of those records must be ERROR-level (or carry exc_info).
-    surfaced = [
-        r for r in oc_records
-        if r.levelno >= logging.ERROR or r.exc_info is not None
-    ]
+    surfaced = [r for r in oc_records if r.levelno >= logging.ERROR or r.exc_info is not None]
     assert surfaced, (
         "The OC producer failure was logged only at WARNING with no exc_info — "
         "that is the silent-swallow pattern that shipped the broken advisor. "

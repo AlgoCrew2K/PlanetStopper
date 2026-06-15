@@ -83,18 +83,20 @@ _MIGRATION_PATH = Path(__file__).parents[2] / "migrations" / _MIGRATION_FILENAME
 # Migration 025 (S3-AUDIT-004 fix) added the NULLable `symphony_id` column so
 # the /api/advisor-observations symphony filter can resolve OC/DE rows in one
 # query.  Producers populate it; pre-existing callers leave it NULL.
-_EXPECTED_COLUMNS: frozenset[str] = frozenset({
-    "id",
-    "created_at",
-    "advisor_role",
-    "subject_type",
-    "subject_id",
-    "verdict",
-    "raw_response",
-    "is_advisory_only",
-    "spec_bundle_id",
-    "symphony_id",
-})
+_EXPECTED_COLUMNS: frozenset[str] = frozenset(
+    {
+        "id",
+        "created_at",
+        "advisor_role",
+        "subject_type",
+        "subject_id",
+        "verdict",
+        "raw_response",
+        "is_advisory_only",
+        "spec_bundle_id",
+        "symphony_id",
+    }
+)
 
 # Roles that must be accepted by the table discriminator (Phase-1/Phase-2 set).
 _VALID_ROLES = (
@@ -204,8 +206,7 @@ def test_migration_017_is_valid_sql_and_idempotent(tmp_path):
         conn.commit()
     except sqlite3.OperationalError as exc:
         pytest.fail(
-            f"Migration SQL is invalid or not idempotent: {exc}\n"
-            f"Migration path: {_MIGRATION_PATH}"
+            f"Migration SQL is invalid or not idempotent: {exc}\nMigration path: {_MIGRATION_PATH}"
         )
     finally:
         conn.close()
@@ -215,9 +216,7 @@ def test_migration_017_is_valid_sql_and_idempotent(tmp_path):
         "SELECT name FROM sqlite_master WHERE type='table' AND name='advisor_observations'"
     ).fetchone()
     conn2.close()
-    assert row is not None, (
-        "advisor_observations table must exist after running the migration"
-    )
+    assert row is not None, "advisor_observations table must exist after running the migration"
 
 
 # ---------------------------------------------------------------------------
@@ -286,9 +285,7 @@ def test_migration_016_listed_before_017():
     """
     files = db_module._MIGRATION_FILES
     predecessor = "016_spec_bundles.sql"
-    assert predecessor in files, (
-        f"'{predecessor}' not found in _MIGRATION_FILES."
-    )
+    assert predecessor in files, f"'{predecessor}' not found in _MIGRATION_FILES."
     idx_016 = files.index(predecessor)
     idx_017 = files.index(_MIGRATION_FILENAME)
     assert idx_016 < idx_017, (
@@ -309,6 +306,7 @@ def test_advisor_observations_table_exists_after_init_db():
     """
     # The global _isolate_db fixture has already called init_db().
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     cols = conn.execute("PRAGMA table_info(advisor_observations)").fetchall()
@@ -327,6 +325,7 @@ def test_advisor_observations_has_all_expected_columns():
     set is derived from plan §Deliverables #1 and verified against the real DB.
     """
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     cols_info = conn.execute("PRAGMA table_info(advisor_observations)").fetchall()
@@ -355,6 +354,7 @@ def test_advisor_observations_column_count_canary():
     set-difference tests above pass but the count still changes — this catches it.
     """
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     cols = conn.execute("PRAGMA table_info(advisor_observations)").fetchall()
@@ -374,6 +374,7 @@ def test_is_advisory_only_has_default_1_in_schema():
     so a schema-grep reviewer sees the table is non-actionable (plan §Risk callouts).
     """
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     cols = {
@@ -382,9 +383,7 @@ def test_is_advisory_only_has_default_1_in_schema():
     }
     conn.close()
 
-    assert "is_advisory_only" in cols, (
-        "is_advisory_only column not found in advisor_observations"
-    )
+    assert "is_advisory_only" in cols, "is_advisory_only column not found in advisor_observations"
     dflt = cols["is_advisory_only"]["dflt_value"]
     assert dflt == "1", (
         f"is_advisory_only DEFAULT must be 1 (got {dflt!r}). "
@@ -395,6 +394,7 @@ def test_is_advisory_only_has_default_1_in_schema():
 def test_raw_response_has_default_empty_json_in_schema():
     """raw_response must default to '{}' for computed rows that carry no LLM output."""
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     cols = {
@@ -427,9 +427,7 @@ def test_observation_with_spec_bundle_id_references_existing_bundle():
     from database import insert_advisor_observation, get_advisor_observations_for_subject  # noqa: PLC0415
 
     bundle_hash = "deadbeef1234567890abcdef"  # representative hash string
-    row_id = insert_advisor_observation(
-        **_computed_row_kwargs(spec_bundle_id=bundle_hash)
-    )
+    row_id = insert_advisor_observation(**_computed_row_kwargs(spec_bundle_id=bundle_hash))
     assert isinstance(row_id, int) and row_id > 0
 
     rows = get_advisor_observations_for_subject("autotune_run", "run-001")
@@ -447,9 +445,7 @@ def test_observation_with_null_spec_bundle_id_is_legal():
     insert_advisor_observation(**_computed_row_kwargs(spec_bundle_id=None))
     rows = get_advisor_observations_for_subject("autotune_run", "run-001")
     assert rows, "Expected one row"
-    assert rows[0]["spec_bundle_id"] is None, (
-        "spec_bundle_id must be NULL when not supplied"
-    )
+    assert rows[0]["spec_bundle_id"] is None, "spec_bundle_id must be NULL when not supplied"
 
 
 # ---------------------------------------------------------------------------
@@ -493,9 +489,7 @@ def test_insert_advisor_observation_ids_are_monotonically_increasing():
 
     ids = []
     for i in range(4):
-        row_id = insert_advisor_observation(
-            **_computed_row_kwargs(subject_id=f"run-mono-{i}")
-        )
+        row_id = insert_advisor_observation(**_computed_row_kwargs(subject_id=f"run-mono-{i}"))
         ids.append(row_id)
 
     for j in range(1, len(ids)):
@@ -534,6 +528,7 @@ def test_is_advisory_only_cannot_be_set_to_0():
     """
     from database import insert_advisor_observation, get_advisor_observations_for_subject  # noqa: PLC0415
     import os
+
     db_path = os.environ["DB_PATH"]
 
     try:
@@ -579,6 +574,7 @@ def test_computed_row_raw_response_empty_dict_round_trips():
     # Normalise: accept either already-parsed dict or JSON string
     if isinstance(raw, str):
         import json  # noqa: PLC0415
+
         raw = json.loads(raw)
 
     assert raw == {}, (
@@ -613,12 +609,9 @@ def test_llm_authored_row_raw_response_payload_round_trips():
     if isinstance(raw, str):
         raw = json.loads(raw)
 
-    assert isinstance(raw, dict), (
-        f"raw_response must be returned as a dict; got {type(raw)}"
-    )
+    assert isinstance(raw, dict), f"raw_response must be returned as a dict; got {type(raw)}"
     assert raw == expected_payload, (
-        f"raw_response payload did not round-trip. "
-        f"Expected {expected_payload!r}, got {raw!r}."
+        f"raw_response payload did not round-trip. Expected {expected_payload!r}, got {raw!r}."
     )
 
 
@@ -643,12 +636,8 @@ def test_get_advisor_observations_for_role_returns_only_matching_role():
     oc_rows = get_advisor_observations_for_role("OVERFITTING_CONSCIENCE")
     sc_rows = get_advisor_observations_for_role("SPEC_CRITIC")
 
-    assert len(oc_rows) == 1, (
-        f"Expected 1 OVERFITTING_CONSCIENCE row; got {len(oc_rows)}"
-    )
-    assert len(sc_rows) == 2, (
-        f"Expected 2 SPEC_CRITIC rows; got {len(sc_rows)}"
-    )
+    assert len(oc_rows) == 1, f"Expected 1 OVERFITTING_CONSCIENCE row; got {len(oc_rows)}"
+    assert len(sc_rows) == 2, f"Expected 2 SPEC_CRITIC rows; got {len(sc_rows)}"
 
     for row in oc_rows:
         assert row["advisor_role"] == "OVERFITTING_CONSCIENCE", (
@@ -711,9 +700,7 @@ def test_ro_connection_can_select_from_advisor_observations():
     finally:
         conn.close()
 
-    assert len(rows) == 1, (
-        f"Expected 1 row via read-only connection; got {len(rows)}"
-    )
+    assert len(rows) == 1, f"Expected 1 row via read-only connection; got {len(rows)}"
 
 
 def test_ro_connection_cannot_insert_into_advisor_observations():
@@ -754,6 +741,7 @@ def test_write_wall_breach_observation_succeeds_after_migration():
     The test verifies the row appears in the table.
     """
     import os  # noqa: PLC0415
+
     db_path = os.environ["DB_PATH"]
 
     # Call the helper — it swallows its own exceptions internally and logs them.
@@ -774,9 +762,7 @@ def test_write_wall_breach_observation_succeeds_after_migration():
     assert rows[0][1] == "fold_role_wall", (
         f"subject_type must be 'fold_role_wall'; got {rows[0][1]!r}"
     )
-    assert rows[0][2] == "BREACH", (
-        f"verdict must be 'BREACH'; got {rows[0][2]!r}"
-    )
+    assert rows[0][2] == "BREACH", f"verdict must be 'BREACH'; got {rows[0][2]!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -815,9 +801,7 @@ def test_get_advisor_observations_for_subject_filters_correctly():
     # Three rows: two for the target (type=autotune_run, id=run-target),
     # one decoy with same type but different id, one decoy with different type.
     insert_advisor_observation(**_computed_row_kwargs(subject_id="run-target"))
-    insert_advisor_observation(
-        **_llm_authored_row_kwargs(subject_id="run-target")
-    )
+    insert_advisor_observation(**_llm_authored_row_kwargs(subject_id="run-target"))
     insert_advisor_observation(**_computed_row_kwargs(subject_id="run-decoy"))
     insert_advisor_observation(
         **_computed_row_kwargs(subject_type="shadow_decision", subject_id="run-target")
@@ -1038,9 +1022,7 @@ def test_write_wall_breach_observation_stores_is_advisory_only_1():
         f"is_advisory_only must be 1 in a WALL_BREACH row; got {is_advisory_only!r}. "
         "The raw INSERT passes 1 explicitly; the schema DEFAULT is also 1."
     )
-    assert verdict == "BREACH", (
-        f"verdict must be 'BREACH'; got {verdict!r}"
-    )
+    assert verdict == "BREACH", f"verdict must be 'BREACH'; got {verdict!r}"
     # spec_bundle_id omitted from the raw INSERT — must be NULL via column DEFAULT (no default → NULL)
     assert spec_bundle_id is None, (
         f"spec_bundle_id must be NULL in a WALL_BREACH row (column omitted from INSERT); "
@@ -1089,9 +1071,7 @@ def test_advisor_observations_schema_fixture_matches_live_db():
     import json as _json  # noqa: PLC0415
     import os  # noqa: PLC0415
 
-    assert _SCHEMA_FIXTURE_PATH.is_file(), (
-        f"Schema fixture missing: {_SCHEMA_FIXTURE_PATH}"
-    )
+    assert _SCHEMA_FIXTURE_PATH.is_file(), f"Schema fixture missing: {_SCHEMA_FIXTURE_PATH}"
     fixture = _json.loads(_SCHEMA_FIXTURE_PATH.read_text(encoding="utf-8"))
 
     db_path = os.environ["DB_PATH"]
@@ -1102,10 +1082,7 @@ def test_advisor_observations_schema_fixture_matches_live_db():
     assert pragma_rows, "advisor_observations does not exist — migration not applied."
 
     # Build a map: column_name -> {notnull, has_default}
-    live = {
-        row[1]: {"notnull": row[3], "has_default": row[4] is not None}
-        for row in pragma_rows
-    }
+    live = {row[1]: {"notnull": row[3], "has_default": row[4] is not None} for row in pragma_rows}
 
     for col_spec in fixture["columns"]:
         name = col_spec["name"]
@@ -1149,9 +1126,7 @@ def test_is_advisory_only_is_not_null_in_schema():
     }
     conn.close()
 
-    assert "is_advisory_only" in cols, (
-        "is_advisory_only column not found in advisor_observations"
-    )
+    assert "is_advisory_only" in cols, "is_advisory_only column not found in advisor_observations"
     notnull = cols["is_advisory_only"]["notnull"]
     assert notnull == 1, (
         f"is_advisory_only must be NOT NULL (notnull=1); got notnull={notnull}. "

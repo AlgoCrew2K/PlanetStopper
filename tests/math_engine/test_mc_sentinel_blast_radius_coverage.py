@@ -47,10 +47,7 @@ import pytest
 import math_engine
 
 FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "mc_sentinel_blast_radius"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "mc_sentinel_blast_radius"
 )
 
 
@@ -90,6 +87,7 @@ def _minimum_raw_days() -> int:
 # ---------------------------------------------------------------------------
 # R-5. 38 raw days → sentinel (eligible_days = 19 < MC_MIN_HISTORY_DAYS)
 # ---------------------------------------------------------------------------
+
 
 def test_eligible_pool_38_raw_days_returns_sentinel() -> None:
     """
@@ -135,6 +133,7 @@ def test_eligible_pool_38_raw_days_returns_sentinel() -> None:
 # ---------------------------------------------------------------------------
 # R-6. 39 raw days → float in [0, 100] (eligible_days = 20 = MC_MIN_HISTORY_DAYS)
 # ---------------------------------------------------------------------------
+
 
 def test_eligible_pool_39_raw_days_returns_valid_float() -> None:
     """
@@ -185,6 +184,7 @@ def test_eligible_pool_39_raw_days_returns_valid_float() -> None:
 # R-7. 20 raw days → sentinel (not the old in-band 100.0)
 # ---------------------------------------------------------------------------
 
+
 def test_twenty_raw_days_returns_sentinel_not_old_in_band_100() -> None:
     """
     R-7 — 20 raw days: eligible_days = 20 - (MC_VOL_WINDOW_DAYS - 1) = 1,
@@ -234,6 +234,7 @@ def test_twenty_raw_days_returns_sentinel_not_old_in_band_100() -> None:
 # R-8. compute_tp_confirmation with mc_available=False does NOT arm TP
 # ---------------------------------------------------------------------------
 
+
 def test_tp_confirmation_does_not_arm_when_mc_unavailable() -> None:
     """
     R-8 — When mc_available=False (insufficient MC history), the take-profit
@@ -274,6 +275,7 @@ def test_tp_confirmation_does_not_arm_when_mc_unavailable() -> None:
 # ---------------------------------------------------------------------------
 # R-9. compute_tp_confirmation with mc_available=False does NOT confirm exit
 # ---------------------------------------------------------------------------
+
 
 def test_tp_confirmation_does_not_confirm_exit_when_mc_unavailable() -> None:
     """
@@ -340,14 +342,13 @@ def test_tp_confirmation_does_not_confirm_exit_when_mc_unavailable_at_threshold(
         f"above_tp_count={near_threshold_count}) set is_tp_hit=True at count "
         f"TP_CONFIRM_TICKS-1. The MC-unavailable guard must block this."
     )
-    assert new_above_tp_count == 0, (
-        f"Expected count reset to 0; got {new_above_tp_count}."
-    )
+    assert new_above_tp_count == 0, f"Expected count reset to 0; got {new_above_tp_count}."
 
 
 # ---------------------------------------------------------------------------
 # R-10. mc_sanity_gate_would_block is always False when mc_available=False
 # ---------------------------------------------------------------------------
+
 
 def test_mc_sanity_gate_would_block_is_false_when_mc_unavailable() -> None:
     """
@@ -388,6 +389,7 @@ def test_mc_sanity_gate_would_block_is_false_when_mc_unavailable() -> None:
 # ---------------------------------------------------------------------------
 # R-14. mc_history never contains None after a sentinel-returning tick
 # ---------------------------------------------------------------------------
+
 
 def test_mc_history_not_polluted_with_sentinel_after_insufficient_mc() -> None:
     """
@@ -489,6 +491,7 @@ def test_mc_history_does_append_valid_prob_beating() -> None:
 # C-13. autotuner tick with mc_prob=None key present → mc_available=False
 # ---------------------------------------------------------------------------
 
+
 def test_autotuner_tick_mc_prob_none_key_present_yields_mc_unavailable() -> None:
     """
     C-13 — spec-mc critical note: ``tick.get("mc_prob", 50.0)`` returns None
@@ -539,7 +542,9 @@ def test_autotuner_tick_mc_prob_key_absent_yields_mc_available_true() -> None:
     mc = tick_without_mc_key.get("mc_prob", 50.0)
     mc_available = mc is not None
 
-    assert mc == pytest.approx(50.0, abs=1e-9), (  # approx: the 50.0 default is exact, but pytest.approx is idiomatic for float comparisons here
+    assert (
+        mc == pytest.approx(50.0, abs=1e-9)
+    ), (  # approx: the 50.0 default is exact, but pytest.approx is idiomatic for float comparisons here
         f"tick.get('mc_prob', 50.0) returned {mc!r} for a tick with no mc_prob "
         f"key. Expected the default 50.0 for backward-compatible absent-key ticks."
     )
@@ -554,6 +559,7 @@ def test_autotuner_tick_mc_prob_key_absent_yields_mc_available_true() -> None:
 # R-4b. F-4 sentinel path: compute_exit_confirmation fires when MC is sentinel
 #        and below-stop condition is met (protective stop always fires)
 # ---------------------------------------------------------------------------
+
 
 def test_exit_confirmation_fires_when_mc_sentinel_and_below_stop() -> None:
     """
@@ -618,7 +624,9 @@ def test_exit_confirmation_fires_when_mc_sentinel_and_below_stop() -> None:
         below_stop_count = new_count
 
 
-def test_exit_confirmation_mc_sentinel_does_not_suppress_stop_when_low_value_would_suppress() -> None:
+def test_exit_confirmation_mc_sentinel_does_not_suppress_stop_when_low_value_would_suppress() -> (
+    None
+):
     """
     [H1] R-4b hostile variant: prob_underperforming=None with a value that, if it
     WERE a real float, would FALL BELOW MC_BREAKDOWN_THRESHOLD and suppress the

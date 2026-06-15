@@ -97,8 +97,7 @@ FOLD_TRANSFORM_MIN_VALIDATION_DAYS = 5
 # We round up to an integer and store as a named constant.
 # Source: derived from autotuner fold constants above; annotated inline.
 FOLD_TRANSFORM_MIN_TOTAL_DAYS = math.ceil(
-    (PURGE_DAYS + EMBARGO_DAYS + FOLD_TRANSFORM_MIN_VALIDATION_DAYS)
-    / (1.0 - TRAIN_RATIO)
+    (PURGE_DAYS + EMBARGO_DAYS + FOLD_TRANSFORM_MIN_VALIDATION_DAYS) / (1.0 - TRAIN_RATIO)
 )
 
 # Caveat text: selecting on backtest Sharpe/Sortino is the canonical selection
@@ -356,10 +355,10 @@ class _FoldResult(NamedTuple):
     """
 
     validation_returns_pct: list  # post-purge validation fold returns (in %)
-    oos_alpha: float              # sum of validation_returns_pct
-    validation_days: int          # len(validation_returns_pct)
-    purge_integrity_ok: bool      # True iff series was long enough to purge cleanly
-    thin_window: bool             # True iff validation_days < FOLD_TRANSFORM_MIN_VALIDATION_DAYS
+    oos_alpha: float  # sum of validation_returns_pct
+    validation_days: int  # len(validation_returns_pct)
+    purge_integrity_ok: bool  # True iff series was long enough to purge cleanly
+    thin_window: bool  # True iff validation_days < FOLD_TRANSFORM_MIN_VALIDATION_DAYS
 
 
 def _fold_transform_single(daily_returns_pct: list) -> _FoldResult:
@@ -573,8 +572,7 @@ def evaluate_candidate_batch(
     # The BHY veto itself is determined after we see p_adj, so we only pre-filter
     # on the structural vetoes that are independent of the BHY computation.
     veto_eligible_indices = [
-        i for i in range(n)
-        if fold_results[i].purge_integrity_ok and candidates[i].nn1_compliant
+        i for i in range(n) if fold_results[i].purge_integrity_ok and candidates[i].nn1_compliant
     ]
 
     winner_idx: "int | None" = None
@@ -650,14 +648,16 @@ def evaluate_candidate_batch(
         if verdict.decision == "ADOPT_CANDIDATE":
             caveats.append(SURVIVOR_OVERFITTING_CAVEAT)
 
-        results.append(CandidateGateResult(
-            candidate_id=cand.candidate_id,
-            verdict=verdict,
-            validation_days=fold.validation_days,
-            oos_alpha=fold.oos_alpha,
-            caveats=caveats,
-            winner_p_adj=p_adj[idx],
-        ))
+        results.append(
+            CandidateGateResult(
+                candidate_id=cand.candidate_id,
+                verdict=verdict,
+                validation_days=fold.validation_days,
+                oos_alpha=fold.oos_alpha,
+                caveats=caveats,
+                winner_p_adj=p_adj[idx],
+            )
+        )
 
     survivors = [r for r in results if r.verdict.decision == "ADOPT_CANDIDATE"]
 

@@ -252,6 +252,4 @@ def test_record_cvar_diagnostic_exists_as_callable():
         "shadow-logging-pattern plan deliverable: sqlite-specialist must implement it "
         "as a thin wrapper over write_telemetry_row."
     )
-    assert callable(db.record_cvar_diagnostic), (
-        "database.record_cvar_diagnostic is not callable."
-    )
+    assert callable(db.record_cvar_diagnostic), "database.record_cvar_diagnostic is not callable."

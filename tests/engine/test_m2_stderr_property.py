@@ -23,6 +23,7 @@ import pytest
 try:
     from hypothesis import given, settings, HealthCheck, assume
     from hypothesis import strategies as st
+
     _HYPOTHESIS_AVAILABLE = True
 except ImportError:
     _HYPOTHESIS_AVAILABLE = False
@@ -40,6 +41,7 @@ pytestmark = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 if _HYPOTHESIS_AVAILABLE:
+
     @st.composite
     def synthetic_knn_pool(draw):
         """
@@ -90,6 +92,7 @@ if _HYPOTHESIS_AVAILABLE:
 # This is extracted here as a shared spec module (plan risk callout: "shared spec
 # module avoids drift between test §8.3 scenario 2 and this property test").
 # ---------------------------------------------------------------------------
+
 
 def _reference_distinct_tail_obs_count(pool: list[float], alpha: float = 0.05) -> int:
     """
@@ -163,7 +166,9 @@ def test_m2_stderr_scales_with_distinct_tail_obs_count_not_resample(
     Docstring: "wrong stderr ≈ 27× correct stderr, so a 50% rejection band has
     > 20x margin" (per plan test-m2-stderr-correctness §D3 Property 1).
     """
-    result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+    result = math_engine.compute_cvar_5pct_general_distribution(
+        pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+    )
 
     if result.cvar_pct is None or result.stderr is None:
         # Insufficient pool — sentinel path, skip property assertion for this draw
@@ -224,7 +229,9 @@ def test_m2_tail_obs_count_field_matches_distinct_count(pool: list[float]):
 
     Exact equality (integer).
     """
-    result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+    result = math_engine.compute_cvar_5pct_general_distribution(
+        pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+    )
 
     if result.cvar_pct is None:
         # Sentinel path — tail_obs_count must be 0
@@ -257,7 +264,11 @@ def test_m2_tail_obs_count_field_matches_distinct_count(pool: list[float]):
     # which is only ~21% of the [50,1000] pool-size range. hypothesis treats this
     # as excessive filtering, but the precondition is intentional and statistically
     # necessary — draws with k<40 are genuinely out-of-scope for this property.
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large, HealthCheck.filter_too_much],
+    suppress_health_check=[
+        HealthCheck.too_slow,
+        HealthCheck.data_too_large,
+        HealthCheck.filter_too_much,
+    ],
 )
 @given(
     base_pool=synthetic_knn_pool(),
@@ -288,9 +299,13 @@ def test_m2_stderr_decreases_monotonically_with_pool_growth(
     wrong impl produces approximately equal stderr values; that class is caught
     by Property 1 (absolute value vs reference), not this property.
     """
-    result_n = math_engine.compute_cvar_5pct_general_distribution(base_pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+    result_n = math_engine.compute_cvar_5pct_general_distribution(
+        base_pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+    )
     combined_pool = base_pool + extra_pool
-    result_2n = math_engine.compute_cvar_5pct_general_distribution(combined_pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+    result_2n = math_engine.compute_cvar_5pct_general_distribution(
+        combined_pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+    )
 
     if result_n.stderr is None or result_2n.stderr is None:
         return  # sentinel path — skip
@@ -344,7 +359,9 @@ def test_m2_stderr_is_finite_for_any_non_degenerate_pool(pool: list[float]):
     For insufficient pools (below the eligibility threshold or with < 2 tail obs),
     the function must return the None sentinel — not raise or return non-finite.
     """
-    result = math_engine.compute_cvar_5pct_general_distribution(pool, alpha=math_engine.CVAR_ALPHA_DEFAULT)
+    result = math_engine.compute_cvar_5pct_general_distribution(
+        pool, alpha=math_engine.CVAR_ALPHA_DEFAULT
+    )
 
     if result.cvar_pct is None:
         # Insufficient pool — None sentinel is the correct outcome

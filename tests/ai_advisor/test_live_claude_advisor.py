@@ -43,9 +43,7 @@ def live_suggestions_response():
     exercises the real end-to-end path, not a hand-rolled API call.
     """
     if not _anthropic_key_present():
-        pytest.skip(
-            "ANTHROPIC_API_KEY not in environment — skipping live Claude test"
-        )
+        pytest.skip("ANTHROPIC_API_KEY not in environment — skipping live Claude test")
 
     import ai_advisor
 
@@ -54,9 +52,7 @@ def live_suggestions_response():
     # contract, not the data accessors (those are covered Tier 1). If
     # ai_advisor exposes a way to build a context from explicit data, prefer
     # it; otherwise assemble a minimal dict matching the context contract.
-    context = ai_advisor.assemble_advisor_context(
-        scope="global", symphony_id=None
-    )
+    context = ai_advisor.assemble_advisor_context(scope="global", symphony_id=None)
 
     response, error = ai_advisor.request_suggestions(context)
     # The live call should succeed with a real key; if it fails, surface it.
@@ -75,9 +71,7 @@ def test_live_response_is_config_suggestions_response(live_suggestions_response)
     Tier 1 fixture."""
     import ai_advisor
 
-    assert isinstance(
-        live_suggestions_response, ai_advisor.ConfigSuggestionsResponse
-    ), (
+    assert isinstance(live_suggestions_response, ai_advisor.ConfigSuggestionsResponse), (
         "the live Claude response must parse into ConfigSuggestionsResponse — "
         "if it does not, the structured-output schema has drifted from what "
         "the model returns"
@@ -132,6 +126,7 @@ def test_live_response_suggestions_conform_to_schema(live_suggestions_response):
 # itself is still mocked (to avoid a full 125-day sim in a live contract test).
 # ===========================================================================
 
+
 def test_live_revalidate_oos_assembly_reaches_run_simulation_with_5_args():
     """The real ``revalidate_suggestion_oos`` assembly path (live DB + live
     Alpaca history fetch) must deliver 5 structurally valid args to
@@ -157,20 +152,15 @@ def test_live_revalidate_oos_assembly_reaches_run_simulation_with_5_args():
     import database
 
     if not _anthropic_key_present():
-        pytest.skip(
-            "ANTHROPIC_API_KEY not in environment — skipping live OOS assembly test"
-        )
+        pytest.skip("ANTHROPIC_API_KEY not in environment — skipping live OOS assembly test")
 
     # Pick a symphony_id from the live state DB. Skip if none available.
     bot_state = database.load_state()
     symphony_entries = [
-        (k, v) for k, v in bot_state.items()
-        if isinstance(v, dict) and v.get("name")
+        (k, v) for k, v in bot_state.items() if isinstance(v, dict) and v.get("name")
     ]
     if not symphony_entries:
-        pytest.skip(
-            "no symphony entries in live bot_state — skipping live OOS assembly test"
-        )
+        pytest.skip("no symphony entries in live bot_state — skipping live OOS assembly test")
 
     acc_key, acc_data = symphony_entries[0]
     symphony_id = database.normalize_name(acc_data["name"])

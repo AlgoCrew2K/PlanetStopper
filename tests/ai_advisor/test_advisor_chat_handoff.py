@@ -26,6 +26,7 @@ plus node --check (JS syntax validation).  The project has no browser test
 harness, so DOM simulation is out of scope; the contract is verified through
 file-content assertions.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -198,7 +199,7 @@ class TestAssetSwapsSenderHandoff:
                 f"Found window.location.href='/ai-advisor/chat' at offset {nav_start} "
                 f"in ai_advisor_asset_swaps.js WITHOUT a sessionStorage.setItem call "
                 f"in the preceding 200 characters.\n"
-                f"Context:\n{src[look_back_start:nav_start + 50]!r}\n\n"
+                f"Context:\n{src[look_back_start : nav_start + 50]!r}\n\n"
                 f"Fix: add sessionStorage.setItem('pendingChatArtifact', d) "
                 f"immediately before every window.location.href navigation to "
                 f"/ai-advisor/chat in both the else branch and the catch branch."
@@ -286,7 +287,7 @@ class TestLogicChangesSenderHandoff:
                 f"Found window.location.href='/ai-advisor/chat' at offset {nav_start} "
                 f"in ai_advisor_logic_changes.js WITHOUT a sessionStorage.setItem call "
                 f"in the preceding 200 characters.\n"
-                f"Context:\n{src[look_back_start:nav_start + 50]!r}\n\n"
+                f"Context:\n{src[look_back_start : nav_start + 50]!r}\n\n"
                 f"Fix: add sessionStorage.setItem('pendingChatArtifact', d) "
                 f"immediately before every /ai-advisor/chat navigation."
             )
@@ -414,7 +415,7 @@ class TestChatReceiverHandoff:
             pytest.skip("sessionStorage.getItem not present — caught by sibling test")
 
         # Look for openChatPanel in the region after getItem (up to 500 chars ahead).
-        region = src[getitem_idx: getitem_idx + 500]
+        region = src[getitem_idx : getitem_idx + 500]
         assert "openChatPanel" in region, (
             f"openChatPanel does not appear within 500 characters after "
             f"sessionStorage.getItem in ai_advisor_chat.js.\n"
@@ -437,7 +438,7 @@ class TestChatReceiverHandoff:
             pytest.skip("sessionStorage.getItem not present — caught by sibling test")
 
         # Within the handler region starting at getItem
-        region = src[getitem_idx: getitem_idx + 600]
+        region = src[getitem_idx : getitem_idx + 600]
 
         open_panel_idx = region.find("openChatPanel")
         remove_idx = region.find("sessionStorage.removeItem")
@@ -490,7 +491,7 @@ class TestChatReceiverRobustness:
             pytest.skip("sessionStorage.getItem not present — caught by sibling test")
 
         # Look for a guard pattern within 400 characters of the getItem call
-        region = src[getitem_idx: getitem_idx + 400]
+        region = src[getitem_idx : getitem_idx + 400]
 
         has_null_guard = bool(re.search(r"if\s*\(", region))
         has_try_catch = "try" in region and "catch" in region
@@ -527,7 +528,7 @@ class TestChatReceiverRobustness:
         if getitem_idx == -1:
             pytest.skip("sessionStorage.getItem not present — caught by sibling test")
 
-        region = src[getitem_idx: getitem_idx + 400]
+        region = src[getitem_idx : getitem_idx + 400]
 
         remove_idx = region.find("sessionStorage.removeItem")
         if remove_idx == -1:
@@ -582,12 +583,8 @@ class TestHandoffKeyCoherence:
         chat_src = _read(_CHAT_JS)
 
         key = "pendingChatArtifact"
-        assert key in lc_src, (
-            f"Key '{key}' not found in ai_advisor_logic_changes.js."
-        )
-        assert key in chat_src, (
-            f"Key '{key}' not found in ai_advisor_chat.js."
-        )
+        assert key in lc_src, f"Key '{key}' not found in ai_advisor_logic_changes.js."
+        assert key in chat_src, f"Key '{key}' not found in ai_advisor_chat.js."
 
     def test_no_alternate_key_spellings_in_sender_files(self):
         """Sender files must not contain alternate spellings of the handoff key.

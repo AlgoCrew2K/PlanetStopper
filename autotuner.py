@@ -51,6 +51,7 @@ def _replay_grace_minutes() -> int:
     _replay_in_open_window_grace below.
     """
     import alpha_bot_execution
+
     return alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES
 
 
@@ -65,6 +66,7 @@ def _replay_execution_start_time() -> str:
     EXECUTION_START_TIME was non-default.
     """
     import alpha_bot_execution
+
     return alpha_bot_execution.EXECUTION_START_TIME
 
 
@@ -98,6 +100,7 @@ def _replay_in_open_window_grace(
     start_offset = (int(h) - 9) * 60 + (int(m) - 30)
     return start_offset <= tick_idx < start_offset + grace_minutes
 
+
 # --- PORT-LEVEL REPLAY BLIND SPOT (AC-8 / plan D-C3b) ---
 # The autotuner replay (run_simulation / _collect_sim_returns /
 # replay_exit_sequence) simulates ONLY the per-symphony altitude — it iterates
@@ -117,11 +120,16 @@ def _replay_in_open_window_grace(
 # Vars in database.DEFAULT_LOCKED_VARS AND in a symphony's per-symphony
 # locked_vars list are excluded from the search space — they retain their
 # current values and are never overwritten by trial suggestions.
-OPTUNA_SEARCH_SPACE_KEYS = frozenset({
-    "TAKE_PROFIT_MC_PCT", "VWAP_CROSS_HWM_PCT",
-    "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS",
-    "PARABOLIC_VELOCITY_THRESHOLD", "MAX_PARABOLIC_SQUEEZE",
-})
+OPTUNA_SEARCH_SPACE_KEYS = frozenset(
+    {
+        "TAKE_PROFIT_MC_PCT",
+        "VWAP_CROSS_HWM_PCT",
+        "VWAP_BLEED_MULTIPLIER",
+        "VWAP_BLEED_TICKS",
+        "PARABOLIC_VELOCITY_THRESHOLD",
+        "MAX_PARABOLIC_SQUEEZE",
+    }
+)
 
 # NN1 (synthesis hard gate — council §2.5): the following facets MUST NEVER
 # appear in OPTUNA_SEARCH_SPACE_KEYS — they are frozen OUTSIDE the search
@@ -144,30 +152,32 @@ OPTUNA_SEARCH_SPACE_KEYS = frozenset({
 # BACKTEST_SELECTION is the NN1-violation tripwire — present in the enum so
 # the violation has a name; never silently as a fallback for unclassifiable rows.
 # Reference: council synthesis §2.5, §3.7.
-FREEZE_DISCIPLINE_THEORY               = "THEORY"
-FREEZE_DISCIPLINE_MANDATE              = "MANDATE"
-FREEZE_DISCIPLINE_STYLIZED_FACT        = "STYLIZED_FACT"
-FREEZE_DISCIPLINE_POLITIS_WHITE        = "POLITIS_WHITE"
-FREEZE_DISCIPLINE_CADENCE              = "CADENCE"
-FREEZE_DISCIPLINE_CALIBRATION          = "CALIBRATION"
-FREEZE_DISCIPLINE_BACKTEST_SELECTION   = "BACKTEST_SELECTION"  # NN1 VIOLATION
+FREEZE_DISCIPLINE_THEORY = "THEORY"
+FREEZE_DISCIPLINE_MANDATE = "MANDATE"
+FREEZE_DISCIPLINE_STYLIZED_FACT = "STYLIZED_FACT"
+FREEZE_DISCIPLINE_POLITIS_WHITE = "POLITIS_WHITE"
+FREEZE_DISCIPLINE_CADENCE = "CADENCE"
+FREEZE_DISCIPLINE_CALIBRATION = "CALIBRATION"
+FREEZE_DISCIPLINE_BACKTEST_SELECTION = "BACKTEST_SELECTION"  # NN1 VIOLATION
 
 # Frozenset of disciplines that do NOT constitute an NN1 violation.
 # Default-deny: any freeze_discipline NOT in this set is treated as a violation.
-NN1_HONEST_DISCIPLINES: frozenset = frozenset({
-    FREEZE_DISCIPLINE_THEORY,
-    FREEZE_DISCIPLINE_MANDATE,
-    FREEZE_DISCIPLINE_STYLIZED_FACT,
-    FREEZE_DISCIPLINE_POLITIS_WHITE,
-    FREEZE_DISCIPLINE_CADENCE,
-    FREEZE_DISCIPLINE_CALIBRATION,
-})
+NN1_HONEST_DISCIPLINES: frozenset = frozenset(
+    {
+        FREEZE_DISCIPLINE_THEORY,
+        FREEZE_DISCIPLINE_MANDATE,
+        FREEZE_DISCIPLINE_STYLIZED_FACT,
+        FREEZE_DISCIPLINE_POLITIS_WHITE,
+        FREEZE_DISCIPLINE_CADENCE,
+        FREEZE_DISCIPLINE_CALIBRATION,
+    }
+)
 
-EVIDENCE_SOURCE_THEORY               = "THEORY"
-EVIDENCE_SOURCE_MANDATE              = "MANDATE"
-EVIDENCE_SOURCE_STYLIZED_FACT        = "STYLIZED_FACT"
-EVIDENCE_SOURCE_BACKTEST_SELECTION   = "BACKTEST_SELECTION"  # NN1 VIOLATION
-EVIDENCE_SOURCE_OOS                  = "OOS"                 # WORSE: frozen-eval peek
+EVIDENCE_SOURCE_THEORY = "THEORY"
+EVIDENCE_SOURCE_MANDATE = "MANDATE"
+EVIDENCE_SOURCE_STYLIZED_FACT = "STYLIZED_FACT"
+EVIDENCE_SOURCE_BACKTEST_SELECTION = "BACKTEST_SELECTION"  # NN1 VIOLATION
+EVIDENCE_SOURCE_OOS = "OOS"  # WORSE: frozen-eval peek
 
 # --- Optuna sampler + parallelism env-var constants (OPTUNA-1 / OPTUNA-6) ---
 # Source: math re-audit OPTUNA-1/OPTUNA-6 — pin sampler + parallelism via env.
@@ -206,8 +216,12 @@ ACTIVE_OPTUNA_PRUNER_FAMILY = "NOP"
 #   BHY c(N) factor is materially weaker (c(50) ≈ 4.50 vs c(100) ≈ 5.19).
 #   OPTUNA_N_TRIALS_CALIBRATION equals the floor exactly — the calibration
 #   sweep IS the floor. OPTUNA_N_TRIALS_PRODUCTION is 5x that floor.
-OPTUNA_N_TRIALS_PRODUCTION = 500   # production walk-forward main study site; 5x the 100-trial stability floor
-OPTUNA_N_TRIALS_CALIBRATION = 100  # calibration sweep; equals the statistical-stability floor exactly
+OPTUNA_N_TRIALS_PRODUCTION = (
+    500  # production walk-forward main study site; 5x the 100-trial stability floor
+)
+OPTUNA_N_TRIALS_CALIBRATION = (
+    100  # calibration sweep; equals the statistical-stability floor exactly
+)
 
 
 def _build_optuna_sampler_from_env() -> "optuna.samplers.TPESampler":
@@ -375,9 +389,7 @@ assert abs(TRAIN_RATIO + VALIDATION_RATIO + FROZEN_EVAL_RATIO - 1.0) < 1e-9, (
 # References synthetic_history._WALK_FORWARD_TRADING_DAYS (not a hardcoded
 # literal) so the two constants cannot drift independently.
 _OOS_USABLE_VALIDATION_DAYS_EXPECTED = (
-    int(synthetic_history._WALK_FORWARD_TRADING_DAYS * VALIDATION_RATIO)
-    - PURGE_DAYS
-    - EMBARGO_DAYS
+    int(synthetic_history._WALK_FORWARD_TRADING_DAYS * VALIDATION_RATIO) - PURGE_DAYS - EMBARGO_DAYS
 )
 
 # --- CPCV constants (Phase 2 — Combinatorial Purged Cross-Validation) ---
@@ -391,7 +403,7 @@ _OOS_USABLE_VALIDATION_DAYS_EXPECTED = (
 # changing the CV configuration propagates to _CPCV_N_SPLITS and _CPCV_N_PATHS
 # automatically, without manual re-derivation. Changing these constants is a
 # methodology change — surface to PM first.
-_CPCV_N_GROUPS = 6      # N: number of contiguous date groups to partition history into
+_CPCV_N_GROUPS = 6  # N: number of contiguous date groups to partition history into
 _CPCV_K_TEST_GROUPS = 2  # k: number of groups held out as test per split
 # C(N, k) — total splits; derived so it tracks N and k automatically.
 _CPCV_N_SPLITS = math.comb(_CPCV_N_GROUPS, _CPCV_K_TEST_GROUPS)
@@ -462,7 +474,7 @@ def _generate_cpcv_folds(
     starts.append(n_dates)  # sentinel
 
     # Precompute each group's date set.
-    groups: list[list] = [sorted_dates[starts[g]:starts[g + 1]] for g in range(n_groups)]
+    groups: list[list] = [sorted_dates[starts[g] : starts[g + 1]] for g in range(n_groups)]
 
     # Canonical first-available-slot path assignment (mlfinlab _fill_backtest_paths):
     # each group tracks the index of the next unoccupied path slot.
@@ -523,11 +535,13 @@ def _generate_cpcv_folds(
             assigned_paths.add(group_path_ptr[g])
             group_path_ptr[g] += 1
 
-        folds.append({
-            "train_dates": effective_train_dates,
-            "test_dates": raw_test_dates,
-            "path_membership": sorted(assigned_paths),
-        })
+        folds.append(
+            {
+                "train_dates": effective_train_dates,
+                "test_dates": raw_test_dates,
+                "path_membership": sorted(assigned_paths),
+            }
+        )
 
     return folds
 
@@ -977,9 +991,7 @@ def compute_n_effective(
     and does not pass this param here; the assert below guards direct callers.
     """
     # TYPE-002: guard against callers passing integer PK instead of bundle hash.
-    assert winning_spec_bundle_id is None or isinstance(
-        winning_spec_bundle_id, str
-    ), (
+    assert winning_spec_bundle_id is None or isinstance(winning_spec_bundle_id, str), (
         f"compute_n_effective: winning_spec_bundle_id must be str (bundle_hash) "
         f"or None, got {type(winning_spec_bundle_id).__name__!r}. "
         f"Pass the 64-char bundle_hash, not the integer spec_bundles.id."
@@ -991,7 +1003,10 @@ def compute_n_effective(
         if row.get("touched_frozen_eval"):
             continue
         # Exclude the winner bundle — already counted in n_optuna via the sweep.
-        if winning_spec_bundle_id is not None and row.get("spec_bundle_id") == winning_spec_bundle_id:
+        if (
+            winning_spec_bundle_id is not None
+            and row.get("spec_bundle_id") == winning_spec_bundle_id
+        ):
             continue
         s += int(row.get("n_configs_searched", 1))
     return n_optuna + s
@@ -1006,9 +1021,9 @@ def calculate_historical_deviation(current_date_str):
         "Take-Profit": 0.0,
         "Trailing Stop": -0.20,
         "VWAP Breakdown": -0.40,
-        "VWAP Bleed Cut": -0.25
+        "VWAP Bleed Cut": -0.25,
     }
-    
+
     deviation_sums = {k: 0.0 for k in deviation_dict.keys()}
     deviation_counts = {k: 0 for k in deviation_dict.keys()}
 
@@ -1034,9 +1049,7 @@ def calculate_historical_deviation(current_date_str):
             try:
                 # Extract date from filename: post_mortem_YYYY-MM-DD.json
                 date_part = (
-                    os.path.basename(f_path)
-                    .replace("post_mortem_", "")
-                    .replace(".json", "")
+                    os.path.basename(f_path).replace("post_mortem_", "").replace(".json", "")
                 )
                 file_dt = datetime.strptime(date_part, "%Y-%m-%d")
                 if file_dt < lookback_dt or file_dt >= current_dt:
@@ -1050,8 +1063,12 @@ def calculate_historical_deviation(current_date_str):
                         exit_ret = t.get("exit_return")
                         attempted = t.get("attempted_trigger_level")
 
-                        if reason in deviation_sums and exit_ret is not None and attempted is not None:
-                            deviation_sums[reason] += (exit_ret - attempted)
+                        if (
+                            reason in deviation_sums
+                            and exit_ret is not None
+                            and attempted is not None
+                        ):
+                            deviation_sums[reason] += exit_ret - attempted
                             deviation_counts[reason] += 1
             except (json.JSONDecodeError, OSError, KeyError, ValueError) as exc:
                 # A corrupt/unreadable post-mortem must be skipped LOUDLY — the
@@ -1075,8 +1092,14 @@ def calculate_historical_deviation(current_date_str):
     print(f"  -> Historical Execution Deviation Penalties: {deviation_dict}")
     return deviation_dict
 
+
 def _replay_exit_tick(
-    state, tick, tick_idx, n_ticks, p, grace_minutes,
+    state,
+    tick,
+    tick_idx,
+    n_ticks,
+    p,
+    grace_minutes,
     execution_start_hhmm: str = "09:30",
 ):
     """Run ONE replay tick of the production exit path; mutate `state` in place.
@@ -1148,13 +1171,14 @@ def _replay_exit_tick(
     # from wall-clock open/close datetimes, so a 1-bar session sits at the
     # close, not the open (M-C3.1 — faithful production parity).
     time_ratio = 1.0 if n_ticks == 1 else tick_idx / max(1, n_ticks - 1)
-    dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(
-        time_ratio
-    )
+    dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(time_ratio)
 
     active_stop_dist = math_engine.compute_active_trailing_stop(
-        vol, dynamic_multiplier, dynamic_min_stop,
-        state["para_armed"], state["breakeven_locked"],
+        vol,
+        dynamic_multiplier,
+        dynamic_min_stop,
+        state["para_armed"],
+        state["breakeven_locked"],
         p.get("MAX_PARABOLIC_SQUEEZE", 0.50),
     )
     base_stop = safe_hwm - active_stop_dist
@@ -1163,8 +1187,12 @@ def _replay_exit_tick(
     # re-enters a tick with triggered state mid-day.
     state["hwm_hold_ticks"], state["breakeven_locked"], stop_level = (
         math_engine.compute_breakeven_update(
-            ret, vol, base_stop, state["hwm_hold_ticks"],
-            state["breakeven_locked"], False,
+            ret,
+            vol,
+            base_stop,
+            state["hwm_hold_ticks"],
+            state["breakeven_locked"],
+            False,
         )
     )
 
@@ -1188,16 +1216,14 @@ def _replay_exit_tick(
     # the confirm-count constant (TP_CONFIRM_TICKS) has one source of truth.
     # An MC-unavailable tick while tp_armed resets above_tp_count to 0 — an
     # absent MC opinion cannot count toward a TP confirmation (AC-3).
-    state["tp_armed"], state["above_tp_count"], is_tp_hit = (
-        math_engine.compute_tp_confirmation(
-            mc_available=mc_available,
-            prob_underperforming=mc,
-            take_profit_mc_pct=take_profit_mc,
-            current_return=ret,
-            is_triggered=False,
-            tp_armed=state["tp_armed"],
-            above_tp_count=state["above_tp_count"],
-        )
+    state["tp_armed"], state["above_tp_count"], is_tp_hit = math_engine.compute_tp_confirmation(
+        mc_available=mc_available,
+        prob_underperforming=mc,
+        take_profit_mc_pct=take_profit_mc,
+        current_return=ret,
+        is_triggered=False,
+        tp_armed=state["tp_armed"],
+        above_tp_count=state["above_tp_count"],
     )
 
     # Check 3: VWAP Breakdown — canonical state machine + open-window grace.
@@ -1289,7 +1315,12 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
     execution_start_hhmm = _replay_execution_start_time()
     for tick_idx, tick in enumerate(ticks):
         reason = _replay_exit_tick(
-            state, tick, tick_idx, n_ticks, params, grace_minutes,
+            state,
+            tick,
+            tick_idx,
+            n_ticks,
+            params,
+            grace_minutes,
             execution_start_hhmm=execution_start_hhmm,
         )
         out.append({"tick_idx": tick_idx, "exit_reason": reason})
@@ -1298,7 +1329,9 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
     return out
 
 
-def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviation_dict, *, return_dates=False):
+def _collect_sim_returns(
+    p, history_data, acc_sym_ids, current_date_str, deviation_dict, *, return_dates=False
+):
     """Run the guard-alpha simulation and return per-triggered-day guard_alpha values.
 
     Identical tick logic to run_simulation; returns a list instead of a scalar
@@ -1327,7 +1360,8 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
     for sym_id in acc_sym_ids:
         dates_data = history_data.get(sym_id, {})
         for date, ticks in dates_data.items():
-            if not ticks: continue
+            if not ticks:
+                continue
 
             # Per-position transient state — re-initialized INSIDE the per-day
             # loop via the canonical constructor so every simulated day is
@@ -1348,7 +1382,11 @@ def _collect_sim_returns(p, history_data, acc_sym_ids, current_date_str, deviati
             # path.
             for tick_idx, tick in enumerate(ticks):
                 reason_str = _replay_exit_tick(
-                    day_state, tick, tick_idx, n_ticks, p,
+                    day_state,
+                    tick,
+                    tick_idx,
+                    n_ticks,
+                    p,
                     grace_minutes,
                     execution_start_hhmm=execution_start_hhmm,
                 )
@@ -1395,7 +1433,11 @@ def _collect_sim_returns_dated(p, history_data, acc_sym_ids, current_date_str, d
             n_ticks = len(ticks)
             for tick_idx, tick in enumerate(ticks):
                 reason_str = _replay_exit_tick(
-                    day_state, tick, tick_idx, n_ticks, p,
+                    day_state,
+                    tick,
+                    tick_idx,
+                    n_ticks,
+                    p,
                     grace_minutes,
                     execution_start_hhmm=execution_start_hhmm,
                 )
@@ -1453,14 +1495,20 @@ def filter_sortino_sentinels(trials):
     preserving input order.
     """
     return [
-        t for t in trials
+        t
+        for t in trials
         if t.value is not None
         and not _trial_has_sentinel_path(t)
         and t.value < _PARTIAL_SENTINEL_MEAN_THRESHOLD
     ]
 
 
-def _haircut_select(completed_trials, n_effective: "int | None" = None, tstat_fn=compute_sortino_tstat, gamma: "float | None" = None):
+def _haircut_select(
+    completed_trials,
+    n_effective: "int | None" = None,
+    tstat_fn=compute_sortino_tstat,
+    gamma: "float | None" = None,
+):
     """Apply the Harvey & Liu selection-bias haircut to a set of completed trials.
 
     Each completed trial must carry its in-sample validation return series under
@@ -1600,7 +1648,9 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
     # exact names as the contractual RUN_SIM_* set (test_run_sim_constants_not_at_module_scope).
     # A rename would require a coordinated test update — out of scope for this hotfix pass.
     RUN_SIM_MISSED_UPSIDE_MULT = SORTINO_OBJ_MISSED_UPSIDE_MULT
-    RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT = SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD  # _PCT suffix: T6 contract
+    RUN_SIM_MISSED_UPSIDE_THRESHOLD_PCT = (
+        SORTINO_OBJ_MISSED_UPSIDE_THRESHOLD  # _PCT suffix: T6 contract
+    )
     RUN_SIM_DRAWDOWN_MULT = SORTINO_OBJ_DRAWDOWN_MULT
     RUN_SIM_DRAWDOWN_THRESHOLD_PCT = SORTINO_OBJ_DRAWDOWN_THRESHOLD  # _PCT suffix: T6 contract
     RUN_SIM_DRAWDOWN_MIN_GAIN_PCT = SORTINO_OBJ_DRAWDOWN_MIN_GAIN  # _PCT suffix: T6 contract
@@ -1613,7 +1663,8 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
     for sym_id in acc_sym_ids:
         dates_data = history_data.get(sym_id, {})
         for date, ticks in dates_data.items():
-            if not ticks: continue
+            if not ticks:
+                continue
 
             # Per-position transient state — re-initialized INSIDE the per-day
             # loop via the canonical constructor so every simulated day is
@@ -1635,7 +1686,11 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
             # the production exit path.
             for tick_idx, tick in enumerate(ticks):
                 reason_str = _replay_exit_tick(
-                    day_state, tick, tick_idx, n_ticks, p,
+                    day_state,
+                    tick,
+                    tick_idx,
+                    n_ticks,
+                    p,
                     grace_minutes,
                     execution_start_hhmm=execution_start_hhmm,
                 )
@@ -1663,8 +1718,10 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
 
                 # 2. Penalize peak-to-exit drawdown (giving back too much profit)
                 # — only for positions that reached a meaningful gain.
-                if (safe_hwm > RUN_SIM_DRAWDOWN_MIN_GAIN_PCT
-                        and drawdown_from_peak > RUN_SIM_DRAWDOWN_THRESHOLD_PCT):
+                if (
+                    safe_hwm > RUN_SIM_DRAWDOWN_MIN_GAIN_PCT
+                    and drawdown_from_peak > RUN_SIM_DRAWDOWN_THRESHOLD_PCT
+                ):
                     total_guard_alpha -= drawdown_from_peak * RUN_SIM_DRAWDOWN_MULT
 
                 # 3. Apply standard EOD-based guard alpha; negative guard-alpha
@@ -1760,7 +1817,9 @@ def _apply_optuna_archive_migration_if_needed():
     if not os.path.exists(db_path):
         return
 
-    migration_path = _pathlib.Path(__file__).parent / "migrations" / "optuna_001_archive_accumulated_studies.sql"
+    migration_path = (
+        _pathlib.Path(__file__).parent / "migrations" / "optuna_001_archive_accumulated_studies.sql"
+    )
     if not migration_path.exists():
         return
 
@@ -1790,11 +1849,17 @@ def validate_search_space_nn1() -> None:
 
     Reference: council synthesis §2.5; plan D5.
     """
-    _forbidden_in_search_space = frozenset({
-        "gamma", "utility_family", "wealth_argument",
-        "generator_family", "horizon_convention", "lambda",
-        "regime_bucket_thresh",
-    })
+    _forbidden_in_search_space = frozenset(
+        {
+            "gamma",
+            "utility_family",
+            "wealth_argument",
+            "generator_family",
+            "horizon_convention",
+            "lambda",
+            "regime_bucket_thresh",
+        }
+    )
     leaked = OPTUNA_SEARCH_SPACE_KEYS & _forbidden_in_search_space
     if leaked:
         raise RuntimeError(
@@ -1898,7 +1963,9 @@ def validate_nn1_compliance(spec_bundle_id: int) -> "tuple[bool, list[str]]":
     return is_honest, violations
 
 
-def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, spec_bundle_id: "int | None" = None):  # TYPE-001 (sprint-2-audit a6e4d9f8)
+def run_autotuner(
+    bot_state, current_date_str, account_uuids, is_forced=False, spec_bundle_id: "int | None" = None
+):  # TYPE-001 (sprint-2-audit a6e4d9f8)
     """
     Runs walk-forward optimization using Bayesian Optimization (Optuna) per symphony.
     Implements a three-fold walk-forward split (60/20/20): train / validation / frozen-eval.
@@ -2016,8 +2083,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         # isolation is preserved (no re-raise) so one producer cannot take down
         # the autotune cycle or its sibling producers.
         logging.error(
-            "Spec Critic observation PERSISTENCE FAILED — advisor outage "
-            "(cycle continues): %s",
+            "Spec Critic observation PERSISTENCE FAILED — advisor outage (cycle continues): %s",
             e,
             exc_info=True,
         )
@@ -2046,13 +2112,17 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
     _utility_family = _facets_by_name.get("utility_family", "")
     _objective_kind = _facets_by_name.get("objective_kind", "")
     if not _objective_kind:
-        _objective_kind = "crra_eu" if _utility_family.upper() == "CRRA" else "sortino_loss_aversion"
+        _objective_kind = (
+            "crra_eu" if _utility_family.upper() == "CRRA" else "sortino_loss_aversion"
+        )
 
     # Apply optuna_001 archive migration once if any bare (non-prefixed) legacy
     # studies exist — renames them to LEGACY__<name> non-destructively.
     _apply_optuna_archive_migration_if_needed()
 
-    print(f"  -> Starting EOD Autotune (250-day WFA: 60% Train / 20% Validation / 20% Frozen-Eval per Symphony)...")
+    print(
+        f"  -> Starting EOD Autotune (250-day WFA: 60% Train / 20% Validation / 20% Frozen-Eval per Symphony)..."
+    )
 
     # 0. Calculate Historical Execution Deviation
     deviation_dict = calculate_historical_deviation(current_date_str)
@@ -2092,15 +2162,15 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
 
     # Three-fold split: TRAIN_RATIO / VALIDATION_RATIO / FROZEN_EVAL_RATIO (60/20/20).
     # Reference: López de Prado 2018, Advances in Financial Machine Learning, Ch. 7.4.
-    val_start_idx    = int(total_days * TRAIN_RATIO)
+    val_start_idx = int(total_days * TRAIN_RATIO)
     frozen_start_idx = int(total_days * (TRAIN_RATIO + VALIDATION_RATIO))
     # split_idx aliases val_start_idx — preserved so O1 test assertions that inspect
     # autotuner.py source for "split_idx" continue to find the split site.
     split_idx = val_start_idx
 
-    raw_train_dates    = sorted_dates[:val_start_idx]
-    raw_val_dates      = sorted_dates[val_start_idx:frozen_start_idx]
-    raw_frozen_dates   = sorted_dates[frozen_start_idx:]
+    raw_train_dates = sorted_dates[:val_start_idx]
+    raw_val_dates = sorted_dates[val_start_idx:frozen_start_idx]
+    raw_frozen_dates = sorted_dates[frozen_start_idx:]
 
     # Boundary 1 — train | validation: purge + embargo on train side.
     # Exclude the last PURGE_DAYS + EMBARGO_DAYS of raw_train_dates (identical
@@ -2115,22 +2185,28 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
     val_purge_end_idx = frozen_start_idx - PURGE_DAYS - EMBARGO_DAYS
     # Purge-reduced validation: used by the Optuna objective closure only, preventing
     # late validation features from leaking into the frozen-eval fold.
-    validation_dates_purged = set(sorted_dates[val_start_idx:max(val_start_idx, val_purge_end_idx)])
+    validation_dates_purged = set(
+        sorted_dates[val_start_idx : max(val_start_idx, val_purge_end_idx)]
+    )
     # Full raw validation: used by the OOS cascade (AI/fallback/default) to preserve
     # the behavioural contract that the cascade evaluates on the raw OOS fold.
     validation_dates_full = set(raw_val_dates)
 
     frozen_dates = set(raw_frozen_dates)
 
-    history_train           = {}
-    history_validation      = {}  # purge-reduced; used by Optuna objective only
+    history_train = {}
+    history_validation = {}  # purge-reduced; used by Optuna objective only
     history_validation_full = {}  # full raw validation fold; used by OOS cascade
-    history_frozen          = {}
+    history_frozen = {}
     for sym_id, sym_data in history_125d.items():
-        history_train[sym_id]           = {d: t for d, t in sym_data.items() if d in train_dates}
-        history_validation[sym_id]      = {d: t for d, t in sym_data.items() if d in validation_dates_purged}
-        history_validation_full[sym_id] = {d: t for d, t in sym_data.items() if d in validation_dates_full}
-        history_frozen[sym_id]          = {d: t for d, t in sym_data.items() if d in frozen_dates}
+        history_train[sym_id] = {d: t for d, t in sym_data.items() if d in train_dates}
+        history_validation[sym_id] = {
+            d: t for d, t in sym_data.items() if d in validation_dates_purged
+        }
+        history_validation_full[sym_id] = {
+            d: t for d, t in sym_data.items() if d in validation_dates_full
+        }
+        history_frozen[sym_id] = {d: t for d, t in sym_data.items() if d in frozen_dates}
 
     # OOS cascade uses the full validation fold — same contract as the pre-O6 OOS test fold.
     history_test = history_validation_full
@@ -2188,20 +2264,38 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             # already has its pinned value in p (from current_params.copy()
             # above) and must not be offered to Optuna for exploration.
             if "TAKE_PROFIT_MC_PCT" not in locked_vars:
-                p["TAKE_PROFIT_MC_PCT"] = trial.suggest_float("TAKE_PROFIT_MC_PCT", _SS_TAKE_PROFIT_MC_MIN, _SS_TAKE_PROFIT_MC_MAX)
+                p["TAKE_PROFIT_MC_PCT"] = trial.suggest_float(
+                    "TAKE_PROFIT_MC_PCT", _SS_TAKE_PROFIT_MC_MIN, _SS_TAKE_PROFIT_MC_MAX
+                )
             if "VWAP_CROSS_HWM_PCT" not in locked_vars:
-                p["VWAP_CROSS_HWM_PCT"] = trial.suggest_float("VWAP_CROSS_HWM_PCT", _SS_VWAP_CROSS_HWM_MIN, _SS_VWAP_CROSS_HWM_MAX)
+                p["VWAP_CROSS_HWM_PCT"] = trial.suggest_float(
+                    "VWAP_CROSS_HWM_PCT", _SS_VWAP_CROSS_HWM_MIN, _SS_VWAP_CROSS_HWM_MAX
+                )
             if "VWAP_BLEED_MULTIPLIER" not in locked_vars:
-                p["VWAP_BLEED_MULTIPLIER"] = trial.suggest_float("VWAP_BLEED_MULTIPLIER", _SS_VWAP_BLEED_MULT_MIN, _SS_VWAP_BLEED_MULT_MAX)
+                p["VWAP_BLEED_MULTIPLIER"] = trial.suggest_float(
+                    "VWAP_BLEED_MULTIPLIER", _SS_VWAP_BLEED_MULT_MIN, _SS_VWAP_BLEED_MULT_MAX
+                )
             if "VWAP_BLEED_TICKS" not in locked_vars:
-                p["VWAP_BLEED_TICKS"] = trial.suggest_int("VWAP_BLEED_TICKS", _SS_VWAP_BLEED_TICKS_MIN, _SS_VWAP_BLEED_TICKS_MAX)
+                p["VWAP_BLEED_TICKS"] = trial.suggest_int(
+                    "VWAP_BLEED_TICKS", _SS_VWAP_BLEED_TICKS_MIN, _SS_VWAP_BLEED_TICKS_MAX
+                )
             if "PARABOLIC_VELOCITY_THRESHOLD" not in locked_vars:
-                p["PARABOLIC_VELOCITY_THRESHOLD"] = trial.suggest_float("PARABOLIC_VELOCITY_THRESHOLD", _SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX)
+                p["PARABOLIC_VELOCITY_THRESHOLD"] = trial.suggest_float(
+                    "PARABOLIC_VELOCITY_THRESHOLD", _SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX
+                )
             if "MAX_PARABOLIC_SQUEEZE" not in locked_vars:
-                p["MAX_PARABOLIC_SQUEEZE"] = trial.suggest_float("MAX_PARABOLIC_SQUEEZE", _SS_MAX_PARA_SQUEEZE_MIN, _SS_MAX_PARA_SQUEEZE_MAX)
+                p["MAX_PARABOLIC_SQUEEZE"] = trial.suggest_float(
+                    "MAX_PARABOLIC_SQUEEZE", _SS_MAX_PARA_SQUEEZE_MIN, _SS_MAX_PARA_SQUEEZE_MAX
+                )
 
-            acc_sym_ids = [k for k, v in bot_state.items() if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == normalized_name]
-            if not acc_sym_ids: return 0.0
+            acc_sym_ids = [
+                k
+                for k, v in bot_state.items()
+                if isinstance(v, dict)
+                and database.normalize_name(v.get("name", "")) == normalized_name
+            ]
+            if not acc_sym_ids:
+                return 0.0
             target_sym_id = acc_sym_ids[0]
 
             # CPCV aggregate: score this trial on the mean across the _CPCV_N_PATHS paths.
@@ -2228,17 +2322,23 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             daily_date_returns: dict[str, float] = {}
             cscv_date_returns: dict[str, float] = {}
             for _path_hist in _cpcv_path_histories:
-                path_returns = _collect_sim_returns(p, _path_hist, [target_sym_id], current_date_str, deviation_dict)
+                path_returns = _collect_sim_returns(
+                    p, _path_hist, [target_sym_id], current_date_str, deviation_dict
+                )
                 path_scores.append(
                     math_engine.compute_crra_eu_objective(
                         [r / RETURN_PCT_TO_FRACTION for r in path_returns], _gamma
-                    ) if _objective_kind == "crra_eu" else compute_sortino_ratio(path_returns)
+                    )
+                    if _objective_kind == "crra_eu"
+                    else compute_sortino_ratio(path_returns)
                 )
                 # Date-labeled unions. Uses _collect_sim_returns_dated (not an inline
                 # return_dates=True call) to avoid conflating the mock boundary: tests
                 # that patch _collect_sim_returns for flat-return assertions must not
                 # intercept the dated-variant call that feeds these dicts.
-                for _date, _ga in _collect_sim_returns_dated(p, _path_hist, [target_sym_id], current_date_str, deviation_dict):
+                for _date, _ga in _collect_sim_returns_dated(
+                    p, _path_hist, [target_sym_id], current_date_str, deviation_dict
+                ):
                     # daily_returns is RAW PERCENT (T5 provenance) — no divide here.
                     daily_date_returns[_date] = _ga
                     # C1 fix: divide by RETURN_PCT_TO_FRACTION so the stored value is
@@ -2274,12 +2374,11 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             return sum(path_scores) / len(path_scores)
 
         start_time = time.time()
-        
+
         # Parallel Bayesian Optimization
         db_url = "sqlite:///optuna_studies.db"
         storage = optuna.storages.RDBStorage(
-            url=db_url,
-            engine_kwargs={"connect_args": {"timeout": 60}}
+            url=db_url, engine_kwargs={"connect_args": {"timeout": 60}}
         )
         study_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         # Source sampler seed + parallelism from env (OPTUNA-1 / OPTUNA-6 audit fix).
@@ -2311,9 +2410,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             pruner=optuna.pruners.NopPruner(),
         )
         study.optimize(objective, n_trials=OPTUNA_N_TRIALS_PRODUCTION, n_jobs=_n_jobs)
-        
 
-        
         naive_sharpe_value = study.best_value
         best_alpha_train = naive_sharpe_value
         best_params = study.best_params
@@ -2372,11 +2469,13 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             )
             # d_spec: COUNT DISTINCT spec_bundle_ids from BACKTEST_SELECTION rows
             # (council §5; differs from S which is SUM(n_configs_searched)).
-            d_spec = len({
-                row.get("spec_bundle_id")
-                for row in _ledger_rows
-                if row.get("spec_bundle_id") is not None
-            })
+            d_spec = len(
+                {
+                    row.get("spec_bundle_id")
+                    for row in _ledger_rows
+                    if row.get("spec_bundle_id") is not None
+                }
+            )
             winner_trial, winner_p_adj, winner_tstat = _haircut_select(
                 haircut_trials, n_effective=n_eff, tstat_fn=_tstat_fn, gamma=_gamma
             )
@@ -2409,7 +2508,7 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
                 haircut_trials,
                 key=lambda t: t.value if t.value is not None else float("-inf"),
                 reverse=True,
-            )[:math_engine._CSCV_TOP_K]
+            )[: math_engine._CSCV_TOP_K]
             # Build list[dict[str, float]]: one cscv_date_returns dict per config.
             # Trials without cscv_date_returns (e.g. very old study rows) are skipped.
             _top_k_configs: list[dict[str, float]] = [
@@ -2473,9 +2572,19 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         for name, val in best_params.items():
             best_p[name] = round(val, 2)
 
-        acc_sym_ids = [k for k, v in bot_state.items() if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == normalized_name]
+        acc_sym_ids = [
+            k
+            for k, v in bot_state.items()
+            if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == normalized_name
+        ]
         target_sym_id = acc_sym_ids[0] if acc_sym_ids else None
-        oos_alpha = -run_simulation(best_p, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
+        oos_alpha = -run_simulation(
+            best_p,
+            history_test,
+            [target_sym_id] if target_sym_id else [],
+            current_date_str,
+            deviation_dict,
+        )
 
         # If the AI proposal is schema-invalid, poison its OOS alpha so the
         # cascade below naturally selects fallback (or default). Done AFTER
@@ -2501,31 +2610,59 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
 
         # Evaluate fallback parameters in OOS for comparison
         fallback_params = current_params.copy()
-        fallback_oos_alpha = -run_simulation(fallback_params, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
+        fallback_oos_alpha = -run_simulation(
+            fallback_params,
+            history_test,
+            [target_sym_id] if target_sym_id else [],
+            current_date_str,
+            deviation_dict,
+        )
 
         # Evaluate global default parameters in OOS for comparison
         default_params = database.DEFAULT_STRATEGY.copy()
-        default_oos_alpha = -run_simulation(default_params, history_test, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
+        default_oos_alpha = -run_simulation(
+            default_params,
+            history_test,
+            [target_sym_id] if target_sym_id else [],
+            current_date_str,
+            deviation_dict,
+        )
 
         # Validation-fold metric (selection truth — what Optuna actually optimized against).
         # For CRRA-EU bundles, the Sortino ratio is not the selection metric — compute_crra_eu_objective
         # was used. Sortino is suppressed (None) for CRRA-EU to avoid misleading reporting.
-        validation_returns = _collect_sim_returns(best_p, history_validation, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
+        validation_returns = _collect_sim_returns(
+            best_p,
+            history_validation,
+            [target_sym_id] if target_sym_id else [],
+            current_date_str,
+            deviation_dict,
+        )
         if _objective_kind == "crra_eu":
             validation_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
         else:
-            validation_sharpe_value = compute_sortino_ratio(validation_returns) if validation_returns else None
+            validation_sharpe_value = (
+                compute_sortino_ratio(validation_returns) if validation_returns else None
+            )
 
         # Frozen-eval: consumed exactly once post-selection on the held-out final 20% fold.
         # This is the honest performance metric — not seen by any Optuna trial callback.
         # PURGE_DAYS referenced here confirms the boundary purge applies at validation|frozen-eval.
         # Single read via _collect_sim_returns; no separate run_simulation call so the
         # "consumed once" invariant holds across all frozen-fold access paths.
-        frozen_eval_returns = _collect_sim_returns(best_p, history_frozen, [target_sym_id] if target_sym_id else [], current_date_str, deviation_dict)
+        frozen_eval_returns = _collect_sim_returns(
+            best_p,
+            history_frozen,
+            [target_sym_id] if target_sym_id else [],
+            current_date_str,
+            deviation_dict,
+        )
         if _objective_kind == "crra_eu":
             frozen_eval_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
         else:
-            frozen_eval_sharpe_value = compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
+            frozen_eval_sharpe_value = (
+                compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
+            )
 
         # Calculate daily averages for better understanding
         train_days_count = len(train_dates)
@@ -2592,21 +2729,29 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         # vs the global default).
         if oos_alpha > fallback_oos_alpha and oos_alpha > default_oos_alpha:
             if oos_alpha > 0:
-                print(f"       OOS validation passed! OOS Guard Alpha: +{oos_alpha:.2f}% (Average: {avg_oos_alpha:.2f}%)")
+                print(
+                    f"       OOS validation passed! OOS Guard Alpha: +{oos_alpha:.2f}% (Average: {avg_oos_alpha:.2f}%)"
+                )
             else:
-                print(f"       OOS validation passed (Beat Baselines)! OOS Guard Alpha: {oos_alpha:.2f}% (Avg: {avg_oos_alpha:.2f}%) vs Fallback: {fallback_oos_alpha:.2f}% / Default: {default_oos_alpha:.2f}%")
+                print(
+                    f"       OOS validation passed (Beat Baselines)! OOS Guard Alpha: {oos_alpha:.2f}% (Avg: {avg_oos_alpha:.2f}%) vs Fallback: {fallback_oos_alpha:.2f}% / Default: {default_oos_alpha:.2f}%"
+                )
             for name, val in best_params.items():
                 if name not in locked_vars:
                     current_params[name] = round(val, 2)
             baseline_decision = "Adopted AI"
         elif fallback_oos_alpha >= default_oos_alpha:
-            print(f"       OOS validation failed (AI: {oos_alpha:.2f}%). Reverting to Fallback parameters (Fallback: {fallback_oos_alpha:.2f}% vs Default: {default_oos_alpha:.2f}%).")
+            print(
+                f"       OOS validation failed (AI: {oos_alpha:.2f}%). Reverting to Fallback parameters (Fallback: {fallback_oos_alpha:.2f}% vs Default: {default_oos_alpha:.2f}%)."
+            )
             for k, v in fallback_params.items():
                 if k not in locked_vars:
                     current_params[k] = v
             baseline_decision = "Reverted to Fallback"
         else:
-            print(f"       OOS validation & Fallback failed. Resetting to Global Default (Default: {default_oos_alpha:.2f}% vs AI: {oos_alpha:.2f}%, Fallback: {fallback_oos_alpha:.2f}%).")
+            print(
+                f"       OOS validation & Fallback failed. Resetting to Global Default (Default: {default_oos_alpha:.2f}% vs AI: {oos_alpha:.2f}%, Fallback: {fallback_oos_alpha:.2f}%)."
+            )
             for k, v in default_params.items():
                 if k not in locked_vars:
                     current_params[k] = v
@@ -2626,7 +2771,10 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
         # Build Discord logs ensuring all original variables are shown
         optimization_results[normalized_name]["_baseline_chosen"] = baseline_decision
         for k, original_val in original_params.items():
-            optimization_results[normalized_name][k] = {"old": original_val, "new": current_params.get(k, original_val)}
+            optimization_results[normalized_name][k] = {
+                "old": original_val,
+                "new": current_params.get(k, original_val),
+            }
 
         elapsed = time.time() - start_time
         haircut_log = (
@@ -2634,7 +2782,9 @@ def run_autotuner(bot_state, current_date_str, account_uuids, is_forced=False, s
             if selection_tstat_value is not None and naive_sharpe_value is not None
             else " | Haircut: N/A"
         )
-        print(f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count}){haircut_log}")
+        print(
+            f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count}){haircut_log}"
+        )
 
         database.save_symphony_strategy(normalized_name, current_params, locked_vars)
 
@@ -2792,7 +2942,9 @@ def run_calibration_sweep(
 
     # Boundary 2 — validation | frozen-eval: purge + embargo on validation side.
     val_purge_end_idx = frozen_start_idx - PURGE_DAYS - EMBARGO_DAYS
-    validation_dates_purged = set(sorted_dates[val_start_idx:max(val_start_idx, val_purge_end_idx)])
+    validation_dates_purged = set(
+        sorted_dates[val_start_idx : max(val_start_idx, val_purge_end_idx)]
+    )
 
     frozen_dates = set(sorted_dates[frozen_start_idx:])
 
@@ -2802,7 +2954,9 @@ def run_calibration_sweep(
     history_validation: dict = {}
     history_frozen: dict = {}
     for sym_id, sym_data in history_data.items():
-        history_validation[sym_id] = {d: t for d, t in sym_data.items() if d in validation_dates_purged}
+        history_validation[sym_id] = {
+            d: t for d, t in sym_data.items() if d in validation_dates_purged
+        }
         history_frozen[sym_id] = {d: t for d, t in sym_data.items() if d in frozen_dates}
 
     # Derive trigger counts on validation fold for current params (denominator for freq change).
@@ -2856,7 +3010,9 @@ def run_calibration_sweep(
         # n_jobs sourced from OPTUNA_N_JOBS env (OPTUNA-6 uniform application across all
         # autotuner study sites; default 1 for SQLite RDBStorage writer-lock safety).
         _sweep_n_jobs = _resolve_optuna_n_jobs_from_env()
-        logging.debug("run_calibration_sweep: n_jobs=%s (env key=%s)", _sweep_n_jobs, _OPTUNA_N_JOBS_ENV)
+        logging.debug(
+            "run_calibration_sweep: n_jobs=%s (env key=%s)", _sweep_n_jobs, _OPTUNA_N_JOBS_ENV
+        )
         study.optimize(objective, n_trials=OPTUNA_N_TRIALS_CALIBRATION, n_jobs=_sweep_n_jobs)
 
         naive_sharpe_value: float | None = study.best_value
@@ -2937,23 +3093,25 @@ def run_calibration_sweep(
                 if current_value != 0
                 else 0.0
             )
-            report_rows.append({
-                "symphony_id": sym_id,
-                "param_name": param_name,
-                "current_value": current_value,
-                "proposed_value": proposed_value,
-                "delta_pct": delta_pct,
-                "expected_trigger_freq_change": expected_trigger_freq_change,
-                "frozen_eval_alpha": frozen_eval_alpha,
-                "naive_sharpe": naive_sharpe_value,
-                "selection_tstat": selection_tstat_value,
-                "haircut_outcome": haircut_outcome,
-                "sortino": sortino_value,
-                "n_trials": n_trials,
-                "study_name": study_name,
-                "trading_day_start": trading_day_start,
-                "trading_day_end": trading_day_end,
-                "cycle_id": run_timestamp,
-            })
+            report_rows.append(
+                {
+                    "symphony_id": sym_id,
+                    "param_name": param_name,
+                    "current_value": current_value,
+                    "proposed_value": proposed_value,
+                    "delta_pct": delta_pct,
+                    "expected_trigger_freq_change": expected_trigger_freq_change,
+                    "frozen_eval_alpha": frozen_eval_alpha,
+                    "naive_sharpe": naive_sharpe_value,
+                    "selection_tstat": selection_tstat_value,
+                    "haircut_outcome": haircut_outcome,
+                    "sortino": sortino_value,
+                    "n_trials": n_trials,
+                    "study_name": study_name,
+                    "trading_day_start": trading_day_start,
+                    "trading_day_end": trading_day_end,
+                    "cycle_id": run_timestamp,
+                }
+            )
 
     return report_rows

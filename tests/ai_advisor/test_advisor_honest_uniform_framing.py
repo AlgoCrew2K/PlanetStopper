@@ -107,21 +107,17 @@ def test_ai_advisor_renders_honest_uniform_guardrail_explanation(flask_client, u
 
     # Truthful content: must reference the SHARED/FROZEN THEORY spec as the reason
     # the guardrail checks are uniform (the honest explanation).
-    explains_shared_spec = (
-        ("theory" in lower and ("frozen" in lower or "shared" in lower or "spec" in lower))
+    explains_shared_spec = "theory" in lower and (
+        "frozen" in lower or "shared" in lower or "spec" in lower
     )
     # And must point the operator to where the genuine per-symphony advice lives
     # (the Run Advisor / suggestions), so a uniform CLEAR doesn't read as "no value".
-    points_to_run_advisor = (
-        "run advisor" in lower
-        or "suggestion" in lower
-        or "proposal" in lower
-    )
+    points_to_run_advisor = "run advisor" in lower or "suggestion" in lower or "proposal" in lower
 
     assert has_hook or (explains_shared_spec and points_to_run_advisor), (
         "The /ai-advisor page renders uniform CLEAR guardrail rows with no honest "
         "explanation. AC-7: surface a lean, truthful note (data-testid="
-        "\"guardrail-uniform-note\" or explanatory prose) saying the guardrail "
+        '"guardrail-uniform-note" or explanatory prose) saying the guardrail '
         "checks are uniform because the symphonies share the frozen THEORY spec, "
         "and the per-symphony advice lives in the Run Advisor. Do NOT fabricate a "
         "per-symphony number — just explain the uniformity honestly."
@@ -130,7 +126,7 @@ def test_ai_advisor_renders_honest_uniform_guardrail_explanation(flask_client, u
     # against an empty-hook tautology.
     if has_hook:
         assert explains_shared_spec or points_to_run_advisor, (
-            "data-testid=\"guardrail-uniform-note\" is present but carries no "
+            'data-testid="guardrail-uniform-note" is present but carries no '
             "truthful explanation (no frozen-THEORY-spec reason, no Run-Advisor "
             "pointer). The honest framing must have real content."
         )

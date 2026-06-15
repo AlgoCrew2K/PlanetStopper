@@ -14,18 +14,22 @@ mutating the caller's copy has no cross-altitude side effects (AC-P2.3.4).
 from __future__ import annotations
 
 # Mode-specific: overridden by per-account values in port-level altitude (AC-P2.3.3)
-_MODE_SPECIFIC_PARAMS = frozenset({
-    "PARABOLIC_VELOCITY_THRESHOLD",
-    "VWAP_CROSS_HWM_PCT",
-})
+_MODE_SPECIFIC_PARAMS = frozenset(
+    {
+        "PARABOLIC_VELOCITY_THRESHOLD",
+        "VWAP_CROSS_HWM_PCT",
+    }
+)
 
 # Mode-invariant: always per-symphony regardless of altitude (AC-P2.3.2, panel M1)
-_MODE_INVARIANT_PARAMS = frozenset({
-    "TAKE_PROFIT_MC_PCT",
-    "VWAP_BLEED_MULTIPLIER",
-    "VWAP_BLEED_TICKS",
-    "MAX_PARABOLIC_SQUEEZE",
-})
+_MODE_INVARIANT_PARAMS = frozenset(
+    {
+        "TAKE_PROFIT_MC_PCT",
+        "VWAP_BLEED_MULTIPLIER",
+        "VWAP_BLEED_TICKS",
+        "MAX_PARABOLIC_SQUEEZE",
+    }
+)
 
 
 def get_params_for_altitude(

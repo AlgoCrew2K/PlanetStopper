@@ -165,12 +165,8 @@ def test_flush_closure_acquires_lock_around_load_modify_save(client):
 
     # (b) Both load_state and save_state must have been called while the lock
     # was held (lock.acquire appears before both; lock.release appears after both).
-    bg_load = next(
-        (e for e in call_log if e.startswith("load_state")), None
-    )
-    bg_save = next(
-        (e for e in call_log if e.startswith("save_state")), None
-    )
+    bg_load = next((e for e in call_log if e.startswith("load_state")), None)
+    bg_save = next((e for e in call_log if e.startswith("save_state")), None)
     assert bg_load is not None and "lock_held=True" in bg_load, (
         f"load_state was called without the lock held.  call_log={call_log!r}.  "
         "Fix: acquire _FLUSH_STATE_LOCK BEFORE calling load_state() in "
@@ -309,9 +305,7 @@ def test_flush_log_count_reflects_background_thread_iteration(client, caplog):
         "after iterating it, not from the closed-over symphonies_reset list."
     )
     # Ensure the stale request-thread count is NOT the one logged
-    assert not any(
-        "wrote 2 symphony state entries" in msg for msg in wrote_messages
-    ), (
+    assert not any("wrote 2 symphony state entries" in msg for msg in wrote_messages), (
         f"Log message(s) found: {wrote_messages}.  "
         "The log must NOT report the request-thread's stale count (2).  "
         "It must use the background thread's actual iteration count."
@@ -339,7 +333,7 @@ def test_flush_resync_handler_returns_without_blocking_on_background_write(
     """
     monkeypatch.setattr(analytics, "_POST_MORTEMS_DIR", str(tmp_path / "pm"))
 
-    write_gate = threading.Event()   # background thread waits on this
+    write_gate = threading.Event()  # background thread waits on this
     handler_returned_at: list[float] = []
     bg_write_released_at: list[float] = []
 

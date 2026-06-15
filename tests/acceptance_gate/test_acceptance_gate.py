@@ -56,6 +56,7 @@ def fixture() -> dict:
 # Helpers — module import + path resolution
 # ---------------------------------------------------------------------------
 
+
 def _repo_root() -> pathlib.Path:
     # tests/acceptance_gate/<this_file> -> repo_root
     return pathlib.Path(__file__).resolve().parents[2]
@@ -67,6 +68,7 @@ def _import_acceptance_gate() -> types.ModuleType:
     Raises ImportError (RED) if the module does not exist yet.
     """
     import sys
+
     repo = str(_repo_root())
     if repo not in sys.path:
         sys.path.insert(0, repo)
@@ -161,9 +163,7 @@ class TestVerdictStructSchema:
         """AcceptanceVerdict must contain a 'panel_score' field (float or None)."""
         ag = _import_acceptance_gate()
         verdict = self._make_passing_verdict(ag)
-        assert hasattr(verdict, "panel_score"), (
-            "AcceptanceVerdict must have a 'panel_score' field."
-        )
+        assert hasattr(verdict, "panel_score"), "AcceptanceVerdict must have a 'panel_score' field."
         # When vetoes pass, panel_score must be a float
         assert verdict.panel_score is not None, (
             "panel_score must be a float (not None) when all vetoes pass."
@@ -184,9 +184,7 @@ class TestVerdictStructSchema:
         valid_decisions = set(fixture["verdict_struct_schema"]["decision_enum"])
         ag = _import_acceptance_gate()
         verdict = self._make_passing_verdict(ag)
-        assert hasattr(verdict, "decision"), (
-            "AcceptanceVerdict must have a 'decision' field."
-        )
+        assert hasattr(verdict, "decision"), "AcceptanceVerdict must have a 'decision' field."
         assert verdict.decision in valid_decisions, (
             f"decision must be one of {valid_decisions}, got {verdict.decision!r}."
         )
@@ -357,7 +355,9 @@ class TestOnedirectionalBrake:
         but winner_trial=None. panel_score MUST be None and decision MUST be
         REJECT_VETO_FAILED. The panel has zero power to resurrect a veto-failed candidate.
         """
-        scenario = fixture["veto_scenarios"]["stellar_discretionary_score_cannot_outvote_bhy_failure"]
+        scenario = fixture["veto_scenarios"][
+            "stellar_discretionary_score_cannot_outvote_bhy_failure"
+        ]
         c = scenario["candidate"]
         ag = _import_acceptance_gate()
 
@@ -387,7 +387,9 @@ class TestOnedirectionalBrake:
 
     def test_stellar_discretionary_cannot_outvote_nn1_failure(self, fixture):
         """Maximal discretionary scores + NN1 failure = REJECT (anti-pattern test, NN1 variant)."""
-        scenario = fixture["veto_scenarios"]["stellar_discretionary_score_cannot_outvote_nn1_failure"]
+        scenario = fixture["veto_scenarios"][
+            "stellar_discretionary_score_cannot_outvote_nn1_failure"
+        ]
         c = scenario["candidate"]
         ag = _import_acceptance_gate()
 
@@ -526,7 +528,9 @@ class TestPanelCannotPromote:
         The panel being high doesn't matter — the gate cannot promote a candidate
         that lost the OOS comparison.
         """
-        scenario = fixture["one_directional_brake_scenarios"]["panel_cannot_adopt_when_candidate_loses_oos"]
+        scenario = fixture["one_directional_brake_scenarios"][
+            "panel_cannot_adopt_when_candidate_loses_oos"
+        ]
         c = scenario["candidate"]
         ag = _import_acceptance_gate()
 
@@ -605,9 +609,7 @@ class TestFixedNamedWeights:
         assert isinstance(w, (int, float)), (
             f"PANEL_WEIGHT_STABILITY must be numeric, got {type(w).__name__!r}."
         )
-        assert 0.0 < w <= 1.0, (
-            f"PANEL_WEIGHT_STABILITY must be in (0, 1], got {w}."
-        )
+        assert 0.0 < w <= 1.0, f"PANEL_WEIGHT_STABILITY must be in (0, 1], got {w}."
 
     def test_panel_weight_prior_anchor_constant_exists(self, fixture):
         """acceptance_gate must define PANEL_WEIGHT_PRIOR_ANCHOR as a module-level constant."""
@@ -627,10 +629,7 @@ class TestFixedNamedWeights:
         Tolerance: 1e-9 (these are hand-set constants, not computed values).
         """
         ag = _import_acceptance_gate()
-        weight_attrs = [
-            name for name in dir(ag)
-            if name.startswith("PANEL_WEIGHT_")
-        ]
+        weight_attrs = [name for name in dir(ag) if name.startswith("PANEL_WEIGHT_")]
         assert len(weight_attrs) >= 2, (
             f"Expected at least 2 PANEL_WEIGHT_* constants, found: {weight_attrs}."
         )
@@ -658,9 +657,7 @@ class TestFixedNamedWeights:
         assert isinstance(threshold, (int, float)), (
             f"PANEL_ADOPT_MARGIN_THRESHOLD must be numeric, got {type(threshold).__name__!r}."
         )
-        assert threshold >= 0.0, (
-            "PANEL_ADOPT_MARGIN_THRESHOLD must be non-negative."
-        )
+        assert threshold >= 0.0, "PANEL_ADOPT_MARGIN_THRESHOLD must be non-negative."
 
 
 # ---------------------------------------------------------------------------
@@ -674,16 +671,14 @@ class TestPanelScoreBound:
     @pytest.mark.parametrize(
         "stability, prior_anchor",
         [
-            (0.0, 0.0),   # worst possible
-            (0.5, 0.5),   # midpoint
-            (1.0, 1.0),   # best possible
-            (0.0, 1.0),   # mixed
-            (1.0, 0.0),   # mixed
+            (0.0, 0.0),  # worst possible
+            (0.5, 0.5),  # midpoint
+            (1.0, 1.0),  # best possible
+            (0.0, 1.0),  # mixed
+            (1.0, 0.0),  # mixed
         ],
     )
-    def test_panel_score_in_zero_one_for_veto_passing_candidates(
-        self, stability, prior_anchor
-    ):
+    def test_panel_score_in_zero_one_for_veto_passing_candidates(self, stability, prior_anchor):
         """panel_score must be in [0.0, 1.0] for any combination of valid sub-scores.
 
         Property: weighted average of sub-scores in [0,1] with weights summing
@@ -703,9 +698,7 @@ class TestPanelScoreBound:
             incumbent_stability_score=0.5,
             incumbent_prior_anchor_score=0.5,
         )
-        assert verdict.panel_score is not None, (
-            "panel_score must not be None when all vetoes pass."
-        )
+        assert verdict.panel_score is not None, "panel_score must not be None when all vetoes pass."
         assert 0.0 <= verdict.panel_score <= 1.0, (
             # tolerance comment: panel_score is a weighted average of [0,1] sub-scores
             # with weights summing to 1; the only floating-point concern is boundary
@@ -846,9 +839,7 @@ class TestAdvisorReuse:
     def test_acceptance_gate_imports_overfitting_conscience(self):
         """acceptance_gate.py should import from advisors.overfitting_conscience (reuse, not reinvent)."""
         gate_path = _repo_root() / "acceptance_gate.py"
-        assert gate_path.exists(), (
-            f"acceptance_gate.py not found at {gate_path}."
-        )
+        assert gate_path.exists(), f"acceptance_gate.py not found at {gate_path}."
         tree = _parse_source("acceptance_gate.py")
 
         found_oc = False
@@ -873,9 +864,7 @@ class TestAdvisorReuse:
     def test_acceptance_gate_imports_spec_critic(self):
         """acceptance_gate.py should import from advisors.spec_critic (reuse, not reinvent)."""
         gate_path = _repo_root() / "acceptance_gate.py"
-        assert gate_path.exists(), (
-            f"acceptance_gate.py not found at {gate_path}."
-        )
+        assert gate_path.exists(), f"acceptance_gate.py not found at {gate_path}."
         tree = _parse_source("acceptance_gate.py")
 
         found_sc = False

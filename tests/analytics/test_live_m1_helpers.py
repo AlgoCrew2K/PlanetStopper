@@ -43,9 +43,7 @@ def test_live_symphony_stats_meta_has_required_per_symphony_fields():
     account_ids_raw = os.environ.get("COMPOSER_ACCOUNT_IDS") or os.environ.get("ACCOUNT_UUIDS")
 
     if not composer_token or not account_ids_raw:
-        pytest.skip(
-            "COMPOSER_API_TOKEN and COMPOSER_ACCOUNT_IDS env vars required for live test"
-        )
+        pytest.skip("COMPOSER_API_TOKEN and COMPOSER_ACCOUNT_IDS env vars required for live test")
 
     account_ids = [a.strip() for a in account_ids_raw.split(",") if a.strip()]
     if not account_ids:
@@ -64,7 +62,9 @@ def test_live_symphony_stats_meta_has_required_per_symphony_fields():
     tested_symphonies = 0
 
     for account_id in account_ids:
-        url = f"https://api.composer.trade/api/v2/portfolio/accounts/{account_id}/symphony-stats-meta"
+        url = (
+            f"https://api.composer.trade/api/v2/portfolio/accounts/{account_id}/symphony-stats-meta"
+        )
         response = requests.get(url, headers=headers, timeout=15)
 
         assert response.status_code == 200, (

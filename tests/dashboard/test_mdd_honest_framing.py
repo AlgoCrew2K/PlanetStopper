@@ -60,6 +60,7 @@ def _max_dd_row_markup(src: str) -> str:
 # TEMPLATE-SOURCE contract — the honest-framing gates exist on the MDD row
 # ===========================================================================
 
+
 class TestMddTemplateGatesOnInsufficiency:
     def test_template_defines_mdd_insufficient_flag(self):
         src = _template_src()
@@ -82,7 +83,8 @@ class TestMddTemplateGatesOnInsufficiency:
         block = _max_dd_row_markup(_template_src())
         assert re.search(
             r"{%\s*if\s+not\s+mdd_insufficient\s*%}.*?comp-mdd-delta",
-            block, re.DOTALL,
+            block,
+            re.DOTALL,
         ), (
             "AC-4c FAIL: the comp-mdd-delta alpha span is not gated on "
             "`{% if not mdd_insufficient %}` — a misleading 0.00% guard-saved alpha would "
@@ -97,7 +99,7 @@ class TestMddTemplateGatesOnInsufficiency:
         # Only consider 'winner' tokens that live in attribute markup (a class gate), not
         # the explanatory comment prose.
         for m in re.finditer(r"%}winner", block):
-            preceding = block[max(0, m.start() - 200):m.start()]
+            preceding = block[max(0, m.start() - 200) : m.start()]
             assert "not mdd_insufficient" in preceding, (
                 "AC-4c FAIL: a 'winner' styling in the Max DD row is not guarded by "
                 "`not mdd_insufficient` — a Bot +0.00% empty-series artifact could be "
@@ -108,6 +110,7 @@ class TestMddTemplateGatesOnInsufficiency:
 # ===========================================================================
 # RENDERED-PAGE — the gates fire end to end on an insufficient-history page
 # ===========================================================================
+
 
 @pytest.fixture
 def client():
@@ -154,10 +157,19 @@ class TestMddRenderedInsufficientFraming:
     ):
         mock_database.load_state.return_value = {
             "sym-x": {
-                "name": "Symphony X", "account": "ACC1", "armed": True, "tp_armed": False,
-                "para_armed": False, "triggered": False, "current_return": 1.5,
-                "current_value": 10000.0, "stop_trigger": -2.0, "mc_prob": 40.0,
-                "simple_return": 0.12, "net_deposits": 1000.0, "time_weighted_return": 0.12,
+                "name": "Symphony X",
+                "account": "ACC1",
+                "armed": True,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
+                "current_return": 1.5,
+                "current_value": 10000.0,
+                "stop_trigger": -2.0,
+                "mc_prob": 40.0,
+                "simple_return": 0.12,
+                "net_deposits": 1000.0,
+                "time_weighted_return": 0.12,
                 "max_drawdown": 0.08,
             }
         }

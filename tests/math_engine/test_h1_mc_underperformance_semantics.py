@@ -68,6 +68,7 @@ import math_engine
 # Constant rename: MC_BREAKDOWN_THRESHOLD exists, value preserved at 60.0
 # ---------------------------------------------------------------------------
 
+
 def test_mc_breakdown_threshold_constant_exists_with_preserved_value() -> None:
     """
     The threshold constant is renamed MC_SANITY_THRESHOLD -> MC_BREAKDOWN_THRESHOLD
@@ -90,6 +91,7 @@ def test_mc_breakdown_threshold_constant_exists_with_preserved_value() -> None:
 # ---------------------------------------------------------------------------
 # The CENTERPIECE: the protective stop fires on a confirmed idiosyncratic crash
 # ---------------------------------------------------------------------------
+
 
 def test_protective_stop_fires_on_idiosyncratic_crash() -> None:
     """
@@ -135,6 +137,7 @@ def test_protective_stop_fires_on_idiosyncratic_crash() -> None:
 # The complement: the stop stays suppressed on a normal dip (no hair-trigger)
 # ---------------------------------------------------------------------------
 
+
 def test_protective_stop_suppressed_on_normal_dip() -> None:
     """
     Scenario: a shallow dip where the analog distribution says today is NOT
@@ -172,6 +175,7 @@ def test_protective_stop_suppressed_on_normal_dip() -> None:
 # Regression: market-wide crash still fires via the regime-guard None path
 # ---------------------------------------------------------------------------
 
+
 def test_market_wide_crash_fires_via_regime_guard_none() -> None:
     """
     On a market-WIDE crash the regime-match-quality guard sets
@@ -208,19 +212,18 @@ def test_market_wide_crash_fires_via_regime_guard_none() -> None:
 # Property: at-threshold boundary fires (>= is inclusive, matching the spec)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "prob,expected_hit",
     [
         (59.999, False),  # just below breakdown threshold -> suppressed
-        (60.0, True),     # exactly at threshold -> fires (>= is inclusive)
-        (60.001, True),   # just above -> fires
-        (100.0, True),    # max underperformance -> fires
-        (0.0, False),     # outperforming -> suppressed
+        (60.0, True),  # exactly at threshold -> fires (>= is inclusive)
+        (60.001, True),  # just above -> fires
+        (100.0, True),  # max underperformance -> fires
+        (0.0, False),  # outperforming -> suppressed
     ],
 )
-def test_breakdown_gate_boundary_is_inclusive_at_threshold(
-    prob: float, expected_hit: bool
-) -> None:
+def test_breakdown_gate_boundary_is_inclusive_at_threshold(prob: float, expected_hit: bool) -> None:
     """
     The corrected gate uses `>= MC_BREAKDOWN_THRESHOLD` (inclusive at 60.0).
     A value exactly at the threshold counts as confirmed breakdown and fires;
@@ -251,6 +254,7 @@ def test_breakdown_gate_boundary_is_inclusive_at_threshold(
 # Regression: the TP "Exceptional Gain" arm is RENAME-ONLY (behavior preserved)
 # ---------------------------------------------------------------------------
 
+
 def test_tp_arm_behavior_unchanged_after_rename() -> None:
     """
     The TP "Exceptional Gain" arm in compute_tp_confirmation is RENAME-ONLY:
@@ -278,12 +282,8 @@ def test_tp_arm_behavior_unchanged_after_rename() -> None:
         "exceptional up-day must ARM the take-profit, exactly as the pre-rename "
         "code did. The rename must preserve this behavior."
     )
-    assert new_above_tp_count == 0, (
-        f"Arming resets above_tp_count to 0; got {new_above_tp_count}."
-    )
-    assert is_tp_hit is False, (
-        "Arming alone does not fire the TP; got is_tp_hit True."
-    )
+    assert new_above_tp_count == 0, f"Arming resets above_tp_count to 0; got {new_above_tp_count}."
+    assert is_tp_hit is False, "Arming alone does not fire the TP; got is_tp_hit True."
 
 
 def test_tp_confirm_behavior_unchanged_after_rename() -> None:

@@ -69,21 +69,18 @@ def _seed_shadow_db(tmp_path: Path) -> str:
 # Class 1 — static source scan
 # ---------------------------------------------------------------------------
 
+
 class TestStaticSourceScan:
     """Verify that every sqlite3.connect call in analytics.py uses uri=True
     and ?mode=ro in the connection string — no plain read-write handle."""
 
-    _ANALYTICS_SRC = (
-        Path(__file__).parent.parent.parent / "analytics.py"
-    )
+    _ANALYTICS_SRC = Path(__file__).parent.parent.parent / "analytics.py"
 
     def _source(self) -> str:
         return self._ANALYTICS_SRC.read_text(encoding="utf-8")
 
     def test_analytics_py_exists(self):
-        assert self._ANALYTICS_SRC.exists(), (
-            f"analytics.py not found at {self._ANALYTICS_SRC}"
-        )
+        assert self._ANALYTICS_SRC.exists(), f"analytics.py not found at {self._ANALYTICS_SRC}"
 
     def test_no_plain_readwrite_connect(self):
         """None of the sqlite3.connect sites may use a bare variable without
@@ -108,8 +105,7 @@ class TestStaticSourceScan:
 
         assert not violations, (
             f"Found {len(violations)} sqlite3.connect site(s) in analytics.py "
-            f"without ?mode=ro:\n"
-            + "\n".join(f"  - {v}" for v in violations)
+            f"without ?mode=ro:\n" + "\n".join(f"  - {v}" for v in violations)
         )
 
     def test_all_ro_connects_use_uri_true(self):
@@ -142,11 +138,12 @@ class TestStaticSourceScan:
 # Class 2 — behavioral pin
 # ---------------------------------------------------------------------------
 
+
 class TestBehavioralPin:
     """Confirm that:
-      (a) a ?mode=ro URI connection rejects writes (OperationalError), and
-      (b) _get_shadow_cumulative_trajectory reads rows correctly via the
-          read-only path (behavioral smoke through one real analytics fn).
+    (a) a ?mode=ro URI connection rejects writes (OperationalError), and
+    (b) _get_shadow_cumulative_trajectory reads rows correctly via the
+        read-only path (behavioral smoke through one real analytics fn).
     """
 
     def test_mode_ro_rejects_insert(self, tmp_path):
@@ -188,10 +185,6 @@ class TestBehavioralPin:
         """A ?mode=ro connection must return rows on SELECT (sanity check)."""
         db_file = _seed_shadow_db(tmp_path)
         conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
-        rows = conn.execute(
-            "SELECT COUNT(*) FROM shadow_history"
-        ).fetchone()
+        rows = conn.execute("SELECT COUNT(*) FROM shadow_history").fetchone()
         conn.close()
-        assert rows[0] == 3, (
-            f"Expected 3 rows in seeded DB via read-only connection, got {rows[0]}"
-        )
+        assert rows[0] == 3, f"Expected 3 rows in seeded DB via read-only connection, got {rows[0]}"

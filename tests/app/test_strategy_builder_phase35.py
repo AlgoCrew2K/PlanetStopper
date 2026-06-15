@@ -65,10 +65,12 @@ def _make_spa_corr_module():
 
 def _spa_obs_side_effect(sb_obs):
     """Return a get_advisor_observations_for_role side_effect serving sb_obs for STRATEGY_BUILDER."""
+
     def _side_effect(role, limit=50):
         if role == "STRATEGY_BUILDER":
             return list(sb_obs) if sb_obs is not None else []
         return []
+
     return _side_effect
 
 
@@ -506,11 +508,16 @@ def test_pc1_old_row_renders_single_column_stats_table_no_crash(client):
 
     fake_corr = _make_spa_corr_module()
     with (
-        patch.object(app_module.database, "get_advisor_observations_for_role",
-                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(
+            app_module.database,
+            "get_advisor_observations_for_role",
+            side_effect=_spa_obs_side_effect([obs]),
+        ),
         patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
         patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.object(
+            app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+        ),
         patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
         resp = client.get("/ai-advisor")
@@ -555,11 +562,16 @@ def test_pc2_old_row_card_artifacts_cagr_is_none_not_string_none(client):
 
     fake_corr = _make_spa_corr_module()
     with (
-        patch.object(app_module.database, "get_advisor_observations_for_role",
-                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(
+            app_module.database,
+            "get_advisor_observations_for_role",
+            side_effect=_spa_obs_side_effect([obs]),
+        ),
         patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
         patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.object(
+            app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+        ),
         patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
@@ -597,11 +609,16 @@ def test_pc3_old_row_stats_table_has_no_live_baseline_column(client):
 
     fake_corr = _make_spa_corr_module()
     with (
-        patch.object(app_module.database, "get_advisor_observations_for_role",
-                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(
+            app_module.database,
+            "get_advisor_observations_for_role",
+            side_effect=_spa_obs_side_effect([obs]),
+        ),
         patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
         patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.object(
+            app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+        ),
         patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
         resp = client.get("/ai-advisor")
@@ -695,11 +712,16 @@ def test_pd1_new_row_stats_table_has_two_column_headers(client):
 
     fake_corr = _make_spa_corr_module()
     with (
-        patch.object(app_module.database, "get_advisor_observations_for_role",
-                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(
+            app_module.database,
+            "get_advisor_observations_for_role",
+            side_effect=_spa_obs_side_effect([obs]),
+        ),
         patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
         patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.object(
+            app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+        ),
         patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
         resp = client.get("/ai-advisor")
@@ -738,11 +760,16 @@ def test_pd2_new_row_baseline_column_shows_formatted_value_not_dash(client):
 
     fake_corr = _make_spa_corr_module()
     with (
-        patch.object(app_module.database, "get_advisor_observations_for_role",
-                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(
+            app_module.database,
+            "get_advisor_observations_for_role",
+            side_effect=_spa_obs_side_effect([obs]),
+        ),
         patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
         patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.object(
+            app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+        ),
         patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
         resp = client.get("/ai-advisor")
@@ -786,11 +813,16 @@ def test_pd3_old_row_stats_table_header_has_exactly_one_data_column(client):
 
     fake_corr = _make_spa_corr_module()
     with (
-        patch.object(app_module.database, "get_advisor_observations_for_role",
-                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(
+            app_module.database,
+            "get_advisor_observations_for_role",
+            side_effect=_spa_obs_side_effect([obs]),
+        ),
         patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
         patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.object(
+            app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+        ),
         patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
     ):
         resp = client.get("/ai-advisor")
@@ -850,11 +882,16 @@ def test_pe1_get_route_card_artifacts_for_new_row_includes_phase35_metric_keys(c
 
     fake_corr = _make_spa_corr_module()
     with (
-        patch.object(app_module.database, "get_advisor_observations_for_role",
-                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(
+            app_module.database,
+            "get_advisor_observations_for_role",
+            side_effect=_spa_obs_side_effect([obs]),
+        ),
         patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
         patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.object(
+            app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+        ),
         patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
@@ -896,11 +933,16 @@ def test_pe2_get_route_card_artifacts_cagr_matches_raw_response_cagr(client):
 
     fake_corr = _make_spa_corr_module()
     with (
-        patch.object(app_module.database, "get_advisor_observations_for_role",
-                     side_effect=_spa_obs_side_effect([obs])),
+        patch.object(
+            app_module.database,
+            "get_advisor_observations_for_role",
+            side_effect=_spa_obs_side_effect([obs]),
+        ),
         patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
         patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-        patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+        patch.object(
+            app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+        ),
         patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         patch.object(app_module, "render_template", side_effect=_capture),
     ):
@@ -1051,11 +1093,18 @@ class TestAdversarialCycle2Phase35:
 
         fake_corr = _make_spa_corr_module()
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_spa_obs_side_effect([obs])),
-            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=_spa_obs_side_effect([obs]),
+            ),
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
             patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
             try:
@@ -1096,11 +1145,18 @@ class TestAdversarialCycle2Phase35:
 
         fake_corr = _make_spa_corr_module()
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_spa_obs_side_effect([obs])),
-            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=_spa_obs_side_effect([obs]),
+            ),
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
             patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
             resp = client.get("/ai-advisor")
@@ -1314,7 +1370,6 @@ class TestIndependentCycle2Phase35:
             "NaN in raw_response breaks JS JSON.parse on the Discuss button."
         )
 
-
     def test_ic2_1c_numpy_nan_in_metrics_produces_non_rfc_json_is_xfail_bug(self):
         """IC2-1c: numpy.float64('nan') in info.metrics also produces non-RFC JSON.
 
@@ -1365,7 +1420,6 @@ class TestIndependentCycle2Phase35:
             "IC2-1c: json.dumps(raw_response) contains 'NaN' literal for numpy.float64 nan. "
             "The implementation must sanitize both Python nan and numpy nan -> None."
         )
-
 
     # -----------------------------------------------------------------------
     # IC2-2: _build_live_baseline pathological live_returns inputs
@@ -1579,11 +1633,18 @@ class TestIndependentCycle2Phase35:
 
         fake_corr = _make_spa_corr_module()
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_spa_obs_side_effect([partial_baseline_obs])),
-            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=_spa_obs_side_effect([partial_baseline_obs]),
+            ),
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
             patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
             resp = client.get("/ai-advisor")
@@ -1650,11 +1711,18 @@ class TestIndependentCycle2Phase35:
 
         fake_corr = _make_spa_corr_module()
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_spa_obs_side_effect([obs])),
-            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=_spa_obs_side_effect([obs]),
+            ),
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
             patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
             resp = client.get("/ai-advisor")
@@ -1715,11 +1783,18 @@ class TestIndependentCycle2Phase35:
 
         fake_corr = _make_spa_corr_module()
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_spa_obs_side_effect([withheld_partial_obs])),
-            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=_spa_obs_side_effect([withheld_partial_obs]),
+            ),
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
             patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
             resp = client.get("/ai-advisor")
@@ -1893,11 +1968,18 @@ class TestIndependentCycle2Phase35:
 
         fake_corr = _make_spa_corr_module()
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_spa_obs_side_effect([new_row_no_baseline])),
-            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=_spa_obs_side_effect([new_row_no_baseline]),
+            ),
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
             patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch.object(app_module, "render_template", side_effect=capture_render),
         ):
@@ -1952,11 +2034,18 @@ class TestIndependentCycle2Phase35:
 
         fake_corr = _make_spa_corr_module()
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_spa_obs_side_effect([obs])),
-            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=_spa_obs_side_effect([obs]),
+            ),
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
             patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch.object(app_module, "render_template", side_effect=capture_render),
         ):
@@ -2004,11 +2093,18 @@ class TestIndependentCycle2Phase35:
 
         fake_corr = _make_spa_corr_module()
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_spa_obs_side_effect([obs])),
-            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=_spa_obs_side_effect([obs]),
+            ),
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
             patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
             resp = client.get("/ai-advisor")
@@ -2054,11 +2150,18 @@ class TestIndependentCycle2Phase35:
 
         fake_corr = _make_spa_corr_module()
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_spa_obs_side_effect([obs])),
-            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=_spa_obs_side_effect([obs]),
+            ),
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
             patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
             patch.object(app_module, "render_template", side_effect=capture_render),
         ):
@@ -2118,11 +2221,18 @@ class TestIndependentCycle2Phase35:
 
         fake_corr = _make_spa_corr_module()
         with (
-            patch.object(app_module.database, "get_advisor_observations_for_role",
-                         side_effect=_spa_obs_side_effect(all_obs)),
-            patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(
+                app_module.database,
+                "get_advisor_observations_for_role",
+                side_effect=_spa_obs_side_effect(all_obs),
+            ),
+            patch.object(
+                app_module.analytics, "get_history_with_cache_invalidation", return_value={}
+            ),
             patch.object(app_module.analytics, "list_available_symphonies", return_value=[]),
-            patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
+            patch.object(
+                app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+            ),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
             resp = client.get("/ai-advisor")

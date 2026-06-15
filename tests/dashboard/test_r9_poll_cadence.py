@@ -26,7 +26,7 @@ import re
 
 _JS_PATH = pathlib.Path(__file__).parent.parent.parent / "static" / "index.js"
 
-_POLL_FLOOR_MS = 15_000   # project minimum; actual value is 30 000 ms
+_POLL_FLOOR_MS = 15_000  # project minimum; actual value is 30 000 ms
 _POLL_ACTUAL_MS = 30_000  # confirmed by behavior audit B-27
 
 

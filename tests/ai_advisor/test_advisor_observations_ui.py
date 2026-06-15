@@ -61,11 +61,7 @@ import pytest
 # Fixture loader
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "ai_advisor"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "ai_advisor"
 
 
 def _load_fixture(name: str) -> dict:
@@ -76,6 +72,7 @@ def _load_fixture(name: str) -> dict:
 # Shared test-sentinel observation rows (derived from fixture schema, never
 # hardcoded producer values — these are structural sentinels only)
 # ---------------------------------------------------------------------------
+
 
 def _make_observation(
     *,
@@ -111,6 +108,7 @@ def _make_observation(
 # (patch init_db so the import side-effect does not open the live DB)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def flask_client():
     """Flask test client with minimal stubs. No live DB; no live network."""
@@ -125,6 +123,7 @@ def flask_client():
 # ---------------------------------------------------------------------------
 # Helper: render /ai-advisor with a patched observations accessor
 # ---------------------------------------------------------------------------
+
 
 def _get_ai_advisor_page(flask_client, observations: list[dict]) -> object:
     """GET /ai-advisor with database.get_advisor_observations_for_role patched
@@ -141,6 +140,7 @@ def _get_ai_advisor_page(flask_client, observations: list[dict]) -> object:
 # ===========================================================================
 # Section 1 — Route contract: GET /ai-advisor returns 200
 # ===========================================================================
+
 
 class TestAiAdvisorRouteReturns200:
     """GET /ai-advisor must return 200 regardless of observation count."""
@@ -168,6 +168,7 @@ class TestAiAdvisorRouteReturns200:
 # ===========================================================================
 # Section 2 — Template structure: both sections present
 # ===========================================================================
+
 
 class TestTemplateSectionsCoexist:
     """Both the new observations section AND the existing suggestions section
@@ -222,6 +223,7 @@ class TestTemplateSectionsCoexist:
 # Section 3 — Verdict color tokens: no raw hex in rendered markup
 # ===========================================================================
 
+
 class TestVerdictColorTokensNoRawHex:
     """Verdict CLEAR/WATCH/BREACH must be color-coded using studio design-system
     tokens, never raw hex literals.  Architecture constraint: no bare hex
@@ -243,10 +245,9 @@ class TestVerdictColorTokensNoRawHex:
         # If the section is not present the test will fail on the section-present test;
         # here we only check for raw hex inside rendered style attributes or inline styles.
         import re
+
         # Raw hex: #rrggbb or #rrr  — 3 or 6 hex digit sequences after '#'
-        inline_hex_pattern = re.compile(
-            r'style\s*=\s*["\'][^"\']*#[0-9a-fA-F]{3,8}[^"\']*["\']'
-        )
+        inline_hex_pattern = re.compile(r'style\s*=\s*["\'][^"\']*#[0-9a-fA-F]{3,8}[^"\']*["\']')
         matches = inline_hex_pattern.findall(body)
         # Filter to only matches that appear to be coloring verdict rows
         # (contain "color" or "background")
@@ -291,6 +292,7 @@ class TestVerdictColorTokensNoRawHex:
 # Section 4 — is_advisory_only badge present on every observation row
 # ===========================================================================
 
+
 class TestIsAdvisoryOnlyBadge:
     """Every rendered observation row must carry the is_advisory_only badge —
     the structural declaration that the Advisor never moves money.
@@ -303,9 +305,7 @@ class TestIsAdvisoryOnlyBadge:
         body = resp.get_data(as_text=True)
         # Badge can be rendered as data-testid or a CSS class or text content
         assert (
-            "advisory-only" in body
-            or "is-advisory-only" in body
-            or "advisory only" in body.lower()
+            "advisory-only" in body or "is-advisory-only" in body or "advisory only" in body.lower()
         ), (
             "Every observation row must render an is_advisory_only badge. "
             "Use data-testid='advisory-only-badge' or class 'advisory-only' — "
@@ -336,6 +336,7 @@ class TestIsAdvisoryOnlyBadge:
 # Section 5 — Empty state: no stack trace, friendly message
 # ===========================================================================
 
+
 class TestEmptyStateRendering:
     """When advisor_observations is empty, the section must show a friendly
     empty-state message, not a Python stack trace or blank space."""
@@ -345,8 +346,10 @@ class TestEmptyStateRendering:
         'No observations from advisors at this time' message."""
         resp = _get_ai_advisor_page(flask_client, [])
         body = resp.get_data(as_text=True)
-        assert "no observations from advisors" in body.lower() or \
-               "no advisor observations" in body.lower(), (
+        assert (
+            "no observations from advisors" in body.lower()
+            or "no advisor observations" in body.lower()
+        ), (
             "Empty advisor_observations must render a friendly empty-state message "
             "('No observations from advisors at this time') — not a blank section "
             "and not a Python stack trace."
@@ -370,6 +373,7 @@ class TestEmptyStateRendering:
 # Section 6 — /api/advisor-observations JSON route
 # ===========================================================================
 
+
 class TestAdvisorObservationsApiRoute:
     """GET /api/advisor-observations returns 200 + a JSON list with the
     correct data shape.  Every row in the response must have the required keys."""
@@ -384,7 +388,9 @@ class TestAdvisorObservationsApiRoute:
         """GET /api/advisor-observations must return 200."""
         with (
             patch("database.get_advisor_observations_for_role", return_value=observations_fixture),
-            patch("database.get_advisor_observations_for_subject", return_value=observations_fixture),
+            patch(
+                "database.get_advisor_observations_for_subject", return_value=observations_fixture
+            ),
         ):
             resp = flask_client.get("/api/advisor-observations")
         assert resp.status_code == 200, (
@@ -396,7 +402,9 @@ class TestAdvisorObservationsApiRoute:
         """Response must be a JSON array (list)."""
         with (
             patch("database.get_advisor_observations_for_role", return_value=observations_fixture),
-            patch("database.get_advisor_observations_for_subject", return_value=observations_fixture),
+            patch(
+                "database.get_advisor_observations_for_subject", return_value=observations_fixture
+            ),
         ):
             resp = flask_client.get("/api/advisor-observations")
         data = resp.get_json()
@@ -408,11 +416,19 @@ class TestAdvisorObservationsApiRoute:
         """Each row in the response must have the required keys:
         advisor_role, subject_type, subject_id, verdict, is_advisory_only,
         created_at.  These are the fields the template renders."""
-        required_keys = {"advisor_role", "subject_type", "subject_id",
-                         "verdict", "is_advisory_only", "created_at"}
+        required_keys = {
+            "advisor_role",
+            "subject_type",
+            "subject_id",
+            "verdict",
+            "is_advisory_only",
+            "created_at",
+        }
         with (
             patch("database.get_advisor_observations_for_role", return_value=observations_fixture),
-            patch("database.get_advisor_observations_for_subject", return_value=observations_fixture),
+            patch(
+                "database.get_advisor_observations_for_subject", return_value=observations_fixture
+            ),
         ):
             resp = flask_client.get("/api/advisor-observations")
         data = resp.get_json()
@@ -429,7 +445,9 @@ class TestAdvisorObservationsApiRoute:
         structural declaration that the Advisor never moves money."""
         with (
             patch("database.get_advisor_observations_for_role", return_value=observations_fixture),
-            patch("database.get_advisor_observations_for_subject", return_value=observations_fixture),
+            patch(
+                "database.get_advisor_observations_for_subject", return_value=observations_fixture
+            ),
         ):
             resp = flask_client.get("/api/advisor-observations")
         data = resp.get_json()
@@ -443,6 +461,7 @@ class TestAdvisorObservationsApiRoute:
 # ===========================================================================
 # Section 7 — Symphony filter: ?symphony_id= parameter
 # ===========================================================================
+
 
 class TestSymphonyIdFilter:
     """GET /api/advisor-observations?symphony_id=<id> must filter observations
@@ -461,9 +480,7 @@ class TestSymphonyIdFilter:
         """When ?symphony_id=sym-A is given, the route returns every row
         emitted by the new single-query accessor for that symphony."""
         rows_a = [_make_observation(obs_id=1, subject_id="run-7")]
-        with patch(
-            "database.get_advisor_observations_for_symphony", return_value=rows_a
-        ):
+        with patch("database.get_advisor_observations_for_symphony", return_value=rows_a):
             resp = flask_client.get("/api/advisor-observations?symphony_id=sym-A")
 
         assert resp.status_code == 200, (
@@ -486,12 +503,8 @@ class TestSymphonyIdFilter:
             patch(
                 "database.get_advisor_observations_for_symphony", return_value=[]
             ) as mock_symphony,
-            patch(
-                "database.get_advisor_observations_for_subject", return_value=[]
-            ) as mock_subject,
-            patch(
-                "database.get_advisor_observations_for_role", return_value=[]
-            ) as mock_role,
+            patch("database.get_advisor_observations_for_subject", return_value=[]) as mock_subject,
+            patch("database.get_advisor_observations_for_role", return_value=[]) as mock_role,
         ):
             flask_client.get("/api/advisor-observations?symphony_id=sym-B")
 
@@ -507,22 +520,19 @@ class TestSymphonyIdFilter:
     def test_symphony_filter_empty_result_returns_empty_list(self, flask_client):
         """?symphony_id= with no matching rows must return [] (empty list),
         not 404 or a stack trace."""
-        with patch(
-            "database.get_advisor_observations_for_symphony", return_value=[]
-        ):
+        with patch("database.get_advisor_observations_for_symphony", return_value=[]):
             resp = flask_client.get("/api/advisor-observations?symphony_id=nonexistent-sym")
         assert resp.status_code == 200, (
             "Filtered request with no matching rows must return 200 + empty list, not 404."
         )
         data = resp.get_json()
-        assert data == [], (
-            f"No matching symphony_id must yield an empty list; got {data!r}"
-        )
+        assert data == [], f"No matching symphony_id must yield an empty list; got {data!r}"
 
 
 # ===========================================================================
 # Section 8 — Read-only enforcement: POST/PUT/DELETE return 405
 # ===========================================================================
+
 
 class TestReadOnlyEnforcement:
     """The dashboard is a read-only surface (architecture constraint 2).
@@ -552,6 +562,7 @@ class TestReadOnlyEnforcement:
 # ===========================================================================
 # Section 9 — Hostile edges
 # ===========================================================================
+
 
 class TestHostileEdges:
     """Adversarial edge cases: large tables, XSS, malformed legacy rows."""
@@ -611,8 +622,8 @@ class TestHostileEdges:
             "advisor_role": "OVERFITTING_CONSCIENCE",
             "subject_type": "autotune_run",
             "subject_id": "legacy-run-001",
-            "verdict": None,       # legacy rows may have NULL verdict
-            "raw_response": {},    # empty raw_response
+            "verdict": None,  # legacy rows may have NULL verdict
+            "raw_response": {},  # empty raw_response
             "is_advisory_only": 1,
             "spec_bundle_id": None,  # NULL — before spec_bundle_id was added
         }
@@ -649,16 +660,20 @@ class TestHostileEdges:
 # Section 10 — Advisor role human-friendly labels
 # ===========================================================================
 
+
 class TestAdvisorRoleHumanFriendlyLabels:
     """The template must display human-friendly labels for advisor roles,
     not the raw internal enum strings (OVERFITTING_CONSCIENCE is not
     operator-friendly)."""
 
-    @pytest.mark.parametrize("role,expected_label_fragment", [
-        ("OVERFITTING_CONSCIENCE", "Overfitting"),
-        ("SPEC_CRITIC", "Spec"),
-        ("DIVERGENCE_EXPLAINER", "Divergence"),
-    ])
+    @pytest.mark.parametrize(
+        "role,expected_label_fragment",
+        [
+            ("OVERFITTING_CONSCIENCE", "Overfitting"),
+            ("SPEC_CRITIC", "Spec"),
+            ("DIVERGENCE_EXPLAINER", "Divergence"),
+        ],
+    )
     def test_advisor_role_displayed_with_human_friendly_label(
         self, flask_client, role, expected_label_fragment
     ):
@@ -677,6 +692,7 @@ class TestAdvisorRoleHumanFriendlyLabels:
 # ===========================================================================
 # Section 11 — Fixture self-check
 # ===========================================================================
+
 
 class TestFixtureSelfCheck:
     """Validate the fixture file itself covers the required schema fields and
@@ -709,9 +725,7 @@ class TestFixtureSelfCheck:
         required_cols = set(fixture["_columns"])
         for row in fixture["example_rows"]:
             missing = required_cols - set(row.keys())
-            assert not missing, (
-                f"Fixture row id={row.get('id')!r} is missing columns: {missing}"
-            )
+            assert not missing, f"Fixture row id={row.get('id')!r} is missing columns: {missing}"
 
     def test_fixture_valid_verdicts_list_matches_schema(self):
         """The fixture's valid_verdicts list must match the schema-documented

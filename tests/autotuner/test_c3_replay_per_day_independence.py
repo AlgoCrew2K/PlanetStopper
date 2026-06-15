@@ -40,9 +40,7 @@ import pytest
 import autotuner
 
 
-_AUTOTUNER_TREE = ast.parse(
-    pathlib.Path(autotuner.__file__).read_text(encoding="utf-8")
-)
+_AUTOTUNER_TREE = ast.parse(pathlib.Path(autotuner.__file__).read_text(encoding="utf-8"))
 
 # Per-position transient state names the replay must re-init each day.
 _PER_DAY_STATE_NAMES = {
@@ -260,17 +258,13 @@ def _default_params() -> dict:
     }
 
 
-def _replay_seq_for_day(
-    ticks: list[dict], params: dict, grace_minutes: int = 0
-) -> list[dict]:
+def _replay_seq_for_day(ticks: list[dict], params: dict, grace_minutes: int = 0) -> list[dict]:
     if not hasattr(autotuner, "replay_exit_sequence"):
         pytest.fail(
             "autotuner.replay_exit_sequence missing — required for AC-9 "
             "per-day independence behavioural test."
         )
-    return autotuner.replay_exit_sequence(
-        ticks, params, grace_minutes=grace_minutes
-    )
+    return autotuner.replay_exit_sequence(ticks, params, grace_minutes=grace_minutes)
 
 
 def test_replay_day_is_independent_of_a_prior_days_exit() -> None:
@@ -288,8 +282,13 @@ def test_replay_day_is_independent_of_a_prior_days_exit() -> None:
     # A quiet day: small positive returns, mc neutral, no VWAP signal.
     quiet_day = [
         {
-            "time": "09:30", "return": 0.3, "mc_prob": 50.0, "vol": 0.5,
-            "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0,
+            "time": "09:30",
+            "return": 0.3,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
         }
         for _ in range(20)
     ]
@@ -322,16 +321,26 @@ def test_replay_multi_day_history_each_day_starts_fresh() -> None:
     # Day 1: a sustained deep bleed that triggers a VWAP exit early.
     day1 = [
         {
-            "time": "09:30", "return": -9.0, "mc_prob": 50.0, "vol": 0.5,
-            "vwap_diff": -3.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0,
+            "time": "09:30",
+            "return": -9.0,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": -3.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 1.0,
         }
         for _ in range(10)
     ]
     # Day 2: quiet — no signal of any kind.
     day2 = [
         {
-            "time": "09:30", "return": 0.3, "mc_prob": 50.0, "vol": 0.5,
-            "vwap_diff": 0.0, "base_atr_pct": 0.5, "valid_vwap_weight": 0.0,
+            "time": "09:30",
+            "return": 0.3,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 0.0,
         }
         for _ in range(20)
     ]
@@ -340,8 +349,7 @@ def test_replay_multi_day_history_each_day_starts_fresh() -> None:
     # Must not raise — the per-day loop handles both days.
     result = autotuner.run_simulation(params, history, ["sym-A"], "2026-05-01", {})
     assert isinstance(result, float), (
-        "run_simulation must return a float guard-alpha scalar over a "
-        "2-day history."
+        "run_simulation must return a float guard-alpha scalar over a 2-day history."
     )
 
     # Day 2 simulated independently must produce no exit — confirming the

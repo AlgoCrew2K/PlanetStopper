@@ -120,7 +120,9 @@ def _make_proposal_run(
     survivor_result = SimpleNamespace(
         candidate_id="sym-test:T1:0",
         verdict=SimpleNamespace(decision="ADOPT_CANDIDATE"),
-        caveats=["Selected on backtest: gate passes but selection bias remains. Treat as hypothesis."],
+        caveats=[
+            "Selected on backtest: gate passes but selection bias remains. Treat as hypothesis."
+        ],
         winner_p_adj=None,
         metrics={"sharpe_ratio": None, "sortino_ratio": None},
         template_id="T1",
@@ -210,17 +212,17 @@ def test_get_ai_advisor_spa_contains_strategy_builder_tab_button(client):
     NEW contract: checks data-tab="strategy-builder" on /ai-advisor (AC1).
     """
     import app as _app_module
+
     _stub_patches = [
-        patch.object(_app_module.analytics, "get_history_with_cache_invalidation",
-                     return_value={}),
-        patch.object(_app_module.analytics, "list_available_symphonies",
-                     return_value=[]),
-        patch.object(_app_module.analytics, "compute_per_symphony_returns",
-                     return_value=([], [], [])),
-        patch.object(_app_module.database, "get_advisor_observations_for_role",
-                     return_value=[]),
+        patch.object(_app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(_app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(
+            _app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+        ),
+        patch.object(_app_module.database, "get_advisor_observations_for_role", return_value=[]),
     ]
     from unittest.mock import MagicMock
+
     fake_corr = MagicMock()
     fake_corr.compute_pairwise_correlations.return_value = []
     fake_corr.CRISIS_CAVEAT = "caveat"
@@ -253,17 +255,17 @@ def test_get_ai_advisor_spa_contains_strategy_builder_risk_banner(client):
     NEW contract: checks risk banner on /ai-advisor (6th tab panel — AC2).
     """
     import app as _app_module
+
     _stub_patches = [
-        patch.object(_app_module.analytics, "get_history_with_cache_invalidation",
-                     return_value={}),
-        patch.object(_app_module.analytics, "list_available_symphonies",
-                     return_value=[]),
-        patch.object(_app_module.analytics, "compute_per_symphony_returns",
-                     return_value=([], [], [])),
-        patch.object(_app_module.database, "get_advisor_observations_for_role",
-                     return_value=[]),
+        patch.object(_app_module.analytics, "get_history_with_cache_invalidation", return_value={}),
+        patch.object(_app_module.analytics, "list_available_symphonies", return_value=[]),
+        patch.object(
+            _app_module.analytics, "compute_per_symphony_returns", return_value=([], [], [])
+        ),
+        patch.object(_app_module.database, "get_advisor_observations_for_role", return_value=[]),
     ]
     from unittest.mock import MagicMock
+
     fake_corr = MagicMock()
     fake_corr.compute_pairwise_correlations.return_value = []
     fake_corr.CRISIS_CAVEAT = "caveat"
@@ -284,7 +286,7 @@ def test_get_ai_advisor_spa_contains_strategy_builder_risk_banner(client):
 
     assert has_testid or has_text_a or has_text_b, (
         "GET /ai-advisor must render a non-dismissible risk banner in the strategy-builder panel. "
-        "Expected one of: data-testid=\"strategy-builder-risk-banner\", "
+        'Expected one of: data-testid="strategy-builder-risk-banner", '
         "'Logic-change proposals carry the highest overfitting risk', "
         "or 'non-dismissible'. "
         "Port the risk banner from the standalone template into the 6th tab panel (AC2)."
@@ -342,7 +344,11 @@ def test_post_run_without_csrf_token_returns_403(client, _reenable_csrf):
     """
     resp = client.post(
         "/ai-advisor/strategy-builder/run",
-        json={"objective": "diversify", "universe": ["SPY", "AGG", "GLD"], "symphony_id": "sym-test"},
+        json={
+            "objective": "diversify",
+            "universe": ["SPY", "AGG", "GLD"],
+            "symphony_id": "sym-test",
+        },
         content_type="application/json",
         # Deliberately no X-CSRF-Token header
     )
@@ -367,7 +373,11 @@ def test_post_run_with_wrong_csrf_token_returns_403(client, _reenable_csrf):
 
     resp = client.post(
         "/ai-advisor/strategy-builder/run",
-        json={"objective": "diversify", "universe": ["SPY", "AGG", "GLD"], "symphony_id": "sym-test"},
+        json={
+            "objective": "diversify",
+            "universe": ["SPY", "AGG", "GLD"],
+            "symphony_id": "sym-test",
+        },
         content_type="application/json",
         headers={"X-CSRF-Token": fake_token},
     )
@@ -632,7 +642,7 @@ def test_survivor_card_contains_all_required_testid_landmarks(client):
     ]
     for testid in required_testids:
         assert f'data-testid="{testid}"' in html, (
-            f"Survivor card must contain data-testid=\"{testid}\". "
+            f'Survivor card must contain data-testid="{testid}". '
             f"This is a required DOM landmark for the Strategy Builder card anatomy."
         )
 
@@ -680,9 +690,7 @@ def test_survivor_card_contains_zero_forms_and_zero_submit_buttons_and_zero_acti
     )
 
     # Count submit buttons — must be zero
-    submit_count = len(
-        re.findall(r'<button[^>]+type\s*=\s*["\']submit["\']', html, re.IGNORECASE)
-    )
+    submit_count = len(re.findall(r'<button[^>]+type\s*=\s*["\']submit["\']', html, re.IGNORECASE))
     assert submit_count == 0, (
         f"Survivor card page contains {submit_count} <button type='submit'> element(s). "
         "Advisory-only cards must have ZERO submit buttons."
@@ -734,7 +742,7 @@ def test_empty_state_renders_when_no_observations(client):
 
     html = resp.get_data(as_text=True)
     assert 'data-testid="strategy-builder-empty-state"' in html, (
-        'GET /ai-advisor/strategy-builder with no observations must render '
+        "GET /ai-advisor/strategy-builder with no observations must render "
         'data-testid="strategy-builder-empty-state". '
         "Operators need a clear empty-state signal rather than a silently empty page."
     )
@@ -762,7 +770,7 @@ def test_rejected_candidates_section_present_when_withheld_observations_exist(cl
 
     html = resp.get_data(as_text=True)
     assert 'data-testid="rejected-candidates-section"' in html, (
-        'GET /ai-advisor/strategy-builder with WITHHELD observations must render '
+        "GET /ai-advisor/strategy-builder with WITHHELD observations must render "
         'data-testid="rejected-candidates-section". '
         "The rejected candidates section is required for operator audit trail (AC-3.2)."
     )
@@ -790,7 +798,7 @@ def test_backtest_failed_card_present_when_backtest_error_in_observation(client)
 
     html = resp.get_data(as_text=True)
     assert 'data-testid="backtest-failed-card"' in html, (
-        'GET /ai-advisor/strategy-builder with backtest_error in raw_response must render '
+        "GET /ai-advisor/strategy-builder with backtest_error in raw_response must render "
         'data-testid="backtest-failed-card". '
         "Backtest-failed cards need a distinct warn-tint state to distinguish them "
         "from intentionally withheld candidates."
@@ -1055,14 +1063,19 @@ def test_get_route_filters_out_non_strategy_builder_observations(client):
     # the full correlation-diagnostic / history machinery around the prefetch call.
     import inspect
     import app as _app_mod
+
     source = inspect.getsource(_app_mod.ai_advisor_tab)
-    assert 'get_advisor_observations_for_role("STRATEGY_BUILDER")' in source or            "get_advisor_observations_for_role('STRATEGY_BUILDER')" in source, (
+    assert (
+        'get_advisor_observations_for_role("STRATEGY_BUILDER")' in source
+        or "get_advisor_observations_for_role('STRATEGY_BUILDER')" in source
+    ), (
         "ai_advisor_tab does not call "
         "database.get_advisor_observations_for_role('STRATEGY_BUILDER'). "
         "The route must use the role-scoped DB accessor to fetch Strategy Builder "
         "observations (AC4) so that OVERFITTING_CONSCIENCE, SPEC_CRITIC, and other "
         "advisor roles cannot bleed into the Strategy Builder panel."
     )
+
 
 # ---------------------------------------------------------------------------
 # J: POST /run — unknown objective defaults to diversify (no 400/500)
@@ -1255,7 +1268,7 @@ def test_template_run_trigger_button_is_not_type_submit():
 
     # Find all <button> elements and check none of the run-related ones are type="submit"
     run_button_pattern = re.compile(
-        r'<button[^>]+(?:sb-run-btn|sbRunAnalysis|run-trigger-btn)[^>]*>', re.IGNORECASE
+        r"<button[^>]+(?:sb-run-btn|sbRunAnalysis|run-trigger-btn)[^>]*>", re.IGNORECASE
     )
     run_buttons = run_button_pattern.findall(source)
 
@@ -1316,10 +1329,10 @@ def test_survivor_card_fdr_metadata_contains_numeric_alpha_value(client):
     # Accept either α= or alpha= (HTML entity vs literal) followed by digits.
     # Pattern matches: α=0.0500, α=0.05, alpha=0.0500, ɑ=0.05, etc.
     has_numeric_alpha = bool(
-        re.search(r'(?:α|&alpha;|&#x3b1;|alpha)\s*=\s*\d', html, re.IGNORECASE)
+        re.search(r"(?:α|&alpha;|&#x3b1;|alpha)\s*=\s*\d", html, re.IGNORECASE)
     )
     assert has_numeric_alpha, (
-        "data-testid=\"fdr-metadata\" must render a numeric α= value "
+        'data-testid="fdr-metadata" must render a numeric α= value '
         "(e.g. 'α=0.0500') in the rendered HTML. "
         "The template must interpolate the fdr_q value from the observation, "
         "not just print 'Yekutieli c(n) correction applied' without a number. "
@@ -1370,15 +1383,12 @@ def test_survivor_card_caveat_text_contains_overfitting_risk_wording(client):
 
     # The exact contract wording from the domain-reviewer.
     # "Overfitting risk cannot be eliminated — only resisted."
-    has_exact_wording = (
-        "Overfitting risk cannot be eliminated" in html
-        and "only resisted" in html
-    )
+    has_exact_wording = "Overfitting risk cannot be eliminated" in html and "only resisted" in html
     assert has_exact_wording, (
         "Survivor card caveat text must contain the exact contract wording: "
-        "\"Overfitting risk cannot be eliminated — only resisted.\" "
+        '"Overfitting risk cannot be eliminated — only resisted." '
         "The template currently uses a paraphrase ('Selected on backtest: the gate screens...') "
         "that does not satisfy the domain contract. "
         "The caveat-text element must be updated to include: "
-        "\"Overfitting risk cannot be eliminated — only resisted.\""
+        '"Overfitting risk cannot be eliminated — only resisted."'
     )

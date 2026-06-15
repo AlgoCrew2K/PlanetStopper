@@ -64,9 +64,7 @@ _SYNTH_PATH = _REPO_ROOT / "synthetic_history.py"
 def synth_tree() -> ast.Module:
     """Parsed AST of synthetic_history.py — parsed once per module."""
     assert _SYNTH_PATH.is_file(), f"expected production module at {_SYNTH_PATH}"
-    return ast.parse(
-        _SYNTH_PATH.read_text(encoding="utf-8"), filename=str(_SYNTH_PATH)
-    )
+    return ast.parse(_SYNTH_PATH.read_text(encoding="utf-8"), filename=str(_SYNTH_PATH))
 
 
 def _all_except_handlers(tree: ast.AST) -> list[ast.ExceptHandler]:
@@ -97,9 +95,7 @@ def _cache_io_except_handlers(tree: ast.AST) -> list[ast.ExceptHandler]:
             for sub in ast.walk(node):
                 if isinstance(sub, ast.ExceptHandler):
                     excluded.add(id(sub))
-    return [
-        h for h in _all_except_handlers(tree) if id(h) not in excluded
-    ]
+    return [h for h in _all_except_handlers(tree) if id(h) not in excluded]
 
 
 def _handler_caught_names(handler: ast.ExceptHandler) -> set[str]:
@@ -198,11 +194,7 @@ def test_no_bare_except_in_synthetic_history(synth_tree: ast.Module) -> None:
     this guard pins the stronger invariant so a future edit cannot regress to
     one.
     """
-    bare = [
-        h.lineno
-        for h in _all_except_handlers(synth_tree)
-        if h.type is None
-    ]
+    bare = [h.lineno for h in _all_except_handlers(synth_tree) if h.type is None]
     assert not bare, (
         f"synthetic_history.py has bare `except:` handler(s) at line(s) "
         f"{bare}. Catch a specific exception set instead."
@@ -229,9 +221,7 @@ def test_no_over_broad_exception_handler_swallows_cache_io(
 
     assert not offenders, (
         "synthetic_history.py has over-broad exception handler(s):\n"
-        + "\n".join(
-            f"  - line {ln}: catches {names}" for ln, names in offenders
-        )
+        + "\n".join(f"  - line {ln}: catches {names}" for ln, names in offenders)
         + "\nAC-3: catch a SPECIFIC exception set (OSError / JSONDecodeError "
         "/ UnicodeDecodeError family) — `except Exception` swallows unrelated "
         "bugs and produces silently-incomplete autotuner input."
@@ -269,10 +259,7 @@ def test_cache_io_handlers_catch_only_specific_io_exceptions(
     assert not offenders, (
         "synthetic_history.py cache except-handler(s) catch exception types "
         "outside the expected cache-I/O set:\n"
-        + "\n".join(
-            f"  - line {ln}: unexpected {sorted(names)}"
-            for ln, names in offenders
-        )
+        + "\n".join(f"  - line {ln}: unexpected {sorted(names)}" for ln, names in offenders)
         + f"\nAcceptable set: {sorted(_ACCEPTABLE_CACHE_EXCEPTIONS)}. The "
         "cache read/write handlers should catch the OSError / JSONDecodeError "
         "/ UnicodeDecodeError family only."
@@ -334,16 +321,13 @@ def test_cache_exception_handlers_name_the_failure_context(
                 for sub in ast.walk(arg):
                     if isinstance(sub, ast.Name):
                         referenced.add(sub.id)
-                    if isinstance(sub, ast.Constant) and isinstance(
-                        sub.value, str
-                    ):
+                    if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
                         # a format string mentioning the path/symbol counts
                         referenced.add(sub.value)
 
         names_exc = exc_name is not None and exc_name in referenced
         names_context = any(
-            ("cache" in r.lower() or "file" in r.lower() or "path" in r.lower())
-            for r in referenced
+            ("cache" in r.lower() or "file" in r.lower() or "path" in r.lower()) for r in referenced
         )
         if not (names_exc and names_context):
             missing = []
@@ -356,10 +340,7 @@ def test_cache_exception_handlers_name_the_failure_context(
     assert not offenders, (
         "synthetic_history.py logging exception handler(s) do not name the "
         "failure context:\n"
-        + "\n".join(
-            f"  - line {ln}: message omits {what}"
-            for ln, what in offenders
-        )
+        + "\n".join(f"  - line {ln}: message omits {what}" for ln, what in offenders)
         + "\nAC-3: the WARNING must name both the exception detail and the "
         "affected cache file path so the failure is diagnosable."
     )
@@ -371,9 +352,7 @@ def test_cache_exception_handlers_name_the_failure_context(
 # ---------------------------------------------------------------------------
 
 
-def test_cache_load_helper_logs_warning_on_corrupt_cache(
-    tmp_path, caplog
-) -> None:
+def test_cache_load_helper_logs_warning_on_corrupt_cache(tmp_path, caplog) -> None:
     """If synthetic_history exposes a pure cache-load helper, a corrupt cache
     file must produce a logged WARNING that names the file — and the helper
     must NOT propagate the decode error (a corrupt cache is recoverable: the
@@ -419,9 +398,7 @@ def test_cache_load_helper_logs_warning_on_corrupt_cache(
         f"history is regenerated, not consumed."
     )
 
-    warning_records = [
-        r for r in caplog.records if r.levelno >= logging.WARNING
-    ]
+    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warning_records, (
         "loading a corrupt cache file produced no WARNING log record. AC-3: "
         "a swallowed cache error must be logged so the operator sees it."

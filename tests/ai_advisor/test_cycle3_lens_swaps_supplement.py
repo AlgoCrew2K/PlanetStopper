@@ -65,8 +65,18 @@ _LENS_SCORES_FIXTURE = {
 }
 
 _LENS_SOURCES_FIXTURE = [
-    {"title": "Bond rally driven by FOMC", "url": "https://example.com/bond", "published": "2026-06-01", "lens": "sentiment"},
-    {"title": "FRED 10-Yr yield", "url": "https://fred.stlouisfed.org/series/DGS10", "published": "2026-06-01", "lens": "macro"},
+    {
+        "title": "Bond rally driven by FOMC",
+        "url": "https://example.com/bond",
+        "published": "2026-06-01",
+        "lens": "sentiment",
+    },
+    {
+        "title": "FRED 10-Yr yield",
+        "url": "https://fred.stlouisfed.org/series/DGS10",
+        "published": "2026-06-01",
+        "lens": "macro",
+    },
 ]
 
 _MOCK_BT_RESULT = None  # built per-test via helper
@@ -122,7 +132,12 @@ class TestLensSourcesKwargOnProposeOperatorSwap:
         if param is None:
             pytest.skip("lens_sources param not yet added — covered by signature test above.")
         sentinel = param.default
-        assert sentinel is None or sentinel == [] or sentinel == inspect.Parameter.empty or hasattr(sentinel, "__iter__"), (
+        assert (
+            sentinel is None
+            or sentinel == []
+            or sentinel == inspect.Parameter.empty
+            or hasattr(sentinel, "__iter__")
+        ), (
             f"lens_sources default={sentinel!r}. Must default to None or [] "
             "(backward-compat: existing callers that don't pass lens_sources must still work). "
             "A required parameter would break all existing callers."
@@ -239,7 +254,10 @@ class TestLensSourcesKwargOnSuggestSwaps:
             with (
                 patch("advisors.asset_swap_engine.run_backtest", return_value=_make_mock_bt()),
                 patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
-                patch("advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch),
+                patch(
+                    "advisors.asset_swap_engine.evaluate_candidate_batch",
+                    return_value=mock_gate_batch,
+                ),
                 patch("database.insert_advisor_observation"),
             ):
                 result = engine.suggest_swaps(
@@ -303,7 +321,9 @@ class TestLensSourcesKwargOnSuggestSwaps:
         with (
             patch("advisors.asset_swap_engine.run_backtest", return_value=_make_mock_bt()),
             patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
-            patch("advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch),
+            patch(
+                "advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch
+            ),
             patch("database.insert_advisor_observation", side_effect=_capture),
         ):
             engine.suggest_swaps(

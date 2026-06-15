@@ -97,9 +97,9 @@ def test_bleed_counter_survives_vwap_bounce() -> None:
     """
     new_a, new_b, is_a_broken, is_b_broken = math_engine.compute_vwap_breakdown_update(
         **_bleed_arm_inputs(
-            valid_vwap_weight=0.9,       # coverage fine
-            weighted_vwap_diff=0.5,      # BOUNCE above VWAP -> System A gate fails
-            current_return=-2.5,         # still bleeding -> System B arm met
+            valid_vwap_weight=0.9,  # coverage fine
+            weighted_vwap_diff=0.5,  # BOUNCE above VWAP -> System A gate fails
+            current_return=-2.5,  # still bleeding -> System B arm met
             current_vwap_bleed_ticks=3,
         )
     )
@@ -109,8 +109,7 @@ def test_bleed_counter_survives_vwap_bounce() -> None:
         f"not reference VWAP); got {new_b}. Pre-fix the System-A gate wiped it."
     )
     assert is_b_broken is True, (
-        f"is_vwap_bleed_broken must be True once new_b (4) >= threshold (3); "
-        f"got {is_b_broken}."
+        f"is_vwap_bleed_broken must be True once new_b (4) >= threshold (3); got {is_b_broken}."
     )
 
 
@@ -127,9 +126,9 @@ def test_bleed_counter_survives_low_coverage() -> None:
     """
     new_a, new_b, is_a_broken, is_b_broken = math_engine.compute_vwap_breakdown_update(
         **_bleed_arm_inputs(
-            valid_vwap_weight=0.4,       # coverage BELOW VWAP_WEIGHT_THRESHOLD
-            weighted_vwap_diff=-0.5,     # diff sign fine, but coverage fails the gate
-            current_return=-2.5,         # System B arm met
+            valid_vwap_weight=0.4,  # coverage BELOW VWAP_WEIGHT_THRESHOLD
+            weighted_vwap_diff=-0.5,  # diff sign fine, but coverage fails the gate
+            current_return=-2.5,  # System B arm met
             current_vwap_bleed_ticks=8,
             vwap_bleed_ticks_threshold=10,  # 9 < 10 -> not yet broken
         )
@@ -139,8 +138,7 @@ def test_bleed_counter_survives_low_coverage() -> None:
         f"must increment 8 -> 9 regardless of coverage; got {new_b}."
     )
     assert is_b_broken is False, (
-        f"new_b (9) < threshold (10): is_vwap_bleed_broken must be False; "
-        f"got {is_b_broken}."
+        f"new_b (9) < threshold (10): is_vwap_bleed_broken must be False; got {is_b_broken}."
     )
 
 
@@ -158,8 +156,8 @@ def test_bleed_counter_resets_when_its_own_arm_condition_fails() -> None:
     new_a, new_b, is_a_broken, is_b_broken = math_engine.compute_vwap_breakdown_update(
         **_bleed_arm_inputs(
             valid_vwap_weight=0.9,
-            weighted_vwap_diff=0.5,      # System A gate fails (bounce)
-            current_return=-0.5,         # ABOVE bleed_arm -1.0 -> System B arm MISSES
+            weighted_vwap_diff=0.5,  # System A gate fails (bounce)
+            current_return=-0.5,  # ABOVE bleed_arm -1.0 -> System B arm MISSES
             current_vwap_bleed_ticks=5,
         )
     )
@@ -181,13 +179,13 @@ def test_system_a_still_gated_on_gate_miss() -> None:
     new_a, new_b, is_a_broken, is_b_broken = math_engine.compute_vwap_breakdown_update(
         is_triggered=False,
         valid_vwap_weight=0.9,
-        weighted_vwap_diff=0.5,          # bounce -> System A gate fails
+        weighted_vwap_diff=0.5,  # bounce -> System A gate fails
         safe_hwm=10.0,
-        current_return=1.0,              # < safe_hwm; would arm System A IF gate passed
-        vwap_cross_hwm_pct=2.0,          # 10.0 >= 2.0 (System A condition would be met)
+        current_return=1.0,  # < safe_hwm; would arm System A IF gate passed
+        vwap_cross_hwm_pct=2.0,  # 10.0 >= 2.0 (System A condition would be met)
         vwap_bleed_arm_pct=-1.0,
         vwap_bleed_ticks_threshold=3,
-        current_vwap_ticks=2,            # near System A threshold
+        current_vwap_ticks=2,  # near System A threshold
         current_vwap_bleed_ticks=0,
     )
     assert new_a == 0, (
@@ -212,7 +210,7 @@ def test_both_counters_frozen_when_triggered() -> None:
         **_bleed_arm_inputs(
             valid_vwap_weight=0.9,
             weighted_vwap_diff=-0.5,
-            current_return=-2.5,         # would arm System B if not triggered
+            current_return=-2.5,  # would arm System B if not triggered
             current_vwap_bleed_ticks=7,
             current_vwap_ticks=4,
             is_triggered=True,
@@ -221,8 +219,7 @@ def test_both_counters_frozen_when_triggered() -> None:
     assert new_a == 4, f"Triggered: System A count must be frozen at 4; got {new_a}."
     assert new_b == 7, f"Triggered: System B count must be frozen at 7; got {new_b}."
     assert is_a_broken is False and is_b_broken is False, (
-        f"Triggered: both broken flags must be False; got "
-        f"a={is_a_broken}, b={is_b_broken}."
+        f"Triggered: both broken flags must be False; got a={is_a_broken}, b={is_b_broken}."
     )
 
 
@@ -238,10 +235,10 @@ def test_bleed_increments_even_when_system_a_simultaneously_arms() -> None:
     new_a, new_b, is_a_broken, is_b_broken = math_engine.compute_vwap_breakdown_update(
         is_triggered=False,
         valid_vwap_weight=0.9,
-        weighted_vwap_diff=-0.5,         # gate passes
+        weighted_vwap_diff=-0.5,  # gate passes
         safe_hwm=10.0,
-        current_return=-2.5,             # System A: -2.5 < 10.0 (met); System B: -2.5 <= -1.0 (met)
-        vwap_cross_hwm_pct=2.0,          # 10.0 >= 2.0 (System A condition met)
+        current_return=-2.5,  # System A: -2.5 < 10.0 (met); System B: -2.5 <= -1.0 (met)
+        vwap_cross_hwm_pct=2.0,  # 10.0 >= 2.0 (System A condition met)
         vwap_bleed_arm_pct=-1.0,
         vwap_bleed_ticks_threshold=3,
         current_vwap_ticks=1,

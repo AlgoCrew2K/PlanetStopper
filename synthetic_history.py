@@ -14,6 +14,7 @@ from joblib import Parallel, delayed
 import math_engine
 
 from dotenv import load_dotenv
+
 load_dotenv()
 ALPACA_KEY = os.getenv("ALPACA_KEY")
 ALPACA_SECRET = os.getenv("ALPACA_SECRET")
@@ -100,6 +101,7 @@ def compute_vwap_from_bars(bars):
         return last_close
     return total_pv / total_v
 
+
 # --- Fetch-window sizing (trading-day counted, not calendar-day literal) ----
 # The autotuner slices the last 250 trading days of synthetic history for its
 # walk-forward replay. Pinned to the autotuner replay-window length — also the
@@ -116,9 +118,7 @@ _WALK_FORWARD_TRADING_DAYS = 250
 # MC_VOL_WINDOW_DAYS - 1 raw days of vol-window warmup behind it
 # (math_engine.run_monte_carlo eligible-pool guard). That warmup PRECEDES the
 # replay window, so it is additive to the 250-day slice.
-_MC_WARMUP_TRADING_DAYS = (
-    math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
-)
+_MC_WARMUP_TRADING_DAYS = math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
 # Holiday / margin buffer: a safety cushion of extra trading days so the
 # fetched window comfortably clears the floor even if the upstream bar feed
 # drops a trailing day or a half-day. 10 trading days ~ two market weeks.
@@ -129,9 +129,7 @@ _FETCH_WINDOW_BUFFER_TRADING_DAYS = 10
 # self-validating exchange calendar) plus the post-fetch shortfall guards in
 # generate_synthetic_history — NOT a hand-maintained holiday table.
 _REQUIRED_FETCH_TRADING_DAYS = (
-    _WALK_FORWARD_TRADING_DAYS
-    + _MC_WARMUP_TRADING_DAYS
-    + _FETCH_WINDOW_BUFFER_TRADING_DAYS
+    _WALK_FORWARD_TRADING_DAYS + _MC_WARMUP_TRADING_DAYS + _FETCH_WINDOW_BUFFER_TRADING_DAYS
 )
 
 # Calendar-days-per-trading-day padding factor used only to pick a generously
@@ -195,9 +193,7 @@ def compute_fetch_window_start(end_date):
     """
     if isinstance(end_date, _dt.datetime):
         end_date = end_date.date()
-    calendar_days = int(
-        _REQUIRED_FETCH_TRADING_DAYS * _CALENDAR_DAYS_PER_TRADING_DAY
-    )
+    calendar_days = int(_REQUIRED_FETCH_TRADING_DAYS * _CALENDAR_DAYS_PER_TRADING_DAY)
     return end_date - timedelta(days=calendar_days)
 
 
@@ -253,9 +249,7 @@ def fetch_daily_bars_with_floor(fetch_fn, end_date=None):
             _MAX_FETCH_WIDEN_ATTEMPTS,
             _FETCH_WIDEN_STEP_CALENDAR_DAYS,
         )
-        window_start = window_start - timedelta(
-            days=_FETCH_WIDEN_STEP_CALENDAR_DAYS
-        )
+        window_start = window_start - timedelta(days=_FETCH_WIDEN_STEP_CALENDAR_DAYS)
 
     raise HistoryShortfallError(
         "synthetic_history: daily-bar fetch remained short of the "
@@ -284,6 +278,7 @@ def load_cached_history(cache_file):
         )
         return None
 
+
 # Insufficient-MC handling: run_monte_carlo returns the out-of-band sentinel
 # None (math_engine.MC_INSUFFICIENT_HISTORY_SENTINEL) when MC history is too
 # short. The replay carries that None straight through into the tick's
@@ -300,21 +295,22 @@ def load_cached_history(cache_file):
 # is sufficient for the tuning approximation.
 _MC_REPLAY_SIMULATION_PATHS = 300
 
+
 def get_alpaca_headers():
-    return {
-        "APCA-API-KEY-ID": ALPACA_KEY,
-        "APCA-API-SECRET-KEY": ALPACA_SECRET
-    }
+    return {"APCA-API-KEY-ID": ALPACA_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET}
+
 
 def fetch_bars(tickers_list, start_str, end_str, timeframe="1Day"):
     headers = get_alpaca_headers()
     batch_size = 30
     all_data = {}
-    
+
     for i in range(0, len(tickers_list), batch_size):
         batch = tickers_list[i : i + batch_size]
         symbol_string = ",".join(batch)
-        print(f"      -> Fetching {timeframe} bars batch {i // batch_size + 1}/{len(tickers_list)//batch_size + 1}...")
+        print(
+            f"      -> Fetching {timeframe} bars batch {i // batch_size + 1}/{len(tickers_list) // batch_size + 1}..."
+        )
 
         page_token = None
         while True:
@@ -323,18 +319,25 @@ def fetch_bars(tickers_list, start_str, end_str, timeframe="1Day"):
                 url += f"&page_token={page_token}"
 
             success = False
-            for attempt in range(10): # Allow up to 10 retries for rate limits
+            for attempt in range(10):  # Allow up to 10 retries for rate limits
                 try:
                     response = requests.get(url, headers=headers, timeout=30)
                     if response.status_code == 200:
                         success = True
                         break
                     elif response.status_code == 429:
-                        print(f"      -> Rate limit hit (429). Sleeping for 15s... (Attempt {attempt+1}/10)")
+                        print(
+                            f"      -> Rate limit hit (429). Sleeping for 15s... (Attempt {attempt + 1}/10)"
+                        )
                         time.sleep(15)
                     else:
                         # Log status code only; omit response.text to avoid leaking payload in logs (cycle-#27 hardening)
-                        logging.warning("fetch_bars: HTTP %s for batch %d (attempt %d/10)", response.status_code, i // batch_size + 1, attempt + 1)
+                        logging.warning(
+                            "fetch_bars: HTTP %s for batch %d (attempt %d/10)",
+                            response.status_code,
+                            i // batch_size + 1,
+                            attempt + 1,
+                        )
                         time.sleep(5)
                 except requests.RequestException as e:
                     # Narrow to transport/connection errors raised by requests; re-raise unexpected errors upstream
@@ -342,7 +345,10 @@ def fetch_bars(tickers_list, start_str, end_str, timeframe="1Day"):
                     time.sleep(5)
 
             if not success:
-                logging.error("fetch_bars: batch %d failed after 10 attempts; aborting symbol fetch", i // batch_size + 1)
+                logging.error(
+                    "fetch_bars: batch %d failed after 10 attempts; aborting symbol fetch",
+                    i // batch_size + 1,
+                )
                 break
 
             data = response.json()
@@ -356,8 +362,9 @@ def fetch_bars(tickers_list, start_str, end_str, timeframe="1Day"):
             if not page_token:
                 break
             time.sleep(0.35)
-                
+
     return all_data
+
 
 def build_replay_day(
     sym_id,
@@ -402,8 +409,8 @@ def build_replay_day(
 
             if ticker in intraday_by_date[date_str] and i < len(intraday_by_date[date_str][ticker]):
                 bar = intraday_by_date[date_str][ticker][i]
-                c = bar['c']
-                v = bar['vwap']
+                c = bar["c"]
+                v = bar["vwap"]
 
                 y_close = yesterday_closes.get(ticker, c)
                 if y_close > 0:
@@ -441,22 +448,24 @@ def build_replay_day(
         if _regime.is_unprecedented:
             mc_prob = None
 
-        ticks.append({
-            "time": ts[11:16],
-            "return": agg_ret * 100.0,
-            "mc_prob": mc_prob,
-            "vol": vol,
-            "vwap_diff": weighted_vwap_diff,
-            "base_atr_pct": base_atr,
-            "valid_vwap_weight": valid_alloc,
-        })
+        ticks.append(
+            {
+                "time": ts[11:16],
+                "return": agg_ret * 100.0,
+                "mc_prob": mc_prob,
+                "vol": vol,
+                "vwap_diff": weighted_vwap_diff,
+                "base_atr_pct": base_atr,
+                "valid_vwap_weight": valid_alloc,
+            }
+        )
 
     return ticks
 
 
 def generate_synthetic_history(bot_state, current_date_str):
     print("  -> Generating Synthetic Forward-Looking Intraday History...")
-    
+
     # 1. Extract tickers
     all_tickers = set()
     symphony_holdings = {}
@@ -466,15 +475,16 @@ def generate_synthetic_history(bot_state, current_date_str):
             symphony_holdings[sym_id] = holdings
             for h in holdings:
                 all_tickers.add(h["ticker"])
-                
+
     if not all_tickers:
         return {}
 
     # Check cache based on date and exact holdings
     import hashlib
+
     holdings_str = json.dumps(symphony_holdings, sort_keys=True)
-    holdings_hash = hashlib.md5(holdings_str.encode('utf-8')).hexdigest()
-    
+    holdings_hash = hashlib.md5(holdings_str.encode("utf-8")).hexdigest()
+
     cache_dir = "cache"
     os.makedirs(cache_dir, exist_ok=True)
     # Cache marker bumped v2 -> v3 -> v4:
@@ -485,8 +495,10 @@ def generate_synthetic_history(bot_state, current_date_str):
     #     replay expectation. Loading it verbatim would feed the autotuner a
     #     degenerate half-window. v4 forces regeneration; stale v3 files are
     #     orphaned on disk (harmless — no matching key).
-    cache_file = os.path.join(cache_dir, f"synthetic_history_v4_{current_date_str}_{holdings_hash}.json")
-    
+    cache_file = os.path.join(
+        cache_dir, f"synthetic_history_v4_{current_date_str}_{holdings_hash}.json"
+    )
+
     if os.path.exists(cache_file):
         print(f"  -> Loading cached synthetic history from {cache_file}...")
         cached = load_cached_history(cache_file)
@@ -497,10 +509,10 @@ def generate_synthetic_history(bot_state, current_date_str):
     tickers_list = list(all_tickers)
     if "SPY" not in tickers_list:
         tickers_list.append("SPY")
-    
+
     # 2. Compute date ranges
     end_date = datetime.strptime(current_date_str, "%Y-%m-%d")
-    
+
     # Use UTC to prevent local timezone (e.g. Japan) from messing up the 'today' comparison.
     now_utc = datetime.now(timezone.utc)
     # If the requested end_date is today (or in the future) relative to US market
@@ -519,7 +531,7 @@ def generate_synthetic_history(bot_state, current_date_str):
     window_start = compute_fetch_window_start(end_date)
     start_1m_str = window_start.strftime("%Y-%m-%dT00:00:00Z")
     end_date_str_utc = end_date.strftime("%Y-%m-%dT23:59:59Z")
-    
+
     # 3. Fetch Data
     # Route the daily fetch through the bounded widen+refetch helper: if the
     # first generously-padded window returns fewer than the required trading
@@ -536,7 +548,7 @@ def generate_synthetic_history(bot_state, current_date_str):
 
     daily_bars_raw = fetch_daily_bars_with_floor(_fetch_daily, end_date)
     intraday_bars_raw = fetch_bars(list(all_tickers), start_1m_str, end_date_str_utc, "1Min")
-    
+
     # 4. Process Daily Bars into historical_data format
     historical_daily = {}
     for sym, bars in daily_bars_raw.items():
@@ -552,9 +564,9 @@ def generate_synthetic_history(bot_state, current_date_str):
                     "daily_ret": (curr_close - prev_close) / prev_close,
                     "high": bars[i]["h"],
                     "low": bars[i]["l"],
-                    "close": curr_close
+                    "close": curr_close,
                 }
-                
+
     # The daily / MC-warmup floor is enforced upstream by
     # fetch_daily_bars_with_floor — it widens + refetches and hard-fails if the
     # returned daily bars stay short of _REQUIRED_FETCH_TRADING_DAYS — so by
@@ -565,19 +577,22 @@ def generate_synthetic_history(bot_state, current_date_str):
     intraday_by_date = {}
     for sym, bars in intraday_bars_raw.items():
         df = pd.DataFrame(bars)
-        if df.empty: continue
-        df['date'] = df['t'].str[:10]
-        for date_str, group in df.groupby('date'):
+        if df.empty:
+            continue
+        df["date"] = df["t"].str[:10]
+        for date_str, group in df.groupby("date"):
             if date_str not in intraday_by_date:
                 intraday_by_date[date_str] = {}
-            
+
             group = group.copy()
-            group['pv'] = group['c'] * group['v']
-            group['cum_pv'] = group['pv'].cumsum()
-            group['cum_v'] = group['v'].cumsum()
-            group['vwap'] = np.where(group['cum_v'] > 0, group['cum_pv'] / group['cum_v'], group['c'])
-            
-            intraday_by_date[date_str][sym] = group[['t', 'c', 'vwap']].to_dict(orient='records')
+            group["pv"] = group["c"] * group["v"]
+            group["cum_pv"] = group["pv"].cumsum()
+            group["cum_v"] = group["v"].cumsum()
+            group["vwap"] = np.where(
+                group["cum_v"] > 0, group["cum_pv"] / group["cum_v"], group["c"]
+            )
+
+            intraday_by_date[date_str][sym] = group[["t", "c", "vwap"]].to_dict(orient="records")
 
     # Last _WALK_FORWARD_TRADING_DAYS trading days — the autotuner replay slice.
     intraday_dates = sorted(list(intraday_by_date.keys()))[-_WALK_FORWARD_TRADING_DAYS:]
@@ -604,29 +619,32 @@ def generate_synthetic_history(bot_state, current_date_str):
         )
 
     history_125d = {sym_id: {} for sym_id in symphony_holdings.keys()}
-    
+
     def process_day(date_str):
         day_history = {}
         # Get historical_data UP TO the day before
         prev_dates = [d for d in daily_dates if d < date_str]
-        if not prev_dates: return date_str, {}
-        
+        if not prev_dates:
+            return date_str, {}
+
         hist_data_up_to_yesterday = {d: historical_daily[d] for d in prev_dates}
-        
+
         yesterday_date = prev_dates[-1]
-        yesterday_closes = {sym: historical_daily[yesterday_date][sym]["c"] 
-                          for sym in historical_daily[yesterday_date]}
-                          
+        yesterday_closes = {
+            sym: historical_daily[yesterday_date][sym]["c"]
+            for sym in historical_daily[yesterday_date]
+        }
+
         spy_today = 0.0
         if "SPY" in historical_daily.get(date_str, {}):
             spy_today = historical_daily[date_str]["SPY"]["daily_ret"] * 100.0
-            
+
         for sym_id, holdings in symphony_holdings.items():
             ref_sym = holdings[0]["ticker"] if holdings else None
             if not ref_sym or ref_sym not in intraday_by_date[date_str]:
                 continue
 
-            timestamps = [row['t'] for row in intraday_by_date[date_str][ref_sym]]
+            timestamps = [row["t"] for row in intraday_by_date[date_str][ref_sym]]
 
             # Delegate per-symphony tick building to the module-level,
             # API-free per-day builder.
@@ -643,19 +661,21 @@ def generate_synthetic_history(bot_state, current_date_str):
 
         return date_str, day_history
 
-    print(f"  -> Simulating {len(intraday_dates)} days of Intraday Tick Data using Parallel Processing...")
+    print(
+        f"  -> Simulating {len(intraday_dates)} days of Intraday Tick Data using Parallel Processing..."
+    )
     # n_jobs is env-bounded (ALPHABOT_MAX_JOBS, default -1 = all cores in prod;
     # set to 1 by tests/conftest.py to neutralize the xdist x cores fan-out that
     # crashed the host — see _resolve_replay_n_jobs). Reproducibility-neutral.
     results = Parallel(n_jobs=_resolve_replay_n_jobs())(
         delayed(process_day)(d) for d in intraday_dates
     )
-    
+
     for date_str, day_history in results:
         for sym_id, ticks in day_history.items():
             if ticks:
                 history_125d[sym_id][date_str] = ticks
-                
+
     try:
         with open(cache_file, "w") as f:
             json.dump(history_125d, f)
@@ -667,5 +687,5 @@ def generate_synthetic_history(bot_state, current_date_str):
             cache_file,
             e,
         )
-                
+
     return history_125d

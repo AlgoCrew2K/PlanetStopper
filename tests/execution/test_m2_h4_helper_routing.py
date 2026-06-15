@@ -52,9 +52,9 @@ def test_math_engine_has_no_raw_cvar_diagnostics_insert():
     """
     source = _MATH_ENGINE_PATH.read_text(encoding="utf-8")
     # Case-insensitive check for the INSERT INTO cvar_diagnostics pattern
-    assert "cvar_diagnostics" not in source.lower().replace(
-        "cvarassessment", ""
-    ).replace("cvar_pct", "").replace("cvar_n_tail", ""), (
+    assert "cvar_diagnostics" not in source.lower().replace("cvarassessment", "").replace(
+        "cvar_pct", ""
+    ).replace("cvar_n_tail", ""), (
         "math_engine.py contains a cvar_diagnostics reference that looks like "
         "a direct write. All cvar_diagnostics writes must go through "
         "database.record_cvar_diagnostic. "
@@ -109,9 +109,8 @@ def test_alpha_bot_execution_has_no_raw_cvar_diagnostics_insert():
 
     # Look for INSERT ... cvar_diagnostics patterns (SQL strings)
     import re
-    raw_insert_pattern = re.compile(
-        r"INSERT\s+INTO\s+cvar_diagnostics", re.IGNORECASE
-    )
+
+    raw_insert_pattern = re.compile(r"INSERT\s+INTO\s+cvar_diagnostics", re.IGNORECASE)
     matches = raw_insert_pattern.findall(source)
 
     assert not matches, (

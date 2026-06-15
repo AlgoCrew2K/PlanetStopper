@@ -84,9 +84,7 @@ from ai_advisor import ConfigSuggestionsResponse
 # Fixture loading
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "ai_advisor"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "ai_advisor"
 
 
 def _load_fixture(name: str) -> dict:
@@ -151,9 +149,7 @@ class TestAC1AssessmentAlwaysPresent:
     the route must surface it rather than silently discarding it.
     """
 
-    def test_suggest_returns_assessment_key_alongside_suggestions(
-        self, client, monkeypatch
-    ):
+    def test_suggest_returns_assessment_key_alongside_suggestions(self, client, monkeypatch):
         """Route-level: ``assessment`` key must be present in the JSON response.
 
         Mocks BOTH app_module.database (the route's DB binding) AND
@@ -566,7 +562,13 @@ class TestAC3AssessmentBuilderExists:
         assert isinstance(result, dict), (
             f"build_assessment_from_context must return a dict, got {type(result).__name__!r}"
         )
-        for field in ("baseline_decision", "oos_alpha", "fallback_oos_alpha", "default_oos_alpha", "summary"):
+        for field in (
+            "baseline_decision",
+            "oos_alpha",
+            "fallback_oos_alpha",
+            "default_oos_alpha",
+            "summary",
+        ):
             assert field in result, (
                 f"build_assessment_from_context must return a dict with key {field!r}; "
                 f"got keys: {sorted(result.keys())!r}"
@@ -584,7 +586,9 @@ class TestAC3AssessmentBuilderExists:
             "build_assessment_from_context",
             getattr(ai_advisor, "_build_assessment_from_context", None),
         )
-        assert fn is not None, "function not found — see test_build_assessment_from_context_function_exists_in_ai_advisor"
+        assert fn is not None, (
+            "function not found — see test_build_assessment_from_context_function_exists_in_ai_advisor"
+        )
 
         # Context A: adopted symphony with finite oos_alpha from the adopted fixture.
         context_a = {
@@ -624,9 +628,7 @@ class TestAC3AssessmentBuilderExists:
         assert result_b["baseline_decision"] == _FIXTURE_REVERTED["baseline_decision"]
 
         # oos_alpha must be passed through.
-        assert result_a["oos_alpha"] == pytest.approx(
-            _FIXTURE_ADOPTED["oos_alpha"], abs=1e-9
-        ), (
+        assert result_a["oos_alpha"] == pytest.approx(_FIXTURE_ADOPTED["oos_alpha"], abs=1e-9), (
             # approx tolerance: 1e-9 — float round-trip through JSON, no meaningful diff
             "build_assessment_from_context must pass oos_alpha from optuna_evidence"
         )
@@ -655,9 +657,7 @@ class TestAC4JSRendersAssessment:
        assessment fields rather than the current generic string.
     """
 
-    _JS_PATH = (
-        pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js"
-    )
+    _JS_PATH = pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js"
 
     def test_ai_advisor_js_passes_node_check(self):
         """``node --check static/ai_advisor.js`` must exit 0 (no syntax errors).
@@ -958,7 +958,7 @@ class TestAC6SecurityContracts:
         raw = json.dumps(body).lower()
 
         # Fragments that indicate an internal path was leaked.
-        for bad_fragment in ("traceback", "file \"", "users\\paulm", "/home/", "c:\\"):
+        for bad_fragment in ("traceback", 'file "', "users\\paulm", "/home/", "c:\\"):
             assert bad_fragment not in raw, (
                 f"D-1 security contract: the response must not contain internal path "
                 f"fragment {bad_fragment!r}. Got response: {json.dumps(body)!r}"
@@ -995,9 +995,7 @@ class TestB1RouteDbMockHermeticity:
     The fix removes the isinstance guard from app.py that masked the issue.
     """
 
-    def test_route_level_db_mock_covers_ai_advisor_database_binding(
-        self, client, monkeypatch
-    ):
+    def test_route_level_db_mock_covers_ai_advisor_database_binding(self, client, monkeypatch):
         """Proves that ``ai_advisor.database.get_latest_autotune_run`` is actually
         exercised under the route test mock setup AND that the assessment is non-empty.
 

@@ -102,9 +102,7 @@ def test_all_calls_have_base_dir_kwarg(target_calls):
         base_dir_kwargs = [kw for kw in call_node.keywords if kw.arg == _EXPECTED_KWARG]
 
         if not base_dir_kwargs:
-            violations.append(
-                f"app.py:{lineno} — call is missing `base_dir` keyword argument"
-            )
+            violations.append(f"app.py:{lineno} — call is missing `base_dir` keyword argument")
             continue
 
         kw = base_dir_kwargs[0]

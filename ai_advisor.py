@@ -336,18 +336,12 @@ _FRED_SERIES: dict[str, tuple[str, str]] = {
         "https://fred.stlouisfed.org/series/FEDFUNDS",
     ),
 }
-_FRED_OBSERVATIONS_URL: str = (
-    "https://api.stlouisfed.org/fred/series/observations"
-)
+_FRED_OBSERVATIONS_URL: str = "https://api.stlouisfed.org/fred/series/observations"
 
 # SEC EDGAR ticker→CIK lookup (company tickers JSON) — no auth required.
 _SEC_TICKERS_URL: str = "https://data.sec.gov/submissions/{cik_padded}.json"
-_SEC_COMPANYFACTS_URL: str = (
-    "https://data.sec.gov/api/xbrl/companyfacts/{cik_padded}.json"
-)
-_SEC_TICKERS_JSON_URL: str = (
-    "https://data.sec.gov/files/company_tickers.json"
-)
+_SEC_COMPANYFACTS_URL: str = "https://data.sec.gov/api/xbrl/companyfacts/{cik_padded}.json"
+_SEC_TICKERS_JSON_URL: str = "https://data.sec.gov/files/company_tickers.json"
 
 # GAAP concepts extracted for the fundamentals payload (concept → label).
 _SEC_KEY_CONCEPTS: dict[str, str] = {
@@ -497,12 +491,14 @@ def _build_sentiment_section(_data: object = None) -> dict:
         url = article.get("url", "")
         title = article.get("title", "")
         seendate = article.get("seendate", "")
-        citation = build_citation({
-            "title": title,
-            "url": url,
-            "published": seendate,
-            "lens": _lens,
-        })
+        citation = build_citation(
+            {
+                "title": title,
+                "url": url,
+                "published": seendate,
+                "lens": _lens,
+            }
+        )
         if citation is not None:
             sources.append(citation)
 
@@ -512,7 +508,7 @@ def _build_sentiment_section(_data: object = None) -> dict:
         "available": True,
         "payload": {
             "article_count": len(articles),
-            "tone_summary": None,   # aggregate tone from GDELT tone-endpoint; not fetched this cycle
+            "tone_summary": None,  # aggregate tone from GDELT tone-endpoint; not fetched this cycle
             "tone_score": None,
         },
         "sources": sources,
@@ -541,6 +537,7 @@ def _build_derivatives_section(_data: object = None) -> dict:
     """
     _lens = "derivatives"
     from advisors import lens_options_proxy as _proxy_mod  # CC-2: lazy import
+
     result = _proxy_mod._fetch_options_proxy()
 
     if not result.get("available"):
@@ -553,12 +550,14 @@ def _build_derivatives_section(_data: object = None) -> dict:
         }
 
     as_of = result.get("as_of_date", "")
-    citation = build_citation({
-        "title": "VIXCLS / VXVCLS (CBOE Vol Index)",
-        "url": "https://fred.stlouisfed.org/series/VIXCLS",
-        "published": as_of,
-        "lens": _lens,
-    })
+    citation = build_citation(
+        {
+            "title": "VIXCLS / VXVCLS (CBOE Vol Index)",
+            "url": "https://fred.stlouisfed.org/series/VIXCLS",
+            "published": as_of,
+            "lens": _lens,
+        }
+    )
     sources = [citation] if citation is not None else []
 
     logger.info(
@@ -648,12 +647,14 @@ def _build_macro_section(_data: object = None) -> dict:
             }
             # Build one clickable source per series using the release page URL.
             published = latest.get("date", obs_data.get("realtime_end", ""))
-            citation = build_citation({
-                "title": label,
-                "url": release_url,
-                "published": published,
-                "lens": _lens,
-            })
+            citation = build_citation(
+                {
+                    "title": label,
+                    "url": release_url,
+                    "published": published,
+                    "lens": _lens,
+                }
+            )
             if citation is not None:
                 sources.append(citation)
 
@@ -862,12 +863,14 @@ def _build_fundamentals_section(_data: object = None, *, ticker: str | None = No
                     f"?action=getcompany&CIK={cik_padded}&type=10-K&dateb=&owner=include&count=10"
                 )
                 filed_date = latest_entry.get("filed", "")
-                citation = build_citation({
-                    "title": f"{entity_name} {latest_entry.get('form', 'Filing')} ({filed_date})",
-                    "url": filing_url,
-                    "published": filed_date,
-                    "lens": _lens,
-                })
+                citation = build_citation(
+                    {
+                        "title": f"{entity_name} {latest_entry.get('form', 'Filing')} ({filed_date})",
+                        "url": filing_url,
+                        "published": filed_date,
+                        "lens": _lens,
+                    }
+                )
                 if citation is not None:
                     sources.append(citation)
             break  # one unit type per concept is sufficient
@@ -1346,8 +1349,7 @@ def request_suggestions(
         # Full detail is logged server-side via exc_info=True; the UI sees only
         # the error class name, mirroring the client-construction failure path.
         msg = (
-            f"Claude advisor request failed ({type(exc).__name__}). "
-            "Try again, or decide manually."
+            f"Claude advisor request failed ({type(exc).__name__}). Try again, or decide manually."
         )
         logger.warning(
             "ai_advisor: messages.parse failed: %s: %s",

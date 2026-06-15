@@ -53,7 +53,7 @@ import math_engine
 
 
 _SEED = 20260608  # fixed seed -> reproducible bootstrap CDF estimate
-_PATHS = 5000     # large path count -> faithful empirical CDF
+_PATHS = 5000  # large path count -> faithful empirical CDF
 
 
 def _build_analog_pool() -> dict:

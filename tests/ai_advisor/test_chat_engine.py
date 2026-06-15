@@ -138,6 +138,7 @@ _GATE_VERDICT_ARTIFACT = {
 # Never embeds trade directives.
 # ---------------------------------------------------------------------------
 
+
 def _make_fake_llm_response(
     text: str = "This swap reduces fleet correlation by replacing the incumbent with the candidate asset.",
 ):
@@ -305,14 +306,14 @@ def test_advisor_chat_does_not_import_alpha_bot_execution():
     path — an architecture violation.
     """
     saved = {
-        name: sys.modules.get(name)
-        for name in ("advisors.advisor_chat", "alpha_bot_execution")
+        name: sys.modules.get(name) for name in ("advisors.advisor_chat", "alpha_bot_execution")
     }
     try:
         sys.modules.pop("advisors.advisor_chat", None)
         pre_import_keys = set(sys.modules.keys())
 
         import importlib
+
         importlib.import_module("advisors.advisor_chat")
 
         post_import_keys = set(sys.modules.keys())
@@ -337,11 +338,7 @@ def test_advisor_chat_source_does_not_reference_accept_route():
     writes a config suggestion to live state.  Any advisor_chat that references
     this route has a potential write path to the execution surface.
     """
-    advisor_chat_path = (
-        pathlib.Path(__file__).parent.parent.parent
-        / "advisors"
-        / "advisor_chat.py"
-    )
+    advisor_chat_path = pathlib.Path(__file__).parent.parent.parent / "advisors" / "advisor_chat.py"
     if not advisor_chat_path.exists():
         pytest.skip("advisor_chat.py not yet created — GREEN creates it")
 
@@ -363,11 +360,7 @@ def test_advisor_chat_source_does_not_reference_composer_write_endpoints():
     AC-X1: only reads (GET /score) + stateless POST /api/v0.1/backtest are allowed.
     The Composer write endpoints are: POST/PUT /symphonies, /copy, /deploy, go-to-cash.
     """
-    advisor_chat_path = (
-        pathlib.Path(__file__).parent.parent.parent
-        / "advisors"
-        / "advisor_chat.py"
-    )
+    advisor_chat_path = pathlib.Path(__file__).parent.parent.parent / "advisors" / "advisor_chat.py"
     if not advisor_chat_path.exists():
         pytest.skip("advisor_chat.py not yet created — GREEN creates it")
 
@@ -393,13 +386,9 @@ def test_alpha_bot_execution_does_not_import_advisor_chat():
     import of advisor_chat.  The live 1-minute engine must remain uncontaminated
     by advisor modules.
     """
-    abe_path = (
-        pathlib.Path(__file__).parent.parent.parent
-        / "alpha_bot_execution.py"
-    )
+    abe_path = pathlib.Path(__file__).parent.parent.parent / "alpha_bot_execution.py"
     assert abe_path.exists(), (
-        f"alpha_bot_execution.py not found at {abe_path} — "
-        "this is a project-critical file"
+        f"alpha_bot_execution.py not found at {abe_path} — this is a project-critical file"
     )
 
     source = abe_path.read_text(encoding="utf-8")
@@ -436,9 +425,7 @@ def test_explain_artifact_returns_error_when_api_key_missing():
             artifact=_ASSET_SWAP_ARTIFACT,
         )
 
-    assert result.answer is None, (
-        "When API key is missing, ChatResponse.answer must be None"
-    )
+    assert result.answer is None, "When API key is missing, ChatResponse.answer must be None"
     assert isinstance(result.error, str) and result.error, (
         "When API key is missing, ChatResponse.error must be a non-empty string"
     )
@@ -496,9 +483,7 @@ def test_explain_artifact_returns_error_on_llm_api_error():
             artifact=_GATE_VERDICT_ARTIFACT,
         )
 
-    assert result.answer is None, (
-        "On LLM API error, ChatResponse.answer must be None"
-    )
+    assert result.answer is None, "On LLM API error, ChatResponse.answer must be None"
     assert isinstance(result.error, str) and result.error, (
         "On LLM API error, ChatResponse.error must be a non-empty string"
     )
@@ -664,12 +649,20 @@ def test_chat_response_has_no_trade_action_fields():
         field_names = set(cls.model_fields.keys())
     else:
         import inspect
+
         sig = inspect.signature(cls.__init__)
         field_names = set(sig.parameters.keys()) - {"self"}
 
     forbidden_fields = {
-        "apply_trade", "trade_directive", "action", "config_write",
-        "accept", "deploy", "mutation", "trade", "execute",
+        "apply_trade",
+        "trade_directive",
+        "action",
+        "config_write",
+        "accept",
+        "deploy",
+        "mutation",
+        "trade",
+        "execute",
     }
     violations = field_names & forbidden_fields
     assert not violations, (
@@ -700,6 +693,7 @@ def test_chat_response_has_required_explain_only_fields():
         field_names = set(cls.model_fields.keys())
     else:
         import inspect
+
         sig = inspect.signature(cls.__init__)
         field_names = set(sig.parameters.keys()) - {"self"}
 
@@ -762,8 +756,7 @@ def test_explain_artifact_error_starts_with_unavailable_prefix_on_no_key():
     assert result.answer is None
     prefix = getattr(ac, "CHAT_UNAVAILABLE_PREFIX", "chat unavailable")
     assert result.error.lower().startswith(prefix.lower()), (
-        f"Error message must start with CHAT_UNAVAILABLE_PREFIX={prefix!r}. "
-        f"Got: {result.error!r}"
+        f"Error message must start with CHAT_UNAVAILABLE_PREFIX={prefix!r}. Got: {result.error!r}"
     )
 
 
@@ -782,10 +775,7 @@ def test_app_py_chat_route_does_not_call_accept_function():
     This is a source-inspection test.  Once GREEN adds a chat route, this test
     verifies the route handler does not call mutation functions.
     """
-    app_path = (
-        pathlib.Path(__file__).parent.parent.parent
-        / "app.py"
-    )
+    app_path = pathlib.Path(__file__).parent.parent.parent / "app.py"
     assert app_path.exists(), f"app.py not found at {app_path}"
 
     source = app_path.read_text(encoding="utf-8")
@@ -892,16 +882,13 @@ def test_m5_fixture_is_valid_and_has_required_keys(fixture):
         "advisory_only_persistence_contract",
     }
     missing = required_keys - set(fixture.keys())
-    assert not missing, (
-        f"M5 chat fixture is missing required top-level keys: {sorted(missing)}."
-    )
+    assert not missing, f"M5 chat fixture is missing required top-level keys: {sorted(missing)}."
 
 
 def test_m5_fixture_provenance_is_schema_derived(fixture):
     """The fixture provenance must be 'schema-derived' (not producer-computed)."""
     assert fixture.get("_fixture_provenance") == "schema-derived", (
-        f"Fixture provenance must be 'schema-derived', "
-        f"got {fixture.get('_fixture_provenance')!r}."
+        f"Fixture provenance must be 'schema-derived', got {fixture.get('_fixture_provenance')!r}."
     )
 
 

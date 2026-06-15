@@ -123,12 +123,9 @@ class TestGetSymphonyMaxDrawdownUsesPositiveMagnitude:
         result = get_symphony_max_drawdown(sym_dict, bot_state_entry=None)
         assert result["if_held"] is not None
         assert result["if_held"] > 0.0, (
-            "get_symphony_max_drawdown is operator-facing — D8 canonical is "
-            "POSITIVE magnitude"
+            "get_symphony_max_drawdown is operator-facing — D8 canonical is POSITIVE magnitude"
         )
-        assert result["if_held"] == pytest.approx(
-            _DRAWDOWN_MAGNITUDE * 100.0, rel=1e-9
-        )
+        assert result["if_held"] == pytest.approx(_DRAWDOWN_MAGNITUDE * 100.0, rel=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +165,9 @@ class TestPortfolioStripDrawdownSignIsCacheWarmthInvariant:
             "abs()-convert it at the app.py boundary."
         )
         # Magnitude must be preserved by the abs() conversion.
-        assert mdd["if_held"] == pytest.approx(
-            abs(quantstats_negative_mdd_pct), rel=1e-9
-        ), "abs() conversion must preserve the magnitude, only drop the sign"
+        assert mdd["if_held"] == pytest.approx(abs(quantstats_negative_mdd_pct), rel=1e-9), (
+            "abs() conversion must preserve the magnitude, only drop the sign"
+        )
 
     def test_cold_cache_portfolio_mdd_if_held_is_positive_magnitude(self):
         """COLD cache: if_held flows through analytics.get_portfolio_max_drawdown
@@ -251,4 +248,3 @@ class TestDrawdownConventionIsDocumentedAndCrossReferenced:
             "the D8 abs() conversion must be documented with a comment naming "
             "the canonical positive-magnitude drawdown convention"
         )
-

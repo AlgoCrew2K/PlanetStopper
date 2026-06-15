@@ -54,7 +54,9 @@ def _make_fake_backtest_result(n_days: int = 100, base_return: float = 0.001):
     for i in range(n_days):
         returns[d.isoformat()] = base_return * (1 + (i % 5) * 0.1 - 0.2)
         d += timedelta(days=1)
-    return BacktestResult(stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns=returns)
+    return BacktestResult(
+        stats={"sharpe": 0.5, "cagr": 0.08}, data_warnings=[], daily_returns=returns
+    )
 
 
 def _make_error_backtest_result(reason: str = "network timeout"):
@@ -90,6 +92,7 @@ def _make_community_result(n_candidates: int = 2, *, available: bool = True) -> 
             "daily",
             [symphony_schema.make_weight_equal([symphony_schema.make_asset(t)])],
         )
+
         # Composition hash mirrors community_strats._composition_hash logic
         def _strip_ids(obj):
             if isinstance(obj, dict):
@@ -99,17 +102,20 @@ def _make_community_result(n_candidates: int = 2, *, available: bool = True) -> 
             return obj
 
         import hashlib
+
         canonical = json.dumps(_strip_ids(tree), sort_keys=True, separators=(",", ":"))
         comp_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-        candidates.append({
-            "sid": f"sid-{i:04d}",
-            "name": f"Community Strat {i}",
-            "tree": tree,
-            "tickers": [t],
-            "oos_metrics": {"sharpe": 0.8 + i * 0.1},
-            "composition_hash": comp_hash,
-        })
+        candidates.append(
+            {
+                "sid": f"sid-{i:04d}",
+                "name": f"Community Strat {i}",
+                "tree": tree,
+                "tickers": [t],
+                "oos_metrics": {"sharpe": 0.8 + i * 0.1},
+                "composition_hash": comp_hash,
+            }
+        )
 
     return {
         "available": True,
@@ -262,8 +268,7 @@ class TestCommunityAdapterMapping:
         source_tree = result_doc["candidates"][0]["tree"]
         out = sbe.community_candidate_infos(result_doc, max_candidates=10)
         assert out[0].tree == source_tree, (
-            "tree must be carried through unchanged; "
-            "deepcopy is fine but structure must match"
+            "tree must be carried through unchanged; deepcopy is fine but structure must match"
         )
 
     def test_adapter_params_contains_sid(self, sbe):
@@ -281,9 +286,7 @@ class TestCommunityAdapterMapping:
         result_doc = _make_community_result(n_candidates=1)
         name = result_doc["candidates"][0]["name"]
         out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert "name" in out[0].params, (
-            "params must contain key 'name'"
-        )
+        assert "name" in out[0].params, "params must contain key 'name'"
         assert out[0].params["name"] == name
 
     def test_adapter_params_contains_composition_hash(self, sbe):
@@ -291,9 +294,7 @@ class TestCommunityAdapterMapping:
         result_doc = _make_community_result(n_candidates=1)
         comp_hash = result_doc["candidates"][0]["composition_hash"]
         out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert "composition_hash" in out[0].params, (
-            "params must contain key 'composition_hash'"
-        )
+        assert "composition_hash" in out[0].params, "params must contain key 'composition_hash'"
         assert out[0].params["composition_hash"] == comp_hash
 
     def test_adapter_metrics_empty_dict_pre_backtest(self, sbe):
@@ -316,9 +317,7 @@ class TestCommunityAdapterMapping:
         n = 3
         result_doc = _make_community_result(n_candidates=n)
         out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert len(out) == n, (
-            f"Expected {n} CandidateInfo objects; got {len(out)}"
-        )
+        assert len(out) == n, f"Expected {n} CandidateInfo objects; got {len(out)}"
 
 
 class TestCommunityAdapterEmptyAndUnavailable:
@@ -342,9 +341,7 @@ class TestCommunityAdapterEmptyAndUnavailable:
             "source": "captplanet",
         }
         out = sbe.community_candidate_infos(result_doc, max_candidates=10)
-        assert out == [], (
-            "community_candidate_infos must return [] when candidates list is empty"
-        )
+        assert out == [], "community_candidate_infos must return [] when candidates list is empty"
 
 
 class TestCommunityAdapterCap:
@@ -408,7 +405,10 @@ class TestGateReceivesFullBatch:
 
         with (
             patch("advisors.strategy_builder_engine.run_backtest", return_value=fake_result),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", side_effect=_capture_batch),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                side_effect=_capture_batch,
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -448,7 +448,10 @@ class TestGateReceivesFullBatch:
 
         with (
             patch("advisors.strategy_builder_engine.run_backtest", return_value=fake_result),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", side_effect=_capture_batch),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                side_effect=_capture_batch,
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -541,7 +544,10 @@ class TestBacktestFailureIsolation:
 
         with (
             patch("advisors.strategy_builder_engine.run_backtest", side_effect=_selective_backtest),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", side_effect=_capturing_gate),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                side_effect=_capturing_gate,
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -583,8 +589,14 @@ class TestBacktestFailureIsolation:
             return _make_empty_gated_batch()
 
         with (
-            patch("advisors.strategy_builder_engine.run_backtest", side_effect=RuntimeError("simulated failure")),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", side_effect=_capturing_gate),
+            patch(
+                "advisors.strategy_builder_engine.run_backtest",
+                side_effect=RuntimeError("simulated failure"),
+            ),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                side_effect=_capturing_gate,
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -636,7 +648,10 @@ class TestBacktestFailureIsolation:
 
         with (
             patch("advisors.strategy_builder_engine.run_backtest", side_effect=_selective_run),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", side_effect=_capturing_gate),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                side_effect=_capturing_gate,
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -677,7 +692,11 @@ class TestBacktestFailureIsolation:
                 candidate_id=f"sid-all-fail-{i}",
                 tree=bad_trees[i],
                 template_id="community",
-                params={"sid": f"sid-all-fail-{i}", "name": f"All Fail {i}", "composition_hash": f"hash-{i}"},
+                params={
+                    "sid": f"sid-all-fail-{i}",
+                    "name": f"All Fail {i}",
+                    "composition_hash": f"hash-{i}",
+                },
             )
             for i in range(3)
         ]
@@ -691,7 +710,10 @@ class TestBacktestFailureIsolation:
 
         with (
             patch("advisors.strategy_builder_engine.run_backtest", side_effect=_selective_run),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", return_value=_make_empty_gated_batch()),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                return_value=_make_empty_gated_batch(),
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -754,8 +776,7 @@ class TestCommunityProvenance:
 
         # At least one persisted raw_response must have template_id="community"
         community_persisted = [
-            rr for rr in persisted_raw_responses
-            if rr.get("template_id") == "community"
+            rr for rr in persisted_raw_responses if rr.get("template_id") == "community"
         ]
         assert len(community_persisted) >= 1, (
             "A surviving community candidate must produce a persisted observation with "
@@ -796,8 +817,7 @@ class TestCommunityProvenance:
 
         # Find the community raw_response and check it contains sid provenance
         community_persisted = [
-            rr for rr in persisted_raw_responses
-            if rr.get("template_id") == "community"
+            rr for rr in persisted_raw_responses if rr.get("template_id") == "community"
         ]
         assert len(community_persisted) >= 1
         rr = community_persisted[0]
@@ -826,7 +846,9 @@ class TestCommunityProvenance:
             patch("advisors.strategy_builder_engine.run_backtest", return_value=fake_result),
             patch("advisors.strategy_builder_engine.evaluate_candidate_batch", return_value=gated),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
-            patch("advisors.strategy_builder_engine.database.insert_advisor_observation", mock_persist),
+            patch(
+                "advisors.strategy_builder_engine.database.insert_advisor_observation", mock_persist
+            ),
         ):
             sbe.propose_strategies(
                 objective=sbe.Objective.diversify,
@@ -839,8 +861,7 @@ class TestCommunityProvenance:
 
         # At least one call must have subject_id equal to the community sid
         calls_with_sid = [
-            c for c in mock_persist.call_args_list
-            if c.kwargs.get("subject_id") == expected_sid
+            c for c in mock_persist.call_args_list if c.kwargs.get("subject_id") == expected_sid
         ]
         assert len(calls_with_sid) >= 1, (
             f"insert_advisor_observation must be called with subject_id={expected_sid!r}; "
@@ -859,8 +880,14 @@ class TestNoRegression:
     def test_propose_strategies_accepts_community_candidates_none(self, sbe):
         """AC-6: community_candidates=None must not raise — the signature must accept the kwarg."""
         with (
-            patch("advisors.strategy_builder_engine.run_backtest", return_value=_make_fake_backtest_result()),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", return_value=_make_empty_gated_batch()),
+            patch(
+                "advisors.strategy_builder_engine.run_backtest",
+                return_value=_make_fake_backtest_result(),
+            ),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                return_value=_make_empty_gated_batch(),
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -879,8 +906,14 @@ class TestNoRegression:
     def test_propose_strategies_accepts_community_candidates_empty_list(self, sbe):
         """AC-6: community_candidates=[] must not raise and must behave as template-only."""
         with (
-            patch("advisors.strategy_builder_engine.run_backtest", return_value=_make_fake_backtest_result()),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", return_value=_make_empty_gated_batch()),
+            patch(
+                "advisors.strategy_builder_engine.run_backtest",
+                return_value=_make_fake_backtest_result(),
+            ),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                return_value=_make_empty_gated_batch(),
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -916,7 +949,10 @@ class TestNoRegression:
 
         with (
             patch("advisors.strategy_builder_engine.run_backtest", return_value=fake_result),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", side_effect=_capture_for_none),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                side_effect=_capture_for_none,
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -930,7 +966,10 @@ class TestNoRegression:
 
         with (
             patch("advisors.strategy_builder_engine.run_backtest", return_value=fake_result),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", side_effect=_capture_for_empty),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                side_effect=_capture_for_empty,
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -1004,8 +1043,14 @@ class TestAdvisorySafetyAndNeverRaises:
         community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
 
         with (
-            patch("advisors.strategy_builder_engine.run_backtest", side_effect=Exception("total failure")),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", return_value=_make_empty_gated_batch()),
+            patch(
+                "advisors.strategy_builder_engine.run_backtest",
+                side_effect=Exception("total failure"),
+            ),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                return_value=_make_empty_gated_batch(),
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -1030,7 +1075,9 @@ class TestAdvisorySafetyAndNeverRaises:
         community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
 
         with (
-            patch("advisors.strategy_builder_engine.run_backtest", side_effect=RuntimeError("boom")),
+            patch(
+                "advisors.strategy_builder_engine.run_backtest", side_effect=RuntimeError("boom")
+            ),
             patch(
                 "advisors.strategy_builder_engine.evaluate_candidate_batch",
                 side_effect=RuntimeError("gate also broken"),
@@ -1079,8 +1126,14 @@ class TestAdvisorySafetyAndNeverRaises:
         community_cands = sbe.community_candidate_infos(community_result, max_candidates=10)
 
         with (
-            patch("advisors.strategy_builder_engine.run_backtest", return_value=_make_fake_backtest_result()),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", return_value=_make_empty_gated_batch()),
+            patch(
+                "advisors.strategy_builder_engine.run_backtest",
+                return_value=_make_fake_backtest_result(),
+            ),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                return_value=_make_empty_gated_batch(),
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -1093,11 +1146,15 @@ class TestAdvisorySafetyAndNeverRaises:
                 community_candidates=community_cands,
             )
 
-        required_fields = {"candidates", "gated_batch", "screened_survivors", "observations_written", "error"}
+        required_fields = {
+            "candidates",
+            "gated_batch",
+            "screened_survivors",
+            "observations_written",
+            "error",
+        }
         missing = required_fields - set(dir(run))
-        assert not missing, (
-            f"ProposalRun is missing required fields: {missing}"
-        )
+        assert not missing, f"ProposalRun is missing required fields: {missing}"
 
 
 # ===========================================================================
@@ -1114,6 +1171,7 @@ class TestCapEnforcedInProposeStrategies:
 
         # Build cap+2 community candidates directly (bypass adapter cap by constructing manually)
         from advisors import symphony_schema
+
         extra_candidates = []
         for i in range(cap + 2):
             tree = symphony_schema.make_root(
@@ -1126,7 +1184,11 @@ class TestCapEnforcedInProposeStrategies:
                     candidate_id=f"sid-extra-{i}",
                     tree=tree,
                     template_id="community",
-                    params={"sid": f"sid-extra-{i}", "name": f"Extra {i}", "composition_hash": f"h{i}"},
+                    params={
+                        "sid": f"sid-extra-{i}",
+                        "name": f"Extra {i}",
+                        "composition_hash": f"h{i}",
+                    },
                 )
             )
 
@@ -1140,7 +1202,10 @@ class TestCapEnforcedInProposeStrategies:
 
         with (
             patch("advisors.strategy_builder_engine.run_backtest", return_value=fake_result),
-            patch("advisors.strategy_builder_engine.evaluate_candidate_batch", side_effect=_capturing_gate),
+            patch(
+                "advisors.strategy_builder_engine.evaluate_candidate_batch",
+                side_effect=_capturing_gate,
+            ),
             patch("advisors.strategy_builder_engine._has_composer_key", return_value=True),
             patch("advisors.strategy_builder_engine.database.insert_advisor_observation"),
         ):
@@ -1155,8 +1220,7 @@ class TestCapEnforcedInProposeStrategies:
 
         # Count community-sourced candidates in the gate batch
         community_ids_in_batch = [
-            c.candidate_id for c in captured_batch
-            if c.candidate_id.startswith("sid-extra-")
+            c.candidate_id for c in captured_batch if c.candidate_id.startswith("sid-extra-")
         ]
         assert len(community_ids_in_batch) <= cap, (
             f"propose_strategies must cap community candidates at MAX_COMMUNITY_CANDIDATES_PER_RUN={cap}; "

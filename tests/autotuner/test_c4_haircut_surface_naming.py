@@ -156,8 +156,9 @@ def test_autotune_runs_column_docstring_does_not_misattribute_to_bailey_lopez():
     if "lópez de prado" in lowered or "lopez de prado" in lowered:
         # If the name still appears, it must not be next to the column doc.
         # Narrow check: the autotune_runs column block must not cite it.
-        col_doc_region = src[max(0, src.find("deflated_sharpe")):
-                             src.find("deflated_sharpe") + 600]
+        col_doc_region = src[
+            max(0, src.find("deflated_sharpe")) : src.find("deflated_sharpe") + 600
+        ]
         assert "Prado" not in col_doc_region, (
             "database.py's autotune_runs column documentation still cites "
             "López de Prado — the DSR source. After D3 the stored statistic is "

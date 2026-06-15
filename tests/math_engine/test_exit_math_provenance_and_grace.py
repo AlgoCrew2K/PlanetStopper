@@ -50,6 +50,7 @@ import math_engine
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 except Exception:  # pragma: no cover - zoneinfo always present on 3.12
     _ET = timezone(timedelta(hours=-4))
@@ -142,9 +143,7 @@ def test_vwap_system_a_provenance_note_anchored_to_the_gate_quantity() -> None:
     declaration) and the gate-quantity reference may sit a few lines below
     the comment header.
     """
-    src_lines = inspect.getsource(
-        math_engine.compute_vwap_breakdown_update
-    ).splitlines()
+    src_lines = inspect.getsource(math_engine.compute_vwap_breakdown_update).splitlines()
     closure_markers = (
         "leung",
         "peskir",
@@ -167,7 +166,7 @@ def test_vwap_system_a_provenance_note_anchored_to_the_gate_quantity() -> None:
     near = False
     for i, line in enumerate(src_lines):
         if is_closure_citation(line):
-            window = src_lines[max(0, i - 6): i + 7]
+            window = src_lines[max(0, i - 6) : i + 7]
             if any(is_gate_ref(w) for w in window):
                 near = True
                 break
@@ -252,8 +251,7 @@ def test_grace_window_utc_caller_cannot_shift_the_window() -> None:
     )
     # And it must be the correct answer: 10:35 ET is inside [10:30, 10:45).
     assert result_et is True, (
-        f"10:35 ET is inside the [10:30, 10:30+15min) grace window; "
-        f"expected True, got {result_et}."
+        f"10:35 ET is inside the [10:30, 10:30+15min) grace window; expected True, got {result_et}."
     )
 
 
@@ -275,15 +273,10 @@ def test_grace_window_dead_local_exec_start_removed() -> None:
 
     target_fn: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "is_in_open_window_grace"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "is_in_open_window_grace":
             target_fn = node
             break
-    assert target_fn is not None, (
-        "is_in_open_window_grace not found in math_engine.py"
-    )
+    assert target_fn is not None, "is_in_open_window_grace not found in math_engine.py"
 
     dead_local_assigns: list[int] = []
     for sub in ast.walk(target_fn):
@@ -316,6 +309,4 @@ def test_grace_window_is_pure_and_deterministic() -> None:
         f"is_in_open_window_grace is non-deterministic: {r1} vs {r2} for "
         f"identical inputs. It must stay pure after the tz fix."
     )
-    assert r1 is True, (
-        f"10:40 ET is inside [10:30, 10:45) grace; expected True, got {r1}."
-    )
+    assert r1 is True, f"10:40 ET is inside [10:30, 10:45) grace; expected True, got {r1}."

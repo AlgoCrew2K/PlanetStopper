@@ -25,6 +25,7 @@ Fixtures:
   tests/fixtures/math/bhy_byte_identical_pin.json — N=10 p-values, expected
     p_adj computed independently of autotuner.py.
 """
+
 from __future__ import annotations
 
 import ast
@@ -42,6 +43,7 @@ _BHY_FIXTURE = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "bhy_byte_identi
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -270,6 +272,7 @@ def test_haircut_select_accepts_tstat_fn_parameter():
     # Call with CRRA-EU tstat_fn -- must not raise.
     # Supply dummy gamma=2.0; the function will compute via compute_crra_eu_tstat.
     import functools
+
     crra_tstat_fn = functools.partial(autotuner.compute_crra_eu_tstat)
 
     winner, p_adj, tstat = autotuner._haircut_select(trials, tstat_fn=crra_tstat_fn)
@@ -284,12 +287,11 @@ def test_haircut_select_accepts_tstat_fn_parameter():
         # raw daily_returns, to match the corrected behavior.
         # Note: compute_crra_utility lives in math_engine, not autotuner.
         import math_engine as _math_engine
+
         _gamma = 2.0
         u_series = [
             _math_engine.compute_crra_utility(
-                autotuner.derive_floored_wealth_argument(
-                    r / autotuner.RETURN_PCT_TO_FRACTION
-                ),
+                autotuner.derive_floored_wealth_argument(r / autotuner.RETURN_PCT_TO_FRACTION),
                 _gamma,
             )
             for r in winner.user_attrs["daily_returns"]
@@ -353,12 +355,13 @@ def test_sortino_sentinel_filter_retains_under_both_tstat_fns():
 
     trials = [
         _make_trial(sentinel, sentinel_returns),  # must be filtered
-        _make_trial(0.5, good_returns),            # legitimate winner candidate
+        _make_trial(0.5, good_returns),  # legitimate winner candidate
     ]
 
     for fn_choice, label in [(None, "default (Sortino)"), ("crra", "CRRA-EU")]:
         if fn_choice == "crra":
             import functools
+
             tstat_fn = functools.partial(autotuner.compute_crra_eu_tstat)
             winner, _, _ = autotuner._haircut_select(trials, tstat_fn=tstat_fn)
         else:
@@ -386,12 +389,11 @@ def test_haircut_select_tstat_fn_default_is_sortino():
     existing Sortino-objective autotune runs.
     """
     import inspect
+
     autotuner = _import_autotuner()
 
     sig = inspect.signature(autotuner._haircut_select)
-    assert "tstat_fn" in sig.parameters, (
-        "_haircut_select must have a tstat_fn parameter."
-    )
+    assert "tstat_fn" in sig.parameters, "_haircut_select must have a tstat_fn parameter."
 
     default = sig.parameters["tstat_fn"].default
     # The default must be compute_sortino_tstat (the Sortino-branch function).

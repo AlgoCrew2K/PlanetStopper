@@ -70,6 +70,7 @@ _TOL = 1e-9
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -160,8 +161,7 @@ def test_benjamini_hochberg_adjust_applies_the_bhy_dependency_factor():
     result = autotuner.benjamini_hochberg_adjust(list(raw_p))
 
     assert len(result) == len(bhy_expected), (
-        f"benjamini_hochberg_adjust returned {len(result)} values for a "
-        f"{len(raw_p)}-element input."
+        f"benjamini_hochberg_adjust returned {len(result)} values for a {len(raw_p)}-element input."
     )
     for i, (got, bhy_exp, bh_exp) in enumerate(zip(result, bhy_expected, bh_1995)):
         assert got == pytest.approx(bhy_exp, abs=_TOL), (
@@ -182,11 +182,14 @@ def test_benjamini_hochberg_adjust_applies_the_bhy_dependency_factor():
         )
 
 
-@pytest.mark.parametrize("scenario_key", [
-    "mixed_one_clear_winner",
-    "noise_only_none_clears",
-    "one_signal_among_noise",
-])
+@pytest.mark.parametrize(
+    "scenario_key",
+    [
+        "mixed_one_clear_winner",
+        "noise_only_none_clears",
+        "one_signal_among_noise",
+    ],
+)
 def test_benjamini_hochberg_adjust_matches_fixture(scenario_key):
     """
     AC-2: benjamini_hochberg_adjust must implement the BHY step-up exactly.
@@ -234,8 +237,11 @@ def test_benjamini_hochberg_adjust_results_are_in_unit_interval():
     """
     autotuner = _import_autotuner()
 
-    for scenario_key in ("mixed_one_clear_winner", "noise_only_none_clears",
-                         "one_signal_among_noise"):
+    for scenario_key in (
+        "mixed_one_clear_winner",
+        "noise_only_none_clears",
+        "one_signal_among_noise",
+    ):
         raw_p = _load_fixture()["scenarios"][scenario_key]["expected"]["raw_p"]
         result = autotuner.benjamini_hochberg_adjust(list(raw_p))
         for i, p in enumerate(result):
@@ -336,6 +342,7 @@ def _synthetic_noise_series(seed: int) -> list[float]:
     threshold for a 6-trial set.
     """
     import numpy as np
+
     rng = np.random.default_rng(seed)
     return list(rng.normal(loc=0.0, scale=0.02, size=30))
 
@@ -356,10 +363,7 @@ def test_haircut_rejects_an_all_noise_trial_set():
 
     # Six pure-noise trials with distinct seeds so the series differ.
     series_per_trial = [_synthetic_noise_series(100 + i) for i in range(6)]
-    t_stats = [
-        autotuner.compute_sortino_tstat(s, seed=i)
-        for i, s in enumerate(series_per_trial)
-    ]
+    t_stats = [autotuner.compute_sortino_tstat(s, seed=i) for i, s in enumerate(series_per_trial)]
     p_values = [autotuner.compute_haircut_pvalue(t) for t in t_stats]
     p_adj = autotuner.benjamini_hochberg_adjust(p_values)
 
@@ -397,10 +401,7 @@ def test_haircut_passes_a_genuine_signal_among_noise():
         _synthetic_noise_series(204),
         _synthetic_noise_series(205),
     ]
-    t_stats = [
-        autotuner.compute_sortino_tstat(s, seed=i)
-        for i, s in enumerate(series_per_trial)
-    ]
+    t_stats = [autotuner.compute_sortino_tstat(s, seed=i) for i, s in enumerate(series_per_trial)]
     p_values = [autotuner.compute_haircut_pvalue(t) for t in t_stats]
     p_adj = autotuner.benjamini_hochberg_adjust(p_values)
 
@@ -414,8 +415,7 @@ def test_haircut_passes_a_genuine_signal_among_noise():
     # The winner (argmin p_adj) must be the genuine signal at index 2.
     winner_idx = min(range(len(p_adj)), key=lambda i: p_adj[i])
     assert winner_idx == 2, (
-        f"argmin p_adj must select the genuine signal at index 2; got "
-        f"winner_idx={winner_idx}."
+        f"argmin p_adj must select the genuine signal at index 2; got winner_idx={winner_idx}."
     )
 
 

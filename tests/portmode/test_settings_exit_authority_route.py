@@ -31,6 +31,7 @@ def settings_client():
     os.environ["EXIT_AUTHORITY"] = "per_symphony"
 
     import database
+
     _old_level = logging.getLogger().level
     logging.getLogger().setLevel(logging.CRITICAL)
     try:
@@ -39,6 +40,7 @@ def settings_client():
         logging.getLogger().setLevel(_old_level)
 
     import app as app_module
+
     # Point app at our temp .env so writes don't touch the real file
     app_module.ENV_FILE_PATH = env_path
     app_module.app.config["TESTING"] = True
@@ -151,14 +153,11 @@ class TestSettingsPostWritesExitAuthority:
             content = f.read()
         # Find the timestamp value — accept either key casing
         import re
-        match = re.search(
-            r"(?:_exit_authority_changed_at|EXIT_AUTHORITY_CHANGED_AT)=(.+)", content
-        )
+
+        match = re.search(r"(?:_exit_authority_changed_at|EXIT_AUTHORITY_CHANGED_AT)=(.+)", content)
         assert match is not None, "changed_at key not found in .env"
         ts = match.group(1).strip().strip('"').strip("'")
-        assert "T" in ts, (
-            "AC-P2.2.4: _exit_authority_changed_at must be ISO 8601 (contains 'T')"
-        )
+        assert "T" in ts, "AC-P2.2.4: _exit_authority_changed_at must be ISO 8601 (contains 'T')"
 
 
 class TestExitAuthorityNotMaskedInSettingsKeys:
@@ -166,6 +165,7 @@ class TestExitAuthorityNotMaskedInSettingsKeys:
 
     def test_exit_authority_absent_from_masked_keys(self):
         import app as app_module
+
         assert "EXIT_AUTHORITY" not in app_module._MASKED_SETTINGS_KEYS, (
             "EXIT_AUTHORITY must not be in _MASKED_SETTINGS_KEYS — it is not a secret"
         )

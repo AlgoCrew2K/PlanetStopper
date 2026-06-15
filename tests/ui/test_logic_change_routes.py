@@ -50,12 +50,14 @@ def _ensure_repo_on_path() -> None:
 # Flask test client fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def flask_client():
     """Minimal Flask test client.  DB and network are not initialised — all
     routes under test are patched to avoid live access."""
     _ensure_repo_on_path()
     import app as _app
+
     _app.app.config["TESTING"] = True
     with _app.app.test_client() as client:
         yield client
@@ -64,6 +66,7 @@ def flask_client():
 # ---------------------------------------------------------------------------
 # Helpers: build minimal result objects for mocking
 # ---------------------------------------------------------------------------
+
 
 def _make_logic_change_run_result(
     survivors: bool = False,
@@ -85,9 +88,7 @@ def _make_logic_change_run_result(
     )
     from advisors.backtest_gate_engine import HARVEY_LIU_FDR_Q, GatedBatch
 
-    gate_batch = GatedBatch(
-        results=[], survivors=[], n_candidates=1, fdr_q=HARVEY_LIU_FDR_Q
-    )
+    gate_batch = GatedBatch(results=[], survivors=[], n_candidates=1, fdr_q=HARVEY_LIU_FDR_Q)
     objective = LogicChangeObjective(
         objective_type="reduce_drawdown",
         measured_value=-0.25,
@@ -121,7 +122,9 @@ def _make_logic_change_run_result(
         gate_result=None,
         baseline_stats={"sharpe_ratio": None, "sortino_ratio": None},
         variant_stats={"sharpe_ratio": None, "sortino_ratio": None},
-        caveats=[] if not survivors else [
+        caveats=[]
+        if not survivors
+        else [
             "The gate screens for statistical significance (BHY/Yekutieli FDR) "
             "but selecting the best backtest from N candidates still concentrates "
             "selection bias even after correction. Treat survivors as hypotheses."
@@ -133,7 +136,9 @@ def _make_logic_change_run_result(
         backtest_error=backtest_error,
     )
 
-    message = "1 logic change survived the gate for Test Symphony" if survivors else NO_SURVIVORS_MESSAGE
+    message = (
+        "1 logic change survived the gate for Test Symphony" if survivors else NO_SURVIVORS_MESSAGE
+    )
 
     return LogicChangeRunResult(
         gate_batch=gate_batch,
@@ -161,6 +166,7 @@ def _minimal_score_tree() -> dict:
 # ===========================================================================
 # Section 1 — Routes exist and return non-404
 # ===========================================================================
+
 
 class TestRoutesExist:
     """Both M4 routes must be registered in app.py."""
@@ -215,6 +221,7 @@ class TestRoutesExist:
 # Section 2 — AC-X4: no API key → clear error, no DB write
 # ===========================================================================
 
+
 class TestNoApiKeyRoute:
     """AC-X4: absent Composer key → 'advisor unavailable' + no DB write."""
 
@@ -232,12 +239,9 @@ class TestNoApiKeyRoute:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data is not None, "Response must be JSON."
-        assert "error" in data, (
-            f"No-API-key response must contain an 'error' key. Got: {data!r}"
-        )
+        assert "error" in data, f"No-API-key response must contain an 'error' key. Got: {data!r}"
         assert "advisor unavailable" in data["error"].lower(), (
-            f"Error message must contain 'advisor unavailable' (AC-X4). "
-            f"Got: {data['error']!r}"
+            f"Error message must contain 'advisor unavailable' (AC-X4). Got: {data['error']!r}"
         )
 
     def test_evaluate_no_api_key_writes_no_db_observations(self, flask_client):
@@ -283,6 +287,7 @@ class TestNoApiKeyRoute:
 # ===========================================================================
 # Section 3 — Evaluate route JSON shape (AC-3.2 / AC-3.3 audit trail)
 # ===========================================================================
+
 
 class TestEvaluateJsonShape:
     """POST /evaluate must return JSON with FDR metadata and gate verdict (AC-3.2/3.3)."""
@@ -438,18 +443,10 @@ class TestEvaluateJsonShape:
             )
 
         data = resp.get_json()
-        assert "survivors_detail" in data, (
-            "Evaluate response must have 'survivors_detail' list."
-        )
-        assert "rejected_detail" in data, (
-            "Evaluate response must have 'rejected_detail' list."
-        )
-        assert isinstance(data["survivors_detail"], list), (
-            "survivors_detail must be a list."
-        )
-        assert isinstance(data["rejected_detail"], list), (
-            "rejected_detail must be a list."
-        )
+        assert "survivors_detail" in data, "Evaluate response must have 'survivors_detail' list."
+        assert "rejected_detail" in data, "Evaluate response must have 'rejected_detail' list."
+        assert isinstance(data["survivors_detail"], list), "survivors_detail must be a list."
+        assert isinstance(data["rejected_detail"], list), "rejected_detail must be a list."
 
     def test_evaluate_proposal_detail_includes_fdr_fields(self, flask_client):
         """Each proposal dict in survivors_detail/rejected_detail must include FDR fields.
@@ -517,6 +514,7 @@ class TestEvaluateJsonShape:
 # ===========================================================================
 # Section 4 — Missing required fields → 400/error (AC-X5 / input validation)
 # ===========================================================================
+
 
 class TestInputValidation:
     """Missing or empty required fields must return a clear error."""
@@ -588,6 +586,7 @@ class TestInputValidation:
 # ===========================================================================
 # Section 5 — AC-X1: no Composer write endpoints (static analysis)
 # ===========================================================================
+
 
 class TestNoComposerWriteEndpoints:
     """AC-X1: static analysis — route handlers must not call Composer write endpoints."""
@@ -670,6 +669,7 @@ class TestNoComposerWriteEndpoints:
 # Section 6 — Template structure (AC-3.3 / AC-3.4)
 # ===========================================================================
 
+
 class TestTemplateStructure:
     """The template must contain required AC-3.3/AC-3.4 structural elements."""
 
@@ -715,8 +715,7 @@ class TestTemplateStructure:
     def test_template_has_no_api_key_state(self, template_html):
         """AC-X4: the template must include a no-api-key state element."""
         assert "no-api-key-state" in template_html, (
-            "Template must contain data-testid='no-api-key-state' for the "
-            "AC-X4 absent-key state."
+            "Template must contain data-testid='no-api-key-state' for the AC-X4 absent-key state."
         )
 
     def test_template_has_no_auto_apply_or_deploy_button(self, template_html):
@@ -734,6 +733,7 @@ class TestTemplateStructure:
 # ===========================================================================
 # Section 7 — JS module structure (AC-3.4 advise-only / no write actions)
 # ===========================================================================
+
 
 class TestJsModuleStructure:
     """The JS module must not contain auto-apply or Composer write calls."""
@@ -773,6 +773,7 @@ class TestJsModuleStructure:
 # Section 8 — AC-X5: backtest error state surfaced per-proposal (not a 500)
 # ===========================================================================
 
+
 class TestBacktestErrorSurfacedInResponse:
     """AC-X5: backtest errors must surface as backtest_error in the proposal dict."""
 
@@ -800,8 +801,7 @@ class TestBacktestErrorSurfacedInResponse:
             )
 
         assert resp.status_code == 200, (
-            "Route must return 200 even when backtest failed (AC-X5). "
-            f"Got {resp.status_code}."
+            f"Route must return 200 even when backtest failed (AC-X5). Got {resp.status_code}."
         )
         data = resp.get_json()
         assert data is not None
@@ -823,6 +823,7 @@ class TestBacktestErrorSurfacedInResponse:
 # ===========================================================================
 # Section 9 — Logic Changes tab links from sibling tabs
 # ===========================================================================
+
 
 class TestTabNavigation:
     """The Logic Changes tab must be reachable from sibling advisor tabs."""
@@ -993,7 +994,9 @@ class TestAcceptanceVerdictGateReason:
                 "The gate screens for statistical significance (BHY/Yekutieli FDR) "
                 "but selecting the best backtest from N candidates still concentrates "
                 "selection bias even after correction. Treat survivors as hypotheses."
-            ] if vetoes_passed and decision == "ADOPT_CANDIDATE" else [],
+            ]
+            if vetoes_passed and decision == "ADOPT_CANDIDATE"
+            else [],
             winner_p_adj=0.03,
         )
         objective = LogicChangeObjective(
@@ -1050,6 +1053,7 @@ class TestAcceptanceVerdictGateReason:
         well-formed JSON result.
         """
         from acceptance_gate import DECISION_ADOPT_CANDIDATE
+
         mock_result = self._make_run_result_with_gate(
             vetoes_passed=True,
             decision=DECISION_ADOPT_CANDIDATE,
@@ -1087,6 +1091,7 @@ class TestAcceptanceVerdictGateReason:
     def test_gate_decision_present_in_response(self, flask_client):
         """gate_decision must be present and equal to the AcceptanceVerdict.decision value."""
         from acceptance_gate import DECISION_ADOPT_CANDIDATE
+
         mock_result = self._make_run_result_with_gate(
             vetoes_passed=True,
             decision=DECISION_ADOPT_CANDIDATE,
@@ -1111,9 +1116,7 @@ class TestAcceptanceVerdictGateReason:
 
         data = resp.get_json()
         assert data is not None
-        assert "gate_decision" in data, (
-            "Response must include gate_decision field."
-        )
+        assert "gate_decision" in data, "Response must include gate_decision field."
         assert data["gate_decision"] == DECISION_ADOPT_CANDIDATE, (
             f"gate_decision must equal the AcceptanceVerdict.decision. "
             f"Expected {DECISION_ADOPT_CANDIDATE!r}, got {data['gate_decision']!r}."
@@ -1127,6 +1130,7 @@ class TestAcceptanceVerdictGateReason:
         This is the direct regression guard for the gr.verdict.reason bug.
         """
         from acceptance_gate import DECISION_ADOPT_CANDIDATE
+
         mock_result = self._make_run_result_with_gate(
             vetoes_passed=True,
             decision=DECISION_ADOPT_CANDIDATE,
@@ -1157,8 +1161,7 @@ class TestAcceptanceVerdictGateReason:
         )
         for proposal in all_proposals:
             assert "gate_reason" in proposal, (
-                f"Each proposal dict must include gate_reason. "
-                f"Got keys: {list(proposal.keys())}."
+                f"Each proposal dict must include gate_reason. Got keys: {list(proposal.keys())}."
             )
             # gate_reason must be a string (or None) — never an AttributeError
             gr_value = proposal["gate_reason"]
@@ -1170,6 +1173,7 @@ class TestAcceptanceVerdictGateReason:
     def test_gate_reason_string_for_veto_failed_verdict(self, flask_client):
         """gate_reason must be a non-None string even when vetoes_passed=False."""
         from acceptance_gate import DECISION_REJECT_VETO_FAILED
+
         mock_result = self._make_run_result_with_gate(
             vetoes_passed=False,
             decision=DECISION_REJECT_VETO_FAILED,
@@ -1211,6 +1215,7 @@ class TestAcceptanceVerdictGateReason:
         """
         _ensure_repo_on_path()
         from acceptance_gate import AcceptanceVerdict
+
         verdict = AcceptanceVerdict(
             vetoes_passed=True,
             panel_score=0.8,

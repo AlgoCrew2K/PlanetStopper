@@ -54,10 +54,7 @@ import re
 import pytest
 
 FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "cvar_assessment_contract"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "cvar_assessment_contract"
 )
 
 # Production modules that must NOT import CVaRAssessment in Phase 1.
@@ -88,6 +85,7 @@ def _required_field_names(fx: dict) -> set[str]:
 # 1. CVaRAssessment is importable from math_engine
 # ---------------------------------------------------------------------------
 
+
 def test_cvar_assessment_is_importable_from_math_engine() -> None:
     """
     The dataclass must live in math_engine so the Phase-2 simulator and the M2
@@ -107,6 +105,7 @@ def test_cvar_assessment_is_importable_from_math_engine() -> None:
 # ---------------------------------------------------------------------------
 # 2. Exact field set — no extra, no missing
 # ---------------------------------------------------------------------------
+
 
 def test_cvar_assessment_has_exactly_the_required_fields() -> None:
     """
@@ -140,6 +139,7 @@ def test_cvar_assessment_has_exactly_the_required_fields() -> None:
 # 3. cvar_pct annotation admits None (mirrors the MC sentinel contract)
 # ---------------------------------------------------------------------------
 
+
 def test_cvar_assessment_cvar_pct_annotation_admits_none() -> None:
     """
     cvar_pct must be typed ``float | None``; an annotation of ``float`` would
@@ -164,6 +164,7 @@ def test_cvar_assessment_cvar_pct_annotation_admits_none() -> None:
 # 4. Construction with a valid float cvar_pct succeeds
 # ---------------------------------------------------------------------------
 
+
 def test_cvar_assessment_construction_with_valid_float_succeeds() -> None:
     """
     The normal (sufficient-data) case: a float cvar_pct with any breach value
@@ -183,7 +184,9 @@ def test_cvar_assessment_construction_with_valid_float_succeeds() -> None:
         stderr=0.001,
         insufficient_reason=None,
     )
-    assert obj.cvar_pct == pytest.approx(-4.2, abs=1e-9), (  # approx: float equality is exact here but matches project convention
+    assert obj.cvar_pct == pytest.approx(
+        -4.2, abs=1e-9
+    ), (  # approx: float equality is exact here but matches project convention
         "cvar_pct was not stored correctly."
     )
     assert obj.breach is False
@@ -215,6 +218,7 @@ def test_cvar_assessment_construction_breach_true_with_valid_float_succeeds() ->
 # 5. Construction with cvar_pct=None and breach=False succeeds
 # ---------------------------------------------------------------------------
 
+
 def test_cvar_assessment_construction_none_cvar_pct_breach_false_succeeds() -> None:
     """
     The insufficient-sentinel case: cvar_pct=None with breach=False is the only
@@ -241,6 +245,7 @@ def test_cvar_assessment_construction_none_cvar_pct_breach_false_succeeds() -> N
 # ---------------------------------------------------------------------------
 # 6. Construction with cvar_pct=None and breach=True raises ValueError
 # ---------------------------------------------------------------------------
+
 
 def test_cvar_assessment_none_cvar_pct_with_breach_true_raises() -> None:
     """
@@ -272,6 +277,7 @@ def test_cvar_assessment_none_cvar_pct_with_breach_true_raises() -> None:
 # 7. The dataclass is frozen (immutable after construction)
 # ---------------------------------------------------------------------------
 
+
 def test_cvar_assessment_is_frozen() -> None:
     """
     The dataclass must be @dataclass(frozen=True) so no consumer can mutate
@@ -296,6 +302,7 @@ def test_cvar_assessment_is_frozen() -> None:
 # ---------------------------------------------------------------------------
 # 8. Phase-1 production-consumer prohibition
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("module_filename", _PRODUCTION_MODULES)
 def test_phase1_production_module_does_not_import_cvar_assessment(
@@ -331,6 +338,7 @@ def test_phase1_production_module_does_not_import_cvar_assessment(
 # ---------------------------------------------------------------------------
 # 9. tail_obs_count is 0 when cvar_pct is None
 # ---------------------------------------------------------------------------
+
 
 def test_cvar_assessment_tail_obs_count_is_zero_when_cvar_pct_is_none() -> None:
     """

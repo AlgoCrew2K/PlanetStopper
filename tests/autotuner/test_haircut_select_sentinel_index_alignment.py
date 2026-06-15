@@ -34,6 +34,7 @@ equality with the returned winner_tstat.
 
 Fixture: tests/fixtures/math/haircut_select_sentinel_index_alignment.json
 """
+
 from __future__ import annotations
 
 import json
@@ -43,8 +44,7 @@ import pytest
 
 _WORKTREE_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FIXTURE_PATH = (
-    _WORKTREE_ROOT / "tests" / "fixtures" / "math"
-    / "haircut_select_sentinel_index_alignment.json"
+    _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "haircut_select_sentinel_index_alignment.json"
 )
 
 
@@ -59,12 +59,16 @@ def h3_fixture() -> dict:
 
 
 def _make_trial(name, value, returns_pct):
-    return type("FakeTrial", (), {
-        "value": value,
-        "user_attrs": {"daily_returns": returns_pct},
-        "params": {"NAME": name},
-        "number": 0,
-    })()
+    return type(
+        "FakeTrial",
+        (),
+        {
+            "value": value,
+            "user_attrs": {"daily_returns": returns_pct},
+            "params": {"NAME": name},
+            "number": 0,
+        },
+    )()
 
 
 def _tstat_of_series(returns_pct, gamma):
@@ -104,9 +108,7 @@ class TestHaircutSelectSentinelIndexAlignment:
         sentinel = _make_trial(
             "SENT_STRONG", math_engine._SORTINO_SENTINEL, sc["sentinel_trial_series_pct"]
         )
-        real = _make_trial(
-            "REAL_WEAK", sc["real_trial_value"], sc["real_trial_series_pct"]
-        )
+        real = _make_trial("REAL_WEAK", sc["real_trial_value"], sc["real_trial_series_pct"])
         gamma = sc["gamma"]
 
         # completed_trials order: sentinel BEFORE the real trial.
@@ -120,9 +122,7 @@ class TestHaircutSelectSentinelIndexAlignment:
                 "_haircut_select returned the SENTINEL trial as winner — the sentinel "
                 "filter (autotuner.py:1458-1460) must exclude it."
             )
-            expected_tstat = _tstat_of_series(
-                winner.user_attrs["daily_returns"], gamma
-            )
+            expected_tstat = _tstat_of_series(winner.user_attrs["daily_returns"], gamma)
             assert winner_tstat == pytest.approx(expected_tstat, rel=1e-9), (
                 f"Returned winner_tstat={winner_tstat!r} does not match the t-stat of "
                 f"the RETURNED trial's own series ({expected_tstat!r}).\n"
@@ -148,9 +148,7 @@ class TestHaircutSelectSentinelIndexAlignment:
         sentinel = _make_trial(
             "SENT_STRONG", math_engine._SORTINO_SENTINEL, sc["sentinel_trial_series_pct"]
         )
-        real = _make_trial(
-            "REAL_WEAK", sc["real_trial_value"], sc["real_trial_series_pct"]
-        )
+        real = _make_trial("REAL_WEAK", sc["real_trial_value"], sc["real_trial_series_pct"])
         gamma = sc["gamma"]
 
         winner, p_adj, winner_tstat = autotuner._haircut_select(

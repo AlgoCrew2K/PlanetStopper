@@ -37,6 +37,7 @@ _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -69,16 +70,13 @@ def test_extreme_positive_tstat_pvalue_is_clamped_above_zero():
     # than computing one via compute_sortino_tstat.
     t_stat = 10.0
     assert t_stat > 8.5, (
-        f"Test construction: t_stat must be large enough to underflow 1-Φ(t); "
-        f"got {t_stat}."
+        f"Test construction: t_stat must be large enough to underflow 1-Φ(t); got {t_stat}."
     )
 
     # The haircut must expose a p-value step. It is exercised here via the BHY
     # pipeline: a single-trial p-vector through benjamini_hochberg_adjust must not
     # yield a degenerate 0.0. The implementer's p-value derivation must clamp.
-    p_adj = autotuner.benjamini_hochberg_adjust(
-        [_haircut_pvalue(autotuner, t_stat)]
-    )
+    p_adj = autotuner.benjamini_hochberg_adjust([_haircut_pvalue(autotuner, t_stat)])
     assert len(p_adj) == 1
     assert p_adj[0] > 0.0, (
         f"AC-8: an extreme-t trial produced an adjusted p-value of exactly "
@@ -86,8 +84,7 @@ def test_extreme_positive_tstat_pvalue_is_clamped_above_zero():
         f"numerical-stability epsilon) so downstream log/Φ⁻¹ stay finite."
     )
     assert math.isfinite(p_adj[0]), (
-        f"AC-8: the adjusted p-value for an extreme-t trial is non-finite "
-        f"({p_adj[0]!r})."
+        f"AC-8: the adjusted p-value for an extreme-t trial is non-finite ({p_adj[0]!r})."
     )
 
 
@@ -106,8 +103,7 @@ def test_extreme_negative_tstat_pvalue_is_clamped_below_one():
     # negative t directly instead of computing one.
     t_stat = -10.0
     assert t_stat < -8.5, (
-        f"Test construction: t_stat must be negative enough to saturate "
-        f"1-Φ(t)→1.0; got {t_stat}."
+        f"Test construction: t_stat must be negative enough to saturate 1-Φ(t)→1.0; got {t_stat}."
     )
 
     p = _haircut_pvalue(autotuner, t_stat)
@@ -136,10 +132,10 @@ def test_bhy_adjusted_pvalues_stay_finite_for_extreme_trial_set():
     # moderate / null values. See the per-test notes above on why we
     # don't go through compute_sortino_tstat post-AC-1.
     t_stats = [
-        10.0,     # extreme positive — Φ saturates, raw p underflows
-        0.3,      # moderate positive — well above the clamp
-        -10.0,    # extreme negative — 1-Φ saturates to 1.0
-        0.0,      # exactly null — raw p = 0.5
+        10.0,  # extreme positive — Φ saturates, raw p underflows
+        0.3,  # moderate positive — well above the clamp
+        -10.0,  # extreme negative — 1-Φ saturates to 1.0
+        0.0,  # exactly null — raw p = 0.5
     ]
     p_values = [_haircut_pvalue(autotuner, t) for t in t_stats]
     p_adj = autotuner.benjamini_hochberg_adjust(p_values)
@@ -150,9 +146,7 @@ def test_bhy_adjusted_pvalues_stay_finite_for_extreme_trial_set():
             f"for an extreme-trial-set input. The p-value clamp must keep the "
             f"whole pipeline finite."
         )
-        assert 0.0 <= p <= 1.0, (
-            f"AC-8: BHY adjusted p-value at index {i} is outside [0,1] ({p!r})."
-        )
+        assert 0.0 <= p <= 1.0, f"AC-8: BHY adjusted p-value at index {i} is outside [0,1] ({p!r})."
 
 
 def test_pvalue_clamp_epsilon_is_a_named_constant():
@@ -168,8 +162,15 @@ def test_pvalue_clamp_epsilon_is_a_named_constant():
     lowered = src.lower()
 
     has_clamp_concept = any(
-        kw in lowered for kw in ("p-value clamp", "p_value clamp", "pvalue clamp",
-                                 "clamp p", "numerical stability", "numerical-stability")
+        kw in lowered
+        for kw in (
+            "p-value clamp",
+            "p_value clamp",
+            "pvalue clamp",
+            "clamp p",
+            "numerical stability",
+            "numerical-stability",
+        )
     )
     assert has_clamp_concept, (
         "autotuner.py does not document a p-value clamp. AC-8 requires the "
@@ -189,8 +190,12 @@ def _haircut_pvalue(autotuner, t_stat: float) -> float:
     If the implementer names the p-value function differently, update this one
     helper — every AC-8 test routes through it.
     """
-    for name in ("compute_haircut_pvalue", "sortino_tstat_pvalue",
-                 "compute_tstat_pvalue", "haircut_pvalue"):
+    for name in (
+        "compute_haircut_pvalue",
+        "sortino_tstat_pvalue",
+        "compute_tstat_pvalue",
+        "haircut_pvalue",
+    ):
         fn = getattr(autotuner, name, None)
         if fn is not None:
             return fn(t_stat)

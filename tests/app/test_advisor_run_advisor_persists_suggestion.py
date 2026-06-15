@@ -74,11 +74,15 @@ def mock_database():
 def mock_advisor_gates():
     """Mock the C2 gate functions so /accept reaches the write path with a PASS."""
     with (
-        patch.object(ai_advisor, "enforce_suggestion_allowlist",
-                     return_value=([object()], [])),  # (allowed, rejected) — nothing rejected
+        patch.object(
+            ai_advisor, "enforce_suggestion_allowlist", return_value=([object()], [])
+        ),  # (allowed, rejected) — nothing rejected
         patch.object(ai_advisor, "check_risk_direction_agreement", return_value=None),
-        patch.object(ai_advisor, "revalidate_suggestion_oos",
-                     return_value={"passed": True, "detail": "OOS re-validation PASSED"}),
+        patch.object(
+            ai_advisor,
+            "revalidate_suggestion_oos",
+            return_value={"passed": True, "detail": "OOS re-validation PASSED"},
+        ),
     ):
         yield
 
@@ -224,8 +228,11 @@ def test_suggest_surfaces_error_when_api_unavailable(client, mock_database, monk
     monkeypatch.delenv("DEV_ADVISOR_FIXTURE", raising=False)
     with (
         patch.object(ai_advisor, "assemble_advisor_context", return_value={}),
-        patch.object(ai_advisor, "request_suggestions",
-                     return_value=(None, "Claude advisor unavailable: no API key")),
+        patch.object(
+            ai_advisor,
+            "request_suggestions",
+            return_value=(None, "Claude advisor unavailable: no API key"),
+        ),
     ):
         resp = client.post(
             "/ai-advisor/suggest",
@@ -249,14 +256,21 @@ def test_suggest_does_not_record_on_render_or_error(client, mock_database, monke
     from ai_advisor import ConfigSuggestion, ConfigSuggestionsResponse
 
     suggestion = ConfigSuggestion(
-        config_key="MAX_SQUEEZE_FLOOR", current_value=0.20, suggested_value=0.30,
-        rationale="r", risk_direction="loosens", confidence="medium",
+        config_key="MAX_SQUEEZE_FLOOR",
+        current_value=0.20,
+        suggested_value=0.30,
+        rationale="r",
+        risk_direction="loosens",
+        confidence="medium",
         data_sufficiency="sufficient",
     )
     with (
         patch.object(ai_advisor, "assemble_advisor_context", return_value={}),
-        patch.object(ai_advisor, "request_suggestions",
-                     return_value=(ConfigSuggestionsResponse(suggestions=[suggestion]), None)),
+        patch.object(
+            ai_advisor,
+            "request_suggestions",
+            return_value=(ConfigSuggestionsResponse(suggestions=[suggestion]), None),
+        ),
         patch.object(app_module, "_compute_suggestion_gates", return_value={}),
         patch.object(app_module, "_enrich_suggestion_impact", return_value={}),
     ):

@@ -78,9 +78,7 @@ VALID_ENDPOINT_CASES = _DATA["valid_endpoint_cases"]
     REJECT_CASES,
     ids=[c["label"] for c in REJECT_CASES],
 )
-def test_time_ratio_outside_unit_interval_raises_value_error(
-    case: dict[str, Any]
-) -> None:
+def test_time_ratio_outside_unit_interval_raises_value_error(case: dict[str, Any]) -> None:
     """
     AC-6 (M-1): compute_time_squeeze_decay must raise ValueError for
     time_ratio < 0 or time_ratio > 1.
@@ -154,9 +152,7 @@ def test_endpoint_zero_yields_market_open_values() -> None:
     runtime — NOT hardcoded literals — so the test stays correct if the
     constants are retuned.
     """
-    case = next(
-        c for c in VALID_ENDPOINT_CASES if c["label"] == "endpoint_zero_market_open"
-    )
+    case = next(c for c in VALID_ENDPOINT_CASES if c["label"] == "endpoint_zero_market_open")
     dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(
         case["time_ratio"]
     )
@@ -187,9 +183,7 @@ def test_endpoint_one_yields_market_close_values() -> None:
 
     Expected values read from the named constants at runtime.
     """
-    case = next(
-        c for c in VALID_ENDPOINT_CASES if c["label"] == "endpoint_one_market_close"
-    )
+    case = next(c for c in VALID_ENDPOINT_CASES if c["label"] == "endpoint_one_market_close")
     dynamic_multiplier, dynamic_min_stop = math_engine.compute_time_squeeze_decay(
         case["time_ratio"]
     )
@@ -223,8 +217,7 @@ def test_in_range_time_ratio_does_not_raise(time_ratio: float) -> None:
     """
     result = math_engine.compute_time_squeeze_decay(time_ratio)
     assert isinstance(result, tuple) and len(result) == 2, (
-        f"time_ratio={time_ratio} (in range) must return a 2-tuple; "
-        f"got {result!r}"
+        f"time_ratio={time_ratio} (in range) must return a 2-tuple; got {result!r}"
     )
     dm, dms = result
     assert isinstance(dm, float) and isinstance(dms, float), (
@@ -301,11 +294,7 @@ def test_decay_curve_provenance_comment_cites_m3_closure() -> None:
 
     # Either 'sqrt' or 'square-root' / 'square root' satisfies the formula
     # reference -- the comment may use either spelling.
-    assert (
-        "sqrt" in block
-        or "square-root" in block
-        or "square root" in block
-    ), (
+    assert "sqrt" in block or "square-root" in block or "square root" in block, (
         "M3 decay-curve provenance comment must reference the sqrt /"
         "square-root-of-time scaling that defines f(t) = 1 - sqrt(1 - t). "
         f"Block scanned:\n{block}"

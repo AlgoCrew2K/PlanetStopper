@@ -79,6 +79,7 @@ def _pattern_is_covered(artifact_path: str, gitignore_lines: list[str]) -> bool:
         # or full path using simple fnmatch-style rules.
         if "*" in pat:
             import fnmatch
+
             # Match against the full path and the basename.
             if fnmatch.fnmatch(art, pat):
                 return True
@@ -98,40 +99,43 @@ def _pattern_is_covered(artifact_path: str, gitignore_lines: list[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("artifact,description", [
-    (
-        ".claude/heartbeats/some-agent-1.txt",
-        ".claude/heartbeats/ — agent heartbeat files written during TDD cycles",
-    ),
-    (
-        ".claude/worktrees/some-branch/app.py",
-        ".claude/worktrees/ — agent working-tree code checkouts",
-    ),
-    (
-        ".claude/audit-worktrees/audit-1/database.py",
-        ".claude/audit-worktrees/ — audit working trees",
-    ),
-    (
-        "alphabot.db",
-        "alphabot.db — live state database (must not be committed)",
-    ),
-    (
-        "some_new_study.db",
-        "*.db — catch-all for any SQLite database file",
-    ),
-    (
-        ".design-handoff/screenshots/screenshot_001.png",
-        "screenshots/ or .design-handoff/ — design-handoff screenshots",
-    ),
-    (
-        "alphabot.db.preDryRun-1779897990-backup",
-        "*.db.preDryRun* — backup DB files created by dry-run harness",
-    ),
-    (
-        "alphabot_state.db.postDryRun",
-        "*.db.postDryRun — post-dry-run database snapshots",
-    ),
-])
+@pytest.mark.parametrize(
+    "artifact,description",
+    [
+        (
+            ".claude/heartbeats/some-agent-1.txt",
+            ".claude/heartbeats/ — agent heartbeat files written during TDD cycles",
+        ),
+        (
+            ".claude/worktrees/some-branch/app.py",
+            ".claude/worktrees/ — agent working-tree code checkouts",
+        ),
+        (
+            ".claude/audit-worktrees/audit-1/database.py",
+            ".claude/audit-worktrees/ — audit working trees",
+        ),
+        (
+            "alphabot.db",
+            "alphabot.db — live state database (must not be committed)",
+        ),
+        (
+            "some_new_study.db",
+            "*.db — catch-all for any SQLite database file",
+        ),
+        (
+            ".design-handoff/screenshots/screenshot_001.png",
+            "screenshots/ or .design-handoff/ — design-handoff screenshots",
+        ),
+        (
+            "alphabot.db.preDryRun-1779897990-backup",
+            "*.db.preDryRun* — backup DB files created by dry-run harness",
+        ),
+        (
+            "alphabot_state.db.postDryRun",
+            "*.db.postDryRun — post-dry-run database snapshots",
+        ),
+    ],
+)
 def test_gitignore_covers_artifact_pattern(artifact, description):
     """Each operational artifact class must be covered by .gitignore.
 

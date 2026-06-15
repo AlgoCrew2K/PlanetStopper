@@ -35,22 +35,26 @@ import app as app_module
 # Broker-order denylist
 # ---------------------------------------------------------------------------
 
-_BROKER_ORDER_SYMBOLS: frozenset[str] = frozenset({
-    "submit_order",
-    "place_order",
-    "cancel_order",
-    "liquidate",
-    # Composer go-to-cash verb used inside perform_account_liquidation
-    "go-to-cash",
-})
+_BROKER_ORDER_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "submit_order",
+        "place_order",
+        "cancel_order",
+        "liquidate",
+        # Composer go-to-cash verb used inside perform_account_liquidation
+        "go-to-cash",
+    }
+)
 
 # Routes that are legitimately allowed to reach order paths (with guards):
 # sell_account is the ONLY route allowed to reach perform_account_liquidation,
 # and only when LIVE_EXECUTION=True + all confirmation gates pass.
-_ALLOWED_ORDER_ROUTES: frozenset[str] = frozenset({
-    "sell_account",
-    "perform_account_liquidation",  # helper, not a route itself
-})
+_ALLOWED_ORDER_ROUTES: frozenset[str] = frozenset(
+    {
+        "sell_account",
+        "perform_account_liquidation",  # helper, not a route itself
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -116,43 +120,27 @@ class TestNoBrokerSymbolsInRoutes:
 
     def test_no_route_references_submit_order(self):
         """No route body may contain the symbol submit_order."""
-        violators = [
-            f for f in self._route_names
-            if "submit_order" in self._call_map.get(f, set())
-        ]
-        assert not violators, (
-            "Route(s) reference submit_order: " + ", ".join(violators)
-        )
+        violators = [f for f in self._route_names if "submit_order" in self._call_map.get(f, set())]
+        assert not violators, "Route(s) reference submit_order: " + ", ".join(violators)
 
     def test_no_route_references_place_order(self):
         """No route body may contain the symbol place_order."""
-        violators = [
-            f for f in self._route_names
-            if "place_order" in self._call_map.get(f, set())
-        ]
-        assert not violators, (
-            "Route(s) reference place_order: " + ", ".join(violators)
-        )
+        violators = [f for f in self._route_names if "place_order" in self._call_map.get(f, set())]
+        assert not violators, "Route(s) reference place_order: " + ", ".join(violators)
 
     def test_no_route_references_cancel_order(self):
         """No route body may contain the symbol cancel_order."""
-        violators = [
-            f for f in self._route_names
-            if "cancel_order" in self._call_map.get(f, set())
-        ]
-        assert not violators, (
-            "Route(s) reference cancel_order: " + ", ".join(violators)
-        )
+        violators = [f for f in self._route_names if "cancel_order" in self._call_map.get(f, set())]
+        assert not violators, "Route(s) reference cancel_order: " + ", ".join(violators)
 
     def test_no_non_sell_route_references_liquidate(self):
         """No route except sell_account may reference the symbol liquidate."""
         violators = [
-            f for f in self._route_names  # already excludes sell_account
+            f
+            for f in self._route_names  # already excludes sell_account
             if "liquidate" in self._call_map.get(f, set())
         ]
-        assert not violators, (
-            "Non-sell route(s) reference liquidate: " + ", ".join(violators)
-        )
+        assert not violators, "Non-sell route(s) reference liquidate: " + ", ".join(violators)
 
 
 # ---------------------------------------------------------------------------
@@ -325,9 +313,7 @@ class TestSellAccountLiveModeGate:
             f"Wrong confirm_phrase must be rejected with 400, got {resp.status_code}"
         )
         broker_posts = [u for u in requests_post_calls if "go-to-cash" in u]
-        assert not broker_posts, (
-            "Broker order was placed despite invalid confirmation phrase."
-        )
+        assert not broker_posts, "Broker order was placed despite invalid confirmation phrase."
 
     def test_mismatched_account_id_is_rejected_before_any_order(self, flask_client):
         """sell_account with mismatched confirm_account_id must be rejected, no order placed."""
@@ -349,6 +335,4 @@ class TestSellAccountLiveModeGate:
 
         assert resp.status_code == 400
         broker_posts = [u for u in requests_post_calls if "go-to-cash" in u]
-        assert not broker_posts, (
-            "Broker order was placed despite account ID mismatch."
-        )
+        assert not broker_posts, "Broker order was placed despite account ID mismatch."

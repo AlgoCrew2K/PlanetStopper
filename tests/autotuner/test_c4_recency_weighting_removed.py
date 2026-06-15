@@ -43,6 +43,7 @@ _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -102,9 +103,7 @@ def test_no_exponential_decay_weight_in_autotuner():
                 for sub in ast.walk(node.args[0])
             )
             if arg_has_usub:
-                offending.append(
-                    f"line {getattr(node, 'lineno', '?')}: math.exp(<...-...>)"
-                )
+                offending.append(f"line {getattr(node, 'lineno', '?')}: math.exp(<...-...>)")
 
     assert not offending, (
         "autotuner.py still computes an exponential decay weight "
@@ -127,17 +126,11 @@ def test_days_ago_decay_weight_is_not_applied_to_guard_alpha():
     offending: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
-            names = {
-                s.id.lower()
-                for s in (node.left, node.right)
-                if isinstance(s, ast.Name)
-            }
+            names = {s.id.lower() for s in (node.left, node.right) if isinstance(s, ast.Name)}
             has_weight = any("weight" in n for n in names)
             has_alpha = any("guard_alpha" in n or "alpha" == n for n in names)
             if has_weight and has_alpha:
-                offending.append(
-                    f"line {getattr(node, 'lineno', '?')}: guard-alpha × weight"
-                )
+                offending.append(f"line {getattr(node, 'lineno', '?')}: guard-alpha × weight")
 
     assert not offending, (
         "autotuner.py still multiplies guard-alpha by a recency weight. D5 "
@@ -181,35 +174,55 @@ def test_collect_sim_returns_value_is_independent_of_day_age(monkeypatch):
     # with a DIFFERENT return so guard_alpha = 3.0 - 5.0 = -2.0 is non-zero — a
     # decay weight would scale it, an unweighted append would not.
     ticks = [
-        {"return": 3.0, "vwap_diff": -9.9, "vol": 1.0, "mc_prob": 50.0,
-         "valid_vwap_weight": 1.0},
-        {"return": 5.0, "vwap_diff": 0.0, "vol": 1.0, "mc_prob": 50.0,
-         "valid_vwap_weight": 1.0},
+        {"return": 3.0, "vwap_diff": -9.9, "vol": 1.0, "mc_prob": 50.0, "valid_vwap_weight": 1.0},
+        {"return": 5.0, "vwap_diff": 0.0, "vol": 1.0, "mc_prob": 50.0, "valid_vwap_weight": 1.0},
     ]
-    deviation_dict = {"VWAP Breakdown": 0.0, "VWAP Bleed Cut": 0.0,
-                      "Take-Profit": 0.0, "Trailing Stop": 0.0}
+    deviation_dict = {
+        "VWAP Breakdown": 0.0,
+        "VWAP Bleed Cut": 0.0,
+        "Take-Profit": 0.0,
+        "Trailing Stop": 0.0,
+    }
 
     def _collect_for_date(day_date: str, current_date: str) -> list:
         history = {"sym-A": {day_date: list(ticks)}}
         with (
-            patch("autotuner.math_engine.compute_para_arm_decision",
-                  side_effect=lambda **kw: (0.0, False)),
-            patch("autotuner.math_engine.compute_time_squeeze_decay",
-                  side_effect=lambda tr: (1.5, 0.5)),
-            patch("autotuner.math_engine.compute_active_trailing_stop",
-                  side_effect=lambda *a, **kw: 5.0),
-            patch("autotuner.math_engine.compute_breakeven_update",
-                  side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
-            patch("autotuner.math_engine.compute_tp_confirmation",
-                  side_effect=lambda **kw: (kw.get("tp_armed", False), 0, False)),
-            patch("autotuner.math_engine.compute_exit_confirmation",
-                  side_effect=lambda **kw: (0, False)),
-            patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-                  side_effect=lambda *a, **kw: -100.0),
-            patch("autotuner.math_engine.compute_vwap_breakdown_update",
-                  side_effect=lambda **kw: (0, 0, True, False)
-                  if kw.get("weighted_vwap_diff", 0.0) <= -9.0
-                  else (0, 0, False, False)),
+            patch(
+                "autotuner.math_engine.compute_para_arm_decision",
+                side_effect=lambda **kw: (0.0, False),
+            ),
+            patch(
+                "autotuner.math_engine.compute_time_squeeze_decay",
+                side_effect=lambda tr: (1.5, 0.5),
+            ),
+            patch(
+                "autotuner.math_engine.compute_active_trailing_stop",
+                side_effect=lambda *a, **kw: 5.0,
+            ),
+            patch(
+                "autotuner.math_engine.compute_breakeven_update",
+                side_effect=lambda *a, **kw: (a[3], a[4], a[2]),
+            ),
+            patch(
+                "autotuner.math_engine.compute_tp_confirmation",
+                side_effect=lambda **kw: (kw.get("tp_armed", False), 0, False),
+            ),
+            patch(
+                "autotuner.math_engine.compute_exit_confirmation",
+                side_effect=lambda **kw: (0, False),
+            ),
+            patch(
+                "autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+                side_effect=lambda *a, **kw: -100.0,
+            ),
+            patch(
+                "autotuner.math_engine.compute_vwap_breakdown_update",
+                side_effect=lambda **kw: (
+                    (0, 0, True, False)
+                    if kw.get("weighted_vwap_diff", 0.0) <= -9.0
+                    else (0, 0, False, False)
+                ),
+            ),
             patch("autotuner._replay_grace_minutes", return_value=0),
             contextlib.redirect_stdout(io.StringIO()),
         ):
@@ -218,8 +231,8 @@ def test_collect_sim_returns_value_is_independent_of_day_age(monkeypatch):
             )
 
     current_date = "2026-05-10"
-    recent = _collect_for_date("2026-05-08", current_date)   # 2 days ago
-    old = _collect_for_date("2026-03-11", current_date)      # ~60 days ago
+    recent = _collect_for_date("2026-05-08", current_date)  # 2 days ago
+    old = _collect_for_date("2026-03-11", current_date)  # ~60 days ago
 
     assert len(recent) == 1 and len(old) == 1, (
         "Both replays must produce exactly one triggered-day observation; "

@@ -121,9 +121,7 @@ def test_api_performance_live_metrics_includes_volatility_key(
     shadow_returns = [0.12 * (i + 1) for i in range(n_days)]
     dates = [f"2026-01-{i + 1:02d}" for i in range(n_days)]
 
-    analytics_module.compute_aggregate_returns.return_value = (
-        dates, live_returns, shadow_returns
-    )
+    analytics_module.compute_aggregate_returns.return_value = (dates, live_returns, shadow_returns)
     live_m = _metrics_with_volatility(volatility=0.035)
     shadow_m = _metrics_with_volatility(volatility=0.028)
     analytics_module.compute_quantstats_metrics.side_effect = [live_m, shadow_m]

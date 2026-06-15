@@ -10,6 +10,7 @@ assemble_advisor_context, mirroring app.py:2497-2507.
 These tests are RED on the original code (hash passed as-is → autotune_run=None
 → assemble_advisor_context called with hash, not name) and GREEN after the fix.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -63,6 +64,7 @@ FAKE_SUGGESTIONS_RESPONSE = ai_advisor.ConfigSuggestionsResponse(
 # Helper — build a Flask test client with the route wired up.
 # ---------------------------------------------------------------------------
 
+
 def _make_client():
     """Return a Flask test client for app.py with CSRF disabled."""
     import app as flask_app  # noqa: PLC0415 — import inside helper intentional
@@ -76,6 +78,7 @@ def _make_client():
 # Test 1 (core RED→GREEN): hash is resolved to normalized name before context
 # assembly, so assemble_advisor_context sees the name, not the hash.
 # ---------------------------------------------------------------------------
+
 
 def test_suggest_resolves_hash_to_name_before_context_assembly():
     """
@@ -143,6 +146,7 @@ def test_suggest_resolves_hash_to_name_before_context_assembly():
 # a valid (possibly empty) suggestions JSON, not a 500.
 # ---------------------------------------------------------------------------
 
+
 def test_suggest_unknown_hash_falls_back_gracefully():
     """
     GIVEN  a bot_state that does NOT contain the supplied hash
@@ -156,21 +160,25 @@ def test_suggest_unknown_hash_falls_back_gracefully():
 
     with (
         patch("database.load_state", return_value=FAKE_BOT_STATE),
-        patch("ai_advisor.assemble_advisor_context", return_value={
-            "scope": "symphony",
-            "symphony_id": unknown_hash,
-            "role_framing": "",
-            "suggestible_surface": [],
-            "locked_vars": [],
-            "optuna_evidence": {"available": False},
-            "volatility_regime": {"available": False},
-            "data_window": {},
-            "risk_invariants": [],
-            "symphony_logic": None,
-        }),
-        patch("ai_advisor.request_suggestions", return_value=(
-            ai_advisor.ConfigSuggestionsResponse(suggestions=[]), None
-        )),
+        patch(
+            "ai_advisor.assemble_advisor_context",
+            return_value={
+                "scope": "symphony",
+                "symphony_id": unknown_hash,
+                "role_framing": "",
+                "suggestible_surface": [],
+                "locked_vars": [],
+                "optuna_evidence": {"available": False},
+                "volatility_regime": {"available": False},
+                "data_window": {},
+                "risk_invariants": [],
+                "symphony_logic": None,
+            },
+        ),
+        patch(
+            "ai_advisor.request_suggestions",
+            return_value=(ai_advisor.ConfigSuggestionsResponse(suggestions=[]), None),
+        ),
     ):
         resp = client.post(
             "/ai-advisor/suggest",
@@ -188,27 +196,32 @@ def test_suggest_unknown_hash_falls_back_gracefully():
 # Test 3: empty symphony_id string falls back gracefully (no KeyError/crash).
 # ---------------------------------------------------------------------------
 
+
 def test_suggest_empty_symphony_id_does_not_crash():
     """Empty string symphony_id → graceful degradation, no 500."""
     client = _make_client()
 
     with (
         patch("database.load_state", return_value={}),
-        patch("ai_advisor.assemble_advisor_context", return_value={
-            "scope": "symphony",
-            "symphony_id": "",
-            "role_framing": "",
-            "suggestible_surface": [],
-            "locked_vars": [],
-            "optuna_evidence": {"available": False},
-            "volatility_regime": {"available": False},
-            "data_window": {},
-            "risk_invariants": [],
-            "symphony_logic": None,
-        }),
-        patch("ai_advisor.request_suggestions", return_value=(
-            ai_advisor.ConfigSuggestionsResponse(suggestions=[]), None
-        )),
+        patch(
+            "ai_advisor.assemble_advisor_context",
+            return_value={
+                "scope": "symphony",
+                "symphony_id": "",
+                "role_framing": "",
+                "suggestible_surface": [],
+                "locked_vars": [],
+                "optuna_evidence": {"available": False},
+                "volatility_regime": {"available": False},
+                "data_window": {},
+                "risk_invariants": [],
+                "symphony_logic": None,
+            },
+        ),
+        patch(
+            "ai_advisor.request_suggestions",
+            return_value=(ai_advisor.ConfigSuggestionsResponse(suggestions=[]), None),
+        ),
     ):
         resp = client.post(
             "/ai-advisor/suggest",
