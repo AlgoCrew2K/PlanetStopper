@@ -1396,13 +1396,17 @@ if _HYPOTHESIS_AVAILABLE:
             max_size=100,
         )
     )
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None)
     def test_tone_is_always_in_minus1_to_1_for_any_valid_gdelt_values(raw_values: list[float]):
         """PROPERTY: For any list of numeric AvgTone values in [-100,100],
         the normalized tone is in [-1.0, 1.0].
 
         This locks the normalization math: mean / 100, clamped to [-1, 1].
         FAILS if the producer's clamping is wrong or missing.
+
+        deadline=None: the producer's inter-request sleep (6s) is mocked out,
+        but Hypothesis's 200ms default deadline would still fire without this
+        setting since wall-clock includes mock setup overhead.
         """
         from advisors import lens_gdelt
 
@@ -1414,7 +1418,11 @@ if _HYPOTHESIS_AVAILABLE:
         artlist_resp = _make_mock_http_response({"articles": []})
         tone_resp = _make_mock_http_response(fixture)
 
-        with patch("requests.get", side_effect=[tone_resp, artlist_resp]):
+        # patch time.sleep so the 6s inter-request sleep doesn't consume wall-clock
+        with (
+            patch("requests.get", side_effect=[tone_resp, artlist_resp]),
+            patch("time.sleep"),
+        ):
             result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
 
         if result.get("available") is True:
@@ -1429,7 +1437,7 @@ if _HYPOTHESIS_AVAILABLE:
             )
 
     @given(available=st.booleans())
-    @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None)
     def test_tone_none_implies_available_false_property(available: bool):
         """PROPERTY: If the result has tone=None, available must be False.
 
