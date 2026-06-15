@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 # Maximum candidates generated per proposal run. PM-ASSUMED: 30 (bounded batch per AC-3).
 MAX_CANDIDATES_PER_RUN: int = 30
 
+# Maximum community-sourced candidates admitted per proposal run. Caps the caller-injected
+# community_candidates list inside propose_strategies regardless of adapter output size.
+MAX_COMMUNITY_CANDIDATES_PER_RUN: int = 20
+
 # Observation type tag written to advisor_observations.
 _OBSERVATION_TYPE = "strategy_proposal"
 
@@ -181,6 +185,74 @@ def _has_composer_key() -> bool:
         return bool(COMPOSER_KEY_ID and COMPOSER_SECRET)
     except ImportError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Community-candidate adapter
+# ---------------------------------------------------------------------------
+
+
+def community_candidate_infos(
+    community_result,
+    *,
+    max_candidates: int,
+) -> list[CandidateInfo]:
+    """Map a load_community_strategies result to a capped list of CandidateInfo objects.
+
+    Each candidate dict ``{sid, name, tree, tickers, oos_metrics, composition_hash}``
+    becomes a ``CandidateInfo`` with:
+        candidate_id  = sid
+        template_id   = "community"
+        params        = {sid, name, composition_hash}   (provenance — AC-5)
+        metrics       = {}                              (filled after backtest — AC-1)
+        backtest_error = None
+
+    Returns ``[]`` when:
+        - community_result is None or not a dict
+        - ``available`` is False
+        - ``candidates`` is missing, None, or empty
+
+    Never raises — any unexpected error returns ``[]`` (advisory path).
+
+    Args:
+        community_result: Dict returned by load_community_strategies (caller's job to obtain).
+        max_candidates: Hard cap on the returned list length (first-N, deterministic).
+    """
+    try:
+        if not isinstance(community_result, dict):
+            return []
+        if not community_result.get("available", False):
+            return []
+        raw = community_result.get("candidates")
+        if not raw or not isinstance(raw, list):
+            return []
+
+        infos: list[CandidateInfo] = []
+        for doc in raw[:max_candidates]:
+            try:
+                sid = doc["sid"]
+                infos.append(
+                    CandidateInfo(
+                        candidate_id=sid,
+                        tree=doc["tree"],
+                        template_id="community",
+                        params={
+                            "sid": sid,
+                            "name": doc.get("name", ""),
+                            "composition_hash": doc.get("composition_hash", ""),
+                        },
+                        metrics={},
+                        backtest_error=None,
+                    )
+                )
+            except Exception:
+                # Skip malformed individual docs; don't abort the whole adapter.
+                logger.debug("community_candidate_infos: skipping malformed doc", exc_info=True)
+                continue
+        return infos
+    except Exception:
+        logger.debug("community_candidate_infos: unexpected error", exc_info=True)
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -789,6 +861,7 @@ def propose_strategies(
     *,
     incumbent_oos_alpha: float = 0.0,
     default_oos_alpha: float = 0.0,
+    community_candidates: list[CandidateInfo] | None = None,
 ) -> ProposalRun:
     """Propose new candidate symphonies from scratch.
 
@@ -809,6 +882,12 @@ def propose_strategies(
             directly to ``evaluate_candidate_batch`` for the BHY FDR gate.
         default_oos_alpha: Fallback OOS alpha used by the gate when no incumbent
             alpha is available.
+        community_candidates: Optional pre-built ``CandidateInfo`` objects sourced from
+            the community-strategies loader (via ``community_candidate_infos``).  These
+            are appended to the template-generated candidates and flow through the SAME
+            single-batch FDR gate (AC-2).  Capped at ``MAX_COMMUNITY_CANDIDATES_PER_RUN``
+            inside this function regardless of list length (AC-3).  ``None`` and ``[]``
+            are identical — no community candidates are injected (AC-6).
 
     Returns:
         ProposalRun where:
@@ -834,6 +913,13 @@ def propose_strategies(
 
         # Step 1: Generate candidate trees (objective-directed, bounded)
         candidate_infos = _generate_candidate_trees(objective, universe)
+
+        # Step 1b: Inject caller-provided community candidates (keyword-only, AC-2/AC-3/AC-6).
+        # Cap at MAX_COMMUNITY_CANDIDATES_PER_RUN even if the caller passes more — the adapter
+        # may have been called with a higher explicit max_candidates.
+        # None and [] are both no-ops (AC-6: byte-for-byte identical to the template-only path).
+        if community_candidates:
+            candidate_infos.extend(community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN])
 
         if not candidate_infos:
             return ProposalRun(

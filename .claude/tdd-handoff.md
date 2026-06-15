@@ -1,60 +1,63 @@
-# TDD Handoff — community-strats-loader
-Plan: feature-plans/community-strats-loader.md
-Branch: team/community-strats
-Phase: green
+# TDD Handoff — propose-strategies-community-wiring
+Plan: feature-plans/propose-strategies-community-wiring.md
+Branch: team/propose-strategies-wiring
+Phase: red
 
 ## Test Files
-- tests/advisors/test_community_strats.py
+- tests/advisors/test_community_strats_wiring.py — 39 tests (38 failing RED, 1 GREEN invariant guard)
 
 ## Fixture Files
-None — fixtures are built inline via symphony_schema constructors in test helpers.
+None — trees built inline via symphony_schema constructors; community_result dicts built by _make_community_result() helper in the test file.
 
 ## A/C Coverage Matrix
 | A/C ID | Description | Test File | Test Name(s) | Status |
 |--------|-------------|-----------|--------------|--------|
-| AC-1 | Atlas read routes through cached_pull; second call within TTL does NOT call fetch_fn | test_community_strats.py | test_cache_routing_first_call_invokes_fetch_fn_once, test_cache_routing_second_call_within_ttl_skips_fetch | RED |
-| AC-2 | force_refresh=True bypasses cache, calls fetch_fn again even when fresh | test_community_strats.py | test_force_refresh_calls_fetch_fn_despite_fresh_cache | RED |
-| AC-3 | Returned candidate has {sid,name,tree,tickers,oos_metrics,composition_hash}; tree passes validate_tree==[]; tickers==extract_tickers(tree) | test_community_strats.py | test_candidate_shape_has_required_keys, test_candidate_tree_passes_validate_tree, test_candidate_tickers_match_extract_tickers | RED |
-| AC-4 | Bad edn / unparseable / validate_tree-rejected counted in stats; valid remainder returned | test_community_strats.py | test_missing_edn_string_counted_in_stats, test_unparseable_edn_counted_in_stats, test_validate_rejected_counted_in_stats, test_mixed_valid_and_invalid_returns_valid_remainder | RED |
-| AC-5 | Dedup by composition hash — two same-hash docs collapse to one retaining higher sharpe | test_community_strats.py | test_dedup_same_hash_keeps_higher_sharpe, test_dedup_count_reflected_in_stats | RED |
-| AC-6 | min_oos_sharpe excludes present-sharpe-below-floor; keeps docs lacking sharpe; limit caps | test_community_strats.py | test_min_oos_sharpe_excludes_below_floor, test_min_oos_sharpe_keeps_missing_sharpe_docs, test_limit_caps_returned_candidates | RED |
-| AC-7 | Never-raising + D-1: any failure → available=False, reason=type(exc).__name__ ONLY | test_community_strats.py | test_mongo_down_returns_available_false, test_available_false_has_required_keys, test_d1_reason_is_exception_class_name_only, test_d1_no_mongo_uri_substring_in_return, test_d1_no_host_substring_in_return, test_function_never_raises | RED |
-| AC-8 | MONGO_URI never written to cache DB or returned; no cross-DB imports | test_community_strats.py | test_mongo_uri_not_stored_in_cache_db, test_mongo_uri_not_in_return_value_recursive, test_no_autotuner_or_execution_import | RED |
-| AC-9 | Mongo projection excludes heavy fields (backtest/quantstats arrays) | test_community_strats.py | test_projection_excludes_heavy_fields | RED |
+| AC-1 | adapter maps community docs → CandidateInfo; candidate_id=sid, template_id="community", tree carried, params has sid+name+composition_hash; metrics={}; backtest_error=None | test_community_strats_wiring.py | test_community_candidate_infos_exists_on_module, test_adapter_returns_list, test_adapter_candidate_id_is_sid, test_adapter_template_id_is_community, test_adapter_tree_carried_through, test_adapter_params_contains_sid, test_adapter_params_contains_name, test_adapter_params_contains_composition_hash, test_adapter_metrics_empty_dict_pre_backtest, test_adapter_backtest_error_is_none_pre_backtest, test_adapter_count_matches_candidates_list | RED |
+| AC-1 (empty) | available=False → []; empty candidates list → [] | test_community_strats_wiring.py | test_adapter_available_false_returns_empty_list, test_adapter_empty_candidates_list_returns_empty_list | RED |
+| AC-2 | evaluate_candidate_batch receives template + community candidates together (FULL batch); called exactly once | test_community_strats_wiring.py | test_gate_input_includes_community_candidate_ids, test_gate_input_includes_template_candidates_when_community_present, test_gate_is_called_exactly_once | RED |
+| AC-3 | MAX_COMMUNITY_CANDIDATES_PER_RUN exists as named int constant; adapter caps at max_candidates; propose_strategies enforces the cap | test_community_strats_wiring.py | test_max_community_candidates_per_run_exists, test_max_community_candidates_per_run_is_positive_int, test_adapter_caps_at_max_candidates, test_adapter_cap_is_deterministic_takes_first, test_adapter_max_candidates_uses_module_constant_as_default, test_community_candidates_exceeding_cap_are_truncated_in_batch | RED |
+| AC-4 | backtest exception → backtest_error set; failed candidate excluded from gate; other candidates unaffected; all-fail → run completes | test_community_strats_wiring.py | test_community_backtest_error_sets_backtest_error_field, test_community_backtest_error_candidate_excluded_from_gate, test_one_bad_community_candidate_does_not_block_template_candidates, test_all_community_backtest_failures_run_completes | RED |
+| AC-5 | persisted observation for surviving community candidate has template_id="community" + sid in params + subject_id=sid | test_community_strats_wiring.py | test_persisted_observation_has_template_id_community, test_persisted_observation_raw_response_contains_sid, test_persisted_subject_id_is_sid | RED |
+| AC-6 | community_candidates=None and =[] → no regression; gate batch size identical; community_candidates is keyword-only | test_community_strats_wiring.py | test_propose_strategies_accepts_community_candidates_none, test_propose_strategies_accepts_community_candidates_empty_list, test_gate_batch_size_same_for_none_and_empty_list, test_community_candidates_kwarg_is_keyword_only | RED |
+| AC-7 | adapter never raises on malformed input; propose_strategies never raises on community failures; returns ProposalRun on catastrophic failure; no LIVE_EXECUTION import; advisory-only | test_community_strats_wiring.py | test_community_candidate_infos_never_raises_on_malformed_result, test_propose_strategies_never_raises_on_community_exception, test_propose_strategies_returns_proposal_run_on_community_failures, test_strategy_builder_engine_does_not_import_live_execution_at_module_level (GREEN invariant), test_community_candidate_infos_does_not_call_live_execution, test_propose_strategies_with_community_candidates_returns_proposal_run_type | RED (38 failing) + 1 GREEN invariant |
 
 ## Import Stubs Created
-- advisors/community_strats.py — exports `load_community_strategies(*, limit=None, min_oos_sharpe=None, client=None, force_refresh=False) -> dict`; returns always-false honest-empty; NO logic
+None needed — `advisors/strategy_builder_engine.py` already exists. The new symbols (`community_candidate_infos`, `MAX_COMMUNITY_CANDIDATES_PER_RUN`, `community_candidates` kwarg on `propose_strategies`) are simply absent, causing AttributeError / TypeError failures — the correct RED signal.
 
 ## Questions for User
-- The feature plan references "edn_string" parsed from Mongo docs but does not specify the wire format. Tests treat edn_string as a JSON-encoded tree dict (json.loads). If an EDN library is intended, the implementer must document this; the test contract (parse_failed on bad input, validate_tree on result) is format-agnostic.
+None. The AC matrix is fully specified; the adapter contract is recovered from pre-rip c1bf5dc.
 
-## Behavioral Test Plan
-N/A — no UI surface. All tests are unit tests.
+## RED Run Result
+- 38 failed on missing symbols (AttributeError on `community_candidate_infos` / `MAX_COMMUNITY_CANDIDATES_PER_RUN`; TypeError on unknown `community_candidates` kwarg in `propose_strategies`)
+- 1 passed: `test_strategy_builder_engine_does_not_import_live_execution_at_module_level` — architectural invariant guard; correctly GREEN before and after implementation (module must never export LIVE_EXECUTION)
+- 0 skipped
+- No syntax errors, no import errors, no test infrastructure failures
 
 ## Status Log
-- [2026-06-14] test-writer: Starting RED phase for community-strats-loader (AC-1..AC-9)
-- [2026-06-14] test-writer: RED complete — 32 tests total (24 failing on stub, 7 green security/invariant guards, 1 skipped pending pymongo call). Stub created at advisors/community_strats.py. Committed at c1bca14 on team/community-strats.
-- [2026-06-14] test-writer: REVIEW — found 1 test bug (_raise side_effect TypeError masking D-1 test) + added 6 integration-specialist tests (S1-C plumbing, S2-B cache pipeline, S2-C stats invariant). Fixed bug. 38/38 GREEN at 3fbb650. APPROVED — all AC-1..AC-9 covered, 38 passed / 0 failed / 0 skipped. Ready for doc-writer then PM gate.
-- [2026-06-14] implementer: GREEN complete — 38/38 tests passing on committed tree f6d48c1. No test bugs documented (test-writer pre-fixed the _raise side_effect issue). Typecheck N/A (stdlib + lazy imports). Lint clean (ruff via linter hook).
-
-## Implementation Notes
-- `_composition_hash(tree)`: strips uuid4 `id` keys recursively before JSON-dumping; ensures identical-logic trees hash identically regardless of node id generation. Does NOT use `database.compute_composition_hash` (which takes `list[str]` of symphony IDs — different semantic).
-- `_oos_sharpe(doc)` returns `float("-inf")` for missing/absent sharpe so docs-with-sharpe always win dedup ties.
-- `client` kwarg retained for interface compatibility but unused — the fetch_fn closure always uses `pymongo.MongoClient(os.environ["MONGO_URI"], ...)` directly.
-- `cached_pull` returning `None` (documented sentinel) → `available=False, reason="NoneType"` (no raise).
-- Non-list payload from cache → `available=False, reason="TypeError"` (guards against corrupt cache returning a dict).
-- All outer logic wrapped in `try/except Exception` — nothing can escape.
-- Stats `valid` counts post-dedup survivors (post-limit if limit applied). The stats sum invariant holds when no limit is applied.
-- `sharpe_filtered` counter: only increments for docs that HAVE a sharpe AND it's below the floor; docs lacking sharpe entirely pass through.
-
-## Test File Issues (for test-writer to fix)
-None remaining. Fixed: zero-arg `_raise` callable used as side_effect in 3 D-1 tests — mock forwarded call args causing TypeError. Fixed by using exception instances as side_effect.
+- [2026-06-14] test-writer: Starting RED phase for propose-strategies-community-wiring (AC-1..AC-7)
+- [2026-06-14] test-writer: RED complete — 39 tests (38 failing on missing symbols, 1 GREEN architectural invariant guard). No stubs needed. Committed RED on team/propose-strategies-wiring.
 
 ## Implementation Notes for Implementer
-- edn_string wire format: implement as json.loads (safest, no eval). parse_failed on any ValueError/JSONDecodeError.
-- atlas_cache.cached_pull collection name: "captplanet.strategies" (matches AC-1/AC-2 spy tests).
-- The 7 security invariant tests (PASSED) are not to be broken — they assert things that must hold on both stub and real implementation.
-- The 1 skipped projection test activates once find() is called with a projection arg.
-- Trees must be deserialised from edn_string then passed through validate_tree ([] = keep; errors = validate_rejected++).
-- Dedup: do NOT use database.compute_composition_hash (that function takes list[str] of symphony IDs — wrong type for this use case). Instead implement a private _composition_hash(tree) helper: strip all 'id' keys recursively from a deep copy of the tree, then json.dumps(stripped, sort_keys=True, separators=(',',':')), then hashlib.sha256(...).hexdigest(). Keep doc with higher oos_metrics.get('sharpe', float('-inf')) when hashes collide.
-- Missing sharpe: treat as -inf for dedup comparison only; keep doc regardless of min_oos_sharpe floor.
+### What to add to advisors/strategy_builder_engine.py
+
+1. `MAX_COMMUNITY_CANDIDATES_PER_RUN: int = <N>` at module level (alongside `MAX_CANDIDATES_PER_RUN`). Choose a reasonable positive integer cap.
+
+2. `community_candidate_infos(community_result, *, max_candidates) -> list[CandidateInfo]` function:
+   - Returns `[]` when `community_result.get("available") is False` or `candidates` is empty/None
+   - Maps each candidate dict `{sid, name, tree, tickers, oos_metrics, composition_hash}` to:
+     `CandidateInfo(candidate_id=sid, tree=tree, template_id="community", params={"sid": sid, "name": name, "composition_hash": composition_hash}, metrics={}, backtest_error=None, data_warnings=[])`
+   - Truncates to `max_candidates` (deterministic: first N items)
+   - Never raises — wrap in try/except, return [] on any failure
+
+3. `community_candidates: list[CandidateInfo] | None = None` as a keyword-only parameter on `propose_strategies` (after the `*` — it's already keyword-only for `incumbent_oos_alpha`/`default_oos_alpha`):
+   - After `candidate_infos = _generate_candidate_trees(objective, universe)`, extend with the (capped) community candidates: `if community_candidates: candidate_infos.extend(community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN])`
+   - The existing backtest loop, gate call, and persistence path are UNCHANGED — community candidates flow through the same code
+   - Per-candidate try/except already exists in the backtest loop — community candidates get the same failure isolation automatically
+
+### Key invariants the tests enforce (implementer must NOT break)
+- `evaluate_candidate_batch` called exactly once per run
+- Gate input = FULL combined batch (template + community); screens never applied to gate input
+- `template_id="community"` must propagate from CandidateInfo into raw_response on persist
+- `params["sid"]` must equal the community candidate's `candidate_id`
+- `community_candidates=None` and `community_candidates=[]` must be identical in behavior
+- `community_candidates` must be keyword-only (no positional use)
