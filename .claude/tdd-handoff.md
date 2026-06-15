@@ -2,7 +2,7 @@
 Plan: feature-plans/derivatives-section-wiring.md
 Branch: feat/derivatives-section-wiring
 Phase: red
-HEAD SHA: (update after final RED commit)
+HEAD SHA: 12218de
 
 ## Test Files
 - tests/test_derivatives_section.py (root-level; 9 tests, 8 RED — prior test-writer)
