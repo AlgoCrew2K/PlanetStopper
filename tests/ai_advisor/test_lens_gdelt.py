@@ -1460,6 +1460,127 @@ if _HYPOTHESIS_AVAILABLE:
 
 
 # ---------------------------------------------------------------------------
+# Review-round RED — gaps found after implementer GREEN
+# ---------------------------------------------------------------------------
+
+
+class TestReviewRoundGaps:
+    """Tests added after the first GREEN that expose two implementation gaps.
+
+    Gap 1: _GDELT_INTER_REQUEST_S is defined but never used — the artlist GET
+    fires immediately after tone extraction with no sleep, keeping the IP
+    window hot and re-tripping 429 on the artlist call.
+
+    Gap 2: Non-429 HTTP errors (e.g. 503) return reason='HTTPError' (the D-1
+    class name) but contract §4 specifies the NAMED label 'gdelt_fetch_failed'
+    for non-200-non-429 HTTP-status failures — distinct from caught exceptions.
+    """
+
+    def test_inter_request_sleep_is_called_between_tone_and_artlist_gets(
+        self, timelinetone_fixture: dict, artlist_fixture: dict
+    ):
+        """time.sleep(_GDELT_INTER_REQUEST_S) must be called between tone and artlist GETs.
+
+        Contract §5 Amendment 1: both GETs share GDELT's per-IP rate-limit window.
+        Firing artlist immediately after tone keeps the window hot and re-trips 429.
+        _GDELT_INTER_REQUEST_S=6.0 must be slept between the two calls.
+
+        FAILS if the constant is defined but never passed to time.sleep (current gap).
+        """
+        from advisors import lens_gdelt
+
+        tone_resp = _make_mock_http_response(timelinetone_fixture)
+        artlist_resp = _make_mock_http_response(artlist_fixture)
+        inter_s = lens_gdelt._GDELT_INTER_REQUEST_S
+
+        sleep_durations: list[float] = []
+
+        def capture_sleep(duration: float) -> None:
+            sleep_durations.append(duration)
+
+        with (
+            patch("requests.get", side_effect=[tone_resp, artlist_resp]),
+            patch("time.sleep", side_effect=capture_sleep),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert result.get("available") is True, (
+            f"Expected successful result for this test. Got: {result!r}"
+        )
+        assert any(abs(d - inter_s) < 0.01 for d in sleep_durations), (
+            f"_GDELT_INTER_REQUEST_S={inter_s}s sleep was never called. "
+            f"Recorded sleeps: {sleep_durations}. "
+            f"Contract §5 Amendment 1: sleep _GDELT_INTER_REQUEST_S between the "
+            f"tone GET and artlist GET — the constant is defined but unused."
+        )
+
+    def test_non_429_http_error_returns_gdelt_fetch_failed_reason(self):
+        """Non-200 non-429 HTTP responses return reason='gdelt_fetch_failed'.
+
+        Contract §4 named-label table:
+          HTTP 429 exhausted        -> 'rate_limited'
+          Non-200 non-429 HTTP      -> 'gdelt_fetch_failed'   <- this test
+          Caught network exception  -> type(exc).__name__
+
+        The current implementation calls resp.raise_for_status() for non-429
+        non-2xx, which raises HTTPError — caught by the outer except, yielding
+        reason='HTTPError'. That is D-1 compliant (class name only) but §4
+        specifies 'gdelt_fetch_failed' as a NAMED label for HTTP-status failures,
+        separate from general exception handling.
+
+        FAILS if reason='HTTPError' instead of 'gdelt_fetch_failed'.
+        """
+        from advisors import lens_gdelt
+        from requests.exceptions import HTTPError
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 503
+        mock_resp.raise_for_status.side_effect = HTTPError("503 Server Error")
+        mock_resp.text = "Service Unavailable"
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert result["available"] is False, (
+            f"503 response must return available=False. Got: {result!r}"
+        )
+        assert result.get("reason") == "gdelt_fetch_failed", (
+            f"Non-429 HTTP error must return reason='gdelt_fetch_failed' (§4). "
+            f"Got reason={result.get('reason')!r}. "
+            f"'HTTPError' is the D-1 class name but §4 names 'gdelt_fetch_failed' "
+            f"for HTTP-status failures — different from caught network exceptions."
+        )
+
+    def test_non_200_5xx_returns_gdelt_fetch_failed(self):
+        """HTTP 500 also yields reason='gdelt_fetch_failed' (not 'HTTPError').
+
+        Verify the named-label rule applies across all non-200 non-429 codes.
+        """
+        from advisors import lens_gdelt
+        from requests.exceptions import HTTPError
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.raise_for_status.side_effect = HTTPError("500 Internal Server Error")
+        mock_resp.text = "Internal Server Error"
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("time.sleep"),
+        ):
+            result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
+
+        assert result["available"] is False
+        assert result.get("reason") == "gdelt_fetch_failed", (
+            f"HTTP 500 must return reason='gdelt_fetch_failed' (§4). "
+            f"Got: {result.get('reason')!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # @pytest.mark.live — excluded from default run (--include-live opt-in)
 # ---------------------------------------------------------------------------
 
