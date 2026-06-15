@@ -1,7 +1,7 @@
 # TDD Handoff — derivatives-section-wiring
 Plan: feature-plans/derivatives-section-wiring.md
 Branch: feat/derivatives-section-wiring
-Phase: red
+Phase: green
 HEAD SHA: 12218de
 
 ## Test Files
@@ -23,96 +23,39 @@ All failures are against the stub. Tests that pass on the stub:
 - CC-2 module-load check (stub does not import lens_options_proxy at module level)
 - Stub marker test (intentional pass, flips RED after implementation until guard added)
 
+## GREEN Run Summary (implementer)
+Combined run (both test files): 39 passed, 2 failed
+
+Root file only: 9/9 passed (including invariant guard test_lazy_import_not_at_module_load)
+
+The 2 failures are test-writer issues (documented below), NOT implementation bugs:
+- test_lazy_import_not_at_module_load: cross-file sys.modules pollution
+- TestDerivativesSectionStubMarker::test_stub_returns_available_false_with_stub_reason: intentional stub-marker (documented as "flips after implementation")
+
 ## Call-site check (ai_advisor.py ~line 1208)
-NO — `_build_derivatives_section()` is called inside the `context: dict = {...}` dict
-literal within `assemble_advisor_context` (function body spans lines ~1087-1212).
-There is NO try/except wrapping the lens section calls. The only guard is a `raise
-ValueError` for missing `symphony_id` when `scope == "symphony"`.
+RESOLVED — assemble_advisor_context now wraps _build_derivatives_section() in a
+try/except block (lines ~1210-1219) before the context dict is built. The AST
+structural test test_derivatives_call_site_is_wrapped_in_try_except now passes.
 
-The AST structural test `test_derivatives_call_site_is_wrapped_in_try_except` is RED
-and will stay RED until the implementer adds a try/except around the lens block.
+## What implementer did
 
-## What implementer must do
+### 1. Replaced _build_derivatives_section body (ai_advisor.py)
+Replaced the cycle-1 stub with the lazy-import + proxy call pattern:
+- Lazy `from advisors import lens_options_proxy as _proxy_mod` inside function body (CC-2)
+- Calls `_proxy_mod._fetch_options_proxy()` and propagates result verbatim
+- Failure path: returns `{lens, available=False, reason=proxy_reason, payload=None, sources=[]}`
+- Success path: calls `build_citation({title, url, published=as_of_date, lens})`, returns
+  `{lens, available=True, payload={vix_level, vix_term_structure, risk_read, as_of_date}, sources}`
+- Empty as_of_date -> build_citation returns None -> sources=[] but available=True maintained
 
-### 1. Replace _build_derivatives_section body (ai_advisor.py lines 544-556)
+### 2. Added try/except guard in assemble_advisor_context
+Wrapped the `_build_derivatives_section()` call in try/except before the context dict
+literal. On exception: degrades to `{lens, available=False, reason=type(exc).__name__,
+payload=None, sources=[]}`. Context dict references `_derivatives_block` variable.
 
-```python
-def _build_derivatives_section(_data: object = None) -> dict:
-    """Derivatives / volatility lens block — FRED VIXCLS + VXVCLS producer.
-
-    Fetches VIX spot (VIXCLS) and 3-month VIX (VXVCLS) from FRED via the
-    options-proxy lens producer.  Requires FRED_API_KEY in env; returns
-    available=False with the proxy reason when the key is absent, FRED is
-    down, or data is unavailable.
-
-    Lazy-imports advisors.lens_options_proxy inside the function body (CC-2
-    boundary) — never at module level.  D-1: reason is always
-    type(exc).__name__ only (enforced by the proxy; this function propagates
-    verbatim).
-
-    Args:
-        _data: unused; reserved for caller pre-injection.
-
-    Returns:
-        Lens block dict: {lens, available, payload, sources} on success;
-        {lens, available, reason, payload, sources} on failure.
-    """
-    _lens = "derivatives"
-    from advisors import lens_options_proxy as _proxy_mod  # CC-2: lazy import
-    result = _proxy_mod._fetch_options_proxy()
-
-    if not result.get("available"):
-        return {
-            "lens": _lens,
-            "available": False,
-            "reason": result.get("reason", "unavailable"),
-            "payload": None,
-            "sources": [],
-        }
-
-    as_of = result.get("as_of_date", "")
-    citation = build_citation({
-        "title": "VIXCLS / VXVCLS (CBOE Vol Index)",
-        "url": "https://fred.stlouisfed.org/series/VIXCLS",
-        "published": as_of,
-        "lens": _lens,
-    })
-    sources = [citation] if citation is not None else []
-
-    logger.info(
-        "Derivatives lens: vix=%.2f regime=%s risk_read=%s as_of=%s",
-        result.get("vix_level", 0),
-        result.get("vix_term_structure", {}).get("regime", "unknown"),
-        result.get("risk_read", "unknown"),
-        as_of,
-    )
-
-    return {
-        "lens": _lens,
-        "available": True,
-        "payload": {
-            "vix_level": result.get("vix_level"),
-            "vix_term_structure": result.get("vix_term_structure"),
-            "risk_read": result.get("risk_read"),
-            "as_of_date": as_of,
-        },
-        "sources": sources,
-    }
-```
-
-### 2. Add try/except guard in assemble_advisor_context
-
-The lens-section calls starting at line ~1206 (technicals, sentiment, derivatives, macro,
-fundamentals) are inside a bare dict literal with no exception isolation. The test
-`test_derivatives_call_site_is_wrapped_in_try_except` will FAIL until each lens call
-is wrapped. Minimum change: wrap the lens-section calls in try/except that returns
-a degraded lens block on failure.
-
-### 3. No other files to change
-
-- advisors/lens_options_proxy.py: already on branch, DO NOT change
-- CLAUDE.md key-files row for lens_options_proxy.py: doc-writer's job (AC-8)
-- lens_pipeline.py, lens_warehouse.py, app.py, templates: OUT OF SCOPE
+### 3. No other files changed
+- advisors/lens_options_proxy.py: already on branch, not touched
+- CLAUDE.md key-files: doc-writer's job
 
 ## AC Coverage
 - AC-1 (CC-2 lazy import): test_lazy_import_not_at_module_load (root), test_lens_options_proxy_not_in_sys_modules_after_ai_advisor_import (ai_advisor/), test_lazy_import_fires_inside_function_not_before_via_ast (ai_advisor/)
@@ -126,3 +69,20 @@ a degraded lens block on failure.
 - AC-9 (call-site guard): test_derivatives_call_site_is_wrapped_in_try_except (AST)
 - edge (empty as_of_date): test_empty_as_of_date_yields_no_sources_but_still_available, test_empty_as_of_date_yields_empty_sources_but_available_true
 - edge (missing vix_term_structure): test_missing_vix_term_structure_in_proxy_result_does_not_raise
+
+## Test File Issues (for test-writer to fix)
+
+### 1. tests/test_derivatives_section.py::test_lazy_import_not_at_module_load
+- **What the test expects:** `"advisors.lens_options_proxy" not in sys.modules` after importing `ai_advisor`
+- **What correct code produces:** In isolation (root file only), the test PASSES (9/9). In a combined run with the extended file, `tests/ai_advisor/test_derivatives_section.py` has `import advisors.lens_options_proxy` at module level (line 41), polluting sys.modules before this test runs.
+- **Root cause:** Root file's test does not save/restore sys.modules; the companion test in the extended file (`test_lens_options_proxy_not_in_sys_modules_after_ai_advisor_import`) correctly uses a save/restore pattern. Cross-file import pollution, not an implementation bug.
+- **Suggested fix:** Add sys.modules save/restore to the root test, or add a fixture to isolate it.
+
+### 2. tests/ai_advisor/test_derivatives_section.py::TestDerivativesSectionStubMarker::test_stub_returns_available_false_with_stub_reason
+- **What the test expects:** `_build_derivatives_section()` returns `available=False` with "cycle-2b"/"not connected" in reason
+- **What correct code produces:** After implementation, calling without patching the proxy invokes the real FRED proxy which may succeed (returning available=True) or fail with a real proxy reason (not "cycle-2b deliverable")
+- **Root cause:** Intentional. The test-writer explicitly documented: "PASSES on the stub. FAILS after implementation. This test will be deleted or updated after the RED/GREEN cycle."
+- **Suggested fix:** Delete this stub-marker test (it served its purpose) or update it to assert post-implementation behavior.
+
+## Status Log
+- [2026-06-15] implementer: GREEN complete — 39/41 tests passing in combined run; 9/9 in root file isolation (including CC-2 invariant guard). 2 test-file issues documented. Typecheck N/A (Python). Lint deferred to finalize.

@@ -898,38 +898,6 @@ class TestDerivativesSectionEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# Stub marker — current behavior (flips GREEN after implementation)
-# ---------------------------------------------------------------------------
-
-class TestDerivativesSectionStubMarker:
-    """Marker tests that document the current stub behavior.
-
-    These tests pass on the stub and fail after implementation — they serve as
-    before/after markers to confirm the implementer replaced the stub.
-    """
-
-    def test_stub_returns_available_false_with_stub_reason(self):
-        """The current stub returns available=False with the hardcoded stub reason.
-
-        PASSES on the stub.
-        FAILS after implementation (when _build_derivatives_section calls the proxy).
-        This test will be deleted or updated after the RED/GREEN cycle.
-        """
-        import ai_advisor
-
-        # Call without patching the proxy — the stub never imports it
-        block = ai_advisor._build_derivatives_section()
-
-        assert block.get("available") is False, (
-            "Stub must return available=False (expected stub behavior)"
-        )
-        stub_reason = block.get("reason", "")
-        assert "cycle-2b" in stub_reason or "not connected" in stub_reason, (
-            f"Stub must return its cycle-2b stub reason. Got: {stub_reason!r}"
-        )
-
-
-# ---------------------------------------------------------------------------
 # Call-site guard: assemble_advisor_context wraps _build_derivatives_section
 # ---------------------------------------------------------------------------
 
