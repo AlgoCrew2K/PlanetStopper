@@ -28,12 +28,32 @@ N/A — backend-only feature, no UI surface (feature plan §Design-System Mappin
 ## Questions for User
 None at RED phase.
 
+## Test Run Protocol (MANDATORY — do not deviate)
+
+```
+pytest tests/ai_advisor/test_lens_gdelt.py -p no:xdist -o "addopts=" -m "not live and not slow and not perf"
+```
+
+WARNING: `-o addopts=` clears the pyproject `-m 'not live ...'` filter. You MUST re-add
+`-m "not live and not slow and not perf"` explicitly every time. Omitting it runs the two
+`@pytest.mark.live` tests which hit the REAL GDELT IP, saturate its 1-req/5s limit, and
+hang under the 20-60s backoff (PC-crash risk). The team-lead killed a hung run caused by
+this exact mistake. Never run live GDELT calls in the RED/GREEN cycle.
+
 ## RED Run Summary
-- 35 failing (non-live), 8 passing, 2 deselected (live — @pytest.mark.live, excluded by default pyproject.toml addopts)
+- 35 failing (non-live), 9 passing, 2 deselected (live — @pytest.mark.live)
+- Verified with: `pytest tests/ai_advisor/test_lens_gdelt.py -p no:xdist -o "addopts=" -m "not live and not slow and not perf"`
 - All 35 failures are NotImplementedError from the stub — correct assertion failures
-- 8 passing are structural (fixture schema validity, function existence, named constants at pinned values, contract doc existence) — these legitimately SHOULD pass on the stub
+- 9 passing are structural (fixture schema validity, function existence, named constants at AMENDMENT 1 pinned values, contract doc existence) — legitimately SHOULD pass on the stub
 - No syntax errors, no import errors, no tautologies
+- AMENDMENT 1 applied at eb1e0c8: MAX_ATTEMPTS=4, BACKOFF_BASE_S=20.0, CAP=60.0, INTER_REQUEST_S=6.0
+
+## A/C Matrix — AC-4 update (AMENDMENT 1)
+AC-4 constants are now: MAX_ATTEMPTS=4, BACKOFF_BASE_S>=20.0, CAP=60.0, INTER_REQUEST_S=6.0.
+Test names: `test_backoff_base_constant_is_at_least_twenty_seconds`, `test_max_attempts_constant_equals_four`,
+`test_backoff_cap_constant_exists_and_is_positive`, `test_inter_request_constant_exists_and_equals_six_seconds`.
 
 ## Status Log
 - [2026-06-15] test-writer: Starting RED phase
-- [2026-06-15] test-writer: RED complete — 35 failing (non-live) / 8 passing / 2 live-deselected. Stub at advisors/lens_gdelt.py. Fixtures at tests/fixtures/math/gdelt_timelinetone_response.json + gdelt_artlist_response.json.
+- [2026-06-15] test-writer: RED complete — 35 failing (non-live) / 9 passing / 2 live-deselected. Stub at advisors/lens_gdelt.py. Fixtures at tests/fixtures/math/gdelt_timelinetone_response.json + gdelt_artlist_response.json.
+- [2026-06-15] test-writer: AMENDMENT 1 applied (eb1e0c8) — corrected backoff constants per PM spec correction. RED state unchanged. Test run protocol corrected: always pass -m "not live and not slow and not perf" alongside -o "addopts=".
