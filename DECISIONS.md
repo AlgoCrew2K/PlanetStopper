@@ -634,3 +634,70 @@ Cycle: `propose-wiring` on branch `team/propose-strategies-wiring`. 39/39 tests 
 **`CandidateInfo`/`ProposalRun`/`ScreenConfig`/`Objective` shapes are unchanged.** The FDR gate logic, screen logic, and persistence path are unchanged. Only the candidate list assembly in Step 1b is new.
 
 **Status:** GREEN at `4edbe92`. 39/39 tests GREEN (AC-1..AC-7). Acceptance criteria verified: adapter mapping + cap (AC-1/AC-3), gate-input includes community candidates (AC-2), backtest failure isolation (AC-4), provenance in persist args (AC-5), no-regression vs template-only (AC-6), advisory-safety + never-raises (AC-7).
+
+---
+
+## GDELT Tone/Sentiment Producer — lens_gdelt (2026-06-15)
+
+Cycle: `gdelt-tone` on branch `feat/lens-gdelt-tone`. 47/47 tests GREEN (2 live-excluded).
+
+### DE-GDELT-001: Two-endpoint design — timelinetone for tone signal, artlist for citations; artlist is best-effort
+
+**Decision:** `_fetch_gdelt_sentiment` makes two HTTP GETs: `timelinetone` for the
+tone signal and `artlist` for source citations. The artlist result is best-effort —
+any failure yields `sources=[]` without degrading `available` or `tone`. The tone
+endpoint is the authoritative signal; artlist is enrichment only.
+
+**Rationale:** GDELT's `timelinetone` mode returns a time series of `AvgTone`
+values. The `artlist` mode returns article metadata useful as citations in the
+Market Prism synthesis. Combining both in one producer avoids a second lazy-import
+boundary while keeping the concerns separated in the return dict (`tone` vs `sources`).
+
+### DE-GDELT-002: Amendment 1 backoff constants — BASE=20.0s, MAX=4, CAP=60.0s, INTER=6.0s
+
+**Decision:** The retry constants are pinned at the Amendment 1 values
+(`_GDELT_BACKOFF_BASE_S=20.0`, `_GDELT_MAX_ATTEMPTS=4`, `_GDELT_BACKOFF_CAP_S=60.0`,
+`_GDELT_INTER_REQUEST_S=6.0`). The original values (`BASE=1.0`, `MAX=3`, `CAP=30.0`)
+caused a persistent-429 PC crash when the GDELT IP was saturated by a background
+probe: with `BASE=1.0` the retries fired within GDELT's 5 s/req window, never
+clearing the 429. `BASE=20.0` gives 4× margin above the floor. `MAX=4` gives 3
+retry opportunities. `INTER=6.0` prevents the artlist GET from immediately reusing
+the rate-limit window that the tone GET just consumed.
+
+**Consequence:** The inter-request sleep adds ~6 s to every successful call. This
+is acceptable on the off-hours advisory path (never on the execution path).
+
+### DE-GDELT-003: D-1 — named labels for HTTP-status failures, `type(exc).__name__` for caught exceptions
+
+**Decision:** Non-429 non-200 HTTP status codes return the named label
+`"gdelt_fetch_failed"` (not `type(HTTPError).__name__` = `"HTTPError"`). Caught
+network exceptions (Timeout, ConnectionError, etc.) return `type(exc).__name__`.
+Rate limiting after all retries returns `"rate_limited"`. Empty tone data returns
+`"no_tone_data"`.
+
+**Rationale:** Named labels allow callers to distinguish the HTTP-failure class
+without coupling to the requests exception hierarchy. `type(exc).__name__` for
+genuine exceptions satisfies the D-1 contract (class name only, never `str(exc)`,
+never the message body).
+
+**Implementation:** The status check (`if not (200 <= resp.status_code < 300)`)
+fires before `resp.json()` and returns `_unavailable("gdelt_fetch_failed")`
+directly, bypassing `raise_for_status()` entirely. This avoids leaking the
+`HTTPError` class name through the catch-all.
+
+### DE-GDELT-004: Tone extraction path — `timeline[0]["data"][k]["value"]`, not `timeline[0]["value"]`
+
+**Decision:** The tone field is extracted from `timeline[0]["data"][k]["value"]`
+(deep nested). The prior implementation read `entry.get("value")` from the
+series-wrapper object `{series, data}`, which has no `"value"` key at that level
+(see `gdelt-diagnosis.md §1`). This always produced `tone=None, available=True`,
+violating the honest-availability contract.
+
+**Consequence:** A dedicated test class (`TestToneNormalization`) and a fixture
+designed with a series wrapper that has NO top-level `"value"` key lock this
+field path permanently. Any regression to the old path causes immediate RED.
+
+**Status:** GREEN at `7c5b203`. 47/47 tests GREEN (AC-1..AC-5). Acceptance criteria
+verified per `tests/ai_advisor/test_lens_gdelt.py` — fixture schema, honest
+availability, D-1 reason labels, tone normalization, bounded retry, artlist sources,
+contract document existence, inter-request sleep, HTTP reason label.

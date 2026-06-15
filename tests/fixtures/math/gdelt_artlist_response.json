@@ -1,0 +1,31 @@
+{
+  "_provenance": "Schema-derived fixture — GDELT lens RED phase. Shape derived from GDELT 2.0 DOC API JSONFeed specification (https://blog.gdeltproject.org/gdelt-doc-2-0-api-supports-jsonfeed/) and the existing gdelt_sentiment_api_shape.json fixture (Cycle 2). Values are test sentinels. The runtime validator (validate_artlist_shape) asserts each article carries url + seendate (contract hard requirement per .claude/gdelt-contract.md §3). No live GDELT calls in CI.",
+  "_api_url": "https://api.gdeltproject.org/api/v2/doc/doc?query=stock+market+finance&mode=artlist&format=json&maxrecords=10",
+  "_note": "Each article in 'articles' MUST carry: url (https://), title, seendate (GDELT format YYYYMMDDTHHmmssZ), domain. The producer maps seendate -> sources[*].seendate in the return dict. Tests assert shape/presence of these fields, never their specific string values.",
+  "articles": [
+    {
+      "url": "https://www.example-financial-news.com/markets-outlook-2026",
+      "title": "Markets Signal Volatility Shift Ahead of Fed Decision",
+      "seendate": "20260614T130000Z",
+      "language": "English",
+      "domain": "example-financial-news.com",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://www.another-market-outlet.com/equity-resilience",
+      "title": "Equity Markets Show Resilience Despite Mixed Economic Data",
+      "seendate": "20260614T120000Z",
+      "language": "English",
+      "domain": "another-market-outlet.com",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://www.third-financial-source.com/risk-outlook",
+      "title": "Risk Appetite Improves as Inflation Data Comes In Below Forecast",
+      "seendate": "20260614T110000Z",
+      "language": "English",
+      "domain": "third-financial-source.com",
+      "sourcecountry": "United States"
+    }
+  ]
+}

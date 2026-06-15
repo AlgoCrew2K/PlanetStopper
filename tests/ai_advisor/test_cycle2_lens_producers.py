@@ -207,8 +207,39 @@ def _make_mock_response(json_data: dict, status_code: int = 200) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
+def _make_tone_result(
+    available: bool = True,
+    tone: float | None = 0.12,
+    sources: list | None = None,
+    reason: str | None = None,
+) -> dict:
+    """Build a mock _fetch_gdelt_sentiment return dict for use in wiring tests.
+
+    Phase 2: _build_sentiment_section calls both artlist (via _fetch_with_backoff)
+    and _fetch_gdelt_sentiment (via advisors.lens_gdelt). Tests that cover the
+    full merged path must mock BOTH call sites.
+    """
+    return {
+        "available": available,
+        "tone": tone if available else None,
+        "per_ticker": None,
+        "source": "GDELT 2.0 DOC API timelinetone — https://api.gdeltproject.org/",
+        "sources": sources if sources is not None else [],
+        "reason": reason,
+    }
+
+
 class TestGdeltSentimentProducer:
-    """_build_sentiment_section must return a real lens block from GDELT data."""
+    """_build_sentiment_section must return a real lens block from GDELT data.
+
+    Phase 2 update: _build_sentiment_section now calls BOTH the artlist endpoint
+    (via _fetch_with_backoff / requests.get) and the tone producer
+    (advisors.lens_gdelt._fetch_gdelt_sentiment). Tests that exercise the full
+    success path mock BOTH call sites. The tone mock is injected via
+    patch("advisors.lens_gdelt._fetch_gdelt_sentiment") so the artlist path
+    continues to be patched at the requests.get level (no change to existing
+    artlist assertions).
+    """
 
     def test_sentiment_section_helper_exists(self):
         """ai_advisor._build_sentiment_section exists and is callable.
@@ -229,14 +260,21 @@ class TestGdeltSentimentProducer:
         The mock provides the captured GDELT artlist shape from the fixture.
         Tests that the producer correctly maps articles -> available lens block.
 
+        Phase 2: also mocks the tone producer so the wired call doesn't fire
+        the live GDELT timelinetone endpoint.
+
         FAILS if _build_sentiment_section is still the Cycle-1 stub (returns
         available=False unconditionally).
         """
         import ai_advisor
 
         mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+        tone_result = _make_tone_result(available=True, tone=0.05)
 
-        with patch("requests.get", return_value=mock_resp) as mock_get:
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
             block = ai_advisor._build_sentiment_section()
 
         _assert_available_true_shape(block, "sentiment")
@@ -265,8 +303,12 @@ class TestGdeltSentimentProducer:
 
         fixture_articles = gdelt_shape_fixture["gdelt_artlist_shape"]["articles"]
         mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+        tone_result = _make_tone_result(available=True, tone=0.05)
 
-        with patch("requests.get", return_value=mock_resp):
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
             block = ai_advisor._build_sentiment_section()
 
         _assert_available_true_shape(block, "sentiment")
@@ -298,8 +340,12 @@ class TestGdeltSentimentProducer:
 
         fixture_articles = gdelt_shape_fixture["gdelt_artlist_shape"]["articles"]
         mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+        tone_result = _make_tone_result(available=True, tone=0.05)
 
-        with patch("requests.get", return_value=mock_resp):
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
             block = ai_advisor._build_sentiment_section()
 
         _assert_available_true_shape(block, "sentiment")
@@ -324,13 +370,20 @@ class TestGdeltSentimentProducer:
         available=True with empty sources correctly signals 'no news found' —
         NOT a fabrication failure.
 
+        Phase 2: tone mock returns available=True so only the artlist path
+        produces available=True; both sources contribute to availability.
+
         FAILS if the producer returns available=False for an empty-article response.
         """
         import ai_advisor
 
         empty_resp = _make_mock_response(gdelt_shape_fixture["empty_artlist_shape"])
+        tone_result = _make_tone_result(available=True, tone=0.0)
 
-        with patch("requests.get", return_value=empty_resp):
+        with (
+            patch("requests.get", return_value=empty_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
             block = ai_advisor._build_sentiment_section()
 
         _assert_lens_block_shape(block, "sentiment")
@@ -348,10 +401,14 @@ class TestGdeltSentimentProducer:
         )
 
     def test_sentiment_timeout_returns_available_false_with_exc_class_only(self):
-        """A network timeout returns available=False + reason = exc class only (D-1).
+        """A network timeout on the artlist path returns available=False (D-1).
 
         D-1: error reasons expose ONLY type(exc).__name__, never raw str(exc).
         str(exc) may contain hostnames, partial URLs, or sensitive context.
+
+        Phase 2: both artlist (requests.get) and tone (_fetch_gdelt_sentiment)
+        are mocked. The timeout fires on the artlist side; tone mock returns
+        unavailable to confirm both-fail path returns available=False.
 
         FAILS if the producer raises, or exposes str(exc) in the reason.
         """
@@ -359,8 +416,12 @@ class TestGdeltSentimentProducer:
         from requests.exceptions import Timeout
 
         timeout_exc = Timeout("Connection to api.gdeltproject.org timed out after 30s")
+        tone_result = _make_tone_result(available=False, tone=None, reason="Timeout")
 
-        with patch("requests.get", side_effect=timeout_exc):
+        with (
+            patch("requests.get", side_effect=timeout_exc),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
             block = ai_advisor._build_sentiment_section()
 
         _assert_available_false_shape(block, "sentiment")
@@ -380,16 +441,21 @@ class TestGdeltSentimentProducer:
         )
 
     def test_sentiment_http_error_returns_available_false(self):
-        """Any non-200 HTTP from GDELT returns available=False (not a fabrication).
+        """Any non-200 HTTP from GDELT artlist returns available=False.
 
         A 429 or 503 from GDELT should degrade to available=False gracefully.
+        Phase 2: tone also mocked as unavailable so the combined result is False.
         """
         import ai_advisor
         from requests.exceptions import HTTPError
 
         mock_resp = _make_mock_response({}, status_code=429)
+        tone_result = _make_tone_result(available=False, tone=None, reason="rate_limited")
 
-        with patch("requests.get", return_value=mock_resp):
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
             block = ai_advisor._build_sentiment_section()
 
         _assert_available_false_shape(block, "sentiment")
@@ -421,10 +487,12 @@ class TestGdeltSentimentProducer:
             ]
         }
         mock_resp = _make_mock_response(gdelt_artlist)
+        tone_result = _make_tone_result(available=True, tone=0.05)
 
         with (
             patch.dict(os.environ, env_without_gdelt_key, clear=True),
             patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
         ):
             block = ai_advisor._build_sentiment_section()
 
@@ -459,14 +527,386 @@ class TestGdeltSentimentProducer:
             ]
         }
         mock_resp = _make_mock_response(gdelt_artlist)
+        tone_result = _make_tone_result(available=True, tone=0.05)
 
-        with patch("requests.get", return_value=mock_resp):
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
             block = ai_advisor._build_sentiment_section()
 
         reason = block.get("reason", "")
         assert "cycle-1 scaffold" not in reason, (
             f"_build_sentiment_section still returns the Cycle-1 stub reason: "
             f"{reason!r}. Cycle 2 must replace the stub with a real GDELT producer."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — wiring tests (RED): tone signal merged into _build_sentiment_section
+# ---------------------------------------------------------------------------
+
+
+class TestPhase2GdeltToneWiring:
+    """Phase 2 RED: _build_sentiment_section must call advisors.lens_gdelt._fetch_gdelt_sentiment
+    and merge the tone result into the payload.
+
+    Contract (PM Phase 2 brief):
+      payload = {article_count: int, tone_score: float | None}
+      sources = [artlist citations]
+
+      Per-source exception isolation:
+        tone ok, artlist fail/empty  → available=True, tone_score=<float>, article_count=0, sources=[]
+        artlist ok, tone fail/None   → available=True, tone_score=None,    article_count=N, sources=[...]
+        both fail                    → available=False, reason set, payload=None, sources=[]
+
+      Invariant preserved at PRODUCER level:
+        _fetch_gdelt_sentiment: tone is None => available is False  (NOT weakened)
+        _build_sentiment_section: tone_score can be None while artlist makes block available
+        (different level — the section merges two independent signals)
+    """
+
+    def test_section_calls_gdelt_sentiment_producer(self, gdelt_shape_fixture: dict):
+        """_build_sentiment_section must call advisors.lens_gdelt._fetch_gdelt_sentiment.
+
+        Phase 2 wiring gate: without this call the tone signal is always None
+        (hollow implementation). This test fails on the current implementation
+        because _fetch_gdelt_sentiment is never invoked.
+
+        FAILS if _fetch_gdelt_sentiment is not called (current hollow state).
+        """
+        import ai_advisor
+
+        mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+        tone_result = _make_tone_result(available=True, tone=0.08)
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch(
+                "advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result
+            ) as mock_tone,
+        ):
+            ai_advisor._build_sentiment_section()
+
+        assert mock_tone.call_count >= 1, (
+            "_build_sentiment_section did not call advisors.lens_gdelt._fetch_gdelt_sentiment. "
+            "Phase 2 wiring is incomplete — the tone signal is permanently None (hollow). "
+            "Wire the call: from advisors import lens_gdelt; "
+            "tone_result = lens_gdelt._fetch_gdelt_sentiment([]) inside the section."
+        )
+
+    def test_tone_score_in_payload_when_tone_available(self, gdelt_shape_fixture: dict):
+        """payload['tone_score'] is a float when the tone producer returns available=True.
+
+        Phase 2 contract: tone_score in payload must be the normalized float from
+        _fetch_gdelt_sentiment, not None (the current hardcoded hollow value).
+
+        FAILS on current implementation where tone_score is always None.
+        """
+        import ai_advisor
+
+        mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+        tone_result = _make_tone_result(available=True, tone=0.15)
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
+            block = ai_advisor._build_sentiment_section()
+
+        payload = block.get("payload", {})
+        assert isinstance(payload, dict), "payload must be a dict"
+        assert "tone_score" in payload, "payload must carry 'tone_score'"
+        tone_score = payload["tone_score"]
+        assert isinstance(tone_score, float), (
+            f"payload['tone_score'] must be a float when tone producer returns available=True. "
+            f"Got {tone_score!r} (type: {type(tone_score).__name__}). "
+            f"Current implementation hardcodes tone_score=None — Phase 2 must wire the value."
+        )
+        assert -1.0 <= tone_score <= 1.0, (
+            f"payload['tone_score'] must be in [-1, 1] (normalized GDELT AvgTone). "
+            f"Got {tone_score}."
+        )
+
+    def test_tone_score_none_when_tone_unavailable_but_artlist_ok(
+        self, gdelt_shape_fixture: dict
+    ):
+        """When tone is unavailable but artlist succeeds: available=True, tone_score=None.
+
+        Per-source isolation: a failed tone GET must NOT invalidate artlist citations.
+        The block is available because artlist gave us articles; tone_score is None
+        because the tone producer was unavailable.
+
+        FAILS if tone failure degrades available to False (incorrect coupling).
+        """
+        import ai_advisor
+
+        mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+        tone_result = _make_tone_result(available=False, tone=None, reason="Timeout")
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
+            block = ai_advisor._build_sentiment_section()
+
+        assert block.get("available") is True, (
+            "Tone unavailable must NOT degrade available to False when artlist succeeded. "
+            "Per-source isolation: artlist citations make the block available independently. "
+            f"Got: {block!r}"
+        )
+        payload = block.get("payload", {})
+        assert payload.get("tone_score") is None, (
+            "tone_score must be None when tone producer returned available=False. "
+            f"Got tone_score={payload.get('tone_score')!r}"
+        )
+        # artlist citations must still be present
+        sources = block.get("sources", [])
+        fixture_count = len(gdelt_shape_fixture["gdelt_artlist_shape"]["articles"])
+        assert len(sources) == fixture_count, (
+            f"Artlist citations must be present even when tone fails. "
+            f"Expected {fixture_count} sources, got {len(sources)}."
+        )
+
+    def test_tone_ok_artlist_fails_available_true_with_tone_score(self):
+        """When tone succeeds but artlist fails: available=True, tone_score=float, sources=[].
+
+        Per-source isolation: an artlist fetch error must NOT prevent the block
+        from being available when the tone signal was obtained.
+
+        FAILS if artlist failure degrades available to False.
+        """
+        import ai_advisor
+        from requests.exceptions import Timeout
+
+        tone_result = _make_tone_result(available=True, tone=0.22)
+
+        with (
+            patch("requests.get", side_effect=Timeout("artlist timeout")),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
+            block = ai_advisor._build_sentiment_section()
+
+        assert block.get("available") is True, (
+            "Artlist failure must NOT degrade available to False when tone succeeded. "
+            "Per-source isolation: tone signal makes the block available independently. "
+            f"Got: {block!r}"
+        )
+        payload = block.get("payload", {})
+        tone_score = payload.get("tone_score")
+        assert isinstance(tone_score, float) and -1.0 <= tone_score <= 1.0, (
+            f"payload['tone_score'] must be the float from the tone producer "
+            f"even when artlist failed. Got {tone_score!r}."
+        )
+        sources = block.get("sources", [])
+        assert sources == [], (
+            f"sources must be [] when artlist failed (no citations to emit). "
+            f"Got {sources!r}."
+        )
+
+    def test_both_fail_returns_available_false_with_reason(self):
+        """When both tone and artlist fail: available=False, reason set, payload=None/empty.
+
+        PM contract: both-fail path degrades to available=False with a reason string.
+        Neither source gives us anything to present.
+
+        FAILS if available=True is returned with no usable data (fabrication).
+        """
+        import ai_advisor
+        from requests.exceptions import Timeout
+
+        tone_result = _make_tone_result(available=False, tone=None, reason="Timeout")
+
+        with (
+            patch("requests.get", side_effect=Timeout("artlist timeout")),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
+            block = ai_advisor._build_sentiment_section()
+
+        assert block.get("available") is False, (
+            "When both tone and artlist fail, available must be False. "
+            f"Got: {block!r}"
+        )
+        reason = block.get("reason", "")
+        assert isinstance(reason, str) and reason.strip(), (
+            f"available=False must carry a non-empty reason. Got reason={reason!r}"
+        )
+        _assert_available_false_shape(block, "sentiment")
+
+    def test_tone_score_not_hardcoded_none_varies_with_producer_output(
+        self, gdelt_shape_fixture: dict
+    ):
+        """tone_score in payload reflects the actual tone value from the producer.
+
+        Verifies the wiring passes the tone value through, not a constant.
+        Two calls with different tone values must produce different tone_scores.
+
+        FAILS if tone_score is always None regardless of producer output (hollow).
+        """
+        import ai_advisor
+
+        mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+
+        tone_a = _make_tone_result(available=True, tone=0.30)
+        tone_b = _make_tone_result(available=True, tone=-0.25)
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_a),
+        ):
+            block_a = ai_advisor._build_sentiment_section()
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_b),
+        ):
+            block_b = ai_advisor._build_sentiment_section()
+
+        score_a = (block_a.get("payload") or {}).get("tone_score")
+        score_b = (block_b.get("payload") or {}).get("tone_score")
+
+        assert score_a != score_b, (
+            f"tone_score is constant ({score_a!r}) regardless of producer output. "
+            f"The wiring is not passing the tone value through. "
+            f"Expected different values for tone=0.30 vs tone=-0.25."
+        )
+        assert score_a is not None and score_b is not None, (
+            f"tone_score must not be None when producer returns available=True. "
+            f"Got score_a={score_a!r}, score_b={score_b!r}."
+        )
+
+    def test_empty_published_citation_is_rejected_by_build_citation(self):
+        """A GDELT article with empty seendate must NOT produce a citation source.
+
+        build_citation requires 'published' to be a non-empty string (CC-4).
+        An article with seendate='' must be silently dropped (citation=None),
+        not emitted as a source with published=''.
+
+        FAILS if the section emits a source with an empty 'published' field,
+        which would fail the citation guard and leak invalid citations.
+        """
+        import ai_advisor
+
+        artlist_with_empty_seendate = {
+            "articles": [
+                {
+                    "url": "https://www.example.com/valid-article",
+                    "title": "Valid Article With Date",
+                    "seendate": "20260610T120000Z",
+                    "domain": "example.com",
+                },
+                {
+                    "url": "https://www.example.com/no-date-article",
+                    "title": "Article Missing Seendate",
+                    "seendate": "",  # empty — build_citation must reject this
+                    "domain": "example.com",
+                },
+            ]
+        }
+        mock_resp = _make_mock_response(artlist_with_empty_seendate)
+        tone_result = _make_tone_result(available=True, tone=0.05)
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
+            block = ai_advisor._build_sentiment_section()
+
+        sources = block.get("sources", [])
+        # Only the valid article (non-empty seendate) should survive
+        for i, src in enumerate(sources):
+            published = src.get("published", "")
+            assert isinstance(published, str) and published.strip(), (
+                f"Source[{i}] has empty 'published' field — build_citation should have "
+                f"rejected this article (seendate was ''). Got: {src!r}"
+            )
+        # The valid article must be present
+        valid_urls = {s.get("url") for s in sources}
+        assert "https://www.example.com/valid-article" in valid_urls, (
+            "The valid article (non-empty seendate) must appear in sources. "
+            f"Got sources: {sources!r}"
+        )
+        # The rejected article must NOT be present
+        assert "https://www.example.com/no-date-article" not in valid_urls, (
+            "The article with empty seendate must be rejected by build_citation. "
+            f"Got sources: {sources!r}"
+        )
+
+    def test_section_is_importable_without_import_error(self):
+        """Importing advisors.lens_gdelt inside _build_sentiment_section must not raise.
+
+        After Phase 2 wiring, _build_sentiment_section will import lens_gdelt.
+        This test verifies the import path is valid (the module exists and is
+        importable from the ai_advisor module context).
+
+        FAILS if the wiring uses a broken import path.
+        """
+        try:
+            from advisors import lens_gdelt
+
+            assert hasattr(lens_gdelt, "_fetch_gdelt_sentiment"), (
+                "advisors.lens_gdelt._fetch_gdelt_sentiment not found. "
+                "The Phase 2 wiring target is missing."
+            )
+        except ImportError as exc:
+            raise AssertionError(
+                f"Could not import advisors.lens_gdelt: {type(exc).__name__}. "
+                f"The Phase 1 producer must be importable for Phase 2 wiring."
+            ) from exc
+
+    def test_combined_path_tone_score_propagates_alongside_artlist_sources(
+        self, gdelt_shape_fixture: dict
+    ):
+        """Combined path: both tone AND artlist succeed — tone_score must propagate.
+
+        This is the reviewer gap (Phase 2 APPROVE condition): none of the
+        existing property tests mock _fetch_gdelt_sentiment, so they silently
+        exercise only the artlist-only path and cannot catch a regression where
+        tone_score is dropped while artlist citations are still emitted.
+
+        Contract (combined path):
+          - available=True
+          - payload['tone_score'] == value returned by tone producer (not None)
+          - len(sources) == number of articles in fixture
+
+        FAILS if tone_score is None or absent when tone producer returned
+        available=True alongside a successful artlist fetch.
+        """
+        import ai_advisor
+
+        fixture_articles = gdelt_shape_fixture["gdelt_artlist_shape"]["articles"]
+        mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+        # Arbitrary in-range tone value — not hardcoded to a producer constant
+        expected_tone = 0.33
+        tone_result = _make_tone_result(available=True, tone=expected_tone)
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
+            block = ai_advisor._build_sentiment_section()
+
+        assert block.get("available") is True, (
+            f"Combined path (tone ok + artlist ok) must return available=True. "
+            f"Got: {block!r}"
+        )
+        payload = block.get("payload") or {}
+        tone_score = payload.get("tone_score")
+        assert isinstance(tone_score, float) and tone_score == pytest.approx(
+            expected_tone, abs=1e-9
+        ), (
+            # abs=1e-9: tone_score passes through without arithmetic; exact equality
+            # is expected. pytest.approx used defensively for float identity.
+            f"payload['tone_score'] must equal the tone producer's value "
+            f"({expected_tone}) when both signals succeed. "
+            f"Got tone_score={tone_score!r}. "
+            f"A regression here means tone_score is being dropped or overwritten "
+            f"while artlist citations are still emitted."
+        )
+        sources = block.get("sources", [])
+        assert len(sources) == len(fixture_articles), (
+            f"Combined path must emit one source per fixture article. "
+            f"Expected {len(fixture_articles)}, got {len(sources)}."
         )
 
 
@@ -1037,14 +1477,22 @@ def test_gdelt_tone_aggregate_is_not_presented_as_clickable_source(
     A 'tone_score' value in the payload is fine as a derived signal; it must
     NOT be wrapped into a source with a fabricated URL.
 
+    Phase 2: also mocks _fetch_gdelt_sentiment so the lazy import does not
+    silently return unavailable (which would trigger pytest.skip, masking the
+    assertion below on every run post-Phase-2 wiring).
+
     FAILS if the producer creates a source entry for the aggregate tone score
     instead of (or in addition to) per-article sources.
     """
     import ai_advisor
 
     mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+    tone_result = _make_tone_result(available=True, tone=0.05)
 
-    with patch("requests.get", return_value=mock_resp):
+    with (
+        patch("requests.get", return_value=mock_resp),
+        patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+    ):
         block = ai_advisor._build_sentiment_section()
 
     if not block.get("available"):
@@ -1108,12 +1556,21 @@ def test_fred_series_values_are_not_wrapped_as_clickable_sources(
 if _HYPOTHESIS_AVAILABLE:
 
     @given(article_count=st.integers(min_value=0, max_value=50))
-    @settings(max_examples=30)
+    @settings(max_examples=30, deadline=None)
     def test_gdelt_sources_count_equals_article_count(article_count: int):
         """PROPERTY: len(sources) == article_count for any non-negative count.
 
         The GDELT producer must produce exactly one source per article.
         This invariant must hold for any article count from 0 to 50.
+
+        Phase 2: also mocks _fetch_gdelt_sentiment with available=True so the
+        combined path (tone + artlist both succeed) is exercised. Without this
+        mock, the lazy import fires the live producer against the artlist-mock,
+        gets no "timeline" key, returns unavailable, and the test silently only
+        exercises the artlist-only path.
+
+        deadline=None: _make_tone_result helper + mock setup must not be subject
+        to the 200ms hypothesis deadline.
         """
         import ai_advisor
 
@@ -1129,8 +1586,13 @@ if _HYPOTHESIS_AVAILABLE:
             for i in range(article_count)
         ]
         mock_resp = _make_mock_response({"articles": articles})
+        # tone available=True so we exercise combined path, not artlist-only path
+        tone_result = _make_tone_result(available=True, tone=0.10)
 
-        with patch("requests.get", return_value=mock_resp):
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
             block = ai_advisor._build_sentiment_section()
 
         if block.get("available") is True:
@@ -1139,6 +1601,12 @@ if _HYPOTHESIS_AVAILABLE:
                 f"PROPERTY VIOLATION: article_count={article_count} but "
                 f"len(sources)={len(sources)}. "
                 f"Each GDELT article must produce exactly one citation source."
+            )
+            # Combined path: tone_score must be the value from the tone producer
+            payload = block.get("payload", {})
+            assert payload.get("tone_score") is not None, (
+                f"PROPERTY VIOLATION: combined path (tone available=True, artlist ok) "
+                f"must carry a non-None tone_score in payload. Got payload={payload!r}"
             )
 
     @given(st.booleans())
