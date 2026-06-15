@@ -520,17 +520,65 @@ def _build_sentiment_section(_data: object = None) -> dict:
 
 
 def _build_derivatives_section(_data: object = None) -> dict:
-    """Derivatives / options lens block — cycle-1 stub (Cycle-2b deliverable).
+    """Derivatives / volatility lens block — FRED VIXCLS + VXVCLS producer.
 
-    Honest availability: CBOE put/call + Alpaca IV source not yet connected.
-    Returns available=False with an informative reason.
+    Fetches VIX spot (VIXCLS) and 3-month VIX (VXVCLS) from FRED via the
+    options-proxy lens producer.  Requires FRED_API_KEY in env; returns
+    available=False with the proxy reason when the key is absent, FRED is
+    down, or data is unavailable.
+
+    Lazy-imports advisors.lens_options_proxy inside the function body (CC-2
+    boundary) — never at module level.  D-1: reason is always
+    type(exc).__name__ only (enforced by the proxy; this function propagates
+    verbatim).
+
+    Args:
+        _data: unused; reserved for caller pre-injection.
+
+    Returns:
+        Lens block dict: {lens, available, payload, sources} on success;
+        {lens, available, reason, payload, sources} on failure.
     """
+    _lens = "derivatives"
+    from advisors import lens_options_proxy as _proxy_mod  # CC-2: lazy import
+    result = _proxy_mod._fetch_options_proxy()
+
+    if not result.get("available"):
+        return {
+            "lens": _lens,
+            "available": False,
+            "reason": result.get("reason", "unavailable"),
+            "payload": None,
+            "sources": [],
+        }
+
+    as_of = result.get("as_of_date", "")
+    citation = build_citation({
+        "title": "VIXCLS / VXVCLS (CBOE Vol Index)",
+        "url": "https://fred.stlouisfed.org/series/VIXCLS",
+        "published": as_of,
+        "lens": _lens,
+    })
+    sources = [citation] if citation is not None else []
+
+    logger.info(
+        "Derivatives lens: vix=%.2f regime=%s risk_read=%s as_of=%s",
+        result.get("vix_level", 0),
+        result.get("vix_term_structure", {}).get("regime", "unknown"),
+        result.get("risk_read", "unknown"),
+        as_of,
+    )
+
     return {
-        "lens": "derivatives",
-        "available": False,
-        "reason": "derivatives source not connected — cycle-2b deliverable",
-        "payload": None,
-        "sources": [],
+        "lens": _lens,
+        "available": True,
+        "payload": {
+            "vix_level": result.get("vix_level"),
+            "vix_term_structure": result.get("vix_term_structure"),
+            "risk_read": result.get("risk_read"),
+            "as_of_date": as_of,
+        },
+        "sources": sources,
     }
 
 
@@ -1159,6 +1207,17 @@ def assemble_advisor_context(
         logic_id = composer_symphony_id if composer_symphony_id is not None else symphony_id
         condensed_logic = symphony_logic.get_condensed_logic(logic_id)
 
+    try:
+        _derivatives_block = _build_derivatives_section()
+    except Exception as _exc:
+        _derivatives_block = {
+            "lens": "derivatives",
+            "available": False,
+            "reason": type(_exc).__name__,
+            "payload": None,
+            "sources": [],
+        }
+
     context: dict = {
         "scope": scope,
         "symphony_id": symphony_id,
@@ -1183,7 +1242,7 @@ def assemble_advisor_context(
         # context (CC-3 data-wall, GATE-1-AC §1).
         "technicals": _build_technicals_section(),
         "sentiment": _build_sentiment_section(),
-        "derivatives": _build_derivatives_section(),
+        "derivatives": _derivatives_block,
         "macro": _build_macro_section(),
         "fundamentals": _build_fundamentals_section(),
     }
