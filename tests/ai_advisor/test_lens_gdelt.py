@@ -27,9 +27,7 @@ from __future__ import annotations
 
 import json
 import pathlib
-import sys
-from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -76,8 +74,7 @@ def validate_timelinetone_shape(data: dict) -> None:
     for i, pt in enumerate(points):
         assert "date" in pt, f"data[{i}] missing 'date'"
         assert "value" in pt, (
-            f"data[{i}] missing 'value' — "
-            "this is the nested field the producer MUST read"
+            f"data[{i}] missing 'value' — this is the nested field the producer MUST read"
         )
         assert isinstance(pt["value"], (int, float)), (
             f"data[{i}]['value'] must be numeric, got {type(pt['value'])}"
@@ -98,8 +95,7 @@ def validate_artlist_shape(data: dict) -> None:
             f"article[{i}]['url'] must be an http/https URL"
         )
         assert "seendate" in art, (
-            f"article[{i}] missing 'seendate' — "
-            "the producer maps seendate -> sources[*].seendate"
+            f"article[{i}] missing 'seendate' — the producer maps seendate -> sources[*].seendate"
         )
         assert isinstance(art["seendate"], str) and art["seendate"].strip(), (
             f"article[{i}]['seendate'] must be a non-empty string"
@@ -146,7 +142,10 @@ def _make_mock_429_response() -> MagicMock:
     """Simulate a GDELT 429 with plaintext body (contract §5 — NOT JSON)."""
     mock_resp = MagicMock()
     mock_resp.status_code = 429
-    mock_resp.text = "Please limit requests to one every 5 seconds or contact kalev.leetaru5@gmail.com for larger queries."
+    mock_resp.text = (
+        "Please limit requests to one every 5 seconds"
+        " or contact kalev.leetaru5@gmail.com for larger queries."
+    )
     # 429 body is NOT JSON — json() must not be called on it (it would raise)
     mock_resp.json.side_effect = ValueError("429 body is plaintext, not JSON")
     return mock_resp
@@ -323,9 +322,7 @@ class TestProducerExistsAndShape:
             f"Got: {result.get('source')!r}"
         )
 
-    def test_reason_is_none_on_success(
-        self, timelinetone_fixture: dict, artlist_fixture: dict
-    ):
+    def test_reason_is_none_on_success(self, timelinetone_fixture: dict, artlist_fixture: dict):
         """'reason' is None when available=True (contract §3 — reason only on failure).
 
         FAILS if the producer sets a reason string on the success path.
@@ -339,8 +336,7 @@ class TestProducerExistsAndShape:
             result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
 
         assert result.get("reason") is None, (
-            f"'reason' must be None when available=True (§3). "
-            f"Got reason={result.get('reason')!r}"
+            f"'reason' must be None when available=True (§3). Got reason={result.get('reason')!r}"
         )
 
 
@@ -364,8 +360,9 @@ class TestHonestAvailabilityInvariants:
         Hard invariant: tone is None => available is False (§4).
         FAILS if the producer returns available=True with tone=None.
         """
-        from advisors import lens_gdelt
         from requests.exceptions import Timeout
+
+        from advisors import lens_gdelt
 
         with (
             patch("requests.get", side_effect=Timeout("test timeout")),
@@ -469,8 +466,7 @@ class TestHonestAvailabilityInvariants:
             result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
 
         assert result["available"] is False, (
-            f"Empty timeline list must produce available=False (§4 no-tone path). "
-            f"Got: {result!r}"
+            f"Empty timeline list must produce available=False (§4 no-tone path). Got: {result!r}"
         )
         assert result.get("tone") is None, (
             f"Empty timeline must produce tone=None. Got tone={result.get('tone')!r}"
@@ -550,8 +546,9 @@ class TestErrorReasonLabels:
         D-1 contract (§4): reason = type(exc).__name__ ONLY.
         NEVER str(exc) — str(exc) may contain the URL, host, or credential detail.
         """
-        from advisors import lens_gdelt
         from requests.exceptions import Timeout
+
+        from advisors import lens_gdelt
 
         timeout_exc = Timeout("Connection to api.gdeltproject.org timed out after 15s")
 
@@ -561,9 +558,7 @@ class TestErrorReasonLabels:
         ):
             result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
 
-        assert result["available"] is False, (
-            f"Timeout must return available=False. Got: {result!r}"
-        )
+        assert result["available"] is False, f"Timeout must return available=False. Got: {result!r}"
         reason = result.get("reason", "")
         assert isinstance(reason, str) and reason.strip(), (
             f"Timeout reason must be a non-empty string. Got: {reason!r}"
@@ -627,8 +622,7 @@ class TestErrorReasonLabels:
             result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
 
         assert result["available"] is False, (
-            f"Persistent 429 must return available=False after retries exhausted. "
-            f"Got: {result!r}"
+            f"Persistent 429 must return available=False after retries exhausted. Got: {result!r}"
         )
         assert result.get("reason") == "rate_limited", (
             f"Persistent 429 reason must be 'rate_limited' (§4). "
@@ -671,8 +665,9 @@ class TestErrorReasonLabels:
 
         D-1: str(ConnectionError) may contain socket addresses / internal hosts.
         """
-        from advisors import lens_gdelt
         from requests.exceptions import ConnectionError as ReqConnError
+
+        from advisors import lens_gdelt
 
         conn_exc = ReqConnError("Failed to establish: secret-internal.example.com:443")
 
@@ -699,8 +694,9 @@ class TestErrorReasonLabels:
         Contract §4: unavailable return has tone=None, per_ticker=None.
         FAILS if any unavailable path returns a non-None tone or per_ticker.
         """
-        from advisors import lens_gdelt
         from requests.exceptions import Timeout
+
+        from advisors import lens_gdelt
 
         with (
             patch("requests.get", side_effect=Timeout("test")),
@@ -722,8 +718,9 @@ class TestErrorReasonLabels:
         Contract §3: sources=None when the whole producer is unavailable.
         sources=[] is reserved for 'tone succeeded but artlist failed/empty'.
         """
-        from advisors import lens_gdelt
         from requests.exceptions import Timeout
+
+        from advisors import lens_gdelt
 
         with (
             patch("requests.get", side_effect=Timeout("test")),
@@ -943,9 +940,7 @@ class TestBoundedRetry:
             "advisors.lens_gdelt._GDELT_MAX_ATTEMPTS constant is missing."
         )
         attempts = lens_gdelt._GDELT_MAX_ATTEMPTS
-        assert isinstance(attempts, int), (
-            f"_GDELT_MAX_ATTEMPTS must be int, got {type(attempts)}"
-        )
+        assert isinstance(attempts, int), f"_GDELT_MAX_ATTEMPTS must be int, got {type(attempts)}"
         assert attempts == 4, (
             f"_GDELT_MAX_ATTEMPTS must be 4 (contract §5 AMENDMENT 1). Got {attempts}."
         )
@@ -997,9 +992,7 @@ class TestBoundedRetry:
             f"MAX_ATTEMPTS={max_attempts}. "
             f"This is the infinite-loop bug — the retry is not bounded."
         )
-        assert tone_calls >= 1, (
-            f"Producer made 0 HTTP calls — it did not attempt the request."
-        )
+        assert tone_calls >= 1, "Producer made 0 HTTP calls — it did not attempt the request."
 
     def test_retry_count_does_not_exceed_max_attempts(self):
         """Under any error condition, total HTTP calls <= _GDELT_MAX_ATTEMPTS.
@@ -1007,8 +1000,9 @@ class TestBoundedRetry:
         Property: No error scenario can exceed the MAX_ATTEMPTS bound.
         This directly tests the anti-crash guarantee.
         """
-        from advisors import lens_gdelt
         from requests.exceptions import ConnectionError as ReqConnError
+
+        from advisors import lens_gdelt
 
         max_attempts = lens_gdelt._GDELT_MAX_ATTEMPTS
         conn_err = ReqConnError("test connection failure")
@@ -1036,10 +1030,12 @@ class TestBoundedRetry:
         """
         from advisors import lens_gdelt
 
-        empty_resp = _make_mock_http_response({
-            "query_details": {},
-            "timeline": [{"series": "Average Tone", "data": []}],
-        })
+        empty_resp = _make_mock_http_response(
+            {
+                "query_details": {},
+                "timeline": [{"series": "Average Tone", "data": []}],
+            }
+        )
 
         with patch("requests.get", return_value=empty_resp) as mock_get:
             result = lens_gdelt._fetch_gdelt_sentiment(["SPY"])
@@ -1267,8 +1263,9 @@ class TestSourcesFromArtlist:
         Contract §3: artlist citations are best-effort. A failed artlist call
         must not bring down the tone result.
         """
-        from advisors import lens_gdelt
         from requests.exceptions import Timeout
+
+        from advisors import lens_gdelt
 
         # Tone call succeeds, artlist call times out
         tone_resp = _make_mock_http_response(timelinetone_fixture)
@@ -1396,7 +1393,9 @@ if _HYPOTHESIS_AVAILABLE:
             max_size=100,
         )
     )
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None)
+    @settings(
+        max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None
+    )
     def test_tone_is_always_in_minus1_to_1_for_any_valid_gdelt_values(raw_values: list[float]):
         """PROPERTY: For any list of numeric AvgTone values in [-100,100],
         the normalized tone is in [-1.0, 1.0].
@@ -1410,7 +1409,9 @@ if _HYPOTHESIS_AVAILABLE:
         """
         from advisors import lens_gdelt
 
-        data_points = [{"date": f"20260614T{i:02d}0000Z", "value": v} for i, v in enumerate(raw_values)]
+        data_points = [
+            {"date": f"20260614T{i:02d}0000Z", "value": v} for i, v in enumerate(raw_values)
+        ]
         fixture = {
             "query_details": {},
             "timeline": [{"series": "Average Tone", "data": data_points}],
@@ -1427,9 +1428,7 @@ if _HYPOTHESIS_AVAILABLE:
 
         if result.get("available") is True:
             tone = result["tone"]
-            assert isinstance(tone, float), (
-                f"tone must be float for raw_values={raw_values[:3]}..."
-            )
+            assert isinstance(tone, float), f"tone must be float for raw_values={raw_values[:3]}..."
             assert -1.0 <= tone <= 1.0, (
                 f"PROPERTY VIOLATION: tone={tone} is out of [-1, 1] for "
                 f"raw_values (first 3): {raw_values[:3]}. "
@@ -1437,14 +1436,17 @@ if _HYPOTHESIS_AVAILABLE:
             )
 
     @given(available=st.booleans())
-    @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None)
+    @settings(
+        max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None
+    )
     def test_tone_none_implies_available_false_property(available: bool):
         """PROPERTY: If the result has tone=None, available must be False.
 
         Tests the §4 hard invariant across multiple unavailable scenarios.
         """
-        from advisors import lens_gdelt
         from requests.exceptions import Timeout
+
+        from advisors import lens_gdelt
 
         if available:
             # Simulate a timeout -> unavailable
@@ -1538,8 +1540,9 @@ class TestReviewRoundGaps:
 
         FAILS if reason='HTTPError' instead of 'gdelt_fetch_failed'.
         """
-        from advisors import lens_gdelt
         from requests.exceptions import HTTPError
+
+        from advisors import lens_gdelt
 
         mock_resp = MagicMock()
         mock_resp.status_code = 503
@@ -1567,8 +1570,9 @@ class TestReviewRoundGaps:
 
         Verify the named-label rule applies across all non-200 non-429 codes.
         """
-        from advisors import lens_gdelt
         from requests.exceptions import HTTPError
+
+        from advisors import lens_gdelt
 
         mock_resp = MagicMock()
         mock_resp.status_code = 500
@@ -1583,8 +1587,7 @@ class TestReviewRoundGaps:
 
         assert result["available"] is False
         assert result.get("reason") == "gdelt_fetch_failed", (
-            f"HTTP 500 must return reason='gdelt_fetch_failed' (§4). "
-            f"Got: {result.get('reason')!r}"
+            f"HTTP 500 must return reason='gdelt_fetch_failed' (§4). Got: {result.get('reason')!r}"
         )
 
 

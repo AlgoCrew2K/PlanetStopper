@@ -85,9 +85,7 @@ _GDELT_ARTLIST_URL: str = (
 )
 
 # Source citation string — always present in the return dict (contract §3).
-_GDELT_SOURCE: str = (
-    "GDELT 2.0 DOC API timelinetone — https://api.gdeltproject.org/"
-)
+_GDELT_SOURCE: str = "GDELT 2.0 DOC API timelinetone — https://api.gdeltproject.org/"
 
 
 # ---------------------------------------------------------------------------
@@ -143,12 +141,11 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
                 # JSON (contract §5: "do NOT parse the 429 body").
                 if attempt < _GDELT_MAX_ATTEMPTS - 1:
                     sleep_s = min(
-                        _GDELT_BACKOFF_BASE_S * (2 ** attempt),
+                        _GDELT_BACKOFF_BASE_S * (2**attempt),
                         _GDELT_BACKOFF_CAP_S,
                     )
                     logger.debug(
-                        "GDELT timelinetone returned 429; retrying in %.1fs "
-                        "(attempt %d/%d)",
+                        "GDELT timelinetone returned 429; retrying in %.1fs (attempt %d/%d)",
                         sleep_s,
                         attempt + 1,
                         _GDELT_MAX_ATTEMPTS,
@@ -162,8 +159,15 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
                 )
                 return _unavailable("rate_limited")
 
-            # Non-429: fail immediately on non-2xx (no retry on 5xx in v1)
-            resp.raise_for_status()
+            # Non-429 non-2xx: named label per contract §4 — do NOT raise
+            # (raise_for_status would yield reason="HTTPError" via the outer
+            # except, which violates the named-label table in §4).
+            if not (200 <= resp.status_code < 300):
+                logger.info(
+                    "GDELT timelinetone: HTTP %d -> gdelt_fetch_failed",
+                    resp.status_code,
+                )
+                return _unavailable("gdelt_fetch_failed")
 
             tone_data = resp.json()
             logger.info("GDELT timelinetone: HTTP %d", resp.status_code)
@@ -188,11 +192,7 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
 
         series = timeline[0]
         points = series.get("data", [])
-        raw = [
-            p["value"]
-            for p in points
-            if isinstance(p.get("value"), (int, float))
-        ]
+        raw = [p["value"] for p in points if isinstance(p.get("value"), (int, float))]
 
         if not raw:
             logger.debug("GDELT timelinetone: no numeric values in data")
@@ -207,7 +207,13 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
         logger.warning("GDELT tone extraction exception: %s", exc_type)
         return _unavailable(exc_type)
 
-    # --- Step 3: Fetch sources from artlist endpoint (best-effort) ---
+    # --- Step 3: Rate-limit spacing before the artlist GET ---
+    # Tone and artlist share GDELT's per-IP window (1 req / 5s).
+    # Sleep _GDELT_INTER_REQUEST_S (6.0s) to clear the window before the
+    # second call (contract §5 Amendment 1 — _GDELT_INTER_REQUEST_S = 6.0).
+    time.sleep(_GDELT_INTER_REQUEST_S)
+
+    # --- Step 4: Fetch sources from artlist endpoint (best-effort) ---
     # Artlist citations are best-effort — a failed artlist call does NOT
     # invalidate the tone signal.  On failure: sources=[] (not None).
     sources: list[dict[str, Any]] = []
@@ -239,7 +245,7 @@ def _fetch_gdelt_sentiment(universe: list[str]) -> dict[str, Any]:
         )
         sources = []
 
-    # --- Step 4: Return the successful result ---
+    # --- Step 5: Return the successful result ---
     # Invariant: available=True => tone is float in [-1,1], reason=None.
     return {
         "available": True,
