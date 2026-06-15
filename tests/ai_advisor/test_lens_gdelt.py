@@ -906,14 +906,14 @@ class TestBoundedRetry:
     The fix: BACKOFF_BASE_S >= 5.0 (contract §5 pinned value).
     """
 
-    def test_backoff_base_constant_is_at_least_five_seconds(self):
-        """_GDELT_BACKOFF_BASE_S >= 5.0 (the load-bearing anti-crash fix).
+    def test_backoff_base_constant_is_at_least_twenty_seconds(self):
+        """_GDELT_BACKOFF_BASE_S == 20.0 (AMENDMENT 1 — margin above GDELT's 5s window).
 
-        Contract §5 PINNED: base MUST be >= 5.0 because GDELT enforces
-        1 request / 5 seconds. base < 5.0 means the retry fires before
-        the window clears -> persistent 429 -> the prior PC-crash loop.
+        Contract §5 AMENDMENT 1: base is 20.0, not 5.0. 5.0 is GDELT's literal
+        rate limit with zero margin — a 5s backoff can still re-trip 429 on a
+        loaded IP. 20.0 gives 4x margin above the 5s floor.
 
-        FAILS on any value < 5.0 (including the prior value of 1.0).
+        FAILS on any value < 20.0 (including the prior 5.0 or the original 1.0).
         """
         from advisors import lens_gdelt
 
@@ -925,17 +925,17 @@ class TestBoundedRetry:
         assert isinstance(base, (int, float)), (
             f"_GDELT_BACKOFF_BASE_S must be numeric, got {type(base)}"
         )
-        assert base >= 5.0, (
-            f"_GDELT_BACKOFF_BASE_S must be >= 5.0 (GDELT rate limit is 1 req/5s). "
-            f"Got {base}. "
-            f"The prior value was 1.0 — that's the crash root cause. "
-            f"Contract §5 pins this at 5.0."
+        assert base >= 20.0, (
+            f"_GDELT_BACKOFF_BASE_S must be >= 20.0 (AMENDMENT 1: 4x margin above "
+            f"GDELT's 5s rate limit). Got {base}. "
+            f"5.0 is GDELT's literal floor — zero margin, can still re-trip 429. "
+            f"Contract §5 AMENDMENT 1 pins this at 20.0."
         )
 
-    def test_max_attempts_constant_equals_three(self):
-        """_GDELT_MAX_ATTEMPTS == 3 (contract §5 PINNED value).
+    def test_max_attempts_constant_equals_four(self):
+        """_GDELT_MAX_ATTEMPTS == 4 (contract §5 AMENDMENT 1: initial + 3 retries).
 
-        Finite bound on retry loop: 1 initial + 2 retries = 3 total attempts.
+        Backoff schedule: 20s, 40s, 60s (capped). 4 total attempts.
         """
         from advisors import lens_gdelt
 
@@ -946,15 +946,14 @@ class TestBoundedRetry:
         assert isinstance(attempts, int), (
             f"_GDELT_MAX_ATTEMPTS must be int, got {type(attempts)}"
         )
-        assert attempts == 3, (
-            f"_GDELT_MAX_ATTEMPTS must be 3 (contract §5). Got {attempts}."
+        assert attempts == 4, (
+            f"_GDELT_MAX_ATTEMPTS must be 4 (contract §5 AMENDMENT 1). Got {attempts}."
         )
 
     def test_backoff_cap_constant_exists_and_is_positive(self):
-        """_GDELT_BACKOFF_CAP_S exists and is > 0 (per-attempt sleep ceiling).
+        """_GDELT_BACKOFF_CAP_S == 60.0 (contract §5 AMENDMENT 1 ramp ceiling).
 
-        Contract §5 pins this at 30.0. At minimum it must exist as a named
-        constant (no magic numbers) and be positive.
+        Schedule: min(20 * 2**i, 60) -> 20s, 40s, 60s across 3 retries.
         """
         from advisors import lens_gdelt
 
@@ -965,9 +964,9 @@ class TestBoundedRetry:
         assert isinstance(cap, (int, float)) and cap > 0, (
             f"_GDELT_BACKOFF_CAP_S must be a positive number. Got {cap!r}."
         )
-        # Contract pins it at 30.0
-        assert cap == 30.0, (
-            f"_GDELT_BACKOFF_CAP_S must be 30.0 (contract §5 PINNED). Got {cap}."
+        # AMENDMENT 1 pins it at 60.0
+        assert cap == 60.0, (
+            f"_GDELT_BACKOFF_CAP_S must be 60.0 (contract §5 AMENDMENT 1). Got {cap}."
         )
 
     def test_bounded_retry_exhausts_after_max_attempts_on_429(self):
@@ -1082,16 +1081,37 @@ class TestBoundedRetry:
             f"The producer must sleep between retries (not spin-wait)."
         )
 
-    def test_backoff_sleep_duration_is_at_least_base(self):
-        """Each sleep call uses a duration >= _GDELT_BACKOFF_BASE_S.
+    def test_inter_request_constant_exists_and_equals_six_seconds(self):
+        """_GDELT_INTER_REQUEST_S == 6.0 (AMENDMENT 1: spacing between tone and artlist GETs).
 
-        The sleep duration must be >= 5.0 on every call so retries actually
-        clear GDELT's 5s rate-limit window.
+        The tone GET and artlist GET share GDELT's per-IP window. A 6s gap
+        gives one second of margin above the 5s rate-limit floor.
+        """
+        from advisors import lens_gdelt
+
+        assert hasattr(lens_gdelt, "_GDELT_INTER_REQUEST_S"), (
+            "advisors.lens_gdelt._GDELT_INTER_REQUEST_S constant is missing "
+            "(AMENDMENT 1 — spacing between the two GETs)."
+        )
+        inter = lens_gdelt._GDELT_INTER_REQUEST_S
+        assert isinstance(inter, (int, float)) and inter >= 5.0, (
+            f"_GDELT_INTER_REQUEST_S must be >= 5.0 (must exceed GDELT's 5s floor). "
+            f"Got {inter!r}. AMENDMENT 1 pins this at 6.0."
+        )
+        assert inter == 6.0, (
+            f"_GDELT_INTER_REQUEST_S must be 6.0 (contract §5 AMENDMENT 1). Got {inter}."
+        )
+
+    def test_backoff_sleep_duration_is_at_least_base(self):
+        """Each retry sleep call uses a duration >= _GDELT_BACKOFF_BASE_S (20.0s).
+
+        AMENDMENT 1 raises the base to 20.0 — well above GDELT's 5s window —
+        so each retry clears the rate-limit with 4x margin.
         """
         from advisors import lens_gdelt
 
         always_429 = _make_mock_429_response()
-        base_s = lens_gdelt._GDELT_BACKOFF_BASE_S
+        base_s = lens_gdelt._GDELT_BACKOFF_BASE_S  # 20.0 after AMENDMENT 1
 
         sleep_durations: list[float] = []
 
@@ -1104,12 +1124,20 @@ class TestBoundedRetry:
         ):
             lens_gdelt._fetch_gdelt_sentiment(["SPY"])
 
-        for i, dur in enumerate(sleep_durations):
+        # Filter to retry sleeps only (the inter-request sleep between tone/artlist
+        # may also be captured; those are expected to be _GDELT_INTER_REQUEST_S=6.0).
+        # Retry sleeps (between 429 attempts) must all be >= base_s.
+        retry_sleeps = [d for d in sleep_durations if d >= base_s]
+        assert len(retry_sleeps) >= 1, (
+            f"No retry sleep of duration >= {base_s}s was recorded. "
+            f"Recorded sleeps: {sleep_durations}. "
+            f"Each 429 retry must sleep >= _GDELT_BACKOFF_BASE_S ({base_s}s)."
+        )
+        for i, dur in enumerate(retry_sleeps):
             assert dur >= base_s, (
-                f"Backoff sleep[{i}] = {dur}s is less than "
+                f"Retry sleep[{i}] = {dur}s is less than "
                 f"_GDELT_BACKOFF_BASE_S={base_s}s. "
-                f"Sleep must be >= base so each retry clears GDELT's 5s window. "
-                f"The prior value (1.0s) caused the persistent-429 PC crash."
+                f"AMENDMENT 1: base is 20.0 — 4x margin above GDELT's 5s floor."
             )
 
 
