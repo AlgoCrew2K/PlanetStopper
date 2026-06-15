@@ -597,3 +597,40 @@ Cycle: `community-strats` on branch `team/community-strats`. 38/38 tests GREEN a
 **No production caller yet.** The propose_strategies wiring (making `strategy_builder_engine` consume these candidates as community-strategy inputs) is the next cycle. `load_community_strategies` must not be called from production routes until that wiring is in.
 
 **Status:** GREEN at `f6d48c1`. 38/38 tests GREEN (AC-1..AC-9). Acceptance criteria verified: cache HIT/MISS/force semantics (closure call counts), D-1 secret-leak walk (MONGO_URI never in returns/cache), never-raising on Mongo-down/cache-fail/bad-edn, dedup by tree-structural hash, sharpe-filter keeping no-sharpe docs.
+
+---
+
+## Community-Candidate Wiring — propose_strategies Integration (2026-06-14)
+
+Cycle: `propose-wiring` on branch `team/propose-strategies-wiring`. 39/39 tests GREEN at `4edbe92` (AC-1..AC-7).
+
+### DE-PSW-001: Community candidates enter the same single-batch FDR gate as template candidates; adapter at the caller boundary; rebuilt via Agent Team after solo-built rip
+
+**Decision:** `advisors/strategy_builder_engine.py` gains `community_candidate_infos(community_result, *, max_candidates) -> list[CandidateInfo]` and a keyword-only `community_candidates: list[CandidateInfo] | None = None` parameter on `propose_strategies`. Community-sourced candidates join template-generated candidates in a single call to `evaluate_candidate_batch` — the single-batch FDR correction is the anti-overfit invariant.
+
+**Key design choices:**
+
+1. **Single-batch FDR gate (anti-overfit invariant).** All successfully-backtested candidates — template-generated and community-sourced — enter `evaluate_candidate_batch` together. Splitting community candidates into a separate gate would give each group a weaker multiple-testing correction, increasing false discovery. Wide exploration must pay one batch-wide correction: this is the design constraint that drove the wiring architecture.
+
+2. **Adapter at the caller boundary; `propose_strategies` does not import the loader.** `community_candidate_infos` maps a `load_community_strategies` result dict to `CandidateInfo` objects; `propose_strategies` receives them via the `community_candidates` kwarg. The engine is decoupled from the loader — the caller owns the Atlas fetch and passes the adapted output. This mirrors the existing `live_returns` injection pattern.
+
+3. **Per-candidate backtest failure isolation (AC-4).** Each community candidate's `run_backtest` call is wrapped in the same per-candidate `try/except` as template candidates. A failure sets `backtest_error` and excludes the candidate from the gate without aborting the run. One bad community candidate cannot affect template-candidate processing.
+
+4. **Provenance in persisted observations (AC-5).** Community survivors are persisted with `template_id="community"` and the source `sid` in `params`. Downstream surfaces can identify community-origin candidates in dashboard cards and M6 chat artifacts.
+
+5. **No-regression guarantee (AC-6).** `community_candidates=None` and `community_candidates=[]` are both falsy — the `if community_candidates:` guard short-circuits the `extend`, leaving the execution path byte-for-byte identical to the pre-wiring code. No behavioral change to existing callers.
+
+6. **`MAX_COMMUNITY_CANDIDATES_PER_RUN = 20` named constant (AC-3).** The cap is enforced inside `propose_strategies` (`community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN]`) regardless of what the adapter or caller passes. No magic numbers.
+
+7. **Advisory safety (AC-7).** No `LIVE_EXECUTION`, credential key, or `_SETTINGS_WRITE_ALLOWLIST` entry is touched. The wiring is purely advisory-path. `propose_strategies` still never raises — catastrophic failure returns `ProposalRun(error=...)`.
+
+8. **Rebuilt via Agent Team (operator hard rule).** The prior wiring (ripped at `ad3a637`) was built by a solo agent in violation of the teams-default rule. This version was built by the `propose-wiring` team (test-writer + implementer + reviewer + doc-writer) using the Toxic Pair TDD composition on `team/propose-strategies-wiring`.
+
+**Public surface additions:**
+- `community_candidate_infos(community_result, *, max_candidates) -> list[CandidateInfo]` — adapter; never raises; returns `[]` on unavailable/empty/malformed input.
+- `MAX_COMMUNITY_CANDIDATES_PER_RUN: int = 20` — named constant.
+- `propose_strategies(..., *, community_candidates: list[CandidateInfo] | None = None) -> ProposalRun` — kwarg addition; no change to existing positional signature.
+
+**`CandidateInfo`/`ProposalRun`/`ScreenConfig`/`Objective` shapes are unchanged.** The FDR gate logic, screen logic, and persistence path are unchanged. Only the candidate list assembly in Step 1b is new.
+
+**Status:** GREEN at `4edbe92`. 39/39 tests GREEN (AC-1..AC-7). Acceptance criteria verified: adapter mapping + cap (AC-1/AC-3), gate-input includes community candidates (AC-2), backtest failure isolation (AC-4), provenance in persist args (AC-5), no-regression vs template-only (AC-6), advisory-safety + never-raises (AC-7).
