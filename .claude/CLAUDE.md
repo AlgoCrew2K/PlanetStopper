@@ -8,6 +8,7 @@
 - **Workflow:** Hard fork — never re-syncing upstream; full autonomy within global guidelines
 - **PM autonomy (operator directive 2026-06-11):** never pause to ask the operator mid-backlog — proceed phase to phase until the backlog is exhausted or blocked on an operator-only input (credentials, scope change). Document assumptions as `[PM-ASSUMED]` in contract docs instead of asking.
 - **PM status integrity (operator directive 2026-06-12):** NEVER report team/agent status without validating it first in the same turn — check the process table (`pgrep`), file mtimes, and `git log` before every claim. Inference is never reported as fact; if something is unverified, it is labeled unverified. A missing completion notification is NOT evidence of progress.
+- **PM compaction resilience (operator directive):** Compaction can drop "what's mine" from context. Keep `.claude/PM-ACTIVE-WORK.md` as a durable on-disk ledger of owned teams (+ their `leadSessionId`), branches, in-flight agents, and open inputs; update it on every create/teardown. On EVERY wake/resume/compaction-recovery, READ that ledger FIRST. Before calling any team/branch/process "rogue/foreign", run the ownership check: a team whose `leadSessionId` == this session id is YOURS; one claude.exe in the process table means no concurrent external driver. Never raise a rogue-session alarm without failing that check first.
 - **Roadmap (in scope):** historical analysis, live-vs-Planet Stopper comparison stats, charts/graphs in Flask dashboard, pytest + GitHub Actions test harness
 
 ## Key Files (quick reference for workers)
@@ -51,6 +52,16 @@ python app.py          # run daemon
 - Every change to math layers requires a golden-fixture test
 - API calls must be testable from a fixture (Composer + Alpaca)
 - Schema migrations: additive-first, NULLable + DEFAULT, never destructive in one step
+
+## Merge & PR Workflow (HARD REQUIREMENT - operator-mandated)
+No feature reaches `main` (local OR origin) by self-merge. EVERY feature passes this gate:
+1. Feature branch off `origin/main`. Never commit feature work straight to main; never squash-self-merge a cycle branch into local main as a substitute for shipping.
+2. Open a PR to origin. Cycle-complete is NOT done - done = PR open, reviewed, functionally tested, and merged to origin.
+3. Run the `/review` skill (the built-in "Review a pull request" skill) on the PR - this is the invocable PR-review skill. Do NOT rely on the project `quant-code-reviewer` alone, and do NOT use `/code-review` or the (disabled) pr-review-toolkit. Resolve or explicitly accept findings before merge.
+4. Behavioral + functional test, LIVE, run BY THE PM AFTER the `/review` - against the real environment (live DB, running daemon, real API calls / rendered page). Tests-green is necessary, NEVER sufficient.
+5. Merge to origin only after 2-4 pass. Then reconcile local main.
+
+"Merged"/green in any status doc means merged to ORIGIN via a reviewed + functionally-tested PR. Work only on local main is "local-only, unshipped" - never marked done.
 
 ## Known Gotchas
 | Issue | Fix |
