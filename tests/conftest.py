@@ -111,6 +111,7 @@ def _disable_csrf_for_tests(monkeypatch):
     explicitly and supply/omit the X-CSRF-Token header under test.
     """
     import app as _app_module
+
     monkeypatch.setattr(_app_module, "_csrf_check_enabled", False)
 
 
@@ -128,5 +129,6 @@ def _isolate_db(tmp_path, monkeypatch):
     initialised schema without needing a separate fixture call.
     """
     import database as _db
+
     monkeypatch.setenv("DB_PATH", str(tmp_path / "test_alphabot_state.db"))
     _db.init_db()

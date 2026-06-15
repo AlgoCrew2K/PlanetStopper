@@ -119,10 +119,7 @@ def _et_result_offset(result, source_utc: _dt.datetime) -> _dt.timedelta:
         # Naive ET wall clock — derive offset vs the source UTC instant.
         naive_utc = source_utc.replace(tzinfo=None)
         return result - naive_utc
-    pytest.fail(
-        f"UTC->ET helper must return a datetime, got "
-        f"{type(result).__name__} ({result!r})."
-    )
+    pytest.fail(f"UTC->ET helper must return a datetime, got {type(result).__name__} ({result!r}).")
 
 
 # ---------------------------------------------------------------------------
@@ -188,8 +185,7 @@ def test_winter_and_summer_offsets_actually_differ() -> None:
         f"(UTC-4) must differ by exactly one hour."
     )
     assert summer_off - winter_off == _dt.timedelta(hours=1), (
-        f"EDT must be exactly one hour ahead of EST; got summer={summer_off}, "
-        f"winter={winter_off}."
+        f"EDT must be exactly one hour ahead of EST; got summer={summer_off}, winter={winter_off}."
     )
 
 
@@ -247,9 +243,7 @@ def test_source_no_longer_hardcodes_a_utc_offset_via_timedelta_hours() -> None:
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        is_timedelta = (
-            isinstance(func, ast.Name) and func.id == "timedelta"
-        ) or (
+        is_timedelta = (isinstance(func, ast.Name) and func.id == "timedelta") or (
             isinstance(func, ast.Attribute) and func.attr == "timedelta"
         )
         if not is_timedelta:

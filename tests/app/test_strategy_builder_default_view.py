@@ -112,6 +112,7 @@ class TestDefaultPageShowsAllProposals:
         """
         import app as _am
         from unittest.mock import MagicMock, patch
+
         _am.app.config["TESTING"] = True
 
         fake_corr = MagicMock()
@@ -146,6 +147,7 @@ class TestDefaultPageShowsAllProposals:
         """
         import app as _am
         from unittest.mock import MagicMock, patch
+
         _am.app.config["TESTING"] = True
 
         called_roles: list = []
@@ -159,14 +161,12 @@ class TestDefaultPageShowsAllProposals:
         fake_corr.CRISIS_CAVEAT = "caveat"
 
         with (
-            patch.object(_am.database, "get_advisor_observations_for_role",
-                         side_effect=_capture_role),
-            patch.object(_am.analytics, "get_history_with_cache_invalidation",
-                         return_value={}),
-            patch.object(_am.analytics, "list_available_symphonies",
-                         return_value=[]),
-            patch.object(_am.analytics, "compute_per_symphony_returns",
-                         return_value=([], [], [])),
+            patch.object(
+                _am.database, "get_advisor_observations_for_role", side_effect=_capture_role
+            ),
+            patch.object(_am.analytics, "get_history_with_cache_invalidation", return_value={}),
+            patch.object(_am.analytics, "list_available_symphonies", return_value=[]),
+            patch.object(_am.analytics, "compute_per_symphony_returns", return_value=([], [], [])),
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):
             resp = client.get("/ai-advisor")

@@ -71,8 +71,7 @@ _EXIT_TRIGGERS_DDL = (
 )
 
 _EXIT_TRIGGERS_IDX_TS = (
-    "CREATE INDEX IF NOT EXISTS idx_exit_triggers_ts "
-    "ON exit_triggers (ts_utc DESC)"
+    "CREATE INDEX IF NOT EXISTS idx_exit_triggers_ts ON exit_triggers (ts_utc DESC)"
 )
 
 _EXIT_TRIGGERS_IDX_SYM_TS = (
@@ -268,8 +267,16 @@ class _FakeDB:
                 "INSERT INTO exit_triggers "
                 "(ts_utc, ts_et, symphony_id, account_id, triggered_reason, at_return, gate_state_json, cycle_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (ts_utc, ts_et, symphony_id, account_id, triggered_reason,
-                 at_return, gate_state_json, cycle_id),
+                (
+                    ts_utc,
+                    ts_et,
+                    symphony_id,
+                    account_id,
+                    triggered_reason,
+                    at_return,
+                    gate_state_json,
+                    cycle_id,
+                ),
             )
             conn.commit()
             conn.close()
@@ -554,8 +561,7 @@ def test_get_triggers_since_filters_correctly(tmp_path):
     results = db.get_triggers(since=params["since"])
 
     assert len(results) == params["expected_count"], (
-        f"since={params['since']!r}: expected {params['expected_count']} rows, "
-        f"got {len(results)}"
+        f"since={params['since']!r}: expected {params['expected_count']} rows, got {len(results)}"
     )
 
 
@@ -619,14 +625,13 @@ def test_get_triggers_default_limit_is_100(tmp_path):
     We verify the implementation encodes this default (function signature check).
     """
     import inspect
+
     # The production function must have limit=100 as default in its signature.
     # We assert on _FakeDB.get_triggers (the test stand-in) as a proxy for the
     # contract the implementer must match.
     sig = inspect.signature(_FakeDB.get_triggers)
     limit_default = sig.parameters["limit"].default
-    assert limit_default == 100, (
-        f"get_triggers() default limit must be 100; got {limit_default!r}"
-    )
+    assert limit_default == 100, f"get_triggers() default limit must be 100; got {limit_default!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -649,10 +654,7 @@ def test_api_triggers_route_returns_200_with_array(monkeypatch):
     """
     fixture = _load("api_triggers_filter_params.json")
     # Build mock rows WITHOUT account_id (as get_triggers() must return)
-    mock_rows = [
-        {k: v for k, v in r.items() if k != "account_id"}
-        for r in fixture["rows"]
-    ]
+    mock_rows = [{k: v for k, v in r.items() if k != "account_id"} for r in fixture["rows"]]
 
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -769,9 +771,7 @@ def test_retention_rotation_deletes_old_rows_in_batches(tmp_path):
     retention_days = setup["retention_days"]
 
     for i in range(setup["rows_older_than_retention_days"]):
-        ts = (now - datetime.timedelta(days=retention_days + i + 1)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        ts = (now - datetime.timedelta(days=retention_days + i + 1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         conn.execute(
             "INSERT INTO exit_triggers (ts_utc, ts_et, symphony_id, triggered_reason) "
             "VALUES (?, ?, ?, ?)",
@@ -790,9 +790,7 @@ def test_retention_rotation_deletes_old_rows_in_batches(tmp_path):
 
     # Run batched rotation (what the production function must do).
     batch_size = setup["batch_size"]
-    cutoff = (now - datetime.timedelta(days=retention_days)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    cutoff = (now - datetime.timedelta(days=retention_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     deleted_total = 0
     while True:
         cursor = conn.execute(
@@ -924,7 +922,10 @@ def test_api_triggers_today_data_available_for_status_cell(tmp_path):
     # Sub-line format: '<reason> @ <hh:mm>' — both fields must be present
     assert "triggered_reason" in most_recent
     assert "ts_et" in most_recent
-    assert isinstance(most_recent["triggered_reason"], str) and len(most_recent["triggered_reason"]) > 0
+    assert (
+        isinstance(most_recent["triggered_reason"], str)
+        and len(most_recent["triggered_reason"]) > 0
+    )
     assert isinstance(most_recent["ts_et"], str) and len(most_recent["ts_et"]) > 0
 
 
@@ -963,6 +964,4 @@ def test_aggregate_strip_hidden_when_no_triggers_today(tmp_path):
     # We pin this contract: caller receives [] and must not render the strip.
     triggers_today = results
     strip_should_be_hidden = len(triggers_today) == 0
-    assert strip_should_be_hidden, (
-        "Aggregate strip must be hidden when there are no triggers today"
-    )
+    assert strip_should_be_hidden, "Aggregate strip must be hidden when there are no triggers today"

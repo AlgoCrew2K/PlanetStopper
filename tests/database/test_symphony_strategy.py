@@ -35,6 +35,7 @@ from database import (
 # Fixture: isolated, fresh SQLite database per test
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path, monkeypatch):
     """
@@ -54,6 +55,7 @@ def isolated_db(tmp_path, monkeypatch):
 # Helper: read the raw row from DB for inspection
 # ---------------------------------------------------------------------------
 
+
 def _fetch_raw_row(db_path: str, symphony_name: str):
     """Return (parameters_json, locked_vars_json) or None."""
     conn = sqlite3.connect(db_path)
@@ -70,6 +72,7 @@ def _fetch_raw_row(db_path: str, symphony_name: str):
 # ---------------------------------------------------------------------------
 # Test 1: first-seen auto-init returns DEFAULT_STRATEGY byte-for-byte
 # ---------------------------------------------------------------------------
+
 
 def test_first_seen_autoinit_returns_default_strategy():
     """
@@ -102,6 +105,7 @@ def test_first_seen_autoinit_returns_default_strategy():
 # Test 2: auto-init persists the row in the DB
 # ---------------------------------------------------------------------------
 
+
 def test_first_seen_autoinit_persists_row(isolated_db):
     """
     After the auto-init path fires, the row must exist in symphony_strategies
@@ -111,16 +115,12 @@ def test_first_seen_autoinit_persists_row(isolated_db):
     get_symphony_strategy(symphony_name)
 
     row = _fetch_raw_row(isolated_db, symphony_name)
-    assert row is not None, (
-        "auto-init must write a row to symphony_strategies; found None"
-    )
+    assert row is not None, "auto-init must write a row to symphony_strategies; found None"
 
     persisted_params = json.loads(row[0])
     persisted_locked = json.loads(row[1])
 
-    assert persisted_params == DEFAULT_STRATEGY, (
-        "persisted parameters must equal DEFAULT_STRATEGY"
-    )
+    assert persisted_params == DEFAULT_STRATEGY, "persisted parameters must equal DEFAULT_STRATEGY"
     assert persisted_locked == DEFAULT_LOCKED_VARS, (
         "persisted locked_vars must equal DEFAULT_LOCKED_VARS"
     )
@@ -129,6 +129,7 @@ def test_first_seen_autoinit_persists_row(isolated_db):
 # ---------------------------------------------------------------------------
 # Test 3: round-trip preservation — save custom dict, fetch, equal
 # ---------------------------------------------------------------------------
+
 
 def test_round_trip_custom_strategy_preserved():
     """
@@ -154,6 +155,7 @@ def test_round_trip_custom_strategy_preserved():
 # ---------------------------------------------------------------------------
 # Test 4: name normalization — variants must merge to a single row
 # ---------------------------------------------------------------------------
+
 
 def _count_all_rows(db_path: str) -> int:
     """Return total row count in symphony_strategies."""
@@ -223,7 +225,7 @@ def test_name_normalization_merges_variants_to_same_row(isolated_db):
     # Scenario B: fetch normalized first, then save under raw name
     # ------------------------------------------------------------------
     # Use a separate symphony name for a clean slate within the same isolated_db
-    raw_name_b = "Tech Momentum  "   # trailing spaces — normalize strips them
+    raw_name_b = "Tech Momentum  "  # trailing spaces — normalize strips them
     normalized_b = normalize_name(raw_name_b)  # "tech momentum"
 
     assert raw_name_b != normalized_b, (
@@ -265,6 +267,7 @@ def test_name_normalization_merges_variants_to_same_row(isolated_db):
 # Test 5: multiple symphonies are isolated — no cross-contamination
 # ---------------------------------------------------------------------------
 
+
 def test_multiple_symphonies_are_isolated():
     """
     Saving a strategy for symphony-A must not affect what symphony-B returns,
@@ -285,9 +288,7 @@ def test_multiple_symphonies_are_isolated():
     assert result_b["params"] == params_b, (
         "symphony-beta params contaminated by symphony-alpha write"
     )
-    assert result_a["locked_vars"] == [], (
-        "symphony-alpha locked_vars contaminated"
-    )
+    assert result_a["locked_vars"] == [], "symphony-alpha locked_vars contaminated"
     assert result_b["locked_vars"] == ["TRIGGER_THRESHOLD_PCT"], (
         "symphony-beta locked_vars contaminated"
     )
@@ -309,16 +310,18 @@ def test_multiple_symphonies_are_isolated():
 # CANARY: This set is the authoritative field list as of the time this test
 # was written (2026-05-13).  Any addition or removal to DEFAULT_STRATEGY
 # must be accompanied by an update here — that is the point of this test.
-_EXPECTED_DEFAULT_STRATEGY_KEYS = frozenset({
-    "TRIGGER_THRESHOLD_PCT",
-    "TAKE_PROFIT_MC_PCT",
-    "MAX_SQUEEZE_FLOOR",
-    "VWAP_CROSS_HWM_PCT",
-    "PARABOLIC_VELOCITY_THRESHOLD",
-    "MAX_PARABOLIC_SQUEEZE",
-    "VWAP_BLEED_MULTIPLIER",
-    "VWAP_BLEED_TICKS",
-})
+_EXPECTED_DEFAULT_STRATEGY_KEYS = frozenset(
+    {
+        "TRIGGER_THRESHOLD_PCT",
+        "TAKE_PROFIT_MC_PCT",
+        "MAX_SQUEEZE_FLOOR",
+        "VWAP_CROSS_HWM_PCT",
+        "PARABOLIC_VELOCITY_THRESHOLD",
+        "MAX_PARABOLIC_SQUEEZE",
+        "VWAP_BLEED_MULTIPLIER",
+        "VWAP_BLEED_TICKS",
+    }
+)
 
 
 def test_default_strategy_field_set_canary():
@@ -341,9 +344,7 @@ def test_default_strategy_field_set_canary():
     assert not missing, (
         f"Fields removed from DEFAULT_STRATEGY (update canary if intentional): {missing}"
     )
-    assert not extra, (
-        f"Fields added to DEFAULT_STRATEGY (update canary if intentional): {extra}"
-    )
+    assert not extra, f"Fields added to DEFAULT_STRATEGY (update canary if intentional): {extra}"
 
     # Count check as a secondary signal
     assert len(DEFAULT_STRATEGY) == len(_EXPECTED_DEFAULT_STRATEGY_KEYS), (
@@ -355,6 +356,7 @@ def test_default_strategy_field_set_canary():
 # ---------------------------------------------------------------------------
 # Test 7: all DEFAULT_STRATEGY values are positive floats (shape/property)
 # ---------------------------------------------------------------------------
+
 
 def test_default_strategy_all_values_are_positive():
     """
@@ -376,6 +378,7 @@ def test_default_strategy_all_values_are_positive():
 # ---------------------------------------------------------------------------
 # Test 8: second call after auto-init reads from DB, not re-seeds
 # ---------------------------------------------------------------------------
+
 
 def test_second_call_after_autoinit_reads_from_db(isolated_db):
     """

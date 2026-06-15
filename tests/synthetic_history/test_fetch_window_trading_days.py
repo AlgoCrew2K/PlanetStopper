@@ -75,9 +75,7 @@ _WALK_FORWARD_TRADING_DAYS = 125
 # each eligible day needs MC_VOL_WINDOW_DAYS - 1 raw days of vol warmup behind
 # it (math_engine eligible-pool guard). Derived from named math_engine
 # constants — NOT hardcoded.
-_MC_WARMUP_TRADING_DAYS = (
-    math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
-)
+_MC_WARMUP_TRADING_DAYS = math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
 
 # The minimum trading days the fetch window must yield, BEFORE any holiday /
 # margin buffer. The implementer's buffer makes the real target larger; the
@@ -209,14 +207,9 @@ def test_required_floor_is_derived_from_named_constants_not_a_literal() -> None:
     constants changes the warmup, this assertion documents the new expectation
     explicitly rather than letting the window tests drift silently.
     """
-    expected_warmup = (
-        math_engine.MC_MIN_HISTORY_DAYS + math_engine.MC_VOL_WINDOW_DAYS - 1
-    )
+    expected_warmup = math_engine.MC_MIN_HISTORY_DAYS + math_engine.MC_VOL_WINDOW_DAYS - 1
     assert _MC_WARMUP_TRADING_DAYS == expected_warmup
-    assert (
-        _MIN_REQUIRED_TRADING_DAYS
-        == _WALK_FORWARD_TRADING_DAYS + expected_warmup
-    )
+    assert _MIN_REQUIRED_TRADING_DAYS == _WALK_FORWARD_TRADING_DAYS + expected_warmup
     # The whole point of the fix: the floor exceeds the old 180-calendar-day
     # window's worst-case trading-day yield (~119-123). 125 + 39 = 164 trading
     # days, which 180 calendar days (~128 weekdays) cannot possibly cover.
@@ -238,9 +231,7 @@ def test_window_yields_required_trading_days_for_a_plain_end_date() -> None:
     end_date = _dt.date(2026, 5, 15)
     start_date = _call_window_helper(fn, end_date)
 
-    assert start_date < end_date, (
-        "fetch-window start must precede the end date."
-    )
+    assert start_date < end_date, "fetch-window start must precede the end date."
     trading_days = _independent_trading_day_count(start_date, end_date)
     assert trading_days >= _MIN_REQUIRED_TRADING_DAYS, (
         f"fetch window {start_date}..{end_date} yields only {trading_days} "
@@ -306,10 +297,10 @@ def test_window_is_not_a_fixed_180_calendar_day_subtraction() -> None:
 @pytest.mark.parametrize(
     "end_date",
     [
-        _dt.date(2026, 1, 9),   # spans year-end + Thanksgiving holiday cluster
+        _dt.date(2026, 1, 9),  # spans year-end + Thanksgiving holiday cluster
         _dt.date(2026, 3, 13),  # spans the DST transition + winter holidays
         _dt.date(2026, 5, 15),  # spring end date
-        _dt.date(2025, 12, 12), # spans the autumn holiday run
+        _dt.date(2025, 12, 12),  # spans the autumn holiday run
     ],
 )
 def test_window_meets_floor_across_multiple_end_dates(
@@ -351,9 +342,7 @@ def test_window_meets_floor_across_multiple_end_dates(
 import ast as _ast  # noqa: E402  (Revise-round import, kept local to its section)
 import pathlib as _pathlib  # noqa: E402
 
-_SYNTH_PATH = (
-    _pathlib.Path(__file__).resolve().parents[2] / "synthetic_history.py"
-)
+_SYNTH_PATH = _pathlib.Path(__file__).resolve().parents[2] / "synthetic_history.py"
 
 
 def _synth_source() -> str:
@@ -383,9 +372,7 @@ def test_no_fixed_180_day_timedelta_literal_survives_in_code() -> None:
         if not isinstance(node, _ast.Call):
             continue
         func = node.func
-        is_timedelta = (
-            isinstance(func, _ast.Name) and func.id == "timedelta"
-        ) or (
+        is_timedelta = (isinstance(func, _ast.Name) and func.id == "timedelta") or (
             isinstance(func, _ast.Attribute) and func.attr == "timedelta"
         )
         if not is_timedelta:
@@ -394,9 +381,7 @@ def test_no_fixed_180_day_timedelta_literal_survives_in_code() -> None:
             if kw.arg == "days" and isinstance(kw.value, _ast.Constant):
                 # The old window literal was 180; flag anything in that range
                 # so a near-miss (e.g. 175/185) is also caught.
-                if isinstance(kw.value.value, (int, float)) and (
-                    150 <= kw.value.value <= 220
-                ):
+                if isinstance(kw.value.value, (int, float)) and (150 <= kw.value.value <= 220):
                     offenders.append(node.lineno)
     assert not offenders, (
         f"synthetic_history.py still has an executable `timedelta(days=~180)` "
@@ -417,15 +402,10 @@ def test_generate_synthetic_history_calls_the_window_helper() -> None:
     tree = _synth_tree()
     gen = None
     for node in _ast.walk(tree):
-        if (
-            isinstance(node, _ast.FunctionDef)
-            and node.name == "generate_synthetic_history"
-        ):
+        if isinstance(node, _ast.FunctionDef) and node.name == "generate_synthetic_history":
             gen = node
             break
-    assert gen is not None, (
-        "synthetic_history.generate_synthetic_history not found."
-    )
+    assert gen is not None, "synthetic_history.generate_synthetic_history not found."
 
     helper_names = {
         "compute_fetch_window_start",
@@ -469,15 +449,10 @@ def test_replay_window_shortfall_is_surfaced_not_silently_sliced() -> None:
     tree = _synth_tree()
     gen = None
     for node in _ast.walk(tree):
-        if (
-            isinstance(node, _ast.FunctionDef)
-            and node.name == "generate_synthetic_history"
-        ):
+        if isinstance(node, _ast.FunctionDef) and node.name == "generate_synthetic_history":
             gen = node
             break
-    assert gen is not None, (
-        "synthetic_history.generate_synthetic_history not found."
-    )
+    assert gen is not None, "synthetic_history.generate_synthetic_history not found."
 
     # Module-level names bound to a numeric constant. The shortfall guard
     # SHOULD compare against a NAMED floor constant (not a bare literal — the
@@ -486,9 +461,7 @@ def test_replay_window_shortfall_is_surfaced_not_silently_sliced() -> None:
     # the numeric side of the floor check.
     module_numeric_consts: set[str] = set()
     for node in tree.body:
-        if isinstance(node, _ast.Assign) and isinstance(
-            node.value, _ast.Constant
-        ):
+        if isinstance(node, _ast.Assign) and isinstance(node.value, _ast.Constant):
             if isinstance(node.value.value, (int, float)) and not isinstance(
                 node.value.value, bool
             ):
@@ -496,9 +469,7 @@ def test_replay_window_shortfall_is_surfaced_not_silently_sliced() -> None:
                     if isinstance(tgt, _ast.Name):
                         module_numeric_consts.add(tgt.id)
         # `_NAME: int = 174` annotated assignment also counts.
-        if isinstance(node, _ast.AnnAssign) and isinstance(
-            node.value, _ast.Constant
-        ):
+        if isinstance(node, _ast.AnnAssign) and isinstance(node.value, _ast.Constant):
             if isinstance(node.value.value, (int, float)) and not isinstance(
                 node.value.value, bool
             ):
@@ -531,9 +502,7 @@ def test_replay_window_shortfall_is_surfaced_not_silently_sliced() -> None:
             continue
         operands = [node.left, *node.comparators]
         has_len_call = any(
-            isinstance(o, _ast.Call)
-            and isinstance(o.func, _ast.Name)
-            and o.func.id == "len"
+            isinstance(o, _ast.Call) and isinstance(o.func, _ast.Name) and o.func.id == "len"
             for o in operands
         )
         has_numeric = any(_is_numeric_floor_operand(o) for o in operands)
@@ -610,15 +579,10 @@ def test_stale_cache_cannot_bypass_the_new_trading_day_floor() -> None:
     # cache-load branch contains a len() comparison.
     gen = None
     for node in _ast.walk(tree):
-        if (
-            isinstance(node, _ast.FunctionDef)
-            and node.name == "generate_synthetic_history"
-        ):
+        if isinstance(node, _ast.FunctionDef) and node.name == "generate_synthetic_history":
             gen = node
             break
-    assert gen is not None, (
-        "synthetic_history.generate_synthetic_history not found."
-    )
+    assert gen is not None, "synthetic_history.generate_synthetic_history not found."
 
     # Collect names bound from a load_cached_history(...) call.
     cache_loaded_names: set[str] = set()
@@ -723,9 +687,7 @@ def test_independence_day_2026_is_a_trading_day_not_a_holiday() -> None:
     )
     # Stronger: with that table as the holiday set, 2026-07-03 must be a
     # business day.
-    assert bool(
-        np.is_busday(jul3, holidays=holidays_arr)
-    ), (
+    assert bool(np.is_busday(jul3, holidays=holidays_arr)), (
         "with _US_MARKET_HOLIDAYS as the holiday set, np.is_busday reports "
         "2026-07-03 as a non-trading day. It is a real NYSE trading day."
     )
@@ -793,15 +755,10 @@ def test_daily_warmup_floor_is_enforced_on_the_returned_daily_bars() -> None:
     tree = _synth_tree()
     gen = None
     for node in _ast.walk(tree):
-        if (
-            isinstance(node, _ast.FunctionDef)
-            and node.name == "generate_synthetic_history"
-        ):
+        if isinstance(node, _ast.FunctionDef) and node.name == "generate_synthetic_history":
             gen = node
             break
-    assert gen is not None, (
-        "synthetic_history.generate_synthetic_history not found."
-    )
+    assert gen is not None, "synthetic_history.generate_synthetic_history not found."
 
     # --- Path (a): generate_synthetic_history calls the widen+refetch helper.
     widen_helper_names = {
@@ -843,9 +800,7 @@ def test_daily_warmup_floor_is_enforced_on_the_returned_daily_bars() -> None:
             ):
                 has_floor_operand = True
             if isinstance(o, _ast.Name) and (
-                o.id.isupper()
-                or o.id.startswith("_")
-                and any(c.isupper() for c in o.id)
+                o.id.isupper() or o.id.startswith("_") and any(c.isupper() for c in o.id)
             ):
                 has_floor_operand = True
         if not (len_args and has_floor_operand):
@@ -1093,9 +1048,7 @@ def test_widen_refetch_is_bounded_and_hard_fails_on_persistent_shortfall() -> No
     )
     # The failure message should name the shortfall so it is diagnosable.
     msg = str(excinfo.value).lower()
-    assert any(
-        token in msg for token in ("short", "floor", "trading day", "insufficient")
-    ), (
+    assert any(token in msg for token in ("short", "floor", "trading day", "insufficient")), (
         f"the hard-failure exception must name the trading-day shortfall so "
         f"it is diagnosable; got: {excinfo.value!r}"
     )
@@ -1123,14 +1076,12 @@ def test_widen_refetch_loop_uses_named_constants_no_magic_numbers() -> None:
         if name.isupper() or (name.startswith("_") and any(c.isupper() for c in name))
     }
     numeric_consts = {
-        n: v for n, v in module_consts.items() if isinstance(v, (int, float))
-        and not isinstance(v, bool)
+        n: v
+        for n, v in module_consts.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
     }
 
-    has_widen_const = any(
-        ("widen" in n.lower() or "refetch" in n.lower())
-        for n in numeric_consts
-    )
+    has_widen_const = any(("widen" in n.lower() or "refetch" in n.lower()) for n in numeric_consts)
     has_retry_bound_const = any(
         (
             "attempt" in n.lower()

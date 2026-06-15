@@ -74,6 +74,7 @@ def _build_history(n_days: int = 5) -> dict:
 
 def _fallback_params() -> dict:
     import database
+
     return database.DEFAULT_STRATEGY.copy()
 
 
@@ -139,17 +140,19 @@ def _autotuner_patches(best_params, fallback, vwap_side_effect=None):
 
     history = _build_history(n_days=5)
 
-    with patch("autotuner.optuna.create_study", return_value=fake_study), \
-         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value=history), \
-         patch("autotuner.database.load_chart_history", return_value={}), \
-         patch("autotuner.database.save_chart_archive"), \
-         patch("autotuner.database.get_symphony_strategy",
-               return_value={"params": fallback.copy(), "locked_vars": []}), \
-         patch("autotuner.database.DEFAULT_STRATEGY", database.DEFAULT_STRATEGY.copy()), \
-         patch("autotuner.math_engine.compute_vwap_breakdown_update",
-               side_effect=vwap_side_effect):
+    with (
+        patch("autotuner.optuna.create_study", return_value=fake_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": fallback.copy(), "locked_vars": []},
+        ),
+        patch("autotuner.database.DEFAULT_STRATEGY", database.DEFAULT_STRATEGY.copy()),
+        patch("autotuner.math_engine.compute_vwap_breakdown_update", side_effect=vwap_side_effect),
+    ):
         yield {"fake_study": fake_study}
 
 
@@ -173,6 +176,7 @@ def _run_autotuner(symphony_name: str = "DefensiveAlpha"):
 def _fetch_advisor_observations(role: str) -> list[tuple]:
     """Return raw advisor_observations rows for a given role from the live DB."""
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     rows = conn.execute(
@@ -193,6 +197,7 @@ def _normalized(symphony_name: str) -> str:
     this test file must use the same form or queries miss every row.
     """
     import database as _db
+
     return _db.normalize_name(symphony_name)
 
 
@@ -204,6 +209,7 @@ def _fetch_autotune_runs_for_symphony(symphony_id: str) -> list[tuple]:
     lowercased PK value.
     """
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     rows = conn.execute(
@@ -284,6 +290,7 @@ def test_divergence_explainer_persists_a_row_when_flag_off():
     """
     # Ensure flag is off for this test (clear any prior set).
     import os
+
     os.environ.pop("SECOND_WINDOW_CVAR_ENABLED", None)
 
     _run_autotuner(symphony_name="DefensiveAlpha")
@@ -331,6 +338,7 @@ def test_oc_prior_runs_supplied_so_drift_indicator_can_fire():
     # distinct s_count values, so the autotuner's prior_runs SELECT can return
     # them and we can verify they reach the producer.
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     _norm = _normalized("DefensiveAlpha")
@@ -439,9 +447,7 @@ def test_run_autotuner_survives_sc_producer_exception():
         _run_autotuner(symphony_name="DefensiveAlpha")
 
     rows = _fetch_autotune_runs_for_symphony("DefensiveAlpha")
-    assert rows, (
-        "SC producer raise should NOT abort run_autotuner.  S3-AUDIT-006."
-    )
+    assert rows, "SC producer raise should NOT abort run_autotuner.  S3-AUDIT-006."
 
 
 def test_run_autotuner_survives_de_producer_exception():
@@ -455,6 +461,4 @@ def test_run_autotuner_survives_de_producer_exception():
         _run_autotuner(symphony_name="DefensiveAlpha")
 
     rows = _fetch_autotune_runs_for_symphony("DefensiveAlpha")
-    assert rows, (
-        "DE producer raise should NOT abort run_autotuner.  S3-AUDIT-006."
-    )
+    assert rows, "DE producer raise should NOT abort run_autotuner.  S3-AUDIT-006."

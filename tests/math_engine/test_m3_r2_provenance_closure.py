@@ -242,12 +242,12 @@ def test_r2_gate_behavior_unchanged_under_provenance_only_closure() -> None:
     # condition fires).
     result = math_engine.compute_vwap_breakdown_update(
         is_triggered=False,
-        valid_vwap_weight=1.0,    # > VWAP_WEIGHT_THRESHOLD (0.5)
+        valid_vwap_weight=1.0,  # > VWAP_WEIGHT_THRESHOLD (0.5)
         weighted_vwap_diff=-1.0,  # < 0
         safe_hwm=1.0,
         current_return=0.5,
-        vwap_cross_hwm_pct=1.0,   # safe_hwm == vwap_cross_hwm_pct (gate ==)
-        vwap_bleed_arm_pct=-99.0, # System B fails (current_return > arm)
+        vwap_cross_hwm_pct=1.0,  # safe_hwm == vwap_cross_hwm_pct (gate ==)
+        vwap_bleed_arm_pct=-99.0,  # System B fails (current_return > arm)
         vwap_bleed_ticks_threshold=3,
         current_vwap_ticks=0,
         current_vwap_bleed_ticks=0,
@@ -264,16 +264,14 @@ def test_r2_gate_behavior_unchanged_under_provenance_only_closure() -> None:
         f"runtime contract."
     )
     assert is_vwap_broken is False, (
-        f"At one tick, is_vwap_broken must still be False (3-tick confirm). "
-        f"Got {is_vwap_broken}."
+        f"At one tick, is_vwap_broken must still be False (3-tick confirm). Got {is_vwap_broken}."
     )
     assert new_vwap_bleed_ticks == 0, (
         f"System B fails when current_return > vwap_bleed_arm_pct; ticks "
         f"reset to 0. Got {new_vwap_bleed_ticks}."
     )
     assert is_vwap_bleed_broken is False, (
-        f"System B not broken when it didn't even arm. Got "
-        f"{is_vwap_bleed_broken}."
+        f"System B not broken when it didn't even arm. Got {is_vwap_bleed_broken}."
     )
 
 

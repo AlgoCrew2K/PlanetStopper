@@ -83,7 +83,7 @@ import alpha_bot_execution
 
 # Reuse the B1 harness verbatim. Duplicating the fixture / helpers would drift.
 from tests.execution.test_main_pipeline import (
-    patched_environment,           # noqa: F401  (re-exported pytest fixture)
+    patched_environment,  # noqa: F401  (re-exported pytest fixture)
     _seed_state,
     _make_symphony_payload,
     _make_vwap_payload,
@@ -99,21 +99,22 @@ from tests.execution.test_main_pipeline import (
 # Production constants pinned by this module. These are the literal values
 # being protected against regression; the docstring at the top of this file
 # cites the source-of-truth lines in alpha_bot_execution.py.
-_PROD_CHUNK_SIZE = 25       # alpha_bot_execution.py:756 (`range(0, len, 25)`)
-_PROD_CHUNK_SLEEP_SECS = 60 # alpha_bot_execution.py:761 (`time.sleep(60)`)
+_PROD_CHUNK_SIZE = 25  # alpha_bot_execution.py:756 (`range(0, len, 25)`)
+_PROD_CHUNK_SLEEP_SECS = 60  # alpha_bot_execution.py:761 (`time.sleep(60)`)
 
 
 # ZoneInfo for the blackout fixed clock. Mirrors test_main_pipeline.py's fallback.
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 
     def _et(year, month, day, hour, minute):
         return datetime(year, month, day, hour, minute, 0, tzinfo=_ET)
 except Exception:  # pragma: no cover -- tzdata missing
+
     def _et(year, month, day, hour, minute):
-        return datetime(year, month, day, hour, minute, 0,
-                        tzinfo=timezone(timedelta(hours=-4)))
+        return datetime(year, month, day, hour, minute, 0, tzinfo=timezone(timedelta(hours=-4)))
 
 
 # Wednesday 2025-05-14 15:55 ET — inside the [15:53, 16:00) blackout window.
@@ -176,8 +177,7 @@ def _seed_blackout_state(triggered_symphonies):
             "current_holdings": [{"ticker": t, "allocation": 1.0 / len(tickers)} for t in tickers],
             "trigger_prices": {t: 500.0 for t in tickers},
             "triggered_basket_snapshot": [
-                {"ticker": t, "allocation": 1.0 / len(tickers), "price": 500.0}
-                for t in tickers
+                {"ticker": t, "allocation": 1.0 / len(tickers), "price": 500.0} for t in tickers
             ],
         }
     return state
@@ -197,9 +197,7 @@ class TestBlackoutWindowGeneratesPreRebalanceSnapshot:
 
         # One triggered symphony seeded into state. The blackout snapshot scan
         # must find SPY in its triggered_basket_snapshot.
-        env["db"].load_state.return_value = _seed_blackout_state(
-            [(_SYMPHONY_ID, [_TICKER])]
-        )
+        env["db"].load_state.return_value = _seed_blackout_state([(_SYMPHONY_ID, [_TICKER])])
         # Composer fan-out result for the blackout path is unused (the branch
         # returns BEFORE fetch_symphony_stats runs), but set it to empty so a
         # regression that runs the fan-out crashes here loudly.
@@ -210,9 +208,7 @@ class TestBlackoutWindowGeneratesPreRebalanceSnapshot:
         }
         env["fetch_intraday_vwaps"].return_value = snapshot_vwap_payload
 
-        with patch.object(
-            alpha_bot_execution, "get_current_et", return_value=_BLACKOUT_ET
-        ):
+        with patch.object(alpha_bot_execution, "get_current_et", return_value=_BLACKOUT_ET):
             alpha_bot_execution.main()
 
         # ----- 1. generate_eod_snapshot called exactly once -----
@@ -267,23 +263,18 @@ class TestBlackoutWindowDoesNotRunExecutionPipeline:
     undefined real-money behaviour.
     """
 
-    def test_blackout_short_circuits_before_execution_pipeline(
-        self, patched_environment
-    ):
+    def test_blackout_short_circuits_before_execution_pipeline(self, patched_environment):
         env = patched_environment
-        env["db"].load_state.return_value = _seed_blackout_state(
-            [(_SYMPHONY_ID, [_TICKER])]
-        )
+        env["db"].load_state.return_value = _seed_blackout_state([(_SYMPHONY_ID, [_TICKER])])
         env["fetch_symphony_stats"].return_value = []
         env["fetch_intraday_vwaps"].return_value = {
             _TICKER: {"vwap": 502.0, "last_price": 503.5},
         }
 
-        with patch.object(
-            alpha_bot_execution, "get_current_et", return_value=_BLACKOUT_ET
-        ), patch.object(
-            alpha_bot_execution, "execute_sell_to_cash"
-        ) as mock_execute:
+        with (
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_BLACKOUT_ET),
+            patch.object(alpha_bot_execution, "execute_sell_to_cash") as mock_execute,
+        ):
             alpha_bot_execution.main()
 
         # ----- 1. Composer symphony fan-out did NOT run -----
@@ -316,18 +307,18 @@ class TestBlackoutCollectsTickersAcrossMultipleTriggeredSymphonies:
     omit tickers and the operator's pre-rebalance audit would be incomplete.
     """
 
-    def test_all_triggered_symphony_tickers_passed_to_vwap_fetch(
-        self, patched_environment
-    ):
+    def test_all_triggered_symphony_tickers_passed_to_vwap_fetch(self, patched_environment):
         env = patched_environment
 
         # Three triggered symphonies, each with a distinct ticker basket.
         # Sym A: [SPY], Sym B: [QQQ, IWM], Sym C: [SPY, GLD] (note SPY overlap).
-        seeded = _seed_blackout_state([
-            ("sym-blackout-A", ["SPY"]),
-            ("sym-blackout-B", ["QQQ", "IWM"]),
-            ("sym-blackout-C", ["SPY", "GLD"]),  # SPY also in A
-        ])
+        seeded = _seed_blackout_state(
+            [
+                ("sym-blackout-A", ["SPY"]),
+                ("sym-blackout-B", ["QQQ", "IWM"]),
+                ("sym-blackout-C", ["SPY", "GLD"]),  # SPY also in A
+            ]
+        )
         env["db"].load_state.return_value = seeded
         env["fetch_symphony_stats"].return_value = []
         env["fetch_intraday_vwaps"].return_value = {
@@ -337,9 +328,7 @@ class TestBlackoutCollectsTickersAcrossMultipleTriggeredSymphonies:
             "GLD": {"vwap": 180.0, "last_price": 181.0},
         }
 
-        with patch.object(
-            alpha_bot_execution, "get_current_et", return_value=_BLACKOUT_ET
-        ):
+        with patch.object(alpha_bot_execution, "get_current_et", return_value=_BLACKOUT_ET):
             alpha_bot_execution.main()
 
         # ----- 1. fetch_intraday_vwaps was called exactly once -----
@@ -378,13 +367,9 @@ class TestBlackoutForceFlagBypassesEarlyReturn:
     impossible.
     """
 
-    def test_force_flag_continues_pipeline_past_blackout_branch(
-        self, patched_environment
-    ):
+    def test_force_flag_continues_pipeline_past_blackout_branch(self, patched_environment):
         env = patched_environment
-        env["db"].load_state.return_value = _seed_blackout_state(
-            [(_SYMPHONY_ID, [_TICKER])]
-        )
+        env["db"].load_state.return_value = _seed_blackout_state([(_SYMPHONY_ID, [_TICKER])])
         # Empty symphony list — the test asserts the engine ATTEMPTED the
         # Composer fan-out (proving it ran past the blackout's early return),
         # not that anything was processed.
@@ -393,11 +378,13 @@ class TestBlackoutForceFlagBypassesEarlyReturn:
             _TICKER: {"vwap": 500.0, "last_price": 500.0},
         }
 
-        with patch.object(
-            alpha_bot_execution, "get_current_et", return_value=_BLACKOUT_ET
-        ), patch.object(
-            alpha_bot_execution.sys, "argv",
-            ["alpha_bot_execution.py", "--force"],
+        with (
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_BLACKOUT_ET),
+            patch.object(
+                alpha_bot_execution.sys,
+                "argv",
+                ["alpha_bot_execution.py", "--force"],
+            ),
         ):
             alpha_bot_execution.main()
 
@@ -406,10 +393,13 @@ class TestBlackoutForceFlagBypassesEarlyReturn:
 
         # ----- 2. Critical: the Composer fan-out RAN — proving the engine
         #         continued past the blackout's early return. -----
-        env["fetch_symphony_stats"].assert_called(), (
-            "--force MUST bypass the blackout's early return so the normal "
-            "execution pipeline runs. fetch_symphony_stats not being called "
-            "means the engine returned at the blackout guard despite --force."
+        (
+            env["fetch_symphony_stats"].assert_called(),
+            (
+                "--force MUST bypass the blackout's early return so the normal "
+                "execution pipeline runs. fetch_symphony_stats not being called "
+                "means the engine returned at the blackout guard despite --force."
+            ),
         )
 
 
@@ -437,9 +427,9 @@ class TestBlackoutForceFlagBypassesEarlyReturn:
 #      final save_state reflects triggered=True for every queued symphony.
 
 
-_FU5_QUEUE_DEPTH = 27   # one full chunk + 2 stragglers
-_FU5_FIXTURE_PCT_CHANGE = 0.12   # → current_return == 12.0
-_FU5_SEED_HWM = 20.0    # above current_return → HWM-rise branch skipped
+_FU5_QUEUE_DEPTH = 27  # one full chunk + 2 stragglers
+_FU5_FIXTURE_PCT_CHANGE = 0.12  # → current_return == 12.0
+_FU5_SEED_HWM = 20.0  # above current_return → HWM-rise branch skipped
 _FU5_LIVE_PRICE = 505.25
 
 
@@ -497,9 +487,7 @@ class TestExecutionQueueChunksAtTwentyFive:
     guarantees ``execution_queue`` receives all 27 items.
     """
 
-    def test_twenty_seven_triggers_produce_one_sleep_of_sixty_seconds(
-        self, patched_environment
-    ):
+    def test_twenty_seven_triggers_produce_one_sleep_of_sixty_seconds(self, patched_environment):
         env = patched_environment
 
         env["fetch_symphony_stats"].return_value = [
@@ -512,13 +500,16 @@ class TestExecutionQueueChunksAtTwentyFive:
         # no-op MagicMock — re-grab it from the module so we can inspect
         # call args. The harness patch is via patch.object(... time, "sleep")
         # without a return-value override, which makes it a MagicMock attribute.
-        with patch.object(
-            alpha_bot_execution.math_engine,
-            "compute_exit_confirmation",
-            return_value=(3, True),  # force trailing-stop hit for every symphony
-        ), patch.object(
-            alpha_bot_execution, "execute_sell_to_cash", return_value=True
-        ) as mock_execute:
+        with (
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),  # force trailing-stop hit for every symphony
+            ),
+            patch.object(
+                alpha_bot_execution, "execute_sell_to_cash", return_value=True
+            ) as mock_execute,
+        ):
             alpha_bot_execution.main()
 
         # ----- 1. All 27 executor calls happened -----
@@ -538,6 +529,7 @@ class TestExecutionQueueChunksAtTwentyFive:
         # Calculated from production constants (chunk size 25, queue depth 27):
         # expected inter-chunk pauses = ceil(27/25) - 1 = 1.
         import math as _math
+
         expected_sleeps = _math.ceil(_FU5_QUEUE_DEPTH / _PROD_CHUNK_SIZE) - 1
         assert len(sleep_calls) == expected_sleeps, (
             f"Expected {expected_sleeps} call(s) to "
@@ -556,9 +548,7 @@ class TestExecutionQueueChunkingProcessesEveryItem:
     a real-money double-charge.
     """
 
-    def test_all_twenty_seven_symphonies_committed_as_triggered(
-        self, patched_environment
-    ):
+    def test_all_twenty_seven_symphonies_committed_as_triggered(self, patched_environment):
         env = patched_environment
 
         env["fetch_symphony_stats"].return_value = [
@@ -582,8 +572,7 @@ class TestExecutionQueueChunkingProcessesEveryItem:
         # Fixture-derived expected set of triggered symphony ids.
         expected_ids = {f"sym-fu5-{i:03d}" for i in range(_FU5_QUEUE_DEPTH)}
         actual_triggered_ids = {
-            k for k, v in final_state.items()
-            if isinstance(v, dict) and v.get("triggered") is True
+            k for k, v in final_state.items() if isinstance(v, dict) and v.get("triggered") is True
         }
         # Subset assertion — final_state may also contain top-level non-symphony
         # keys (date, post_mortem_run, etc.). We want every fixture symphony
@@ -608,9 +597,7 @@ class TestExecutionQueueChunkingPersistsCumulativeStateOnce:
     AND the second chunk (indices 25..26).
     """
 
-    def test_final_save_state_contains_symphonies_from_both_chunks(
-        self, patched_environment
-    ):
+    def test_final_save_state_contains_symphonies_from_both_chunks(self, patched_environment):
         env = patched_environment
 
         env["fetch_symphony_stats"].return_value = [
@@ -664,15 +651,11 @@ class TestExecutionQueueNoSleepUnderChunkBoundary:
     on light days.
     """
 
-    def test_single_item_queue_does_not_invoke_sixty_second_sleep(
-        self, patched_environment
-    ):
+    def test_single_item_queue_does_not_invoke_sixty_second_sleep(self, patched_environment):
         env = patched_environment
 
         # One symphony only.
-        env["fetch_symphony_stats"].return_value = [
-            _make_fu5_symphony_payload(0)
-        ]
+        env["fetch_symphony_stats"].return_value = [_make_fu5_symphony_payload(0)]
         env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(_FU5_LIVE_PRICE)
         env["db"].load_state.return_value = _seed_fu5_state(1)
 
@@ -685,8 +668,9 @@ class TestExecutionQueueNoSleepUnderChunkBoundary:
 
         # The 60-second sleep must NOT have been invoked.
         sleep_mock = alpha_bot_execution.time.sleep
-        sleep_60_calls = [c for c in sleep_mock.call_args_list
-                          if c.args == (_PROD_CHUNK_SLEEP_SECS,)]
+        sleep_60_calls = [
+            c for c in sleep_mock.call_args_list if c.args == (_PROD_CHUNK_SLEEP_SECS,)
+        ]
         assert len(sleep_60_calls) == 0, (
             f"A single-item execution queue must NOT trigger "
             f"time.sleep({_PROD_CHUNK_SLEEP_SECS}); the inter-chunk pause is "

@@ -40,6 +40,7 @@ AUTOTUNER_SRC = pathlib.Path(__file__).parent.parent.parent / "autotuner.py"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text())
 
@@ -75,6 +76,7 @@ def _trading_days_between(start: str, end: str, all_dates: list[str]) -> int:
 # ---------------------------------------------------------------------------
 # Test 1: Feature lookback inventory is complete and MAX is correct
 # ---------------------------------------------------------------------------
+
 
 class TestFeatureLookbackInventory:
     """
@@ -150,6 +152,7 @@ class TestFeatureLookbackInventory:
 # Test 2: Purge removes train samples whose feature window overlaps test window
 # ---------------------------------------------------------------------------
 
+
 class TestPurgeRemovesOverlappingTrainSamples:
     """
     Using the deterministic split fixture, verify that a correct purge implementation
@@ -213,7 +216,7 @@ class TestPurgeRemovesOverlappingTrainSamples:
         assert split_idx_lines, "split_idx not found in autotuner.py"
 
         split_lineno = split_idx_lines[0]
-        vicinity = "\n".join(lines[split_lineno: split_lineno + 50])
+        vicinity = "\n".join(lines[split_lineno : split_lineno + 50])
 
         has_purge_constant = bool(re.search(r"\bPURGE_DAYS\b", vicinity))
         has_purge_filter = bool(re.search(r"purge|embargo", vicinity, re.IGNORECASE))
@@ -228,6 +231,7 @@ class TestPurgeRemovesOverlappingTrainSamples:
 # ---------------------------------------------------------------------------
 # Test 3: Embargo separates train-end from test-start
 # ---------------------------------------------------------------------------
+
 
 class TestEmbargoSeparatesTrainFromTest:
     """
@@ -277,6 +281,7 @@ class TestEmbargoSeparatesTrainFromTest:
 # Test 4: Embargo uses a named constant (AST inspection)
 # ---------------------------------------------------------------------------
 
+
 class TestEmbargoIsNamedConstant:
     """
     AST inspection: no bare integer 1 (or similar) is used for the embargo period;
@@ -311,8 +316,7 @@ class TestEmbargoIsNamedConstant:
         source = _parse_autotuner_source()
         lines = source.splitlines()
         embargo_lines = [
-            (i, line) for i, line in enumerate(lines)
-            if re.search(r"\bEMBARGO_DAYS\b\s*=", line)
+            (i, line) for i, line in enumerate(lines) if re.search(r"\bEMBARGO_DAYS\b\s*=", line)
         ]
         assert embargo_lines, (
             "EMBARGO_DAYS = ... assignment not found in autotuner.py — RED until implemented"
@@ -324,8 +328,11 @@ class TestEmbargoIsNamedConstant:
             start = lineno
             while start > 0 and lines[start - 1].strip().startswith("#"):
                 start -= 1
-            context = "\n".join(lines[start: lineno + 1])
-            if re.search(r"[Ll]ópez de Prado|Lopez de Prado|L.pez de Prado", context) and "2018" in context:
+            context = "\n".join(lines[start : lineno + 1])
+            if (
+                re.search(r"[Ll]ópez de Prado|Lopez de Prado|L.pez de Prado", context)
+                and "2018" in context
+            ):
                 found_citation = True
                 break
         assert found_citation, (
@@ -345,7 +352,7 @@ class TestEmbargoIsNamedConstant:
             pytest.skip("split_idx not found — implementer may have restructured the split")
 
         split_lineno = split_idx_lines[0]
-        vicinity = "\n".join(lines[split_lineno: split_lineno + 30])
+        vicinity = "\n".join(lines[split_lineno : split_lineno + 30])
 
         bare_literal_patterns = [
             r"embargo\s*=\s*1\b",
@@ -362,6 +369,7 @@ class TestEmbargoIsNamedConstant:
 # Test 5: OOS fold collapse is documented (PA-26)
 # ---------------------------------------------------------------------------
 
+
 class TestOOSFoldCollapseDocumented:
     """
     The 125-day history / 20-day purge / ~5 usable test-day tradeoff must be
@@ -377,8 +385,15 @@ class TestOOSFoldCollapseDocumented:
         source = _parse_autotuner_source()
 
         has_oos_collapse_mention = bool(
-            re.search(r"OOS.fold.collapse|fold.collapse|usable.test.day|test.fold.shrink", source, re.IGNORECASE)
-            or (re.search(r"purge", source, re.IGNORECASE) and re.search(r"usable|shrink|collapse", source, re.IGNORECASE))
+            re.search(
+                r"OOS.fold.collapse|fold.collapse|usable.test.day|test.fold.shrink",
+                source,
+                re.IGNORECASE,
+            )
+            or (
+                re.search(r"purge", source, re.IGNORECASE)
+                and re.search(r"usable|shrink|collapse", source, re.IGNORECASE)
+            )
         )
         assert has_oos_collapse_mention, (
             "autotuner.py must document the OOS fold collapse tradeoff "
@@ -404,6 +419,7 @@ class TestOOSFoldCollapseDocumented:
 # ---------------------------------------------------------------------------
 # Test 6: Purge uses MAX of feature lookbacks (20), not over-purged to 46
 # ---------------------------------------------------------------------------
+
 
 class TestPurgeUsesMaxLookbackNotPartial:
     """
@@ -452,7 +468,8 @@ class TestPurgeUsesMaxLookbackNotPartial:
                     f"  - {node.value}=46 means the implementer treated decay half-life as a feature lookback (wrong). "
                     f"  - {node.value}=15 means ATR-only (missing the vol window). "
                     f"  - {node.value}=14 means wrong ATR constant (ATR_LOOKBACK_DAYS=15, not 14)."
-                    if node.value != correct_purge else ""
+                    if node.value != correct_purge
+                    else ""
                 )
 
     def test_inventory_max_lookback_is_vol_not_atr_not_decay(self):
@@ -502,25 +519,19 @@ class TestPurgeUsesMaxLookbackNotPartial:
         lines = source.splitlines()
 
         purge_lines = [
-            (i, line) for i, line in enumerate(lines)
-            if re.search(r"\bPURGE_DAYS\b\s*=", line)
+            (i, line) for i, line in enumerate(lines) if re.search(r"\bPURGE_DAYS\b\s*=", line)
         ]
-        assert purge_lines, (
-            "PURGE_DAYS = ... assignment not found in autotuner.py"
-        )
+        assert purge_lines, "PURGE_DAYS = ... assignment not found in autotuner.py"
 
         found_comment = False
         for lineno, _ in purge_lines:
             start = lineno
             while start > 0 and lines[start - 1].strip().startswith("#"):
                 start -= 1
-            context = "\n".join(lines[start: lineno + 1])
-            cites_source = bool(
-                re.search(r"[Ll][óo]pez de Prado", context) and "2018" in context
-            )
+            context = "\n".join(lines[start : lineno + 1])
+            cites_source = bool(re.search(r"[Ll][óo]pez de Prado", context) and "2018" in context)
             explains_derivation = bool(
-                re.search(r"max\s*\(", context)
-                or re.search(r"lookback", context, re.IGNORECASE)
+                re.search(r"max\s*\(", context) or re.search(r"lookback", context, re.IGNORECASE)
             )
             if cites_source and explains_derivation:
                 found_comment = True

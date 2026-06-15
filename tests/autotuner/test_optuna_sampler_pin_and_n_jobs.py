@@ -68,6 +68,7 @@ def autotuner_module():
 @pytest.fixture(scope="module")
 def autotuner_source() -> str:
     import autotuner as _at
+
     return pathlib.Path(_at.__file__).read_text(encoding="utf-8")
 
 
@@ -134,6 +135,7 @@ def _kw(call: ast.Call, name: str) -> ast.expr | None:
 # Module-level named constants for the env-var names (OPTUNA-1 + OPTUNA-6)
 # ---------------------------------------------------------------------------
 
+
 def test_autotuner_exposes_named_env_var_constants(autotuner_module, pin_contract):
     """``OPTUNA_SAMPLER_SEED`` and ``OPTUNA_N_JOBS`` env-var names must live
     as module-level named constants in autotuner.py — not as repeated string
@@ -170,6 +172,7 @@ def test_autotuner_exposes_named_env_var_constants(autotuner_module, pin_contrac
 # ---------------------------------------------------------------------------
 # OPTUNA-1: explicit TPESampler at the run_autotuner site
 # ---------------------------------------------------------------------------
+
 
 def test_run_autotuner_create_study_passes_explicit_sampler(autotuner_ast):
     """The ``run_autotuner`` main study site must call ``create_study(...)``
@@ -213,15 +216,11 @@ def test_run_autotuner_sampler_is_tpe_with_seed_kwarg(autotuner_ast):
             )
             continue
         f = sampler_expr.func
-        is_tpe = (
-            (isinstance(f, ast.Attribute) and f.attr == "TPESampler")
-            or (isinstance(f, ast.Name) and f.id == "TPESampler")
+        is_tpe = (isinstance(f, ast.Attribute) and f.attr == "TPESampler") or (
+            isinstance(f, ast.Name) and f.id == "TPESampler"
         )
         if not is_tpe:
-            bad.append(
-                f"line {call.lineno}: sampler= must construct TPESampler, "
-                f"got {ast.dump(f)}"
-            )
+            bad.append(f"line {call.lineno}: sampler= must construct TPESampler, got {ast.dump(f)}")
             continue
         # Must pass an explicit ``seed=`` kwarg.
         if _kw(sampler_expr, "seed") is None:
@@ -267,6 +266,7 @@ def test_run_autotuner_sampler_seed_sourced_from_env_constant(
 # OPTUNA-6: n_jobs read from env, never hardcoded -1
 # ---------------------------------------------------------------------------
 
+
 def test_run_autotuner_study_optimize_n_jobs_not_hardcoded_minus_one(autotuner_ast):
     """``study.optimize(..., n_jobs=...)`` inside run_autotuner must not
     pass the literal -1 (audit OPTUNA-6 prohibition)."""
@@ -301,17 +301,14 @@ def test_run_autotuner_study_optimize_n_jobs_not_hardcoded_minus_one(autotuner_a
     assert not offenders, "OPTUNA-6 violations:\n  - " + "\n  - ".join(offenders)
 
 
-def test_run_autotuner_n_jobs_sourced_from_env_constant(
-    autotuner_source: str, pin_contract: dict
-):
+def test_run_autotuner_n_jobs_sourced_from_env_constant(autotuner_source: str, pin_contract: dict):
     """The n_jobs value must be sourced from the OPTUNA-6 env-var constant
     inside run_autotuner."""
     n_jobs_env = pin_contract["constants"]["n_jobs_env_var"]
     tree = ast.parse(autotuner_source)
     func = _function_def(tree, _RUN_AUTOTUNER)
     found = any(
-        isinstance(node, ast.Constant) and node.value == n_jobs_env
-        for node in ast.walk(func)
+        isinstance(node, ast.Constant) and node.value == n_jobs_env for node in ast.walk(func)
     )
     assert found, (
         f"OPTUNA-6: run_autotuner must reference the env var {n_jobs_env!r} "
@@ -323,6 +320,7 @@ def test_run_autotuner_n_jobs_sourced_from_env_constant(
 # ---------------------------------------------------------------------------
 # Behavioural pass-through: env -> create_study(sampler=...) + optimize(n_jobs=...)
 # ---------------------------------------------------------------------------
+
 
 def test_env_seed_flows_through_to_create_study_sampler(
     monkeypatch, autotuner_module, pin_contract
@@ -378,8 +376,7 @@ def test_env_seed_flows_through_to_create_study_sampler(
 
     sampler = helper()
     assert isinstance(sampler, real_tpe), (
-        f"_build_optuna_sampler_from_env() must return a TPESampler, "
-        f"got {type(sampler).__name__}"
+        f"_build_optuna_sampler_from_env() must return a TPESampler, got {type(sampler).__name__}"
     )
     assert captured, (
         "TPESampler was not constructed by the helper — the helper must "
@@ -437,8 +434,7 @@ def test_env_n_jobs_parsed_to_int(monkeypatch, autotuner_module, pin_contract):
     )
     value = helper()
     assert isinstance(value, int), (
-        f"_resolve_optuna_n_jobs_from_env() must return int, "
-        f"got {type(value).__name__}"
+        f"_resolve_optuna_n_jobs_from_env() must return int, got {type(value).__name__}"
     )
     assert value == 3, f"Env OPTUNA_N_JOBS=3 must flow through; got {value!r}"
 
@@ -482,9 +478,7 @@ def test_unset_n_jobs_env_falls_back_to_one_for_sqlite_safety(
     )
 
 
-def test_invalid_n_jobs_env_falls_back_to_safe_default(
-    monkeypatch, autotuner_module, pin_contract
-):
+def test_invalid_n_jobs_env_falls_back_to_safe_default(monkeypatch, autotuner_module, pin_contract):
     """A non-int env value must not crash the daemon — fall back to the
     same safe default (1) the unset case uses. The risk engine runs on a
     1-minute cadence; a parse-error crash here would take the engine down,
@@ -510,11 +504,14 @@ def test_invalid_n_jobs_env_falls_back_to_safe_default(
 # Determinism property — sampler-level (not end-to-end run_autotuner)
 # ---------------------------------------------------------------------------
 
+
 def _toy_objective_factory():
     """Return a deterministic 1-D objective: maximize -(x-0.37)**2 on [0,1]."""
+
     def _objective(trial):
         x = trial.suggest_float("x", 0.0, 1.0)
         return -((x - 0.37) ** 2)
+
     return _objective
 
 
@@ -539,8 +536,7 @@ def test_pinned_seed_yields_identical_trial_sequences(pin_contract):
     seq_a = _run(seed)
     seq_b = _run(seed)
     assert len(seq_a) == n_trials and len(seq_b) == n_trials, (
-        f"Expected {n_trials} trials each; got len(a)={len(seq_a)}, "
-        f"len(b)={len(seq_b)}"
+        f"Expected {n_trials} trials each; got len(a)={len(seq_a)}, len(b)={len(seq_b)}"
     )
     assert seq_a == seq_b, (
         "Determinism violated: two TPESampler(seed=4242) runs over the "
@@ -587,6 +583,7 @@ def test_unseeded_sampler_diverges_negative_control(pin_contract):
 # env-driven (OPTUNA-6 applied across all autotuner.py study sites)
 # ---------------------------------------------------------------------------
 
+
 def test_calibration_sweep_preserves_tpesampler_pin(autotuner_ast, pin_contract):
     """``run_calibration_sweep`` must keep its explicit
     ``TPESampler(seed=random_state)`` sampler. The OPTUNA-1/6 fix to the
@@ -627,8 +624,7 @@ def test_calibration_sweep_preserves_tpesampler_pin(autotuner_ast, pin_contract)
                         saw_tpe = True
                         # Verify seed= is passed.
                         assert _kw(assign.value, "seed") is not None, (
-                            f"calibration TPESampler must keep seed= kwarg "
-                            f"(line {assign.lineno})."
+                            f"calibration TPESampler must keep seed= kwarg (line {assign.lineno})."
                         )
         elif isinstance(sampler_expr, ast.Call):
             f = sampler_expr.func
@@ -637,8 +633,7 @@ def test_calibration_sweep_preserves_tpesampler_pin(autotuner_ast, pin_contract)
             ):
                 saw_tpe = True
                 assert _kw(sampler_expr, "seed") is not None, (
-                    f"calibration TPESampler must keep seed= kwarg "
-                    f"(line {call.lineno})."
+                    f"calibration TPESampler must keep seed= kwarg (line {call.lineno})."
                 )
     assert saw_tpe, (
         "Calibration-site regression: run_calibration_sweep must continue "
@@ -669,9 +664,8 @@ def test_calibration_sweep_n_jobs_is_env_driven_not_literal_one(autotuner_ast):
             continue  # No kwarg at all is acceptable (defaults to 1).
         # Any integer literal (positive, negative, or via UnaryOp) is a
         # hardcode and a violation of the expanded OPTUNA-6 rule.
-        is_int_literal = (
-            isinstance(n_jobs_expr, ast.Constant)
-            and isinstance(n_jobs_expr.value, int)
+        is_int_literal = isinstance(n_jobs_expr, ast.Constant) and isinstance(
+            n_jobs_expr.value, int
         )
         is_unary_int_literal = (
             isinstance(n_jobs_expr, ast.UnaryOp)
@@ -680,8 +674,7 @@ def test_calibration_sweep_n_jobs_is_env_driven_not_literal_one(autotuner_ast):
         )
         if is_int_literal or is_unary_int_literal:
             literal_repr = (
-                str(n_jobs_expr.value) if is_int_literal
-                else ("-" + str(n_jobs_expr.operand.value))
+                str(n_jobs_expr.value) if is_int_literal else ("-" + str(n_jobs_expr.operand.value))
             )
             offenders.append(
                 f"line {call.lineno}: study.optimize(..., n_jobs={literal_repr}) "
@@ -689,9 +682,7 @@ def test_calibration_sweep_n_jobs_is_env_driven_not_literal_one(autotuner_ast):
                 f"counts in autotuner.py). Source via "
                 f"_resolve_optuna_n_jobs_from_env() instead."
             )
-    assert not offenders, (
-        "OPTUNA-6 calibration-site violations:\n  - " + "\n  - ".join(offenders)
-    )
+    assert not offenders, "OPTUNA-6 calibration-site violations:\n  - " + "\n  - ".join(offenders)
 
 
 def test_calibration_sweep_references_n_jobs_env_constant(
@@ -705,8 +696,7 @@ def test_calibration_sweep_references_n_jobs_env_constant(
     tree = ast.parse(autotuner_source)
     func = _function_def(tree, _RUN_CALIBRATION)
     found_literal = any(
-        isinstance(node, ast.Constant) and node.value == n_jobs_env
-        for node in ast.walk(func)
+        isinstance(node, ast.Constant) and node.value == n_jobs_env for node in ast.walk(func)
     )
     # The impl may instead reference the named constant via a Name node
     # whose binding is the module-level constant. We accept either path:
@@ -718,10 +708,7 @@ def test_calibration_sweep_references_n_jobs_env_constant(
     seed_const_names: set[str] = set()
     for node in tree.body:
         if isinstance(node, ast.Assign):
-            if (
-                isinstance(node.value, ast.Constant)
-                and node.value.value == n_jobs_env
-            ):
+            if isinstance(node.value, ast.Constant) and node.value.value == n_jobs_env:
                 for tgt in node.targets:
                     if isinstance(tgt, ast.Name):
                         seed_const_names.add(tgt.id)

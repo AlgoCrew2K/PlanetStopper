@@ -80,8 +80,7 @@ def test_requirements_txt_exists():
     )
     content = REQUIREMENTS_PATH.read_text(encoding="utf-8").strip()
     assert content, (
-        "requirements.txt exists but is empty. "
-        "Populate it with all runtime dependencies, pinned."
+        "requirements.txt exists but is empty. Populate it with all runtime dependencies, pinned."
     )
 
 
@@ -132,7 +131,8 @@ def test_all_requirements_are_pinned():
     """
     assert REQUIREMENTS_PATH.exists(), "requirements.txt missing — cannot check pinning."
     unpinned = [
-        raw for (_, raw) in _parse_requirements(REQUIREMENTS_PATH)
+        raw
+        for (_, raw) in _parse_requirements(REQUIREMENTS_PATH)
         if not _has_version_specifier(raw)
     ]
     assert not unpinned, (
@@ -161,9 +161,7 @@ def test_anthropic_is_pinned():
     entries = _parse_requirements(REQUIREMENTS_PATH)
     anthropic_lines = [(name, raw) for (name, raw) in entries if name == "anthropic"]
 
-    assert anthropic_lines, (
-        "anthropic is not declared in requirements.txt — see RED-2."
-    )
+    assert anthropic_lines, "anthropic is not declared in requirements.txt — see RED-2."
     _, raw = anthropic_lines[0]
     assert _has_version_specifier(raw), (
         f"anthropic is declared but not pinned: {raw!r}. "

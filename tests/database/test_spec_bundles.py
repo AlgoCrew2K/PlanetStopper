@@ -102,22 +102,22 @@ _FIXTURE_PATH = (
     / "spec_bundles_schema.json"
 )
 
-_MIGRATION_PATH = (
-    pathlib.Path(__file__).parents[2] / "migrations" / "016_spec_bundles.sql"
-)
+_MIGRATION_PATH = pathlib.Path(__file__).parents[2] / "migrations" / "016_spec_bundles.sql"
 
 # ---------------------------------------------------------------------------
 # Freeze-discipline canonical enum — sourced from plan.md and README.md §1 NN1.
 # Pin it here so any deviation in the implementation surfaces immediately.
 # ---------------------------------------------------------------------------
 
-_VALID_FREEZE_DISCIPLINES: frozenset[str] = frozenset({
-    "THEORY",
-    "MANDATE",
-    "STYLIZED_FACT",
-    "CALIBRATION",
-    "BACKTEST_SELECTION",
-})
+_VALID_FREEZE_DISCIPLINES: frozenset[str] = frozenset(
+    {
+        "THEORY",
+        "MANDATE",
+        "STYLIZED_FACT",
+        "CALIBRATION",
+        "BACKTEST_SELECTION",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # DB isolation fixture — function-scoped, redirects DB_FILE, runs migrations
@@ -227,12 +227,12 @@ def test_bundle_immutability_update_raises_on_existing_bundle(migrated_db):
 
     # Attempt 1: if an update accessor exists, it must raise
     import inspect  # noqa: PLC0415
+
     mutation_names = [
         name
         for name, obj in inspect.getmembers(db_module, inspect.isfunction)
-        if "spec_bundle" in name and any(
-            name.startswith(prefix) for prefix in ("update_", "edit_", "modify_", "set_")
-        )
+        if "spec_bundle" in name
+        and any(name.startswith(prefix) for prefix in ("update_", "edit_", "modify_", "set_"))
     ]
     assert not mutation_names, (
         f"database.py must not export mutation accessors for spec_bundles; "
@@ -521,8 +521,7 @@ def test_016_migration_file_exists():
     The migration file migrations/016_spec_bundles.sql must exist on disk.
     """
     assert _MIGRATION_PATH.is_file(), (
-        f"Migration file not found: {_MIGRATION_PATH}. "
-        "Create migrations/016_spec_bundles.sql."
+        f"Migration file not found: {_MIGRATION_PATH}. Create migrations/016_spec_bundles.sql."
     )
 
 
@@ -649,7 +648,10 @@ def test_insert_spec_bundle_facet_rejects_invalid_freeze_discipline(migrated_db)
     kwargs = _make_minimal_bundle_kwargs("enum-guard")
     insert_spec_bundle(**kwargs)
 
-    with pytest.raises((ValueError, TypeError), match=r"(?i)freeze_discipline|invalid|not.*valid|unrecognised|unrecognized"):
+    with pytest.raises(
+        (ValueError, TypeError),
+        match=r"(?i)freeze_discipline|invalid|not.*valid|unrecognised|unrecognized",
+    ):
         insert_spec_bundle_facet(
             bundle_hash=kwargs["bundle_hash"],
             facet_name="generator_family",
@@ -806,9 +808,7 @@ def test_get_spec_bundle_returns_none_for_unknown_hash(migrated_db):
     from database import get_spec_bundle  # noqa: PLC0415
 
     result = get_spec_bundle("no-such-hash-000000000000000000000000000000000000")
-    assert result is None, (
-        f"get_spec_bundle() must return None for an unknown hash; got {result!r}"
-    )
+    assert result is None, f"get_spec_bundle() must return None for an unknown hash; got {result!r}"
 
 
 def test_get_spec_bundle_returns_dict_with_all_schema_columns(migrated_db):
@@ -826,8 +826,14 @@ def test_get_spec_bundle_returns_dict_with_all_schema_columns(migrated_db):
         "get_spec_bundle() must return a non-empty dict for a known hash."
     )
 
-    expected_keys = {"bundle_hash", "frozen_at", "facets_json", "horizon_bars",
-                     "cvar_alpha", "generator_family"}
+    expected_keys = {
+        "bundle_hash",
+        "frozen_at",
+        "facets_json",
+        "horizon_bars",
+        "cvar_alpha",
+        "generator_family",
+    }
     missing = expected_keys - set(row.keys())
     assert not missing, (
         f"get_spec_bundle() returned a dict missing columns: {missing}. "
@@ -865,13 +871,18 @@ def test_get_spec_facets_for_bundle_returns_dicts_with_all_schema_columns(migrat
     facets = get_spec_facets_for_bundle(kwargs["bundle_hash"])
     assert facets, "Precondition: at least one facet must be returned"
 
-    expected_keys = {"id", "bundle_hash", "facet_name", "facet_value",
-                     "freeze_discipline", "justification", "calibration_evidence"}
+    expected_keys = {
+        "id",
+        "bundle_hash",
+        "facet_name",
+        "facet_value",
+        "freeze_discipline",
+        "justification",
+        "calibration_evidence",
+    }
     for facet in facets:
         missing = expected_keys - set(facet.keys())
-        assert not missing, (
-            f"Facet dict missing columns: {missing}. Got: {sorted(facet.keys())}"
-        )
+        assert not missing, f"Facet dict missing columns: {missing}. Got: {sorted(facet.keys())}"
 
 
 # ===========================================================================
@@ -985,6 +996,7 @@ def test_init_db_does_not_create_spec_bundles_or_spec_facets():
     invisible to operator deployments that call init_db() but not run_migrations().
     """
     import inspect  # noqa: PLC0415
+
     source = inspect.getsource(db_module.init_db)
     assert "spec_bundles" not in source, (
         "init_db() must not contain 'spec_bundles'. "
@@ -992,8 +1004,7 @@ def test_init_db_does_not_create_spec_bundles_or_spec_facets():
         "no dual-write (H1) needed for spec_bundles."
     )
     assert "spec_facets" not in source, (
-        "init_db() must not contain 'spec_facets'. "
-        "New-table migrations use run_migrations() only."
+        "init_db() must not contain 'spec_facets'. New-table migrations use run_migrations() only."
     )
 
 
@@ -1045,7 +1056,12 @@ def test_insert_spec_bundle_persists_facets_json_retrievable_and_deserializable(
     A stub returning a row dict with empty-string facets_json would pass all
     shape tests. This test verifies the actual stored content round-trips.
     """
-    from database import canonicalize_facets_json, get_spec_bundle, hash_facets_json, insert_spec_bundle  # noqa: PLC0415
+    from database import (
+        canonicalize_facets_json,
+        get_spec_bundle,
+        hash_facets_json,
+        insert_spec_bundle,
+    )  # noqa: PLC0415
 
     facets = {"generator_family": "crra", "horizon_bars": 63, "cvar_alpha": 0.05}
     canonical = canonicalize_facets_json(facets)

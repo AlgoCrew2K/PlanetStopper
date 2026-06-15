@@ -55,6 +55,7 @@ MIGRATION_FILE = REPO_ROOT / "migrations" / "optuna_001_archive_accumulated_stud
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_naming_pairs():
     with open(NAMING_PAIRS_FIXTURE, encoding="utf-8") as f:
         return json.load(f)["pairs"]
@@ -66,8 +67,12 @@ def _build_bot_state(symphony_name: str = "My Symphony") -> dict:
 
 def _build_history(n_days: int = 5) -> dict:
     tick = {
-        "return": 1.0, "mc_prob": 50.0, "vol": 1.5,
-        "vwap_diff": 0.0, "base_atr_pct": 1.0, "valid_vwap_weight": 1.0,
+        "return": 1.0,
+        "mc_prob": 50.0,
+        "vol": 1.5,
+        "vwap_diff": 0.0,
+        "base_atr_pct": 1.0,
+        "valid_vwap_weight": 1.0,
     }
     dates = [f"2026-05-{d:02d}" for d in range(1, n_days + 1)]
     return {"sym-1": {d: [tick] for d in dates}}
@@ -94,9 +99,7 @@ def _autotuner_patches(captured_study_names: list, captured_load_if_exists: list
 
     import database
 
-    def fake_create_study(
-        study_name, storage, load_if_exists, direction, sampler=None, **kwargs
-    ):
+    def fake_create_study(study_name, storage, load_if_exists, direction, sampler=None, **kwargs):
         # `sampler` kwarg added by fix-optuna1-6 (autotuner.py:1567 now passes
         # explicit TPESampler(seed=...) per OPTUNA-1). Accept it + any future
         # kwargs to keep this mock loose-coupled to the call signature.
@@ -104,19 +107,25 @@ def _autotuner_patches(captured_study_names: list, captured_load_if_exists: list
         captured_load_if_exists.append(load_if_exists)
         return fake_study
 
-    with patch("autotuner.optuna.create_study", side_effect=fake_create_study), \
-         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value=_build_history()), \
-         patch("autotuner.database.load_chart_history", return_value={}), \
-         patch("autotuner.database.save_chart_archive"), \
-         patch("autotuner.database.get_symphony_strategy",
-               return_value={"params": database.DEFAULT_STRATEGY.copy(), "locked_vars": []}), \
-         patch("autotuner.database.save_symphony_strategy"), \
-         patch("autotuner.database.save_autotune_run", return_value=1), \
-         patch("autotuner.database.DEFAULT_STRATEGY", database.DEFAULT_STRATEGY.copy()), \
-         patch("autotuner.math_engine.compute_vwap_breakdown_update",
-               return_value=(0, 0, False, False)):
+    with (
+        patch("autotuner.optuna.create_study", side_effect=fake_create_study),
+        patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+        patch(
+            "autotuner.synthetic_history.generate_synthetic_history", return_value=_build_history()
+        ),
+        patch("autotuner.database.load_chart_history", return_value={}),
+        patch("autotuner.database.save_chart_archive"),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": database.DEFAULT_STRATEGY.copy(), "locked_vars": []},
+        ),
+        patch("autotuner.database.save_symphony_strategy"),
+        patch("autotuner.database.save_autotune_run", return_value=1),
+        patch("autotuner.database.DEFAULT_STRATEGY", database.DEFAULT_STRATEGY.copy()),
+        patch(
+            "autotuner.math_engine.compute_vwap_breakdown_update", return_value=(0, 0, False, False)
+        ),
+    ):
         yield
 
 
@@ -124,6 +133,7 @@ def _run_autotuner(symphony_name: str, captured_names: list, captured_flags: lis
     import autotuner
     import inspect
     from tests.autotuner.conftest import make_phase1_theory_bundle
+
     bot_state = _build_bot_state(symphony_name)
     buf = io.StringIO()
     spec_bundle_id = make_phase1_theory_bundle()
@@ -137,6 +147,7 @@ def _run_autotuner(symphony_name: str, captured_names: list, captured_flags: lis
 # ===========================================================================
 # Test 1 — study_name has timestamp__ prefix (AC-O3.1)
 # ===========================================================================
+
 
 def test_study_name_has_timestamp_prefix():
     """
@@ -157,7 +168,7 @@ def test_study_name_has_timestamp_prefix():
     assert TIMESTAMP_PREFIX_RE.match(study_name), (
         f"study_name must start with a timestamp prefix (e.g. '2026-05-15T160000Z'); "
         f"got {study_name!r}. Fix: autotuner.py create_study call must use "
-        f"study_name=f\"{{timestamp}}__{'{normalized_name}'}\"."
+        f'study_name=f"{{timestamp}}__{"{normalized_name}"}".'
     )
 
     # Must contain the __ separator
@@ -170,6 +181,7 @@ def test_study_name_has_timestamp_prefix():
 # ===========================================================================
 # Test 2 — load_if_exists=False (AC-O3.1)
 # ===========================================================================
+
 
 def test_create_study_load_if_exists_false():
     """
@@ -192,6 +204,7 @@ def test_create_study_load_if_exists_false():
 # ===========================================================================
 # Test 3 — study_name embeds the normalized symphony name (AC-O3.1)
 # ===========================================================================
+
 
 def test_study_name_embeds_normalized_symphony_name():
     """
@@ -228,6 +241,7 @@ def test_study_name_embeds_normalized_symphony_name():
 # ===========================================================================
 # Test 4 — two runs produce different study names (AC-O3.3)
 # ===========================================================================
+
 
 def test_two_runs_produce_different_study_names():
     """
@@ -274,6 +288,7 @@ def test_two_runs_produce_different_study_names():
 # Test 5 — migration file exists and targets optuna_studies.db (AC-O3.2)
 # ===========================================================================
 
+
 def test_migration_file_exists_and_documents_correct_target_db():
     """
     migrations/optuna_001_archive_accumulated_studies.sql must exist and its
@@ -302,6 +317,7 @@ def test_migration_file_exists_and_documents_correct_target_db():
 # ===========================================================================
 # Test 6 — migration is rename-only (AC-O3.2 non-destructive)
 # ===========================================================================
+
 
 def test_archive_migration_is_rename_only(tmp_path):
     """
@@ -339,6 +355,7 @@ def test_archive_migration_is_rename_only(tmp_path):
 # Test 7 — migration is idempotent (running twice does not double-prefix)
 # ===========================================================================
 
+
 def test_archive_migration_is_idempotent(tmp_path):
     """
     Running optuna_001_archive_accumulated_studies.sql twice on the same DB
@@ -369,6 +386,7 @@ def test_archive_migration_is_idempotent(tmp_path):
 # Test 8 — migration preserves already-LEGACY__ rows unchanged
 # ===========================================================================
 
+
 def test_archive_migration_skips_already_archived_rows(tmp_path):
     """
     Rows already prefixed with LEGACY__ must not be modified by the migration.
@@ -380,9 +398,7 @@ def test_archive_migration_skips_already_archived_rows(tmp_path):
     conn = sqlite3.connect(str(working_db))
     # Insert a row that is already archived and one in new timestamp format
     conn.execute("INSERT INTO studies (study_name) VALUES ('LEGACY__already_archived')")
-    conn.execute(
-        "INSERT INTO studies (study_name) VALUES ('2026-05-15T160000Z__new_format')"
-    )
+    conn.execute("INSERT INTO studies (study_name) VALUES ('2026-05-15T160000Z__new_format')")
     conn.commit()
 
     sql = MIGRATION_FILE.read_text(encoding="utf-8")

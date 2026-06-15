@@ -43,6 +43,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 def perf_client():
     """Flask test client for /performance route tests."""
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         yield c
@@ -52,6 +53,7 @@ def perf_client():
 def index_client():
     """Flask test client for / (index/dashboard) route tests."""
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         yield c
@@ -91,24 +93,27 @@ def _patch_analytics_phase2():
     @contextlib.contextmanager
     def _ctx():
         with patch.object(
-            app_module.analytics, "get_history_with_cache_invalidation",
-            return_value={}
+            app_module.analytics, "get_history_with_cache_invalidation", return_value={}
         ):
             with patch.object(
-                app_module.analytics, "compute_aggregate_returns",
-                return_value=(_dates, _live_returns, _shadow_returns)
+                app_module.analytics,
+                "compute_aggregate_returns",
+                return_value=(_dates, _live_returns, _shadow_returns),
             ):
                 with patch.object(
-                    app_module.analytics, "compute_per_symphony_returns",
-                    return_value=(_dates, _live_returns, _shadow_returns)
+                    app_module.analytics,
+                    "compute_per_symphony_returns",
+                    return_value=(_dates, _live_returns, _shadow_returns),
                 ):
                     with patch.object(
-                        app_module.analytics, "compute_quantstats_metrics",
-                        side_effect=[_live_metrics, _shadow_metrics]
+                        app_module.analytics,
+                        "compute_quantstats_metrics",
+                        side_effect=[_live_metrics, _shadow_metrics],
                     ):
                         with patch.object(
-                            app_module.analytics, "list_available_symphonies",
-                            return_value=["sym-A", "sym-B"]
+                            app_module.analytics,
+                            "list_available_symphonies",
+                            return_value=["sym-A", "sym-B"],
                         ):
                             yield
 
@@ -130,13 +135,14 @@ def test_performance_headline_has_sharpe_delta_stat():
       "data-testid attribute: sharpe-delta-stat"
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
             html = client.get("/performance").data.decode("utf-8")
     assert 'data-testid="sharpe-delta-stat"' in html, (
         "performance.html Phase 2 headline strip must include "
-        "data-testid=\"sharpe-delta-stat\". "
+        'data-testid="sharpe-delta-stat". '
         "Design: Phase 2 replaces bot/held return cells with Sharpe/MDD/Sortino deltas."
     )
 
@@ -151,13 +157,13 @@ def test_performance_headline_has_mdd_reduction_stat():
       "MDD Reduction — label 'MAX DD REDUCTION', value = |held_mdd| − |bot_mdd|"
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
             html = client.get("/performance").data.decode("utf-8")
     assert 'data-testid="mdd-reduction-stat"' in html, (
-        "performance.html Phase 2 headline strip must include "
-        "data-testid=\"mdd-reduction-stat\"."
+        'performance.html Phase 2 headline strip must include data-testid="mdd-reduction-stat".'
     )
 
 
@@ -168,13 +174,13 @@ def test_performance_headline_has_sortino_delta_stat():
     loss-avoidance system.
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
             html = client.get("/performance").data.decode("utf-8")
     assert 'data-testid="sortino-delta-stat"' in html, (
-        "performance.html Phase 2 headline strip must include "
-        "data-testid=\"sortino-delta-stat\"."
+        'performance.html Phase 2 headline strip must include data-testid="sortino-delta-stat".'
     )
 
 
@@ -187,12 +193,13 @@ def test_performance_headline_has_observation_caption():
       "Observation count moves to a small data-testid='obs-caption' <p> element"
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
             html = client.get("/performance").data.decode("utf-8")
     assert 'data-testid="obs-caption"' in html, (
-        "performance.html Phase 2 must include data-testid=\"obs-caption\" "
+        'performance.html Phase 2 must include data-testid="obs-caption" '
         "for the observation count (moved out of the headline strip)."
     )
 
@@ -211,6 +218,7 @@ def test_performance_metrics_table_has_volatility_row():
       'Annualized volatility    ← new Tier 1'
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
@@ -236,6 +244,7 @@ def test_performance_metrics_table_has_max_drawdown_reduction_row():
       "['max_drawdown_delta', 'Max DD reduction', 'pp', false]  // derived"
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
@@ -259,14 +268,12 @@ def test_performance_metrics_table_has_volatility_reduction_row():
       "['volatility_delta', 'Volatility reduction', 'pp', false]  // new Tier 1, derived"
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
             html = client.get("/performance").data.decode("utf-8")
-    has_vol_reduction = (
-        "volatility reduction" in html.lower()
-        or "vol reduction" in html.lower()
-    )
+    has_vol_reduction = "volatility reduction" in html.lower() or "vol reduction" in html.lower()
     assert has_vol_reduction, (
         "Phase 2 metrics table must include a 'Volatility reduction' row. "
         "Source: METRIC_LABELS entry volatility_delta."
@@ -287,13 +294,14 @@ def test_performance_metrics_table_has_spy_tqqq_placeholder_rows():
     data from a misconfigured or missing feed.
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
             html = client.get("/performance").data.decode("utf-8")
     assert 'data-unavail="true"' in html, (
         "Phase 2 performance.html must render Tier 2 placeholder rows with "
-        "data-unavail=\"true\" so they are distinguishable from live data rows. "
+        'data-unavail="true" so they are distinguishable from live data rows. '
         "Source: ux-design-deliverable.md §Change 2 placeholder row rendering."
     )
 
@@ -312,6 +320,7 @@ def test_performance_placeholder_rows_do_not_show_fake_numbers():
     both 'upside capture' and 'downside capture' label variants.
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
@@ -321,14 +330,14 @@ def test_performance_placeholder_rows_do_not_show_fake_numbers():
     # near the 'capture' label text.
     has_unavail_signal = (
         'class="metric-unavail"' in html
-        or 'metric-unavail' in html
+        or "metric-unavail" in html
         or (
             "capture" in html.lower()
             and (
                 "data-unavail" in html
                 or "—" in html  # em-dash
-                or ">—<" in html     # HTML dash entity
-                or ">--<" in html    # double-dash fallback
+                or ">—<" in html  # HTML dash entity
+                or ">--<" in html  # double-dash fallback
             )
         )
     )
@@ -352,6 +361,7 @@ def test_performance_metrics_table_phase2_has_more_than_seven_rows():
     Shape assertion, not value assertion.
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
@@ -381,23 +391,15 @@ def test_performance_metrics_table_has_updated_column_headers():
       <th>Delta (bot − baseline)</th>
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
             html = client.get("/performance").data.decode("utf-8")
     # Accept either the exact design wording or reasonable paraphrases.
-    has_held_header = (
-        "if-held baseline" in html.lower()
-        or "if held baseline" in html.lower()
-    )
-    has_bot_header = (
-        "bot (planet stopper)" in html.lower()
-        or "planet stopper" in html.lower()
-    )
-    has_delta_header = (
-        "delta (bot" in html.lower()
-        or "delta" in html.lower()
-    )
+    has_held_header = "if-held baseline" in html.lower() or "if held baseline" in html.lower()
+    has_bot_header = "bot (planet stopper)" in html.lower() or "planet stopper" in html.lower()
+    has_delta_header = "delta (bot" in html.lower() or "delta" in html.lower()
     missing = []
     if not has_held_header:
         missing.append("'If-held baseline' column header")
@@ -424,6 +426,7 @@ def test_performance_metrics_table_has_caption():
       </p>
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         with _patch_analytics_phase2():
@@ -458,12 +461,13 @@ def test_index_hero_has_volatility_vs_row():
       data-testid='comp-vol-bot-text' and data-testid='comp-vol-held-text'
     """
     import app as app_module
+
     app_module.app.config["TESTING"] = True
 
     template_path = PROJECT_ROOT / "templates" / "index.html"
     content = template_path.read_text(encoding="utf-8")
 
-    assert 'data-testid="comp-vol-bot-text"' in content or 'comp-vol-bot' in content, (
+    assert 'data-testid="comp-vol-bot-text"' in content or "comp-vol-bot" in content, (
         "templates/index.html Phase 2 must include a volatility vs-row in the hero "
         "with data-testid='comp-vol-bot-text' for the bot annualized vol value. "
         "Source: ux-design-deliverable.md §Change 4."
@@ -478,7 +482,7 @@ def test_index_hero_volatility_row_has_held_text():
     template_path = PROJECT_ROOT / "templates" / "index.html"
     content = template_path.read_text(encoding="utf-8")
 
-    assert 'data-testid="comp-vol-held-text"' in content or 'comp-vol-held' in content, (
+    assert 'data-testid="comp-vol-held-text"' in content or "comp-vol-held" in content, (
         "templates/index.html Phase 2 must include data-testid='comp-vol-held-text' "
         "in the hero volatility vs-row. "
         "Source: ux-design-deliverable.md §Change 4."
@@ -496,10 +500,7 @@ def test_index_hero_volatility_bar_elements_present():
     template_path = PROJECT_ROOT / "templates" / "index.html"
     content = template_path.read_text(encoding="utf-8")
 
-    has_vol_bars = (
-        "comp-bar-vol-bot" in content
-        or "comp-bar-vol" in content
-    )
+    has_vol_bars = "comp-bar-vol-bot" in content or "comp-bar-vol" in content
     assert has_vol_bars, (
         "templates/index.html Phase 2 hero volatility row must include bar elements "
         "(data-testid='comp-bar-vol-bot' / 'comp-bar-vol-held'). "
@@ -538,8 +539,7 @@ def test_index_detail_panel_has_risk_profile_section():
     content = template_path.read_text(encoding="utf-8")
 
     assert (
-        'id="detail-risk-profile"' in content
-        or 'data-testid="detail-risk-profile"' in content
+        'id="detail-risk-profile"' in content or 'data-testid="detail-risk-profile"' in content
     ), (
         "templates/index.html Phase 2 must include id='detail-risk-profile' or "
         "data-testid='detail-risk-profile' in the detail panel for the Risk Profile "
@@ -627,10 +627,7 @@ def test_performance_js_phase2_metric_labels_includes_volatility():
     js_path = PROJECT_ROOT / "static" / "performance.js"
     content = js_path.read_text(encoding="utf-8")
 
-    has_volatility_label = (
-        "'volatility'" in content
-        or '"volatility"' in content
-    )
+    has_volatility_label = "'volatility'" in content or '"volatility"' in content
     assert has_volatility_label, (
         "static/performance.js METRIC_LABELS must include a 'volatility' entry. "
         "Source: ux-design-deliverable.md §Change 2 — new Tier 1 row."
@@ -685,10 +682,7 @@ def test_performance_js_phase2_renders_upside_capture_as_placeholder():
     js_path = PROJECT_ROOT / "static" / "performance.js"
     content = js_path.read_text(encoding="utf-8")
 
-    has_unavail_logic = (
-        "data-unavail" in content
-        or "metric-unavail" in content
-    )
+    has_unavail_logic = "data-unavail" in content or "metric-unavail" in content
     assert has_unavail_logic, (
         "static/performance.js must include logic for rendering Tier 2 placeholder "
         "rows with data-unavail='true' and a dash when value is null. "

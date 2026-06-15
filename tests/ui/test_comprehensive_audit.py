@@ -47,15 +47,17 @@ _HISTORY_HTML = _TEMPLATES_DIR / "history.html"
 # Shared fixture helpers
 # ---------------------------------------------------------------------------
 
-def _make_portfolio_strip(tc_dr=1.15, tc_held=68.80, cr_dr=1.41, cr_held=68.42,
-                          mdd_dr=0.28, mdd_held=0.19):
+
+def _make_portfolio_strip(
+    tc_dr=1.15, tc_held=68.80, cr_dr=1.41, cr_held=68.42, mdd_dr=0.28, mdd_held=0.19
+):
     return {
-        "today_change":       {"dry_run": tc_dr,  "if_held": tc_held},
-        "cumulative_return":  {"dry_run": cr_dr,  "if_held": cr_held},
-        "max_drawdown":       {"dry_run": mdd_dr, "if_held": mdd_held},
+        "today_change": {"dry_run": tc_dr, "if_held": tc_held},
+        "cumulative_return": {"dry_run": cr_dr, "if_held": cr_held},
+        "max_drawdown": {"dry_run": mdd_dr, "if_held": mdd_held},
         "hist_dates": [f"2026-04-{d:02d}" for d in range(1, 36)],
-        "hist_bot":   [0.001 * (i + 1) for i in range(35)],
-        "hist_held":  [0.0008 * (i + 1) for i in range(35)],
+        "hist_bot": [0.001 * (i + 1) for i in range(35)],
+        "hist_held": [0.0008 * (i + 1) for i in range(35)],
     }
 
 
@@ -79,7 +81,9 @@ def _api_state_stub(bot_state=None, portfolio_strip=None):
         "port_state": {},
         "exit_authority": "per_symphony",
         "daemon_started_at": "2026-05-19T00:00:00Z",
-        "portfolio_strip": portfolio_strip if portfolio_strip is not None else _make_portfolio_strip(),
+        "portfolio_strip": portfolio_strip
+        if portfolio_strip is not None
+        else _make_portfolio_strip(),
     }
 
 
@@ -100,6 +104,7 @@ def _patch_db():
 # D-CARD-01 — renderSparkline must destroy existing Chart instance before new
 # ---------------------------------------------------------------------------
 
+
 def test_dashboard_renderSparkline_destroys_prior_chart_before_new():
     """D-CARD-01: renderSparkline must not call `new Chart()` without first destroying
     any prior Chart instance on the same canvas.
@@ -116,28 +121,28 @@ def test_dashboard_renderSparkline_destroys_prior_chart_before_new():
     """
     src = _INDEX_JS.read_text(encoding="utf-8")
     # Extract renderSparkline function body
-    m = re.search(r'function\s+renderSparkline\s*\([^)]*\)\s*\{', src)
+    m = re.search(r"function\s+renderSparkline\s*\([^)]*\)\s*\{", src)
     assert m, "renderSparkline function not found in static/index.js"
     start = m.start()
     # Find matching closing brace by counting depth
     depth = 0
-    i = src.index('{', start)
+    i = src.index("{", start)
     body_start = i
     while i < len(src):
-        if src[i] == '{':
+        if src[i] == "{":
             depth += 1
-        elif src[i] == '}':
+        elif src[i] == "}":
             depth -= 1
             if depth == 0:
                 body_end = i
                 break
         i += 1
-    body = src[body_start:body_end + 1]
+    body = src[body_start : body_end + 1]
 
-    has_destroy = '.destroy()' in body
+    has_destroy = ".destroy()" in body
     # Acceptable pattern B: no new Chart() inside repeated call (uses update() instead)
-    has_new_chart = 'new Chart(' in body
-    uses_update_pattern = 'chart.update(' in body or '.update(' in body
+    has_new_chart = "new Chart(" in body
+    uses_update_pattern = "chart.update(" in body or ".update(" in body
 
     # Either destroy() before new Chart(), or no new Chart() at all (mutate-update pattern)
     assert has_destroy or (not has_new_chart) or uses_update_pattern, (
@@ -154,6 +159,7 @@ def test_dashboard_renderSparkline_destroys_prior_chart_before_new():
 # D-CARD-02 — renderSparkline must read d.time not d.date for chart labels
 # ---------------------------------------------------------------------------
 
+
 def test_dashboard_renderSparkline_reads_d_time_for_labels():
     """D-CARD-02: renderSparkline builds chart labels from each data point's timestamp.
 
@@ -163,22 +169,22 @@ def test_dashboard_renderSparkline_reads_d_time_for_labels():
     Fix: change `d.date` to `d.time` in the renderSparkline labels mapping.
     """
     src = _INDEX_JS.read_text(encoding="utf-8")
-    m = re.search(r'function\s+renderSparkline\s*\([^)]*\)\s*\{', src)
+    m = re.search(r"function\s+renderSparkline\s*\([^)]*\)\s*\{", src)
     assert m, "renderSparkline function not found in static/index.js"
     start = m.start()
     depth = 0
-    i = src.index('{', start)
+    i = src.index("{", start)
     body_start = i
     while i < len(src):
-        if src[i] == '{':
+        if src[i] == "{":
             depth += 1
-        elif src[i] == '}':
+        elif src[i] == "}":
             depth -= 1
             if depth == 0:
                 body_end = i
                 break
         i += 1
-    body = src[body_start:body_end + 1]
+    body = src[body_start : body_end + 1]
 
     # d.date used in labels mapping is the bug
     assert "d.date" not in body, (
@@ -196,6 +202,7 @@ def test_dashboard_renderSparkline_reads_d_time_for_labels():
 # D-HERO-02 — Jinja initial render of comparison rows must not show +0.00%
 # ---------------------------------------------------------------------------
 
+
 def test_dashboard_jinja_initial_comparison_rows_show_dash_not_zero(monkeypatch):
     """D-HERO-02: When meta.portfolio.tc/cr/mdd are 0 (first call, no scheduler cycle yet),
     the Jinja-rendered comparison row values must show a placeholder '—', not '+0.00%'.
@@ -210,17 +217,19 @@ def test_dashboard_jinja_initial_comparison_rows_show_dash_not_zero(monkeypatch)
     """
     # Build a state where portfolio_strip is present but tc/cr/mdd are all zero
     zero_strip = {
-        "today_change":      {"dry_run": 0.0, "if_held": 0.0},
+        "today_change": {"dry_run": 0.0, "if_held": 0.0},
         "cumulative_return": {"dry_run": 0.0, "if_held": 0.0},
-        "max_drawdown":      {"dry_run": 0.0, "if_held": 0.0},
+        "max_drawdown": {"dry_run": 0.0, "if_held": 0.0},
         "hist_dates": [],
         "hist_bot": [],
         "hist_held": [],
     }
     stub = _api_state_stub(portfolio_strip=zero_strip)
     db_mock = _patch_db()
-    with patch.object(app_module, "get_api_state_dict", return_value=stub), \
-         patch.object(app_module, "database", db_mock):
+    with (
+        patch.object(app_module, "get_api_state_dict", return_value=stub),
+        patch.object(app_module, "database", db_mock),
+    ):
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as c:
             resp = c.get("/")
@@ -242,6 +251,7 @@ def test_dashboard_jinja_initial_comparison_rows_show_dash_not_zero(monkeypatch)
 # D-HERO-03 — updateComparisonRows must preserve Bot/Held prefix in text spans
 # ---------------------------------------------------------------------------
 
+
 def test_dashboard_updateComparisonRows_preserves_bot_held_prefix_in_separate_span():
     """D-HERO-03: updateComparisonRows sets textContent on .comp-{row}-{bot,held}-text spans.
 
@@ -257,22 +267,22 @@ def test_dashboard_updateComparisonRows_preserves_bot_held_prefix_in_separate_sp
     sibling label element separate from the testid span.
     """
     src = _INDEX_JS.read_text(encoding="utf-8")
-    m = re.search(r'function\s+updateComparisonRows\s*\([^)]*\)\s*\{', src)
+    m = re.search(r"function\s+updateComparisonRows\s*\([^)]*\)\s*\{", src)
     assert m, "updateComparisonRows function not found in static/index.js"
     start = m.start()
     depth = 0
-    i = src.index('{', start)
+    i = src.index("{", start)
     body_start = i
     while i < len(src):
-        if src[i] == '{':
+        if src[i] == "{":
             depth += 1
-        elif src[i] == '}':
+        elif src[i] == "}":
             depth -= 1
             if depth == 0:
                 body_end = i
                 break
         i += 1
-    body = src[body_start:body_end + 1]
+    body = src[body_start : body_end + 1]
 
     # Check if textContent assignment includes prefix strings
     sets_text_content = "textContent" in body
@@ -293,6 +303,7 @@ def test_dashboard_updateComparisonRows_preserves_bot_held_prefix_in_separate_sp
 # ---------------------------------------------------------------------------
 # D-HERO-04 — Window-selector buttons must trigger chart data re-fetch
 # ---------------------------------------------------------------------------
+
 
 def test_dashboard_window_selector_buttons_have_fetch_handler():
     """D-HERO-04: The hero chart window-selector buttons (30d/60d/90d/125d/YTD/1Y)
@@ -317,27 +328,35 @@ def test_dashboard_window_selector_buttons_have_fetch_handler():
     # Find the window-selector event handler region
     # It should contain a fetch/filter action beyond just classList manipulation
     selector_block_match = re.search(
-        r'window-selector[^}]*?(?:addEventListener|forEach)[^}]*?\{[^}]*?\}',
-        combined, re.DOTALL
+        r"window-selector[^}]*?(?:addEventListener|forEach)[^}]*?\{[^}]*?\}", combined, re.DOTALL
     )
 
     # The key indicator: class-only toggle (classList.add/remove) with no fetch/update
     class_only_pattern = re.search(
-        r'window-selector.*?addEventListener.*?click.*?\{(?:(?!fetch|loadState|_cumChart|renderHeroChart).)*?\}',
-        combined, re.DOTALL
+        r"window-selector.*?addEventListener.*?click.*?\{(?:(?!fetch|loadState|_cumChart|renderHeroChart).)*?\}",
+        combined,
+        re.DOTALL,
     )
 
     # If the only handler found just toggles active class, that's the bug
     in_template = re.search(
         r"querySelector.*window-selector.*click|window-selector.*click.*fetch"
         r"|window-selector.*click.*loadState|window-selector.*click.*_cumChart",
-        combined, re.DOTALL
+        combined,
+        re.DOTALL,
     )
     fetch_in_handler = (
-        "loadState(" in combined[combined.find("window-selector"):combined.find("window-selector") + 500]
-        or "_cumChart" in combined[combined.find("window-selector"):combined.find("window-selector") + 500]
-        or "fetch(" in combined[combined.find("window-selector"):combined.find("window-selector") + 500]
-    ) if "window-selector" in combined else False
+        (
+            "loadState("
+            in combined[combined.find("window-selector") : combined.find("window-selector") + 500]
+            or "_cumChart"
+            in combined[combined.find("window-selector") : combined.find("window-selector") + 500]
+            or "fetch("
+            in combined[combined.find("window-selector") : combined.find("window-selector") + 500]
+        )
+        if "window-selector" in combined
+        else False
+    )
 
     # Direct check in JS: window button handler must trigger fetch or _cumChart update.
     # The JS uses windowMap keyed by data-testid (e.g. 'window-30d') not 'window-selector'.
@@ -346,7 +365,7 @@ def test_dashboard_window_selector_buttons_have_fetch_handler():
     if ws_idx < 0:
         ws_idx = src.find("windowMap")  # fallback: window button map declaration
     if ws_idx >= 0:
-        handler_region = src[ws_idx:ws_idx + 800]
+        handler_region = src[ws_idx : ws_idx + 800]
         has_data_action = (
             "fetch(" in handler_region
             or "loadState" in handler_region
@@ -373,6 +392,7 @@ def test_dashboard_window_selector_buttons_have_fetch_handler():
 # D-LAY-01 — Pages must not have a max-width cap (4K ultrawide)
 # ---------------------------------------------------------------------------
 
+
 def _extract_page_wrap_css_block(src: str) -> str:
     """Return the CSS declaration block for .page-wrap (or .dashboard-layout).
 
@@ -382,7 +402,7 @@ def _extract_page_wrap_css_block(src: str) -> str:
     inner elements (modals, dialogs, cards) legitimately use max-width and must
     not be flagged."""
     m = re.search(
-        r'\.(?:page-wrap|dashboard-layout)\s*\{([^}]*)\}',
+        r"\.(?:page-wrap|dashboard-layout)\s*\{([^}]*)\}",
         src,
         re.DOTALL,
     )
@@ -398,8 +418,8 @@ def _page_max_width_caps(css: str) -> list[int]:
     `--studio-page-max-width: <N>px` custom-property declarations and any direct
     `max-width: <N>px` literal on .page-wrap are inspected.
     """
-    values = re.findall(r'--studio-page-max-width\s*:\s*(\d+)px', css)
-    values += re.findall(r'max-width\s*:\s*(\d+)px', css)
+    values = re.findall(r"--studio-page-max-width\s*:\s*(\d+)px", css)
+    values += re.findall(r"max-width\s*:\s*(\d+)px", css)
     return [int(v) for v in values if int(v) <= 1600]
 
 
@@ -441,9 +461,9 @@ def test_dashboard_no_max_width_cap_on_top_level_container():
 def test_performance_no_max_width_cap_on_top_level_container():
     """D-LAY-01 (Performance): Same max-width audit for the Performance page."""
     src = _PERFORMANCE_HTML.read_text(encoding="utf-8")
-    max_width_matches = re.findall(r'max-width\s*:\s*(\d+)px', src)
+    max_width_matches = re.findall(r"max-width\s*:\s*(\d+)px", src)
     # 88rem ≈ 1408px at 16px base — still caps 4K
-    max_width_rem_matches = re.findall(r'max-width\s*:\s*([\d.]+)rem', src)
+    max_width_rem_matches = re.findall(r"max-width\s*:\s*([\d.]+)rem", src)
     capped_px = [int(v) for v in max_width_matches if int(v) <= 1600]
     # 88rem ≈ 1408px — this is a cap; ≥ 120rem ≈ 1920px would be acceptable
     capped_rem = [float(v) for v in max_width_rem_matches if float(v) <= 100]
@@ -456,7 +476,7 @@ def test_performance_no_max_width_cap_on_top_level_container():
 def _strip_media_query_breakpoints(src: str) -> str:
     """Remove @media (max-width: ...) { ... } blocks so the remaining max-width
     checks only flag container/element width caps, not responsive breakpoints."""
-    return re.sub(r'@media\s*\([^)]*max-width[^)]*\)\s*\{[^}]*\}', '', src, flags=re.DOTALL)
+    return re.sub(r"@media\s*\([^)]*max-width[^)]*\)\s*\{[^}]*\}", "", src, flags=re.DOTALL)
 
 
 def test_history_no_max_width_cap_on_top_level_container():
@@ -464,8 +484,8 @@ def test_history_no_max_width_cap_on_top_level_container():
     Excludes @media breakpoints; only flags container element width caps.
     """
     src = _strip_media_query_breakpoints(_HISTORY_HTML.read_text(encoding="utf-8"))
-    max_width_rem_matches = re.findall(r'max-width\s*:\s*([\d.]+)rem', src)
-    max_width_px_matches = re.findall(r'max-width\s*:\s*(\d+)px', src)
+    max_width_rem_matches = re.findall(r"max-width\s*:\s*([\d.]+)rem", src)
+    max_width_px_matches = re.findall(r"max-width\s*:\s*(\d+)px", src)
     capped_rem = [float(v) for v in max_width_rem_matches if float(v) <= 100]
     capped_px = [int(v) for v in max_width_px_matches if int(v) <= 1600]
     assert len(capped_rem) == 0 and len(capped_px) == 0, (
@@ -479,8 +499,8 @@ def test_advisor_no_max_width_cap_on_top_level_container():
     Excludes @media breakpoints; only flags container element width caps.
     """
     src = _strip_media_query_breakpoints(_ADVISOR_HTML.read_text(encoding="utf-8"))
-    max_width_rem_matches = re.findall(r'max-width\s*:\s*([\d.]+)rem', src)
-    max_width_px_matches = re.findall(r'max-width\s*:\s*(\d+)px', src)
+    max_width_rem_matches = re.findall(r"max-width\s*:\s*([\d.]+)rem", src)
+    max_width_px_matches = re.findall(r"max-width\s*:\s*(\d+)px", src)
     capped_rem = [float(v) for v in max_width_rem_matches if float(v) <= 100]
     capped_px = [int(v) for v in max_width_px_matches if int(v) <= 1600]
     assert len(capped_rem) == 0 and len(capped_px) == 0, (
@@ -492,6 +512,7 @@ def test_advisor_no_max_width_cap_on_top_level_container():
 # ---------------------------------------------------------------------------
 # F-TWEAK-01 — tweaks.js applies theme via data-theme attribute
 # ---------------------------------------------------------------------------
+
 
 def test_tweaks_js_applies_theme_via_data_theme_attribute():
     """F-TWEAK-01: The tweaks system must apply the selected theme by setting
@@ -518,6 +539,7 @@ def test_tweaks_js_applies_theme_via_data_theme_attribute():
 # F-TWEAK-02 — tweaks.js applies density via data-density attribute
 # ---------------------------------------------------------------------------
 
+
 def test_tweaks_js_applies_density_via_data_density_attribute():
     """F-TWEAK-02: The tweaks system must apply density via `data-density` attribute.
 
@@ -534,6 +556,7 @@ def test_tweaks_js_applies_density_via_data_density_attribute():
 # F-TWEAK-03 — tweaks.js propagates accent via CSS variable
 # ---------------------------------------------------------------------------
 
+
 def test_tweaks_js_propagates_accent_via_css_variable():
     """F-TWEAK-03: The tweaks system must propagate the accent color by calling
     root.style.setProperty('--studio-accent', values.accent).
@@ -548,6 +571,7 @@ def test_tweaks_js_propagates_accent_via_css_variable():
 # ---------------------------------------------------------------------------
 # F-TWEAK-04 — tweaks.js propagates typeface via --studio-sans CSS variable
 # ---------------------------------------------------------------------------
+
 
 def test_tweaks_js_propagates_typeface_via_css_variable():
     """F-TWEAK-04: The typeface picker must propagate the font family via
@@ -566,6 +590,7 @@ def test_tweaks_js_propagates_typeface_via_css_variable():
 # F-TWEAK-05 — tweaks.js stores and retrieves mathOverlays setting
 # ---------------------------------------------------------------------------
 
+
 def test_tweaks_js_stores_math_overlays_setting():
     """F-TWEAK-05: The mathOverlays toggle must be included in the stored tweaks object.
 
@@ -580,22 +605,22 @@ def test_tweaks_js_stores_math_overlays_setting():
         "Fix: add 'mathOverlays: true' to TWEAK_DEFAULTS and handle it in applyAll()."
     )
     # applyAll must do something with mathOverlays — not just store it
-    m = re.search(r'function\s+applyAll\s*\([^)]*\)\s*\{', src)
+    m = re.search(r"function\s+applyAll\s*\([^)]*\)\s*\{", src)
     assert m, "applyAll function not found in tweaks.js"
     start = m.start()
     depth = 0
-    i = src.index('{', start)
+    i = src.index("{", start)
     body_start = i
     while i < len(src):
-        if src[i] == '{':
+        if src[i] == "{":
             depth += 1
-        elif src[i] == '}':
+        elif src[i] == "}":
             depth -= 1
             if depth == 0:
                 body_end = i
                 break
         i += 1
-    apply_body = src[body_start:body_end + 1]
+    apply_body = src[body_start : body_end + 1]
     assert "mathOverlays" in apply_body or "math" in apply_body.lower(), (
         "applyAll() in tweaks.js does not handle the mathOverlays setting. "
         "The toggle must propagate to the DOM (e.g. root.setAttribute('data-math-overlays', ...))"
@@ -606,6 +631,7 @@ def test_tweaks_js_stores_math_overlays_setting():
 # ---------------------------------------------------------------------------
 # F-TWEAK-06 — tweaks.js stores and retrieves numFormat setting
 # ---------------------------------------------------------------------------
+
 
 def test_tweaks_js_stores_num_format_setting():
     """F-TWEAK-06: The numFormat toggle must be included in stored tweaks and applied.
@@ -619,22 +645,22 @@ def test_tweaks_js_stores_num_format_setting():
         "Fix: add 'numFormat: \"full\"' to TWEAK_DEFAULTS."
     )
     # applyAll must propagate numFormat to DOM somehow
-    m = re.search(r'function\s+applyAll\s*\([^)]*\)\s*\{', src)
+    m = re.search(r"function\s+applyAll\s*\([^)]*\)\s*\{", src)
     assert m, "applyAll function not found in tweaks.js"
     start = m.start()
     depth = 0
-    i = src.index('{', start)
+    i = src.index("{", start)
     body_start = i
     while i < len(src):
-        if src[i] == '{':
+        if src[i] == "{":
             depth += 1
-        elif src[i] == '}':
+        elif src[i] == "}":
             depth -= 1
             if depth == 0:
                 body_end = i
                 break
         i += 1
-    apply_body = src[body_start:body_end + 1]
+    apply_body = src[body_start : body_end + 1]
     assert "numFormat" in apply_body or "num-format" in apply_body or "data-num" in apply_body, (
         "applyAll() in tweaks.js does not handle numFormat. "
         "The number format toggle must propagate to the DOM so CSS/JS can switch "
@@ -645,6 +671,7 @@ def test_tweaks_js_stores_num_format_setting():
 # ---------------------------------------------------------------------------
 # F-TWEAK-07 — tweaks.js persists to localStorage and rehydrates on next visit
 # ---------------------------------------------------------------------------
+
 
 def test_tweaks_js_persists_and_rehydrates_from_local_storage():
     """F-TWEAK-07: tweaks.js must save the full tweaks object to localStorage on every
@@ -679,6 +706,7 @@ def test_tweaks_js_persists_and_rehydrates_from_local_storage():
 # F-WORKSPACE-01 — Workspace switcher must trigger data refetch
 # ---------------------------------------------------------------------------
 
+
 def test_workspace_switcher_has_click_handler_that_refetches_data():
     """F-WORKSPACE-01: The workspace switcher button in _chrome.html must have a
     click handler that refetches data for the switched account.
@@ -697,18 +725,14 @@ def test_workspace_switcher_has_click_handler_that_refetches_data():
 
     # Check for inline onclick on the workspace-switcher button element itself
     # Extract the button tag only (stops at first '>') to avoid cross-element false positives
-    ws_btn_tag_match = re.search(
-        r'data-testid="workspace-switcher"[^>]*>', chrome_src
-    )
-    has_inline_onclick = bool(
-        ws_btn_tag_match and "onclick" in ws_btn_tag_match.group(0)
-    )
+    ws_btn_tag_match = re.search(r'data-testid="workspace-switcher"[^>]*>', chrome_src)
+    has_inline_onclick = bool(ws_btn_tag_match and "onclick" in ws_btn_tag_match.group(0))
 
     # Check JS files for a scoped querySelector/getElementById targeting workspace-switcher
     # with an addEventListener('click', ...) call within ~200 chars of the reference
     def _has_scoped_js_click(src):
-        for m in re.finditer(r'workspace-switcher', src):
-            snippet = src[m.start():m.start() + 300]
+        for m in re.finditer(r"workspace-switcher", src):
+            snippet = src[m.start() : m.start() + 300]
             if "addEventListener" in snippet and "click" in snippet:
                 return True
             if "onclick" in snippet:
@@ -732,6 +756,7 @@ def test_workspace_switcher_has_click_handler_that_refetches_data():
 # D-HERO-02 (API layer) — meta.portfolio.tc must match portfolio_strip.today_change.dry_run
 # ---------------------------------------------------------------------------
 
+
 def test_api_state_meta_portfolio_tc_matches_portfolio_strip_today_change_dry_run(monkeypatch):
     """D-HERO-02 (API): _build_meta must populate meta.portfolio.tc from
     portfolio_strip.today_change.dry_run — never return a zero placeholder
@@ -744,13 +769,16 @@ def test_api_state_meta_portfolio_tc_matches_portfolio_strip_today_change_dry_ru
     stub = _api_state_stub(portfolio_strip=strip)
     db_mock = _patch_db()
 
-    with patch.object(app_module, "get_api_state_dict", return_value=stub), \
-         patch.object(app_module, "database", db_mock):
+    with (
+        patch.object(app_module, "get_api_state_dict", return_value=stub),
+        patch.object(app_module, "database", db_mock),
+    ):
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as c:
             resp = c.get("/api/state")
     assert resp.status_code == 200
     import json
+
     data = json.loads(resp.data)
     meta = data.get("meta", {})
     portfolio = meta.get("portfolio", {})
@@ -770,6 +798,7 @@ def test_api_state_meta_portfolio_tc_matches_portfolio_strip_today_change_dry_ru
 # D-CARD-01 (additional) — _sparks registry pattern in index.js
 # ---------------------------------------------------------------------------
 
+
 def test_dashboard_index_js_has_sparkline_chart_registry_or_destroy_pattern():
     """D-CARD-01 (registry): A Chart.js canvas can only have one Chart instance.
     index.js must either:
@@ -780,37 +809,37 @@ def test_dashboard_index_js_has_sparkline_chart_registry_or_destroy_pattern():
     """
     src = _INDEX_JS.read_text(encoding="utf-8")
     # Pattern (a): module-level registry dict + destroy before new Chart
-    has_registry = re.search(r'var\s+_sparks\s*=\s*\{|const\s+_sparks\s*=\s*\{|_sparks\s*=\s*\{\}', src)
+    has_registry = re.search(
+        r"var\s+_sparks\s*=\s*\{|const\s+_sparks\s*=\s*\{|_sparks\s*=\s*\{\}", src
+    )
     # Pattern (b): no new Chart() inside renderSparkline (uses update path only)
-    m = re.search(r'function\s+renderSparkline\s*\([^)]*\)\s*\{', src)
+    m = re.search(r"function\s+renderSparkline\s*\([^)]*\)\s*\{", src)
     if m:
         start = m.start()
         depth = 0
-        i = src.index('{', start)
+        i = src.index("{", start)
         body_start = i
         while i < len(src):
-            if src[i] == '{':
+            if src[i] == "{":
                 depth += 1
-            elif src[i] == '}':
+            elif src[i] == "}":
                 depth -= 1
                 if depth == 0:
                     body_end = i
                     break
             i += 1
-        body = src[body_start:body_end + 1]
-        has_new_chart_in_body = 'new Chart(' in body
-        has_destroy_in_body = '.destroy()' in body
+        body = src[body_start : body_end + 1]
+        has_new_chart_in_body = "new Chart(" in body
+        has_destroy_in_body = ".destroy()" in body
         # Pattern (b): new Chart() only when no existing instance (guarded)
-        has_guard = re.search(r'if\s*\(\s*!?\s*_sparks|if\s*\(\s*!?\s*existing|if\s*\(\s*!', body)
+        has_guard = re.search(r"if\s*\(\s*!?\s*_sparks|if\s*\(\s*!?\s*existing|if\s*\(\s*!", body)
     else:
         has_new_chart_in_body = False
         has_destroy_in_body = False
         has_guard = None
 
     safe = (
-        has_registry is not None
-        or has_destroy_in_body
-        or (has_guard and not has_new_chart_in_body)
+        has_registry is not None or has_destroy_in_body or (has_guard and not has_new_chart_in_body)
     )
     assert safe, (
         "renderSparkline creates a new Chart() instance on every poll without safeguards. "
@@ -825,6 +854,7 @@ def test_dashboard_index_js_has_sparkline_chart_registry_or_destroy_pattern():
 # D-HERO-04 (additional) — window selector buttons carry data-window attribute
 # ---------------------------------------------------------------------------
 
+
 def test_dashboard_window_selector_buttons_carry_data_window_attribute():
     """D-HERO-04 (template): Window-selector buttons must carry a data-window
     attribute so the click handler can read the selected window value.
@@ -837,7 +867,7 @@ def test_dashboard_window_selector_buttons_carry_data_window_attribute():
     m = re.search(r'data-testid=["\']window-selector["\'].*?</div>', src, re.DOTALL)
     assert m, "window-selector div not found in templates/index.html"
     block = m.group(0)
-    buttons = re.findall(r'<button[^>]*>', block)
+    buttons = re.findall(r"<button[^>]*>", block)
     assert len(buttons) >= 5, f"Expected ≥5 window buttons, found {len(buttons)}"
     buttons_without_data_window = [b for b in buttons if "data-window" not in b]
     assert len(buttons_without_data_window) == 0, (
@@ -853,6 +883,7 @@ def test_dashboard_window_selector_buttons_carry_data_window_attribute():
 # KICK CYCLE 9 — updateDashboard must wrap renderers in try/catch (Step 3.5)
 # ---------------------------------------------------------------------------
 
+
 def test_dashboard_updateDashboard_wraps_renderers_in_try_catch():
     """KICK CYCLE 9 Step 3.5: updateDashboard() calls renderHeroChart, renderGuardAlpha,
     updateComparisonRows, updateVerdicts, and loadCharts in sequence.
@@ -866,24 +897,24 @@ def test_dashboard_updateDashboard_wraps_renderers_in_try_catch():
     Fix: wrap each of the 5 render calls in updateDashboard with individual try/catch blocks.
     """
     src = _INDEX_JS.read_text(encoding="utf-8")
-    m = re.search(r'function\s+updateDashboard\s*\([^)]*\)\s*\{', src)
+    m = re.search(r"function\s+updateDashboard\s*\([^)]*\)\s*\{", src)
     assert m, "updateDashboard function not found in static/index.js"
     start = m.start()
     depth = 0
-    i = src.index('{', start)
+    i = src.index("{", start)
     body_start = i
     while i < len(src):
-        if src[i] == '{':
+        if src[i] == "{":
             depth += 1
-        elif src[i] == '}':
+        elif src[i] == "}":
             depth -= 1
             if depth == 0:
                 body_end = i
                 break
         i += 1
-    body = src[body_start:body_end + 1]
+    body = src[body_start : body_end + 1]
 
-    has_try = 'try' in body and 'catch' in body
+    has_try = "try" in body and "catch" in body
     assert has_try, (
         "updateDashboard() calls renderHeroChart / renderGuardAlpha / updateComparisonRows "
         "/ updateVerdicts / loadCharts in sequence with no error isolation. "
@@ -897,6 +928,7 @@ def test_dashboard_updateDashboard_wraps_renderers_in_try_catch():
 # KICK CYCLE 9 — API↔DOM cross-check: comparison rows show API values (Step 3.1)
 # ---------------------------------------------------------------------------
 
+
 def test_dashboard_api_state_portfolio_strip_has_dict_today_change(monkeypatch):
     """KICK CYCLE 9 Step 3.1: /api/state must return portfolio_strip.today_change as a
     dict with dry_run and if_held keys — not a bare float.
@@ -908,12 +940,15 @@ def test_dashboard_api_state_portfolio_strip_has_dict_today_change(monkeypatch):
     This is a contract test: the shape must be correct regardless of the specific values.
     """
     import json
+
     strip = _make_portfolio_strip(tc_dr=0.79, tc_held=0.80)
     stub = _api_state_stub(portfolio_strip=strip)
     db_mock = _patch_db()
 
-    with patch.object(app_module, "get_api_state_dict", return_value=stub), \
-         patch.object(app_module, "database", db_mock):
+    with (
+        patch.object(app_module, "get_api_state_dict", return_value=stub),
+        patch.object(app_module, "database", db_mock),
+    ):
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as c:
             resp = c.get("/api/state")
@@ -937,6 +972,7 @@ def test_dashboard_api_state_portfolio_strip_has_dict_today_change(monkeypatch):
 # Performance P-WIN-01 — window selector change triggers data re-fetch
 # ---------------------------------------------------------------------------
 
+
 def test_performance_window_selector_change_triggers_refresh():
     """P-WIN-01: The Performance page window selector must trigger a data re-fetch
     when changed (30d/60d/90d/125d/YTD/1Y/5Y).
@@ -944,12 +980,16 @@ def test_performance_window_selector_change_triggers_refresh():
     static/performance.js already has: daysPicker.addEventListener('change', refresh)
     This test verifies that wiring is present.
     """
-    src = (pathlib.Path(__file__).parent.parent.parent / "static" / "performance.js").read_text(encoding="utf-8")
+    src = (pathlib.Path(__file__).parent.parent.parent / "static" / "performance.js").read_text(
+        encoding="utf-8"
+    )
     assert "daysPicker" in src or "days-picker" in src, (
         "performance.js has no reference to days-picker / daysPicker. "
         "The window selector must be wired to trigger a data refresh when changed."
     )
-    assert re.search(r"addEventListener.*change.*refresh|daysPicker.*change|change.*refresh", src, re.DOTALL), (
+    assert re.search(
+        r"addEventListener.*change.*refresh|daysPicker.*change|change.*refresh", src, re.DOTALL
+    ), (
         "performance.js does not wire the days-picker change event to a refresh/fetch call. "
         "Fix: daysPicker.addEventListener('change', refresh) in wireUI()."
     )
@@ -959,19 +999,23 @@ def test_performance_window_selector_change_triggers_refresh():
 # History H-WIN-01 — window selector change triggers loadHistory
 # ---------------------------------------------------------------------------
 
+
 def test_history_window_selector_change_triggers_load_history():
     """H-WIN-01: The History page window selector must trigger loadHistory() when changed.
 
     static/history.js must wire window-picker change to update currentWindow + call loadHistory.
     """
-    src = (pathlib.Path(__file__).parent.parent.parent / "static" / "history.js").read_text(encoding="utf-8")
+    src = (pathlib.Path(__file__).parent.parent.parent / "static" / "history.js").read_text(
+        encoding="utf-8"
+    )
     assert "window-picker" in src or "windowPicker" in src or "picker" in src, (
         "history.js has no reference to window-picker. "
         "The window selector must be wired to trigger loadHistory() when changed."
     )
     assert re.search(
         r"picker.*addEventListener.*change|addEventListener.*change.*loadHistory|change.*currentWindow",
-        src, re.DOTALL
+        src,
+        re.DOTALL,
     ), (
         "history.js does not wire the window-picker change event to loadHistory(). "
         "Fix: picker.addEventListener('change', function() { currentWindow = picker.value; loadHistory(currentWindow); })."
@@ -982,16 +1026,20 @@ def test_history_window_selector_change_triggers_load_history():
 # Advisor A-INTERACT-01 — Symphony picker triggers suggestion fetch
 # ---------------------------------------------------------------------------
 
+
 def test_advisor_symphony_picker_triggers_suggestion_fetch():
     """A-INTERACT-01: Clicking a different symphony in the Advisor symphony picker
     must trigger a new /ai-advisor/suggest POST for that symphony.
 
     static/ai_advisor.js must wire the symphony selector change to loadSuggestions().
     """
-    src = (pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js").read_text(encoding="utf-8")
+    src = (pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js").read_text(
+        encoding="utf-8"
+    )
     has_symphony_change = re.search(
         r"symphony.*addEventListener.*change|addEventListener.*change.*suggest|picker.*change",
-        src, re.DOTALL
+        src,
+        re.DOTALL,
     )
     assert has_symphony_change, (
         "ai_advisor.js does not wire the symphony picker change event to a suggestion fetch. "
@@ -1004,9 +1052,12 @@ def test_advisor_symphony_picker_triggers_suggestion_fetch():
 # Advisor A-INTERACT-02/03 — Apply/Dismiss buttons POST to correct endpoints
 # ---------------------------------------------------------------------------
 
+
 def test_advisor_apply_button_posts_to_accept_endpoint():
     """A-INTERACT-02: The Apply button on each suggestion card must POST to /ai-advisor/accept."""
-    src = (pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js").read_text(encoding="utf-8")
+    src = (pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js").read_text(
+        encoding="utf-8"
+    )
     assert "/ai-advisor/accept" in src, (
         "ai_advisor.js does not POST to /ai-advisor/accept. "
         "The Apply button must call the accept endpoint to persist the suggestion. "
@@ -1016,7 +1067,9 @@ def test_advisor_apply_button_posts_to_accept_endpoint():
 
 def test_advisor_dismiss_button_posts_to_reject_endpoint():
     """A-INTERACT-03: The Dismiss button on each suggestion card must POST to /ai-advisor/reject."""
-    src = (pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js").read_text(encoding="utf-8")
+    src = (pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js").read_text(
+        encoding="utf-8"
+    )
     assert "/ai-advisor/reject" in src, (
         "ai_advisor.js does not POST to /ai-advisor/reject. "
         "The Dismiss button must call the reject endpoint. "
@@ -1028,6 +1081,7 @@ def test_advisor_dismiss_button_posts_to_reject_endpoint():
 # Foundation F-NAV-01 — active route highlighted in top nav
 # ---------------------------------------------------------------------------
 
+
 def test_chrome_nav_links_have_active_route_indicator():
     """F-NAV-01: The active route must be highlighted in the top nav.
 
@@ -1036,7 +1090,8 @@ def test_chrome_nav_links_have_active_route_indicator():
     """
     src = _CHROME_HTML.read_text(encoding="utf-8")
     has_active_indicator = (
-        "active_route" in src or "active-route" in src
+        "active_route" in src
+        or "active-route" in src
         or "aria-current" in src
         or re.search(r"active_route\s*==|active_route\s*is", src)
     )
@@ -1053,6 +1108,7 @@ def test_chrome_nav_links_have_active_route_indicator():
 # Foundation F-NAV-02 — nav links route correctly
 # ---------------------------------------------------------------------------
 
+
 def test_chrome_nav_links_href_routes_are_correct():
     """F-NAV-02: Nav links in _chrome.html must use url_for() to route correctly.
 
@@ -1062,8 +1118,11 @@ def test_chrome_nav_links_href_routes_are_correct():
     src = _CHROME_HTML.read_text(encoding="utf-8")
     nav_links = re.findall(r'href\s*=\s*["\'][^"\']+["\']', src)
     hardcoded = [
-        link for link in nav_links
-        if re.search(r'href\s*=\s*["\']/(?:dashboard|performance|history|ai.?advisor|settings)', link)
+        link
+        for link in nav_links
+        if re.search(
+            r'href\s*=\s*["\']/(?:dashboard|performance|history|ai.?advisor|settings)', link
+        )
         and "url_for" not in link
     ]
     assert len(hardcoded) == 0, (
@@ -1077,6 +1136,7 @@ def test_chrome_nav_links_href_routes_are_correct():
 # Foundation F-MODE-01 — LIVE/DRY-RUN badge reflects actual env
 # ---------------------------------------------------------------------------
 
+
 def test_rendered_dashboard_mode_badge_reflects_api_state(monkeypatch):
     """F-MODE-01: The LIVE / DRY-RUN badge must reflect the actual LIVE_EXECUTION env var.
 
@@ -1084,10 +1144,13 @@ def test_rendered_dashboard_mode_badge_reflects_api_state(monkeypatch):
     The badge must read from meta.mode which is computed from the LIVE_EXECUTION env.
     """
     import json
+
     stub = _api_state_stub()
     db_mock = _patch_db()
-    with patch.object(app_module, "get_api_state_dict", return_value=stub), \
-         patch.object(app_module, "database", db_mock):
+    with (
+        patch.object(app_module, "get_api_state_dict", return_value=stub),
+        patch.object(app_module, "database", db_mock),
+    ):
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as c:
             resp_api = c.get("/api/state")
@@ -1108,6 +1171,7 @@ def test_rendered_dashboard_mode_badge_reflects_api_state(monkeypatch):
 # Foundation F-CLOCK-01 — ET clock element exists in rendered nav
 # ---------------------------------------------------------------------------
 
+
 def test_rendered_dashboard_has_et_clock_element(monkeypatch):
     """F-CLOCK-01: The dashboard must render an ET clock element that updates live.
 
@@ -1116,13 +1180,15 @@ def test_rendered_dashboard_has_et_clock_element(monkeypatch):
     """
     stub = _api_state_stub()
     db_mock = _patch_db()
-    with patch.object(app_module, "get_api_state_dict", return_value=stub), \
-         patch.object(app_module, "database", db_mock):
+    with (
+        patch.object(app_module, "get_api_state_dict", return_value=stub),
+        patch.object(app_module, "database", db_mock),
+    ):
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as c:
             resp = c.get("/")
     html = resp.data.decode("utf-8")
-    assert "clock-et" in html or "data-testid=\"clock" in html or "ET" in html, (
+    assert "clock-et" in html or 'data-testid="clock' in html or "ET" in html, (
         "Dashboard rendered HTML does not contain an ET clock element (data-testid='clock-et' "
         "or similar). The clock must be visible so operators know the current market time. "
         "Fix: render {{ meta.clock_et }} in the nav chrome and ensure the testid is present."

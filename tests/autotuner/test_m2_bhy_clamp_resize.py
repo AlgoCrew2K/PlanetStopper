@@ -85,8 +85,7 @@ class TestMaxOptunaTrialsConstant:
             "now a duplication."
         )
         assert isinstance(autotuner.MAX_OPTUNA_TRIALS, int), (
-            f"MAX_OPTUNA_TRIALS must be an int; got "
-            f"{type(autotuner.MAX_OPTUNA_TRIALS).__name__}."
+            f"MAX_OPTUNA_TRIALS must be an int; got {type(autotuner.MAX_OPTUNA_TRIALS).__name__}."
         )
         # The current production value is 500 (autotuner.py:1010). Pin
         # equality so a silent drift surfaces.
@@ -124,9 +123,7 @@ class TestHaircutPvalueEpsilonMeetsBhyScalingFloor:
         floor = q / (n * c_n)
 
         # Pin the constant exists with the expected name.
-        assert hasattr(autotuner, "_HAIRCUT_PVALUE_EPSILON"), (
-            "Existing constant name preserved."
-        )
+        assert hasattr(autotuner, "_HAIRCUT_PVALUE_EPSILON"), "Existing constant name preserved."
         eps = autotuner._HAIRCUT_PVALUE_EPSILON
         assert eps >= floor * 0.99, (
             f"AC-4 / RM-M2 VIOLATED: _HAIRCUT_PVALUE_EPSILON={eps!r} is "
@@ -153,8 +150,7 @@ class TestHaircutPvalueEpsilonMeetsBhyScalingFloor:
         """Basic numeric sanity — finite, positive."""
         eps = autotuner._HAIRCUT_PVALUE_EPSILON
         assert math.isfinite(eps) and eps > 0.0, (
-            f"_HAIRCUT_PVALUE_EPSILON must be finite and positive; got "
-            f"{eps!r}."
+            f"_HAIRCUT_PVALUE_EPSILON must be finite and positive; got {eps!r}."
         )
 
     def test_haircut_pvalue_epsilon_is_symbolic_not_hardcoded(self):
@@ -182,7 +178,7 @@ class TestHaircutPvalueEpsilonMeetsBhyScalingFloor:
             if "_HAIRCUT_PVALUE_EPSILON" in line and "=" in line and "self." not in line:
                 # Include the assignment line plus up to 5 following
                 # lines (the formula may span multiple lines).
-                eps_lines.extend(lines[i:i + 6])
+                eps_lines.extend(lines[i : i + 6])
                 break
         assert eps_lines, "Could not locate _HAIRCUT_PVALUE_EPSILON assignment."
         rhs = "\n".join(eps_lines)
@@ -236,22 +232,23 @@ class TestHaircutPvalueEpsilonMeetsBhyScalingFloor:
         # Find the eps definition line + the surrounding comment block.
         lines = source.splitlines()
         idx = next(
-            (i for i, line in enumerate(lines)
-             if "_HAIRCUT_PVALUE_EPSILON" in line and "=" in line
-             and "self." not in line),
+            (
+                i
+                for i, line in enumerate(lines)
+                if "_HAIRCUT_PVALUE_EPSILON" in line and "=" in line and "self." not in line
+            ),
             None,
         )
         assert idx is not None, "Could not locate eps definition."
         # 30 preceding lines accommodate both the original IEEE-754 block
         # AND the new BHY information-preservation block.
-        window = "\n".join(lines[max(0, idx - 30):idx + 1]).lower()
+        window = "\n".join(lines[max(0, idx - 30) : idx + 1]).lower()
         # Content-element requirements per risk-engine-specialist Gate-3 (b).
         required_concepts = (
             ("bhy", "BHY-scaling rationale must be cited"),
             (
                 "ieee-754",
-                "IEEE-754 stability rationale must be retained from the "
-                "original comment",
+                "IEEE-754 stability rationale must be retained from the original comment",
             ),
         )
         for needle, why in required_concepts:
@@ -287,15 +284,17 @@ class TestHaircutPvalueEpsilonMeetsBhyScalingFloor:
         source = inspect.getsource(autotuner)
         lines = source.splitlines()
         idx = next(
-            (i for i, line in enumerate(lines)
-             if "_HAIRCUT_PVALUE_EPSILON" in line and "=" in line
-             and "self." not in line),
+            (
+                i
+                for i, line in enumerate(lines)
+                if "_HAIRCUT_PVALUE_EPSILON" in line and "=" in line and "self." not in line
+            ),
             None,
         )
         assert idx is not None, "Could not locate eps definition."
         # Same 30-line window as the positive-content test, so the two
         # tests examine the same comment block.
-        window = "\n".join(lines[max(0, idx - 30):idx + 1]).lower()
+        window = "\n".join(lines[max(0, idx - 30) : idx + 1]).lower()
 
         # Strongest signature — the audit's exact phrasing.
         for needle in ("rubber-stamp", "rubber stamp"):
@@ -478,9 +477,7 @@ class TestBhyUnchangedForRealisticTrialSet:
         # and 1/j is decreasing, the product's minimum may not be at j=1.
         # Compute the running-min explicitly so the expected reflects
         # the algorithm precisely.
-        expected_running_min = min(
-            (n * c_n / j) * raw_p[j - 1] for j in range(1, n + 1)
-        )
+        expected_running_min = min((n * c_n / j) * raw_p[j - 1] for j in range(1, n + 1))
         expected_rank1 = min(1.0, max(0.0, expected_running_min))
         # rel=1e-12: deterministic arithmetic, identical to producer's.
         assert adj[min_idx] == pytest.approx(expected_rank1, rel=1e-12), (

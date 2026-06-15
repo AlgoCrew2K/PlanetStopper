@@ -42,6 +42,7 @@ _PORTMODE_TEST = _WORKTREE_ROOT / "tests" / "portmode" / "test_autotuner_portmod
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -68,7 +69,8 @@ def test_compute_dsr_t_function_is_deleted():
 
     tree = _autotuner_tree()
     dsr_t_defs = [
-        node for node in ast.walk(tree)
+        node
+        for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef) and node.name == "compute_dsr_T"
     ]
     assert not dsr_t_defs, (
@@ -95,8 +97,7 @@ def test_n_symphonies_t_inflation_is_not_reintroduced():
             for side in (node.left, node.right):
                 if isinstance(side, ast.Name) and "symphon" in side.id.lower():
                     offending.append(
-                        f"line {getattr(node, 'lineno', '?')}: multiplication by "
-                        f"`{side.id}`"
+                        f"line {getattr(node, 'lineno', '?')}: multiplication by `{side.id}`"
                     )
 
     assert not offending, (
@@ -172,15 +173,13 @@ def test_haircut_t_is_not_the_validation_calendar_day_count():
                     and _is_len_of(node.value, "validation_dates_purged")
                 ):
                     offending.append(
-                        f"line {node.lineno}: `{tgt.id} = "
-                        f"len(validation_dates_purged)`"
+                        f"line {node.lineno}: `{tgt.id} = len(validation_dates_purged)`"
                     )
 
     assert not offending, (
         "autotuner.py sources a `T` from the validation calendar-day count. "
         "AC-3 requires the haircut's per-trial `T` to be `len(daily_returns)` — "
-        "the in-sample return-OBSERVATION count. Offending sites:\n  "
-        + "\n  ".join(offending)
+        "the in-sample return-OBSERVATION count. Offending sites:\n  " + "\n  ".join(offending)
     )
 
 

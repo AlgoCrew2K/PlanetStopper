@@ -108,28 +108,37 @@ def _autotuner_patches(best_params: dict, history: dict):
     with (
         patch("autotuner.optuna.create_study", return_value=fake_study),
         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
-        patch("autotuner.synthetic_history.generate_synthetic_history",
-              return_value=history),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
         patch("autotuner.database.load_chart_history", return_value={}),
         patch("autotuner.database.save_chart_archive"),
-        patch("autotuner.database.get_symphony_strategy",
-              return_value={"params": best_params.copy(),
-                            "locked_vars": []}),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": best_params.copy(), "locked_vars": []},
+        ),
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", best_params.copy()),
         patch("autotuner.database.save_autotune_run", return_value=1),
-        patch("autotuner.math_engine.compute_para_arm_decision",
-              side_effect=lambda **kw: (0.0, False)),
-        patch("autotuner.math_engine.compute_time_squeeze_decay",
-              side_effect=lambda tr: (1.5, 0.5)),
-        patch("autotuner.math_engine.compute_active_trailing_stop",
-              side_effect=lambda *a, **kw: 5.0),
-        patch("autotuner.math_engine.compute_breakeven_update",
-              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
-        patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-              side_effect=lambda *a, **kw: -10.0),
-        patch("autotuner.math_engine.compute_vwap_breakdown_update",
-              side_effect=lambda **kw: (0, 0, False, False)),
+        patch(
+            "autotuner.math_engine.compute_para_arm_decision", side_effect=lambda **kw: (0.0, False)
+        ),
+        patch(
+            "autotuner.math_engine.compute_time_squeeze_decay", side_effect=lambda tr: (1.5, 0.5)
+        ),
+        patch(
+            "autotuner.math_engine.compute_active_trailing_stop", side_effect=lambda *a, **kw: 5.0
+        ),
+        patch(
+            "autotuner.math_engine.compute_breakeven_update",
+            side_effect=lambda *a, **kw: (a[3], a[4], a[2]),
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+            side_effect=lambda *a, **kw: -10.0,
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_breakdown_update",
+            side_effect=lambda **kw: (0, 0, False, False),
+        ),
     ):
         yield fake_study, spec_bundle_id
 
@@ -178,13 +187,9 @@ class TestTrainValidationPurgeRuntimeDisjoint:
         frozen_start_idx = int(n_days * (train_ratio + val_ratio))
 
         # Reconstruct exactly what the autotuner SHOULD produce.
-        effective_train_cutoff = max(
-            0, val_start_idx - purge_days - embargo_days
-        )
+        effective_train_cutoff = max(0, val_start_idx - purge_days - embargo_days)
         expected_train_dates = set(all_history_dates[:effective_train_cutoff])
-        expected_validation_dates = set(
-            all_history_dates[val_start_idx:frozen_start_idx]
-        )
+        expected_validation_dates = set(all_history_dates[val_start_idx:frozen_start_idx])
 
         # Hard disjointness — the test's own pin, independent of producer.
         assert expected_train_dates.isdisjoint(expected_validation_dates), (
@@ -197,25 +202,23 @@ class TestTrainValidationPurgeRuntimeDisjoint:
         seen_date_sets: list[frozenset[str]] = []
         original_collect = autotuner._collect_sim_returns
 
-        def spy_collect(p, history_data, acc_sym_ids, current_date_str,
-                        deviation_dict):
+        def spy_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
             for sym_id, dates_dict in history_data.items():
                 seen_date_sets.append(frozenset(dates_dict.keys()))
-            return original_collect(
-                p, history_data, acc_sym_ids, current_date_str, deviation_dict
-            )
+            return original_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict)
 
         bot_state = {"sym-A": {"name": "Sym A", "account": "acc-1"}}
         params = _default_params()
         history = _build_history(125)
         buf = io.StringIO()
         with _autotuner_patches(params, history) as (_study, spec_bundle_id):
-            with patch("autotuner._collect_sim_returns",
-                       side_effect=spy_collect):
+            with patch("autotuner._collect_sim_returns", side_effect=spy_collect):
                 with contextlib.redirect_stdout(buf):
                     try:
                         autotuner.run_autotuner(
-                            bot_state, "2026-05-10", ["acc-1"],
+                            bot_state,
+                            "2026-05-10",
+                            ["acc-1"],
                             spec_bundle_id=spec_bundle_id,
                         )
                     except Exception:
@@ -276,48 +279,38 @@ class TestValidationFrozenEvalPurgeRuntimeDisjoint:
 
         val_start_idx = int(n_days * train_ratio)
         frozen_start_idx = int(n_days * (train_ratio + val_ratio))
-        val_purge_end_idx = max(
-            val_start_idx, frozen_start_idx - purge_days - embargo_days
-        )
+        val_purge_end_idx = max(val_start_idx, frozen_start_idx - purge_days - embargo_days)
 
-        expected_validation_purged = set(
-            all_history_dates[val_start_idx:val_purge_end_idx]
-        )
+        expected_validation_purged = set(all_history_dates[val_start_idx:val_purge_end_idx])
         # The LAST PURGE_DAYS+EMBARGO_DAYS of the raw validation fold.
-        purged_out_zone = set(
-            all_history_dates[val_purge_end_idx:frozen_start_idx]
-        )
+        purged_out_zone = set(all_history_dates[val_purge_end_idx:frozen_start_idx])
 
         seen_date_sets: list[frozenset[str]] = []
         original_collect = autotuner._collect_sim_returns
 
-        def spy_collect(p, history_data, acc_sym_ids, current_date_str,
-                        deviation_dict):
+        def spy_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
             for sym_id, dates_dict in history_data.items():
                 seen_date_sets.append(frozenset(dates_dict.keys()))
-            return original_collect(
-                p, history_data, acc_sym_ids, current_date_str, deviation_dict
-            )
+            return original_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict)
 
         bot_state = {"sym-A": {"name": "Sym A", "account": "acc-1"}}
         params = _default_params()
         history = _build_history(125)
         buf = io.StringIO()
         with _autotuner_patches(params, history) as (_study, spec_bundle_id):
-            with patch("autotuner._collect_sim_returns",
-                       side_effect=spy_collect):
+            with patch("autotuner._collect_sim_returns", side_effect=spy_collect):
                 with contextlib.redirect_stdout(buf):
                     try:
                         autotuner.run_autotuner(
-                            bot_state, "2026-05-10", ["acc-1"],
+                            bot_state,
+                            "2026-05-10",
+                            ["acc-1"],
                             spec_bundle_id=spec_bundle_id,
                         )
                     except Exception:
                         pass
 
-        assert seen_date_sets, (
-            "AC-7 / INV-COV-2: no _collect_sim_returns calls captured."
-        )
+        assert seen_date_sets, "AC-7 / INV-COV-2: no _collect_sim_returns calls captured."
         # The first call is the objective's evaluation; it must touch the
         # purge-reduced validation slice and NONE of the purge-zone dates.
         first_obj_dates = seen_date_sets[0]
@@ -373,9 +366,7 @@ class TestSyntheticHistoryVwapRuntimeFixture:
         names so a runtime numeric test is possible."""
         # Will pytest.fail() with a descriptive message if absent.
         helper, name = _resolve_vwap_helper()
-        assert callable(helper), (
-            f"{name!r} on synthetic_history must be callable."
-        )
+        assert callable(helper), f"{name!r} on synthetic_history must be callable."
 
     def test_vwap_matches_independently_computed_value(self):
         """Hand-construct a known minute-bar series (3 bars) and assert
@@ -392,20 +383,17 @@ class TestSyntheticHistoryVwapRuntimeFixture:
 
         # Three bars: closes 100, 110, 105 with volumes 1000, 2000, 500.
         bars = [
-            {"c": 100.0, "v": 1000.0, "h": 102.0, "l": 99.0,
-             "t": "2026-01-02T09:30:00Z"},
-            {"c": 110.0, "v": 2000.0, "h": 112.0, "l": 108.0,
-             "t": "2026-01-02T09:31:00Z"},
-            {"c": 105.0, "v":  500.0, "h": 106.0, "l": 104.0,
-             "t": "2026-01-02T09:32:00Z"},
+            {"c": 100.0, "v": 1000.0, "h": 102.0, "l": 99.0, "t": "2026-01-02T09:30:00Z"},
+            {"c": 110.0, "v": 2000.0, "h": 112.0, "l": 108.0, "t": "2026-01-02T09:31:00Z"},
+            {"c": 105.0, "v": 500.0, "h": 106.0, "l": 104.0, "t": "2026-01-02T09:32:00Z"},
         ]
         total_volume = 1000.0 + 2000.0 + 500.0
-        vwap_close = (
-            100.0 * 1000.0 + 110.0 * 2000.0 + 105.0 * 500.0
-        ) / total_volume
+        vwap_close = (100.0 * 1000.0 + 110.0 * 2000.0 + 105.0 * 500.0) / total_volume
+
         # HLC/3 alternative
         def _hlc3(b):
             return (b["h"] + b["l"] + b["c"]) / 3.0
+
         vwap_hlc3 = sum(_hlc3(b) * b["v"] for b in bars) / total_volume
 
         # Call the helper. The signature is implementer's choice — try
@@ -444,8 +432,7 @@ class TestSyntheticHistoryVwapRuntimeFixture:
         explicit error, or uses a documented fallback (last price)."""
         helper, _ = _resolve_vwap_helper()
         bars = [
-            {"c": 100.0, "v": 0.0, "h": 100.0, "l": 100.0,
-             "t": "2026-01-02T09:30:00Z"},
+            {"c": 100.0, "v": 0.0, "h": 100.0, "l": 100.0, "t": "2026-01-02T09:30:00Z"},
         ]
         try:
             result = helper(bars)
@@ -460,9 +447,8 @@ class TestSyntheticHistoryVwapRuntimeFixture:
         # Otherwise the result must be finite / None / 100.0 (last
         # price fallback).
         import math as _math
-        assert result is None or (
-            isinstance(result, (int, float)) and _math.isfinite(result)
-        ), (
+
+        assert result is None or (isinstance(result, (int, float)) and _math.isfinite(result)), (
             f"AC-8 / INV-COV-3: zero-volume bar produced a non-finite "
             f"result {result!r} — the helper must guard against "
             f"division-by-zero explicitly."

@@ -58,6 +58,7 @@ _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_fixture(name: str) -> dict:
     return json.loads((_FIXTURE_DIR / name).read_text(encoding="utf-8"))
 
@@ -86,6 +87,7 @@ def _find_module_level_assignments(tree: ast.Module) -> dict[str, Any]:
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -95,12 +97,14 @@ def _make_bundle() -> int:
     Mirrors the conftest helper; idempotent within a single isolated DB.
     """
     from tests.autotuner.conftest import make_phase1_theory_bundle
+
     return make_phase1_theory_bundle()
 
 
 def _spec_bundle_kwarg() -> dict:
     """Return {spec_bundle_id: <id>} if run_autotuner accepts that parameter."""
     import autotuner as _at
+
     sig = _inspect.signature(_at.run_autotuner)
     if "spec_bundle_id" not in sig.parameters:
         return {}
@@ -131,6 +135,7 @@ def _build_history(n_days: int) -> dict:
     }
     # Use weekdays only to avoid weekend gaps
     import datetime
+
     start = datetime.date(2025, 6, 2)  # Monday
     dates = []
     d = start
@@ -167,24 +172,34 @@ def _autotuner_patches(
         patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
         patch("autotuner.database.load_chart_history", return_value={}),
         patch("autotuner.database.save_chart_archive"),
-        patch("autotuner.database.get_symphony_strategy",
-              return_value={"params": best_params.copy(), "locked_vars": []}),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": best_params.copy(), "locked_vars": []},
+        ),
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", best_params.copy()),
-        patch("autotuner.database.save_autotune_run",
-              side_effect=capturing_save),
-        patch("autotuner.math_engine.compute_para_arm_decision",
-              side_effect=lambda **kw: (0.0, False)),
-        patch("autotuner.math_engine.compute_time_squeeze_decay",
-              side_effect=lambda tr: (1.5, 0.5)),
-        patch("autotuner.math_engine.compute_active_trailing_stop",
-              side_effect=lambda *a, **kw: 5.0),
-        patch("autotuner.math_engine.compute_breakeven_update",
-              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
-        patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-              side_effect=lambda *a, **kw: -10.0),
-        patch("autotuner.math_engine.compute_vwap_breakdown_update",
-              side_effect=lambda **kw: (0, 0, False, False)),
+        patch("autotuner.database.save_autotune_run", side_effect=capturing_save),
+        patch(
+            "autotuner.math_engine.compute_para_arm_decision", side_effect=lambda **kw: (0.0, False)
+        ),
+        patch(
+            "autotuner.math_engine.compute_time_squeeze_decay", side_effect=lambda tr: (1.5, 0.5)
+        ),
+        patch(
+            "autotuner.math_engine.compute_active_trailing_stop", side_effect=lambda *a, **kw: 5.0
+        ),
+        patch(
+            "autotuner.math_engine.compute_breakeven_update",
+            side_effect=lambda *a, **kw: (a[3], a[4], a[2]),
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+            side_effect=lambda *a, **kw: -10.0,
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_breakdown_update",
+            side_effect=lambda **kw: (0, 0, False, False),
+        ),
     ):
         yield fake_study
 
@@ -193,6 +208,7 @@ def _autotuner_patches(
 # Test 1 — 60/20/20 split produces correct fold sizes (test_split_is_60_20_20)
 # Mandatory RED
 # ===========================================================================
+
 
 class TestSplitIs60_20_20:
     """
@@ -230,6 +246,7 @@ class TestSplitIs60_20_20:
         original_run_simulation = None
         try:
             import autotuner as _at
+
             original_run_simulation = _at.run_simulation
         except Exception:
             pass
@@ -245,7 +262,9 @@ class TestSplitIs60_20_20:
                     # We record all dates to verify three disjoint sets exist.
                     dates_seen_in_frozen.update(dates_dict.keys())
             if original_run_simulation:
-                return original_run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict)
+                return original_run_simulation(
+                    p, history_data, acc_sym_ids, current_date_str, deviation_dict
+                )
             return 0.0
 
         calls: list[dict] = []
@@ -255,7 +274,9 @@ class TestSplitIs60_20_20:
         with _autotuner_patches(params, history, save_autotune_run_calls=calls):
             with patch("autotuner.run_simulation", side_effect=spy_run_simulation):
                 with contextlib.redirect_stdout(buf):
-                    _import_autotuner().run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
+                    _import_autotuner().run_autotuner(
+                        bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg()
+                    )
 
         # The key assertion: after O6 is implemented, save_autotune_run must be
         # called with both validation_sharpe and frozen_eval_sharpe kwargs.
@@ -379,6 +400,7 @@ class TestSplitIs60_20_20:
 # Mandatory RED
 # ===========================================================================
 
+
 class TestValidationUsedForSelection:
     """
     The Optuna objective must be evaluated against the validation fold only,
@@ -410,6 +432,7 @@ class TestValidationUsedForSelection:
         objective_date_sets: list[frozenset[str]] = []
 
         import autotuner as at
+
         original_collect = at._collect_sim_returns
 
         def spy_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
@@ -418,9 +441,7 @@ class TestValidationUsedForSelection:
             return original_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict)
 
         # All dates in sorted order — used to derive fold boundaries.
-        all_dates_sorted = sorted(
-            history["sym-A"].keys()
-        )
+        all_dates_sorted = sorted(history["sym-A"].keys())
         split_60 = int(n_days * 0.60)  # end of train fold
         split_80 = int(n_days * 0.80)  # end of validation fold
         validation_dates = frozenset(all_dates_sorted[split_60:split_80])
@@ -465,6 +486,7 @@ class TestValidationUsedForSelection:
 # Mandatory RED — adversarial
 # ===========================================================================
 
+
 class TestFrozenEvalNeverConsumedInSelection:
     """
     Adversarial: the frozen-eval dates must not appear in ANY _collect_sim_returns
@@ -504,13 +526,12 @@ class TestFrozenEvalNeverConsumedInSelection:
 
         all_dates_sorted = sorted(history["sym-A"].keys())
         import ast as _ast
+
         tree = _parse_autotuner_ast()
         assignments = _find_module_level_assignments(tree)
         frozen_ratio_node = assignments.get("FROZEN_EVAL_RATIO")
         frozen_ratio = (
-            frozen_ratio_node.value
-            if isinstance(frozen_ratio_node, _ast.Constant)
-            else 0.20
+            frozen_ratio_node.value if isinstance(frozen_ratio_node, _ast.Constant) else 0.20
         )
         split_at_frozen = int(n_days * (1.0 - frozen_ratio))
         frozen_dates: frozenset[str] = frozenset(all_dates_sorted[split_at_frozen:])
@@ -519,6 +540,7 @@ class TestFrozenEvalNeverConsumedInSelection:
         selection_done = [False]
 
         import autotuner as at
+
         original_collect = at._collect_sim_returns
 
         def spy_collect(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
@@ -551,11 +573,13 @@ class TestFrozenEvalNeverConsumedInSelection:
             f"The frozen-eval fold must be withheld from all Optuna trial callbacks."
         )
 
+
 # ===========================================================================
 # Test 4 — Frozen-eval consumed exactly once post-selection
 # (test_frozen_eval_consumed_once_post_selection)
 # Mandatory RED
 # ===========================================================================
+
 
 class TestFrozenEvalConsumedOncePostSelection:
     """
@@ -592,6 +616,7 @@ class TestFrozenEvalConsumedOncePostSelection:
         run_sim_frozen_calls: list[frozenset[str]] = []
 
         import autotuner as at
+
         original_collect = at._collect_sim_returns
         original_run_sim = at.run_simulation
 
@@ -617,9 +642,7 @@ class TestFrozenEvalConsumedOncePostSelection:
                     at.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
 
         # Count _collect_sim_returns calls that included frozen-eval dates.
-        frozen_eval_invocations = [
-            s for s in collect_calls if s & frozen_dates
-        ]
+        frozen_eval_invocations = [s for s in collect_calls if s & frozen_dates]
 
         assert len(frozen_eval_invocations) >= 1, (
             "The frozen-eval fold must be passed to _collect_sim_returns at least once "
@@ -674,6 +697,7 @@ class TestFrozenEvalConsumedOncePostSelection:
         all_frozen_reads: list[str] = []  # one entry per call that touched frozen dates
 
         import autotuner as at
+
         original_collect = at._collect_sim_returns
         original_run_sim = at.run_simulation
 
@@ -721,6 +745,7 @@ class TestFrozenEvalConsumedOncePostSelection:
 # Mandatory RED
 # ===========================================================================
 
+
 class TestPurgeEmbargoAtBothBoundaries:
     """
     The O1 purge + embargo (PURGE_DAYS=20, EMBARGO_DAYS=1) must be applied at:
@@ -746,29 +771,32 @@ class TestPurgeEmbargoAtBothBoundaries:
         """
         source = _parse_autotuner_source()
 
-        has_frozen_ref = bool(re.search(
-            r"frozen.eval|frozen_eval|FROZEN_EVAL|history_frozen",
-            source,
-            re.IGNORECASE,
-        ))
+        has_frozen_ref = bool(
+            re.search(
+                r"frozen.eval|frozen_eval|FROZEN_EVAL|history_frozen",
+                source,
+                re.IGNORECASE,
+            )
+        )
         assert has_frozen_ref, (
             "autotuner.py has no frozen-eval fold reference. "
             "O6 must add the third fold before purge can be applied at its boundary. "
             "RED until the frozen-eval fold is introduced."
         )
 
-        has_purge_near_frozen = bool(re.search(
-            r"frozen.{0,400}PURGE_DAYS|PURGE_DAYS.{0,400}frozen",
-            source,
-            re.IGNORECASE | re.DOTALL,
-        ))
+        has_purge_near_frozen = bool(
+            re.search(
+                r"frozen.{0,400}PURGE_DAYS|PURGE_DAYS.{0,400}frozen",
+                source,
+                re.IGNORECASE | re.DOTALL,
+            )
+        )
         assert has_purge_near_frozen, (
             "PURGE_DAYS must appear in proximity to frozen-eval logic. "
             "The validation|frozen-eval boundary requires the same purge treatment "
             "as the train|validation boundary per Lopez de Prado 2018 Ch. 7. "
             "RED until the implementer adds purge at the second boundary."
         )
-
 
     def test_frozen_eval_boundary_references_purge_constant(self):
         """
@@ -782,16 +810,20 @@ class TestPurgeEmbargoAtBothBoundaries:
 
         # Look for the pattern: frozen_eval (or equivalent name) AND PURGE_DAYS
         # appearing in close proximity in the source.
-        has_frozen_ref = bool(re.search(
-            r"frozen.eval|frozen_eval|FROZEN_EVAL|history_frozen",
-            source,
-            re.IGNORECASE,
-        ))
-        has_purge_near_frozen = bool(re.search(
-            r"frozen.{0,200}PURGE_DAYS|PURGE_DAYS.{0,200}frozen",
-            source,
-            re.IGNORECASE | re.DOTALL,
-        ))
+        has_frozen_ref = bool(
+            re.search(
+                r"frozen.eval|frozen_eval|FROZEN_EVAL|history_frozen",
+                source,
+                re.IGNORECASE,
+            )
+        )
+        has_purge_near_frozen = bool(
+            re.search(
+                r"frozen.{0,200}PURGE_DAYS|PURGE_DAYS.{0,200}frozen",
+                source,
+                re.IGNORECASE | re.DOTALL,
+            )
+        )
 
         assert has_frozen_ref, (
             "autotuner.py contains no reference to a frozen-eval fold "
@@ -812,6 +844,7 @@ class TestPurgeEmbargoAtBothBoundaries:
 # Mandatory RED
 # ===========================================================================
 
+
 class TestNamedConstantsForRatios:
     """
     TRAIN_RATIO, VALIDATION_RATIO, FROZEN_EVAL_RATIO must exist as module-level
@@ -819,11 +852,14 @@ class TestNamedConstantsForRatios:
     2018 Ch. 7.4.
     """
 
-    @pytest.mark.parametrize("const_info", [
-        {"name": "TRAIN_RATIO",        "expected_value": 0.60},
-        {"name": "VALIDATION_RATIO",   "expected_value": 0.20},
-        {"name": "FROZEN_EVAL_RATIO",  "expected_value": 0.20},
-    ])
+    @pytest.mark.parametrize(
+        "const_info",
+        [
+            {"name": "TRAIN_RATIO", "expected_value": 0.60},
+            {"name": "VALIDATION_RATIO", "expected_value": 0.20},
+            {"name": "FROZEN_EVAL_RATIO", "expected_value": 0.20},
+        ],
+    )
     def test_named_constant_exists_with_correct_value(self, const_info):
         """
         Each ratio constant must exist at module scope in autotuner.py with
@@ -868,9 +904,10 @@ class TestNamedConstantsForRatios:
 
         for i, line in enumerate(lines):
             if any(name in line for name in const_names):
-                context = "\n".join(lines[max(0, i - 2): i + 5])
-                if re.search(r"[Ll]ópez de Prado|Lopez de Prado|L.pez de Prado", context) and \
-                   re.search(r"7\.4|Ch\.?\s*7", context):
+                context = "\n".join(lines[max(0, i - 2) : i + 5])
+                if re.search(
+                    r"[Ll]ópez de Prado|Lopez de Prado|L.pez de Prado", context
+                ) and re.search(r"7\.4|Ch\.?\s*7", context):
                     found_citation = True
                     break
 
@@ -892,9 +929,7 @@ class TestNamedConstantsForRatios:
         total = 0.0
         for name in ["TRAIN_RATIO", "VALIDATION_RATIO", "FROZEN_EVAL_RATIO"]:
             if name not in assignments:
-                pytest.fail(
-                    f"Cannot verify sum: {name} not found in autotuner.py. RED."
-                )
+                pytest.fail(f"Cannot verify sum: {name} not found in autotuner.py. RED.")
             node = assignments[name]
             assert isinstance(node, ast.Constant), (
                 f"{name} must be a literal constant to verify the sum invariant."
@@ -913,6 +948,7 @@ class TestNamedConstantsForRatios:
 # (test_autotune_runs_records_both_metrics)
 # Mandatory RED
 # ===========================================================================
+
 
 class TestAutotuneRunsRecordsBothMetrics:
     """
@@ -939,8 +975,7 @@ class TestAutotuneRunsRecordsBothMetrics:
 
         raw_sql = sql_path.read_text(encoding="utf-8")
         sql_statements = "\n".join(
-            line for line in raw_sql.splitlines()
-            if not line.strip().startswith("--")
+            line for line in raw_sql.splitlines() if not line.strip().startswith("--")
         ).lower()
 
         target_table = fix["target_table"]
@@ -1012,15 +1047,12 @@ class TestAutotuneRunsRecordsBothMetrics:
             "'Adopted AI', 0.8, 0.5, 0.9, 1.4)"
         )
         conn.commit()
-        pre_row_id = conn.execute(
-            "SELECT id FROM autotune_runs"
-        ).fetchone()[0]
+        pre_row_id = conn.execute("SELECT id FROM autotune_runs").fetchone()[0]
 
         # Apply migration 007.
         raw_sql = sql_path.read_text(encoding="utf-8")
         sql_statements = "\n".join(
-            line for line in raw_sql.splitlines()
-            if not line.strip().startswith("--")
+            line for line in raw_sql.splitlines() if not line.strip().startswith("--")
         )
         try:
             conn.executescript(sql_statements)
@@ -1046,14 +1078,13 @@ class TestAutotuneRunsRecordsBothMetrics:
                 f"Column '{col_name}' must be REAL type; got {col_row[2]!r}"
             )
             assert col_row[3] == 0, (
-                f"Column '{col_name}' must be nullable (NOT NULL=0); "
-                f"got NOT NULL={col_row[3]}"
+                f"Column '{col_name}' must be nullable (NOT NULL=0); got NOT NULL={col_row[3]}"
             )
 
         # Pre-existing row must be preserved with NULL in new columns.
         post_row = conn.execute(
-            "SELECT id, validation_sharpe, frozen_eval_sharpe "
-            "FROM autotune_runs WHERE id = ?", (pre_row_id,)
+            "SELECT id, validation_sharpe, frozen_eval_sharpe FROM autotune_runs WHERE id = ?",
+            (pre_row_id,),
         ).fetchone()
         assert post_row is not None, (
             f"Pre-migration row id={pre_row_id} was deleted by migration 007. "
@@ -1093,7 +1124,9 @@ class TestAutotuneRunsRecordsBothMetrics:
         buf = io.StringIO()
         with _autotuner_patches(params, history, save_autotune_run_calls=calls):
             with contextlib.redirect_stdout(buf):
-                _import_autotuner().run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg())
+                _import_autotuner().run_autotuner(
+                    bot_state, "2026-05-10", ["acc-1"], **_spec_bundle_kwarg()
+                )
 
         assert len(calls) >= 1, (
             "run_autotuner must call save_autotune_run at least once (per symphony)."
@@ -1144,6 +1177,7 @@ class TestAutotuneRunsRecordsBothMetrics:
         migration_file = fix["migration_file"]
 
         import database as db
+
         registered = getattr(db, "_MIGRATION_FILES", [])
 
         assert migration_file in registered, (
@@ -1171,6 +1205,7 @@ class TestAutotuneRunsRecordsBothMetrics:
 # Mandatory RED
 # ===========================================================================
 
+
 class TestFoldCollapseAcknowledgment:
     """
     At 125-day history, 60/20/20 = 75/25/25 days. After 20-day purge at each
@@ -1192,13 +1227,17 @@ class TestFoldCollapseAcknowledgment:
         source = _parse_autotuner_source()
 
         has_60_20_20 = bool(re.search(r"60/20/20|60\.?%.*20\.?%.*20\.?%", source, re.IGNORECASE))
-        has_validation_mention = bool(re.search(r"validation.fold|validation.sharpe", source, re.IGNORECASE))
+        has_validation_mention = bool(
+            re.search(r"validation.fold|validation.sharpe", source, re.IGNORECASE)
+        )
         has_frozen_mention = bool(re.search(r"frozen.eval|frozen_eval", source, re.IGNORECASE))
-        has_fold_collapse_note = bool(re.search(
-            r"usable.*validation|usable.*frozen|fold.*collapse|~\s*[0-9]+\s*usable",
-            source,
-            re.IGNORECASE,
-        ))
+        has_fold_collapse_note = bool(
+            re.search(
+                r"usable.*validation|usable.*frozen|fold.*collapse|~\s*[0-9]+\s*usable",
+                source,
+                re.IGNORECASE,
+            )
+        )
 
         assert has_60_20_20 or (has_validation_mention and has_frozen_mention), (
             "autotuner.py must document the 60/20/20 split (validation + frozen-eval). "

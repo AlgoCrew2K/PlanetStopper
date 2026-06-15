@@ -33,6 +33,7 @@ from database import (
 # Fixture: isolated, fresh SQLite DB per test
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path, monkeypatch):
     """
@@ -50,6 +51,7 @@ def isolated_db(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Helper: count rows in chart_archive
 # ---------------------------------------------------------------------------
+
 
 def _count_archive_rows(db_path: str) -> int:
     conn = sqlite3.connect(db_path)
@@ -69,6 +71,7 @@ def _date_str(offset_days: int = 0) -> str:
 # ---------------------------------------------------------------------------
 # Test 1: save_chart_history -> load_chart_history round-trip
 # ---------------------------------------------------------------------------
+
 
 def test_save_and_load_chart_history_round_trips():
     """
@@ -115,12 +118,9 @@ def test_save_chart_history_overwrites_previous():
     loaded = load_chart_history()
 
     assert loaded == second_data, (
-        "load_chart_history must return the most recent save; "
-        "got data from an earlier save instead"
+        "load_chart_history must return the most recent save; got data from an earlier save instead"
     )
-    assert "sym1" not in loaded, (
-        "first save's data must not persist after a second save"
-    )
+    assert "sym1" not in loaded, "first save's data must not persist after a second save"
 
 
 def test_load_chart_history_after_init_returns_empty_dict():
@@ -132,14 +132,13 @@ def test_load_chart_history_after_init_returns_empty_dict():
     assert isinstance(result, dict), (
         f"load_chart_history must return a dict on fresh DB; got {type(result)}"
     )
-    assert result == {}, (
-        "load_chart_history must return {{}} on a freshly initialised DB"
-    )
+    assert result == {}, "load_chart_history must return {{}} on a freshly initialised DB"
 
 
 # ---------------------------------------------------------------------------
 # Test 2: save_chart_archive accumulates dates; upserts on duplicate
 # ---------------------------------------------------------------------------
+
 
 def test_save_chart_archive_accumulates_distinct_dates(isolated_db):
     """
@@ -187,6 +186,7 @@ def test_save_chart_archive_upserts_on_duplicate_date_symphony(isolated_db):
         (date_str, symphony_id),
     )
     import json
+
     stored = json.loads(cursor.fetchone()[0])
     conn.close()
 
@@ -215,6 +215,7 @@ def test_save_chart_archive_different_symphonies_same_date_are_distinct_rows(iso
 # Test 3: get_rolling_60day_chart returns at most 60 distinct dates
 # ---------------------------------------------------------------------------
 
+
 def test_get_rolling_60day_chart_returns_at_most_60_dates(isolated_db):
     """
     When the archive contains 75 distinct dates, get_rolling_60day_chart must
@@ -235,9 +236,7 @@ def test_get_rolling_60day_chart_returns_at_most_60_dates(isolated_db):
     assert isinstance(result, dict), (
         f"get_rolling_60day_chart must return a dict; got {type(result)}"
     )
-    assert symphony_id in result, (
-        "symphony_id must be a key in the returned dict"
-    )
+    assert symphony_id in result, "symphony_id must be a key in the returned dict"
 
     dates_returned = set(result[symphony_id].keys())
     assert len(dates_returned) <= 60, (
@@ -281,8 +280,7 @@ def test_get_rolling_60day_chart_returns_empty_dict_when_no_archive(isolated_db)
     """
     result = get_rolling_60day_chart(_date_str(0))
     assert result == {}, (
-        "get_rolling_60day_chart must return {{}} when archive is empty; "
-        f"got {result!r}"
+        f"get_rolling_60day_chart must return {{{{}}}} when archive is empty; got {result!r}"
     )
 
 

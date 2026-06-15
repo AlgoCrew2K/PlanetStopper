@@ -96,7 +96,7 @@ import alpha_bot_execution
 # building blocks — duplicating them here would violate DRY and would mean
 # the two test modules drift apart over time.
 from tests.execution.test_main_pipeline import (
-    patched_environment,           # noqa: F401  (re-exported pytest fixture)
+    patched_environment,  # noqa: F401  (re-exported pytest fixture)
     _seed_state,
     _make_symphony_payload,
     _make_vwap_payload,
@@ -111,9 +111,9 @@ from tests.execution.test_main_pipeline import (
 # Common scenario seed values — identical to B1 scenario 1 (trigger-fires
 # scenario) so any divergence between dry-run and live-run behaviour shows
 # up as a test-level diff and not a hidden fixture difference.
-_FIXTURE_PCT_CHANGE = 0.12      # → current_return == 12.0
-_SEED_HWM = 20.0                # above current_return → HWM-rise branch skipped
-_LIVE_PRICE = 505.25            # SPY last_price for the freeze snapshot
+_FIXTURE_PCT_CHANGE = 0.12  # → current_return == 12.0
+_SEED_HWM = 20.0  # above current_return → HWM-rise branch skipped
+_LIVE_PRICE = 505.25  # SPY last_price for the freeze snapshot
 
 
 def _configure_trigger_scenario(env):
@@ -155,15 +155,17 @@ class TestLiveExecutionSuccessFreezesState:
         env = patched_environment
         _configure_trigger_scenario(env)
 
-        with patch.object(alpha_bot_execution, "LIVE_EXECUTION", True), \
-             patch.object(
-                 alpha_bot_execution.math_engine,
-                 "compute_exit_confirmation",
-                 return_value=(3, True),  # force the trailing-stop-hit branch
-             ), \
-             patch.object(
-                 alpha_bot_execution, "execute_sell_to_cash", return_value=True
-             ) as mock_execute:
+        with (
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", True),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),  # force the trailing-stop-hit branch
+            ),
+            patch.object(
+                alpha_bot_execution, "execute_sell_to_cash", return_value=True
+            ) as mock_execute,
+        ):
             alpha_bot_execution.main()
 
         # ----- 1. execute_sell_to_cash WAS invoked with the right args -----
@@ -198,9 +200,7 @@ class TestLiveExecutionSuccessFreezesState:
 
         # ----- 3. trigger_prices populated from live_vwaps -----
         assert _TICKER in sym_state["trigger_prices"]
-        assert sym_state["trigger_prices"][_TICKER] == pytest.approx(
-            _LIVE_PRICE, rel=1e-9
-        )
+        assert sym_state["trigger_prices"][_TICKER] == pytest.approx(_LIVE_PRICE, rel=1e-9)
 
         # ----- 4. triggered_basket_snapshot populated -----
         snapshot = sym_state["triggered_basket_snapshot"]
@@ -260,15 +260,17 @@ class TestLiveExecutionHttpFailureSkipsStateFreeze:
         env = patched_environment
         _configure_trigger_scenario(env)
 
-        with patch.object(alpha_bot_execution, "LIVE_EXECUTION", True), \
-             patch.object(
-                 alpha_bot_execution.math_engine,
-                 "compute_exit_confirmation",
-                 return_value=(3, True),  # force the trailing-stop-hit branch
-             ), \
-             patch.object(
-                 alpha_bot_execution, "execute_sell_to_cash", return_value=False
-             ) as mock_execute:
+        with (
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", True),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),  # force the trailing-stop-hit branch
+            ),
+            patch.object(
+                alpha_bot_execution, "execute_sell_to_cash", return_value=False
+            ) as mock_execute,
+        ):
             alpha_bot_execution.main()
 
         # ----- 1. The attempt WAS made -----
@@ -376,17 +378,19 @@ class TestLiveExecutionExceptionIsCaughtAndStateIsPreserved:
         env = patched_environment
         _configure_trigger_scenario(env)
 
-        with patch.object(alpha_bot_execution, "LIVE_EXECUTION", True), \
-             patch.object(
-                 alpha_bot_execution.math_engine,
-                 "compute_exit_confirmation",
-                 return_value=(3, True),  # force the trailing-stop-hit branch
-             ), \
-             patch.object(
-                 alpha_bot_execution,
-                 "execute_sell_to_cash",
-                 side_effect=requests.RequestException("simulated HTTP failure"),
-             ) as mock_execute:
+        with (
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", True),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),  # force the trailing-stop-hit branch
+            ),
+            patch.object(
+                alpha_bot_execution,
+                "execute_sell_to_cash",
+                side_effect=requests.RequestException("simulated HTTP failure"),
+            ) as mock_execute,
+        ):
             # The exception MUST NOT escape main(). Any escape is a regression
             # to the pre-FU1.1 behaviour and would re-introduce the
             # double-charge real-money risk.
@@ -537,6 +541,7 @@ def _seed_two_symphonies(armed: bool, hwm: float):
     symphony key. Returned state has BOTH _SYMPHONY_ID and _SYMPHONY_ID_B at
     the top level.
     """
+
     def _per_sym(armed, hwm):
         return {
             "high_water_mark": hwm,
@@ -583,9 +588,7 @@ class TestLiveExecutionMultiSymphonyPartialFailurePreservesEarlierSuccess:
       * B is persisted in its pre-call state (triggered=False).
     """
 
-    def test_a_succeeds_b_raises_a_is_preserved_no_exception_propagates(
-        self, patched_environment
-    ):
+    def test_a_succeeds_b_raises_a_is_preserved_no_exception_propagates(self, patched_environment):
         env = patched_environment
 
         # Both symphonies report the same fixture-derived current_return so
@@ -596,9 +599,7 @@ class TestLiveExecutionMultiSymphonyPartialFailurePreservesEarlierSuccess:
             _make_symphony_payload_b(last_percent_change=_FIXTURE_PCT_CHANGE),
         ]
         env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(_LIVE_PRICE)
-        env["db"].load_state.return_value = _seed_two_symphonies(
-            armed=True, hwm=_SEED_HWM
-        )
+        env["db"].load_state.return_value = _seed_two_symphonies(armed=True, hwm=_SEED_HWM)
 
         # Per-call dispatch: A's actual_id returns True; B's actual_id raises.
         # We don't care about call order in the chunk loop — the production
@@ -619,17 +620,19 @@ class TestLiveExecutionMultiSymphonyPartialFailurePreservesEarlierSuccess:
                 f"{_ACTUAL_SYMPHONY_ID_B!r}"
             )
 
-        with patch.object(alpha_bot_execution, "LIVE_EXECUTION", True), \
-             patch.object(
-                 alpha_bot_execution.math_engine,
-                 "compute_exit_confirmation",
-                 return_value=(3, True),
-             ), \
-             patch.object(
-                 alpha_bot_execution,
-                 "execute_sell_to_cash",
-                 side_effect=_executor_side_effect,
-             ) as mock_execute:
+        with (
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", True),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),
+            ),
+            patch.object(
+                alpha_bot_execution,
+                "execute_sell_to_cash",
+                side_effect=_executor_side_effect,
+            ) as mock_execute,
+        ):
             try:
                 alpha_bot_execution.main()
             except BaseException as exc:  # pragma: no cover — only fires on regression
@@ -776,17 +779,19 @@ class TestLogSymphonyEventFailureInsideWrapDoesNotPropagate:
 
         env["db"].log_symphony_event.side_effect = _log_raises_on_error
 
-        with patch.object(alpha_bot_execution, "LIVE_EXECUTION", True), \
-             patch.object(
-                 alpha_bot_execution.math_engine,
-                 "compute_exit_confirmation",
-                 return_value=(3, True),  # force the trailing-stop-hit branch
-             ), \
-             patch.object(
-                 alpha_bot_execution,
-                 "execute_sell_to_cash",
-                 side_effect=requests.RequestException("simulated HTTP failure"),
-             ):
+        with (
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", True),
+            patch.object(
+                alpha_bot_execution.math_engine,
+                "compute_exit_confirmation",
+                return_value=(3, True),  # force the trailing-stop-hit branch
+            ),
+            patch.object(
+                alpha_bot_execution,
+                "execute_sell_to_cash",
+                side_effect=requests.RequestException("simulated HTTP failure"),
+            ),
+        ):
             try:
                 alpha_bot_execution.main()
             except BaseException as exc:  # pragma: no cover — only fires on regression

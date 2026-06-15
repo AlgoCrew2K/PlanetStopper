@@ -42,9 +42,7 @@ def fetch_symphony_score(symphony_id: str) -> dict:
     """
     url = f"{COMPOSER_BASE_URL}/symphonies/{symphony_id}/score"
     try:
-        response = requests.get(
-            url, headers=get_composer_headers(), timeout=_SCORE_FETCH_TIMEOUT
-        )
+        response = requests.get(url, headers=get_composer_headers(), timeout=_SCORE_FETCH_TIMEOUT)
         if response.status_code == 200:
             try:
                 return response.json()
@@ -54,10 +52,7 @@ def fetch_symphony_score(symphony_id: str) -> dict:
                     f"HTTP {response.status_code} - {e}"
                 )
                 return {}
-        print(
-            f"Error fetching /score for symphony {symphony_id}: "
-            f"HTTP {response.status_code}"
-        )
+        print(f"Error fetching /score for symphony {symphony_id}: HTTP {response.status_code}")
     except requests.RequestException as e:
         print(f"Exception fetching /score for symphony {symphony_id}: {e}")
     return {}

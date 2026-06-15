@@ -74,23 +74,27 @@ from database import init_db, run_migrations
 # Pin here so any deviation surfaces immediately.
 # ---------------------------------------------------------------------------
 
-_VALID_EVIDENCE_SOURCES: frozenset[str] = frozenset({
-    "THEORY",
-    "MANDATE",
-    "STYLIZED_FACT",
-    "CALIBRATION",
-    "BACKTEST_SELECTION",
-    "OOS",
-})
+_VALID_EVIDENCE_SOURCES: frozenset[str] = frozenset(
+    {
+        "THEORY",
+        "MANDATE",
+        "STYLIZED_FACT",
+        "CALIBRATION",
+        "BACKTEST_SELECTION",
+        "OOS",
+    }
+)
 
 # These are the evidence sources that do NOT contribute to S (honest Phase-1 case).
-_ZERO_S_SOURCES: frozenset[str] = frozenset({
-    "THEORY",
-    "MANDATE",
-    "STYLIZED_FACT",
-    "CALIBRATION",
-    "OOS",
-})
+_ZERO_S_SOURCES: frozenset[str] = frozenset(
+    {
+        "THEORY",
+        "MANDATE",
+        "STYLIZED_FACT",
+        "CALIBRATION",
+        "OOS",
+    }
+)
 
 _VALID_FACET_CATEGORIES: frozenset[str] = frozenset({"specification", "parameter"})
 _VALID_DECISION_TYPES: frozenset[str] = frozenset({"FIXED", "SEARCHED", "REVISED", "OOS_PEEK"})
@@ -107,9 +111,7 @@ _FIXTURE_PATH = (
     / "researcher_dof_ledger_schema.json"
 )
 
-_MIGRATION_PATH = (
-    pathlib.Path(__file__).parents[2] / "migrations" / "018_researcher_dof_ledger.sql"
-)
+_MIGRATION_PATH = pathlib.Path(__file__).parents[2] / "migrations" / "018_researcher_dof_ledger.sql"
 
 # ---------------------------------------------------------------------------
 # DB isolation fixture — function-scoped, redirects DB_FILE, runs full
@@ -188,8 +190,14 @@ def _insert_dof_row_direct(
             "n_configs_searched, touched_frozen_eval, spec_bundle_id, justification) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                facet_name, facet_category, decision_type, evidence_source,
-                n_configs_searched, touched_frozen_eval, spec_bundle_id, justification,
+                facet_name,
+                facet_category,
+                decision_type,
+                evidence_source,
+                n_configs_searched,
+                touched_frozen_eval,
+                spec_bundle_id,
+                justification,
             ),
         )
         conn.commit()
@@ -502,7 +510,8 @@ def test_no_update_accessor_exported_for_researcher_dof_ledger():
     mutation_names = [
         name
         for name, obj in inspect.getmembers(db_module, inspect.isfunction)
-        if "dof_ledger" in name.lower() and any(
+        if "dof_ledger" in name.lower()
+        and any(
             name.startswith(prefix)
             for prefix in ("update_", "edit_", "modify_", "set_", "delete_", "remove_")
         )
@@ -524,9 +533,8 @@ def test_no_delete_accessor_exported_for_researcher_dof_ledger():
     delete_names = [
         name
         for name, obj in inspect.getmembers(db_module, inspect.isfunction)
-        if "dof" in name.lower() and any(
-            name.startswith(prefix) for prefix in ("delete_", "remove_", "purge_", "clear_")
-        )
+        if "dof" in name.lower()
+        and any(name.startswith(prefix) for prefix in ("delete_", "remove_", "purge_", "clear_"))
     ]
     assert not delete_names, (
         f"database module must not export delete/purge accessors for the DoF ledger; "
@@ -979,9 +987,7 @@ def test_insert_dof_ledger_row_returns_positive_int_row_id(migrated_db):
     assert isinstance(row_id, int), (
         f"insert_dof_ledger_row() must return an int; got {type(row_id)}"
     )
-    assert row_id > 0, (
-        f"insert_dof_ledger_row() must return a positive int row_id; got {row_id}"
-    )
+    assert row_id > 0, f"insert_dof_ledger_row() must return a positive int row_id; got {row_id}"
 
 
 def test_get_dof_ledger_for_bundle_returns_empty_list_for_unknown_bundle_id(migrated_db):
@@ -1017,15 +1023,20 @@ def test_get_dof_ledger_for_bundle_returns_dicts_with_all_schema_columns(migrate
     assert rows, "Precondition: at least one row must be returned for the bundle"
 
     expected_keys = {
-        "id", "created_at", "facet_name", "facet_category", "decision_type",
-        "evidence_source", "n_configs_searched", "touched_frozen_eval",
-        "spec_bundle_id", "justification",
+        "id",
+        "created_at",
+        "facet_name",
+        "facet_category",
+        "decision_type",
+        "evidence_source",
+        "n_configs_searched",
+        "touched_frozen_eval",
+        "spec_bundle_id",
+        "justification",
     }
     for row in rows:
         missing = expected_keys - set(row.keys())
-        assert not missing, (
-            f"Row dict missing columns: {missing}. Got: {sorted(row.keys())}"
-        )
+        assert not missing, f"Row dict missing columns: {missing}. Got: {sorted(row.keys())}"
 
 
 def test_created_at_is_nonnull_when_omitted(migrated_db):
@@ -1046,8 +1057,7 @@ def test_created_at_is_nonnull_when_omitted(migrated_db):
         )
         conn.commit()
         row = conn.execute(
-            "SELECT created_at FROM researcher_dof_ledger "
-            "WHERE facet_name = 'direct_insert'"
+            "SELECT created_at FROM researcher_dof_ledger WHERE facet_name = 'direct_insert'"
         ).fetchone()
     finally:
         conn.close()

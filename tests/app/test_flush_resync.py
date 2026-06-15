@@ -174,9 +174,7 @@ def test_flush_resync_deletes_synthetic_and_keeps_real(client, tmp_path, monkeyp
     assert f"post_mortem_{synthetic_date}.json" in body["deleted"], (
         "Synthetic file must appear in deleted list."
     )
-    assert f"post_mortem_{real_date}.json" in body["kept"], (
-        "Real file must appear in kept list."
-    )
+    assert f"post_mortem_{real_date}.json" in body["kept"], "Real file must appear in kept list."
     assert not os.path.exists(os.path.join(pm_dir, f"post_mortem_{synthetic_date}.json")), (
         "Synthetic file must be removed from disk."
     )
@@ -320,9 +318,7 @@ def test_flush_resync_symphony_without_account_resets_cleanly(client, tmp_path, 
         "Symphony without 'account' must appear in symphonies_reset — no KeyError."
     )
     # Background write must have fired
-    assert db_mock.save_state.called, (
-        "database.save_state must be called by the background worker."
-    )
+    assert db_mock.save_state.called, "database.save_state must be called by the background worker."
     # No-account entry resets to {name} only — no spurious "account" key added
     assert saved_state.get("sym_no_acct") == {"name": "NoAccount Symphony"}, (
         "No-account symphony must reset to {name} only — no account key injected."
@@ -340,7 +336,9 @@ def test_flush_resync_invalidates_analytics_cache(client, tmp_path, monkeypatch)
     monkeypatch.setattr(analytics, "_POST_MORTEMS_DIR", pm_dir)
 
     # Pre-populate the cache with stale data (monkeypatch ensures teardown after test)
-    monkeypatch.setattr(analytics, "_HISTORY_CACHE", {"key": "stale-key", "data": {"2026-01-01": {}}})
+    monkeypatch.setattr(
+        analytics, "_HISTORY_CACHE", {"key": "stale-key", "data": {"2026-01-01": {}}}
+    )
 
     write_completed = threading.Event()
 

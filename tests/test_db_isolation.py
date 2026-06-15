@@ -32,6 +32,7 @@ _LIVE_DB = _PROJECT_ROOT / "alphabot_state.db"
 # AC-ISO.1 — save_autotune_run must NOT write to alphabot_state.db
 # ---------------------------------------------------------------------------
 
+
 class TestSaveAutotuneRunDoesNotWriteLiveDb:
     """
     AC-ISO.1: calling database.save_autotune_run inside pytest must never
@@ -89,6 +90,7 @@ class TestSaveAutotuneRunDoesNotWriteLiveDb:
 # AC-ISO.2 — each test gets a distinct DB path
 # ---------------------------------------------------------------------------
 
+
 class TestPerTestDbIsolation:
     """
     AC-ISO.2: every test that requests DB access gets its own DB file so state
@@ -97,6 +99,7 @@ class TestPerTestDbIsolation:
 
     def _current_db_path(self) -> str:
         import database as db_module
+
         return db_module._db_file()
 
     def test_first_test_gets_isolated_path(self):
@@ -121,6 +124,7 @@ class TestPerTestDbIsolation:
     def test_db_path_does_not_end_with_alphabot_state_db_in_project_root(self):
         """Path must not resolve to the project-root alphabot_state.db."""
         import database as db_module
+
         resolved = str(pathlib.Path(db_module._db_file()).resolve())
         live_resolved = str(_LIVE_DB.resolve())
         assert resolved != live_resolved, (
@@ -131,6 +135,7 @@ class TestPerTestDbIsolation:
 # ---------------------------------------------------------------------------
 # AC-ISO.3 — isolation is env-var based, not baked into source code
 # ---------------------------------------------------------------------------
+
 
 class TestIsolationMechanismIsEnvBased:
     """

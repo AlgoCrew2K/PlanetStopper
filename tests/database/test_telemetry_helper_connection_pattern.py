@@ -70,9 +70,7 @@ def test_write_telemetry_row_does_not_use_isolation_level_none():
     spec-h4 Finding 1: the plan's 'isolation_level=None' clause is a spec
     error; adopt the existing contract instead.
     """
-    assert hasattr(db, "write_telemetry_row"), (
-        "write_telemetry_row not found — implement it first"
-    )
+    assert hasattr(db, "write_telemetry_row"), "write_telemetry_row not found — implement it first"
     source = inspect.getsource(db.write_telemetry_row)
     assert "isolation_level=None" not in source, (
         "write_telemetry_row must not pass isolation_level=None to sqlite3.connect. "
@@ -98,9 +96,7 @@ def test_write_telemetry_row_uses_timeout_10():
     CC-002: the sqlite3.connect call was moved into _write_telemetry_row_unsafe;
     we also accept timeout=10.0 in that helper's source.
     """
-    assert hasattr(db, "write_telemetry_row"), (
-        "write_telemetry_row not found — implement it first"
-    )
+    assert hasattr(db, "write_telemetry_row"), "write_telemetry_row not found — implement it first"
     source = inspect.getsource(db.write_telemetry_row)
     # CC-002: sqlite3.connect lives in the private helper; check both.
     # Post fix-perf-fixture: _write_telemetry_row_unsafe was refactored to call
@@ -113,9 +109,7 @@ def test_write_telemetry_row_uses_timeout_10():
         else ""
     )
     get_connection_source = (
-        inspect.getsource(db.get_connection)
-        if hasattr(db, "get_connection")
-        else ""
+        inspect.getsource(db.get_connection) if hasattr(db, "get_connection") else ""
     )
     assert (
         "timeout=10.0" in source
@@ -218,8 +212,7 @@ def test_write_telemetry_row_calls_commit_before_close(tmp_path, monkeypatch):
     commit_idx = call_order.index("commit")
     close_idx = call_order.index("close")
     assert commit_idx < close_idx, (
-        f"commit() must be called before close(); "
-        f"got order: {call_order}"
+        f"commit() must be called before close(); got order: {call_order}"
     )
 
 
@@ -263,7 +256,7 @@ def test_live_mode_swallows_integrity_error_null_column(tmp_path, monkeypatch):
 
     # Pass None for the NOT NULL column — this should cause IntegrityError
     row = {
-        "cycle_id": None,        # violates NOT NULL constraint
+        "cycle_id": None,  # violates NOT NULL constraint
         "symphony_id": "SYM_INTEGRITY_001",
     }
 
@@ -305,7 +298,7 @@ def test_replay_mode_propagates_integrity_error(tmp_path, monkeypatch):
         conn.close()
 
     row = {
-        "cycle_id": None,        # violates NOT NULL constraint
+        "cycle_id": None,  # violates NOT NULL constraint
         "symphony_id": "SYM_INTEGRITY_REPLAY_001",
     }
 
@@ -327,9 +320,7 @@ def test_record_cvar_diagnostic_exists():
         "database.record_cvar_diagnostic does not exist. "
         "H4 plan deliverable (6) requires this thin-wrapper function."
     )
-    assert callable(db.record_cvar_diagnostic), (
-        "database.record_cvar_diagnostic is not callable."
-    )
+    assert callable(db.record_cvar_diagnostic), "database.record_cvar_diagnostic is not callable."
 
 
 def test_record_cvar_diagnostic_source_has_no_sqlite3_connect():
@@ -431,9 +422,13 @@ def test_autotuner_does_not_call_write_telemetry_row_with_live_mode():
     source = autotuner_path.read_text(encoding="utf-8")
 
     # Fast grep for the obvious pattern first
-    assert 'mode="live"' not in source or "write_telemetry_row" not in source or (
-        # If both appear, do a finer AST check
-        _autotuner_has_no_live_telemetry_call(source)
+    assert (
+        'mode="live"' not in source
+        or "write_telemetry_row" not in source
+        or (
+            # If both appear, do a finer AST check
+            _autotuner_has_no_live_telemetry_call(source)
+        )
     ), (
         "autotuner.py contains a write_telemetry_row call with mode='live'. "
         "autotuner is a replay-context file; all telemetry writes must use "
@@ -454,9 +449,8 @@ def _autotuner_has_no_live_telemetry_call(source: str) -> bool:
             continue
         # Match write_telemetry_row(...) calls
         func = node.func
-        is_telemetry_call = (
-            (isinstance(func, ast.Name) and func.id == "write_telemetry_row")
-            or (isinstance(func, ast.Attribute) and func.attr == "write_telemetry_row")
+        is_telemetry_call = (isinstance(func, ast.Name) and func.id == "write_telemetry_row") or (
+            isinstance(func, ast.Attribute) and func.attr == "write_telemetry_row"
         )
         if not is_telemetry_call:
             continue
@@ -494,9 +488,8 @@ def test_autotuner_write_telemetry_calls_use_replay_mode_if_present():
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        is_telemetry_call = (
-            (isinstance(func, ast.Name) and func.id == "write_telemetry_row")
-            or (isinstance(func, ast.Attribute) and func.attr == "write_telemetry_row")
+        is_telemetry_call = (isinstance(func, ast.Name) and func.id == "write_telemetry_row") or (
+            isinstance(func, ast.Attribute) and func.attr == "write_telemetry_row"
         )
         if not is_telemetry_call:
             continue

@@ -57,8 +57,17 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_FIXTURE_PATH = _REPO_ROOT / "tests" / "fixtures" / "ai_advisor" / "m3" / "asset_swap_objective_directed_basic.json"
-_COMPOSER_BACKTEST_FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "composer" / "backtest_inline_v1.json"
+_FIXTURE_PATH = (
+    _REPO_ROOT
+    / "tests"
+    / "fixtures"
+    / "ai_advisor"
+    / "m3"
+    / "asset_swap_objective_directed_basic.json"
+)
+_COMPOSER_BACKTEST_FIXTURE = (
+    _REPO_ROOT / "tests" / "fixtures" / "composer" / "backtest_inline_v1.json"
+)
 
 
 def _ensure_repo_on_path() -> None:
@@ -175,7 +184,7 @@ def _dvm_capital_from_returns(returns_pct: list, symphony_id: str, start_day: in
     value = 10000.0
     values: dict[str, float] = {str(start_day): value}
     for i, r_pct in enumerate(returns_pct):
-        value *= (1.0 + r_pct / 100.0)
+        value *= 1.0 + r_pct / 100.0
         values[str(start_day + i + 1)] = round(value, 2)
     return {symphony_id: values}
 
@@ -280,6 +289,7 @@ class TestObjectiveDirectedCandidateGeneration:
         result_type = engine.SwapProposalResult
         # The result type must have an `objective` field.
         import inspect
+
         sig_fields = None
         if hasattr(result_type, "_fields"):  # NamedTuple
             sig_fields = result_type._fields
@@ -311,6 +321,7 @@ class TestObjectiveDirectedCandidateGeneration:
         result_type = engine.SwapProposalResult
 
         import inspect
+
         if hasattr(result_type, "_fields"):
             sig_fields = result_type._fields
         elif hasattr(result_type, "__dataclass_fields__"):
@@ -325,7 +336,9 @@ class TestObjectiveDirectedCandidateGeneration:
             "objective explanation. A result type with no rationale field cannot satisfy this."
         )
 
-    def test_suggest_swaps_with_reduce_correlation_objective_produces_objective_driven_candidates(self):
+    def test_suggest_swaps_with_reduce_correlation_objective_produces_objective_driven_candidates(
+        self,
+    ):
         """advisor-suggested mode with reduce_correlation objective must generate
         candidates that address the stated correlation objective.
 
@@ -405,15 +418,23 @@ class TestObjectiveDirectedCandidateGeneration:
         # An objective-ignoring generator produces identical candidate lists for any objective.
         # An objective-DRIVEN generator produces different candidate lists for different objectives.
         # We assert they're NOT identical.
-        corr_tickers = sorted(c.get("ticker") or c if isinstance(c, str) else str(c) for c in (corr_candidates or []))
-        dd_tickers = sorted(c.get("ticker") or c if isinstance(c, str) else str(c) for c in (dd_candidates or []))
+        corr_tickers = sorted(
+            c.get("ticker") or c if isinstance(c, str) else str(c) for c in (corr_candidates or [])
+        )
+        dd_tickers = sorted(
+            c.get("ticker") or c if isinstance(c, str) else str(c) for c in (dd_candidates or [])
+        )
 
         # The corr_objective should favor low-correlation assets (sym-C); the dd_objective
         # should favor low-drawdown assets (AGG). If both produce the same list, the
         # generator is ignoring the objective.
         # We allow that they MIGHT overlap (the universe is small), but at least the
         # generator must not be provably objective-unaware — so we check it consumed the objective.
-        assert corr_tickers != dd_tickers or len(corr_candidates or []) == 0 or len(dd_candidates or []) == 0, (
+        assert (
+            corr_tickers != dd_tickers
+            or len(corr_candidates or []) == 0
+            or len(dd_candidates or []) == 0
+        ), (
             "generate_objective_directed_candidates() returns identical candidate lists "
             "for reduce_correlation and reduce_drawdown objectives on the same symphony. "
             "This indicates the generator is ignoring the objective — it is producing "
@@ -526,6 +547,7 @@ class TestOperatorInitiatedSwap:
         result_type = engine.SwapProposalResult
 
         import inspect
+
         if hasattr(result_type, "_fields"):
             sig_fields = set(result_type._fields)
         elif hasattr(result_type, "__dataclass_fields__"):
@@ -535,7 +557,11 @@ class TestOperatorInitiatedSwap:
             sig_fields = set(hints.keys())
 
         # The result must carry the gate verdict — baseline-vs-variant is the gate's job.
-        assert "gate_result" in sig_fields or "verdict" in sig_fields or "candidate_gate_result" in sig_fields, (
+        assert (
+            "gate_result" in sig_fields
+            or "verdict" in sig_fields
+            or "candidate_gate_result" in sig_fields
+        ), (
             "SwapProposalResult must expose gate_result or verdict — "
             "the CandidateGateResult from backtest_gate_engine. "
             "AC-2.3: each surfaced swap must show baseline-vs-variant stats + gate verdict."
@@ -589,7 +615,10 @@ class TestOperatorInitiatedSwap:
                 "AC-X3: every surfaced swap MUST be persisted as an advisor_observation."
             )
             for call_kwargs in persisted_calls:
-                assert call_kwargs.get("is_advisory_only") == 1 or call_kwargs.get("is_advisory_only") is True, (
+                assert (
+                    call_kwargs.get("is_advisory_only") == 1
+                    or call_kwargs.get("is_advisory_only") is True
+                ), (
                     f"insert_advisor_observation called with is_advisory_only="
                     f"{call_kwargs.get('is_advisory_only')!r}. "
                     "AC-X3: is_advisory_only=1 is structural — it must ALWAYS be 1. "
@@ -689,7 +718,9 @@ class TestAdvisorSuggestedMode:
         # The run result must expose the gate batch and it must have zero survivors.
         gate_batch = getattr(result, "gate_batch", None)
         assert gate_batch is not None, "SwapRunResult must expose gate_batch."
-        assert len(gate_batch.survivors) == 0 or True, "zero survivors is valid"  # passed just above
+        assert len(gate_batch.survivors) == 0 or True, (
+            "zero survivors is valid"
+        )  # passed just above
 
     def test_suggest_swaps_zero_survivors_exposes_empty_message(self, m3_fixture):
         """AC-2.5: the result for zero survivors must expose the 'no swap cleared the gate' message.
@@ -700,6 +731,7 @@ class TestAdvisorSuggestedMode:
         run_result_type = engine.SwapRunResult
 
         import inspect
+
         if hasattr(run_result_type, "_fields"):
             sig_fields = set(run_result_type._fields)
         elif hasattr(run_result_type, "__dataclass_fields__"):
@@ -781,6 +813,7 @@ class TestInvalidVariantTreeHandling:
         run_result_type = engine.SwapRunResult
 
         import inspect
+
         if hasattr(run_result_type, "_fields"):
             sig_fields = set(run_result_type._fields)
         elif hasattr(run_result_type, "__dataclass_fields__"):
@@ -791,8 +824,13 @@ class TestInvalidVariantTreeHandling:
 
         # The result must expose something that carries per-candidate errors.
         has_error_field = any(
-            f in sig_fields for f in (
-                "gate_batch", "errors", "failed_candidates", "per_candidate_errors", "backtest_errors"
+            f in sig_fields
+            for f in (
+                "gate_batch",
+                "errors",
+                "failed_candidates",
+                "per_candidate_errors",
+                "backtest_errors",
             )
         )
         assert has_error_field, (
@@ -987,7 +1025,8 @@ class TestOfflineLivePath:
 
         source = engine_path.read_text(encoding="utf-8").lower()
         has_offline_marker = any(
-            term in source for term in ("offline", "off-live", "not on the 1-minute", "advise-only", "advise only")
+            term in source
+            for term in ("offline", "off-live", "not on the 1-minute", "advise-only", "advise only")
         )
         assert has_offline_marker, (
             "advisors/asset_swap_engine.py must contain an 'offline' or 'off-live' "
@@ -1069,9 +1108,7 @@ class TestPersistenceContract:
         source = engine_path.read_text(encoding="utf-8").lower()
 
         has_type_marker = any(
-            t in source for t in (
-                "asset_swap", "observation_type", "swap_proposal", "advisor_type"
-            )
+            t in source for t in ("asset_swap", "observation_type", "swap_proposal", "advisor_type")
         )
         assert has_type_marker, (
             "advisors/asset_swap_engine.py must tag its advisor_observations with a type "
@@ -1203,6 +1240,7 @@ class TestBacktestFailureIsolation:
         # The first backtest call → error, subsequent calls → success.
         # (Number depends on how many candidates generate_objective_directed_candidates returns.)
         call_count = [0]
+
         def _side_effect(*args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -1314,7 +1352,7 @@ class TestSurvivorCaveatsPresent:
                         target_pair=("sym-test", "sym-other"),
                         measured_value=0.88,
                     ),
-                    incumbent_oos_alpha=-50.0,   # very weak incumbent to encourage adoption
+                    incumbent_oos_alpha=-50.0,  # very weak incumbent to encourage adoption
                     default_oos_alpha=-50.0,
                 )
 
@@ -1331,9 +1369,15 @@ class TestSurvivorCaveatsPresent:
             )
             all_text = " ".join(survivor.caveats).lower()
             has_overfitting_warning = any(
-                t in all_text for t in (
-                    "selection bias", "overfitting", "overfit", "gate pass",
-                    "resistance", "not proof", "hypothesis"
+                t in all_text
+                for t in (
+                    "selection bias",
+                    "overfitting",
+                    "overfit",
+                    "gate pass",
+                    "resistance",
+                    "not proof",
+                    "hypothesis",
                 )
             )
             assert has_overfitting_warning, (
@@ -1366,10 +1410,7 @@ class TestEngineDelegatesToM2:
             pytest.skip("Module not yet created (RED state).")
 
         source = engine_path.read_text(encoding="utf-8")
-        has_gate_import = (
-            "evaluate_candidate_batch" in source
-            or "backtest_gate_engine" in source
-        )
+        has_gate_import = "evaluate_candidate_batch" in source or "backtest_gate_engine" in source
         assert has_gate_import, (
             "advisors/asset_swap_engine.py must import evaluate_candidate_batch from "
             "advisors.backtest_gate_engine. "
@@ -1388,9 +1429,7 @@ class TestEngineDelegatesToM2:
 
         source = engine_path.read_text(encoding="utf-8")
         has_backtest_client = any(
-            t in source for t in (
-                "run_backtest", "submit_backtest", "composer_backtest_client"
-            )
+            t in source for t in ("run_backtest", "submit_backtest", "composer_backtest_client")
         )
         assert has_backtest_client, (
             "advisors/asset_swap_engine.py must use run_backtest (or submit_backtest) from "

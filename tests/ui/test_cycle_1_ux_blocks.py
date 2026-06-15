@@ -139,7 +139,7 @@ def test_topbar_force_run_button_no_inline_onclick(client, route):
     idx = html.find('data-testid="force-run-btn"')
     if idx == -1:
         pytest.skip("force-run-btn not present yet (covered by separate test)")
-    surrounding = html[max(0, idx - 100): idx + 200]
+    surrounding = html[max(0, idx - 100) : idx + 200]
     assert "onclick" not in surrounding, (
         "Force run now button must not use inline onclick. "
         "Wire click handler via addEventListener in static/tweaks.js or static/chrome.js."
@@ -152,17 +152,20 @@ def test_topbar_mode_pill_has_data_live_attribute(client):
     This attribute drives CSS danger styling via [data-live='true'] selector in tokens.css.
     """
     env_stub = {"LIVE_EXECUTION": "True", "EXECUTION_START_TIME": "09:30"}
-    with __import__("unittest.mock", fromlist=["patch"]).patch(
-        "database.load_state", return_value={}
-    ), __import__("unittest.mock", fromlist=["patch"]).patch(
-        "dotenv.dotenv_values", return_value=env_stub
+    with (
+        __import__("unittest.mock", fromlist=["patch"]).patch(
+            "database.load_state", return_value={}
+        ),
+        __import__("unittest.mock", fromlist=["patch"]).patch(
+            "dotenv.dotenv_values", return_value=env_stub
+        ),
     ):
         resp = client.get("/")
     html = resp.data.decode("utf-8")
     idx = html.find('data-testid="mode-pill"')
     if idx == -1:
         pytest.fail("mode-pill not present (covered by separate test)")
-    surrounding = html[max(0, idx - 20): idx + 150]
+    surrounding = html[max(0, idx - 20) : idx + 150]
     assert 'data-live="true"' in surrounding, (
         "Mode pill must have data-live='true' when LIVE_EXECUTION=True. "
         "This attribute drives danger CSS styling in tokens.css."
@@ -318,9 +321,9 @@ def test_tweaks_panel_has_typeface_selector(client, route):
     )
 
 
-@pytest.mark.parametrize("typeface", [
-    "Manrope", "Geist", "DM Sans", "Plus Jakarta Sans", "IBM Plex Sans"
-])
+@pytest.mark.parametrize(
+    "typeface", ["Manrope", "Geist", "DM Sans", "Plus Jakarta Sans", "IBM Plex Sans"]
+)
 @pytest.mark.parametrize("route", ["/"])
 def test_tweaks_panel_typeface_selector_has_all_options(client, route, typeface):
     """Typeface selector must include all 5 font options from the design."""
@@ -515,6 +518,7 @@ def test_chrome_html_no_bare_hex():
     # Strip Jinja block tags so we don't accidentally match template syntax
     # Strip HTML comments
     import re as _re
+
     stripped = _re.sub(r"\{#.*?#\}", "", content)
     bare_hex = _re.findall(r"#[0-9a-fA-F]{3,8}\b", stripped)
     assert bare_hex == [], (
@@ -539,6 +543,7 @@ def test_tweaks_css_no_bare_hex():
         pytest.skip("tweaks.css does not exist yet")
     content = tweaks_css_path.read_text(encoding="utf-8")
     import re as _re
+
     # Strip var(...) expressions so fallback hex inside var() is not flagged
     stripped = _re.sub(r"var\([^)]*\)", "", content)
     bare_hex = _re.findall(r"#[0-9a-fA-F]{3,8}\b", stripped)

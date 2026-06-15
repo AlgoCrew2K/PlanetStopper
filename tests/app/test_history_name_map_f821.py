@@ -133,9 +133,7 @@ def test_history_route_populates_name_map_from_live_state(
             }
         ]
     }
-    (tmp_path / f"post_mortem_{today_str}.json").write_text(
-        json.dumps(today_post_mortem)
-    )
+    (tmp_path / f"post_mortem_{today_str}.json").write_text(json.dumps(today_post_mortem))
 
     # Pivot cwd so get_history_summary sees the fixture file.
     monkeypatch.chdir(tmp_path)
@@ -145,9 +143,7 @@ def test_history_route_populates_name_map_from_live_state(
     # If analytics.database doesn't exist, patch.object will raise AttributeError
     # (which also fails this test, correctly — AC-FM.4).
     fake_db = MagicMock()
-    fake_db.load_state.return_value = {
-        "sym-abc": {"id": "sym-abc", "name": "My Symphony"}
-    }
+    fake_db.load_state.return_value = {"sym-abc": {"id": "sym-abc", "name": "My Symphony"}}
 
     with patch.object(analytics_module, "database", fake_db, create=False):
         resp = client_real_analytics.get("/api/history/30")
@@ -197,9 +193,7 @@ def test_history_route_name_map_fallback_to_id_when_state_empty(
             }
         ]
     }
-    (tmp_path / f"post_mortem_{today_str}.json").write_text(
-        json.dumps(today_post_mortem)
-    )
+    (tmp_path / f"post_mortem_{today_str}.json").write_text(json.dumps(today_post_mortem))
     monkeypatch.chdir(tmp_path)
 
     fake_db = MagicMock()

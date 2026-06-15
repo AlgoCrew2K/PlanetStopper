@@ -91,6 +91,7 @@ _TICKER = "SPY"
 # Fixture builders
 # ---------------------------------------------------------------------------
 
+
 def _make_one_day_history(current_date_str: str) -> dict:
     """
     A one-day Alpaca-shaped history. One day is far below MC_MIN_HISTORY_DAYS,
@@ -158,28 +159,19 @@ def patched_environment():
     Bundle every patch main()'s pipeline needs — network, clock, DB, Discord —
     leaving the math engine REAL. Yields a dict of mocks for per-test config.
     """
-    with patch.object(alpha_bot_execution, "database") as mock_db, patch.object(
-        alpha_bot_execution, "reporting"
-    ) as mock_reporting, patch.object(
-        alpha_bot_execution, "fetch_symphony_stats"
-    ) as mock_fetch_sym, patch.object(
-        alpha_bot_execution, "fetch_alpaca_history"
-    ) as mock_fetch_hist, patch.object(
-        alpha_bot_execution, "fetch_intraday_vwaps"
-    ) as mock_fetch_vwap, patch.object(
-        alpha_bot_execution, "get_current_et", return_value=_FIXED_ET
-    ), patch.object(
-        alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]
-    ), patch.object(
-        alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"
-    ), patch.object(
-        alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"
-    ), patch.object(
-        alpha_bot_execution, "LIVE_EXECUTION", False
-    ), patch.object(
-        alpha_bot_execution.time, "sleep"
-    ), patch.object(
-        alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting") as mock_reporting,
+        patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym,
+        patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist,
+        patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap,
+        patch.object(alpha_bot_execution, "get_current_et", return_value=_FIXED_ET),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
     ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = {}
@@ -192,9 +184,7 @@ def patched_environment():
         mock_db.wipe_transient_state.side_effect = lambda s: s
 
         mock_fetch_sym.return_value = []
-        mock_fetch_hist.return_value = _make_one_day_history(
-            _FIXED_ET.strftime("%Y-%m-%d")
-        )
+        mock_fetch_hist.return_value = _make_one_day_history(_FIXED_ET.strftime("%Y-%m-%d"))
         mock_fetch_vwap.return_value = {}
 
         yield {
@@ -216,6 +206,7 @@ def _final_symphony_state(env) -> dict:
 # ---------------------------------------------------------------------------
 # Pre-condition: the harness genuinely exercises the insufficient-MC path
 # ---------------------------------------------------------------------------
+
 
 def test_harness_one_day_history_yields_insufficient_mc_sentinel() -> None:
     """
@@ -239,6 +230,7 @@ def test_harness_one_day_history_yields_insufficient_mc_sentinel() -> None:
 # 1. main() must not propagate a TypeError on the insufficient sentinel
 # ---------------------------------------------------------------------------
 
+
 def test_main_does_not_raise_typeerror_when_mc_history_insufficient(
     patched_environment,
 ) -> None:
@@ -252,9 +244,7 @@ def test_main_does_not_raise_typeerror_when_mc_history_insufficient(
     RED against the un-fixed consumers (7ff61a4).
     """
     env = patched_environment
-    env["fetch_symphony_stats"].return_value = [
-        _make_symphony_payload(last_percent_change=0.03)
-    ]
+    env["fetch_symphony_stats"].return_value = [_make_symphony_payload(last_percent_change=0.03)]
     env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(500.0)
     env["db"].load_state.return_value = _seed_state(armed=False, hwm=0.0)
 
@@ -281,6 +271,7 @@ def test_main_does_not_raise_typeerror_when_mc_history_insufficient(
 # 2. Fail-open ARM under the insufficient sentinel (audit H-3)
 # ---------------------------------------------------------------------------
 
+
 def test_insufficient_mc_arms_symphony_failopen(
     patched_environment,
 ) -> None:
@@ -304,9 +295,7 @@ def test_insufficient_mc_arms_symphony_failopen(
     # A modest positive return — the fail-open arm path does not require
     # the return to be below the stop level; arming is unconditional on
     # MC absence so the ticks-below-stop condition can later confirm.
-    env["fetch_symphony_stats"].return_value = [
-        _make_symphony_payload(last_percent_change=0.03)
-    ]
+    env["fetch_symphony_stats"].return_value = [_make_symphony_payload(last_percent_change=0.03)]
     env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(500.0)
     env["db"].load_state.return_value = _seed_state(armed=False, hwm=0.0)
 
@@ -324,6 +313,7 @@ def test_insufficient_mc_arms_symphony_failopen(
 # 3. No spurious DISARM of an already-armed symphony
 # ---------------------------------------------------------------------------
 
+
 def test_insufficient_mc_does_not_spuriously_disarm_symphony(
     patched_environment,
 ) -> None:
@@ -339,9 +329,7 @@ def test_insufficient_mc_does_not_spuriously_disarm_symphony(
     env = patched_environment
     # A positive return so the disarm gate's ``current_return > 0`` half is
     # satisfied — only the prob_underperforming half should keep the disarm from firing.
-    env["fetch_symphony_stats"].return_value = [
-        _make_symphony_payload(last_percent_change=0.05)
-    ]
+    env["fetch_symphony_stats"].return_value = [_make_symphony_payload(last_percent_change=0.05)]
     env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(500.0)
     env["db"].load_state.return_value = _seed_state(armed=True, hwm=10.0)
 
@@ -359,6 +347,7 @@ def test_insufficient_mc_does_not_spuriously_disarm_symphony(
 # 4. No spurious TP-ARM under the insufficient sentinel
 # ---------------------------------------------------------------------------
 
+
 def test_insufficient_mc_does_not_spuriously_tp_arm_symphony(
     patched_environment,
 ) -> None:
@@ -371,9 +360,7 @@ def test_insufficient_mc_does_not_spuriously_tp_arm_symphony(
     ``is None``.
     """
     env = patched_environment
-    env["fetch_symphony_stats"].return_value = [
-        _make_symphony_payload(last_percent_change=0.08)
-    ]
+    env["fetch_symphony_stats"].return_value = [_make_symphony_payload(last_percent_change=0.08)]
     env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(500.0)
     env["db"].load_state.return_value = _seed_state(armed=False, hwm=0.0)
 
@@ -389,6 +376,7 @@ def test_insufficient_mc_does_not_spuriously_tp_arm_symphony(
 # ---------------------------------------------------------------------------
 # 5. THE FAIL-SAFE PROOF — armed, below-stop symphony still exits
 # ---------------------------------------------------------------------------
+
 
 def test_armed_below_stop_symphony_still_triggers_when_mc_insufficient(
     patched_environment,
@@ -413,9 +401,7 @@ def test_armed_below_stop_symphony_still_triggers_when_mc_insufficient(
     """
     env = patched_environment
     # Deeply negative return — unambiguously below the trailing stop.
-    env["fetch_symphony_stats"].return_value = [
-        _make_symphony_payload(last_percent_change=-0.15)
-    ]
+    env["fetch_symphony_stats"].return_value = [_make_symphony_payload(last_percent_change=-0.15)]
     env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(495.0)
     # Armed, one tick short of confirmation, HWM above the current return so the
     # stop sits above the current return.
@@ -440,6 +426,7 @@ def test_armed_below_stop_symphony_still_triggers_when_mc_insufficient(
 # 6. mc_history is not polluted with the None sentinel
 # ---------------------------------------------------------------------------
 
+
 def test_insufficient_mc_does_not_pollute_mc_history_with_none(
     patched_environment,
 ) -> None:
@@ -453,9 +440,7 @@ def test_insufficient_mc_does_not_pollute_mc_history_with_none(
     the mc_history append branches on ``is None``.
     """
     env = patched_environment
-    env["fetch_symphony_stats"].return_value = [
-        _make_symphony_payload(last_percent_change=0.03)
-    ]
+    env["fetch_symphony_stats"].return_value = [_make_symphony_payload(last_percent_change=0.03)]
     env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(500.0)
     env["db"].load_state.return_value = _seed_state(armed=False, hwm=0.0)
 

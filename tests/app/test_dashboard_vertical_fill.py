@@ -71,17 +71,15 @@ class TestOuterWrapperIsFlexColumn:
 
         # page-wrap skeleton CSS lives in static/layout.css post-consolidation.
         layout_css = (_WORKTREE / "static" / "layout.css").read_text(encoding="utf-8")
-        page_wrap_css_match = re.search(
-            r'\.page-wrap\s*\{([^}]+)\}', layout_css, re.DOTALL
-        )
+        page_wrap_css_match = re.search(r"\.page-wrap\s*\{([^}]+)\}", layout_css, re.DOTALL)
         assert page_wrap_css_match, (
             ".page-wrap CSS definition must be present in static/layout.css — "
             "the shared page-layout skeleton."
         )
         css_body = page_wrap_css_match.group(1)
         narrow_cap = re.search(
-            r'(?:max-width|--studio-page-max-width)\s*:\s*'
-            r'(?:[0-9]{1,3}px|[0-9]{2,3}rem)',
+            r"(?:max-width|--studio-page-max-width)\s*:\s*"
+            r"(?:[0-9]{1,3}px|[0-9]{2,3}rem)",
             layout_css,
         )
         assert not narrow_cap, (
@@ -112,16 +110,16 @@ class TestTableCardFlexGrow:
         html = _INDEX_HTML.read_text(encoding="utf-8")
 
         # Assert the cards-grid CSS class exists (Studio replacement for flex-1 table card)
-        assert 'class="cards-grid"' in html or '.cards-grid' in html, (
+        assert 'class="cards-grid"' in html or ".cards-grid" in html, (
             "index.html must contain a cards-grid CSS class or element; "
             "the Studio design uses a CSS grid for symphony cards, not a flex-1 table card"
         )
 
         # cards-grid must not set a max-height that would cap the grid
-        cards_css_match = re.search(r'\.cards-grid\s*\{([^}]+)\}', html, re.DOTALL)
+        cards_css_match = re.search(r"\.cards-grid\s*\{([^}]+)\}", html, re.DOTALL)
         if cards_css_match:
             css_body = cards_css_match.group(1)
-            assert 'max-height' not in css_body, (
+            assert "max-height" not in css_body, (
                 f".cards-grid CSS must not set max-height; got: {css_body.strip()!r}"
             )
 

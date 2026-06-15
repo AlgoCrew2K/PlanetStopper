@@ -75,6 +75,7 @@ def _load_fixture() -> dict[str, Any]:
 # History builder (shared with mc_rng_seeding fixture spec)
 # ---------------------------------------------------------------------------
 
+
 def _date_key(i: int) -> str:
     base_day = 1 + i
     month = 1 + (base_day - 1) // 28
@@ -128,6 +129,7 @@ def _call_mc_with_seed(fixture: dict, seed: int | None) -> float:
 # ---------------------------------------------------------------------------
 # 1. Static (AST): run_monte_carlo call inside process_day must have seed= kwarg
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def synth_source() -> str:
@@ -190,7 +192,9 @@ def test_run_monte_carlo_call_in_synthetic_history_passes_seed_kwarg(
     This test will be RED until the fix lands.
     """
     calls = _find_run_monte_carlo_calls(synth_tree)
-    assert calls, "No run_monte_carlo call found — see test_process_day_run_monte_carlo_call_exists."
+    assert calls, (
+        "No run_monte_carlo call found — see test_process_day_run_monte_carlo_call_exists."
+    )
 
     missing_seed: list[int] = []
     for call in calls:
@@ -210,6 +214,7 @@ def test_run_monte_carlo_call_in_synthetic_history_passes_seed_kwarg(
 # ---------------------------------------------------------------------------
 # 2. Static (AST): seed= expression must NOT be the literal None
 # ---------------------------------------------------------------------------
+
 
 def test_seed_kwarg_in_synthetic_history_is_not_literal_none(
     synth_tree: ast.Module,
@@ -247,6 +252,7 @@ def test_seed_kwarg_in_synthetic_history_is_not_literal_none(
 # ---------------------------------------------------------------------------
 # 2b. Static (AST): seed= expression must be a function call, not a constant
 # ---------------------------------------------------------------------------
+
 
 def test_seed_kwarg_in_synthetic_history_is_not_a_constant_integer(
     synth_tree: ast.Module,
@@ -286,6 +292,7 @@ def test_seed_kwarg_in_synthetic_history_is_not_a_constant_integer(
 #     and the call site must reference it
 # ---------------------------------------------------------------------------
 
+
 def test_derive_cache_mc_seed_signature_if_present() -> None:
     """
     The implementer may introduce `derive_cache_mc_seed(symphony_id, trading_day)`
@@ -302,6 +309,7 @@ def test_derive_cache_mc_seed_signature_if_present() -> None:
         return  # Not added — implementer used composite-key approach; pass
 
     import inspect
+
     assert callable(math_engine.derive_cache_mc_seed), (
         "math_engine.derive_cache_mc_seed exists but is not callable."
     )
@@ -320,9 +328,7 @@ def test_derive_cache_mc_seed_signature_if_present() -> None:
         f"derive_cache_mc_seed('sym-alpha-001', '2024-01-02') returned "
         f"{seed_a!r} then {seed_b!r} — must be deterministic (pure function)."
     )
-    assert isinstance(seed_a, int), (
-        f"derive_cache_mc_seed returned {type(seed_a)!r}, expected int."
-    )
+    assert isinstance(seed_a, int), f"derive_cache_mc_seed returned {type(seed_a)!r}, expected int."
     # Differentiability: different trading_day → different seed
     seed_other_day = math_engine.derive_cache_mc_seed("sym-alpha-001", "2024-01-03")
     assert seed_a != seed_other_day, (
@@ -340,6 +346,7 @@ def test_derive_cache_mc_seed_signature_if_present() -> None:
 # ---------------------------------------------------------------------------
 # 3. Seed derivation determinism: derive(symphony_id, trading_day) is pure
 # ---------------------------------------------------------------------------
+
 
 def test_cache_seed_derivation_is_deterministic_for_same_inputs() -> None:
     """
@@ -377,6 +384,7 @@ def test_cache_seed_derivation_is_deterministic_for_same_inputs() -> None:
 #         and same day, different symphony → different seed
 # ---------------------------------------------------------------------------
 
+
 def test_seed_differs_when_trading_day_changes_for_same_symphony() -> None:
     """
     If the seed does not encode trading_day, two different days for the same
@@ -401,12 +409,8 @@ def test_seed_differs_when_trading_day_changes_for_same_symphony() -> None:
         "Fixture must provide two cases with the same symphony_id and different trading_day."
     )
 
-    seed_a = math_engine.derive_cycle_mc_seed(
-        f"{case_a['symphony_id']}_{case_a['trading_day']}"
-    )
-    seed_b = math_engine.derive_cycle_mc_seed(
-        f"{case_b['symphony_id']}_{case_b['trading_day']}"
-    )
+    seed_a = math_engine.derive_cycle_mc_seed(f"{case_a['symphony_id']}_{case_a['trading_day']}")
+    seed_b = math_engine.derive_cycle_mc_seed(f"{case_b['symphony_id']}_{case_b['trading_day']}")
 
     assert seed_a != seed_b, (
         f"derive_cycle_mc_seed produced the same seed ({seed_a!r}) for "
@@ -438,12 +442,8 @@ def test_seed_differs_when_symphony_changes_for_same_trading_day() -> None:
         "Fixture must provide two cases with the same trading_day and different symphony_id."
     )
 
-    seed_a = math_engine.derive_cycle_mc_seed(
-        f"{case_a['symphony_id']}_{case_a['trading_day']}"
-    )
-    seed_b = math_engine.derive_cycle_mc_seed(
-        f"{case_b['symphony_id']}_{case_b['trading_day']}"
-    )
+    seed_a = math_engine.derive_cycle_mc_seed(f"{case_a['symphony_id']}_{case_a['trading_day']}")
+    seed_b = math_engine.derive_cycle_mc_seed(f"{case_b['symphony_id']}_{case_b['trading_day']}")
 
     assert seed_a != seed_b, (
         f"derive_cycle_mc_seed produced the same seed ({seed_a!r}) for two "
@@ -456,6 +456,7 @@ def test_seed_differs_when_symphony_changes_for_same_trading_day() -> None:
 # ---------------------------------------------------------------------------
 # 6. Byte-identical cache invariant: same (symphony_id, trading_day) → identical mc_prob
 # ---------------------------------------------------------------------------
+
 
 def test_cache_rebuild_produces_bit_identical_mc_prob_for_same_symphony_and_day() -> None:
     """
@@ -497,14 +498,13 @@ def test_cache_rebuild_produces_bit_identical_mc_prob_for_same_symphony_and_day(
     assert math.isfinite(result_a), (
         f"Seeded run_monte_carlo returned non-finite value {result_a!r}."
     )
-    assert 0.0 <= result_a <= 100.0, (
-        f"mc_prob {result_a!r} outside [0, 100]."
-    )
+    assert 0.0 <= result_a <= 100.0, f"mc_prob {result_a!r} outside [0, 100]."
 
 
 # ---------------------------------------------------------------------------
 # 7. Different (symphony_id, trading_day) → different mc_prob series
 # ---------------------------------------------------------------------------
+
 
 def test_different_symphony_and_day_produce_different_mc_prob() -> None:
     """
@@ -533,12 +533,8 @@ def test_different_symphony_and_day_produce_different_mc_prob() -> None:
         or case_a["trading_day"] != case_b["trading_day"]
     ), "Fixture must provide two cases with at least one different input dimension."
 
-    seed_a = math_engine.derive_cycle_mc_seed(
-        f"{case_a['symphony_id']}_{case_a['trading_day']}"
-    )
-    seed_b = math_engine.derive_cycle_mc_seed(
-        f"{case_b['symphony_id']}_{case_b['trading_day']}"
-    )
+    seed_a = math_engine.derive_cycle_mc_seed(f"{case_a['symphony_id']}_{case_a['trading_day']}")
+    seed_b = math_engine.derive_cycle_mc_seed(f"{case_b['symphony_id']}_{case_b['trading_day']}")
 
     # Prerequisite: seeds must differ (if seeds are identical, the distinction
     # we are testing cannot be measured at the mc_prob level).
@@ -562,6 +558,7 @@ def test_different_symphony_and_day_produce_different_mc_prob() -> None:
 # ---------------------------------------------------------------------------
 # 8. Bug-detection invariant: seed=None is non-deterministic (validates the test can catch the bug)
 # ---------------------------------------------------------------------------
+
 
 def test_unseeded_calls_produce_non_identical_results_across_many_runs() -> None:
     """
@@ -594,6 +591,7 @@ def test_unseeded_calls_produce_non_identical_results_across_many_runs() -> None
 # ---------------------------------------------------------------------------
 # 9. No regression to the live production call site (alpha_bot_execution.py)
 # ---------------------------------------------------------------------------
+
 
 def test_alpha_bot_execution_live_call_site_still_passes_seed_kwarg() -> None:
     """

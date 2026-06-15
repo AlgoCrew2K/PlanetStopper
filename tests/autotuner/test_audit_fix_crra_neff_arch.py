@@ -60,11 +60,7 @@ import pytest
 
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 _FIXTURE_PATH = (
-    _WORKTREE_ROOT
-    / "tests"
-    / "fixtures"
-    / "math"
-    / "crra_haircut_u_transform_contract.json"
+    _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "crra_haircut_u_transform_contract.json"
 )
 
 # BHY tolerance — same as test_c4_harvey_liu_haircut.py and
@@ -78,16 +74,19 @@ def _load_fixture() -> dict:
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
 def _import_database():
     import database
+
     return database
 
 
 def _import_math_engine():
     import math_engine
+
     return math_engine
 
 
@@ -156,9 +155,7 @@ def test_fixture_file_exists_and_has_required_keys():
     for key in ("scenario_contract", "scenario_divergence", "constants"):
         assert key in data, f"Fixture missing top-level key '{key}'."
     for key in ("r_pct", "W_series", "U_series", "T", "expected"):
-        assert key in data["scenario_contract"], (
-            f"scenario_contract missing key '{key}'."
-        )
+        assert key in data["scenario_contract"], f"scenario_contract missing key '{key}'."
     assert "t_crra_eu" in data["scenario_contract"]["expected"]
     assert "t_from_raw_pct" in data["scenario_contract"]["expected"]
 
@@ -329,9 +326,7 @@ class TestHaircutSelectCrraEUUTransformContract:
         # Expected value is the same call so the test always stays in sync
         # regardless of bootstrap parameter tuning.
         # Tolerance exact equality: same function, same inputs, same seed.
-        expected_sortino_tstat = autotuner.compute_sortino_tstat(
-            r_pct, seed=0
-        )
+        expected_sortino_tstat = autotuner.compute_sortino_tstat(r_pct, seed=0)
 
         # rel=1e-9: deterministic arithmetic (same bootstrap RNG path).
         assert winner_tstat == pytest.approx(expected_sortino_tstat, rel=1e-9), (
@@ -471,9 +466,7 @@ class TestNEffectiveWiredIntoAutotunerRun:
             "base_atr_pct": 1.0,
             "valid_vwap_weight": 1.0,
         }
-        history = {
-            "sym-1": {f"2026-05-{d:02d}": [tick] for d in range(1, 11)}
-        }
+        history = {"sym-1": {f"2026-05-{d:02d}": [tick] for d in range(1, 11)}}
 
         # compute_n_effective is the function under test — spy on its calls.
         # Return the configured value so _haircut_select receives it.
@@ -484,26 +477,29 @@ class TestNEffectiveWiredIntoAutotunerRun:
 
         # _haircut_select mock: return a winning trial so the run completes
         # normally. We spy on it to assert it was called with n_effective.
-        mock_haircut = MagicMock(
-            return_value=(fake_trial, 0.04, 1.8)
-        )
+        mock_haircut = MagicMock(return_value=(fake_trial, 0.04, 1.8))
 
-        with patch("autotuner.optuna.create_study", return_value=fake_study), \
-             patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-             patch("autotuner.synthetic_history.generate_synthetic_history",
-                   return_value=history), \
-             patch("autotuner.database.load_chart_history", return_value={}), \
-             patch("autotuner.database.save_chart_archive"), \
-             patch("autotuner.database.get_symphony_strategy",
-                   return_value={
-                       "params": db_module.DEFAULT_STRATEGY.copy(),
-                       "locked_vars": [],
-                   }), \
-             patch("autotuner.database.DEFAULT_STRATEGY", db_module.DEFAULT_STRATEGY.copy()), \
-             patch("autotuner.math_engine.compute_vwap_breakdown_update",
-                   side_effect=lambda **kw: (0, 0, False, False)), \
-             patch("autotuner.compute_n_effective", mock_n_effective), \
-             patch("autotuner._haircut_select", mock_haircut):
+        with (
+            patch("autotuner.optuna.create_study", return_value=fake_study),
+            patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+            patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+            patch("autotuner.database.load_chart_history", return_value={}),
+            patch("autotuner.database.save_chart_archive"),
+            patch(
+                "autotuner.database.get_symphony_strategy",
+                return_value={
+                    "params": db_module.DEFAULT_STRATEGY.copy(),
+                    "locked_vars": [],
+                },
+            ),
+            patch("autotuner.database.DEFAULT_STRATEGY", db_module.DEFAULT_STRATEGY.copy()),
+            patch(
+                "autotuner.math_engine.compute_vwap_breakdown_update",
+                side_effect=lambda **kw: (0, 0, False, False),
+            ),
+            patch("autotuner.compute_n_effective", mock_n_effective),
+            patch("autotuner._haircut_select", mock_haircut),
+        ):
             yield {
                 "mock_n_effective": mock_n_effective,
                 "mock_haircut": mock_haircut,
@@ -528,7 +524,9 @@ class TestNEffectiveWiredIntoAutotunerRun:
         with self._patched_autotuner_run() as mocks:
             with contextlib.redirect_stdout(buf):
                 autotuner.run_autotuner(
-                    bot_state, "2026-05-10", ["acc-1"],
+                    bot_state,
+                    "2026-05-10",
+                    ["acc-1"],
                     spec_bundle_id=spec_bundle_id,
                 )
 
@@ -563,14 +561,14 @@ class TestNEffectiveWiredIntoAutotunerRun:
         with self._patched_autotuner_run(n_effective_return_value=n_eff_sentinel) as mocks:
             with contextlib.redirect_stdout(buf):
                 autotuner.run_autotuner(
-                    bot_state, "2026-05-10", ["acc-1"],
+                    bot_state,
+                    "2026-05-10",
+                    ["acc-1"],
                     spec_bundle_id=spec_bundle_id,
                 )
 
         mock_haircut = mocks["mock_haircut"]
-        assert mock_haircut.call_count >= 1, (
-            "Expected _haircut_select to be called at least once."
-        )
+        assert mock_haircut.call_count >= 1, "Expected _haircut_select to be called at least once."
 
         # Find any call that was made with n_effective=150.
         n_eff_values_seen = []
@@ -613,22 +611,32 @@ class TestNEffectiveWiredIntoAutotunerRun:
             spec_bundle_id=None,  # not the winner bundle — must be counted
         )
 
-        mock_haircut = MagicMock(return_value=(
-            MagicMock(value=0.8, params={
-                "TRIGGER_THRESHOLD_PCT": 15.0,
-                "TAKE_PROFIT_MC_PCT": 5.0,
-                "VWAP_CROSS_HWM_PCT": 0.51,
-                "VWAP_BLEED_MULTIPLIER": 1.5,
-                "VWAP_BLEED_TICKS": 10,
-                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
-                "MAX_PARABOLIC_SQUEEZE": 0.5,
-            }),
-            0.04, 1.8,
-        ))
+        mock_haircut = MagicMock(
+            return_value=(
+                MagicMock(
+                    value=0.8,
+                    params={
+                        "TRIGGER_THRESHOLD_PCT": 15.0,
+                        "TAKE_PROFIT_MC_PCT": 5.0,
+                        "VWAP_CROSS_HWM_PCT": 0.51,
+                        "VWAP_BLEED_MULTIPLIER": 1.5,
+                        "VWAP_BLEED_TICKS": 10,
+                        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                        "MAX_PARABOLIC_SQUEEZE": 0.5,
+                    },
+                ),
+                0.04,
+                1.8,
+            )
+        )
 
         tick = {
-            "return": 1.5, "mc_prob": 50.0, "vol": 1.2,
-            "vwap_diff": 0.0, "base_atr_pct": 1.0, "valid_vwap_weight": 1.0,
+            "return": 1.5,
+            "mc_prob": 50.0,
+            "vol": 1.2,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 1.0,
+            "valid_vwap_weight": 1.0,
         }
         history = {"sym-1": {f"2026-05-{d:02d}": [tick] for d in range(1, 11)}}
 
@@ -651,36 +659,39 @@ class TestNEffectiveWiredIntoAutotunerRun:
         fake_study.trials = [fake_trial]
 
         buf = io.StringIO()
-        with patch("autotuner.optuna.create_study", return_value=fake_study), \
-             patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-             patch("autotuner.synthetic_history.generate_synthetic_history",
-                   return_value=history), \
-             patch("autotuner.database.load_chart_history", return_value={}), \
-             patch("autotuner.database.save_chart_archive"), \
-             patch("autotuner.database.get_symphony_strategy",
-                   return_value={
-                       "params": db_module.DEFAULT_STRATEGY.copy(),
-                       "locked_vars": [],
-                   }), \
-             patch("autotuner.database.DEFAULT_STRATEGY", db_module.DEFAULT_STRATEGY.copy()), \
-             patch("autotuner.math_engine.compute_vwap_breakdown_update",
-                   side_effect=lambda **kw: (0, 0, False, False)), \
-             patch("autotuner._haircut_select", mock_haircut):
+        with (
+            patch("autotuner.optuna.create_study", return_value=fake_study),
+            patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+            patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+            patch("autotuner.database.load_chart_history", return_value={}),
+            patch("autotuner.database.save_chart_archive"),
+            patch(
+                "autotuner.database.get_symphony_strategy",
+                return_value={
+                    "params": db_module.DEFAULT_STRATEGY.copy(),
+                    "locked_vars": [],
+                },
+            ),
+            patch("autotuner.database.DEFAULT_STRATEGY", db_module.DEFAULT_STRATEGY.copy()),
+            patch(
+                "autotuner.math_engine.compute_vwap_breakdown_update",
+                side_effect=lambda **kw: (0, 0, False, False),
+            ),
+            patch("autotuner._haircut_select", mock_haircut),
+        ):
             with contextlib.redirect_stdout(buf):
                 autotuner.run_autotuner(
-                    bot_state, "2026-05-10", ["acc-1"],
+                    bot_state,
+                    "2026-05-10",
+                    ["acc-1"],
                     spec_bundle_id=spec_bundle_id,
                 )
 
-        assert mock_haircut.call_count >= 1, (
-            "Expected _haircut_select to be called at least once."
-        )
+        assert mock_haircut.call_count >= 1, "Expected _haircut_select to be called at least once."
 
         # _haircut_select must have been called with n_effective > n_optuna.
         # n_optuna = len(haircut_trials) = 1 (one fake trial); n_effective >= 1+25=26.
-        n_eff_values_seen = [
-            c.kwargs.get("n_effective") for c in mock_haircut.call_args_list
-        ]
+        n_eff_values_seen = [c.kwargs.get("n_effective") for c in mock_haircut.call_args_list]
         non_none = [v for v in n_eff_values_seen if v is not None]
 
         assert non_none, (
@@ -787,7 +798,7 @@ class TestArchSaveAutotuneRunEutColumns:
             default_oos_alpha=0.1,
             selection_tstat=1.8,
             naive_sharpe=2.0,
-            validation_sharpe=None,   # CRRA-EU path: Sortino not applicable
+            validation_sharpe=None,  # CRRA-EU path: Sortino not applicable
             frozen_eval_sharpe=None,  # CRRA-EU path: Sortino not applicable
             # EUT Phase-1 columns (the new parameters):
             spec_bundle_id="abc123bundle",
@@ -994,29 +1005,40 @@ class TestEndToEndAutotunerEutAuditTrail:
         fake_study.trials = [fake_trial]
 
         tick = {
-            "return": 1.5, "mc_prob": 50.0, "vol": 1.2,
-            "vwap_diff": 0.0, "base_atr_pct": 1.0, "valid_vwap_weight": 1.0,
+            "return": 1.5,
+            "mc_prob": 50.0,
+            "vol": 1.2,
+            "vwap_diff": 0.0,
+            "base_atr_pct": 1.0,
+            "valid_vwap_weight": 1.0,
         }
         history = {"sym-1": {f"2026-05-{d:02d}": [tick] for d in range(1, 11)}}
 
         buf = io.StringIO()
-        with patch("autotuner.optuna.create_study", return_value=fake_study), \
-             patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()), \
-             patch("autotuner.synthetic_history.generate_synthetic_history",
-                   return_value=history), \
-             patch("autotuner.database.load_chart_history", return_value={}), \
-             patch("autotuner.database.save_chart_archive"), \
-             patch("autotuner.database.get_symphony_strategy",
-                   return_value={
-                       "params": db_module.DEFAULT_STRATEGY.copy(),
-                       "locked_vars": [],
-                   }), \
-             patch("autotuner.database.DEFAULT_STRATEGY", db_module.DEFAULT_STRATEGY.copy()), \
-             patch("autotuner.math_engine.compute_vwap_breakdown_update",
-                   side_effect=lambda **kw: (0, 0, False, False)):
+        with (
+            patch("autotuner.optuna.create_study", return_value=fake_study),
+            patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
+            patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+            patch("autotuner.database.load_chart_history", return_value={}),
+            patch("autotuner.database.save_chart_archive"),
+            patch(
+                "autotuner.database.get_symphony_strategy",
+                return_value={
+                    "params": db_module.DEFAULT_STRATEGY.copy(),
+                    "locked_vars": [],
+                },
+            ),
+            patch("autotuner.database.DEFAULT_STRATEGY", db_module.DEFAULT_STRATEGY.copy()),
+            patch(
+                "autotuner.math_engine.compute_vwap_breakdown_update",
+                side_effect=lambda **kw: (0, 0, False, False),
+            ),
+        ):
             with contextlib.redirect_stdout(buf):
                 autotuner.run_autotuner(
-                    bot_state, "2026-05-10", ["acc-1"],
+                    bot_state,
+                    "2026-05-10",
+                    ["acc-1"],
                     spec_bundle_id=spec_bundle_id,
                 )
 

@@ -58,6 +58,7 @@ def _backtest_gate_src() -> str:
 # evaluate_acceptance_gate signature: pbo optional param
 # ---------------------------------------------------------------------------
 
+
 class TestEvaluateAcceptanceGatePboParam:
     """evaluate_acceptance_gate must accept an optional `pbo: float | None` parameter."""
 
@@ -87,10 +88,9 @@ class TestEvaluateAcceptanceGatePboParam:
         """pbo must default to None (backward-compatible — existing callers unaffected)."""
         ag = _import_acceptance_gate()
         import inspect
+
         sig = inspect.signature(ag.evaluate_acceptance_gate)
-        assert "pbo" in sig.parameters, (
-            "evaluate_acceptance_gate must have a 'pbo' parameter"
-        )
+        assert "pbo" in sig.parameters, "evaluate_acceptance_gate must have a 'pbo' parameter"
         param = sig.parameters["pbo"]
         assert param.default is None, (
             f"pbo parameter must default to None for backward compatibility, "
@@ -196,6 +196,7 @@ class TestEvaluateAcceptanceGatePboParam:
 # One-directional brake: PBO veto cannot be outvoted by panel score
 # ---------------------------------------------------------------------------
 
+
 class TestPboVetoOnDirectionalBrake:
     """PBO veto is un-outvotable: panel_score=None when PBO fires, always."""
 
@@ -205,13 +206,13 @@ class TestPboVetoOnDirectionalBrake:
 
         verdict = ag.evaluate_acceptance_gate(
             winner_trial_is_none=False,
-            winner_p_adj=0.001,   # excellent BHY
+            winner_p_adj=0.001,  # excellent BHY
             nn1_compliant=True,
             purge_integrity_ok=True,
-            oos_alpha=100.0,      # stellar OOS
+            oos_alpha=100.0,  # stellar OOS
             fallback_oos_alpha=0.1,
             default_oos_alpha=0.1,
-            candidate_stability_score=1.0,    # perfect panel
+            candidate_stability_score=1.0,  # perfect panel
             candidate_prior_anchor_score=1.0,
             incumbent_stability_score=0.0,
             incumbent_prior_anchor_score=0.0,
@@ -232,7 +233,7 @@ class TestPboVetoOnDirectionalBrake:
 
         # BHY veto fires (winner_trial_is_none=True) even with pbo=0.0 (excellent PBO).
         verdict = ag.evaluate_acceptance_gate(
-            winner_trial_is_none=True,   # BHY veto
+            winner_trial_is_none=True,  # BHY veto
             winner_p_adj=None,
             nn1_compliant=True,
             purge_integrity_ok=True,
@@ -246,14 +247,14 @@ class TestPboVetoOnDirectionalBrake:
             pbo=0.0,  # excellent PBO — but BHY already vetoes
         )
         assert verdict.decision == ag.DECISION_REJECT_VETO_FAILED, (
-            "BHY veto must still fire even when pbo=0.0 (excellent). "
-            f"Got {verdict.decision!r}"
+            f"BHY veto must still fire even when pbo=0.0 (excellent). Got {verdict.decision!r}"
         )
 
 
 # ---------------------------------------------------------------------------
 # AI-Advisor path is unaffected (backtest_gate_engine.py passes pbo=None)
 # ---------------------------------------------------------------------------
+
 
 class TestAiAdvisorPathUnchanged:
     """The AI-Advisor call site in backtest_gate_engine.py must pass pbo=None."""
@@ -281,16 +282,14 @@ class TestAiAdvisorPathUnchanged:
 # Autotuner wiring: top-K PRE-BHY selection + compute_pbo call
 # ---------------------------------------------------------------------------
 
+
 class TestAutotunerPboWiring:
     """The autotuner must select top-K PRE-BHY trials and call compute_pbo post-selection."""
 
     def test_autotuner_calls_compute_pbo(self):
         """autotuner.py must call math_engine.compute_pbo (or import compute_pbo)."""
         src = _autotuner_src()
-        has_compute_pbo = (
-            "compute_pbo" in src
-            or "math_engine.compute_pbo" in src
-        )
+        has_compute_pbo = "compute_pbo" in src or "math_engine.compute_pbo" in src
         assert has_compute_pbo, (
             "autotuner.py must call compute_pbo (from math_engine) "
             "after the BHY haircut selection to compute the PBO gate value."
@@ -299,13 +298,9 @@ class TestAutotunerPboWiring:
     def test_autotuner_passes_pbo_to_evaluate_acceptance_gate(self):
         """autotuner.py must pass pbo=<computed_value> to evaluate_acceptance_gate."""
         src = _autotuner_src()
-        assert "evaluate_acceptance_gate" in src, (
-            "autotuner.py must call evaluate_acceptance_gate"
-        )
+        assert "evaluate_acceptance_gate" in src, "autotuner.py must call evaluate_acceptance_gate"
         # Check that pbo is passed in the autotuner's evaluate_acceptance_gate call.
-        assert "pbo=" in src, (
-            "autotuner.py must pass pbo= keyword arg to evaluate_acceptance_gate"
-        )
+        assert "pbo=" in src, "autotuner.py must pass pbo= keyword arg to evaluate_acceptance_gate"
 
     def test_pbo_computed_from_pre_bhy_top_k_not_post_bhy(self):
         """PBO is computed on PRE-BHY top-K, not post-BHY winner only.
@@ -331,10 +326,12 @@ class TestAutotunerPboWiring:
         axis. Adding PBO must NOT change how compute_n_effective works.
         """
         import ast
+
         src = _autotuner_src()
         tree = ast.parse(src)
         neff_fns = [
-            node for node in ast.walk(tree)
+            node
+            for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef) and node.name == "compute_n_effective"
         ]
         assert len(neff_fns) == 1, (
@@ -354,6 +351,7 @@ class TestAutotunerPboWiring:
 # ---------------------------------------------------------------------------
 # Acceptance gate source: PBO veto docstring / orthogonality comment
 # ---------------------------------------------------------------------------
+
 
 class TestAcceptanceGatePboDocumentation:
     """The acceptance gate source must document the PBO veto's orthogonality."""

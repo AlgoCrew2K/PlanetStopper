@@ -42,8 +42,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures" / "app" / "edit_vars_indicator.json"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "app" / "edit_vars_indicator.json"
 )
 
 
@@ -55,6 +54,7 @@ def _load_fixture() -> dict:
 # Flask client fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def flask_client():
     import app as app_module
@@ -62,13 +62,17 @@ def flask_client():
     app_module.app.config["TESTING"] = True
     with (
         patch.object(app_module, "schedule"),
-        patch.object(app_module, "get_api_state_dict", return_value={
-            "bot_state": {},
-            "is_locked": False,
-            "port_state": {},
-            "exit_authority": {},
-            "daemon_started_at": None,
-        }),
+        patch.object(
+            app_module,
+            "get_api_state_dict",
+            return_value={
+                "bot_state": {},
+                "is_locked": False,
+                "port_state": {},
+                "exit_authority": {},
+                "daemon_started_at": None,
+            },
+        ),
     ):
         with app_module.app.test_client() as client:
             yield client, app_module
@@ -79,10 +83,7 @@ def _make_db_mock_with_strategies(symphonies: dict) -> MagicMock:
     mock_db = MagicMock()
     mock_db.load_state.return_value = {
         "date": "2026-05-16",
-        **{
-            sym_id: {"name": sym_id, "account": "ACC-INDIVIDUAL"}
-            for sym_id in symphonies
-        },
+        **{sym_id: {"name": sym_id, "account": "ACC-INDIVIDUAL"} for sym_id in symphonies},
     }
     mock_db.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
 
@@ -101,6 +102,7 @@ def _make_db_mock_with_strategies(symphonies: dict) -> MagicMock:
 # AC-VARS.1: N≥1 locked vars → indicator element present in rendered HTML
 # ===========================================================================
 
+
 class TestEditVarsIndicatorPresent:
     """
     AC-VARS.1: When at least one symphony has non-empty locked_vars, the
@@ -109,9 +111,7 @@ class TestEditVarsIndicatorPresent:
     The element must be visible (not hidden via CSS class).
     """
 
-    def test_indicator_present_when_locked_vars_populated(
-        self, flask_client, monkeypatch
-    ):
+    def test_indicator_present_when_locked_vars_populated(self, flask_client, monkeypatch):
         """AC-VARS.1: locked_vars populated → indicator element in page HTML."""
         client, app_module = flask_client
         fx = _load_fixture()
@@ -120,9 +120,7 @@ class TestEditVarsIndicatorPresent:
         with patch.object(app_module, "database", _make_db_mock_with_strategies(symphonies)):
             resp = client.get("/")
 
-        assert resp.status_code == 200, (
-            f"Index route must return 200. Got {resp.status_code}."
-        )
+        assert resp.status_code == 200, f"Index route must return 200. Got {resp.status_code}."
         html = resp.get_data(as_text=True)
 
         assert 'id="edit-vars-indicator"' in html or 'data-testid="edit-vars-indicator"' in html, (
@@ -132,9 +130,7 @@ class TestEditVarsIndicatorPresent:
             f"Searched HTML length: {len(html)} chars."
         )
 
-    def test_indicator_shows_nonzero_count(
-        self, flask_client, monkeypatch
-    ):
+    def test_indicator_shows_nonzero_count(self, flask_client, monkeypatch):
         """AC-VARS.1: indicator element must contain a non-zero count or non-empty text."""
         client, app_module = flask_client
         fx = _load_fixture()
@@ -147,6 +143,7 @@ class TestEditVarsIndicatorPresent:
 
         # Find the indicator and verify it's non-empty (has content between tags)
         import re
+
         indicator_pattern = re.compile(
             r'(?:id|data-testid)="edit-vars-indicator"[^>]*>(.*?)<',
             re.DOTALL,
@@ -162,9 +159,7 @@ class TestEditVarsIndicatorPresent:
             f"Found element but content was empty: {match.group(0)!r}"
         )
 
-    def test_indicator_count_matches_fixture_total(
-        self, flask_client, monkeypatch
-    ):
+    def test_indicator_count_matches_fixture_total(self, flask_client, monkeypatch):
         """AC-VARS.1: badge content must equal the fixture's expected_total_locked_count.
 
         Pins that the count is correct, not just non-empty.  The fixture has 2 locked
@@ -183,14 +178,13 @@ class TestEditVarsIndicatorPresent:
         html = resp.get_data(as_text=True)
 
         import re
+
         indicator_pattern = re.compile(
             r'(?:id|data-testid)="edit-vars-indicator"[^>]*>(.*?)<',
             re.DOTALL,
         )
         match = indicator_pattern.search(html)
-        assert match is not None, (
-            "edit-vars-indicator element not found in HTML."
-        )
+        assert match is not None, "edit-vars-indicator element not found in HTML."
         content = match.group(1).strip()
         assert content == str(expected_count), (
             f"edit-vars-indicator badge must show {expected_count} (fixture expected_total_locked_count). "
@@ -203,15 +197,14 @@ class TestEditVarsIndicatorPresent:
 # AC-VARS.2: 0 locked vars → no indicator (empty state preserved)
 # ===========================================================================
 
+
 class TestEditVarsIndicatorAbsentWhenEmpty:
     """
     AC-VARS.2: When no symphony has any locked vars, the indicator element
     must be absent or hidden. No phantom badge when nothing is populated.
     """
 
-    def test_no_indicator_when_no_locked_vars(
-        self, flask_client, monkeypatch
-    ):
+    def test_no_indicator_when_no_locked_vars(self, flask_client, monkeypatch):
         """AC-VARS.2: zero locked_vars across all symphonies → no visible indicator."""
         client, app_module = flask_client
         fx = _load_fixture()
@@ -224,6 +217,7 @@ class TestEditVarsIndicatorAbsentWhenEmpty:
         html = resp.get_data(as_text=True)
 
         import re
+
         indicator_pattern = re.compile(
             r'(?:id|data-testid)="edit-vars-indicator"[^>]*>(.*?)<',
             re.DOTALL,
@@ -242,6 +236,7 @@ class TestEditVarsIndicatorAbsentWhenEmpty:
 # AC-VARS.3: Indicator is in initial server-rendered HTML (no JS required)
 # ===========================================================================
 
+
 class TestEditVarsIndicatorServerRendered:
     """
     AC-VARS.3: The indicator must be present in the initial HTTP response
@@ -249,9 +244,7 @@ class TestEditVarsIndicatorServerRendered:
     indicator on page load without waiting for /api/settings to resolve.
     """
 
-    def test_indicator_in_initial_response_not_gated_on_js(
-        self, flask_client, monkeypatch
-    ):
+    def test_indicator_in_initial_response_not_gated_on_js(self, flask_client, monkeypatch):
         """AC-VARS.3: GET / HTML contains indicator without any JS execution."""
         client, app_module = flask_client
         fx = _load_fixture()
@@ -267,7 +260,7 @@ class TestEditVarsIndicatorServerRendered:
         html = resp.get_data(as_text=True)
 
         # The indicator must appear in the HTML, not only referenced in JS fetch callbacks
-        assert 'edit-vars-indicator' in html, (
+        assert "edit-vars-indicator" in html, (
             "edit-vars-indicator must be present in the server-rendered HTML "
             "(i.e. output of render_template, not injected by JS). "
             "The indicator must be visible on initial page load — AC-VARS.3."
@@ -276,9 +269,10 @@ class TestEditVarsIndicatorServerRendered:
         # Verify it is NOT exclusively inside a JS string literal
         # (a simple heuristic: the element should appear outside of <script> tags)
         import re
+
         # Strip script blocks
-        no_scripts = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
-        assert 'edit-vars-indicator' in no_scripts, (
+        no_scripts = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
+        assert "edit-vars-indicator" in no_scripts, (
             "edit-vars-indicator must appear in the HTML markup (outside <script> tags). "
             "If it only appears inside a JS string, it's not server-rendered."
         )

@@ -10,6 +10,7 @@ All helpers are deterministic — the same canonical facets dict always
 produces the same bundle_hash, so multiple helpers calling this within
 the same test's isolated DB are idempotent (INSERT OR IGNORE).
 """
+
 from __future__ import annotations
 
 import pytest

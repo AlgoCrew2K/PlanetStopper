@@ -111,7 +111,12 @@ _ADVISOR_CONTEXT_WITH_LENSES = {
             "ticker_scores": {"BND": 0.7, "TLT": 0.4, "SHY": 0.2},
         },
         "sources": [
-            {"title": "Bond rally", "url": "https://example.com/1", "published": "2026-06-01", "lens": "sentiment"},
+            {
+                "title": "Bond rally",
+                "url": "https://example.com/1",
+                "published": "2026-06-01",
+                "lens": "sentiment",
+            },
         ],
     },
     "macro": {
@@ -124,7 +129,12 @@ _ADVISOR_CONTEXT_WITH_LENSES = {
             "ticker_scores": {"BND": 0.5, "TLT": 0.8, "SHY": 0.3},
         },
         "sources": [
-            {"title": "10-Yr Treasury", "url": "https://fred.stlouisfed.org/series/DGS10", "published": "2026-06-01", "lens": "macro"},
+            {
+                "title": "10-Yr Treasury",
+                "url": "https://fred.stlouisfed.org/series/DGS10",
+                "published": "2026-06-01",
+                "lens": "macro",
+            },
         ],
     },
     "technicals": {
@@ -154,11 +164,41 @@ _ADVISOR_CONTEXT_WITH_LENSES = {
 _ADVISOR_CONTEXT_ALL_UNAVAILABLE = {
     "scope": "symphony",
     "symphony_id": "test-sym-002",
-    "sentiment": {"lens": "sentiment", "available": False, "reason": "stub", "payload": None, "sources": []},
-    "macro": {"lens": "macro", "available": False, "reason": "stub", "payload": None, "sources": []},
-    "technicals": {"lens": "technicals", "available": False, "reason": "stub", "payload": None, "sources": []},
-    "derivatives": {"lens": "derivatives", "available": False, "reason": "stub", "payload": None, "sources": []},
-    "fundamentals": {"lens": "fundamentals", "available": False, "reason": "stub", "payload": None, "sources": []},
+    "sentiment": {
+        "lens": "sentiment",
+        "available": False,
+        "reason": "stub",
+        "payload": None,
+        "sources": [],
+    },
+    "macro": {
+        "lens": "macro",
+        "available": False,
+        "reason": "stub",
+        "payload": None,
+        "sources": [],
+    },
+    "technicals": {
+        "lens": "technicals",
+        "available": False,
+        "reason": "stub",
+        "payload": None,
+        "sources": [],
+    },
+    "derivatives": {
+        "lens": "derivatives",
+        "available": False,
+        "reason": "stub",
+        "payload": None,
+        "sources": [],
+    },
+    "fundamentals": {
+        "lens": "fundamentals",
+        "available": False,
+        "reason": "stub",
+        "payload": None,
+        "sources": [],
+    },
 }
 
 
@@ -214,9 +254,15 @@ class TestExtractLensScores:
 
         # technicals, derivatives, fundamentals are all unavailable — none should appear.
         for ticker_scores in result.values():
-            assert "technicals" not in ticker_scores, "technicals (unavailable) must not contribute scores"
-            assert "derivatives" not in ticker_scores, "derivatives (unavailable) must not contribute scores"
-            assert "fundamentals" not in ticker_scores, "fundamentals (unavailable) must not contribute scores"
+            assert "technicals" not in ticker_scores, (
+                "technicals (unavailable) must not contribute scores"
+            )
+            assert "derivatives" not in ticker_scores, (
+                "derivatives (unavailable) must not contribute scores"
+            )
+            assert "fundamentals" not in ticker_scores, (
+                "fundamentals (unavailable) must not contribute scores"
+            )
 
     def test_all_unavailable_returns_empty_dict(self):
         """RED: when all lenses are unavailable, result is {} (no fabricated scores)."""
@@ -227,9 +273,7 @@ class TestExtractLensScores:
             fn = getattr(ai, "extract_lens_scores")
 
         result = fn(_ADVISOR_CONTEXT_ALL_UNAVAILABLE)
-        assert result == {}, (
-            f"All-unavailable context must return empty dict; got {result!r}"
-        )
+        assert result == {}, f"All-unavailable context must return empty dict; got {result!r}"
 
     def test_returns_dict_of_dicts(self):
         """RED: return type is dict[str, dict] — outer key is ticker, inner is lens→score."""
@@ -399,7 +443,9 @@ class TestGenerateObjectiveDirectedCandidatesLensParam:
         engine = _import_engine()
         # The constant must be accessible as an attribute — name must be descriptive.
         # We accept LENS_BLEND_WEIGHT or any name containing LENS and WEIGHT.
-        constant_names = [attr for attr in dir(engine) if "LENS" in attr.upper() and "WEIGHT" in attr.upper()]
+        constant_names = [
+            attr for attr in dir(engine) if "LENS" in attr.upper() and "WEIGHT" in attr.upper()
+        ]
         assert constant_names, (
             "No named LENS_BLEND_WEIGHT constant found in asset_swap_engine — "
             "no magic numbers per project coding standard (BRIEF AC-2)"
@@ -461,7 +507,9 @@ class TestGatePathUnchanged:
         with (
             patch("advisors.asset_swap_engine.run_backtest", return_value=mock_bt_result),
             patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
-            patch("advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch) as mock_gate,
+            patch(
+                "advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch
+            ) as mock_gate,
             patch("database.insert_advisor_observation"),
         ):
             obj = engine.SwapObjective(
@@ -496,7 +544,9 @@ class TestGatePathUnchanged:
         with (
             patch("advisors.asset_swap_engine.run_backtest", return_value=mock_bt_result),
             patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
-            patch("advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch),
+            patch(
+                "advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch
+            ),
             patch("database.insert_advisor_observation"),
         ):
             obj = engine.SwapObjective(
@@ -530,7 +580,9 @@ class TestPersistenceLensEvidence:
         mock_bt_result.error = None
         mock_bt_result.stats = {"sharpe": 1.2}
         # Provide 30 daily returns so fold-transform produces a non-trivial oos_alpha.
-        mock_bt_result.daily_returns = {f"day{i}": 0.001 * (1 if i % 2 == 0 else -1) for i in range(30)}
+        mock_bt_result.daily_returns = {
+            f"day{i}": 0.001 * (1 if i % 2 == 0 else -1) for i in range(30)
+        }
         mock_bt_result.data_warnings = []
 
         captured_calls = []
@@ -586,9 +638,7 @@ class TestPersistenceLensEvidence:
         assert calls
         raw = calls[0].get("raw_response", {})
         lens_ev = raw.get("lens_evidence")
-        assert isinstance(lens_ev, dict), (
-            f"lens_evidence must be a dict; got {type(lens_ev)}"
-        )
+        assert isinstance(lens_ev, dict), f"lens_evidence must be a dict; got {type(lens_ev)}"
 
     def test_sources_is_list(self):
         """RED: sources value must be a list."""
@@ -597,9 +647,7 @@ class TestPersistenceLensEvidence:
         assert calls
         raw = calls[0].get("raw_response", {})
         sources = raw.get("sources")
-        assert isinstance(sources, list), (
-            f"sources must be a list; got {type(sources)}"
-        )
+        assert isinstance(sources, list), f"sources must be a list; got {type(sources)}"
 
     def test_propose_operator_swap_accepts_lens_scores_kwarg(self):
         """RED: propose_operator_swap must accept lens_scores keyword argument."""
@@ -650,7 +698,9 @@ class TestPerCandidateRationale:
         mock_bt_result = MagicMock()
         mock_bt_result.error = None
         mock_bt_result.stats = {}
-        mock_bt_result.daily_returns = {f"d{i}": 0.001 * (-1 if i % 3 == 0 else 1) for i in range(30)}
+        mock_bt_result.daily_returns = {
+            f"d{i}": 0.001 * (-1 if i % 3 == 0 else 1) for i in range(30)
+        }
         mock_bt_result.data_warnings = []
 
         mock_gate_batch = MagicMock()
@@ -675,7 +725,9 @@ class TestPerCandidateRationale:
 
         with (
             patch("advisors.asset_swap_engine.run_backtest", return_value=mock_bt_result),
-            patch("advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch),
+            patch(
+                "advisors.asset_swap_engine.evaluate_candidate_batch", return_value=mock_gate_batch
+            ),
             patch("database.insert_advisor_observation"),
         ):
             result = engine.propose_operator_swap(
@@ -732,9 +784,27 @@ class TestSafetyContracts:
                 "payload": {"ticker_scores": {}},  # available but empty
                 "sources": [],
             },
-            "technicals": {"lens": "technicals", "available": False, "reason": "stub", "payload": None, "sources": []},
-            "derivatives": {"lens": "derivatives", "available": False, "reason": "stub", "payload": None, "sources": []},
-            "fundamentals": {"lens": "fundamentals", "available": False, "reason": "stub", "payload": None, "sources": []},
+            "technicals": {
+                "lens": "technicals",
+                "available": False,
+                "reason": "stub",
+                "payload": None,
+                "sources": [],
+            },
+            "derivatives": {
+                "lens": "derivatives",
+                "available": False,
+                "reason": "stub",
+                "payload": None,
+                "sources": [],
+            },
+            "fundamentals": {
+                "lens": "fundamentals",
+                "available": False,
+                "reason": "stub",
+                "payload": None,
+                "sources": [],
+            },
         }
 
         result = fn(context)
@@ -760,9 +830,13 @@ class TestSafetyContracts:
         for ctx in bad_contexts:
             try:
                 result = fn(ctx)
-                assert isinstance(result, dict), f"Must return dict on malformed input; got {type(result)}"
+                assert isinstance(result, dict), (
+                    f"Must return dict on malformed input; got {type(result)}"
+                )
             except Exception as exc:
-                pytest.fail(f"extract_lens_scores raised {type(exc).__name__} on malformed input {ctx!r}: {exc}")
+                pytest.fail(
+                    f"extract_lens_scores raised {type(exc).__name__} on malformed input {ctx!r}: {exc}"
+                )
 
     def test_advisor_observation_role_unchanged(self):
         """RED: advisor_role must still be 'ASSET_SWAP' (addition, not replacement)."""
@@ -865,9 +939,18 @@ class TestFixtureBackedContract:
             ai = _import_ai_advisor()
             fn = getattr(ai, "extract_lens_scores")
 
-        fixture_path = _REPO_ROOT / "tests" / "fixtures" / "ai_advisor" / "cycle3" / "lens_score_extraction_basic.json"
+        fixture_path = (
+            _REPO_ROOT
+            / "tests"
+            / "fixtures"
+            / "ai_advisor"
+            / "cycle3"
+            / "lens_score_extraction_basic.json"
+        )
         if not fixture_path.exists():
-            pytest.skip("Fixture file not found — schema-derived fixture expected at tests/fixtures/ai_advisor/cycle3/lens_score_extraction_basic.json")
+            pytest.skip(
+                "Fixture file not found — schema-derived fixture expected at tests/fixtures/ai_advisor/cycle3/lens_score_extraction_basic.json"
+            )
 
         with fixture_path.open(encoding="utf-8") as fh:
             fixture = json.load(fh)
@@ -940,9 +1023,19 @@ class TestCitationValidationOnPersistence:
         )
 
         mixed_sources = [
-            {"title": "Valid bond article", "url": "https://example.com/bond", "published": "2026-06-01", "lens": "sentiment"},
+            {
+                "title": "Valid bond article",
+                "url": "https://example.com/bond",
+                "published": "2026-06-01",
+                "lens": "sentiment",
+            },
             {"title": "Missing URL", "published": "2026-06-01", "lens": "macro"},
-            {"title": "Bad scheme", "url": "ftp://example.com/data", "published": "2026-06-01", "lens": "macro"},
+            {
+                "title": "Bad scheme",
+                "url": "ftp://example.com/data",
+                "published": "2026-06-01",
+                "lens": "macro",
+            },
         ]
 
         with (
@@ -992,8 +1085,18 @@ class TestCitationValidationOnPersistence:
         )
 
         valid_sources = [
-            {"title": "Bond rally driven by FOMC", "url": "https://example.com/bond", "published": "2026-06-01", "lens": "sentiment"},
-            {"title": "FRED 10-Yr yield", "url": "https://fred.stlouisfed.org/series/DGS10", "published": "2026-06-01", "lens": "macro"},
+            {
+                "title": "Bond rally driven by FOMC",
+                "url": "https://example.com/bond",
+                "published": "2026-06-01",
+                "lens": "sentiment",
+            },
+            {
+                "title": "FRED 10-Yr yield",
+                "url": "https://fred.stlouisfed.org/series/DGS10",
+                "published": "2026-06-01",
+                "lens": "macro",
+            },
         ]
 
         with (

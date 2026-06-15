@@ -21,6 +21,7 @@ Source-of-truth references:
   - autotuner.py:94-114 (loss-aversion constants being deleted).
   - math_engine.py:30-54 (_reject_non_finite policy).
 """
+
 from __future__ import annotations
 
 import ast
@@ -42,11 +43,13 @@ _W_H2_FIXTURE = (
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
 def _import_math_engine():
     import math_engine
+
     return math_engine
 
 
@@ -89,10 +92,7 @@ def test_loss_aversion_constants_deleted_from_autotuner():
     """
     autotuner = _import_autotuner()
 
-    still_present = [
-        name for name in _LOSS_AVERSION_CONST_NAMES
-        if hasattr(autotuner, name)
-    ]
+    still_present = [name for name in _LOSS_AVERSION_CONST_NAMES if hasattr(autotuner, name)]
 
     assert not still_present, (
         f"Original loss-aversion constant names still importable from autotuner: {still_present}.\n"
@@ -120,10 +120,7 @@ def test_loss_aversion_constants_not_in_ast():
         if isinstance(target, ast.Name)
     }
 
-    re_introduced = [
-        name for name in _LOSS_AVERSION_CONST_NAMES
-        if name in module_assigns
-    ]
+    re_introduced = [name for name in _LOSS_AVERSION_CONST_NAMES if name in module_assigns]
 
     assert not re_introduced, (
         f"Original loss-aversion constant name(s) found as module-level assignments in "
@@ -167,10 +164,7 @@ def test_run_sim_constants_not_at_module_scope():
     """
     autotuner = _import_autotuner()
 
-    at_module_scope = [
-        name for name in _RUN_SIM_CONST_NAMES
-        if hasattr(autotuner, name)
-    ]
+    at_module_scope = [name for name in _RUN_SIM_CONST_NAMES if hasattr(autotuner, name)]
 
     assert not at_module_scope, (
         f"RUN_SIM_* constant(s) found at autotuner module scope: {at_module_scope}.\n"
@@ -238,6 +232,7 @@ def test_gamma_read_from_spec_bundles_not_module_constant():
     # not from a module-level constant. Assert that get_spec_facets_for_bundle exists
     # in database and is callable (it is the intended gamma source).
     import database as _db
+
     assert callable(getattr(_db, "get_spec_facets_for_bundle", None)), (
         "database.get_spec_facets_for_bundle must exist and be callable. "
         "The CRRA-EU objective closure reads gamma from spec_facets via this function. "
@@ -253,6 +248,7 @@ def test_gamma_read_from_spec_bundles_not_module_constant():
     # gamma-sensitive (done above) and that the function accepts gamma as an explicit
     # parameter (the correct interface for a DB-sourced gamma).
     import inspect
+
     sig = inspect.signature(math_engine.compute_crra_eu_objective)
     param_names = list(sig.parameters.keys())
     assert len(param_names) >= 2, (
@@ -383,12 +379,11 @@ def test_compute_crra_utility_log_utility_branch_at_gamma_equals_1():
     math_engine = _import_math_engine()
 
     tol_attr = (
-        "CRRA_LOG_UTILITY_GAMMA_TOL"
-        if hasattr(math_engine, "CRRA_LOG_UTILITY_GAMMA_TOL")
-        else None
+        "CRRA_LOG_UTILITY_GAMMA_TOL" if hasattr(math_engine, "CRRA_LOG_UTILITY_GAMMA_TOL") else None
     )
     if tol_attr is None:
         import autotuner
+
         tol_attr = "CRRA_LOG_UTILITY_GAMMA_TOL"
         module_with_tol = autotuner
     else:
@@ -528,9 +523,7 @@ def test_compute_crra_eu_objective_returns_zero_on_empty():
     math_engine = _import_math_engine()
 
     result = math_engine.compute_crra_eu_objective([], gamma=2.0)
-    assert result == 0.0, (
-        f"compute_crra_eu_objective([]) must return 0.0; got {result!r}"
-    )
+    assert result == 0.0, f"compute_crra_eu_objective([]) must return 0.0; got {result!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +660,7 @@ def test_wh5_documentation_plain_sqrt_t_is_known_anticonservative():
 
     # AR(1) series with rho=0.5 and T=21 for numerical stability.
     import random
+
     rng = random.Random(42)
     rho = 0.5
     T = 21
@@ -745,14 +739,13 @@ def test_run_simulation_crra_eu_calls_compute_crra_eu_objective():
     sentinel_return = -0.12345
     gamma = 2.0
 
-    with patch.object(
-        math_engine, "compute_crra_eu_objective", return_value=sentinel_return
-    ) as mock_crra_obj, patch(
-        "autotuner._collect_sim_returns", return_value=test_returns_pct
+    with (
+        patch.object(
+            math_engine, "compute_crra_eu_objective", return_value=sentinel_return
+        ) as mock_crra_obj,
+        patch("autotuner._collect_sim_returns", return_value=test_returns_pct),
     ):
-        result = autotuner.run_simulation_crra_eu(
-            {}, {}, [], "2026-05-26", {}, gamma=gamma
-        )
+        result = autotuner.run_simulation_crra_eu({}, {}, [], "2026-05-26", {}, gamma=gamma)
 
     mock_crra_obj.assert_called_once()
 
@@ -835,9 +828,12 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
     mock_study = MagicMock()
     mock_study.best_value = sentinel_crra_result
     mock_study.best_params = {
-        "TAKE_PROFIT_MC_PCT": 0.5, "VWAP_CROSS_HWM_PCT": 0.5,
-        "VWAP_BLEED_MULTIPLIER": 0.5, "VWAP_BLEED_TICKS": 2,
-        "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.5,
+        "TAKE_PROFIT_MC_PCT": 0.5,
+        "VWAP_CROSS_HWM_PCT": 0.5,
+        "VWAP_BLEED_MULTIPLIER": 0.5,
+        "VWAP_BLEED_TICKS": 2,
+        "PARABOLIC_VELOCITY_THRESHOLD": 0.5,
+        "MAX_PARABOLIC_SQUEEZE": 0.5,
     }
     mock_study.trials = []
 
@@ -848,32 +844,36 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
     mock_study.optimize = _fake_optimize
 
     fake_bot_state = {"acc123__sym456": {"name": "TestSymphony", "is_live": False}}
-    fake_strat_data = {"locked_vars": [], "params": {
-        "TAKE_PROFIT_MC_PCT": 0.5, "VWAP_CROSS_HWM_PCT": 0.5,
-        "VWAP_BLEED_MULTIPLIER": 0.5, "VWAP_BLEED_TICKS": 2,
-        "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.5,
-    }}
+    fake_strat_data = {
+        "locked_vars": [],
+        "params": {
+            "TAKE_PROFIT_MC_PCT": 0.5,
+            "VWAP_CROSS_HWM_PCT": 0.5,
+            "VWAP_BLEED_MULTIPLIER": 0.5,
+            "VWAP_BLEED_TICKS": 2,
+            "PARABOLIC_VELOCITY_THRESHOLD": 0.5,
+            "MAX_PARABOLIC_SQUEEZE": 0.5,
+        },
+    }
 
     # Minimal history: one sym with one date-tick so the fold machinery
     # produces non-empty sets and the symphony loop iterates once.
     fake_sym_id = "acc123__sym456"
-    fake_history = {
-        fake_sym_id: {f"2026-05-{d:02d}": [{"return": 0.5}] for d in range(1, 30)}
-    }
+    fake_history = {fake_sym_id: {f"2026-05-{d:02d}": [{"return": 0.5}] for d in range(1, 30)}}
 
-    with patch("autotuner.database") as mock_db, \
-         patch("autotuner._collect_sim_returns", return_value=test_returns_pct), \
-         patch.object(math_engine, "compute_crra_eu_objective",
-                      side_effect=_fake_crra_eu_objective), \
-         patch("autotuner.compute_sortino_ratio", side_effect=_fake_sortino_ratio), \
-         patch("autotuner.optuna") as mock_optuna, \
-         patch("autotuner._apply_optuna_archive_migration_if_needed"), \
-         patch("autotuner.validate_nn1_compliance", return_value=(True, [])), \
-         patch("autotuner.validate_search_space_nn1"), \
-         patch("autotuner.calculate_historical_deviation", return_value={}), \
-         patch("autotuner.synthetic_history.generate_synthetic_history",
-               return_value=fake_history), \
-         patch("autotuner.synthetic_history.HistoryShortfallError", Exception):
+    with (
+        patch("autotuner.database") as mock_db,
+        patch("autotuner._collect_sim_returns", return_value=test_returns_pct),
+        patch.object(math_engine, "compute_crra_eu_objective", side_effect=_fake_crra_eu_objective),
+        patch("autotuner.compute_sortino_ratio", side_effect=_fake_sortino_ratio),
+        patch("autotuner.optuna") as mock_optuna,
+        patch("autotuner._apply_optuna_archive_migration_if_needed"),
+        patch("autotuner.validate_nn1_compliance", return_value=(True, [])),
+        patch("autotuner.validate_search_space_nn1"),
+        patch("autotuner.calculate_historical_deviation", return_value={}),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=fake_history),
+        patch("autotuner.synthetic_history.HistoryShortfallError", Exception),
+    ):
         # NOTE: targeting generate_synthetic_history and HistoryShortfallError as
         # two separate attribute-level patches rather than patching the module object.
         # Patching the whole module (`patch("autotuner.synthetic_history")`) produces
@@ -918,8 +918,11 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
         mock_optuna.storages.RDBStorage.return_value = MagicMock()
 
         autotuner.run_autotuner(
-            fake_bot_state, "2026-05-26", ["acc123"],
-            is_forced=True, spec_bundle_id=1,
+            fake_bot_state,
+            "2026-05-26",
+            ["acc123"],
+            is_forced=True,
+            spec_bundle_id=1,
         )
 
     assert crra_obj_calls, (

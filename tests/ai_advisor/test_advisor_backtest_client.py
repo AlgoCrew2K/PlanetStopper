@@ -72,7 +72,9 @@ def _parse_source(relpath: str) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
-def _make_mock_response(status_code: int, body: dict | None = None, headers: dict | None = None) -> MagicMock:
+def _make_mock_response(
+    status_code: int, body: dict | None = None, headers: dict | None = None
+) -> MagicMock:
     """Build a minimal mock requests.Response."""
     mock = MagicMock()
     mock.status_code = status_code
@@ -89,6 +91,7 @@ def _make_mock_response(status_code: int, body: dict | None = None, headers: dic
 # ---------------------------------------------------------------------------
 # Fixtures (function-scoped — no shared mutable state)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def captured_fixture() -> dict:
@@ -134,6 +137,7 @@ def minimal_raw_value() -> dict:
 # Section 1 — Module exists and exposes the required public interface
 # ---------------------------------------------------------------------------
 
+
 class TestModuleExists:
     """advisors/composer_backtest_client.py must exist and expose its contract."""
 
@@ -168,6 +172,7 @@ class TestModuleExists:
 # ---------------------------------------------------------------------------
 # Section 2 — The AC-X5 never-raises contract
 # ---------------------------------------------------------------------------
+
 
 class TestNeverRaisesContract:
     """run_backtest MUST NEVER raise on API or transport errors (AC-X5).
@@ -204,9 +209,7 @@ class TestNeverRaisesContract:
 
         assert result is not None
         assert isinstance(result, client.BacktestResult)
-        assert result.error is not None, (
-            "BacktestResult.error must be non-None on a 500 response."
-        )
+        assert result.error is not None, "BacktestResult.error must be non-None on a 500 response."
 
     def test_401_returns_error_result_not_raises(self, minimal_raw_value):
         """401 Unauthorized → BacktestResult with error (AC-X4 missing-key state)."""
@@ -232,9 +235,7 @@ class TestNeverRaisesContract:
 
         assert result is not None, "Timeout must return a BacktestResult, not raise."
         assert isinstance(result, client.BacktestResult)
-        assert result.error is not None, (
-            "Timeout must produce BacktestResult with non-None error."
-        )
+        assert result.error is not None, "Timeout must produce BacktestResult with non-None error."
         assert "timeout" in result.error.lower() or "timed" in result.error.lower(), (
             f"Timeout error must mention the timeout condition; got: {result.error!r}."
         )
@@ -243,8 +244,10 @@ class TestNeverRaisesContract:
         """requests.ConnectionError → BacktestResult with error, not propagated exception."""
         client = _import_client()
 
-        with patch("requests.post", side_effect=requests.ConnectionError("mock conn error")), \
-             patch("time.sleep"):
+        with (
+            patch("requests.post", side_effect=requests.ConnectionError("mock conn error")),
+            patch("time.sleep"),
+        ):
             result = client.run_backtest(raw_value=minimal_raw_value, max_retries=0)
 
         assert result is not None
@@ -267,6 +270,7 @@ class TestNeverRaisesContract:
 # ---------------------------------------------------------------------------
 # Section 3 — Error result shape: reason string is informative
 # ---------------------------------------------------------------------------
+
 
 class TestErrorResultShape:
     """Error results must include a non-empty reason string (AC-X5: 'with reason')."""
@@ -304,14 +308,13 @@ class TestErrorResultShape:
         with patch("requests.post", return_value=mock_resp), patch("time.sleep"):
             result = client.run_backtest(raw_value=minimal_raw_value, max_retries=0)
 
-        assert result.stats is None, (
-            f"Error result must have stats=None, got: {result.stats!r}."
-        )
+        assert result.stats is None, f"Error result must have stats=None, got: {result.stats!r}."
 
 
 # ---------------------------------------------------------------------------
 # Section 4 — Successful response parsing from the real fixture
 # ---------------------------------------------------------------------------
+
 
 class TestSuccessfulParsing:
     """The client must parse the real fixture into a valid BacktestResult."""
@@ -387,6 +390,7 @@ class TestSuccessfulParsing:
     ):
         """All daily_returns values must be finite floats (no inf, no NaN)."""
         import math as _math
+
         client = _import_client()
         raw_value = {"id": symphony_id, "step": "root", "name": "test", "children": []}
         mock_resp = _make_mock_response(200, body=response_body)
@@ -407,6 +411,7 @@ class TestSuccessfulParsing:
 # ---------------------------------------------------------------------------
 # Section 5 — Request body and auth contract
 # ---------------------------------------------------------------------------
+
 
 class TestRequestContract:
     """The client must build a valid request body with auth headers."""
@@ -484,6 +489,7 @@ class TestRequestContract:
 # Section 6 — Retry: 429 then 200 succeeds; bounded retries
 # ---------------------------------------------------------------------------
 
+
 class TestRetryPolicy:
     """Retry is bounded; 429→200 sequence produces a successful result."""
 
@@ -534,6 +540,7 @@ class TestRetryPolicy:
 # Section 7 — Architecture: AC-X2 isolation + no top-level network call
 # ---------------------------------------------------------------------------
 
+
 class TestArchitectureContracts:
     """AC-X2 isolation and import-time safety."""
 
@@ -569,8 +576,10 @@ class TestArchitectureContracts:
 
         sys.modules.pop("advisors.composer_backtest_client", None)
 
-        with patch("requests.post", side_effect=counting_post), \
-             patch("requests.get", side_effect=counting_get):
+        with (
+            patch("requests.post", side_effect=counting_post),
+            patch("requests.get", side_effect=counting_get),
+        ):
             _ensure_repo_on_path()
             importlib.import_module("advisors.composer_backtest_client")
 

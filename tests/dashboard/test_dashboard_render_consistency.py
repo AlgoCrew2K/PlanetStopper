@@ -48,6 +48,7 @@ _DELTA_ROWS = ["today", "cumulative", "mdd"]
 # Fixtures / helpers (mirror tests/dashboard/test_cards_live_refresh.py)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def client():
     app_module.app.config["TESTING"] = True
@@ -101,6 +102,7 @@ def _html_source() -> str:
 # AC-4a part 1 — the three delta spans must carry stable testids (template source)
 # ===========================================================================
 
+
 class TestDeltaSpansHaveTestids:
     """The today/cumulative/mdd alpha spans must be addressable by data-testid so the
     poll can update them. Today only the bot-text/held-text spans have testids.
@@ -137,6 +139,7 @@ class TestDeltaSpansHaveTestids:
 # AC-4a part 2 — updateComparisonRows must WRITE the delta spans each poll (JS source)
 # ===========================================================================
 
+
 class TestPollUpdatesDeltaSpans:
     """The poll handler must address AND write each delta span so the displayed alpha
     refreshes together with Bot/Held — the displayed delta must equal displayed Bot-Held.
@@ -168,7 +171,7 @@ class TestPollUpdatesDeltaSpans:
         start = js.find("function updateComparisonRows")
         assert start != -1, "static/index.js must define updateComparisonRows"
         # Slice a generous window; the function is well under this size.
-        body = js[start:start + 4000]
+        body = js[start : start + 4000]
 
         for row in _DELTA_ROWS:
             assert f"comp-{row}-delta" in body, (
@@ -188,6 +191,7 @@ class TestPollUpdatesDeltaSpans:
 # ===========================================================================
 # AC-4a part 3 — index.js must parse (node --check) so the poll actually runs
 # ===========================================================================
+
 
 class TestIndexJsParses:
     def test_node_check_passes(self):
@@ -210,6 +214,7 @@ class TestIndexJsParses:
 # AC-4d — standby/symphonies count excludes the phantom non-name top-level key
 # ===========================================================================
 
+
 class TestStandbyCountExcludesPhantomKey:
     """/api/state 'symphonies' must be name-guarded: a phantom top-level dict without a
     'name' (e.g. last_market_close_snapshot) must NOT inflate the count 11 -> 12.
@@ -218,14 +223,28 @@ class TestStandbyCountExcludesPhantomKey:
     def _state_with_phantom(self):
         return {
             "sym-a": {
-                "name": "Alpha", "account": "ACC1", "armed": False, "tp_armed": False,
-                "para_armed": False, "triggered": False, "current_return": 1.0,
-                "current_value": 10000.0, "stop_trigger": -2.0, "mc_prob": 30.0,
+                "name": "Alpha",
+                "account": "ACC1",
+                "armed": False,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
+                "current_return": 1.0,
+                "current_value": 10000.0,
+                "stop_trigger": -2.0,
+                "mc_prob": 30.0,
             },
             "sym-b": {
-                "name": "Bravo", "account": "ACC1", "armed": True, "tp_armed": False,
-                "para_armed": False, "triggered": False, "current_return": 0.5,
-                "current_value": 9500.0, "stop_trigger": -1.5, "mc_prob": 40.0,
+                "name": "Bravo",
+                "account": "ACC1",
+                "armed": True,
+                "tp_armed": False,
+                "para_armed": False,
+                "triggered": False,
+                "current_return": 0.5,
+                "current_value": 9500.0,
+                "stop_trigger": -1.5,
+                "mc_prob": 40.0,
             },
             # Phantom: a top-level dict with NO 'name' — must be excluded from symphonies.
             "last_market_close_snapshot": {"ts": "2026-06-04T20:00:00Z", "value": 12945.18},
@@ -248,13 +267,11 @@ class TestStandbyCountExcludesPhantomKey:
         symphonies = resp.get_json()["symphonies"]
 
         # DERIVED: the expected count is the number of name-bearing top-level dicts.
-        expected = sum(
-            1 for v in state.values() if isinstance(v, dict) and "name" in v
-        )
+        expected = sum(1 for v in state.values() if isinstance(v, dict) and "name" in v)
         assert len(symphonies) == expected, (
             f"AC-4d FAIL: 'symphonies' has {len(symphonies)} entries, expected {expected} "
             "name-guarded ones. The phantom 'last_market_close_snapshot' leaked in "
-            "(app.py:1294 has no `\"name\" in v` guard), inflating the standby badge 11 -> 12."
+            '(app.py:1294 has no `"name" in v` guard), inflating the standby badge 11 -> 12.'
         )
 
     def test_no_symphony_is_the_phantom_key(self, client, mock_database, monkeypatch):

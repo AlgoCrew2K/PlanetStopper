@@ -73,9 +73,7 @@ def test_migration_025_uses_alter_table_add_column():
     assert "ADVISOR_OBSERVATIONS" in sql, (
         "Migration 025 must target the advisor_observations table by name."
     )
-    assert "SYMPHONY_ID" in sql, (
-        "Migration 025 must declare a `symphony_id` column."
-    )
+    assert "SYMPHONY_ID" in sql, "Migration 025 must declare a `symphony_id` column."
 
 
 def test_migration_025_column_is_nullable_with_default_null():
@@ -166,6 +164,7 @@ def test_advisor_observations_has_symphony_id_column_after_init_db():
     migrations; this test asserts the column appears with the right shape.
     """
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     cols = {
@@ -253,6 +252,7 @@ def test_insert_advisor_observation_omitting_symphony_id_stores_null():
     assert isinstance(row_id, int) and row_id > 0
 
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     raw = conn.execute(
@@ -286,7 +286,9 @@ def test_get_advisor_observations_for_symphony_accessor_exists():
         "get_advisor_observations_for_symphony",
         "get_advisor_observations_by_symphony",
     )
-    found = [n for n in candidate_names if hasattr(db_module, n) and callable(getattr(db_module, n))]
+    found = [
+        n for n in candidate_names if hasattr(db_module, n) and callable(getattr(db_module, n))
+    ]
     assert found, (
         f"None of {candidate_names!r} are exported by database.py. "
         "Add a single-query symphony-filter accessor backed by the new symphony_id "

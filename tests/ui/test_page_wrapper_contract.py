@@ -128,6 +128,7 @@ _HORIZONTAL_PADDING_PROPS = (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _read_template(name: str) -> str:
     path = _TEMPLATES / name
     assert path.is_file(), f"Expected page template {name!r} at {path}."
@@ -136,9 +137,7 @@ def _read_template(name: str) -> str:
 
 def _inline_style_css(html: str) -> str:
     """Return the concatenated, comment-stripped contents of inline <style>."""
-    blocks = re.findall(
-        r"<style\b[^>]*>(.*?)</style>", html, re.IGNORECASE | re.DOTALL
-    )
+    blocks = re.findall(r"<style\b[^>]*>(.*?)</style>", html, re.IGNORECASE | re.DOTALL)
     css = "\n".join(blocks)
     return re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
 
@@ -199,6 +198,7 @@ def _has_nonzero_horizontal_padding(decls: dict[str, str]) -> bool:
 # AC-LC.1 -- shared layout.css exists
 # ===========================================================================
 
+
 class TestSharedLayoutStylesheetExists:
     """The consolidation hinges on a single shared layout stylesheet."""
 
@@ -214,6 +214,7 @@ class TestSharedLayoutStylesheetExists:
 # AC-LC.2 -- layout.css defines the .page-wrap skeleton once
 # ===========================================================================
 
+
 class TestLayoutCssDefinesSkeleton:
     """layout.css must contain the canonical .page-wrap skeleton rule."""
 
@@ -228,8 +229,7 @@ class TestLayoutCssDefinesSkeleton:
                 page_wrap_props.update(decls)
 
         assert page_wrap_props, (
-            "static/layout.css must define a `.page-wrap` rule -- the shared "
-            "page-wrapper skeleton."
+            "static/layout.css must define a `.page-wrap` rule -- the shared page-wrapper skeleton."
         )
         declared_skeleton = [p for p in SKELETON_PROPERTIES if p in page_wrap_props]
         assert declared_skeleton, (
@@ -242,6 +242,7 @@ class TestLayoutCssDefinesSkeleton:
 # ===========================================================================
 # AC-LC.3 -- layout.css drives variation via named CSS variables
 # ===========================================================================
+
 
 class TestLayoutCssUsesCssVariables:
     """
@@ -260,12 +261,8 @@ class TestLayoutCssUsesCssVariables:
             if ".page-wrap" in selectors:
                 page_wrap_values.extend(decls.values())
 
-        assert page_wrap_values, (
-            "static/layout.css must define a `.page-wrap` rule (AC-LC.2)."
-        )
-        uses_var = any(
-            re.search(r"var\(\s*--studio-page-[\w-]+", v) for v in page_wrap_values
-        )
+        assert page_wrap_values, "static/layout.css must define a `.page-wrap` rule (AC-LC.2)."
+        uses_var = any(re.search(r"var\(\s*--studio-page-[\w-]+", v) for v in page_wrap_values)
         assert uses_var, (
             "static/layout.css `.page-wrap` skeleton must drive per-page "
             "variation through named CSS custom properties "
@@ -279,6 +276,7 @@ class TestLayoutCssUsesCssVariables:
 # ===========================================================================
 # AC-LC.4 -- every page template links layout.css
 # ===========================================================================
+
 
 class TestEveryPageLinksLayoutCss:
     """All five page templates must consume the shared stylesheet."""
@@ -298,6 +296,7 @@ class TestEveryPageLinksLayoutCss:
 # ===========================================================================
 # AC-LC.5 + AC-LC.6 -- no per-template skeleton duplication
 # ===========================================================================
+
 
 class TestNoPerTemplateSkeletonDuplication:
     """
@@ -347,6 +346,7 @@ class TestNoPerTemplateSkeletonDuplication:
 # AC-LC.8 -- history.html's intentional ultrawide cap survives as an override
 # ===========================================================================
 
+
 class TestHistoryUltrawideCapPreservedAsOverride:
     """
     history.html intentionally caps its width at 2400px on ultrawide screens
@@ -389,6 +389,7 @@ class TestHistoryUltrawideCapPreservedAsOverride:
 # ===========================================================================
 # AC-LC.9 -- layout.css resets the body box model
 # ===========================================================================
+
 
 def _is_zero(value: str) -> bool:
     """True if a CSS length value is an effective zero (0 / 0px / 0 0 ...)."""
@@ -433,6 +434,7 @@ class TestLayoutCssResetsBodyBoxModel:
 # AC-LC.10 -- no per-template body margin/padding
 # ===========================================================================
 
+
 class TestNoPerTemplateBodyBoxModel:
     """
     The body box-model reset lives ONLY in layout.css. A page template's inline
@@ -463,6 +465,7 @@ class TestNoPerTemplateBodyBoxModel:
 # ===========================================================================
 # AC-LC.11 + AC-LC.12 -- shared universal box-sizing reset
 # ===========================================================================
+
 
 def _is_universal_selector(selector: str) -> bool:
     """True if a CSS selector is the universal selector `*` or `*::pseudo`.
@@ -505,10 +508,7 @@ class TestLayoutCssOwnsUniversalReset:
             "box-sizing. Three of the five pages currently lack any universal "
             "box-sizing reset and render content-box."
         )
-        assert any(
-            "border-box" in decls.get("box-sizing", "")
-            for decls in universal_rules
-        ), (
+        assert any("border-box" in decls.get("box-sizing", "") for decls in universal_rules), (
             f"static/layout.css universal `*` reset must declare "
             f"box-sizing: border-box. Found: {universal_rules!r}."
         )

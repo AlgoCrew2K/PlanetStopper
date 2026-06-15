@@ -254,8 +254,8 @@ def _latest_chart_row(env, symphony_id: str = _SYMPHONY_ID) -> dict:
 # ===========================================================================
 class TestBreakevenOverlayEmission:
     """The chart_history row must carry a ``breakeven`` key:
-      * value == BREAKEVEN_RETURN_AXIS_VALUE (0.0) when breakeven_locked is True
-      * value is None when breakeven_locked is False
+    * value == BREAKEVEN_RETURN_AXIS_VALUE (0.0) when breakeven_locked is True
+    * value is None when breakeven_locked is False
     """
 
     def test_breakeven_constant_is_defined_and_zero(self):
@@ -290,9 +290,7 @@ class TestBreakevenOverlayEmission:
         env["fetch_symphony_stats"].return_value = [
             _make_symphony_payload(last_percent_change=0.05)
         ]
-        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(
-            last_price=500.0, vwap=500.0
-        )
+        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(last_price=500.0, vwap=500.0)
         env["db"].load_state.return_value = _seed_state(breakeven_locked=False)
 
         alpha_bot_execution.main()
@@ -316,9 +314,7 @@ class TestBreakevenOverlayEmission:
         env["fetch_symphony_stats"].return_value = [
             _make_symphony_payload(last_percent_change=0.05)
         ]
-        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(
-            last_price=500.0, vwap=500.0
-        )
+        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(last_price=500.0, vwap=500.0)
         env["db"].load_state.return_value = _seed_state(breakeven_locked=True)
 
         alpha_bot_execution.main()
@@ -344,17 +340,11 @@ class TestBreakevenOverlayEmission:
         locked breakeven would mislead the operator.
         """
         env = patched_environment
-        env["fetch_symphony_stats"].return_value = [
-            _make_symphony_payload(last_percent_change=0.0)
-        ]
-        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(
-            last_price=500.0, vwap=500.0
-        )
+        env["fetch_symphony_stats"].return_value = [_make_symphony_payload(last_percent_change=0.0)]
+        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(last_price=500.0, vwap=500.0)
         # 0% return + no hold ticks => activation math cannot flip the lock on;
         # seeded False stays False.
-        env["db"].load_state.return_value = _seed_state(
-            breakeven_locked=False, hwm=0.0
-        )
+        env["db"].load_state.return_value = _seed_state(breakeven_locked=False, hwm=0.0)
 
         alpha_bot_execution.main()
         row = _latest_chart_row(env)
@@ -389,16 +379,10 @@ class TestBreakevenOverlayEmission:
                 name=_SYMPHONY_NAME_2,
             ),
         ]
-        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(
-            last_price=500.0, vwap=500.0
-        )
+        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(last_price=500.0, vwap=500.0)
         # Symphony 1: breakeven_locked True. Symphony 2: breakeven_locked False.
-        seed = _seed_state(
-            symphony_id=_SYMPHONY_ID, breakeven_locked=True, hwm=10.0
-        )
-        seed_2 = _seed_state(
-            symphony_id=_SYMPHONY_ID_2, breakeven_locked=False, hwm=0.0
-        )
+        seed = _seed_state(symphony_id=_SYMPHONY_ID, breakeven_locked=True, hwm=10.0)
+        seed_2 = _seed_state(symphony_id=_SYMPHONY_ID_2, breakeven_locked=False, hwm=0.0)
         seed[_SYMPHONY_ID_2] = seed_2[_SYMPHONY_ID_2]
         env["db"].load_state.return_value = seed
 
@@ -432,9 +416,7 @@ class TestVwapOverlayEmission:
         env["fetch_symphony_stats"].return_value = [
             _make_symphony_payload(last_percent_change=0.05)
         ]
-        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(
-            last_price=505.0, vwap=500.0
-        )
+        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(last_price=505.0, vwap=500.0)
         env["db"].load_state.return_value = _seed_state()
 
         alpha_bot_execution.main()
@@ -537,9 +519,7 @@ class TestVwapOverlayEmission:
             f"current_return={current_return}, vwap_overlay={row['vwap']!r}."
         )
 
-    def test_vwap_value_equals_current_return_when_price_equals_vwap(
-        self, patched_environment
-    ):
+    def test_vwap_value_equals_current_return_when_price_equals_vwap(self, patched_environment):
         """When last_price == vwap, weighted_vwap_diff is 0 and the VWAP
         overlay coincides exactly with current_return (the overlay and the
         return line touch). Anchors the zero-diff case.
@@ -549,9 +529,7 @@ class TestVwapOverlayEmission:
         env["fetch_symphony_stats"].return_value = [
             _make_symphony_payload(last_percent_change=last_pct_change)
         ]
-        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(
-            last_price=500.0, vwap=500.0
-        )
+        env["fetch_intraday_vwaps"].return_value = _make_vwap_payload(last_price=500.0, vwap=500.0)
         env["db"].load_state.return_value = _seed_state()
 
         alpha_bot_execution.main()
@@ -665,9 +643,7 @@ class TestVwapOverlayGoldenFixture:
             f"re-derived={rederived_expected}."
         )
 
-        assert row["vwap"] == pytest.approx(
-            rederived_expected, rel=TOL_REL, abs=TOL_ABS
-        ), (
+        assert row["vwap"] == pytest.approx(rederived_expected, rel=TOL_REL, abs=TOL_ABS), (
             f"VWAP overlay does not match golden fixture {fixture_path.name}. "
             f"Expected {rederived_expected} "
             f"(derivation: {fixture.get('derivation')}), got {row['vwap']!r}."
@@ -701,9 +677,7 @@ class TestOverlayKeysDoNotPerturbDecisionPath:
     fails this test.
     """
 
-    def test_overlay_additions_do_not_change_trigger_outcome_or_stop(
-        self, patched_environment
-    ):
+    def test_overlay_additions_do_not_change_trigger_outcome_or_stop(self, patched_environment):
         env = patched_environment
 
         fixture_pct_change = 0.12  # current_return == 12.0
@@ -769,9 +743,7 @@ class TestOverlayKeysDoNotPerturbDecisionPath:
         # 3. The chart row's `return` is the independently-derived current
         #    return, untouched by the overlay arithmetic.
         expected_current_return = fixture_pct_change * 100.0
-        assert row["return"] == pytest.approx(
-            expected_current_return, rel=TOL_REL, abs=TOL_ABS
-        ), (
+        assert row["return"] == pytest.approx(expected_current_return, rel=TOL_REL, abs=TOL_ABS), (
             "chart row 'return' must equal fixture-derived current_return "
             f"({expected_current_return}); the VWAP-overlay arithmetic "
             f"(which also reads current_return) must not mutate it. "
@@ -789,14 +761,11 @@ class TestOverlayKeysDoNotPerturbDecisionPath:
             "the tracked stop level, not None."
         )
         assert "breakeven" in row and row["breakeven"] == 0.0, (
-            "breakeven overlay should be 0.0 here (locked) — sanity anchor "
-            "for the next assertion."
+            "breakeven overlay should be 0.0 here (locked) — sanity anchor for the next assertion."
         )
         # The two are independent keys; assert `stop` is sourced from the
         # engine's stop math by checking it equals the persisted stop_trigger.
-        assert row["stop"] == pytest.approx(
-            sym_state["stop_trigger"], rel=TOL_REL, abs=TOL_ABS
-        ), (
+        assert row["stop"] == pytest.approx(sym_state["stop_trigger"], rel=TOL_REL, abs=TOL_ABS), (
             "chart row 'stop' must equal the engine-computed stop_trigger "
             "persisted to bot_state — proving 'stop' is still sourced from "
             "the decision math and was not overwritten by the breakeven "

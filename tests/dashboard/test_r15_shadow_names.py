@@ -288,7 +288,7 @@ class TestShadowPerfPillRendering:
         # Studio card uses class="card-name" with Jinja {{ sym.get("normalized_name") or sym.get("name") }}
         has_card_name = re.search(
             r'class="card-name"[^>]*>.*?\{\{[^}]*name[^}]*\}\}|'
-            r'\{\{[^}]*(?:normalized_name|name)[^}]*\}\}[^<]*</div>',
+            r"\{\{[^}]*(?:normalized_name|name)[^}]*\}\}[^<]*</div>",
             html,
             re.DOTALL,
         )
@@ -308,7 +308,7 @@ class TestShadowPerfPillRendering:
 
         has_data_attr = re.search(
             r'data-sym-id=["\']?\{\{[^}]+\}\}["\']?|'
-            r'data-sym-id\s*=',
+            r"data-sym-id\s*=",
             html,
         )
         assert has_data_attr, (
@@ -346,7 +346,7 @@ class TestShadowPerfPillRendering:
         """
         html = self._html()
 
-        card_name_css = re.search(r'\.card-name\s*\{([^}]+)\}', html, re.DOTALL)
+        card_name_css = re.search(r"\.card-name\s*\{([^}]+)\}", html, re.DOTALL)
         assert card_name_css, (
             ".card-name CSS must be defined in index.html for symphony name display; "
             "the Studio card-name element replaced the old Shadow Perf pill label"
@@ -354,7 +354,7 @@ class TestShadowPerfPillRendering:
 
         # card-name must have font styling (visible name display)
         css_body = card_name_css.group(1)
-        assert 'font-size' in css_body or 'font-weight' in css_body or 'color' in css_body, (
+        assert "font-size" in css_body or "font-weight" in css_body or "color" in css_body, (
             f".card-name CSS must include font styling; got: {css_body.strip()!r}"
         )
 
@@ -380,8 +380,8 @@ class TestHoverHighlightJs:
         """
         html = self._html()
 
-        has_card_hover_css = re.search(r'\.sym-card\s*:hover\s*\{|sym-card.*:hover', html)
-        has_card_transition = re.search(r'\.sym-card\s*\{[^}]*transition', html, re.DOTALL)
+        has_card_hover_css = re.search(r"\.sym-card\s*:hover\s*\{|sym-card.*:hover", html)
+        has_card_transition = re.search(r"\.sym-card\s*\{[^}]*transition", html, re.DOTALL)
 
         assert has_card_hover_css or has_card_transition, (
             "index.html must define hover state for .sym-card — either a :hover CSS rule "
@@ -458,7 +458,7 @@ class TestCrossHighlightedCss:
         """
         html = self._html()
 
-        sym_card_css = re.search(r'\.sym-card\s*\{([^}]+)\}', html, re.DOTALL)
+        sym_card_css = re.search(r"\.sym-card\s*\{([^}]+)\}", html, re.DOTALL)
         assert sym_card_css, (
             ".sym-card CSS class must be defined in index.html; "
             "the Studio design uses .sym-card for symphony tile cards"
@@ -471,13 +471,12 @@ class TestCrossHighlightedCss:
         """
         html = self._html()
 
-        sym_card_css = re.search(r'\.sym-card\s*\{([^}]+)\}', html, re.DOTALL)
+        sym_card_css = re.search(r"\.sym-card\s*\{([^}]+)\}", html, re.DOTALL)
         assert sym_card_css, ".sym-card CSS not found"
 
         css_body = sym_card_css.group(1)
         has_visual_style = any(
-            prop in css_body
-            for prop in ('border', 'box-shadow', 'background', 'outline')
+            prop in css_body for prop in ("border", "box-shadow", "background", "outline")
         )
         assert has_visual_style, (
             f".sym-card CSS must include border, box-shadow, background, or outline; "
@@ -642,7 +641,7 @@ class TestXssEscapingOnShadowPerfPills:
             re.DOTALL,
         )
         # Also accept if card-name is present and Jinja expressions are used for name rendering
-        has_jinja_expressions = '{{ sym' in html or '{{sym' in html
+        has_jinja_expressions = "{{ sym" in html or "{{sym" in html
 
         assert has_jinja_name or has_jinja_expressions, (
             "index.html symphony cards must render names via Jinja template expressions "
@@ -663,7 +662,7 @@ class TestXssEscapingOnShadowPerfPills:
 
         # Assert the template does NOT use the |safe filter on symphony names
         # (which would bypass Jinja autoescaping)
-        unsafe_name = re.search(r'\{\{[^}]*(?:name|normalized_name)[^}]*\|\s*safe[^}]*\}\}', html)
+        unsafe_name = re.search(r"\{\{[^}]*(?:name|normalized_name)[^}]*\|\s*safe[^}]*\}\}", html)
         assert not unsafe_name, (
             "index.html must NOT use the Jinja |safe filter on symphony name fields; "
             "{{ sym.get('name') | safe }} bypasses autoescaping and creates an XSS vector. "

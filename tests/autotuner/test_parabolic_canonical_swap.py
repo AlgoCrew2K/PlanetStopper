@@ -118,8 +118,7 @@ def test_autotuner_calls_compute_para_arm_decision() -> None:
         "Call(s) to math_engine.compute_para_arm_decision are missing required "
         "kwargs. All four kwargs must be passed by name:\n"
         + "\n".join(
-            f"  - line {lineno}: missing {sorted(missing)}"
-            for lineno, missing in missing_by_call
+            f"  - line {lineno}: missing {sorted(missing)}" for lineno, missing in missing_by_call
         )
         + f"\nFull required kwarg set: {sorted(REQUIRED_KWARGS)}."
     )

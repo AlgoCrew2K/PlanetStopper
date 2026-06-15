@@ -23,6 +23,7 @@ The harvey_liu_haircut.json fixture retains the same scenario structure
 and is still used for the BHY pipeline regression (the pipeline is
 fixture-driven; the t-stat generation adapts to the new signature).
 """
+
 from __future__ import annotations
 
 import inspect
@@ -37,6 +38,7 @@ _HAIRCUT_FIXTURE = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "harvey_liu_
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -70,6 +72,7 @@ def test_sortino_tstat_returns_finite_float_for_sufficient_series():
     result = autotuner.compute_sortino_tstat(returns, seed=42)
 
     import math as _math
+
     assert isinstance(result, float), (
         f"compute_sortino_tstat must return float; got {type(result).__name__!r}."
     )
@@ -114,8 +117,8 @@ def test_sortino_tstat_conservative_fallback_for_small_T():
     autotuner = _import_autotuner()
 
     short_series_cases = [
-        [],          # length 0
-        [0.01],      # length 1
+        [],  # length 0
+        [0.01],  # length 1
         [0.01, -0.005],  # length 2
         [0.01, -0.005, 0.02],  # length 3
         [0.01, -0.005, 0.02, -0.01],  # length 4
@@ -178,13 +181,13 @@ def test_sortino_bhy_pipeline_produces_valid_p_adj_and_winner():
     # "A_strong": consistent positive returns well above target 0.0.
     # "B_weak" / "C_weak": near-zero returns with noise.
     series_A_strong = [0.03] * 15 + [0.02] * 10  # 25 days, consistently positive
-    series_B_weak   = [0.001, -0.001] * 12 + [0.001]  # 25 days, near-zero
-    series_C_weak   = [-0.001, 0.001] * 12 + [-0.001]  # 25 days, near-zero
+    series_B_weak = [0.001, -0.001] * 12 + [0.001]  # 25 days, near-zero
+    series_C_weak = [-0.001, 0.001] * 12 + [-0.001]  # 25 days, near-zero
 
     trials_with_labels = [
         ("A_strong", series_A_strong),
-        ("B_weak",   series_B_weak),
-        ("C_weak",   series_C_weak),
+        ("B_weak", series_B_weak),
+        ("C_weak", series_C_weak),
     ]
 
     tstats = [
@@ -228,8 +231,7 @@ def test_sortino_tstat_signature_is_returns_seed():
     params = list(sig.parameters.keys())
 
     assert len(params) >= 2, (
-        f"compute_sortino_tstat must have at least 2 parameters; "
-        f"got {params!r}."
+        f"compute_sortino_tstat must have at least 2 parameters; got {params!r}."
     )
     # First param: the return series (not a scalar Sortino or sample count).
     assert params[0] in ("returns", "return_series", "daily_returns", "r"), (

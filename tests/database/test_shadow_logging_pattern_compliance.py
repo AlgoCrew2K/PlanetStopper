@@ -250,7 +250,7 @@ def test_alpha_bot_execution_cvar_write_is_not_gated_on_live_execution():
 
     # Check if any cvar call falls inside a LIVE_EXECUTION-gated block
     for call_line in cvar_call_lines:
-        for (start, end) in live_exec_if_ranges:
+        for start, end in live_exec_if_ranges:
             if start <= call_line <= end:
                 gated_lines.append(call_line)
 
@@ -375,8 +375,7 @@ def test_cvar_diagnostics_row_is_queryable_by_cycle_id(tmp_path):
     row_keys = set(row.keys())
     required_keys = {"cycle_id", "symphony_id", "cvar_5pct", "cvar_n_tail"}
     assert required_keys.issubset(row_keys), (
-        f"cvar_diagnostics row missing required keys. "
-        f"Expected {required_keys}, found {row_keys}."
+        f"cvar_diagnostics row missing required keys. Expected {required_keys}, found {row_keys}."
     )
 
     # cycle_id round-trips correctly

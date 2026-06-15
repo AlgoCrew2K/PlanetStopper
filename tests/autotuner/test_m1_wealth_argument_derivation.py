@@ -24,6 +24,7 @@ Three named module-scope constants required by the SUT (no-magic-numbers rule):
   RETURN_PCT_TO_FRACTION   = 100.0
   CRRA_LOG_UTILITY_GAMMA_TOL  = 1e-9  (tolerance for gamma == 1 branch)
 """
+
 from __future__ import annotations
 
 import json
@@ -41,6 +42,7 @@ _W_H2_FIXTURE = (
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -59,6 +61,7 @@ def _get_wealth_arg_floor():
     """
     import autotuner
     import math_engine
+
     if hasattr(math_engine, "WEALTH_ARG_FLOOR"):
         return math_engine.WEALTH_ARG_FLOOR
     if hasattr(autotuner, "WEALTH_ARG_FLOOR"):
@@ -90,6 +93,7 @@ def test_fixture_constants_match_sut_constants():
     """
     autotuner = _import_autotuner()
     import math_engine
+
     fixture = _load_wh2_fixture()
 
     # WEALTH_ARG_FLOOR — plan §Deliverables: 'Module-scope constants in math_engine.py:
@@ -266,6 +270,7 @@ def test_floor_is_applied_to_W_not_to_U():
     """
     autotuner = _import_autotuner()
     import math_engine
+
     fixture = _load_wh2_fixture()
     wealth_arg_floor = _get_wealth_arg_floor()
 
@@ -312,6 +317,7 @@ def test_crra_tstat_is_finite_with_floor_hitting_day():
     """
     autotuner = _import_autotuner()
     import math_engine
+
     fixture = _load_wh2_fixture()
 
     gamma = 2.0
@@ -397,6 +403,7 @@ def test_fixture_u_values_match_crra_formula():
     Tolerance per fixture's tolerance_for_test field (1e-12 to 1e-14).
     """
     import math_engine
+
     fixture = _load_wh2_fixture()
 
     gamma_map = {

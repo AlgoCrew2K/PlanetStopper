@@ -26,6 +26,7 @@ the live time_ratio at each minute.
 The default operator setting is EXECUTION_START_TIME = "10:30". The time_ratio
 anchors on that, not 09:30 ET (see alpha_bot_execution.py:805-807).
 """
+
 from __future__ import annotations
 
 import datetime as dt
@@ -40,12 +41,12 @@ sys.path.insert(0, str(ROOT))
 import math_engine  # noqa: E402
 
 # Default parameters (.env defaults from alpha_bot_execution.py / database.py)
-MAX_PARABOLIC_SQUEEZE = 0.50           # alpha_bot_execution.py:62
-SYMPHONY_VOL_TYPICAL = 1.20            # typical 20-day vol for a Composer symphony (pct points)
-SYMPHONY_VOL_LOW = 0.60                # quiet regime
-SYMPHONY_VOL_HIGH = 2.40               # volatile regime
-HWM_PCT = 1.00                         # safe_hwm 1.0% (assume slight positive drift)
-CURRENT_RETURN_FLAT = 1.00             # flat random-walk price; current_return == HWM
+MAX_PARABOLIC_SQUEEZE = 0.50  # alpha_bot_execution.py:62
+SYMPHONY_VOL_TYPICAL = 1.20  # typical 20-day vol for a Composer symphony (pct points)
+SYMPHONY_VOL_LOW = 0.60  # quiet regime
+SYMPHONY_VOL_HIGH = 2.40  # volatile regime
+HWM_PCT = 1.00  # safe_hwm 1.0% (assume slight positive drift)
+CURRENT_RETURN_FLAT = 1.00  # flat random-walk price; current_return == HWM
 
 EXECUTION_START = dt.time(10, 30)
 MARKET_CLOSE = dt.time(16, 0)
@@ -126,23 +127,32 @@ def build_table(symphony_vol: float) -> str:
         dyn_mult_open, dyn_min_open = math_engine.compute_time_squeeze_decay(0.0)
         # Column "PARA only": squeeze active, breakeven off, NO time-squeeze (tr=0)
         active_para_only, _, _ = stop_distance(
-            symphony_vol=symphony_vol, time_ratio=0.0,
-            para_armed=True, breakeven_locked=False,
+            symphony_vol=symphony_vol,
+            time_ratio=0.0,
+            para_armed=True,
+            breakeven_locked=False,
         )
         # Column "PARA + breakeven": both flags set, NO time-squeeze (tr=0)
         active_para_be, _, _ = stop_distance(
-            symphony_vol=symphony_vol, time_ratio=0.0,
-            para_armed=True, breakeven_locked=True,
+            symphony_vol=symphony_vol,
+            time_ratio=0.0,
+            para_armed=True,
+            breakeven_locked=True,
         )
         # Column "All three": flags + live time-ratio
         active_all3, dyn_mult, dyn_min = stop_distance(
-            symphony_vol=symphony_vol, time_ratio=tr,
-            para_armed=True, breakeven_locked=True,
+            symphony_vol=symphony_vol,
+            time_ratio=tr,
+            para_armed=True,
+            breakeven_locked=True,
         )
         trig_all3 = trigger_level(
-            symphony_vol=symphony_vol, hwm_pct=HWM_PCT,
-            current_return=CURRENT_RETURN_FLAT, time_ratio=tr,
-            para_armed=True, breakeven_locked=True,
+            symphony_vol=symphony_vol,
+            hwm_pct=HWM_PCT,
+            current_return=CURRENT_RETURN_FLAT,
+            time_ratio=tr,
+            para_armed=True,
+            breakeven_locked=True,
         )
         rows.append(
             f"| {t.strftime('%H:%M')} | {tr:.3f} | {decay:.3f} | {dyn_mult:.3f} | "
@@ -162,14 +172,19 @@ def daily_drag_estimate(symphony_vol: float) -> dict[str, float]:
     illustrates the COMPOUNDING SHAPE only.
     """
     import statistics
+
     # 1-min realized vol scaling: daily vol -> per-minute vol = vol / sqrt(390)
     per_min_vol = symphony_vol / math.sqrt(390)
-    times = [dt.time(10, 30 + 5 * i) if (30 + 5 * i) < 60 else
-             dt.time(11 + (30 + 5 * i) // 60, (30 + 5 * i) % 60)
-             for i in range(0, 66)]  # every 5 min 10:30 - 15:55, approx
+    times = [
+        dt.time(10, 30 + 5 * i)
+        if (30 + 5 * i) < 60
+        else dt.time(11 + (30 + 5 * i) // 60, (30 + 5 * i) % 60)
+        for i in range(0, 66)
+    ]  # every 5 min 10:30 - 15:55, approx
     cum_hazard = {"para_only": 0.0, "para_be": 0.0, "all3": 0.0}
     for t in times:
         tr = time_ratio_for(t)
+
         # All three columns assume current_return is at HWM (1%) on flat walk.
         # Stop distance below HWM; hazard = P(N(0, per_min_vol) < -(dist - 0.10)),
         # i.e., we need return to drop more than (dist - magnitude_floor) below HWM
@@ -181,12 +196,16 @@ def daily_drag_estimate(symphony_vol: float) -> dict[str, float]:
             z = slack / max(per_min_vol, 1e-6)
             # 1 - Phi(z) approximation via erfc
             return 0.5 * math.erfc(z / math.sqrt(2))
-        d_para, _, _ = stop_distance(symphony_vol=symphony_vol, time_ratio=0.0,
-                                     para_armed=True, breakeven_locked=False)
-        d_be, _, _ = stop_distance(symphony_vol=symphony_vol, time_ratio=0.0,
-                                   para_armed=True, breakeven_locked=True)
-        d_all, _, _ = stop_distance(symphony_vol=symphony_vol, time_ratio=tr,
-                                    para_armed=True, breakeven_locked=True)
+
+        d_para, _, _ = stop_distance(
+            symphony_vol=symphony_vol, time_ratio=0.0, para_armed=True, breakeven_locked=False
+        )
+        d_be, _, _ = stop_distance(
+            symphony_vol=symphony_vol, time_ratio=0.0, para_armed=True, breakeven_locked=True
+        )
+        d_all, _, _ = stop_distance(
+            symphony_vol=symphony_vol, time_ratio=tr, para_armed=True, breakeven_locked=True
+        )
         cum_hazard["para_only"] += hazard(d_para)
         cum_hazard["para_be"] += hazard(d_be)
         cum_hazard["all3"] += hazard(d_all)
@@ -196,16 +215,22 @@ def daily_drag_estimate(symphony_vol: float) -> dict[str, float]:
 if __name__ == "__main__":
     print("=" * 80)
     print(f"I2 stop-compounding simulation — date 2026-05-17")
-    print(f"Defaults: MAX_PARABOLIC_SQUEEZE={MAX_PARABOLIC_SQUEEZE}, HWM={HWM_PCT}%, current_return={CURRENT_RETURN_FLAT}%")
+    print(
+        f"Defaults: MAX_PARABOLIC_SQUEEZE={MAX_PARABOLIC_SQUEEZE}, HWM={HWM_PCT}%, current_return={CURRENT_RETURN_FLAT}%"
+    )
     print("=" * 80)
-    for label, vol in [("LOW vol (0.60%)", SYMPHONY_VOL_LOW),
-                       ("TYPICAL vol (1.20%)", SYMPHONY_VOL_TYPICAL),
-                       ("HIGH vol (2.40%)", SYMPHONY_VOL_HIGH)]:
+    for label, vol in [
+        ("LOW vol (0.60%)", SYMPHONY_VOL_LOW),
+        ("TYPICAL vol (1.20%)", SYMPHONY_VOL_TYPICAL),
+        ("HIGH vol (2.40%)", SYMPHONY_VOL_HIGH),
+    ]:
         print(f"\n## symphony_vol = {vol} ({label})\n")
         print(build_table(vol))
         cum = daily_drag_estimate(vol)
         print(f"\nApprox cumulative hazard (5-min-bucket sum of 1-min stop-touch p):")
         print(f"  PARA only            : {cum['para_only']:.3f}")
         print(f"  PARA + breakeven     : {cum['para_be']:.3f}")
-        print(f"  PARA + BE + time-sq  : {cum['all3']:.3f}  "
-              f"(ratio vs PARA-only = {cum['all3']/max(cum['para_only'],1e-9):.2f}x)")
+        print(
+            f"  PARA + BE + time-sq  : {cum['all3']:.3f}  "
+            f"(ratio vs PARA-only = {cum['all3'] / max(cum['para_only'], 1e-9):.2f}x)"
+        )

@@ -36,6 +36,7 @@ import pytest
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="function")
 def flask_client():
     """Test client for the Flask app with TESTING mode on.
@@ -53,20 +54,24 @@ def flask_client():
 def _stub_analytics(monkeypatch):
     """Patch analytics accessors so /ai-advisor renders without post-mortem files."""
     import app as flask_app
+
     fake_history: dict = {}
-    monkeypatch.setattr(flask_app.analytics, "get_history_with_cache_invalidation",
-                        lambda **kw: fake_history)
-    monkeypatch.setattr(flask_app.analytics, "list_available_symphonies",
-                        lambda h: [])
-    monkeypatch.setattr(flask_app.analytics, "compute_per_symphony_returns",
-                        lambda h, sym: ([], [], []))
+    monkeypatch.setattr(
+        flask_app.analytics, "get_history_with_cache_invalidation", lambda **kw: fake_history
+    )
+    monkeypatch.setattr(flask_app.analytics, "list_available_symphonies", lambda h: [])
+    monkeypatch.setattr(
+        flask_app.analytics, "compute_per_symphony_returns", lambda h, sym: ([], [], [])
+    )
 
 
 def _stub_db_observations(monkeypatch):
     """Patch database observation accessor so /ai-advisor renders without a live DB."""
     import app as flask_app
-    monkeypatch.setattr(flask_app.database, "get_advisor_observations_for_role",
-                        lambda role, limit=50: [])
+
+    monkeypatch.setattr(
+        flask_app.database, "get_advisor_observations_for_role", lambda role, limit=50: []
+    )
 
 
 @pytest.fixture(scope="function")
@@ -110,6 +115,7 @@ def advisor_page_html(advisor_client, monkeypatch):
 # ===========================================================================
 # AC1 — Single page: GET /ai-advisor returns all 5 tab panels in ONE response.
 # ===========================================================================
+
 
 def test_ac1_get_advisor_returns_200(advisor_client, monkeypatch):
     """GET /ai-advisor must return 200 (the single unified page).
@@ -182,6 +188,7 @@ def test_ac1_sub_page_routes_removed_or_redirect(advisor_client):
 # AC2 — In-place switch: tab nav uses <button> not <a href>, ARIA semantics.
 # ===========================================================================
 
+
 def test_ac2_tab_nav_uses_buttons_not_anchors_to_other_routes(advisor_page_html):
     """The capability tab bar must use <button> elements, not <a href> links to
     other routes.
@@ -232,7 +239,7 @@ def test_ac2_tab_controls_have_button_elements(advisor_page_html):
         # Find the position of the marker and look backwards for the opening tag.
         idx = html.find(marker)
         # Scan backward up to 200 chars for the opening < tag.
-        before = html[max(0, idx - 200): idx]
+        before = html[max(0, idx - 200) : idx]
         last_open = before.rfind("<")
         element_snippet = before[last_open:] + marker
         assert element_snippet.lstrip("<").startswith("button"), (
@@ -260,9 +267,7 @@ def test_ac2_tab_buttons_have_role_tab(advisor_page_html):
     RED: current anchor elements have no role attribute.
     """
     html = advisor_page_html
-    assert 'role="tab"' in html, (
-        "Tab buttons must carry role='tab' (ARIA — AC2). Currently absent."
-    )
+    assert 'role="tab"' in html, "Tab buttons must carry role='tab' (ARIA — AC2). Currently absent."
 
 
 def test_ac2_tab_panels_have_role_tabpanel(advisor_page_html):
@@ -291,6 +296,7 @@ def test_ac2_aria_selected_present(advisor_page_html):
 # AC3 — Overview kept as 5th tab; Run-Advisor + suggestions still functional.
 # ===========================================================================
 
+
 def test_ac3_overview_panel_present_in_single_page(advisor_page_html):
     """The Overview panel (Run-Advisor, autotune rail) must exist on /ai-advisor.
 
@@ -301,8 +307,8 @@ def test_ac3_overview_panel_present_in_single_page(advisor_page_html):
     # These testids exist on the current /ai-advisor page (the legacy overview).
     # After migration they must still be present within the tab-panel-overview panel.
     overview_markers = [
-        "run-advisor-btn",     # "Run Claude advisor" button
-        "autotune-panel",      # autotune right-rail
+        "run-advisor-btn",  # "Run Claude advisor" button
+        "autotune-panel",  # autotune right-rail
     ]
     missing = [m for m in overview_markers if f'data-testid="{m}"' not in html]
     assert not missing, (
@@ -318,6 +324,7 @@ def test_ac3_suggest_route_preserved(advisor_client):
     RED if the route is accidentally dropped during template consolidation.
     """
     import app as flask_app
+
     # Verify the route is registered (endpoint exists in URL map).
     rules = [str(r) for r in flask_app.app.url_map.iter_rules()]
     assert "/ai-advisor/suggest" in rules, (
@@ -332,6 +339,7 @@ def test_ac3_accept_and_reject_routes_preserved(advisor_client):
     RED if the route is accidentally dropped during template consolidation.
     """
     import app as flask_app
+
     rules = [str(r) for r in flask_app.app.url_map.iter_rules()]
     for route in ("/ai-advisor/accept", "/ai-advisor/reject"):
         assert route in rules, (
@@ -343,6 +351,7 @@ def test_ac3_accept_and_reject_routes_preserved(advisor_client):
 # ===========================================================================
 # AC4 — Chat slide panel always in DOM on /ai-advisor; openChatPanel defined.
 # ===========================================================================
+
 
 def test_ac4_chat_panel_present_in_advisor_page(advisor_page_html):
     """The chat panel must be present in the DOM on /ai-advisor (always-in-DOM).
@@ -377,6 +386,7 @@ def test_ac4_chat_send_route_preserved(advisor_client):
     RED if the route is accidentally dropped during template consolidation.
     """
     import app as flask_app
+
     rules = [str(r) for r in flask_app.app.url_map.iter_rules()]
     assert "/ai-advisor/chat/send" in rules, (
         "POST /ai-advisor/chat/send route is missing from the URL map. "
@@ -404,12 +414,14 @@ def test_ac4_chat_get_route_removed_or_redirected(advisor_client):
 # AC5 — Functional regression: POST action routes preserved and CSRF-protected.
 # ===========================================================================
 
+
 def test_ac5_asset_swaps_evaluate_route_preserved(advisor_client):
     """POST /ai-advisor/asset-swaps/evaluate must be registered in the URL map.
 
     RED if the route is accidentally dropped during template consolidation.
     """
     import app as flask_app
+
     rules = [str(r) for r in flask_app.app.url_map.iter_rules()]
     assert "/ai-advisor/asset-swaps/evaluate" in rules, (
         "POST /ai-advisor/asset-swaps/evaluate missing from URL map — AC5."
@@ -422,6 +434,7 @@ def test_ac5_logic_changes_evaluate_route_preserved(advisor_client):
     RED if the route is accidentally dropped during template consolidation.
     """
     import app as flask_app
+
     rules = [str(r) for r in flask_app.app.url_map.iter_rules()]
     assert "/ai-advisor/logic-changes/evaluate" in rules, (
         "POST /ai-advisor/logic-changes/evaluate missing from URL map — AC5."
@@ -471,6 +484,7 @@ def test_ac5_post_routes_require_csrf(monkeypatch):
 # AC7 — node --check on static/ai_advisor.js (no JS parse errors).
 # ===========================================================================
 
+
 def test_ac7_ai_advisor_js_passes_node_check():
     """static/ai_advisor.js must pass `node --check` (no syntax errors).
 
@@ -481,15 +495,14 @@ def test_ac7_ai_advisor_js_passes_node_check():
     RED if the implementer adds tab-switching JS with a syntax error.
     """
     import pathlib
+
     worktree = pathlib.Path(__file__).parents[2]
     js_path = worktree / "static" / "ai_advisor.js"
     assert js_path.exists(), (
-        f"static/ai_advisor.js not found at {js_path}. "
-        "The tab-switcher JS must live in this file."
+        f"static/ai_advisor.js not found at {js_path}. The tab-switcher JS must live in this file."
     )
     result = subprocess.run(
-        ["node", "--check", str(js_path)],
-        capture_output=True, text=True, timeout=15
+        ["node", "--check", str(js_path)], capture_output=True, text=True, timeout=15
     )
     assert result.returncode == 0, (
         f"node --check failed on static/ai_advisor.js:\n{result.stderr}\n{result.stdout}\n"
@@ -504,24 +517,22 @@ def test_ac7_ai_advisor_chat_js_passes_node_check():
     be loadable with no parse errors.
     """
     import pathlib
+
     worktree = pathlib.Path(__file__).parents[2]
     js_path = worktree / "static" / "ai_advisor_chat.js"
-    assert js_path.exists(), (
-        f"static/ai_advisor_chat.js not found at {js_path}."
-    )
+    assert js_path.exists(), f"static/ai_advisor_chat.js not found at {js_path}."
     result = subprocess.run(
-        ["node", "--check", str(js_path)],
-        capture_output=True, text=True, timeout=15
+        ["node", "--check", str(js_path)], capture_output=True, text=True, timeout=15
     )
     assert result.returncode == 0, (
-        f"node --check failed on static/ai_advisor_chat.js:\n{result.stderr}\n"
-        f"{result.stdout}\nAC7."
+        f"node --check failed on static/ai_advisor_chat.js:\n{result.stderr}\n{result.stdout}\nAC7."
     )
 
 
 # ===========================================================================
 # AC2 (structural) — tab switcher JS present in the consolidated page.
 # ===========================================================================
+
 
 def test_ac2_tab_switcher_js_loaded_in_advisor_page(advisor_page_html):
     """The /ai-advisor page must load the JS responsible for in-place tab switching.
@@ -551,6 +562,7 @@ def test_ac2_tab_switcher_js_loaded_in_advisor_page(advisor_page_html):
 # ===========================================================================
 # AC1 (deeper) — each panel contains its expected key content markers.
 # ===========================================================================
+
 
 def test_ac1_correlations_panel_contains_crisis_caveat(advisor_page_html):
     """The correlations panel must carry the crisis caveat banner.
@@ -614,6 +626,7 @@ def test_ac1_chat_panel_contains_thread_and_input(advisor_page_html):
 # ===========================================================================
 # AC6 — visual fidelity markers: tab strip follows window-selector pattern.
 # ===========================================================================
+
 
 def test_ac6_tab_strip_uses_window_selector_or_cap_nav_pattern(advisor_page_html):
     """The tab strip must follow the window-selector / cap-nav CSS class pattern.

@@ -71,11 +71,7 @@ from database import run_migrations
 _WORKTREE_ROOT = pathlib.Path(__file__).parents[2]
 
 _DERIVATION_FIXTURE = (
-    _WORKTREE_ROOT
-    / "tests"
-    / "fixtures"
-    / "m1-wealth-argument"
-    / "derivation-fixture.json"
+    _WORKTREE_ROOT / "tests" / "fixtures" / "m1-wealth-argument" / "derivation-fixture.json"
 )
 
 _ALPHA_BOT_EXECUTION = _WORKTREE_ROOT / "alpha_bot_execution.py"
@@ -391,9 +387,7 @@ def test_all_three_canonical_facets_have_freeze_discipline_theory(migrated_db):
     bundle_hash = db_module.hash_facets_json(canonical_json)
     stored_facets = db_module.get_spec_facets_for_bundle(bundle_hash)
 
-    assert len(stored_facets) == 3, (
-        f"Expected 3 facets, found {len(stored_facets)}."
-    )
+    assert len(stored_facets) == 3, f"Expected 3 facets, found {len(stored_facets)}."
 
     for facet in stored_facets:
         assert facet["freeze_discipline"] == "THEORY", (
@@ -556,9 +550,7 @@ def test_concurrent_calls_produce_single_bundle_row(migrated_db):
         f"Concurrent calls raised exceptions: {errors}. "
         "The accessor must be safe to call from multiple threads simultaneously."
     )
-    assert len(results) == 2, (
-        f"Expected 2 results (one per thread); got {len(results)}."
-    )
+    assert len(results) == 2, f"Expected 2 results (one per thread); got {len(results)}."
     assert results[0] == results[1], (
         f"Concurrent calls returned different bundle_ids: {results}. "
         "Both callers must receive the same id — INSERT OR IGNORE + SELECT ensures this."
@@ -712,12 +704,8 @@ def test_alpha_bot_execution_run_autotuner_call_has_provenance_comment():
     lines = source.splitlines()
 
     # Find lines that contain the run_autotuner call
-    run_autotuner_line_idxs = [
-        i for i, line in enumerate(lines) if "run_autotuner(" in line
-    ]
-    assert run_autotuner_line_idxs, (
-        "No run_autotuner( call found in alpha_bot_execution.py."
-    )
+    run_autotuner_line_idxs = [i for i, line in enumerate(lines) if "run_autotuner(" in line]
+    assert run_autotuner_line_idxs, "No run_autotuner( call found in alpha_bot_execution.py."
 
     # Within a 6-line window around each call, a comment referencing W-H2 or
     # council §2.5 or the cycle commit must be present
@@ -749,9 +737,7 @@ def test_app_py_run_autotuner_call_has_provenance_comment():
     source = _APP_PY.read_text(encoding="utf-8")
     lines = source.splitlines()
 
-    run_autotuner_line_idxs = [
-        i for i, line in enumerate(lines) if "run_autotuner(" in line
-    ]
+    run_autotuner_line_idxs = [i for i, line in enumerate(lines) if "run_autotuner(" in line]
     assert run_autotuner_line_idxs, "No run_autotuner( call found in app.py."
 
     found_provenance = False
@@ -911,15 +897,20 @@ def test_validate_nn1_compliance_rejects_bundle_with_backtest_selection_facet(mi
 
     # Insert two THEORY facets and one BACKTEST_SELECTION facet
     db_module.insert_spec_bundle_facet(
-        bundle_hash=bundle_hash, facet_name="gamma",
-        facet_value="2.0", freeze_discipline="THEORY",
+        bundle_hash=bundle_hash,
+        facet_name="gamma",
+        facet_value="2.0",
+        freeze_discipline="THEORY",
     )
     db_module.insert_spec_bundle_facet(
-        bundle_hash=bundle_hash, facet_name="utility_family",
-        facet_value="CRRA", freeze_discipline="THEORY",
+        bundle_hash=bundle_hash,
+        facet_name="utility_family",
+        facet_value="CRRA",
+        freeze_discipline="THEORY",
     )
     db_module.insert_spec_bundle_facet(
-        bundle_hash=bundle_hash, facet_name="wealth_argument",
+        bundle_hash=bundle_hash,
+        facet_name="wealth_argument",
         facet_value="compounded_return",
         freeze_discipline="BACKTEST_SELECTION",  # tripwire: this one is wrong
     )
@@ -1030,7 +1021,9 @@ def test_accessor_inserts_missing_facets_when_bundle_exists_without_facets(migra
         ).fetchone()[0]
     finally:
         conn.close()
-    assert canonical_bundle_count == 1, "Precondition: canonical bundle must exist after manual insert"
+    assert canonical_bundle_count == 1, (
+        "Precondition: canonical bundle must exist after manual insert"
+    )
     assert len(db_module.get_spec_facets_for_bundle(bundle_hash)) == 0, (
         "Precondition: no facets for the canonical bundle yet"
     )

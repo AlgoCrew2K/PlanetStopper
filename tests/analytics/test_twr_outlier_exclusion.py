@@ -47,7 +47,7 @@ def _normal_sym(sym_id: str, value: float, simple_return: float) -> dict:
         "value": value,
         "last_percent_change": simple_return / 100.0,
         "simple_return": simple_return / 100.0,
-        "net_deposits": value * 0.8,   # non-zero => simple_return path
+        "net_deposits": value * 0.8,  # non-zero => simple_return path
         "time_weighted_return": simple_return / 100.0,
         "max_drawdown": 0.05,
         "trading_day": "2026-06-04",
@@ -65,7 +65,7 @@ def _twr_fallback_sym(sym_id: str, value: float, twr: float) -> dict:
         "last_percent_change": 0.0,
         "simple_return": 0.0,
         "net_deposits": 0.0,
-        "time_weighted_return": twr,   # e.g. 3.18 => 318%
+        "time_weighted_return": twr,  # e.g. 3.18 => 318%
         "max_drawdown": 0.05,
         "trading_day": "2026-06-04",
     }
@@ -139,6 +139,7 @@ class TestTWROutlierExcludedFromPortfolioAggregate:
         bot_state = self._bot_state(all_syms)
 
         from unittest.mock import patch
+
         with patch("analytics._get_shadow_divergence_trajectory", return_value=None):
             result = analytics.get_portfolio_cumulative_return(all_syms, bot_state)
 
@@ -174,6 +175,7 @@ class TestTWROutlierExcludedFromPortfolioAggregate:
         bot_state_with_outlier = self._bot_state(normal_syms + [outlier])
 
         from unittest.mock import patch
+
         with patch("analytics._get_shadow_divergence_trajectory", return_value=None):
             result_without = analytics.get_portfolio_cumulative_return(
                 normal_syms, bot_state_no_outlier
@@ -200,6 +202,7 @@ class TestTWROutlierExcludedFromPortfolioAggregate:
         bot_state = self._bot_state(outlier_only)
 
         from unittest.mock import patch
+
         with patch("analytics._get_shadow_divergence_trajectory", return_value=None):
             result = analytics.get_portfolio_cumulative_return(outlier_only, bot_state)
 
@@ -227,6 +230,7 @@ class TestTWROutlierExcludedFromPortfolioAggregate:
         bot_state = self._bot_state(all_syms)
 
         from unittest.mock import patch
+
         with patch("analytics._get_shadow_divergence_trajectory", return_value=None):
             result = analytics.get_portfolio_cumulative_return(all_syms, bot_state)
 

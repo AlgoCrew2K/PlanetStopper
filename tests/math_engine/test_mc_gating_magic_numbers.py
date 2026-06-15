@@ -108,15 +108,11 @@ import pytest
 
 import math_engine
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "mc_gating"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "mc_gating"
 
 
 # --- Synthetic-history builder ---------------------------------------------
+
 
 def _date_key(i: int) -> str:
     """ISO date string for synthetic day index i (only needs to sort)."""
@@ -166,6 +162,7 @@ def _build_history(spec: dict[str, Any]) -> dict[str, dict[str, dict[str, float]
 
 # --- Fixture discovery ------------------------------------------------------
 
+
 def _load_fixtures() -> list[tuple[str, dict[str, Any]]]:
     paths = sorted(FIXTURE_DIR.glob("*.json"))
     out: list[tuple[str, dict[str, Any]]] = []
@@ -179,6 +176,7 @@ FIXTURES = _load_fixtures()
 
 
 # --- Behavioral-equivalence pins (ZERO TOLERANCE) ---------------------------
+
 
 @pytest.mark.parametrize(
     "fixture_name,fixture",
@@ -212,8 +210,11 @@ def test_run_monte_carlo_behavioral_equivalence_pin(
     seed = inputs["numpy_seed"]
 
     actual = math_engine.run_monte_carlo(
-        holdings, history, spy_today,
-        simulation_paths=sim_paths, neighbor_k=neighbor_k,
+        holdings,
+        history,
+        spy_today,
+        simulation_paths=sim_paths,
+        neighbor_k=neighbor_k,
         seed=seed,
     )
 
@@ -252,11 +253,11 @@ def test_run_monte_carlo_behavioral_equivalence_pin(
 # Trivially structural literals that do not carry domain meaning.
 # Every entry has a justification — DO NOT add to this set without one.
 STRUCTURAL_WHITELIST = {
-    0,        # array index / accumulator init / np.zeros sentinel
-    1,        # increment / single-axis slice / off-by-one
-    -1,       # last-element index (NOTE: AST stores as UnaryOp(USub, Constant(1)); we whitelist 1 directly)
-    0.0,      # zero default for missing daily_ret / structural accumulator
-    2,        # Euclidean-distance exponent (sqrt(a**2 + b**2)) — structural geometry, not a domain knob
+    0,  # array index / accumulator init / np.zeros sentinel
+    1,  # increment / single-axis slice / off-by-one
+    -1,  # last-element index (NOTE: AST stores as UnaryOp(USub, Constant(1)); we whitelist 1 directly)
+    0.0,  # zero default for missing daily_ret / structural accumulator
+    2,  # Euclidean-distance exponent (sqrt(a**2 + b**2)) — structural geometry, not a domain knob
 }
 
 
@@ -326,6 +327,7 @@ def test_no_unnamed_magic_numbers_in_run_monte_carlo() -> None:
 # absent we fall back to scanning for ANY module-level int/float Name with
 # the right value referenced in run_monte_carlo's body. Renames are fine;
 # silently dropping a constant is not.
+
 
 def _module_level_constant_names(value: Any) -> list[str]:
     """All module-level attribute names on math_engine whose value equals `value`."""
@@ -565,9 +567,7 @@ def test_mc_default_neighbor_k_is_named() -> None:
     args = func.args.args
     defaults = func.args.defaults
     n_defaults = len(defaults)
-    default_for = (
-        dict(zip(args[-n_defaults:], defaults, strict=True)) if n_defaults else {}
-    )
+    default_for = dict(zip(args[-n_defaults:], defaults, strict=True)) if n_defaults else {}
     nk_arg = next((a for a in args if a.arg == "neighbor_k"), None)
     assert nk_arg is not None, "run_monte_carlo signature missing `neighbor_k`"
     assert nk_arg in default_for, "`neighbor_k` must have a default value"
@@ -584,6 +584,7 @@ def test_mc_default_neighbor_k_is_named() -> None:
 
 
 # --- Sanity guard for the scanner ------------------------------------------
+
 
 def test_run_monte_carlo_has_zero_magic_number_offenders_regression_canary() -> None:
     """

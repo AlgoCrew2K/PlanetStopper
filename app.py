@@ -415,6 +415,7 @@ def _lens_pipeline_worker() -> None:
     """
     try:
         from advisors.lens_pipeline import run_pipeline  # lazy — not module-level (CC-2)
+
         result = run_pipeline()
         _daemon_log.info("Lens pipeline complete: %s", result)
     except Exception as exc:
@@ -428,6 +429,7 @@ def _run_lens_pipeline() -> None:
     the pipeline never blocks the 1-minute execution path (arch constraint 1).
     """
     import threading
+
     t = threading.Thread(target=_lens_pipeline_worker, daemon=True, name="lens-pipeline")
     t.start()
 

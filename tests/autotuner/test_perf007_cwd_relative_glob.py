@@ -53,20 +53,23 @@ _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
 def _valid_post_mortem_json(reason: str, exit_return: float, attempted: float) -> str:
     """Minimal post-mortem JSON the loop will happily consume."""
-    return json.dumps({
-        "triggers": [
-            {
-                "exit_reason": reason,
-                "exit_return": exit_return,
-                "attempted_trigger_level": attempted,
-            }
-        ]
-    })
+    return json.dumps(
+        {
+            "triggers": [
+                {
+                    "exit_reason": reason,
+                    "exit_return": exit_return,
+                    "attempted_trigger_level": attempted,
+                }
+            ]
+        }
+    )
 
 
 def _write_post_mortem(directory: pathlib.Path, date_str: str, content: str) -> pathlib.Path:
@@ -106,14 +109,14 @@ def test_post_mortem_glob_is_not_cwd_relative_literal():
     tree = ast.parse(_AUTOTUNER_SRC.read_text(encoding="utf-8"))
 
     func = next(
-        (n for n in ast.walk(tree)
-         if isinstance(n, ast.FunctionDef)
-         and n.name == "calculate_historical_deviation"),
+        (
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "calculate_historical_deviation"
+        ),
         None,
     )
-    assert func is not None, (
-        "calculate_historical_deviation not found in autotuner.py."
-    )
+    assert func is not None, "calculate_historical_deviation not found in autotuner.py."
 
     offenders: list[int] = []
     for node in ast.walk(func):
@@ -137,7 +140,7 @@ def test_post_mortem_glob_is_not_cwd_relative_literal():
 
     assert not offenders, (
         f"PERF-007: calculate_historical_deviation still calls "
-        f"`glob.glob(\"post_mortem_*.json\")` at line(s) {offenders}. "
+        f'`glob.glob("post_mortem_*.json")` at line(s) {offenders}. '
         f"A CWD-relative literal silently returns [] from any directory other "
         f"than the project root. Anchor the glob to a module-level "
         f"`_POST_MORTEM_DIR` constant (default `Path(__file__).parent`, "
@@ -188,7 +191,10 @@ def isolated_cwd(tmp_path, monkeypatch):
 
 
 def test_finds_post_mortems_via_env_override_regardless_of_cwd(
-    isolated_cwd, tmp_path, monkeypatch, capsys,
+    isolated_cwd,
+    tmp_path,
+    monkeypatch,
+    capsys,
 ):
     """When POST_MORTEM_DIR points at a directory containing in-window
     post-mortems, the function MUST find them — even though the process CWD
@@ -210,7 +216,8 @@ def test_finds_post_mortems_via_env_override_regardless_of_cwd(
     expected_deviation = exit_return - attempted  # derived, never hardcoded
 
     _write_post_mortem(
-        pm_dir, "2026-05-03",
+        pm_dir,
+        "2026-05-03",
         _valid_post_mortem_json("Trailing Stop", exit_return, attempted),
     )
 
@@ -234,7 +241,9 @@ def test_finds_post_mortems_via_env_override_regardless_of_cwd(
 
 
 def test_default_post_mortem_dir_is_project_root_not_cwd(
-    isolated_cwd, tmp_path, monkeypatch,
+    isolated_cwd,
+    tmp_path,
+    monkeypatch,
 ):
     """Without POST_MORTEM_DIR set, the function must resolve the search to
     the project root (the directory containing autotuner.py) — NOT the
@@ -248,9 +257,7 @@ def test_default_post_mortem_dir_is_project_root_not_cwd(
     monkeypatch.delenv("POST_MORTEM_DIR", raising=False)
 
     name, value = _resolve_post_mortem_dir_attr(autotuner_mod)
-    assert name is not None, (
-        "PERF-007: autotuner must expose _POST_MORTEM_DIR / POST_MORTEM_DIR."
-    )
+    assert name is not None, "PERF-007: autotuner must expose _POST_MORTEM_DIR / POST_MORTEM_DIR."
 
     expected = pathlib.Path(autotuner_mod.__file__).resolve().parent
     actual = pathlib.Path(value).resolve()
@@ -269,7 +276,10 @@ def test_default_post_mortem_dir_is_project_root_not_cwd(
 
 
 def test_warns_when_resolved_dir_has_no_post_mortems(
-    isolated_cwd, tmp_path, monkeypatch, capsys,
+    isolated_cwd,
+    tmp_path,
+    monkeypatch,
+    capsys,
 ):
     """When the resolved post-mortem directory exists but contains zero
     matching files, the function must emit an operator-visible WARNING
@@ -300,7 +310,10 @@ def test_warns_when_resolved_dir_has_no_post_mortems(
 
 
 def test_warns_when_resolved_dir_is_missing(
-    isolated_cwd, tmp_path, monkeypatch, capsys,
+    isolated_cwd,
+    tmp_path,
+    monkeypatch,
+    capsys,
 ):
     """When the resolved post-mortem directory does NOT exist, the function
     must emit an operator-visible WARNING that names the missing path AND
@@ -337,7 +350,9 @@ def test_warns_when_resolved_dir_is_missing(
 
 
 def test_existing_happy_path_preserved_when_files_in_resolved_dir(
-    isolated_cwd, tmp_path, monkeypatch,
+    isolated_cwd,
+    tmp_path,
+    monkeypatch,
 ):
     """When the resolved post-mortem directory contains a valid, in-window
     post-mortem, the deviation it computes must equal exit_return -
@@ -364,8 +379,7 @@ def test_existing_happy_path_preserved_when_files_in_resolved_dir(
     # change makes the defaults collide with this derived value, the test
     # must be re-tuned.
     derived_clashes_with_defaults = any(
-        abs(expected - default) < 1e-3
-        for default in (0.0, -0.20, -0.40, -0.25)
+        abs(expected - default) < 1e-3 for default in (0.0, -0.20, -0.40, -0.25)
     )
     assert not derived_clashes_with_defaults, (
         f"Test setup error: derived deviation {expected} collides with a "
@@ -373,7 +387,8 @@ def test_existing_happy_path_preserved_when_files_in_resolved_dir(
     )
 
     _write_post_mortem(
-        pm_dir, "2026-05-02",
+        pm_dir,
+        "2026-05-02",
         _valid_post_mortem_json("VWAP Breakdown", exit_return, attempted),
     )
 
@@ -388,7 +403,9 @@ def test_existing_happy_path_preserved_when_files_in_resolved_dir(
 
 
 def test_out_of_window_files_in_resolved_dir_still_ignored(
-    isolated_cwd, tmp_path, monkeypatch,
+    isolated_cwd,
+    tmp_path,
+    monkeypatch,
 ):
     """The 45-calendar-day dated-lookback filter must still apply against
     the resolved post-mortem directory. A file dated outside the window
@@ -403,7 +420,8 @@ def test_out_of_window_files_in_resolved_dir_still_ignored(
     current_date = "2026-05-10"
     # Date well outside 45-calendar-day lookback (>45 days before current).
     _write_post_mortem(
-        pm_dir, "2025-01-01",
+        pm_dir,
+        "2025-01-01",
         _valid_post_mortem_json("Trailing Stop", -1.0, -0.5),
     )
 

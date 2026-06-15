@@ -79,6 +79,7 @@ def autotuner_module():
 @pytest.fixture(scope="module")
 def autotuner_source() -> str:
     import autotuner as _at
+
     return pathlib.Path(_at.__file__).read_text(encoding="utf-8")
 
 
@@ -170,6 +171,7 @@ def _expr_resolves_to_nop_pruner(expr: ast.expr, func: ast.FunctionDef, tree: as
 # Module-level named constant for the pruner family
 # ---------------------------------------------------------------------------
 
+
 def test_autotuner_exposes_pruner_family_named_constant(autotuner_module, pin_contract):
     """A module-level named constant in autotuner.py must carry the
     ``"NOP"`` pruner-family label. Per Planet Stopper Coding Standards: every
@@ -199,6 +201,7 @@ def test_autotuner_exposes_pruner_family_named_constant(autotuner_module, pin_co
 # ---------------------------------------------------------------------------
 # OPTUNA-2: explicit NopPruner at the run_autotuner site
 # ---------------------------------------------------------------------------
+
 
 def test_run_autotuner_create_study_passes_explicit_pruner(autotuner_ast):
     """Every ``optuna.create_study(...)`` call inside ``run_autotuner`` must
@@ -252,15 +255,13 @@ def test_run_autotuner_pruner_is_nop_not_default(autotuner_source):
                 f"optuna.pruners.NopPruner() (inline or via a Name bound to "
                 f"a NopPruner() construction); got {ast.dump(pruner_expr)}"
             )
-    assert not bad, (
-        "OPTUNA-2 run_autotuner pruner-pin violations:\n  - "
-        + "\n  - ".join(bad)
-    )
+    assert not bad, "OPTUNA-2 run_autotuner pruner-pin violations:\n  - " + "\n  - ".join(bad)
 
 
 # ---------------------------------------------------------------------------
 # OPTUNA-2: same pin at the run_calibration_sweep site
 # ---------------------------------------------------------------------------
+
 
 def test_run_calibration_sweep_create_study_passes_explicit_pruner(autotuner_ast):
     """Every ``optuna.create_study(...)`` call inside
@@ -306,15 +307,15 @@ def test_run_calibration_sweep_pruner_is_nop_not_default(autotuner_source):
                 f"line {call.lineno}: pruner= must construct "
                 f"optuna.pruners.NopPruner(); got {ast.dump(pruner_expr)}"
             )
-    assert not bad, (
-        "OPTUNA-2 run_calibration_sweep pruner-pin violations:\n  - "
-        + "\n  - ".join(bad)
+    assert not bad, "OPTUNA-2 run_calibration_sweep pruner-pin violations:\n  - " + "\n  - ".join(
+        bad
     )
 
 
 # ---------------------------------------------------------------------------
 # Static guard: no trial.report or .should_prune in autotuner.py
 # ---------------------------------------------------------------------------
+
 
 def test_no_trial_report_or_should_prune_in_autotuner(autotuner_source, pin_contract):
     """autotuner.py source must NOT contain ``trial.report`` or
@@ -349,7 +350,10 @@ def test_no_trial_report_or_should_prune_in_autotuner(autotuner_source, pin_cont
 # Source-comment contract: BHY / N_effective rationale at the pin
 # ---------------------------------------------------------------------------
 
-def test_pruner_pin_site_documents_bhy_and_n_effective(autotuner_source, autotuner_ast, pin_contract):
+
+def test_pruner_pin_site_documents_bhy_and_n_effective(
+    autotuner_source, autotuner_ast, pin_contract
+):
     """Each ``create_study(..., pruner=...)`` site in autotuner.py must
     carry a nearby source-comment block that cites BHY/Harvey/haircut AND
     N_effective — the two math layers that depend on the complete trial
@@ -385,9 +389,8 @@ def test_pruner_pin_site_documents_bhy_and_n_effective(autotuner_source, autotun
                     f"{must_any!r} AND the token {must_also!r}. "
                     f"Found any-of: {has_any}; must-also: {has_must_also}."
                 )
-    assert not findings, (
-        "OPTUNA-2 source-comment contract violations:\n  - "
-        + "\n  - ".join(findings)
+    assert not findings, "OPTUNA-2 source-comment contract violations:\n  - " + "\n  - ".join(
+        findings
     )
 
 
@@ -395,6 +398,7 @@ def test_pruner_pin_site_documents_bhy_and_n_effective(autotuner_source, autotun
 # Behavioural property: a study constructed with NopPruner has
 # isinstance(study.pruner, NopPruner) — not MedianPruner
 # ---------------------------------------------------------------------------
+
 
 def test_nop_pruner_type_distinct_from_median_pruner(pin_contract):
     """Property pin: ``NopPruner`` and ``MedianPruner`` are not the same

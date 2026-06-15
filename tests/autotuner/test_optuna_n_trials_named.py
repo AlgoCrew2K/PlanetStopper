@@ -81,6 +81,7 @@ def autotuner_module():
 @pytest.fixture(scope="module")
 def autotuner_source() -> str:
     import autotuner as _at
+
     return pathlib.Path(_at.__file__).read_text(encoding="utf-8")
 
 
@@ -162,9 +163,8 @@ def _module_int_assignments(tree: ast.Module) -> dict[str, tuple[int, int]]:
 # Named-constant existence + value pins
 # ---------------------------------------------------------------------------
 
-def test_autotuner_exposes_production_n_trials_named_constant(
-    autotuner_module, pin_contract
-):
+
+def test_autotuner_exposes_production_n_trials_named_constant(autotuner_module, pin_contract):
     """``autotuner.py`` must expose a module-level named int constant whose
     VALUE is the production n_trials (500). The implementation chooses the
     symbol name (e.g. ``OPTUNA_N_TRIALS_PRODUCTION``, ``N_TRIALS``,
@@ -185,9 +185,7 @@ def test_autotuner_exposes_production_n_trials_named_constant(
     )
 
 
-def test_autotuner_exposes_calibration_n_trials_named_constant(
-    autotuner_module, pin_contract
-):
+def test_autotuner_exposes_calibration_n_trials_named_constant(autotuner_module, pin_contract):
     """``autotuner.py`` must expose a module-level named int constant whose
     VALUE is the calibration n_trials (100). This MUST equal the project's
     documented statistical-stability floor exactly.
@@ -210,9 +208,7 @@ def test_autotuner_exposes_calibration_n_trials_named_constant(
     )
 
 
-def test_production_n_trials_meets_floor_headroom_ratio(
-    autotuner_module, pin_contract
-):
+def test_production_n_trials_meets_floor_headroom_ratio(autotuner_module, pin_contract):
     """Production n_trials must be >= headroom_ratio (5) * floor (100) = 500.
 
     This is the BHY-adequacy invariant: c(500) ~6.79 vs c(100) ~5.19, a
@@ -251,6 +247,7 @@ def test_production_n_trials_meets_floor_headroom_ratio(
 # Source-comment contract: BHY + floor mention near the production constant
 # ---------------------------------------------------------------------------
 
+
 def _comment_window(source: str, lineno: int, span: int = 25) -> str:
     """Return the source lines from (lineno - span) to (lineno + span),
     joined. Used to scan the comment context surrounding a constant
@@ -272,15 +269,11 @@ def test_production_n_trials_constant_has_bhy_source_comment(
     site, without tracing.
     """
     prod_value = int(pin_contract["constants"]["production_n_trials_value"])
-    required_any = pin_contract["source_comment_contract"][
-        "required_substrings_any_for_bhy"
-    ]
+    required_any = pin_contract["source_comment_contract"]["required_substrings_any_for_bhy"]
 
     assigns = _module_int_assignments(autotuner_ast)
     prod_candidates = [
-        (name, val, lineno)
-        for name, (val, lineno) in assigns.items()
-        if val == prod_value
+        (name, val, lineno) for name, (val, lineno) in assigns.items() if val == prod_value
     ]
     assert prod_candidates, (
         f"Precondition: production n_trials constant (value={prod_value}) "
@@ -316,15 +309,11 @@ def test_production_n_trials_constant_has_floor_source_comment(
     makes the floor-relationship visible.
     """
     prod_value = int(pin_contract["constants"]["production_n_trials_value"])
-    required_any = pin_contract["source_comment_contract"][
-        "required_substrings_any_for_floor"
-    ]
+    required_any = pin_contract["source_comment_contract"]["required_substrings_any_for_floor"]
 
     assigns = _module_int_assignments(autotuner_ast)
     prod_candidates = [
-        (name, val, lineno)
-        for name, (val, lineno) in assigns.items()
-        if val == prod_value
+        (name, val, lineno) for name, (val, lineno) in assigns.items() if val == prod_value
     ]
     assert prod_candidates, (
         f"Precondition: production n_trials constant (value={prod_value}) "
@@ -356,6 +345,7 @@ def test_production_n_trials_constant_has_floor_source_comment(
 # Call-site pin: study.optimize(..., n_trials=<name>) at both sites
 # ---------------------------------------------------------------------------
 
+
 def test_run_autotuner_study_optimize_n_trials_is_not_a_literal(autotuner_ast):
     """``run_autotuner.study.optimize(..., n_trials=...)`` must NOT pass an
     integer literal — the value must be a Name (or attribute) reference
@@ -365,8 +355,7 @@ def test_run_autotuner_study_optimize_n_trials_is_not_a_literal(autotuner_ast):
     func = _function_def(autotuner_ast, _RUN_AUTOTUNER)
     calls = _study_optimize_calls(func)
     assert calls, (
-        "AST: expected at least one study.optimize(...) call in "
-        "run_autotuner — none found."
+        "AST: expected at least one study.optimize(...) call in run_autotuner — none found."
     )
     offenders: list[str] = []
     for call in calls:
@@ -389,7 +378,8 @@ def test_run_autotuner_study_optimize_n_trials_is_not_a_literal(autotuner_ast):
         )
         if is_int_literal or is_unary_int_literal:
             lit_repr = (
-                str(n_trials_expr.value) if is_int_literal
+                str(n_trials_expr.value)
+                if is_int_literal
                 else "-" + str(n_trials_expr.operand.value)
             )
             offenders.append(
@@ -397,9 +387,8 @@ def test_run_autotuner_study_optimize_n_trials_is_not_a_literal(autotuner_ast):
                 f"{lit_repr}) is the OPTUNA-7 magic number. Source from "
                 f"the named module-level constant instead."
             )
-    assert not offenders, (
-        "OPTUNA-7 run_autotuner call-site violations:\n  - "
-        + "\n  - ".join(offenders)
+    assert not offenders, "OPTUNA-7 run_autotuner call-site violations:\n  - " + "\n  - ".join(
+        offenders
     )
 
 
@@ -457,8 +446,7 @@ def test_run_calibration_sweep_study_optimize_n_trials_is_not_a_literal(
     func = _function_def(autotuner_ast, _RUN_CALIBRATION)
     calls = _study_optimize_calls(func)
     assert calls, (
-        "AST: expected at least one study.optimize(...) call in "
-        "run_calibration_sweep — none found."
+        "AST: expected at least one study.optimize(...) call in run_calibration_sweep — none found."
     )
     offenders: list[str] = []
     for call in calls:
@@ -481,7 +469,8 @@ def test_run_calibration_sweep_study_optimize_n_trials_is_not_a_literal(
         )
         if is_int_literal or is_unary_int_literal:
             lit_repr = (
-                str(n_trials_expr.value) if is_int_literal
+                str(n_trials_expr.value)
+                if is_int_literal
                 else "-" + str(n_trials_expr.operand.value)
             )
             offenders.append(
@@ -490,8 +479,7 @@ def test_run_calibration_sweep_study_optimize_n_trials_is_not_a_literal(
                 f"calibration site. Source from the named constant instead."
             )
     assert not offenders, (
-        "OPTUNA-7 run_calibration_sweep call-site violations:\n  - "
-        + "\n  - ".join(offenders)
+        "OPTUNA-7 run_calibration_sweep call-site violations:\n  - " + "\n  - ".join(offenders)
     )
 
 
@@ -559,6 +547,7 @@ def test_run_calibration_sweep_n_trials_references_calibration_constant(
 # Static guard: no integer-literal n_trials kwargs anywhere in autotuner.py
 # ---------------------------------------------------------------------------
 
+
 def test_autotuner_source_has_no_integer_literal_n_trials_kwarg(autotuner_ast):
     """Whole-module sweep: NO ``n_trials=<int-literal>`` may appear
     anywhere in autotuner.py. The previous two tests pin the two known
@@ -585,8 +574,7 @@ def test_autotuner_source_has_no_integer_literal_n_trials_kwarg(autotuner_ast):
             )
             if is_int_literal or is_unary_int_literal:
                 lit_repr = (
-                    str(val_expr.value) if is_int_literal
-                    else "-" + str(val_expr.operand.value)
+                    str(val_expr.value) if is_int_literal else "-" + str(val_expr.operand.value)
                 )
                 offenders.append(
                     f"line {kw.value.lineno}: n_trials={lit_repr} is an "
@@ -603,15 +591,14 @@ def test_autotuner_source_has_no_integer_literal_n_trials_kwarg(autotuner_ast):
 # Regression guards: OPTUNA-1 + OPTUNA-2 + OPTUNA-6 UNCHANGED
 # ---------------------------------------------------------------------------
 
+
 def test_optuna_1_sampler_pin_preserved_at_both_sites(autotuner_ast, pin_contract):
     """OPTUNA-7 must NOT regress OPTUNA-1: every ``optuna.create_study(...)``
     call in autotuner.py must still pass an explicit ``sampler=`` kwarg
     constructing a ``TPESampler``. A diff that touches only n_trials
     leaves the sampler kwarg untouched; this test confirms.
     """
-    expected_sampler_dotted = pin_contract["regression_guards"][
-        "optuna_1_sampler_class"
-    ]
+    expected_sampler_dotted = pin_contract["regression_guards"]["optuna_1_sampler_class"]
     assert expected_sampler_dotted.endswith("TPESampler")
 
     sites: list[str] = []
@@ -624,9 +611,7 @@ def test_optuna_1_sampler_pin_preserved_at_both_sites(autotuner_ast, pin_contrac
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "create_study"
         ]
-        assert create_calls, (
-            f"AST: expected optuna.create_study(...) in {func_name}"
-        )
+        assert create_calls, f"AST: expected optuna.create_study(...) in {func_name}"
         for call in create_calls:
             sampler_expr = _kw(call, "sampler")
             assert sampler_expr is not None, (
@@ -650,17 +635,12 @@ def test_optuna_1_sampler_pin_preserved_at_both_sites(autotuner_ast, pin_contrac
                 for assign in ast.walk(func):
                     if not isinstance(assign, ast.Assign):
                         continue
-                    targets = [
-                        t.id for t in assign.targets if isinstance(t, ast.Name)
-                    ]
-                    if target_name in targets and isinstance(
-                        assign.value, ast.Call
-                    ):
+                    targets = [t.id for t in assign.targets if isinstance(t, ast.Name)]
+                    if target_name in targets and isinstance(assign.value, ast.Call):
                         af = assign.value.func
-                        if (
-                            isinstance(af, ast.Attribute)
-                            and af.attr == "TPESampler"
-                        ) or (isinstance(af, ast.Name) and af.id == "TPESampler"):
+                        if (isinstance(af, ast.Attribute) and af.attr == "TPESampler") or (
+                            isinstance(af, ast.Name) and af.id == "TPESampler"
+                        ):
                             ok = True
                             break
             assert ok, (
@@ -670,8 +650,7 @@ def test_optuna_1_sampler_pin_preserved_at_both_sites(autotuner_ast, pin_contrac
             sites.append(func_name)
 
     assert len(sites) >= 2, (
-        f"Expected sampler pins at both run_autotuner and "
-        f"run_calibration_sweep; located {sites}"
+        f"Expected sampler pins at both run_autotuner and run_calibration_sweep; located {sites}"
     )
 
 
@@ -679,9 +658,7 @@ def test_optuna_2_pruner_pin_preserved_at_both_sites(autotuner_ast, pin_contract
     """OPTUNA-7 must NOT regress OPTUNA-2: every ``optuna.create_study(...)``
     call in autotuner.py must still pass ``pruner=optuna.pruners.NopPruner()``.
     """
-    expected_pruner_dotted = pin_contract["regression_guards"][
-        "optuna_2_pruner_class"
-    ]
+    expected_pruner_dotted = pin_contract["regression_guards"]["optuna_2_pruner_class"]
     assert expected_pruner_dotted.endswith("NopPruner")
 
     sites_checked = 0
@@ -707,9 +684,9 @@ def test_optuna_2_pruner_pin_preserved_at_both_sites(autotuner_ast, pin_contract
                 f"{type(pruner_expr).__name__}"
             )
             f = pruner_expr.func
-            is_nop = (
-                isinstance(f, ast.Attribute) and f.attr == "NopPruner"
-            ) or (isinstance(f, ast.Name) and f.id == "NopPruner")
+            is_nop = (isinstance(f, ast.Attribute) and f.attr == "NopPruner") or (
+                isinstance(f, ast.Name) and f.id == "NopPruner"
+            )
             assert is_nop, (
                 f"OPTUNA-2 regression in {func_name} (line {call.lineno}): "
                 f"pruner= must construct NopPruner."

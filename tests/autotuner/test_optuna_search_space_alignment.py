@@ -117,6 +117,7 @@ def autotuner_module():
 @pytest.fixture(scope="module")
 def autotuner_source() -> str:
     import autotuner as _at
+
     return pathlib.Path(_at.__file__).read_text(encoding="utf-8")
 
 
@@ -128,6 +129,7 @@ def autotuner_ast(autotuner_source: str) -> ast.Module:
 # ---------------------------------------------------------------------------
 # AST helpers
 # ---------------------------------------------------------------------------
+
 
 def _function_def(tree: ast.Module, name: str) -> ast.FunctionDef:
     for node in ast.walk(tree):
@@ -152,7 +154,11 @@ def _module_float_assignments(tree: ast.Module) -> dict[str, tuple[float, int]]:
         # Accept plain Constant(float|int) and UnaryOp(-Constant(...)) for
         # forward compatibility — none of the V1/production bounds are
         # negative today, but the helper should not silently miss them.
-        if isinstance(v, ast.Constant) and isinstance(v.value, (int, float)) and not isinstance(v.value, bool):
+        if (
+            isinstance(v, ast.Constant)
+            and isinstance(v.value, (int, float))
+            and not isinstance(v.value, bool)
+        ):
             value = float(v.value)
         elif (
             isinstance(v, ast.UnaryOp)
@@ -170,9 +176,7 @@ def _module_float_assignments(tree: ast.Module) -> dict[str, tuple[float, int]]:
     return out
 
 
-def _suggest_float_calls_for_facet(
-    func: ast.FunctionDef, facet: str
-) -> list[ast.Call]:
+def _suggest_float_calls_for_facet(func: ast.FunctionDef, facet: str) -> list[ast.Call]:
     """Return every ``trial.suggest_float("<facet>", ...)`` call inside func.
 
     Matches on the first positional arg being a Constant string equal to
@@ -186,9 +190,7 @@ def _suggest_float_calls_for_facet(
         if not isinstance(node, ast.Call):
             continue
         f = node.func
-        is_suggest_float = (
-            isinstance(f, ast.Attribute) and f.attr == "suggest_float"
-        )
+        is_suggest_float = isinstance(f, ast.Attribute) and f.attr == "suggest_float"
         if not is_suggest_float:
             continue
         if not node.args:
@@ -267,6 +269,7 @@ def _adjacent_comment_block(source: str, lineno: int) -> str:
 # Tier 1 — Named-constant existence + asymmetry-is-real invariant
 # ---------------------------------------------------------------------------
 
+
 def test_production_and_v1_bound_constants_exist_as_module_attrs(
     autotuner_module, alignment_contract
 ):
@@ -296,9 +299,7 @@ def test_production_and_v1_bound_constants_exist_as_module_attrs(
     )
 
 
-def test_production_bounds_genuinely_differ_from_v1_bounds(
-    autotuner_module, alignment_contract
-):
+def test_production_bounds_genuinely_differ_from_v1_bounds(autotuner_module, alignment_contract):
     """OPTUNA-9a is explicitly an ASYMMETRY finding. If a future diff
     silently collapses the V1 bounds onto the production bounds (or vice
     versa), the documentation contract this cycle adds is moot — the
@@ -311,9 +312,7 @@ def test_production_bounds_genuinely_differ_from_v1_bounds(
     same diff.
     """
     names = alignment_contract["named_constants_contract"]
-    if not alignment_contract["named_constants_contract"][
-        "production_bounds_must_differ_from_v1"
-    ]:
+    if not alignment_contract["named_constants_contract"]["production_bounds_must_differ_from_v1"]:
         pytest.skip(
             "Fixture has flipped to Path A (alignment); this asymmetry "
             "invariant is intentionally inert."
@@ -338,6 +337,7 @@ def test_production_bounds_genuinely_differ_from_v1_bounds(
 # ---------------------------------------------------------------------------
 # Tier 2 — V1 source-comment block (regression guard for existing comment)
 # ---------------------------------------------------------------------------
+
 
 def test_v1_min_bound_constant_carries_asymmetry_source_comment(
     autotuner_source, autotuner_ast, alignment_contract
@@ -386,6 +386,7 @@ def test_v1_min_bound_constant_carries_asymmetry_source_comment(
 # ---------------------------------------------------------------------------
 # Tier 3 — Call-site discipline (both sites reference the named constants)
 # ---------------------------------------------------------------------------
+
 
 def test_production_site_suggest_float_references_production_bound_names(
     autotuner_ast, alignment_contract
@@ -467,15 +468,12 @@ def test_production_site_suggest_float_references_production_bound_names(
                     f"to {want!r}."
                 )
 
-    assert not offenders, (
-        "OPTUNA-9a production-site call-site violations:\n  - "
-        + "\n  - ".join(offenders)
+    assert not offenders, "OPTUNA-9a production-site call-site violations:\n  - " + "\n  - ".join(
+        offenders
     )
 
 
-def test_v1_site_suggest_float_references_v1_bound_names(
-    autotuner_ast, alignment_contract
-):
+def test_v1_site_suggest_float_references_v1_bound_names(autotuner_ast, alignment_contract):
     """The V1-sweep ``trial.suggest_float("VWAP_CROSS_HWM_PCT", ...)`` call
     inside run_calibration_sweep must reference the named V1 bound
     constants — NOT float literals, and NOT the production constants.
@@ -549,19 +547,15 @@ def test_v1_site_suggest_float_references_v1_bound_names(
                     f"to {want!r}."
                 )
 
-    assert not offenders, (
-        "OPTUNA-9a V1-site call-site violations:\n  - "
-        + "\n  - ".join(offenders)
-    )
+    assert not offenders, "OPTUNA-9a V1-site call-site violations:\n  - " + "\n  - ".join(offenders)
 
 
 # ---------------------------------------------------------------------------
 # Tier 4 — Documentation contract (RED on HEAD)
 # ---------------------------------------------------------------------------
 
-def test_calibration_sweep_docstring_mentions_bound_asymmetry(
-    autotuner_module, alignment_contract
-):
+
+def test_calibration_sweep_docstring_mentions_bound_asymmetry(autotuner_module, alignment_contract):
     """The ``run_calibration_sweep`` docstring must explicitly mention the
     bound asymmetry between the V1 sweep and the production path.
 
@@ -581,9 +575,7 @@ def test_calibration_sweep_docstring_mentions_bound_asymmetry(
     directionality_tokens = alignment_contract["documentation_contract"][
         "calibration_docstring_required_directionality_any"
     ]
-    facet_token = alignment_contract["documentation_contract"][
-        "calibration_docstring_facet_token"
-    ]
+    facet_token = alignment_contract["documentation_contract"]["calibration_docstring_facet_token"]
 
     func = getattr(autotuner_module, "run_calibration_sweep", None)
     assert func is not None and callable(func), (
@@ -678,6 +670,7 @@ def test_production_bound_constants_carry_v1_cross_reference(
 # Tier 5 — Regression guards (sister audit fixes UNCHANGED)
 # ---------------------------------------------------------------------------
 
+
 def test_optuna_1_2_6_7_regression_guards_preserved(
     autotuner_module, autotuner_ast, alignment_contract
 ):
@@ -700,8 +693,7 @@ def test_optuna_1_2_6_7_regression_guards_preserved(
     helper_name = rg["optuna_6_n_jobs_helper_name"]
     helper = getattr(autotuner_module, helper_name, None)
     assert helper is not None and callable(helper), (
-        f"OPTUNA-6 regression: autotuner.{helper_name} must continue to "
-        f"exist and be callable."
+        f"OPTUNA-6 regression: autotuner.{helper_name} must continue to exist and be callable."
     )
 
     # OPTUNA-7: production + calibration n_trials values are still exposed
@@ -822,9 +814,7 @@ def test_v1_source_comment_block_acknowledges_mixed_direction(
     contract = alignment_contract["mixed_direction_contract"]
 
     assigns = _module_float_assignments(autotuner_ast)
-    assert v1_min_name in assigns, (
-        f"AST: expected module-level numeric assignment {v1_min_name!r}."
-    )
+    assert v1_min_name in assigns, f"AST: expected module-level numeric assignment {v1_min_name!r}."
     _val, lineno = assigns[v1_min_name]
     # Use the V1 constant's OWN adjacent comment block so the
     # acknowledgement probe is confined to the V1 documentation surface
@@ -1022,9 +1012,9 @@ def test_out_of_production_range_caveat_present_in_some_documentation_surface(
     """
     names = alignment_contract["named_constants_contract"]
     v1_min_name = names["v1_min_name"]
-    caveat_tokens = alignment_contract[
-        "out_of_production_range_note_contract"
-    ]["required_caveat_tokens_any"]
+    caveat_tokens = alignment_contract["out_of_production_range_note_contract"][
+        "required_caveat_tokens_any"
+    ]
 
     # Surface 1: V1 constant's OWN adjacent comment block. Confined to
     # the V1 block (not a wide window) so an unrelated downstream

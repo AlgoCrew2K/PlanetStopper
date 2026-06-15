@@ -142,8 +142,7 @@ def test_coalesce_filter_includes_null_fold_role_row(fold_db):
 
         # Buggy bare != filter — what a naive implementer might write.
         buggy_rows = conn.execute(
-            f"SELECT {_FOLD_TABLE_ID_COL} FROM {_FOLD_TABLE} "
-            f"WHERE fold_role != 'frozen_eval'"
+            f"SELECT {_FOLD_TABLE_ID_COL} FROM {_FOLD_TABLE} WHERE fold_role != 'frozen_eval'"
         ).fetchall()
         buggy_ids = {r[0] for r in buggy_rows}
     finally:
@@ -333,9 +332,7 @@ def test_advisor_ro_query_rejects_bare_fold_role_predicate(fold_db_with_advisor_
 
     db_path = fold_db_with_advisor_observations
     with patch.object(db, "DB_FILE", db_path):
-        bare_predicate_sql = (
-            f"SELECT id FROM {_FOLD_TABLE} WHERE fold_role != 'frozen_eval'"
-        )
+        bare_predicate_sql = f"SELECT id FROM {_FOLD_TABLE} WHERE fold_role != 'frozen_eval'"
 
         with pytest.raises((ValueError, Exception)):
             db.advisor_ro_query(bare_predicate_sql)
@@ -416,9 +413,7 @@ def test_fold_role_column_present_and_all_role_values_representable(fold_db):
     """
     conn = sqlite3.connect(fold_db)
     try:
-        columns = conn.execute(
-            f"PRAGMA table_info({_FOLD_TABLE})"
-        ).fetchall()
+        columns = conn.execute(f"PRAGMA table_info({_FOLD_TABLE})").fetchall()
         # PRAGMA table_info returns: (cid, name, type, notnull, dflt_value, pk)
         col_map = {row[1]: row for row in columns}
     finally:
@@ -445,9 +440,7 @@ def test_fold_role_column_present_and_all_role_values_representable(fold_db):
     # Verify all four role values are present in the fixture DB.
     conn = sqlite3.connect(fold_db)
     try:
-        rows = conn.execute(
-            f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE}"
-        ).fetchall()
+        rows = conn.execute(f"SELECT {_FOLD_TABLE_ID_COL}, fold_role FROM {_FOLD_TABLE}").fetchall()
     finally:
         conn.close()
 
@@ -678,9 +671,7 @@ def test_fold_partitioned_table_fold_role_column_shape_after_run_migrations(tmp_
         # PRAGMA table_info on autotune_runs must show fold_role.
         conn = sqlite3.connect(db_path)
         try:
-            columns = conn.execute(
-                "PRAGMA table_info(autotune_runs)"
-            ).fetchall()
+            columns = conn.execute("PRAGMA table_info(autotune_runs)").fetchall()
             # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
             col_map = {row[1]: row for row in columns}
         finally:
@@ -708,8 +699,7 @@ def test_fold_partitioned_table_fold_role_column_shape_after_run_migrations(tmp_
     conn = sqlite3.connect(db_path)
     try:
         row = conn.execute(
-            "SELECT fold_role FROM autotune_runs "
-            "WHERE symphony_id = 'pre-migration-symphony'"
+            "SELECT fold_role FROM autotune_runs WHERE symphony_id = 'pre-migration-symphony'"
         ).fetchone()
     finally:
         conn.close()
@@ -736,8 +726,7 @@ def test_wal_mode_preserved_through_migration(tmp_path):
     verifying no journal-mode incompatibility exists.
     """
     assert "019_fold_role_columns.sql" in db._MIGRATION_FILES, (
-        "'019_fold_role_columns.sql' missing from _MIGRATION_FILES — "
-        "cannot test WAL compatibility."
+        "'019_fold_role_columns.sql' missing from _MIGRATION_FILES — cannot test WAL compatibility."
     )
 
     db_path = str(tmp_path / "test_wal.db")
@@ -808,12 +797,10 @@ def test_coalesce_filter_semantics_match_fixture_documentation(fold_db, fixtures
     conn = sqlite3.connect(fold_db)
     try:
         correct_count = conn.execute(
-            f"SELECT COUNT(*) FROM {_FOLD_TABLE} "
-            f"WHERE COALESCE(fold_role, '') != 'frozen_eval'"
+            f"SELECT COUNT(*) FROM {_FOLD_TABLE} WHERE COALESCE(fold_role, '') != 'frozen_eval'"
         ).fetchone()[0]
         buggy_count = conn.execute(
-            f"SELECT COUNT(*) FROM {_FOLD_TABLE} "
-            f"WHERE fold_role != 'frozen_eval'"
+            f"SELECT COUNT(*) FROM {_FOLD_TABLE} WHERE fold_role != 'frozen_eval'"
         ).fetchone()[0]
     finally:
         conn.close()
@@ -919,9 +906,7 @@ def test_advisor_ro_query_rejects_fold_role_diamond_predicate(fold_db_with_advis
 
     db_path = fold_db_with_advisor_observations
     with patch.object(db, "DB_FILE", db_path):
-        diamond_predicate_sql = (
-            f"SELECT id FROM {_FOLD_TABLE} WHERE fold_role <> 'frozen_eval'"
-        )
+        diamond_predicate_sql = f"SELECT id FROM {_FOLD_TABLE} WHERE fold_role <> 'frozen_eval'"
 
         with pytest.raises((ValueError, Exception)) as exc_info:
             db.advisor_ro_query(diamond_predicate_sql)
@@ -1015,7 +1000,7 @@ def test_tripwire_fires_when_first_row_lacks_fold_role_but_second_row_is_frozen_
         mock_conn = MagicMock()
         mock_conn.execute.return_value.fetchall.return_value = [
             mock_row_no_fold_role,  # row 0: no fold_role — triggers break or continue
-            mock_row_frozen,         # row 1: fold_role='frozen_eval' — the wall breach
+            mock_row_frozen,  # row 1: fold_role='frozen_eval' — the wall breach
         ]
         mock_conn.__enter__ = MagicMock(return_value=mock_conn)
         mock_conn.__exit__ = MagicMock(return_value=False)
@@ -1023,8 +1008,7 @@ def test_tripwire_fires_when_first_row_lacks_fold_role_but_second_row_is_frozen_
         with _patch.object(db, "get_ro_connection", return_value=mock_conn):
             # Any SQL that passes the predicate guard (uses COALESCE).
             safe_sql = (
-                f"SELECT id FROM {_FOLD_TABLE} "
-                f"WHERE COALESCE(fold_role, '') != 'frozen_eval'"
+                f"SELECT id FROM {_FOLD_TABLE} WHERE COALESCE(fold_role, '') != 'frozen_eval'"
             )
             # Assert RuntimeError specifically with the WALL_BREACH message fragment.
             # This confirms the tripwire (not some other codepath) fired.

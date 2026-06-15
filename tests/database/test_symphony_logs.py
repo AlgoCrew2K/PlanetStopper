@@ -34,6 +34,7 @@ from database import (
 # Fixture: isolated log file path per test
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def isolated_log_file(tmp_path, monkeypatch):
     """
@@ -53,6 +54,7 @@ def isolated_log_file(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Test 1: log_symphony_event writes JSON with correct structure
 # ---------------------------------------------------------------------------
+
 
 def test_log_symphony_event_writes_three_entries(isolated_log_file):
     """
@@ -76,9 +78,7 @@ def test_log_symphony_event_writes_three_entries(isolated_log_file):
     )
 
     entries = logs[symphony_id]
-    assert len(entries) == 3, (
-        f"Expected 3 log entries for '{symphony_id}'; got {len(entries)}"
-    )
+    assert len(entries) == 3, f"Expected 3 log entries for '{symphony_id}'; got {len(entries)}"
 
     for i, entry in enumerate(entries):
         assert "timestamp" in entry, (
@@ -87,17 +87,14 @@ def test_log_symphony_event_writes_three_entries(isolated_log_file):
         assert "event_type" in entry, (
             f"Entry {i} missing 'event_type' key; keys: {list(entry.keys())}"
         )
-        assert "message" in entry, (
-            f"Entry {i} missing 'message' key; keys: {list(entry.keys())}"
-        )
+        assert "message" in entry, f"Entry {i} missing 'message' key; keys: {list(entry.keys())}"
         # Timestamp must be a non-empty string ending in 'Z' (UTC ISO-8601)
         assert isinstance(entry["timestamp"], str) and entry["timestamp"].endswith("Z"), (
             f"Entry {i} 'timestamp' must be a UTC ISO-8601 string ending in 'Z'; "
             f"got {entry['timestamp']!r}"
         )
         assert entry["message"] == messages[i], (
-            f"Entry {i} message mismatch: expected {messages[i]!r}, "
-            f"got {entry['message']!r}"
+            f"Entry {i} message mismatch: expected {messages[i]!r}, got {entry['message']!r}"
         )
 
 
@@ -125,6 +122,7 @@ def test_log_symphony_event_preserves_event_type(isolated_log_file):
 # Test 2: get_symphony_logs returns logs for the right symphony only
 # ---------------------------------------------------------------------------
 
+
 def test_get_symphony_logs_returns_only_matching_symphony(isolated_log_file):
     """
     After logging events for sym1 and sym2, get_symphony_logs(sym1) must
@@ -139,12 +137,8 @@ def test_get_symphony_logs_returns_only_matching_symphony(isolated_log_file):
 
     result = get_symphony_logs("sym1")
 
-    assert isinstance(result, list), (
-        f"get_symphony_logs must return a list; got {type(result)}"
-    )
-    assert len(result) == 2, (
-        f"Expected 2 entries for sym1; got {len(result)}"
-    )
+    assert isinstance(result, list), f"get_symphony_logs must return a list; got {type(result)}"
+    assert len(result) == 2, f"Expected 2 entries for sym1; got {len(result)}"
 
     messages = [e["message"] for e in result]
     assert "event-for-sym1-a" in messages
@@ -163,10 +157,7 @@ def test_get_symphony_logs_returns_empty_list_for_unknown_symphony(isolated_log_
 
     result = get_symphony_logs("nonexistent-sym")
 
-    assert result == [], (
-        "get_symphony_logs for an unknown symphony must return []; "
-        f"got {result!r}"
-    )
+    assert result == [], f"get_symphony_logs for an unknown symphony must return []; got {result!r}"
 
 
 def test_get_symphony_logs_returns_empty_list_when_file_absent():
@@ -177,6 +168,7 @@ def test_get_symphony_logs_returns_empty_list_when_file_absent():
     Uses a monkeypatch pointing to a path that was never written.
     """
     import tempfile, os
+
     with tempfile.TemporaryDirectory() as td:
         nonexistent = os.path.join(td, "does_not_exist.json")
         original = db_module.SYMPHONY_LOGS_FILE
@@ -187,14 +179,14 @@ def test_get_symphony_logs_returns_empty_list_when_file_absent():
             db_module.SYMPHONY_LOGS_FILE = original
 
     assert result == [], (
-        "get_symphony_logs must return [] when log file does not exist; "
-        f"got {result!r}"
+        f"get_symphony_logs must return [] when log file does not exist; got {result!r}"
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 3: clear_symphony_logs removes all entries
 # ---------------------------------------------------------------------------
+
 
 def test_clear_symphony_logs_empties_all_entries(isolated_log_file):
     """
@@ -219,9 +211,7 @@ def test_clear_symphony_logs_empties_all_entries(isolated_log_file):
     # File must still be valid JSON (not deleted, not corrupted)
     with open(isolated_log_file, "r", encoding="utf-8") as f:
         content = json.load(f)
-    assert content == {}, (
-        f"Log file content after clear must be {{}}; got {content!r}"
-    )
+    assert content == {}, f"Log file content after clear must be {{}}; got {content!r}"
 
 
 def test_clear_symphony_logs_idempotent(isolated_log_file):
@@ -234,14 +224,13 @@ def test_clear_symphony_logs_idempotent(isolated_log_file):
     # Second clear — file is already empty
     clear_symphony_logs()
 
-    assert get_symphony_logs("sym") == [], (
-        "Logs must still be empty after double clear"
-    )
+    assert get_symphony_logs("sym") == [], "Logs must still be empty after double clear"
 
 
 # ---------------------------------------------------------------------------
 # Test 4: log_symphony_event file-write failure is swallowed silently
 # ---------------------------------------------------------------------------
+
 
 def test_log_symphony_event_swallows_oserror_on_write(isolated_log_file):
     """
@@ -292,6 +281,7 @@ def test_log_symphony_event_does_not_swallow_keyboard_interrupt(isolated_log_fil
 # ---------------------------------------------------------------------------
 # Test 5: log entries accumulate across separate calls (append semantics)
 # ---------------------------------------------------------------------------
+
 
 def test_log_symphony_event_appends_across_separate_calls(isolated_log_file):
     """

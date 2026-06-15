@@ -96,23 +96,22 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parents[1]
-    / "fixtures"
-    / "math"
-    / "divergence_explainer_scenarios.json"
+    pathlib.Path(__file__).parents[1] / "fixtures" / "math" / "divergence_explainer_scenarios.json"
 )
 
 # Keys whose presence in raw_response means a signed divergence leaked through.
 # These are the forbidden keys per the CVaR-divergence REJECT user mandate.
-_FORBIDDEN_DIVERGENCE_KEYS = frozenset({
-    "divergence",
-    "signed_divergence",
-    "cvar_diff",
-    "cvar_delta",
-    "window_divergence",
-    "divergence_pct",
-    "delta",
-})
+_FORBIDDEN_DIVERGENCE_KEYS = frozenset(
+    {
+        "divergence",
+        "signed_divergence",
+        "cvar_diff",
+        "cvar_delta",
+        "window_divergence",
+        "divergence_pct",
+        "delta",
+    }
+)
 
 
 def _load_fixture() -> dict:
@@ -146,6 +145,7 @@ def _assert_no_forbidden_divergence_keys(raw_response: dict, context: str) -> No
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def divex_fixture() -> dict:
@@ -181,13 +181,12 @@ def flag_on_no_rows(divex_fixture) -> dict:
 # Test group 1 — Pure function contract: return dict structure and required keys.
 # ===========================================================================
 
+
 def test_pure_function_returns_a_dict_flag_off(flag_off_scenario):
     """compute_divergence_explainer_observation returns a dict when §B is off."""
     mod = _import_divex()
     run = flag_off_scenario["autotune_run"]
-    result = mod.compute_divergence_explainer_observation(
-        run, None, second_window_enabled=False
-    )
+    result = mod.compute_divergence_explainer_observation(run, None, second_window_enabled=False)
     assert isinstance(result, dict), (
         "compute_divergence_explainer_observation must return a dict when §B is off"
     )
@@ -198,9 +197,7 @@ def test_pure_function_returns_a_dict_flag_on(flag_on_both_windows):
     mod = _import_divex()
     run = flag_on_both_windows["autotune_run"]
     cvar_row = flag_on_both_windows["cvar_rows"][0]
-    result = mod.compute_divergence_explainer_observation(
-        run, cvar_row, second_window_enabled=True
-    )
+    result = mod.compute_divergence_explainer_observation(run, cvar_row, second_window_enabled=True)
     assert isinstance(result, dict), (
         "compute_divergence_explainer_observation must return a dict when §B is on"
     )
@@ -210,9 +207,7 @@ def test_return_dict_has_all_required_keys_flag_off(flag_off_scenario):
     """Result dict must carry every required AdvisorObservation key when §B is off."""
     mod = _import_divex()
     run = flag_off_scenario["autotune_run"]
-    result = mod.compute_divergence_explainer_observation(
-        run, None, second_window_enabled=False
-    )
+    result = mod.compute_divergence_explainer_observation(run, None, second_window_enabled=False)
     required = {
         "advisor_role",
         "subject_type",
@@ -222,9 +217,7 @@ def test_return_dict_has_all_required_keys_flag_off(flag_off_scenario):
         "is_advisory_only",
     }
     missing = required - set(result.keys())
-    assert not missing, (
-        f"result is missing required AdvisorObservation keys: {missing}"
-    )
+    assert not missing, f"result is missing required AdvisorObservation keys: {missing}"
 
 
 def test_return_dict_has_all_required_keys_flag_on(flag_on_both_windows):
@@ -232,9 +225,7 @@ def test_return_dict_has_all_required_keys_flag_on(flag_on_both_windows):
     mod = _import_divex()
     run = flag_on_both_windows["autotune_run"]
     cvar_row = flag_on_both_windows["cvar_rows"][0]
-    result = mod.compute_divergence_explainer_observation(
-        run, cvar_row, second_window_enabled=True
-    )
+    result = mod.compute_divergence_explainer_observation(run, cvar_row, second_window_enabled=True)
     required = {
         "advisor_role",
         "subject_type",
@@ -244,9 +235,7 @@ def test_return_dict_has_all_required_keys_flag_on(flag_on_both_windows):
         "is_advisory_only",
     }
     missing = required - set(result.keys())
-    assert not missing, (
-        f"result is missing required AdvisorObservation keys: {missing}"
-    )
+    assert not missing, f"result is missing required AdvisorObservation keys: {missing}"
 
 
 def test_advisor_role_is_divergence_explainer(flag_off_scenario, flag_on_both_windows):
@@ -260,8 +249,7 @@ def test_advisor_role_is_divergence_explainer(flag_off_scenario, flag_on_both_wi
             scenario["autotune_run"], cvar, second_window_enabled=enabled
         )
         assert result["advisor_role"] == "DIVERGENCE_EXPLAINER", (
-            f"{label}: advisor_role must be 'DIVERGENCE_EXPLAINER', "
-            f"got {result['advisor_role']!r}"
+            f"{label}: advisor_role must be 'DIVERGENCE_EXPLAINER', got {result['advisor_role']!r}"
         )
 
 
@@ -304,7 +292,12 @@ def test_raw_response_is_a_dict_on_both_paths(
     mod = _import_divex()
     cases = [
         (flag_off_scenario["autotune_run"], None, False, "flag_off"),
-        (flag_on_both_windows["autotune_run"], flag_on_both_windows["cvar_rows"][0], True, "both_windows"),
+        (
+            flag_on_both_windows["autotune_run"],
+            flag_on_both_windows["cvar_rows"][0],
+            True,
+            "both_windows",
+        ),
         (flag_on_long_null["autotune_run"], flag_on_long_null["cvar_rows"][0], True, "long_null"),
         (flag_on_no_rows["autotune_run"], None, True, "no_rows"),
     ]
@@ -313,14 +306,14 @@ def test_raw_response_is_a_dict_on_both_paths(
             run, cvar, second_window_enabled=enabled
         )
         assert isinstance(result["raw_response"], dict), (
-            f"{label}: raw_response must be a dict, "
-            f"got {type(result['raw_response']).__name__!r}"
+            f"{label}: raw_response must be a dict, got {type(result['raw_response']).__name__!r}"
         )
 
 
 # ===========================================================================
 # Test group 2 — §B feature-flag off: NOT_APPLICABLE behaviour.
 # ===========================================================================
+
 
 def test_flag_off_verdict_is_not_applicable(flag_off_scenario):
     """When §B is disabled, verdict must be 'NOT_APPLICABLE'."""
@@ -341,8 +334,7 @@ def test_flag_off_raw_response_indicates_flag_is_off(flag_off_scenario):
     )
     raw = result["raw_response"]
     assert raw.get("feature_flag") == "off", (
-        "§B disabled: raw_response['feature_flag'] must be 'off'; "
-        f"got raw_response={raw!r}"
+        f"§B disabled: raw_response['feature_flag'] must be 'off'; got raw_response={raw!r}"
     )
 
 
@@ -371,6 +363,7 @@ def test_flag_off_is_advisory_only_is_1(flag_off_scenario):
 # Test group 3 — §B feature-flag on: INFORMATIONAL behaviour.
 # ===========================================================================
 
+
 def test_flag_on_verdict_is_informational(flag_on_both_windows):
     """When §B is enabled and CVaR rows exist, verdict must be 'INFORMATIONAL'."""
     mod = _import_divex()
@@ -394,12 +387,10 @@ def test_flag_on_raw_response_contains_short_window_fields(flag_on_both_windows)
     )
     raw = result["raw_response"]
     assert "short_window_cvar_pct" in raw, (
-        "§B on: raw_response must contain 'short_window_cvar_pct'; "
-        f"got keys: {sorted(raw.keys())}"
+        f"§B on: raw_response must contain 'short_window_cvar_pct'; got keys: {sorted(raw.keys())}"
     )
     assert "short_window_tail_obs" in raw, (
-        "§B on: raw_response must contain 'short_window_tail_obs'; "
-        f"got keys: {sorted(raw.keys())}"
+        f"§B on: raw_response must contain 'short_window_tail_obs'; got keys: {sorted(raw.keys())}"
     )
 
 
@@ -413,12 +404,10 @@ def test_flag_on_raw_response_contains_long_window_fields(flag_on_both_windows):
     )
     raw = result["raw_response"]
     assert "long_window_cvar_pct" in raw, (
-        "§B on: raw_response must contain 'long_window_cvar_pct'; "
-        f"got keys: {sorted(raw.keys())}"
+        f"§B on: raw_response must contain 'long_window_cvar_pct'; got keys: {sorted(raw.keys())}"
     )
     assert "long_window_tail_obs" in raw, (
-        "§B on: raw_response must contain 'long_window_tail_obs'; "
-        f"got keys: {sorted(raw.keys())}"
+        f"§B on: raw_response must contain 'long_window_tail_obs'; got keys: {sorted(raw.keys())}"
     )
 
 
@@ -509,6 +498,7 @@ def test_flag_on_no_rows_both_window_fields_are_none(flag_on_no_rows):
 # decision from the decision-science council.
 # ===========================================================================
 
+
 def test_flag_on_both_windows_raw_response_has_no_divergence_key(flag_on_both_windows):
     """CVaR-divergence REJECT: raw_response must never contain a signed difference.
 
@@ -523,7 +513,7 @@ def test_flag_on_both_windows_raw_response_has_no_divergence_key(flag_on_both_wi
     )
     _assert_no_forbidden_divergence_keys(
         result["raw_response"],
-        "flag_on_both_windows (both CVaR values present — highest risk of divergence leak)"
+        "flag_on_both_windows (both CVaR values present — highest risk of divergence leak)",
     )
 
 
@@ -574,9 +564,7 @@ def test_divergence_reject_adversarial_alternative_key_names():
         "cvar_n_tail_long": 8,
         "ts_utc": "2026-05-27T20:01:00Z",
     }
-    result = mod.compute_divergence_explainer_observation(
-        run, cvar_row, second_window_enabled=True
-    )
+    result = mod.compute_divergence_explainer_observation(run, cvar_row, second_window_enabled=True)
     raw = result["raw_response"]
 
     # Extended adversarial check — proxy names that still encode a difference.
@@ -603,6 +591,7 @@ def test_divergence_reject_adversarial_alternative_key_names():
 # Test group 5 — is_advisory_only invariant across all paths.
 # ===========================================================================
 
+
 def test_is_advisory_only_is_always_1_on_every_verdict(
     flag_off_scenario, flag_on_both_windows, flag_on_long_null, flag_on_no_rows
 ):
@@ -615,8 +604,18 @@ def test_is_advisory_only_is_always_1_on_every_verdict(
     mod = _import_divex()
     cases = [
         (flag_off_scenario["autotune_run"], None, False, "flag_off/NOT_APPLICABLE"),
-        (flag_on_both_windows["autotune_run"], flag_on_both_windows["cvar_rows"][0], True, "flag_on/both_windows"),
-        (flag_on_long_null["autotune_run"], flag_on_long_null["cvar_rows"][0], True, "flag_on/long_null"),
+        (
+            flag_on_both_windows["autotune_run"],
+            flag_on_both_windows["cvar_rows"][0],
+            True,
+            "flag_on/both_windows",
+        ),
+        (
+            flag_on_long_null["autotune_run"],
+            flag_on_long_null["cvar_rows"][0],
+            True,
+            "flag_on/long_null",
+        ),
         (flag_on_no_rows["autotune_run"], None, True, "flag_on/no_rows"),
     ]
     for run, cvar, enabled, label in cases:
@@ -633,6 +632,7 @@ def test_is_advisory_only_is_always_1_on_every_verdict(
 # Test group 6 — verdict is constrained to allowed values.
 # ===========================================================================
 
+
 def test_verdict_is_in_allowed_enum(
     flag_off_scenario, flag_on_both_windows, flag_on_long_null, flag_on_no_rows
 ):
@@ -641,8 +641,18 @@ def test_verdict_is_in_allowed_enum(
     allowed = {"NOT_APPLICABLE", "INFORMATIONAL"}
     cases = [
         (flag_off_scenario["autotune_run"], None, False, "flag_off"),
-        (flag_on_both_windows["autotune_run"], flag_on_both_windows["cvar_rows"][0], True, "flag_on/both"),
-        (flag_on_long_null["autotune_run"], flag_on_long_null["cvar_rows"][0], True, "flag_on/long_null"),
+        (
+            flag_on_both_windows["autotune_run"],
+            flag_on_both_windows["cvar_rows"][0],
+            True,
+            "flag_on/both",
+        ),
+        (
+            flag_on_long_null["autotune_run"],
+            flag_on_long_null["cvar_rows"][0],
+            True,
+            "flag_on/long_null",
+        ),
         (flag_on_no_rows["autotune_run"], None, True, "flag_on/no_rows"),
     ]
     for run, cvar, enabled, label in cases:
@@ -657,6 +667,7 @@ def test_verdict_is_in_allowed_enum(
 # ===========================================================================
 # Test group 7 — Feature-flag env-var integration via run_divergence_explainer.
 # ===========================================================================
+
 
 def test_run_divergence_explainer_reads_env_flag_off(monkeypatch, flag_off_scenario):
     """run_divergence_explainer reads SECOND_WINDOW_CVAR_ENABLED from the env.
@@ -763,6 +774,7 @@ def test_run_divergence_explainer_explicit_kwarg_overrides_env(monkeypatch, flag
 # Test group 8 — Integration entry point: run_divergence_explainer write contract.
 # ===========================================================================
 
+
 def test_run_divergence_explainer_returns_row_id(monkeypatch, flag_off_scenario):
     """run_divergence_explainer returns the row id from insert_advisor_observation."""
     mod = _import_divex()
@@ -834,9 +846,7 @@ def test_run_divergence_explainer_writes_only_divergence_explainer_role(
         )
 
 
-def test_run_divergence_explainer_does_not_write_to_other_tables(
-    monkeypatch, flag_on_both_windows
-):
+def test_run_divergence_explainer_does_not_write_to_other_tables(monkeypatch, flag_on_both_windows):
     """Producer must NOT write to researcher_dof_ledger, autotune_runs, or spec_bundles."""
     mod = _import_divex()
     monkeypatch.setenv("SECOND_WINDOW_CVAR_ENABLED", "1")
@@ -883,14 +893,14 @@ def test_run_divergence_explainer_raw_response_no_divergence_key_at_write_site(
         )
 
     _assert_no_forbidden_divergence_keys(
-        raw_at_persist,
-        "raw_response passed to insert_advisor_observation"
+        raw_at_persist, "raw_response passed to insert_advisor_observation"
     )
 
 
 # ===========================================================================
 # Test group 9 — Wall integrity: no direct DB connections.
 # ===========================================================================
+
 
 def test_divergence_explainer_module_does_not_call_get_connection_directly():
     """The advisors/divergence_explainer.py source must NOT call get_connection() directly.
@@ -899,20 +909,13 @@ def test_divergence_explainer_module_does_not_call_get_connection_directly():
     the wall-breach tripwire — prohibited by architecture constraint
     (database.py wall integrity rule, same as Overfitting Conscience / Spec Critic).
     """
-    source_path = (
-        pathlib.Path(__file__).parents[2]
-        / "advisors"
-        / "divergence_explainer.py"
-    )
+    source_path = pathlib.Path(__file__).parents[2] / "advisors" / "divergence_explainer.py"
     assert source_path.exists(), (
         f"advisors/divergence_explainer.py not found at {source_path} — "
         "the implementer must create it before this test can pass"
     )
     source = source_path.read_text(encoding="utf-8")
-    non_comment_lines = [
-        line for line in source.splitlines()
-        if not line.lstrip().startswith("#")
-    ]
+    non_comment_lines = [line for line in source.splitlines() if not line.lstrip().startswith("#")]
     non_comment_source = "\n".join(non_comment_lines)
     assert "get_connection()" not in non_comment_source, (
         "advisors/divergence_explainer.py must NOT call get_connection() directly — "
@@ -930,11 +933,7 @@ def test_divergence_explainer_module_references_advisor_ro_query():
     Pairing with the previous test: absence of direct connections AND presence
     of the approved read path is the complete wall integrity contract.
     """
-    source_path = (
-        pathlib.Path(__file__).parents[2]
-        / "advisors"
-        / "divergence_explainer.py"
-    )
+    source_path = pathlib.Path(__file__).parents[2] / "advisors" / "divergence_explainer.py"
     assert source_path.exists(), (
         "advisors/divergence_explainer.py not found — implementer must create it"
     )
@@ -1003,6 +1002,7 @@ def test_run_divergence_explainer_actually_calls_advisor_ro_query_when_flag_on(
 # Test group 10 — Performance: producer execution under 100ms.
 # ===========================================================================
 
+
 def test_producer_executes_under_100ms(flag_on_both_windows):
     """compute_divergence_explainer_observation must complete in under 100ms.
 
@@ -1018,9 +1018,7 @@ def test_producer_executes_under_100ms(flag_on_both_windows):
     cvar_row = flag_on_both_windows["cvar_rows"][0]
 
     start = time.monotonic()
-    mod.compute_divergence_explainer_observation(
-        run, cvar_row, second_window_enabled=True
-    )
+    mod.compute_divergence_explainer_observation(run, cvar_row, second_window_enabled=True)
     elapsed = time.monotonic() - start
 
     assert elapsed < BUDGET_SECONDS, (
@@ -1033,6 +1031,7 @@ def test_producer_executes_under_100ms(flag_on_both_windows):
 # ===========================================================================
 # Test group 11 — Hostile edge cases.
 # ===========================================================================
+
 
 def test_missing_run_id_raises_clearly():
     """When autotune_run dict is missing 'id', the function must raise a clear error.
@@ -1067,12 +1066,8 @@ def test_flag_on_cvar_row_none_does_not_raise():
         "run_timestamp": "2026-05-27T16:00:00Z",
     }
     # Must not raise:
-    result = mod.compute_divergence_explainer_observation(
-        run, None, second_window_enabled=True
-    )
-    assert isinstance(result, dict), (
-        "§B on + cvar_row=None must return a dict, not raise"
-    )
+    result = mod.compute_divergence_explainer_observation(run, None, second_window_enabled=True)
+    assert isinstance(result, dict), "§B on + cvar_row=None must return a dict, not raise"
     assert result["verdict"] == "INFORMATIONAL"
     assert result["is_advisory_only"] == 1
     _assert_no_forbidden_divergence_keys(result["raw_response"], "flag_on_cvar_row_None")

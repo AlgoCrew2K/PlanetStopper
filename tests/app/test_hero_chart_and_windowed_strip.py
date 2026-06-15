@@ -54,9 +54,14 @@ def mock_database():
 # the guard, the bot path is WITH the guard. They differ on the trigger days.
 # ---------------------------------------------------------------------------
 
+
 def _divergent_daily_series():
     dates = [f"2026-05-{d:02d}" for d in range(18, 23)] + [
-        "2026-05-26", "2026-05-27", "2026-05-28", "2026-05-29", "2026-06-01",
+        "2026-05-26",
+        "2026-05-27",
+        "2026-05-28",
+        "2026-05-29",
+        "2026-06-01",
     ]
     bot_pct = [1.0, 0.5, -2.0, 0.3, 0.8, -1.0, 0.4, 1.2, -0.6, 0.9]
     held_pct = [1.0, 0.5, -2.0, 2.1, 0.8, -1.0, 0.4, 1.2, -0.6, 0.9]  # day 4 diverges
@@ -66,6 +71,7 @@ def _divergent_daily_series():
 # ===========================================================================
 # AC-4b — /api/hero-chart returns a REAL held series distinct from bot
 # ===========================================================================
+
 
 class TestHeroChartHeldSeriesIsDistinct:
     """hist_held must NOT be the bot series. For a divergent fixture the two compounded
@@ -81,7 +87,9 @@ class TestHeroChartHeldSeriesIsDistinct:
         analytics_mock = MagicMock()
         # The NEW sibling contract risk-engine committed: a real (dates, bot, held) source.
         analytics_mock.get_portfolio_bot_and_held_daily_returns.return_value = (
-            dates, bot_pct, held_pct
+            dates,
+            bot_pct,
+            held_pct,
         )
         # Legacy single-series source still present; must NOT be used to fake held=bot.
         analytics_mock.get_portfolio_daily_returns_from_shadow.return_value = (dates, bot_pct)
@@ -108,7 +116,9 @@ class TestHeroChartHeldSeriesIsDistinct:
         dates, bot_pct, held_pct = _divergent_daily_series()
         analytics_mock = MagicMock()
         analytics_mock.get_portfolio_bot_and_held_daily_returns.return_value = (
-            dates, bot_pct, held_pct
+            dates,
+            bot_pct,
+            held_pct,
         )
         analytics_mock.get_portfolio_daily_returns_from_shadow.return_value = (dates, bot_pct)
 
@@ -126,6 +136,7 @@ class TestHeroChartHeldSeriesIsDistinct:
 # AC-3 — a windowed strip endpoint whose guard-alpha VALUE changes per window
 # ===========================================================================
 
+
 class TestWindowedStripValueRespectsPicker:
     """The headline guard alpha must be recomputed FOR the selected window. A route that
     returns a window-independent all-time value (today's bug) fails the cross-window
@@ -136,8 +147,13 @@ class TestWindowedStripValueRespectsPicker:
         """analytics mock whose windowed strip returns a DIFFERENT guard alpha per window —
         so the test can prove the route threads the window through to the value."""
         per_window_alpha = {
-            "30d": 2.1, "60d": 1.7, "90d": 1.4, "125d": 1.1,
-            "ytd": 0.9, "1y": 0.6, "all": 1.685,
+            "30d": 2.1,
+            "60d": 1.7,
+            "90d": 1.4,
+            "125d": 1.1,
+            "ytd": 0.9,
+            "1y": 0.6,
+            "all": 1.685,
         }
 
         def _strip(symphonies, bot_state, *, window, db_path=None):
@@ -147,7 +163,8 @@ class TestWindowedStripValueRespectsPicker:
                 "today_change": {"if_held": 0.0, "dry_run": 0.0},
                 "cumulative_return": {"if_held": 10.0, "dry_run": 10.0 + alpha},
                 "max_drawdown": {"if_held": 5.0, "dry_run": 5.0},
-                "vol_bot": None, "vol_held": None,
+                "vol_bot": None,
+                "vol_held": None,
                 "guard_alpha": alpha,
                 "insufficient_history": False,
                 "window": wkey,
@@ -175,8 +192,10 @@ class TestWindowedStripValueRespectsPicker:
         generic /api/state that ignores the window must NOT satisfy this — so we assert
         the dedicated route 200s and that the windowed strip fn received this window."""
         analytics_mock, _ = self._windowed_analytics()
-        with patch.object(app_module, "analytics", analytics_mock), \
-             patch.object(app_module, "render_template", lambda *_a, **_k: ""):
+        with (
+            patch.object(app_module, "analytics", analytics_mock),
+            patch.object(app_module, "render_template", lambda *_a, **_k: ""),
+        ):
             resp = client.get(f"/api/strip/{window}")
         assert resp.status_code == 200, (
             f"AC-3 FAIL: the dedicated /api/strip/{window} route is missing or rejected the "
@@ -201,8 +220,10 @@ class TestWindowedStripValueRespectsPicker:
         analytics_mock, per_window_alpha = self._windowed_analytics()
 
         observed = {}
-        with patch.object(app_module, "analytics", analytics_mock), \
-             patch.object(app_module, "render_template", lambda *_a, **_k: ""):
+        with (
+            patch.object(app_module, "analytics", analytics_mock),
+            patch.object(app_module, "render_template", lambda *_a, **_k: ""),
+        ):
             for window in ["30d", "90d", "all"]:
                 resp = self._resolve_windowed_strip(client, window)
                 assert resp.status_code == 200, f"window {window} -> {resp.status_code}"
@@ -221,14 +242,14 @@ class TestWindowedStripValueRespectsPicker:
             "— it stays the window-independent all-time figure (the F1 bug)."
         )
 
-    def test_windowed_strip_echoes_selected_window_for_honest_label(
-        self, client, mock_database
-    ):
+    def test_windowed_strip_echoes_selected_window_for_honest_label(self, client, mock_database):
         """The response must echo the resolved window so the label matches the value
         (the '30d' label on an all-time value is the F1 dishonesty)."""
         analytics_mock, _ = self._windowed_analytics()
-        with patch.object(app_module, "analytics", analytics_mock), \
-             patch.object(app_module, "render_template", lambda *_a, **_k: ""):
+        with (
+            patch.object(app_module, "analytics", analytics_mock),
+            patch.object(app_module, "render_template", lambda *_a, **_k: ""),
+        ):
             resp = self._resolve_windowed_strip(client, "all")
         assert resp.status_code == 200
         body = resp.get_json()

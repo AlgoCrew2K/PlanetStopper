@@ -87,8 +87,7 @@ def _synthetic_history_payload() -> dict:
         # unique string.
         date_key = f"2026-01-{day_idx + 1:03d}"
         history["sym-test-001"][date_key] = [
-            {"return": 0.0, "vol": 1.0, "mc_prob": 50.0,
-             "vwap_diff": 0.0, "valid_vwap_weight": 1.0}
+            {"return": 0.0, "vol": 1.0, "mc_prob": 50.0, "vwap_diff": 0.0, "valid_vwap_weight": 1.0}
         ]
     return history
 
@@ -151,65 +150,77 @@ def _run_autotuner_with_patches(
     # ExitStack flattens the deep nesting; avoids "too many statically nested
     # blocks" SyntaxError from Python's 20-level hard limit.
     with contextlib.ExitStack() as stack:
+        stack.enter_context(patch.object(autotuner, "_haircut_select", return_value=haircut_return))
         stack.enter_context(
-            patch.object(autotuner, "_haircut_select",
-                         return_value=haircut_return))
+            patch.object(autotuner, "compute_sortino_ratio", return_value=sortino_return)
+        )
+        stack.enter_context(patch.object(autotuner, "run_simulation", **_sim_patch_kwargs))
         stack.enter_context(
-            patch.object(autotuner, "compute_sortino_ratio",
-                         return_value=sortino_return))
+            patch.object(autotuner, "_collect_sim_returns", return_value=[0.01, -0.005, 0.008])
+        )
         stack.enter_context(
-            patch.object(autotuner, "run_simulation", **_sim_patch_kwargs))
+            patch.object(
+                autotuner,
+                "calculate_historical_deviation",
+                return_value={
+                    "Take-Profit": 0.0,
+                    "Trailing Stop": -0.2,
+                    "VWAP Breakdown": -0.4,
+                    "VWAP Bleed Cut": -0.25,
+                },
+            )
+        )
         stack.enter_context(
-            patch.object(autotuner, "_collect_sim_returns",
-                         return_value=[0.01, -0.005, 0.008]))
+            patch.object(
+                autotuner.synthetic_history,
+                "generate_synthetic_history",
+                return_value=_synthetic_history_payload(),
+            )
+        )
+        stack.enter_context(patch.object(autotuner, "_apply_optuna_archive_migration_if_needed"))
+        mock_create_study = stack.enter_context(patch("autotuner.optuna.create_study"))
+        stack.enter_context(patch.object(autotuner.optuna.storages, "RDBStorage"))
         stack.enter_context(
-            patch.object(autotuner, "calculate_historical_deviation",
-                         return_value={"Take-Profit": 0.0,
-                                       "Trailing Stop": -0.2,
-                                       "VWAP Breakdown": -0.4,
-                                       "VWAP Bleed Cut": -0.25}))
+            patch.object(autotuner.database, "save_autotune_run", side_effect=_capture_save)
+        )
+        stack.enter_context(patch.object(autotuner.database, "save_symphony_strategy"))
+        stack.enter_context(patch.object(autotuner.database, "save_chart_archive"))
         stack.enter_context(
-            patch.object(autotuner.synthetic_history,
-                         "generate_synthetic_history",
-                         return_value=_synthetic_history_payload()))
+            patch.object(
+                autotuner.database,
+                "load_chart_history",
+                return_value={"date": "2026-05-21", "symphonies": {}},
+            )
+        )
         stack.enter_context(
-            patch.object(autotuner, "_apply_optuna_archive_migration_if_needed"))
-        mock_create_study = stack.enter_context(
-            patch("autotuner.optuna.create_study"))
+            patch.object(
+                autotuner.database,
+                "get_symphony_strategy",
+                return_value={"params": _full_params(), "locked_vars": []},
+            )
+        )
         stack.enter_context(
-            patch.object(autotuner.optuna.storages, "RDBStorage"))
+            patch.object(autotuner.database, "DEFAULT_STRATEGY", new=_full_params())
+        )
         stack.enter_context(
-            patch.object(autotuner.database, "save_autotune_run",
-                         side_effect=_capture_save))
+            patch.object(
+                autotuner.database,
+                "normalize_name",
+                side_effect=lambda s: (s or "").strip().lower(),
+            )
+        )
         stack.enter_context(
-            patch.object(autotuner.database, "save_symphony_strategy"))
+            patch.object(autotuner.database, "get_spec_bundle_by_id", return_value=_stub_bundle_row)
+        )
         stack.enter_context(
-            patch.object(autotuner.database, "save_chart_archive"))
+            patch.object(
+                autotuner.database, "get_spec_facets_for_bundle", return_value=_stub_facets
+            )
+        )
+        stack.enter_context(patch.object(autotuner.database, "advisor_ro_query", return_value=[]))
         stack.enter_context(
-            patch.object(autotuner.database, "load_chart_history",
-                         return_value={"date": "2026-05-21", "symphonies": {}}))
-        stack.enter_context(
-            patch.object(autotuner.database, "get_symphony_strategy",
-                         return_value={"params": _full_params(),
-                                       "locked_vars": []}))
-        stack.enter_context(
-            patch.object(autotuner.database, "DEFAULT_STRATEGY",
-                         new=_full_params()))
-        stack.enter_context(
-            patch.object(autotuner.database, "normalize_name",
-                         side_effect=lambda s: (s or "").strip().lower()))
-        stack.enter_context(
-            patch.object(autotuner.database, "get_spec_bundle_by_id",
-                         return_value=_stub_bundle_row))
-        stack.enter_context(
-            patch.object(autotuner.database, "get_spec_facets_for_bundle",
-                         return_value=_stub_facets))
-        stack.enter_context(
-            patch.object(autotuner.database, "advisor_ro_query",
-                         return_value=[]))
-        stack.enter_context(
-            patch.object(autotuner, "validate_nn1_compliance",
-                         return_value=(True, [])))
+            patch.object(autotuner, "validate_nn1_compliance", return_value=(True, []))
+        )
 
         study = MagicMock()
         study.best_value = 0.5
@@ -229,8 +240,7 @@ def _run_autotuner_with_patches(
             # The harness may raise from an unrelated branch (warning emit,
             # logging side effect). What matters is whether save_autotune_run
             # ran and what kwargs were captured.
-            captured.setdefault("_harness_exception",
-                                f"{type(exc).__name__}: {exc}")
+            captured.setdefault("_harness_exception", f"{type(exc).__name__}: {exc}")
 
     return captured
 
@@ -247,7 +257,7 @@ class TestHaircutRejectionNullsFrozenEvalSharpe:
     def test_haircut_rejection_persists_none_frozen_eval_sharpe(self):
         """Force _haircut_select to reject; pin the captured kwarg."""
         captured = _run_autotuner_with_patches(
-            haircut_return=(None, 0.99, 1.2),     # no winner
+            haircut_return=(None, 0.99, 1.2),  # no winner
             study_best_params=_full_params(),
         )
         assert captured, (

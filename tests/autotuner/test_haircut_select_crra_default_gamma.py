@@ -50,6 +50,7 @@ _EXPECTED_GAMMA = float(database.PHASE1_THEORY_GAMMA)
 #         literal as the gamma fallback.
 # ===========================================================================
 
+
 def test_haircut_select_crra_fallback_does_not_use_bare_literal():
     """_haircut_select must not assign `2.0` as a bare literal gamma fallback.
 
@@ -78,17 +79,13 @@ def test_haircut_select_crra_fallback_does_not_use_bare_literal():
                 break
             func_lines.append(line)
 
-    assert func_lines, (
-        "_haircut_select function not found in autotuner.py — has it been renamed?"
-    )
+    assert func_lines, "_haircut_select function not found in autotuner.py — has it been renamed?"
 
     func_source = "\n".join(func_lines)
 
     # The bare literal assignment pattern we forbid.
     # Match: `_crra_gamma = ... else 2.0` (with optional whitespace).
-    bare_literal_pattern = re.compile(
-        r"_crra_gamma\s*=\s*.+else\s+2\.0\b"
-    )
+    bare_literal_pattern = re.compile(r"_crra_gamma\s*=\s*.+else\s+2\.0\b")
     assert not bare_literal_pattern.search(func_source), (
         "_haircut_select assigns `_crra_gamma = ... else 2.0` — a bare literal "
         "that duplicates database.PHASE1_THEORY_GAMMA. Replace with "
@@ -124,7 +121,7 @@ def test_haircut_select_crra_fallback_references_phase1_gamma_constant():
     has_reference = (
         "PHASE1_THEORY_GAMMA" in func_source
         or "_DEFAULT_CRRA_GAMMA" in func_source  # acceptable local alias
-        or "CRRA_GAMMA_PHASE1" in func_source     # acceptable local alias
+        or "CRRA_GAMMA_PHASE1" in func_source  # acceptable local alias
     )
     assert has_reference, (
         "_haircut_select's gamma fallback must reference database.PHASE1_THEORY_GAMMA "
@@ -140,6 +137,7 @@ def test_haircut_select_crra_fallback_references_phase1_gamma_constant():
 # then verify the result is identical to calling it with gamma=_EXPECTED_GAMMA.
 # No assertion on the numeric output value — only equality between the two calls.
 # ===========================================================================
+
 
 def test_haircut_select_gamma_none_equals_phase1_gamma_value():
     """_haircut_select(trials, gamma=None) must produce the same result as
@@ -157,6 +155,7 @@ def test_haircut_select_gamma_none_equals_phase1_gamma_value():
     """
     import importlib
     import math as _math
+
     autotuner = importlib.import_module("autotuner")
 
     # Minimal completed_trials with distinct values and user_attrs for daily_returns.
@@ -164,21 +163,25 @@ def test_haircut_select_gamma_none_equals_phase1_gamma_value():
     # so the CRRA branch has something to work with if tstat_fn is swapped.
     mock_trials = []
     for i, val in enumerate([0.5, 0.8, 1.2, 0.3, 1.5]):
-        t = type("FakeTrial", (), {
-            "value": val,
-            "user_attrs": {"daily_returns": [val * 0.01] * 50},
-            "params": {
-                "TRIGGER_THRESHOLD_PCT": 15.0 + i,
-                "TAKE_PROFIT_MC_PCT": 5.0,
-                "MAX_SQUEEZE_FLOOR": 0.20,
-                "VWAP_CROSS_HWM_PCT": 1.0,
-                "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
-                "MAX_PARABOLIC_SQUEEZE": 0.50,
-                "VWAP_BLEED_MULTIPLIER": 1.5,
-                "VWAP_BLEED_TICKS": 10,
+        t = type(
+            "FakeTrial",
+            (),
+            {
+                "value": val,
+                "user_attrs": {"daily_returns": [val * 0.01] * 50},
+                "params": {
+                    "TRIGGER_THRESHOLD_PCT": 15.0 + i,
+                    "TAKE_PROFIT_MC_PCT": 5.0,
+                    "MAX_SQUEEZE_FLOOR": 0.20,
+                    "VWAP_CROSS_HWM_PCT": 1.0,
+                    "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+                    "MAX_PARABOLIC_SQUEEZE": 0.50,
+                    "VWAP_BLEED_MULTIPLIER": 1.5,
+                    "VWAP_BLEED_TICKS": 10,
+                },
+                "number": i,
             },
-            "number": i,
-        })()
+        )()
         mock_trials.append(t)
 
     # Mock tstat_fn: returns a deterministic high t-stat based on trial value so
@@ -202,8 +205,7 @@ def test_haircut_select_gamma_none_equals_phase1_gamma_value():
         mock_trials, n_effective=None, tstat_fn=_deterministic_tstat, gamma=None
     )
     result_explicit = autotuner._haircut_select(
-        mock_trials, n_effective=None, tstat_fn=_deterministic_tstat,
-        gamma=_EXPECTED_GAMMA
+        mock_trials, n_effective=None, tstat_fn=_deterministic_tstat, gamma=_EXPECTED_GAMMA
     )
 
     # Both calls must select the same trial (same params dict).

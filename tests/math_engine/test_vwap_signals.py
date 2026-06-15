@@ -99,12 +99,7 @@ import pytest
 
 import math_engine
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "vwap_signals"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "vwap_signals"
 
 # Tolerance: see module docstring. rel=1e-9 catches algorithm errors by
 # eight orders of magnitude; abs=1e-12 anchors zero comparisons.
@@ -136,9 +131,7 @@ FIXTURES = _load_fixtures()
     FIXTURES,
     ids=[name for name, _ in FIXTURES],
 )
-def test_vwap_signals_matches_derived_expected(
-    fixture_name: str, fixture: dict[str, Any]
-) -> None:
+def test_vwap_signals_matches_derived_expected(fixture_name: str, fixture: dict[str, Any]) -> None:
     """
     Every fixture's expected (weighted_vwap_diff, valid_vwap_weight) tuple
     is DERIVED BY HAND in the fixture's 'derivation' field. This test
@@ -151,8 +144,7 @@ def test_vwap_signals_matches_derived_expected(
     """
     func_name = fixture["function"]
     assert func_name == "compute_vwap_signals", (
-        f"{fixture_name}: only compute_vwap_signals is in scope for this "
-        f"cycle"
+        f"{fixture_name}: only compute_vwap_signals is in scope for this cycle"
     )
 
     inputs = fixture["inputs"]
@@ -166,8 +158,7 @@ def test_vwap_signals_matches_derived_expected(
     # Contract: 2-tuple. Defensive unpack with clear failure message if the
     # impl returns a different shape.
     assert isinstance(result, tuple), (
-        f"Fixture {fixture_name}: expected a tuple, got "
-        f"{type(result).__name__}"
+        f"Fixture {fixture_name}: expected a tuple, got {type(result).__name__}"
     )
     assert len(result) == 2, (
         f"Fixture {fixture_name}: expected a 2-tuple "
@@ -232,11 +223,11 @@ def test_empty_holdings_returns_exact_zero_zero() -> None:
         (
             [
                 {"ticker": "AAPL", "allocation": 0.5},
-                {"ticker": "SPY",  "allocation": 0.5},
+                {"ticker": "SPY", "allocation": 0.5},
             ],
             {
                 "AAPL": {"last_price": 100.0, "vwap": 0.0},
-                "SPY":  {"last_price": 200.0, "vwap": 0.0},
+                "SPY": {"last_price": 200.0, "vwap": 0.0},
             },
         ),
         # Tickers present but all v < 0
@@ -275,9 +266,7 @@ def test_no_qualifying_holdings_returns_exact_zero_zero(
     a non-qualifying holding contributes NOTHING to weight either. Catches
     an impl that incorrectly accumulates weight outside the guard.
     """
-    diff, weight = math_engine.compute_vwap_signals(
-        holdings=holdings, live_vwaps=live_vwaps
-    )
+    diff, weight = math_engine.compute_vwap_signals(holdings=holdings, live_vwaps=live_vwaps)
     assert diff == 0.0, (
         f"No qualifying holdings: weighted_vwap_diff must be exactly 0.0, "
         f"got {diff!r}. Inputs: holdings={holdings}, live_vwaps={live_vwaps}"
@@ -378,9 +367,7 @@ def test_valid_weight_equals_sum_of_qualifying_allocations(
       - sums only the diff-contributing weight (would skip alloc=0)
       - mishandles missing-ticker vs missing-vwap in different ways
     """
-    _, weight = math_engine.compute_vwap_signals(
-        holdings=holdings, live_vwaps=live_vwaps
-    )
+    _, weight = math_engine.compute_vwap_signals(holdings=holdings, live_vwaps=live_vwaps)
     assert weight == pytest.approx(expected_weight, rel=TOL_REL, abs=TOL_ABS), (
         f"valid_vwap_weight mismatch. Expected {expected_weight} (sum of "
         f"qualifying allocations), got {weight}. Inputs: holdings={holdings}, "
@@ -455,9 +442,7 @@ def test_weighted_vwap_diff_equals_reference_formula(
     each row. This is a SWEEP across single/multi/sign/skipped/zero regimes
     -- a per-row golden, complementary to the JSON fixture suite.
     """
-    diff, _ = math_engine.compute_vwap_signals(
-        holdings=holdings, live_vwaps=live_vwaps
-    )
+    diff, _ = math_engine.compute_vwap_signals(holdings=holdings, live_vwaps=live_vwaps)
     assert diff == pytest.approx(expected_diff, rel=TOL_REL, abs=TOL_ABS), (
         f"weighted_vwap_diff mismatch. Expected {expected_diff}, got {diff}. "
         f"Inputs: holdings={holdings}, live_vwaps={live_vwaps}"
@@ -481,7 +466,7 @@ def test_function_does_not_mutate_holdings_list_or_dicts() -> None:
     """
     holdings_before = [
         {"ticker": "AAPL", "allocation": 0.5, "working_ticker": "AAPL"},
-        {"ticker": "SPY",  "allocation": 0.3, "extra_field": "untouched"},
+        {"ticker": "SPY", "allocation": 0.3, "extra_field": "untouched"},
         {"ticker": "TSLA", "allocation": 0.2},  # not in live_vwaps -> skipped
     ]
     # Deep snapshot for comparison; deepcopy guarantees no shared references.
@@ -489,13 +474,11 @@ def test_function_does_not_mutate_holdings_list_or_dicts() -> None:
 
     live_vwaps = {
         "AAPL": {"last_price": 110.0, "vwap": 100.0},
-        "SPY":  {"last_price": 200.0, "vwap": 200.0},
+        "SPY": {"last_price": 200.0, "vwap": 200.0},
     }
     live_vwaps_snapshot = copy.deepcopy(live_vwaps)
 
-    math_engine.compute_vwap_signals(
-        holdings=holdings_before, live_vwaps=live_vwaps
-    )
+    math_engine.compute_vwap_signals(holdings=holdings_before, live_vwaps=live_vwaps)
 
     # holdings list identity preserved (no reassignment) -- but more
     # importantly, contents identical to pre-call snapshot.
@@ -513,9 +496,7 @@ def test_function_does_not_mutate_holdings_list_or_dicts() -> None:
     )
 
 
-def test_function_does_not_inject_ticker_key_when_only_working_ticker_present() -> (
-    None
-):
+def test_function_does_not_inject_ticker_key_when_only_working_ticker_present() -> None:
     """
     Sharper guard against the inline producer's mutation creeping in: a
     holding dict that has 'working_ticker' but NO 'ticker' key was
@@ -562,13 +543,13 @@ def test_function_is_pure_repeat_call_returns_identical_result() -> None:
     """
     holdings = [
         {"ticker": "AAPL", "allocation": 0.5},
-        {"ticker": "SPY",  "allocation": 0.3},
-        {"ticker": "QQQ",  "allocation": 0.2},
+        {"ticker": "SPY", "allocation": 0.3},
+        {"ticker": "QQQ", "allocation": 0.2},
     ]
     live_vwaps = {
         "AAPL": {"last_price": 110.0, "vwap": 100.0},
-        "SPY":  {"last_price": 200.0, "vwap": 200.0},
-        "QQQ":  {"last_price": 90.0,  "vwap": 100.0},
+        "SPY": {"last_price": 200.0, "vwap": 200.0},
+        "QQQ": {"last_price": 90.0, "vwap": 100.0},
     }
     # deepcopy each call so prior-call mutations (if any -- another test
     # asserts no mutation, but be defensive) cannot influence the second.
@@ -599,9 +580,7 @@ def test_return_type_contract_float_float() -> None:
         holdings=[{"ticker": "AAPL", "allocation": 0.5}],
         live_vwaps={"AAPL": {"last_price": 110.0, "vwap": 100.0}},
     )
-    assert isinstance(result, tuple) and len(result) == 2, (
-        f"Expected 2-tuple, got {result!r}"
-    )
+    assert isinstance(result, tuple) and len(result) == 2, f"Expected 2-tuple, got {result!r}"
     diff, weight = result
 
     assert type(diff) is float, (
@@ -673,17 +652,14 @@ def test_no_unnamed_magic_numbers_in_vwap_signals_path() -> None:
     # Structural literals -- universal anchors that carry no domain meaning.
     # Python hashes int 0 and float 0.0 as the same dict/set key.
     STRUCTURAL = {
-        0,    # universal zero / accumulator init / `> 0` threshold
-        1,    # universal unit
-        -1,   # unlikely but harmless
+        0,  # universal zero / accumulator init / `> 0` threshold
+        1,  # universal unit
+        -1,  # unlikely but harmless
     }
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_vwap_signals"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_vwap_signals":
             target = node
             break
     assert target is not None, (
@@ -695,9 +671,7 @@ def test_no_unnamed_magic_numbers_in_vwap_signals_path() -> None:
     for sub in ast.walk(target):
         if isinstance(sub, ast.Assign):
             for tgt in sub.targets:
-                if isinstance(tgt, ast.Name) and isinstance(
-                    sub.value, ast.Constant
-                ):
+                if isinstance(tgt, ast.Name) and isinstance(sub.value, ast.Constant):
                     named_literal_lines.add(sub.value.lineno)
 
     def line_has_comment(lineno: int) -> bool:
@@ -711,9 +685,7 @@ def test_no_unnamed_magic_numbers_in_vwap_signals_path() -> None:
 
     offenders: list[tuple[int, Any]] = []
     for sub in ast.walk(target):
-        if isinstance(sub, ast.Constant) and isinstance(
-            sub.value, int | float
-        ):
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, int | float):
             val = sub.value
             if isinstance(val, bool):  # bool is a subclass of int
                 continue

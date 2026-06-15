@@ -24,6 +24,7 @@ Tests in this file must ALL fail RED against the current codebase (which still
 has _WALK_FORWARD_TRADING_DAYS = 125 and cache marker v3) and must turn GREEN
 after the implementer applies the Phase-1 change.
 """
+
 from __future__ import annotations
 
 import ast as _ast
@@ -92,6 +93,7 @@ class TestWalkForwardWindowConstant250:
     def test_constant_equals_250(self):
         """_WALK_FORWARD_TRADING_DAYS must equal 250 at import time."""
         import synthetic_history as sh
+
         actual = sh._WALK_FORWARD_TRADING_DAYS
         assert actual == _EXPECTED_WALK_FORWARD_TRADING_DAYS, (
             f"synthetic_history._WALK_FORWARD_TRADING_DAYS = {actual}; "
@@ -108,6 +110,7 @@ class TestWalkForwardWindowConstant250:
         the old 125-derived value of 174).
         """
         import synthetic_history as sh
+
         floor = sh._REQUIRED_FETCH_TRADING_DAYS
         assert floor >= _MIN_REQUIRED_NO_BUFFER, (
             f"synthetic_history._REQUIRED_FETCH_TRADING_DAYS = {floor}; "
@@ -143,11 +146,7 @@ class TestWalkForwardWindowConstant250:
                         "expression of named constants."
                     )
                     # Confirm _WALK_FORWARD_TRADING_DAYS is referenced in the RHS.
-                    names_in_rhs = {
-                        n.id
-                        for n in _ast.walk(rhs)
-                        if isinstance(n, _ast.Name)
-                    }
+                    names_in_rhs = {n.id for n in _ast.walk(rhs) if isinstance(n, _ast.Name)}
                     assert "_WALK_FORWARD_TRADING_DAYS" in names_in_rhs, (
                         "_REQUIRED_FETCH_TRADING_DAYS RHS does not reference "
                         "_WALK_FORWARD_TRADING_DAYS. After the Phase-1 change "
@@ -343,12 +342,8 @@ class TestCacheMarkerBumpedV4:
         holdings_hash = hashlib.md5(holdings_str.encode("utf-8")).hexdigest()
 
         # The expected v4 filename pattern after the Phase-1 change.
-        expected_v4_filename = (
-            f"synthetic_history_v4_{test_date}_{holdings_hash}.json"
-        )
-        stale_v3_filename = (
-            f"synthetic_history_v3_{test_date}_{holdings_hash}.json"
-        )
+        expected_v4_filename = f"synthetic_history_v4_{test_date}_{holdings_hash}.json"
+        stale_v3_filename = f"synthetic_history_v3_{test_date}_{holdings_hash}.json"
 
         assert expected_v4_filename != stale_v3_filename, (
             "v4 and v3 filenames are identical — the version marker is not "
@@ -360,9 +355,7 @@ class TestCacheMarkerBumpedV4:
         assert "v4" in expected_v4_filename, (
             "expected v4 filename does not contain 'v4' — test logic error."
         )
-        assert "v4" not in stale_v3_filename, (
-            "stale v3 filename contains 'v4' — test logic error."
-        )
+        assert "v4" not in stale_v3_filename, "stale v3 filename contains 'v4' — test logic error."
 
         # After the Phase-1 change is applied, the source code must generate
         # the v4 filename. Verify by checking that the source contains the v4
@@ -465,8 +458,7 @@ class TestNoStale125Literals:
                 anchor_idx = i
                 break
         assert anchor_idx is not None, (
-            "Could not find the _WALK_FORWARD_TRADING_DAYS assignment in "
-            "synthetic_history.py."
+            "Could not find the _WALK_FORWARD_TRADING_DAYS assignment in synthetic_history.py."
         )
 
         # Collect the contiguous comment block above the definition.
@@ -479,6 +471,7 @@ class TestNoStale125Literals:
         comment_text = "\n".join(comment_lines)
         # A comment that still says "125 trading days" or "125-day" is stale.
         import re
+
         stale_matches = re.findall(r"\b125\b", comment_text)
         assert not stale_matches, (
             f"The source comment immediately above _WALK_FORWARD_TRADING_DAYS "

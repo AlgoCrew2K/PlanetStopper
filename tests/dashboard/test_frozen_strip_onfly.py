@@ -51,10 +51,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "dashboard"
-    / "frozen_portfolio_strip"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "frozen_portfolio_strip"
 )
 
 
@@ -65,6 +62,7 @@ def _load(name: str) -> dict:
 # ---------------------------------------------------------------------------
 # Flask test-client fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def flask_client():
@@ -77,10 +75,16 @@ def flask_client():
         patch.object(app_module, "schedule"),
     ):
         mock_analytics.get_portfolio_today_change.return_value = {"if_held": 2.1, "dry_run": 1.9}
-        mock_analytics.get_portfolio_cumulative_return.return_value = {"if_held": 14.3, "dry_run": 13.8}
+        mock_analytics.get_portfolio_cumulative_return.return_value = {
+            "if_held": 14.3,
+            "dry_run": 13.8,
+        }
         mock_analytics.get_portfolio_max_drawdown.return_value = {"if_held": -6.1, "dry_run": -5.7}
         mock_analytics.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
-        mock_analytics.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
+        mock_analytics.get_symphony_cumulative_return.return_value = {
+            "if_held": None,
+            "dry_run": None,
+        }
         mock_analytics.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
         with app_module.app.test_client() as client:
             yield client, app_module
@@ -101,6 +105,7 @@ def _make_db_mock(bot_state: dict) -> MagicMock:
 #          non-None values
 # ===========================================================================
 
+
 class TestOnFlyRecomputeWhenCapturedAllNone:
     """
     Core regression: even when the captured snapshot.portfolio_strip is all-None
@@ -108,9 +113,7 @@ class TestOnFlyRecomputeWhenCapturedAllNone:
     Recompute is authoritative — not a fallback that only triggers on None.
     """
 
-    def test_all_none_captured_strip_today_change_recomputed(
-        self, flask_client, monkeypatch
-    ):
+    def test_all_none_captured_strip_today_change_recomputed(self, flask_client, monkeypatch):
         """AC-OF.1: portfolio_strip.today_change is non-None when accounts_map populated."""
         client, app_module = flask_client
         fx = _load("frozen_strip_onfly_all_none")
@@ -141,9 +144,7 @@ class TestOnFlyRecomputeWhenCapturedAllNone:
             "Captured all-None value must NOT be passed through — call analytics at /api/state time."
         )
 
-    def test_all_none_captured_strip_cumulative_return_recomputed(
-        self, flask_client, monkeypatch
-    ):
+    def test_all_none_captured_strip_cumulative_return_recomputed(self, flask_client, monkeypatch):
         """AC-OF.1: portfolio_strip.cumulative_return is non-None after recompute."""
         client, app_module = flask_client
         fx = _load("frozen_strip_onfly_all_none")
@@ -166,9 +167,7 @@ class TestOnFlyRecomputeWhenCapturedAllNone:
             f"Got portfolio_strip={ps!r}."
         )
 
-    def test_all_none_captured_strip_max_drawdown_recomputed(
-        self, flask_client, monkeypatch
-    ):
+    def test_all_none_captured_strip_max_drawdown_recomputed(self, flask_client, monkeypatch):
         """AC-OF.1: portfolio_strip.max_drawdown is non-None after recompute."""
         client, app_module = flask_client
         fx = _load("frozen_strip_onfly_all_none")
@@ -196,6 +195,7 @@ class TestOnFlyRecomputeWhenCapturedAllNone:
 # AC-OF.2: recompute is authoritative — ignores pre-populated captured value
 # ===========================================================================
 
+
 class TestOnFlyRecomputeIsAuthoritative:
     """
     AC-OF.2: Even when the captured snapshot.portfolio_strip has non-None values,
@@ -207,9 +207,7 @@ class TestOnFlyRecomputeIsAuthoritative:
     fixture's pre-captured value the pass-through path is still in use.
     """
 
-    def test_recompute_overrides_pre_populated_today_change(
-        self, flask_client, monkeypatch
-    ):
+    def test_recompute_overrides_pre_populated_today_change(self, flask_client, monkeypatch):
         """AC-OF.2: response.portfolio_strip.today_change comes from analytics, not snapshot."""
         client, app_module = flask_client
         fx = _load("frozen_strip_onfly_all_none")
@@ -234,11 +232,26 @@ class TestOnFlyRecomputeIsAuthoritative:
         ):
             analytics_sentinel = {"if_held": 2.1, "dry_run": 1.9}
             mock_analytics.get_portfolio_today_change.return_value = analytics_sentinel
-            mock_analytics.get_portfolio_cumulative_return.return_value = {"if_held": 14.3, "dry_run": 13.8}
-            mock_analytics.get_portfolio_max_drawdown.return_value = {"if_held": -6.1, "dry_run": -5.7}
-            mock_analytics.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
-            mock_analytics.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
-            mock_analytics.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
+            mock_analytics.get_portfolio_cumulative_return.return_value = {
+                "if_held": 14.3,
+                "dry_run": 13.8,
+            }
+            mock_analytics.get_portfolio_max_drawdown.return_value = {
+                "if_held": -6.1,
+                "dry_run": -5.7,
+            }
+            mock_analytics.get_symphony_today_change.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
+            mock_analytics.get_symphony_cumulative_return.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
+            mock_analytics.get_symphony_max_drawdown.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
 
             monkeypatch.setattr(
                 app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
@@ -259,9 +272,7 @@ class TestOnFlyRecomputeIsAuthoritative:
             "Recompute must be authoritative — snapshot.portfolio_strip must be ignored."
         )
 
-    def test_recompute_calls_analytics_not_pass_through(
-        self, flask_client, monkeypatch
-    ):
+    def test_recompute_calls_analytics_not_pass_through(self, flask_client, monkeypatch):
         """AC-OF.2: analytics.get_portfolio_today_change must be called on frozen path."""
         client, app_module = flask_client
         fx = _load("frozen_strip_onfly_all_none")
@@ -275,12 +286,30 @@ class TestOnFlyRecomputeIsAuthoritative:
             patch.object(app_module, "database", _make_db_mock(bot_state)),
             patch.object(app_module, "analytics") as mock_analytics,
         ):
-            mock_analytics.get_portfolio_today_change.return_value = {"if_held": 2.1, "dry_run": 1.9}
-            mock_analytics.get_portfolio_cumulative_return.return_value = {"if_held": 14.3, "dry_run": 13.8}
-            mock_analytics.get_portfolio_max_drawdown.return_value = {"if_held": -6.1, "dry_run": -5.7}
-            mock_analytics.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
-            mock_analytics.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
-            mock_analytics.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
+            mock_analytics.get_portfolio_today_change.return_value = {
+                "if_held": 2.1,
+                "dry_run": 1.9,
+            }
+            mock_analytics.get_portfolio_cumulative_return.return_value = {
+                "if_held": 14.3,
+                "dry_run": 13.8,
+            }
+            mock_analytics.get_portfolio_max_drawdown.return_value = {
+                "if_held": -6.1,
+                "dry_run": -5.7,
+            }
+            mock_analytics.get_symphony_today_change.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
+            mock_analytics.get_symphony_cumulative_return.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
+            mock_analytics.get_symphony_max_drawdown.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
 
             monkeypatch.setattr(
                 app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
@@ -308,6 +337,7 @@ class TestOnFlyRecomputeIsAuthoritative:
 # AC-OF.3: analytics called with trading_day=snapshot["trading_day"] (R14)
 # ===========================================================================
 
+
 class TestAnalyticsCalledWithSnapshotTradingDay:
     """
     AC-OF.3: All three portfolio analytics helpers must be called with
@@ -315,9 +345,7 @@ class TestAnalyticsCalledWithSnapshotTradingDay:
     R14 contract: analytics reads shadow_history keyed on trading_day.
     """
 
-    def test_portfolio_analytics_called_with_snapshot_trading_day(
-        self, flask_client, monkeypatch
-    ):
+    def test_portfolio_analytics_called_with_snapshot_trading_day(self, flask_client, monkeypatch):
         """AC-OF.3: each portfolio analytics helper called with snapshot.trading_day."""
         client, app_module = flask_client
         fx = _load("frozen_strip_onfly_all_none")
@@ -332,12 +360,30 @@ class TestAnalyticsCalledWithSnapshotTradingDay:
             patch.object(app_module, "database", _make_db_mock(bot_state)),
             patch.object(app_module, "analytics") as mock_analytics,
         ):
-            mock_analytics.get_portfolio_today_change.return_value = {"if_held": 2.1, "dry_run": 1.9}
-            mock_analytics.get_portfolio_cumulative_return.return_value = {"if_held": 14.3, "dry_run": 13.8}
-            mock_analytics.get_portfolio_max_drawdown.return_value = {"if_held": -6.1, "dry_run": -5.7}
-            mock_analytics.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
-            mock_analytics.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
-            mock_analytics.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
+            mock_analytics.get_portfolio_today_change.return_value = {
+                "if_held": 2.1,
+                "dry_run": 1.9,
+            }
+            mock_analytics.get_portfolio_cumulative_return.return_value = {
+                "if_held": 14.3,
+                "dry_run": 13.8,
+            }
+            mock_analytics.get_portfolio_max_drawdown.return_value = {
+                "if_held": -6.1,
+                "dry_run": -5.7,
+            }
+            mock_analytics.get_symphony_today_change.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
+            mock_analytics.get_symphony_cumulative_return.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
+            mock_analytics.get_symphony_max_drawdown.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
 
             monkeypatch.setattr(
                 app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
@@ -371,15 +417,14 @@ class TestAnalyticsCalledWithSnapshotTradingDay:
 # AC-OF.4: no snapshot → notice preserved, no crash
 # ===========================================================================
 
+
 class TestNoSnapshotNoRegression:
     """
     AC-OF.4: Fresh deploy with no snapshot — existing "No closing snapshot yet"
     notice must still be returned. portfolio_strip key must be absent or None.
     """
 
-    def test_no_snapshot_notice_preserved_and_no_crash(
-        self, flask_client, monkeypatch
-    ):
+    def test_no_snapshot_notice_preserved_and_no_crash(self, flask_client, monkeypatch):
         """AC-OF.4: closed_frozen + no snapshot → notice present, 200, no crash."""
         client, app_module = flask_client
 
@@ -404,15 +449,14 @@ class TestNoSnapshotNoRegression:
 # AC-OF.5: live branch (market open) → no regression
 # ===========================================================================
 
+
 class TestLiveBranchNoRegression:
     """
     AC-OF.5: market_state='open' must still compute portfolio_strip via the
     live analytics path. The frozen on-the-fly logic must not touch the live branch.
     """
 
-    def test_open_market_portfolio_strip_still_computed(
-        self, flask_client, monkeypatch
-    ):
+    def test_open_market_portfolio_strip_still_computed(self, flask_client, monkeypatch):
         """AC-OF.5: market open → portfolio_strip non-None, frozen_at is None."""
         client, app_module = flask_client
 
@@ -440,13 +484,14 @@ class TestLiveBranchNoRegression:
             patch.object(app_module, "render_template", return_value="<table></table>"),
         ):
             mock_db.load_state.return_value = dict(live_state)
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
-            monkeypatch.setattr(
-                app_module, "get_market_state", lambda dt: "open", raising=False
-            )
+            monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open", raising=False)
 
             resp = client.get("/api/state")
 
@@ -456,6 +501,4 @@ class TestLiveBranchNoRegression:
             "Live (open) path portfolio_strip must not be None. "
             "On-the-fly frozen recompute must not have regressed the live path."
         )
-        assert body.get("frozen_at") is None, (
-            "frozen_at must be None on live (open) path."
-        )
+        assert body.get("frozen_at") is None, "frozen_at must be None on live (open) path."

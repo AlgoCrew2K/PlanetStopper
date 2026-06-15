@@ -62,6 +62,7 @@ _FLAG_ENV_VAR = "SECOND_WINDOW_CVAR_ENABLED"
 # Pure computation
 # ---------------------------------------------------------------------------
 
+
 def compute_divergence_explainer_observation(
     autotune_run: dict,
     cvar_row: "dict | None",
@@ -144,6 +145,7 @@ def compute_divergence_explainer_observation(
 # ---------------------------------------------------------------------------
 # Integration entry point
 # ---------------------------------------------------------------------------
+
 
 def run_divergence_explainer(
     autotune_run: dict,

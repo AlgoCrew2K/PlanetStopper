@@ -432,7 +432,7 @@ def _validate_condition_block(condition: dict, node_id) -> list[str]:
                 )
             else:
                 # Recurse into sub-conditions.
-                for sub in (cond.get("conditions") or []):
+                for sub in cond.get("conditions") or []:
                     if isinstance(sub, dict):
                         stack.append((sub, depth + 1))
         # binary-compound requires a 'tickers' key.
@@ -626,11 +626,11 @@ def _collect_condition_tickers(condition: dict, tickers: set) -> None:
             continue
         # binary-compound: collect from the top-level tickers list (real tickers)
         # and skip the lhs ticker which is '%'.
-        for t in (cond.get("tickers") or []):
+        for t in cond.get("tickers") or []:
             if isinstance(t, str) and t and t != "%":
                 tickers.add(t)
         # compound: recurse into sub-conditions.
-        for sub in (cond.get("conditions") or []):
+        for sub in cond.get("conditions") or []:
             if isinstance(sub, dict):
                 stack.append(sub)
 
@@ -752,9 +752,7 @@ def _render_compound_condition_line(condition: dict, indent: str) -> str:
         # golden fixture contract). Use the same iterative walk as extract_tickers.
         all_tickers: set[str] = set()
         _collect_condition_tickers(condition, all_tickers)
-        tickers_part = (
-            f" [{', '.join(sorted(all_tickers))}]" if all_tickers else ""
-        )
+        tickers_part = f" [{', '.join(sorted(all_tickers))}]" if all_tickers else ""
         return f"{indent}WHEN {gate}({len(sub_conds)} conditions){tickers_part}"
     # binary leaf or unknown: render minimally
     lhs = condition.get("lhs") or {}
@@ -1032,9 +1030,7 @@ def make_binary_compound_condition(
             f"{sorted(_KNOWN_OPERATORS)!r}; got {operator!r}"
         )
     if not tickers:
-        raise ValueError(
-            "make_binary_compound_condition: tickers must be a non-empty list"
-        )
+        raise ValueError("make_binary_compound_condition: tickers must be a non-empty list")
     lhs = make_condition_operand(fn, "%", window=window)
     return {
         "condition-type": "binary-compound",
@@ -1065,9 +1061,7 @@ def make_compound_condition(operator: str, conditions: list) -> dict:
             f"{sorted(_KNOWN_OPERATORS)!r}; got {operator!r}"
         )
     if not conditions:
-        raise ValueError(
-            "make_compound_condition: conditions must be a non-empty list"
-        )
+        raise ValueError("make_compound_condition: conditions must be a non-empty list")
     return {
         "condition-type": "compound",
         "operator": operator,

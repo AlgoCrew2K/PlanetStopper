@@ -79,7 +79,10 @@ def test_evaluate_fetch_handler_guards_before_json_parse(js_path):
     # The buggy pattern: an unconditional resp.json() immediately after fetch, with
     # no response-status/ok/content-type guard anywhere in the file.
     has_unconditional_json = bool(
-        re.search(r"\.then\(\s*function\s*\(\s*resp\s*\)\s*\{\s*return\s+resp\.json\(\)\s*;?\s*\}\s*\)", src)
+        re.search(
+            r"\.then\(\s*function\s*\(\s*resp\s*\)\s*\{\s*return\s+resp\.json\(\)\s*;?\s*\}\s*\)",
+            src,
+        )
     )
     has_response_guard = bool(
         re.search(r"resp\.ok", src)
@@ -110,11 +113,10 @@ def test_evaluate_js_is_syntactically_valid(js_path):
     assert js_path.is_file(), f"{js_path} not found"
     result = subprocess.run(
         [node, "--check", str(js_path)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
-    assert result.returncode == 0, (
-        f"node --check failed on {js_path.name}:\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"node --check failed on {js_path.name}:\n{result.stderr}"
 
 
 # ===========================================================================
@@ -148,7 +150,7 @@ def test_run_backtest_413_returns_error_result_not_raise():
         "run_backtest on a 413 must return stats=None (graceful error), not raise "
         "or fabricate stats."
     )
-    err = (getattr(result, "error", "") or "")
+    err = getattr(result, "error", "") or ""
     assert "413" in err, (
         f"The 413 must be reflected in the error string; got {err!r}. The operator "
         "needs to know the backtest was rejected as too large."
@@ -190,6 +192,7 @@ def test_logic_changes_evaluate_413_renders_clean_operator_message():
     (symphony too large / exceeds Composer's inline-backtest limit), not nginx HTML.
     """
     import sys
+
     if "." not in sys.path:
         sys.path.insert(0, ".")
     # Build a run_result whose single proposal carries the raw 413 backtest_error.
@@ -201,11 +204,14 @@ def test_logic_changes_evaluate_413_renders_clean_operator_message():
     client = _flask_client()
     with (
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
-        patch("symphony_logic.fetch_symphony_score",
-              return_value={"id": "x", "name": "X", "children": []}),
+        patch(
+            "symphony_logic.fetch_symphony_score",
+            return_value={"id": "x", "name": "X", "children": []},
+        ),
         patch("database.load_state", return_value={"x": {"name": "X", "account_uuid": "acc-1"}}),
-        patch("advisors.logic_change_engine.propose_operator_logic_change",
-              return_value=run_result),
+        patch(
+            "advisors.logic_change_engine.propose_operator_logic_change", return_value=run_result
+        ),
     ):
         resp = client.post(
             "/ai-advisor/logic-changes/evaluate",
@@ -238,6 +244,7 @@ def test_asset_swaps_evaluate_413_renders_clean_operator_message():
     translate only logic-changes and leak the raw 413 HTML on the swap route.
     """
     import sys
+
     if "." not in sys.path:
         sys.path.insert(0, ".")
     sys.path.insert(0, str(_REPO_ROOT))
@@ -250,11 +257,12 @@ def test_asset_swaps_evaluate_413_renders_clean_operator_message():
     client = _flask_client()
     with (
         patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
-        patch("symphony_logic.fetch_symphony_score",
-              return_value={"id": "x", "name": "X", "children": []}),
+        patch(
+            "symphony_logic.fetch_symphony_score",
+            return_value={"id": "x", "name": "X", "children": []},
+        ),
         patch("database.load_state", return_value={"x": {"name": "X", "account_uuid": "acc-1"}}),
-        patch("advisors.asset_swap_engine.propose_operator_swap",
-              return_value=run_result),
+        patch("advisors.asset_swap_engine.propose_operator_swap", return_value=run_result),
     ):
         resp = client.post(
             "/ai-advisor/asset-swaps/evaluate",
@@ -299,6 +307,7 @@ def test_logic_changes_evaluate_completion_surfaces_real_backtest_stats():
     from "failed gracefully".
     """
     import sys
+
     if "." not in sys.path:
         sys.path.insert(0, ".")
     sys.path.insert(0, str(_REPO_ROOT))
@@ -314,11 +323,14 @@ def test_logic_changes_evaluate_completion_surfaces_real_backtest_stats():
     client = _flask_client()
     with (
         patch("advisors.logic_change_engine._has_composer_key", return_value=True),
-        patch("symphony_logic.fetch_symphony_score",
-              return_value={"id": "x", "name": "X", "children": []}),
+        patch(
+            "symphony_logic.fetch_symphony_score",
+            return_value={"id": "x", "name": "X", "children": []},
+        ),
         patch("database.load_state", return_value={"x": {"name": "X", "account_uuid": "acc-1"}}),
-        patch("advisors.logic_change_engine.propose_operator_logic_change",
-              return_value=run_result),
+        patch(
+            "advisors.logic_change_engine.propose_operator_logic_change", return_value=run_result
+        ),
     ):
         resp = client.post(
             "/ai-advisor/logic-changes/evaluate",

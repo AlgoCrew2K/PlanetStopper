@@ -317,6 +317,7 @@ def test_030_migration_uses_alter_table_for_symphony_strategies():
     )
 
     import re
+
     create_strat = re.search(
         r"CREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS\s+config_audit_log)"
         r"symphony_strategies",
@@ -364,9 +365,7 @@ def test_030_migration_does_not_reference_opt_db():
     assert "alphabot_opt" not in sql_lower, (
         "030 references 'alphabot_opt' — both tables are state-DB only (two-DB boundary)."
     )
-    assert "opt.db" not in sql_lower, (
-        "030 references 'opt.db' — state DB only."
-    )
+    assert "opt.db" not in sql_lower, "030 references 'opt.db' — state DB only."
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +480,9 @@ def test_get_symphony_live_mode_returns_zero_when_column_zero(migrated_db, monke
     has live_mode=0 (explicit dry-run).
     """
     monkeypatch.setattr(db_module, "DB_FILE", migrated_db)
-    save_symphony_strategy("dry-symphony", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS)
+    save_symphony_strategy(
+        "dry-symphony", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS
+    )
 
     # live_mode column defaults to 0 — do not call set_symphony_live_mode.
     result = db_module.get_symphony_live_mode("dry-symphony")
@@ -501,7 +502,9 @@ def test_get_symphony_live_mode_returns_one_when_column_one(migrated_db, monkeyp
     has live_mode=1 (operator has explicitly enabled live for this symphony).
     """
     monkeypatch.setattr(db_module, "DB_FILE", migrated_db)
-    save_symphony_strategy("live-symphony", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS)
+    save_symphony_strategy(
+        "live-symphony", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS
+    )
 
     # Directly write live_mode=1 via SQL — set_symphony_live_mode is tested
     # separately; here we test the reader in isolation.
@@ -649,9 +652,13 @@ def test_set_symphony_live_mode_writes_audit_log_row(migrated_db, monkeypatch):
     case = next(c for c in fx["audit_log_cases"] if c["id"] == "set_to_live")
 
     monkeypatch.setattr(db_module, "DB_FILE", migrated_db)
-    save_symphony_strategy(case["symphony"], db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS)
+    save_symphony_strategy(
+        case["symphony"], db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS
+    )
 
-    db_module.set_symphony_live_mode(case["symphony"], live=int(case["after_value"]), operator=case["operator"])
+    db_module.set_symphony_live_mode(
+        case["symphony"], live=int(case["after_value"]), operator=case["operator"]
+    )
 
     conn = sqlite3.connect(migrated_db)
     try:
@@ -669,9 +676,7 @@ def test_set_symphony_live_mode_writes_audit_log_row(migrated_db, monkeypatch):
     )
     sym, field, before_value, after_value, operator, ts_utc = row
 
-    assert field == "live_mode", (
-        f"audit log field must be 'live_mode'; got {field!r}."
-    )
+    assert field == "live_mode", f"audit log field must be 'live_mode'; got {field!r}."
     assert before_value == case["before_value"], (
         f"audit log before_value must be {case['before_value']!r} (prior live_mode); "
         f"got {before_value!r}."
@@ -745,14 +750,10 @@ def test_set_symphony_live_mode_audit_ts_utc_is_iso_string(migrated_db, monkeypa
     finally:
         conn.close()
 
-    assert row is not None and row[0] is not None, (
-        "config_audit_log ts_utc must not be NULL."
-    )
+    assert row is not None and row[0] is not None, "config_audit_log ts_utc must not be NULL."
     ts = row[0]
     # A minimal ISO string must include at least 'YYYY-MM-DD' (10 chars).
-    assert len(ts) >= 10 and "-" in ts, (
-        f"ts_utc must be an ISO date/datetime string; got {ts!r}."
-    )
+    assert len(ts) >= 10 and "-" in ts, f"ts_utc must be an ISO date/datetime string; got {ts!r}."
 
 
 # ---------------------------------------------------------------------------
@@ -777,7 +778,9 @@ def test_live_mode_absent_from_parameters_json_blob(migrated_db, monkeypatch):
     forbidden_key = case["parameters_key_must_be_absent"]
 
     monkeypatch.setattr(db_module, "DB_FILE", migrated_db)
-    save_symphony_strategy("autotuner-sym", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS)
+    save_symphony_strategy(
+        "autotuner-sym", db_module.DEFAULT_STRATEGY, db_module.DEFAULT_LOCKED_VARS
+    )
 
     conn = sqlite3.connect(migrated_db)
     try:
@@ -823,7 +826,9 @@ def test_save_symphony_strategy_does_not_reset_live_mode(migrated_db, monkeypatc
 
     # Operator enables live_mode.
     db_module.set_symphony_live_mode("persist-sym", live=1, operator="admin")
-    assert db_module.get_symphony_live_mode("persist-sym") == 1, "Pre-condition: live_mode must be 1."
+    assert db_module.get_symphony_live_mode("persist-sym") == 1, (
+        "Pre-condition: live_mode must be 1."
+    )
 
     # Autotuner writes new params — save_symphony_strategy called again.
     updated_params = {**db_module.DEFAULT_STRATEGY, "TRIGGER_THRESHOLD_PCT": 12.0}
@@ -967,7 +972,9 @@ def test_get_symphony_strategy_returns_live_mode_true_when_column_is_one(migrate
 # ---------------------------------------------------------------------------
 
 
-def test_get_symphony_strategy_returns_live_mode_false_when_column_is_zero(migrated_db, monkeypatch):
+def test_get_symphony_strategy_returns_live_mode_false_when_column_is_zero(
+    migrated_db, monkeypatch
+):
     """
     R4: get_symphony_strategy must return live_mode=False (falsy) when the
     symphony_strategies row has live_mode=0.
@@ -1021,7 +1028,9 @@ def test_get_symphony_strategy_live_mode_survives_autotuner_clobber(migrated_db,
 
     # Pre-condition: live_mode is True before the autotune write.
     pre = db_module.get_symphony_strategy("clobber-sym")
-    assert pre.get("live_mode"), "Pre-condition: live_mode must be truthy after set_symphony_live_mode(1)."
+    assert pre.get("live_mode"), (
+        "Pre-condition: live_mode must be truthy after set_symphony_live_mode(1)."
+    )
 
     # Autotuner writes new tuned params (simulates autotuner.py:2518).
     updated_params = {**db_module.DEFAULT_STRATEGY, "TRIGGER_THRESHOLD_PCT": 12.0}

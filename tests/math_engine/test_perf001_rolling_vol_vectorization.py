@@ -65,6 +65,7 @@ FIXTURE_DIR = (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_fixture(filename: str) -> dict[str, Any]:
     with (FIXTURE_DIR / filename).open("r", encoding="utf-8") as fh:
         return json.load(fh)
@@ -87,10 +88,7 @@ def _expand_scenario(scenario: dict[str, Any]) -> dict[str, dict[str, dict[str, 
     raw_day_offset_from_minimum is added to MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1)
     so the fixture never hardcodes the boundary constants.
     """
-    minimum_raw_days = (
-        math_engine.MC_MIN_HISTORY_DAYS
-        + (math_engine.MC_VOL_WINDOW_DAYS - 1)
-    )
+    minimum_raw_days = math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
     num_days = minimum_raw_days + scenario["raw_day_offset_from_minimum"]
     kind = scenario["kind"]
     history: dict = {}
@@ -146,14 +144,13 @@ def _python_loop_rolling_vol_reference(spy_returns: np.ndarray) -> np.ndarray:
 def _spy_returns_from_history(history: dict) -> np.ndarray:
     """Mirror run_monte_carlo's spy_returns extraction. Same key order."""
     valid_dates = sorted(history.keys())
-    return np.array(
-        [history[d].get("SPY", {}).get("daily_ret", 0.0) for d in valid_dates]
-    )
+    return np.array([history[d].get("SPY", {}).get("daily_ret", 0.0) for d in valid_dates])
 
 
 # ---------------------------------------------------------------------------
 # AC-PERF001.1 — Helper exists, callable, correct shape
 # ---------------------------------------------------------------------------
+
 
 def test_compute_rolling_spy_vol_helper_exists_and_is_callable() -> None:
     """The vectorized rolling-vol helper must be a public symbol on math_engine
@@ -180,14 +177,14 @@ def test_compute_rolling_spy_vol_returns_same_shape_as_input() -> None:
         spy_returns = rng.normal(0.0, 0.01, size=n)
         out = math_engine._compute_rolling_spy_vol(spy_returns)
         assert out.shape == spy_returns.shape, (
-            f"Length mismatch for n={n}: input {spy_returns.shape}, "
-            f"output {out.shape}."
+            f"Length mismatch for n={n}: input {spy_returns.shape}, output {out.shape}."
         )
 
 
 # ---------------------------------------------------------------------------
 # AC-PERF001.2 — Numerical identity, helper vs Python-loop reference
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "scenario_id",
@@ -298,6 +295,7 @@ def test_helper_does_not_mutate_input() -> None:
 # AC-PERF001.3 — End-to-end identity: run_monte_carlo output unchanged
 # ---------------------------------------------------------------------------
 
+
 def _reference_run_monte_carlo(
     holdings,
     historical_data,
@@ -336,9 +334,7 @@ def _reference_run_monte_carlo(
     )
     spy_vols = _python_loop_rolling_vol_reference(spy_returns)
     spy_today_ret_dec = spy_today_return / PCT_SCALAR
-    today_vol = np.std(
-        np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1):], spy_today_ret_dec)
-    )
+    today_vol = np.std(np.append(spy_returns[-(MC_VOL_WINDOW_DAYS - 1) :], spy_today_ret_dec))
 
     candidate_idx = np.arange(MC_VOL_WINDOW_DAYS - 1, len(spy_returns))
     cand_returns = spy_returns[candidate_idx]
@@ -357,9 +353,7 @@ def _reference_run_monte_carlo(
     today_ret_z = 0.0 if ret_std == 0.0 else (spy_today_ret_dec - ret_mean) / ret_std
     today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
 
-    distances = np.sqrt(
-        (cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2
-    )
+    distances = np.sqrt((cand_returns_z - today_ret_z) ** 2 + (cand_vols_z - today_vol_z) ** 2)
 
     # PERF-001 is a math-preservation refactor; we don't need to replicate the
     # full path simulation here. We test end-to-end via the public function:
@@ -460,8 +454,7 @@ def test_run_monte_carlo_end_to_end_identical_to_python_loop_path(
 
     # Both finite — sanity check.
     assert math.isfinite(result_production), (
-        f"[{scenario_id}] production run_monte_carlo returned non-finite "
-        f"{result_production!r}."
+        f"[{scenario_id}] production run_monte_carlo returned non-finite {result_production!r}."
     )
     assert math.isfinite(result_reference), (
         f"[{scenario_id}] reference path returned non-finite {result_reference!r}."
@@ -481,6 +474,7 @@ def test_run_monte_carlo_end_to_end_identical_to_python_loop_path(
 # AC-PERF001.3b — Return-type / blast-radius preserved
 # ---------------------------------------------------------------------------
 
+
 def test_run_monte_carlo_returns_float_in_range_on_sufficient_history() -> None:
     """Per [[project_mc_sentinel_consumer_blast_radius]]: the return type
     must remain `float in [0, 100]` on a sufficient history. A vectorization
@@ -488,9 +482,7 @@ def test_run_monte_carlo_returns_float_in_range_on_sufficient_history() -> None:
     7+ consumer sites that do `f"{prob_underperforming:.1f}"` or numeric comparison.
     """
     fixture = _load_fixture("curated_input_scenarios.json")
-    scenario = next(
-        s for s in fixture["scenarios"] if s["id"] == "case_01_long_smooth_history"
-    )
+    scenario = next(s for s in fixture["scenarios"] if s["id"] == "case_01_long_smooth_history")
     history = _expand_scenario(scenario)
     result = math_engine.run_monte_carlo(
         fixture["holdings"],
@@ -505,9 +497,7 @@ def test_run_monte_carlo_returns_float_in_range_on_sufficient_history() -> None:
     # f-string formatting must succeed.
     assert result is not None, "Sufficient history must not return the sentinel."
     assert math.isfinite(result), f"Result {result!r} must be finite."
-    assert 0.0 <= float(result) <= 100.0, (
-        f"Result {result!r} out of [0, 100]."
-    )
+    assert 0.0 <= float(result) <= 100.0, f"Result {result!r} out of [0, 100]."
     # f-string format used by alpha_bot_execution.py:~1265 and reporting.py.
     # If the result is an ndarray this raises TypeError.
     _ = f"{result:.1f}"
@@ -518,9 +508,7 @@ def test_run_monte_carlo_returns_sentinel_one_below_eligible_boundary() -> None:
     minimum_raw_days - 1, the function must return MC_INSUFFICIENT_HISTORY_SENTINEL.
     Vectorization must not change this boundary.
     """
-    minimum_raw_days = (
-        math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
-    )
+    minimum_raw_days = math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
     history = {}
     for i in range(minimum_raw_days - 1):
         history[_date_key(i)] = {
@@ -547,9 +535,7 @@ def test_run_monte_carlo_returns_float_at_eligible_boundary() -> None:
     """At exactly minimum_raw_days, the function must return a valid float
     (not the sentinel). Twin of the above; pins the inclusive lower bound.
     """
-    minimum_raw_days = (
-        math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
-    )
+    minimum_raw_days = math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
     history = {}
     for i in range(minimum_raw_days):
         # Mild alternation so vols and returns are non-degenerate.
@@ -577,6 +563,7 @@ def test_run_monte_carlo_returns_float_at_eligible_boundary() -> None:
 # ---------------------------------------------------------------------------
 # AC-PERF001.4 — Implementation shape: no Python loop over history
 # ---------------------------------------------------------------------------
+
 
 def _function_source(fn) -> str:
     return inspect.getsource(fn)
@@ -634,7 +621,8 @@ def test_compute_rolling_spy_vol_helper_source_does_not_contain_python_for_loop(
     src = _function_source(math_engine._compute_rolling_spy_vol)
     tree = ast.parse(src)
     range_loops = [
-        node for node in ast.walk(tree)
+        node
+        for node in ast.walk(tree)
         if isinstance(node, ast.For)
         and isinstance(node.iter, ast.Call)
         and isinstance(node.iter.func, ast.Name)
@@ -643,15 +631,14 @@ def test_compute_rolling_spy_vol_helper_source_does_not_contain_python_for_loop(
     assert not range_loops, (
         "_compute_rolling_spy_vol contains a `for ... in range(...)` loop. "
         "Vectorize with pd.Series.rolling().std() (ddof=0) or numpy stride "
-        "tricks. Found loops:\n" + "\n---\n".join(
-            ast.unparse(n) for n in range_loops
-        )
+        "tricks. Found loops:\n" + "\n---\n".join(ast.unparse(n) for n in range_loops)
     )
 
 
 # ---------------------------------------------------------------------------
 # AC-PERF001.5 — Performance: >=5x faster than Python-loop reference
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.perf
 def test_compute_rolling_spy_vol_is_at_least_5x_faster_than_python_loop() -> None:
@@ -700,8 +687,8 @@ def test_compute_rolling_spy_vol_is_at_least_5x_faster_than_python_loop() -> Non
     assert speedup >= 5.0, (
         f"_compute_rolling_spy_vol speedup is {speedup:.2f}x; PERF-001 requires "
         f">=5x vs the Python-loop reference on a 750-day input. "
-        f"vectorized={vectorized_time*1000:.2f}ms total over "
-        f"{repetitions} reps; reference={reference_time*1000:.2f}ms. "
+        f"vectorized={vectorized_time * 1000:.2f}ms total over "
+        f"{repetitions} reps; reference={reference_time * 1000:.2f}ms. "
         f"A no-op rewrite scores ~1x; pd.Series.rolling().std() with ddof=0 "
         f"or a numpy strided implementation scores >>5x."
     )
@@ -733,5 +720,5 @@ def test_compute_rolling_spy_vol_wall_clock_under_5ms_at_750_days() -> None:
     assert median_ms < 5.0, (
         f"_compute_rolling_spy_vol median wall-clock is {median_ms:.3f} ms on a "
         f"750-day input; PERF-001 requires < 5 ms. Samples (ms): "
-        f"{[round(s*1000, 3) for s in samples]}."
+        f"{[round(s * 1000, 3) for s in samples]}."
     )

@@ -72,6 +72,7 @@ def _prod_db_row_count(table: str) -> int:
 # GUARD-1: _db_file() raises under pytest when DB_PATH resolves to prod default
 # ---------------------------------------------------------------------------
 
+
 class TestProdDbWriteGuardFires:
     """GUARD-1: database._db_file() must raise RuntimeError when pytest is
     running and DB_PATH resolves to the production-default basename."""
@@ -145,6 +146,7 @@ class TestProdDbWriteGuardFires:
 # ---------------------------------------------------------------------------
 # GUARD-2: Advisor producers do NOT write to the production DB
 # ---------------------------------------------------------------------------
+
 
 class TestAdvisorProducersDoNotWriteProductionDb:
     """GUARD-2: the advisor producers must never reach the production DB,
@@ -309,9 +311,7 @@ class TestAdvisorProducersDoNotWriteProductionDb:
             f"GUARD-2 FAIL: run_spec_critic returned {row_id!r} — expected an int row id. "
             "If this is a MagicMock, the producer reached a mocked database, not the real one."
         )
-        assert row_id > 0, (
-            f"GUARD-2 FAIL: row_id={row_id} — insert must return a positive int."
-        )
+        assert row_id > 0, f"GUARD-2 FAIL: row_id={row_id} — insert must return a positive int."
 
         # Read back from the current temp DB.
         temp_path = db_module._db_file()
@@ -336,6 +336,7 @@ class TestAdvisorProducersDoNotWriteProductionDb:
 # ---------------------------------------------------------------------------
 # GUARD-3: Session-scoped DB_PATH is set before any test (including imports)
 # ---------------------------------------------------------------------------
+
 
 class TestSessionScopedDbPathIsAlwaysSet:
     """GUARD-3: DB_PATH must be set for the entire pytest session.
@@ -409,6 +410,7 @@ class TestSessionScopedDbPathIsAlwaysSet:
 # GUARD-4: Guard does NOT fire when pytest is absent (daemon safety)
 # ---------------------------------------------------------------------------
 
+
 class TestProdDbWriteGuardDoesNotFireOutsidePytest:
     """GUARD-4: the database._db_file() guard must be unconditionally silent
     when `"pytest"` is not in sys.modules.
@@ -426,9 +428,7 @@ class TestProdDbWriteGuardDoesNotFireOutsidePytest:
     test turns RED and blocks a daemon-breaking merge.
     """
 
-    def test_guard_is_gated_on_pytest_sentinel_so_daemon_is_unaffected(
-        self, monkeypatch
-    ):
+    def test_guard_is_gated_on_pytest_sentinel_so_daemon_is_unaffected(self, monkeypatch):
         """Simulate a non-pytest environment: remove pytest from sys.modules,
         remove DB_PATH, call _db_file() — must return the prod default path
         (no exception raised).
@@ -487,9 +487,7 @@ class TestProdDbWriteGuardDoesNotFireOutsidePytest:
         import database as db_module
 
         # pytest IS in sys.modules (we're running under pytest now).
-        assert "pytest" in sys.modules, (
-            "Expected pytest to be in sys.modules during a pytest run."
-        )
+        assert "pytest" in sys.modules, "Expected pytest to be in sys.modules during a pytest run."
 
         monkeypatch.delenv("DB_PATH", raising=False)
         monkeypatch.setattr(db_module, "DB_FILE", _PROD_DB_BASENAME)

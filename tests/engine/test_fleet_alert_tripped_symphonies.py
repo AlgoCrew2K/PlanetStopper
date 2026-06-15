@@ -168,17 +168,21 @@ class TestTrippedSymphonieRoundTrip:
         conn = _make_in_memory_conn()
         write, _ = self._patched_helpers(conn)
         names = ["Aggressive Momentum", "Conservative Bond Ladder"]
-        write({
-            "tripped_at_et": "2026-05-21T10:00:00",
-            "triggered_reason": "trailing_stop",
-            "tripped_count": 2,
-            "active_count": 5,
-            "tripped_symphonies": names,
-        })
+        write(
+            {
+                "tripped_at_et": "2026-05-21T10:00:00",
+                "triggered_reason": "trailing_stop",
+                "tripped_count": 2,
+                "active_count": 5,
+                "tripped_symphonies": names,
+            }
+        )
         raw = conn.execute(
             "SELECT tripped_symphonies FROM fleet_alert_state WHERE id = 1"
         ).fetchone()[0]
-        assert raw is not None, "tripped_symphonies column must be set (not NULL) when names provided."
+        assert raw is not None, (
+            "tripped_symphonies column must be set (not NULL) when names provided."
+        )
         parsed = json.loads(raw)
         assert parsed == names, (
             f"Stored JSON must round-trip to the original list. Expected {names}, got {parsed}."
@@ -189,13 +193,15 @@ class TestTrippedSymphonieRoundTrip:
         conn = _make_in_memory_conn()
         write, read = self._patched_helpers(conn)
         names = ["Symphony Alpha", "Symphony Beta", "Symphony Gamma"]
-        write({
-            "tripped_at_et": "2026-05-21T10:00:00",
-            "triggered_reason": "trailing_stop",
-            "tripped_count": 3,
-            "active_count": 8,
-            "tripped_symphonies": names,
-        })
+        write(
+            {
+                "tripped_at_et": "2026-05-21T10:00:00",
+                "triggered_reason": "trailing_stop",
+                "tripped_count": 3,
+                "active_count": 8,
+                "tripped_symphonies": names,
+            }
+        )
         result = read()
         assert result is not None
         assert result["tripped_symphonies"] == names, (
@@ -227,13 +233,15 @@ class TestTrippedSymphonieRoundTrip:
         """Empty/absent tripped_symphonies list should store NULL (not '[]')."""
         conn = _make_in_memory_conn()
         write, _ = self._patched_helpers(conn)
-        write({
-            "tripped_at_et": "2026-05-21T10:00:00",
-            "triggered_reason": "trailing_stop",
-            "tripped_count": 0,
-            "active_count": 5,
-            "tripped_symphonies": [],
-        })
+        write(
+            {
+                "tripped_at_et": "2026-05-21T10:00:00",
+                "triggered_reason": "trailing_stop",
+                "tripped_count": 0,
+                "active_count": 5,
+                "tripped_symphonies": [],
+            }
+        )
         raw = conn.execute(
             "SELECT tripped_symphonies FROM fleet_alert_state WHERE id = 1"
         ).fetchone()[0]
@@ -266,13 +274,15 @@ class TestDatabaseHelpersTrippedSymphonies:
         import database
 
         names = ["Trend Rider", "Mean Reversion Plus"]
-        database.write_fleet_alert({
-            "tripped_at_et": "2026-05-21T10:30:00",
-            "triggered_reason": "trailing_stop",
-            "tripped_count": 2,
-            "active_count": 6,
-            "tripped_symphonies": names,
-        })
+        database.write_fleet_alert(
+            {
+                "tripped_at_et": "2026-05-21T10:30:00",
+                "triggered_reason": "trailing_stop",
+                "tripped_count": 2,
+                "active_count": 6,
+                "tripped_symphonies": names,
+            }
+        )
         result = database.read_fleet_alert()
         assert result is not None, "read_fleet_alert must return a dict after write."
         assert result["tripped_symphonies"] == names, (
@@ -284,12 +294,14 @@ class TestDatabaseHelpersTrippedSymphonies:
         import database
 
         # Write without tripped_symphonies key.
-        database.write_fleet_alert({
-            "tripped_at_et": "2026-05-21T10:30:00",
-            "triggered_reason": "trailing_stop",
-            "tripped_count": 1,
-            "active_count": 4,
-        })
+        database.write_fleet_alert(
+            {
+                "tripped_at_et": "2026-05-21T10:30:00",
+                "triggered_reason": "trailing_stop",
+                "tripped_count": 1,
+                "active_count": 4,
+            }
+        )
         result = database.read_fleet_alert()
         assert result is not None
         assert result["tripped_symphonies"] == [], (

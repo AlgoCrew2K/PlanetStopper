@@ -292,9 +292,7 @@ def _find_function(tree: ast.Module, name: str) -> ast.FunctionDef | None:
     return None
 
 
-def _augassign_lineno_of_name_inside_node(
-    node: ast.AST, target_name: str
-) -> int | None:
+def _augassign_lineno_of_name_inside_node(node: ast.AST, target_name: str) -> int | None:
     """Find the first AugAssign on ``target_name`` inside ``node``."""
     for sub in ast.walk(node):
         if (
@@ -402,9 +400,7 @@ def test_synthetic_history_valid_alloc_accumulator_is_NOT_gated_by_v_gt_zero() -
         "this test to target the new name and re-verify the asymmetry."
     )
 
-    enclosing_if = _enclosing_if_test_at_or_above(
-        build_replay_day, aug_lineno, "valid_alloc"
-    )
+    enclosing_if = _enclosing_if_test_at_or_above(build_replay_day, aug_lineno, "valid_alloc")
     if enclosing_if is not None and _if_test_compares_v_gt_zero(enclosing_if):
         pytest.fail(
             "SEMANTIC-ASYMMETRY REGRESSION (producer side): "
@@ -481,7 +477,7 @@ def test_producer_and_canonical_asymmetry_is_recorded_in_test_docstring() -> Non
     """
     import tests.synthetic_history.test_calibration_alignment as self_mod
 
-    doc = (self_mod.__doc__ or "")
+    doc = self_mod.__doc__ or ""
     assert "asymmetry" in doc.lower(), (
         "This test file's module docstring no longer mentions the "
         "producer-vs-canonical 'asymmetry'. The behavioral context for "
@@ -520,11 +516,15 @@ def _find_compute_vwap_breakdown_calls(tree: ast.Module) -> list[ast.Call]:
         if isinstance(node, ast.Call):
             func = node.func
             if (
-                isinstance(func, ast.Attribute)
-                and func.attr == "compute_vwap_breakdown_update"
-                and isinstance(func.value, ast.Name)
-                and func.value.id == "math_engine"
-            ) or isinstance(func, ast.Name) and func.id == "compute_vwap_breakdown_update":
+                (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "compute_vwap_breakdown_update"
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "math_engine"
+                )
+                or isinstance(func, ast.Name)
+                and func.id == "compute_vwap_breakdown_update"
+            ):
                 out.append(node)
     return out
 
@@ -571,29 +571,24 @@ def test_autotuner_valid_vwap_weight_tick_get_default_is_one_point_zero() -> Non
         if not node.args:
             continue
         first_arg = node.args[0]
-        if not (
-            isinstance(first_arg, ast.Constant)
-            and first_arg.value == "valid_vwap_weight"
-        ):
+        if not (isinstance(first_arg, ast.Constant) and first_arg.value == "valid_vwap_weight"):
             continue
         # Capture the default arg if present, else None
         default_arg = node.args[1] if len(node.args) >= 2 else None
         found_get_calls.append((node.lineno, default_arg))
 
     assert found_get_calls, (
-        "autotuner.py contains no `tick.get(\"valid_vwap_weight\", ...)` "
+        'autotuner.py contains no `tick.get("valid_vwap_weight", ...)` '
         "call. The stale-cache fallback (Cycle A reviewer requirement) "
         "appears to be missing. Without it, a stale v1 cache that slips "
         "through the version marker raises KeyError at runtime. Add a "
-        "`.get(\"valid_vwap_weight\", 1.0)` read."
+        '`.get("valid_vwap_weight", 1.0)` read.'
     )
 
     offenders: list[tuple[int, str]] = []
     for lineno, default in found_get_calls:
         if default is None:
-            offenders.append(
-                (lineno, "no default — KeyError on stale ticks")
-            )
+            offenders.append((lineno, "no default — KeyError on stale ticks"))
             continue
         if not isinstance(default, ast.Constant):
             offenders.append(
@@ -607,9 +602,7 @@ def test_autotuner_valid_vwap_weight_tick_get_default_is_one_point_zero() -> Non
         if isinstance(default.value, bool):
             # bool is a subclass of int; True == 1 but the semantic intent
             # is wrong.
-            offenders.append(
-                (lineno, f"default is bool {default.value!r} (semantic miss)")
-            )
+            offenders.append((lineno, f"default is bool {default.value!r} (semantic miss)"))
             continue
         if default.value != 1.0:
             offenders.append(
@@ -623,7 +616,7 @@ def test_autotuner_valid_vwap_weight_tick_get_default_is_one_point_zero() -> Non
 
     assert not offenders, (
         "STALE-CACHE FALLBACK REGRESSION in autotuner.py — "
-        "`tick.get(\"valid_vwap_weight\", DEFAULT)` default(s) wrong:\n"
+        '`tick.get("valid_vwap_weight", DEFAULT)` default(s) wrong:\n'
         + "\n".join(f"  - line {ln}: {msg}" for ln, msg in offenders)
         + "\nThe default MUST be 1.0 so a stale v1 cache (no key) "
         "produces the same gate-passes-by-default behavior as pre-Cycle-A "
@@ -726,6 +719,6 @@ def test_autotuner_canonical_call_threads_through_valid_vwap_weight_from_local()
         "`valid_vwap_weight` kwarg is NOT threaded from a tick read "
         "(neither direct nor via an alias). A hardcoded value would "
         "make the stale-cache `.get(..., 1.0)` defense cosmetic. The "
-        "kwarg MUST receive its value from `tick.get(\"valid_vwap_weight\", "
+        'kwarg MUST receive its value from `tick.get("valid_vwap_weight", '
         "1.0)` (directly or via a one-line local alias)."
     )

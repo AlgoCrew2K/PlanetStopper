@@ -63,12 +63,8 @@ def _compute_breakeven_update_calls(filename: str) -> list[ast.Call]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             func = node.func
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr == "compute_breakeven_update"
-            ) or (
-                isinstance(func, ast.Name)
-                and func.id == "compute_breakeven_update"
+            if (isinstance(func, ast.Attribute) and func.attr == "compute_breakeven_update") or (
+                isinstance(func, ast.Name) and func.id == "compute_breakeven_update"
             ):
                 calls.append(node)
     return calls
@@ -127,9 +123,7 @@ def test_live_consumer_still_computes_hwm_anchored_base_stop_level() -> None:
         "clamp, not the anchoring."
     )
     calls = _compute_breakeven_update_calls("alpha_bot_execution.py")
-    base_kwarg_present = any(
-        "base_stop_level" in {kw.arg for kw in c.keywords} for c in calls
-    )
+    base_kwarg_present = any("base_stop_level" in {kw.arg for kw in c.keywords} for c in calls)
     assert base_kwarg_present, (
         "compute_breakeven_update in the live path must still receive "
         "base_stop_level= (the HWM-anchored base recomputed each tick)."

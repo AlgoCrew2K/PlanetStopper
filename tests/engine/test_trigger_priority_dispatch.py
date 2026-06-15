@@ -48,12 +48,7 @@ import alpha_bot_execution
 # Fixture loading
 # ---------------------------------------------------------------------------
 
-FIXTURES_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "engine"
-    / "trigger_priority"
-)
+FIXTURES_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "engine" / "trigger_priority"
 
 
 def _load(name: str) -> dict:
@@ -66,6 +61,7 @@ def _load(name: str) -> dict:
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
     _FIXED_ET = datetime(2026, 5, 14, 11, 30, 0, tzinfo=_ET)  # Wed 11:30 ET — market hours
 except Exception:
@@ -136,6 +132,7 @@ def _seed_state(**extras) -> dict:
 # Core environment fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def patched_env():
     """
@@ -179,18 +176,21 @@ def patched_env():
         # (TP-confirm fires for a pre-armed symphony) and >= TRIGGER_THRESHOLD_PCT
         # (so it does not also re-trip the arm gate). This is NOT a math test —
         # the MC math itself is covered by tests/math_engine/.
-        patch.object(
-            alpha_bot_execution.math_engine, "run_monte_carlo", return_value=50.0
-        ),
+        patch.object(alpha_bot_execution.math_engine, "run_monte_carlo", return_value=50.0),
     ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = _seed_state()
         mock_db.load_chart_history.return_value = {
-            "date": _FIXED_ET.strftime("%Y-%m-%d"), "symphonies": {}
+            "date": _FIXED_ET.strftime("%Y-%m-%d"),
+            "symphonies": {},
         }
         # live_mode=True: these tests exercise live execution paths; the master-switch
         # gate (LIVE_EXECUTION and item["live_mode"]) requires both flags set.
-        mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}, "live_mode": True}
+        mock_db.get_symphony_strategy.return_value = {
+            "params": {},
+            "locked_vars": {},
+            "live_mode": True,
+        }
         mock_db.normalize_name.side_effect = lambda x: x
         mock_db.wipe_transient_state.side_effect = lambda s: s
 
@@ -210,6 +210,7 @@ def patched_env():
 # ---------------------------------------------------------------------------
 # Helper: extract the triggered_reason written to bot_state via save_state
 # ---------------------------------------------------------------------------
+
 
 def _capture_triggered_reason(mock_db: MagicMock) -> str | None:
     """
@@ -269,7 +270,12 @@ def test_vwap_breakdown_wins_when_tp_and_trailing_stop_also_true(patched_env):
         patch.object(
             alpha_bot_execution.math_engine,
             "compute_vwap_breakdown_update",
-            return_value=(3, 2, True, False),  # (vwap_ticks, bleed_ticks, is_vwap_broken, is_vwap_bleed_broken)
+            return_value=(
+                3,
+                2,
+                True,
+                False,
+            ),  # (vwap_ticks, bleed_ticks, is_vwap_broken, is_vwap_bleed_broken)
         ),
         # prob_underperforming >= TAKE_PROFIT_MC_PCT so TP arm fires (above_tp_count increment)
         # but we also need current_return > 0 (payload sets last_percent_change=0.05>0)
@@ -340,9 +346,7 @@ def test_vwap_breakdown_win_telemetry_records_also_true_candidates(patched_env):
     assert gate_state_raw is not None, "gate_state must be passed to record_exit_trigger"
 
     # gate_state may arrive as dict (direct) or JSON string
-    gate_state = (
-        json.loads(gate_state_raw) if isinstance(gate_state_raw, str) else gate_state_raw
-    )
+    gate_state = json.loads(gate_state_raw) if isinstance(gate_state_raw, str) else gate_state_raw
 
     assert "also_true" in gate_state, (
         "AC-H2.3: gate_state must contain 'also_true' key listing non-winning "
@@ -388,9 +392,7 @@ def test_vwap_breakdown_win_gate_state_captures_moment_of_resolution(patched_env
     trigger_calls = _capture_record_exit_trigger_calls(mock_db)
     assert trigger_calls, "record_exit_trigger must be called"
     gate_state_raw = trigger_calls[0].get("gate_state")
-    gate_state = (
-        json.loads(gate_state_raw) if isinstance(gate_state_raw, str) else gate_state_raw
-    )
+    gate_state = json.loads(gate_state_raw) if isinstance(gate_state_raw, str) else gate_state_raw
     assert gate_state is not None
 
     shape = fixture["gate_state_shape"]
@@ -480,9 +482,7 @@ def test_take_profit_wins_telemetry_records_trailing_stop_as_also_true(patched_e
     trigger_calls = _capture_record_exit_trigger_calls(mock_db)
     assert trigger_calls
     gate_state_raw = trigger_calls[0].get("gate_state")
-    gate_state = (
-        json.loads(gate_state_raw) if isinstance(gate_state_raw, str) else gate_state_raw
-    )
+    gate_state = json.loads(gate_state_raw) if isinstance(gate_state_raw, str) else gate_state_raw
     assert "also_true" in gate_state, "also_true must be present in gate_state"
     assert "Trailing Stop" in gate_state["also_true"], (
         f"Trailing Stop must appear in also_true when TP wins over it; got {gate_state['also_true']}"
@@ -600,9 +600,7 @@ def test_vwap_breakdown_wins_over_vwap_bleed_cut_also_true_recorded(patched_env)
     trigger_calls = _capture_record_exit_trigger_calls(mock_db)
     assert trigger_calls
     gate_state_raw = trigger_calls[0].get("gate_state")
-    gate_state = (
-        json.loads(gate_state_raw) if isinstance(gate_state_raw, str) else gate_state_raw
-    )
+    gate_state = json.loads(gate_state_raw) if isinstance(gate_state_raw, str) else gate_state_raw
     assert "also_true" in gate_state
     assert "VWAP Bleed Cut" in gate_state["also_true"], (
         f"VWAP Bleed Cut must appear in also_true; got {gate_state['also_true']}"
@@ -705,9 +703,7 @@ def test_zero_trigger_cycle_fires_no_side_effects(patched_env):
         "Zero-trigger cycle must not call record_exit_trigger"
     )
     reason = _capture_triggered_reason(mock_db)
-    assert reason is None, (
-        f"Zero-trigger cycle must not set triggered_reason; got {reason!r}"
-    )
+    assert reason is None, f"Zero-trigger cycle must not set triggered_reason; got {reason!r}"
 
 
 # ---------------------------------------------------------------------------

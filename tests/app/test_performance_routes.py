@@ -129,13 +129,9 @@ def test_get_performance_returns_200_html(client, mock_analytics):
     performance.html template (not a fallback / error page).
     """
     resp = client.get("/performance")
-    assert resp.status_code == 200, (
-        f"GET /performance must return 200, got {resp.status_code}"
-    )
+    assert resp.status_code == 200, f"GET /performance must return 200, got {resp.status_code}"
     ctype = resp.headers.get("Content-Type", "")
-    assert "text/html" in ctype.lower(), (
-        f"Content-Type must include 'text/html', got {ctype!r}"
-    )
+    assert "text/html" in ctype.lower(), f"Content-Type must include 'text/html', got {ctype!r}"
     # Spot-check the rendered body — the template should at minimum contain a
     # title or heading that identifies the page.  Case-insensitive to keep the
     # contract loose around copy choices.
@@ -155,9 +151,7 @@ def test_get_performance_includes_chartjs_cdn_reference(client, mock_analytics):
     resp = client.get("/performance")
     body = resp.get_data(as_text=True).lower()
     # Loose: any <script ... src="...chart.js..." ...> reference is acceptable.
-    assert "chart.js" in body, (
-        "performance.html must reference Chart.js (CDN script tag) for plots"
-    )
+    assert "chart.js" in body, "performance.html must reference Chart.js (CDN script tag) for plots"
     assert "<script" in body, "Chart.js must be loaded via a <script> tag"
 
 
@@ -384,8 +378,10 @@ def test_api_performance_symphony_happy_path(client, mock_analytics):
     # symphony_id may be passed positionally or via kwarg; accept either.
     positional = call_args.args
     kwargs = call_args.kwargs
-    sym_id_used = kwargs.get("symphony_id") if "symphony_id" in kwargs else (
-        positional[1] if len(positional) >= 2 else None
+    sym_id_used = (
+        kwargs.get("symphony_id")
+        if "symphony_id" in kwargs
+        else (positional[1] if len(positional) >= 2 else None)
     )
     assert sym_id_used == "sym-A", (
         f"compute_per_symphony_returns must be called with sym-A, got {sym_id_used!r}"
@@ -408,21 +404,14 @@ def test_api_performance_symphony_without_symphony_id_returns_400(client, mock_a
     """
     resp = client.get("/api/performance?scope=symphony")
     assert resp.status_code == 400, (
-        "scope=symphony without symphony_id must return 400, got "
-        f"{resp.status_code}"
+        f"scope=symphony without symphony_id must return 400, got {resp.status_code}"
     )
     body = resp.get_json()
     # Body MUST carry an error indicator — either a "status": "error" envelope
     # or an "error" key.  Implementer's choice; both are acceptable.
     assert body is not None, "400 response must include a JSON error body"
-    has_error_signal = (
-        body.get("status") == "error"
-        or "error" in body
-        or "message" in body
-    )
-    assert has_error_signal, (
-        f"400 response must include an error/message field, got body={body!r}"
-    )
+    has_error_signal = body.get("status") == "error" or "error" in body or "message" in body
+    assert has_error_signal, f"400 response must include an error/message field, got body={body!r}"
 
 
 def test_api_performance_symphony_unknown_id_returns_empty_state(client, mock_analytics):
@@ -448,9 +437,7 @@ def test_api_performance_symphony_unknown_id_returns_empty_state(client, mock_an
     }
 
     resp = client.get("/api/performance?scope=symphony&symphony_id=does-not-exist")
-    assert resp.status_code == 200, (
-        "unknown symphony_id must be a graceful empty-state, not 404"
-    )
+    assert resp.status_code == 200, "unknown symphony_id must be a graceful empty-state, not 404"
     body = resp.get_json()
     assert body["observation_count"] == 0
     assert body["insufficient_history"] is True
@@ -485,9 +472,7 @@ def test_api_performance_symphonies_returns_sorted_list(client, mock_analytics):
 # ---------------------------------------------------------------------------
 
 
-def test_performance_routes_do_not_call_database_save_or_requests_post(
-    client, mock_analytics
-):
+def test_performance_routes_do_not_call_database_save_or_requests_post(client, mock_analytics):
     """
     Performance routes MUST be read-only — they must never invoke any
     ``database.save_*`` function, never call ``requests.post``.  This pins the
@@ -506,9 +491,10 @@ def test_performance_routes_do_not_call_database_save_or_requests_post(
     )
     mock_analytics.list_available_symphonies.return_value = ["sym-A"]
 
-    with patch.object(app_module, "database") as db_mock, patch.object(
-        app_module.requests, "post"
-    ) as requests_post_mock:
+    with (
+        patch.object(app_module, "database") as db_mock,
+        patch.object(app_module.requests, "post") as requests_post_mock,
+    ):
         # Hit every Performance route.
         client.get("/performance")
         client.get("/api/performance?scope=aggregate&days=60")
@@ -525,9 +511,7 @@ def test_performance_routes_do_not_call_database_save_or_requests_post(
                 )
 
         # requests.post must never fire from a Performance route.
-        assert not requests_post_mock.called, (
-            "Performance routes must not POST to any external API"
-        )
+        assert not requests_post_mock.called, "Performance routes must not POST to any external API"
 
 
 def test_performance_routes_do_not_acquire_database_lock(client, mock_analytics):
@@ -569,16 +553,8 @@ def test_api_performance_invalid_scope_returns_400(client, mock_analytics):
     so that a typo in the UI does not silently fall through to a default mode.
     """
     resp = client.get("/api/performance?scope=foo")
-    assert resp.status_code == 400, (
-        f"scope=foo must return 400, got {resp.status_code}"
-    )
+    assert resp.status_code == 400, f"scope=foo must return 400, got {resp.status_code}"
     body = resp.get_json()
     assert body is not None
-    has_error_signal = (
-        body.get("status") == "error"
-        or "error" in body
-        or "message" in body
-    )
-    assert has_error_signal, (
-        f"invalid-scope 400 must include an error/message field, got {body!r}"
-    )
+    has_error_signal = body.get("status") == "error" or "error" in body or "message" in body
+    assert has_error_signal, f"invalid-scope 400 must include an error/message field, got {body!r}"

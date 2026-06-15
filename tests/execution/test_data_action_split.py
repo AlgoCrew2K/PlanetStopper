@@ -83,6 +83,7 @@ import alpha_bot_execution
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
 
     def _et(hour: int, minute: int, weekday_date: str = "2025-05-14") -> datetime:
@@ -91,17 +92,17 @@ try:
         return datetime(y, mo, d, hour, minute, 0, tzinfo=_ET)
 
 except Exception:  # pragma: no cover
+
     def _et(hour: int, minute: int, weekday_date: str = "2025-05-14") -> datetime:
         y, mo, d = map(int, weekday_date.split("-"))
-        return datetime(y, mo, d, hour, minute, 0,
-                        tzinfo=timezone(timedelta(hours=-4)))
+        return datetime(y, mo, d, hour, minute, 0, tzinfo=timezone(timedelta(hours=-4)))
 
 
 # Fixed scenario times — all are regular weekday (Wed 2025-05-14)
-_PRE_GATE_09_45 = _et(9, 45)     # 09:45 ET — after market open, before EXECUTION_START_TIME
-_PRE_GATE_10_15 = _et(10, 15)    # 10:15 ET — still before EXECUTION_START_TIME
-_POST_GATE_10_31 = _et(10, 31)   # 10:31 ET — just past EXECUTION_START_TIME
-_POST_GATE_10_45 = _et(10, 45)   # 10:45 ET — solidly in action phase
+_PRE_GATE_09_45 = _et(9, 45)  # 09:45 ET — after market open, before EXECUTION_START_TIME
+_PRE_GATE_10_15 = _et(10, 15)  # 10:15 ET — still before EXECUTION_START_TIME
+_POST_GATE_10_31 = _et(10, 31)  # 10:31 ET — just past EXECUTION_START_TIME
+_POST_GATE_10_45 = _et(10, 45)  # 10:45 ET — solidly in action phase
 
 # Canonical date string matching the above times
 _DATE_STR = "2025-05-14"
@@ -146,8 +147,11 @@ def _make_minimal_history(date_str: str) -> dict:
     return {
         date_str: {
             _TICKER: {
-                "c": 500.0, "daily_ret": 0.001,
-                "high": 501.0, "low": 499.0, "close": 500.0,
+                "c": 500.0,
+                "daily_ret": 0.001,
+                "high": 501.0,
+                "low": 499.0,
+                "close": 500.0,
             }
         }
     }
@@ -199,6 +203,7 @@ def _seed_state(
 # plus a dict of the mock objects so callers can assert call counts.
 # ---------------------------------------------------------------------------
 
+
 def _run_one_cycle(
     current_et: datetime,
     initial_bot_state: dict,
@@ -228,26 +233,31 @@ def _run_one_cycle(
     def capture_save_state(state: dict) -> None:
         captured_states.append(copy.deepcopy(state))
 
-    with patch.object(alpha_bot_execution, "database") as mock_db, \
-         patch.object(alpha_bot_execution, "reporting") as mock_reporting, \
-         patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                      return_value=[sym_payload]), \
-         patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                      return_value=_make_minimal_history(date_str)), \
-         patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                      return_value={_TICKER: {"vwap": 500.0, "last_price": 500.0}}), \
-         patch.object(alpha_bot_execution, "get_current_et",
-                      return_value=current_et), \
-         patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-         patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key-id"), \
-         patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-         patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-         patch.object(alpha_bot_execution, "EXECUTION_START_TIME", execution_start_time), \
-         patch.object(alpha_bot_execution.time, "sleep"), \
-         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]), \
-         patch.object(alpha_bot_execution, "autotuner") as _mock_autotuner, \
-         patch.object(alpha_bot_execution, "math_engine") as mock_math:
-
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting") as mock_reporting,
+        patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=[sym_payload]),
+        patch.object(
+            alpha_bot_execution,
+            "fetch_alpaca_history",
+            return_value=_make_minimal_history(date_str),
+        ),
+        patch.object(
+            alpha_bot_execution,
+            "fetch_intraday_vwaps",
+            return_value={_TICKER: {"vwap": 500.0, "last_price": 500.0}},
+        ),
+        patch.object(alpha_bot_execution, "get_current_et", return_value=current_et),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key-id"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution, "EXECUTION_START_TIME", execution_start_time),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        patch.object(alpha_bot_execution, "autotuner") as _mock_autotuner,
+        patch.object(alpha_bot_execution, "math_engine") as mock_math,
+    ):
         # DB stubs
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = copy.deepcopy(initial_bot_state)
@@ -279,9 +289,7 @@ def _run_one_cycle(
 
         alpha_bot_execution.main()
 
-    final_state = captured_states[-1] if captured_states else copy.deepcopy(
-        initial_bot_state
-    )
+    final_state = captured_states[-1] if captured_states else copy.deepcopy(initial_bot_state)
     mocks = {
         "mock_db": mock_db,
         "mock_math": mock_math,
@@ -298,6 +306,7 @@ def _run_one_cycle(
 # (4 inception fields). It does NOT write current_return from last_percent_change.
 # After the split, the data phase must write current_return every cycle from 09:30.
 # ---------------------------------------------------------------------------
+
 
 class TestPreGateCyclePopulatesAccountsMap:
     """Data phase must write current_return (the symphony's today_change) every cycle."""
@@ -396,6 +405,7 @@ class TestPreGateCyclePopulatesAccountsMap:
 # placement) must be completely absent from pre-gate cycles.
 # ---------------------------------------------------------------------------
 
+
 class TestPreGateCycleDoesNotFireActionPhase:
     """Action phase must be entirely absent from pre-gate cycles."""
 
@@ -486,6 +496,7 @@ class TestPreGateCycleDoesNotFireActionPhase:
 # so the action phase at 10:30 starts with a warm HWM.
 # ---------------------------------------------------------------------------
 
+
 class TestDataPhaseUpdatesHwm:
     """HWM must be advanced in the data phase, not gated at EXECUTION_START_TIME."""
 
@@ -550,6 +561,7 @@ class TestDataPhaseUpdatesHwm:
 # phase fires at 10:31, the math engine has warm state — HWM reflects the
 # intraday peak, symphony_vol is populated, current_return has been tracked.
 # ---------------------------------------------------------------------------
+
 
 class TestWarmStateAtGateBoundary:
     """After pre-gate data cycles, the action phase at 10:31 starts with warm state."""
@@ -649,9 +661,7 @@ class TestWarmStateAtGateBoundary:
             f"action phase at 10:30 starts with warm volatility."
         )
         vol = final[_SYM_ID]["symphony_vol"]
-        assert isinstance(vol, float), (
-            f"symphony_vol must be a float; got {type(vol).__name__}"
-        )
+        assert isinstance(vol, float), f"symphony_vol must be a float; got {type(vol).__name__}"
         assert vol >= 0.0, (
             f"symphony_vol must be non-negative (volatility is always >= 0); got {vol}"
         )
@@ -664,6 +674,7 @@ class TestWarmStateAtGateBoundary:
 # accounts_map (current_return, current_value, holdings), AND the action phase
 # runs MC gating, exit decisions, etc.
 # ---------------------------------------------------------------------------
+
 
 class TestPostGateCycleRunsBothPhases:
     """Post-gate cycles must run the full pipeline (data phase + action phase)."""
@@ -679,13 +690,9 @@ class TestPostGateCycleRunsBothPhases:
             initial_bot_state=initial,
         )
 
-        assert _SYM_ID in final, (
-            f"bot_state must contain symphony {_SYM_ID} after post-gate cycle"
-        )
+        assert _SYM_ID in final, f"bot_state must contain symphony {_SYM_ID} after post-gate cycle"
         actual = final[_SYM_ID].get("current_return")
-        assert actual is not None, (
-            "current_return must not be None after post-gate cycle"
-        )
+        assert actual is not None, "current_return must not be None after post-gate cycle"
         assert actual == pytest.approx(_EXPECTED_CURRENT_RETURN, abs=1e-9), (
             # Tolerance: same float multiply as pre-gate tests
             f"current_return must equal {_EXPECTED_CURRENT_RETURN} after post-gate cycle; "
@@ -735,6 +742,7 @@ class TestPostGateCycleRunsBothPhases:
 # state and overwrites with the old HWM).
 # ---------------------------------------------------------------------------
 
+
 class TestNoPersistDoubleSavePreGate:
     """save_state must be called exactly once per pre-gate data cycle."""
 
@@ -767,6 +775,7 @@ class TestNoPersistDoubleSavePreGate:
 # None over a previously valid current_return or HWM.
 # ---------------------------------------------------------------------------
 
+
 class TestDataPhaseFetchFailureRetainsPriorState:
     """Composer fetch failure in data phase must not overwrite prior bot_state values."""
 
@@ -789,24 +798,25 @@ class TestDataPhaseFetchFailureRetainsPriorState:
         def capture(s: dict) -> None:
             captured_states.append(copy.deepcopy(s))
 
-        with patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "reporting"), \
-             patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                          return_value=[]), \
-             patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                          return_value=_make_minimal_history(date_str)), \
-             patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                          return_value={}), \
-             patch.object(alpha_bot_execution, "get_current_et",
-                          return_value=_PRE_GATE_09_45), \
-             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key-id"), \
-             patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:30"), \
-             patch.object(alpha_bot_execution.time, "sleep"), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+        with (
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "reporting"),
+            patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=[]),
+            patch.object(
+                alpha_bot_execution,
+                "fetch_alpaca_history",
+                return_value=_make_minimal_history(date_str),
+            ),
+            patch.object(alpha_bot_execution, "fetch_intraday_vwaps", return_value={}),
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_PRE_GATE_09_45),
+            patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+            patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key-id"),
+            patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:30"),
+            patch.object(alpha_bot_execution.time, "sleep"),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        ):
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = copy.deepcopy(initial)
             mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
@@ -860,24 +870,25 @@ class TestDataPhaseFetchFailureRetainsPriorState:
         def capture(s: dict) -> None:
             captured_states.append(copy.deepcopy(s))
 
-        with patch.object(alpha_bot_execution, "database") as mock_db, \
-             patch.object(alpha_bot_execution, "reporting"), \
-             patch.object(alpha_bot_execution, "fetch_symphony_stats",
-                          return_value=[]), \
-             patch.object(alpha_bot_execution, "fetch_alpaca_history",
-                          return_value=_make_minimal_history(date_str)), \
-             patch.object(alpha_bot_execution, "fetch_intraday_vwaps",
-                          return_value={}), \
-             patch.object(alpha_bot_execution, "get_current_et",
-                          return_value=_PRE_GATE_09_45), \
-             patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-             patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key-id"), \
-             patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-             patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-             patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:30"), \
-             patch.object(alpha_bot_execution.time, "sleep"), \
-             patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+        with (
+            patch.object(alpha_bot_execution, "database") as mock_db,
+            patch.object(alpha_bot_execution, "reporting"),
+            patch.object(alpha_bot_execution, "fetch_symphony_stats", return_value=[]),
+            patch.object(
+                alpha_bot_execution,
+                "fetch_alpaca_history",
+                return_value=_make_minimal_history(date_str),
+            ),
+            patch.object(alpha_bot_execution, "fetch_intraday_vwaps", return_value={}),
+            patch.object(alpha_bot_execution, "get_current_et", return_value=_PRE_GATE_09_45),
+            patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+            patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-key-id"),
+            patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+            patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+            patch.object(alpha_bot_execution, "EXECUTION_START_TIME", "10:30"),
+            patch.object(alpha_bot_execution.time, "sleep"),
+            patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+        ):
             mock_db.acquire_lock.return_value = True
             mock_db.load_state.return_value = copy.deepcopy(initial)
             mock_db.load_chart_history.return_value = {"date": date_str, "symphonies": {}}
@@ -909,6 +920,7 @@ class TestDataPhaseFetchFailureRetainsPriorState:
 # For each math-engine input that the action phase consumes at 10:31, assert
 # that the field is populated in bot_state by the time the action phase fires.
 # ---------------------------------------------------------------------------
+
 
 class TestMathEngineInputsPopulatedByDataPhase:
     """Key math-engine inputs must be in bot_state before the action phase runs."""

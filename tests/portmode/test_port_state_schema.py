@@ -40,6 +40,7 @@ def mem_db(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", db_path)
 
     import database
+
     database.init_db()
     yield db_path
 
@@ -48,8 +49,8 @@ def mem_db(tmp_path, monkeypatch):
 # AC-P2.5.1: port_state typed table structure
 # ---------------------------------------------------------------------------
 
-class TestPortStateTable:
 
+class TestPortStateTable:
     REQUIRED_COLUMNS = {
         "account_id",
         "high_water_mark",
@@ -74,17 +75,17 @@ class TestPortStateTable:
 
     def test_port_state_table_exists(self, mem_db):
         import database
+
         conn = database.get_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='port_state'"
-        )
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='port_state'")
         row = cursor.fetchone()
         conn.close()
         assert row is not None, "port_state table must exist after init_db()"
 
     def test_port_state_has_required_columns(self, mem_db):
         import database
+
         conn = database.get_connection()
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(port_state)")
@@ -95,6 +96,7 @@ class TestPortStateTable:
 
     def test_account_id_is_primary_key(self, mem_db):
         import database
+
         conn = database.get_connection()
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(port_state)")
@@ -108,8 +110,8 @@ class TestPortStateTable:
 # AC-P2.5.2: CRUD helpers
 # ---------------------------------------------------------------------------
 
-class TestPortStateHelpers:
 
+class TestPortStateHelpers:
     def test_read_returns_none_when_no_row(self, mem_db):
         result = read_port_state("acct-nonexistent")
         assert result is None
@@ -160,6 +162,7 @@ class TestPortStateHelpers:
 # ---------------------------------------------------------------------------
 # AC-P2.5.3: wipe_transient_state allowlist — port_state NOT clobbered
 # ---------------------------------------------------------------------------
+
 
 class TestWipeTransientStateAllowlist:
     """
@@ -233,22 +236,28 @@ class TestWipeTransientStateAllowlist:
 # AC-P2.5.6: port_breakeven_active is non-latching
 # ---------------------------------------------------------------------------
 
-class TestPortBreakevenNonLatching:
 
+class TestPortBreakevenNonLatching:
     def test_port_breakeven_active_can_go_false_after_true(self, mem_db):
         """
         AC-P2.5.6: port_breakeven_active is non-latching. Unlike per-symphony
         breakeven_locked (which is permanently True once set), port_breakeven_active
         is re-evaluated each cycle and CAN revert to False.
         """
-        write_port_state("acct-breakeven", {
-            "port_breakeven_active": True,
-            "composition_hash": "hash-be",
-        })
-        write_port_state("acct-breakeven", {
-            "port_breakeven_active": False,
-            "composition_hash": "hash-be",
-        })
+        write_port_state(
+            "acct-breakeven",
+            {
+                "port_breakeven_active": True,
+                "composition_hash": "hash-be",
+            },
+        )
+        write_port_state(
+            "acct-breakeven",
+            {
+                "port_breakeven_active": False,
+                "composition_hash": "hash-be",
+            },
+        )
         result = read_port_state("acct-breakeven")
         is_false = result["port_breakeven_active"] in (0, False, None)
         assert is_false, (

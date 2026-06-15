@@ -50,6 +50,7 @@ def _ensure_repo_on_path() -> None:
 def flask_client():
     _ensure_repo_on_path()
     import app as _app
+
     _app.app.config["TESTING"] = True
     with _app.app.test_client() as client:
         yield client
@@ -94,12 +95,11 @@ def _varied_returns_backtest(seed: int = 11, n: int = 700, mean_pct: float = 0.5
     daily_returns are FRACTIONS (engine multiplies by 100 to get percent).
     """
     import random  # noqa: PLC0415
+
     rng = random.Random(seed)
     fake = MagicMock()
     fake.error = None
-    fake.daily_returns = {
-        str(19000 + i): (rng.gauss(mean_pct, 0.8) / 100.0) for i in range(n)
-    }
+    fake.daily_returns = {str(19000 + i): (rng.gauss(mean_pct, 0.8) / 100.0) for i in range(n)}
     fake.stats = {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None}
     return fake
 
@@ -133,9 +133,11 @@ class TestRC4PersistRegardlessOfVerdict:
             persisted.append(kwargs)
             return len(persisted)
 
-        score_tree = {"id": "sym-rc4", "type": "root", "children": [
-            {"type": "asset", "ticker": "SPY", "weight": 1.0}
-        ]}
+        score_tree = {
+            "id": "sym-rc4",
+            "type": "root",
+            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
+        }
         objective = swap_engine.SwapObjective(
             objective_type="reduce_correlation",
             target_pair=("sym-rc4", "sym-other"),
@@ -152,7 +154,7 @@ class TestRC4PersistRegardlessOfVerdict:
                 incumbent_asset="SPY",
                 candidate_asset="IALT",
                 objective=objective,
-                incumbent_oos_alpha=50.0,    # strong incumbent -> candidate cannot beat it
+                incumbent_oos_alpha=50.0,  # strong incumbent -> candidate cannot beat it
                 default_oos_alpha=50.0,
             )
 
@@ -190,11 +192,15 @@ class TestRC4PersistRegardlessOfVerdict:
             persisted.append(kwargs)
             return len(persisted)
 
-        score_tree = {"id": "sym-rc4b", "type": "root", "children": [
-            {"type": "asset", "ticker": "SPY", "weight": 1.0}
-        ]}
+        score_tree = {
+            "id": "sym-rc4b",
+            "type": "root",
+            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
+        }
         objective = swap_engine.SwapObjective(
-            objective_type="reduce_correlation", target_pair=None, measured_value=0.6,
+            objective_type="reduce_correlation",
+            target_pair=None,
+            measured_value=0.6,
         )
 
         with (
@@ -211,9 +217,7 @@ class TestRC4PersistRegardlessOfVerdict:
                 default_oos_alpha=50.0,
             )
 
-        assert persisted, (
-            "No observation persisted on a non-ADOPT verdict (RC-4 not satisfied)."
-        )
+        assert persisted, "No observation persisted on a non-ADOPT verdict (RC-4 not satisfied)."
         for kw in persisted:
             assert kw.get("is_advisory_only") in (1, True), (
                 f"A regardless-of-verdict observation was written with is_advisory_only="
@@ -234,8 +238,9 @@ class TestRC4PersistRegardlessOfVerdict:
         with (
             patch("app.ai_advisor.enforce_suggestion_allowlist", return_value=(["k"], [])),
             patch("app.ai_advisor.check_risk_direction_agreement", return_value=None),
-            patch("app.database.get_symphony_strategy",
-                  return_value={"params": {}, "locked_vars": []}),
+            patch(
+                "app.database.get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
+            ),
             patch(
                 "app.ai_advisor.revalidate_suggestion_oos",
                 return_value={"passed": False, "detail": rejection_detail},
@@ -301,8 +306,10 @@ class TestRC5NoSilentMasking:
 
         with (
             patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
-            patch("symphony_logic.fetch_symphony_score",
-                  return_value={"id": _SYM_HASH, "name": _SYM_NAME, "children": []}),
+            patch(
+                "symphony_logic.fetch_symphony_score",
+                return_value={"id": _SYM_HASH, "name": _SYM_NAME, "children": []},
+            ),
             patch("database.load_state", return_value=_bot_state_with_mapping()),
             patch("advisors.asset_swap_engine.propose_operator_swap", side_effect=boom),
         ):
@@ -313,7 +320,7 @@ class TestRC5NoSilentMasking:
 
         data = resp.get_json()
         assert data is not None
-        err = (data.get("error") or "")
+        err = data.get("error") or ""
         assert err, (
             "The route returned NO error after the engine raised — a silent 200-empty. "
             "RC-5: an engine failure must be surfaced, never masked."
@@ -342,17 +349,23 @@ class TestRC5NoSilentMasking:
         """
         fake_bt = _varied_returns_backtest(seed=11, n=700, mean_pct=0.5)
 
-        score_tree = {"id": "sym-rc5p", "type": "root", "children": [
-            {"type": "asset", "ticker": "SPY", "weight": 1.0}
-        ]}
+        score_tree = {
+            "id": "sym-rc5p",
+            "type": "root",
+            "children": [{"type": "asset", "ticker": "SPY", "weight": 1.0}],
+        }
         objective = swap_engine.SwapObjective(
-            objective_type="reduce_correlation", target_pair=None, measured_value=0.85,
+            objective_type="reduce_correlation",
+            target_pair=None,
+            measured_value=0.85,
         )
 
         with (
             patch("advisors.asset_swap_engine.run_backtest", return_value=fake_bt),
-            patch("database.insert_advisor_observation",
-                  side_effect=RuntimeError("DB write failed: disk I/O error")),
+            patch(
+                "database.insert_advisor_observation",
+                side_effect=RuntimeError("DB write failed: disk I/O error"),
+            ),
         ):
             result = swap_engine.propose_operator_swap(
                 symphony_id="sym-rc5p",
@@ -360,7 +373,7 @@ class TestRC5NoSilentMasking:
                 incumbent_asset="SPY",
                 candidate_asset="IALT",
                 objective=objective,
-                incumbent_oos_alpha=-50.0,   # very weak incumbent to encourage ADOPT
+                incumbent_oos_alpha=-50.0,  # very weak incumbent to encourage ADOPT
                 default_oos_alpha=-50.0,
             )
 
@@ -373,8 +386,7 @@ class TestRC5NoSilentMasking:
         # The persistence failure must be visible somewhere on the result — a
         # persistence_error field, an error field, or a per-survivor not-persisted flag.
         surfaced = False
-        run_err = (getattr(result, "persistence_error", None)
-                   or getattr(result, "error", None))
+        run_err = getattr(result, "persistence_error", None) or getattr(result, "error", None)
         if run_err:
             surfaced = True
         else:
@@ -410,7 +422,7 @@ class TestRC5NoSilentMasking:
 
         data = resp.get_json()
         assert data is not None
-        err = (data.get("error") or "")
+        err = data.get("error") or ""
         assert err, "suggest route returned no error after the engine raised (silent masking)."
         assert err.strip().lower() != "an internal error occurred", (
             "POST /ai-advisor/suggest degraded a real engine error to the opaque "
@@ -446,15 +458,20 @@ class TestRC6FailLoudOnUnresolvableName:
         with (
             patch("advisors.asset_swap_engine._has_composer_key", return_value=True),
             # bot_state has a DIFFERENT symphony — the submitted name is unresolvable.
-            patch("database.load_state",
-                  return_value={"otherHASH": {"name": "some other symphony", "account_uuid": "x"}}),
+            patch(
+                "database.load_state",
+                return_value={"otherHASH": {"name": "some other symphony", "account_uuid": "x"}},
+            ),
             patch("symphony_logic.fetch_symphony_score", side_effect=_spy_fetch),
             patch("advisors.asset_swap_engine.propose_operator_swap") as mock_engine,
         ):
             resp = flask_client.post(
                 "/ai-advisor/asset-swaps/evaluate",
-                json={"symphony_id": "a name that does not exist anywhere",
-                      "from_ticker": "SPY", "to_ticker": "QQQ"},
+                json={
+                    "symphony_id": "a name that does not exist anywhere",
+                    "from_ticker": "SPY",
+                    "to_ticker": "QQQ",
+                },
             )
 
         data = resp.get_json()
@@ -479,15 +496,19 @@ class TestRC6FailLoudOnUnresolvableName:
         """Same fail-loud contract on the logic-changes/evaluate route."""
         with (
             patch("advisors.logic_change_engine._has_composer_key", return_value=True),
-            patch("database.load_state",
-                  return_value={"otherHASH": {"name": "some other symphony", "account_uuid": "x"}}),
+            patch(
+                "database.load_state",
+                return_value={"otherHASH": {"name": "some other symphony", "account_uuid": "x"}},
+            ),
             patch("symphony_logic.fetch_symphony_score", return_value={}),
             patch("advisors.logic_change_engine.propose_operator_logic_change") as mock_engine,
         ):
             resp = flask_client.post(
                 "/ai-advisor/logic-changes/evaluate",
-                json={"symphony_id": "a name that does not exist anywhere",
-                      "change_description": "change momentum lookback from 20 to 10 days"},
+                json={
+                    "symphony_id": "a name that does not exist anywhere",
+                    "change_description": "change momentum lookback from 20 to 10 days",
+                },
             )
 
         data = resp.get_json()
@@ -521,6 +542,7 @@ class TestDivergenceExplainerRetiredFromSurface:
         """
         _ensure_repo_on_path()
         import app as _app
+
         assert "DIVERGENCE_EXPLAINER" not in _app._ADVISOR_ROLES, (
             f"_ADVISOR_ROLES still includes DIVERGENCE_EXPLAINER: {_app._ADVISOR_ROLES!r}. "
             "DE-retire (PM decision): the Divergence Explainer must NOT be surfaced as a "

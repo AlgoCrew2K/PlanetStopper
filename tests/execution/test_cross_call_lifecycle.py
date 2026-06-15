@@ -75,6 +75,7 @@ import alpha_bot_execution
 # --------------------------------------------------------------------------- #
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
     _FIXED_ET = datetime(2025, 5, 14, 11, 30, 0, tzinfo=_ET)  # Wed 11:30 ET
 except Exception:  # pragma: no cover -- tzdata missing
@@ -160,37 +161,35 @@ def _patched_main_env(initial_bot_state, pct_change, live_price=500.0):
     can mutate ``bot_state`` between ``main()`` invocations and observe
     the next-tick read. Yields the MagicMock bundle.
     """
-    with patch.object(alpha_bot_execution, "database") as mock_db, \
-         patch.object(alpha_bot_execution, "reporting") as mock_reporting, \
-         patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym, \
-         patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist, \
-         patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap, \
-         patch.object(alpha_bot_execution, "get_current_et", return_value=_FIXED_ET), \
-         patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-         patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"), \
-         patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"), \
-         patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-         patch.object(alpha_bot_execution.time, "sleep"), \
-         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting") as mock_reporting,
+        patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym,
+        patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist,
+        patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap,
+        patch.object(alpha_bot_execution, "get_current_et", return_value=_FIXED_ET),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test-composer-key"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "test-alpaca-key"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+    ):
         mock_db.acquire_lock.return_value = True
         # CRITICAL for multi-tick: return the same dict reference so the
         # tests can mutate bot_state between calls and observe the next
         # tick's read of the mutated state.
         mock_db.load_state.return_value = initial_bot_state
         mock_db.load_chart_history.return_value = {
-            "date": _FIXED_ET.strftime("%Y-%m-%d"), "symphonies": {}
+            "date": _FIXED_ET.strftime("%Y-%m-%d"),
+            "symphonies": {},
         }
         mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
         mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
         mock_db.wipe_transient_state.side_effect = lambda s: s
 
-        mock_fetch_sym.return_value = [
-            _make_symphony_payload(last_percent_change=pct_change)
-        ]
-        mock_fetch_hist.return_value = _make_minimal_history(
-            _FIXED_ET.strftime("%Y-%m-%d")
-        )
+        mock_fetch_sym.return_value = [_make_symphony_payload(last_percent_change=pct_change)]
+        mock_fetch_hist.return_value = _make_minimal_history(_FIXED_ET.strftime("%Y-%m-%d"))
         mock_fetch_vwap.return_value = _make_vwap_payload(live_price)
 
         yield {
@@ -251,21 +250,23 @@ class TestHwmMonotonicityAcrossTicks:
             with _patched_main_env(bot_state, pct_change) as env:
                 # Suppress every exit pathway so the only state change is
                 # HWM (and the routine prev_return / vwap_ticks bookkeeping).
-                with patch.object(
-                    alpha_bot_execution.math_engine,
-                    "compute_exit_confirmation",
-                    return_value=(0, False),
-                ), patch.object(
-                    alpha_bot_execution.math_engine,
-                    "compute_vwap_breakdown_update",
-                    return_value=(0, 0, False, False),
+                with (
+                    patch.object(
+                        alpha_bot_execution.math_engine,
+                        "compute_exit_confirmation",
+                        return_value=(0, False),
+                    ),
+                    patch.object(
+                        alpha_bot_execution.math_engine,
+                        "compute_vwap_breakdown_update",
+                        return_value=(0, 0, False, False),
+                    ),
                 ):
                     alpha_bot_execution.main()
 
                 save_calls = env["db"].save_state.call_args_list
                 assert save_calls, (
-                    f"tick {tick_idx}: save_state never called; "
-                    "pipeline aborted early"
+                    f"tick {tick_idx}: save_state never called; pipeline aborted early"
                 )
                 final_state = save_calls[-1].args[0]
                 sym_state = final_state[_SYMPHONY_ID]
@@ -353,18 +354,22 @@ class TestBreakevenLockedPersistsAcrossTicks:
             mock_breakeven_t1 = MagicMock(
                 return_value=(5, True, 4.0)  # (hold_ticks, locked=True, stop_level)
             )
-            with patch.object(
-                alpha_bot_execution.math_engine,
-                "compute_breakeven_update",
-                mock_breakeven_t1,
-            ), patch.object(
-                alpha_bot_execution.math_engine,
-                "compute_exit_confirmation",
-                return_value=(0, False),
-            ), patch.object(
-                alpha_bot_execution.math_engine,
-                "compute_vwap_breakdown_update",
-                return_value=(0, 0, False, False),
+            with (
+                patch.object(
+                    alpha_bot_execution.math_engine,
+                    "compute_breakeven_update",
+                    mock_breakeven_t1,
+                ),
+                patch.object(
+                    alpha_bot_execution.math_engine,
+                    "compute_exit_confirmation",
+                    return_value=(0, False),
+                ),
+                patch.object(
+                    alpha_bot_execution.math_engine,
+                    "compute_vwap_breakdown_update",
+                    return_value=(0, 0, False, False),
+                ),
             ):
                 alpha_bot_execution.main()
 
@@ -391,18 +396,22 @@ class TestBreakevenLockedPersistsAcrossTicks:
             mock_breakeven_t2 = MagicMock(
                 return_value=(6, True, 4.5)  # math returns locked still True
             )
-            with patch.object(
-                alpha_bot_execution.math_engine,
-                "compute_breakeven_update",
-                mock_breakeven_t2,
-            ), patch.object(
-                alpha_bot_execution.math_engine,
-                "compute_exit_confirmation",
-                return_value=(0, False),
-            ), patch.object(
-                alpha_bot_execution.math_engine,
-                "compute_vwap_breakdown_update",
-                return_value=(0, 0, False, False),
+            with (
+                patch.object(
+                    alpha_bot_execution.math_engine,
+                    "compute_breakeven_update",
+                    mock_breakeven_t2,
+                ),
+                patch.object(
+                    alpha_bot_execution.math_engine,
+                    "compute_exit_confirmation",
+                    return_value=(0, False),
+                ),
+                patch.object(
+                    alpha_bot_execution.math_engine,
+                    "compute_vwap_breakdown_update",
+                    return_value=(0, 0, False, False),
+                ),
             ):
                 alpha_bot_execution.main()
 
@@ -453,33 +462,34 @@ class TestTriggerFreezeIsAtomic:
     # The full set of fields written by the freeze block
     # (alpha_bot_execution.py:778-805).
     REQUIRED_FREEZE_FIELDS = {
-        "armed",                       # set to False
-        "tp_armed",                    # set to False
-        "triggered",                   # set to True
-        "triggered_reason",            # string
-        "triggered_at_return",         # float
-        "triggered_at_hwm",            # float
-        "triggered_at_stop",           # float
-        "triggered_at_time",           # string
-        "high_water_mark",             # set to sentinel -999.0
-        "trigger_prices",              # dict
-        "triggered_basket_snapshot",   # list
+        "armed",  # set to False
+        "tp_armed",  # set to False
+        "triggered",  # set to True
+        "triggered_reason",  # string
+        "triggered_at_return",  # float
+        "triggered_at_hwm",  # float
+        "triggered_at_stop",  # float
+        "triggered_at_time",  # string
+        "high_water_mark",  # set to sentinel -999.0
+        "trigger_prices",  # dict
+        "triggered_basket_snapshot",  # list
     }
 
     def test_all_triggered_fields_written_in_single_save_state_call(self):
         # Fixture-derived inputs
         fixture_pct_change = 0.12  # → current_return == 12.0
-        seed_hwm = 20.0            # above current_return so HWM doesn't rise
+        seed_hwm = 20.0  # above current_return so HWM doesn't rise
         live_price = 505.25
         bot_state = _seed_state(armed=True, hwm=seed_hwm)
 
         with _patched_main_env(bot_state, fixture_pct_change, live_price=live_price) as env:
-            with patch.object(
-                alpha_bot_execution.math_engine,
-                "compute_exit_confirmation",
-                return_value=(3, True),  # force trailing-stop hit
-            ), patch.object(
-                alpha_bot_execution, "execute_sell_to_cash"
+            with (
+                patch.object(
+                    alpha_bot_execution.math_engine,
+                    "compute_exit_confirmation",
+                    return_value=(3, True),  # force trailing-stop hit
+                ),
+                patch.object(alpha_bot_execution, "execute_sell_to_cash"),
             ):
                 alpha_bot_execution.main()
 
@@ -523,18 +533,14 @@ class TestTriggerFreezeIsAtomic:
 
             # Fixture-derived: current_return = fixture_pct_change * 100.
             expected_cr = fixture_pct_change * 100.0
-            assert sym_state["triggered_at_return"] == pytest.approx(
-                expected_cr, rel=1e-9
-            ), (
+            assert sym_state["triggered_at_return"] == pytest.approx(expected_cr, rel=1e-9), (
                 "triggered_at_return must echo current_return at freeze "
                 "instant; fixture-derived expected value"
             )
 
             # Fixture-derived: HWM was seeded above current_return so the
             # rise branch was skipped → safe_hwm == seed_hwm.
-            assert sym_state["triggered_at_hwm"] == pytest.approx(
-                seed_hwm, rel=1e-9
-            )
+            assert sym_state["triggered_at_hwm"] == pytest.approx(seed_hwm, rel=1e-9)
 
             # high_water_mark is reset to the -999.0 sentinel as part of
             # the freeze (line 787). Named-sentinel assertion (not a
@@ -558,14 +564,13 @@ class TestTriggerFreezeIsAtomic:
                 "trigger_prices must contain an entry per ticker in "
                 "current_holdings, derived from live_vwaps"
             )
-            assert sym_state["trigger_prices"][_TICKER] == pytest.approx(
-                live_price, rel=1e-9
-            ), "trigger_price for ticker must equal live_vwap.last_price"
+            assert sym_state["trigger_prices"][_TICKER] == pytest.approx(live_price, rel=1e-9), (
+                "trigger_price for ticker must equal live_vwap.last_price"
+            )
 
             snapshot = sym_state["triggered_basket_snapshot"]
             assert isinstance(snapshot, list) and len(snapshot) == 1, (
-                "triggered_basket_snapshot must be a list with one entry "
-                "per holding"
+                "triggered_basket_snapshot must be a list with one entry per holding"
             )
             snap_row = snapshot[0]
             assert snap_row["ticker"] == _TICKER
@@ -606,12 +611,13 @@ class TestPostTriggerNoRefire:
 
         # ---- Tick 1: trigger fires ----
         with _patched_main_env(bot_state, fixture_pct_change, live_price=live_price) as env_t1:
-            with patch.object(
-                alpha_bot_execution.math_engine,
-                "compute_exit_confirmation",
-                return_value=(3, True),
-            ), patch.object(
-                alpha_bot_execution, "execute_sell_to_cash"
+            with (
+                patch.object(
+                    alpha_bot_execution.math_engine,
+                    "compute_exit_confirmation",
+                    return_value=(3, True),
+                ),
+                patch.object(alpha_bot_execution, "execute_sell_to_cash"),
             ):
                 alpha_bot_execution.main()
 
@@ -626,9 +632,7 @@ class TestPostTriggerNoRefire:
         with _patched_main_env(bot_state, fixture_pct_change, live_price=live_price) as env_t2:
             # Do NOT force the trailing-stop branch this tick — leave
             # the real math engine to short-circuit on is_triggered.
-            with patch.object(
-                alpha_bot_execution, "execute_sell_to_cash"
-            ) as mock_execute_t2:
+            with patch.object(alpha_bot_execution, "execute_sell_to_cash") as mock_execute_t2:
                 alpha_bot_execution.main()
 
             # No second Discord alert.

@@ -34,9 +34,7 @@ import pytest
 # Fixture loader
 # ---------------------------------------------------------------------------
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "frozen_html"
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "frozen_html"
 
 
 def _load(name: str) -> dict:
@@ -46,6 +44,7 @@ def _load(name: str) -> dict:
 # ---------------------------------------------------------------------------
 # Flask test-client fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def flask_client():
@@ -61,7 +60,10 @@ def flask_client():
         mock_analytics.get_portfolio_cumulative_return.return_value = None
         mock_analytics.get_portfolio_max_drawdown.return_value = None
         mock_analytics.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
-        mock_analytics.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
+        mock_analytics.get_symphony_cumulative_return.return_value = {
+            "if_held": None,
+            "dry_run": None,
+        }
         mock_analytics.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
         with app_module.app.test_client() as client:
             yield client, app_module
@@ -82,6 +84,7 @@ def _make_db_mock(bot_state: dict) -> MagicMock:
 # AC-H1: frozen response includes "html" key
 # ===========================================================================
 
+
 class TestFrozenResponseIncludesHtmlKey:
     """
     Core regression: frozen branch must include "html" in its JSON response.
@@ -89,9 +92,7 @@ class TestFrozenResponseIncludesHtmlKey:
     the symphony table stays blank.
     """
 
-    def test_closed_frozen_with_snapshot_includes_html_key(
-        self, flask_client, monkeypatch
-    ):
+    def test_closed_frozen_with_snapshot_includes_html_key(self, flask_client, monkeypatch):
         """AC-H1: closed_frozen + snapshot → response.html is non-null, non-empty string."""
         client, app_module = flask_client
         fx = _load("frozen_html_with_symphonies")
@@ -124,9 +125,7 @@ class TestFrozenResponseIncludesHtmlKey:
             f"/api/state.html must be a string, got {type(html_val).__name__!r}"
         )
 
-    def test_html_key_is_absent_or_safe_when_no_snapshot(
-        self, flask_client, monkeypatch
-    ):
+    def test_html_key_is_absent_or_safe_when_no_snapshot(self, flask_client, monkeypatch):
         """AC-H6: no snapshot → response is not 500; html may be absent or empty-table string."""
         client, app_module = flask_client
 
@@ -152,15 +151,14 @@ class TestFrozenResponseIncludesHtmlKey:
 # AC-H2 + AC-H4: rendered HTML contains <tr data-symphony-id> per symphony
 # ===========================================================================
 
+
 class TestRenderedHtmlContainsSymphonyRows:
     """
     AC-H2: HTML contains one <tr> per symphony from snapshot.
     AC-H4: each <tr> has data-symphony-id attribute (R15 hover-highlight contract).
     """
 
-    def test_html_contains_tr_per_snapshot_symphony(
-        self, flask_client, monkeypatch
-    ):
+    def test_html_contains_tr_per_snapshot_symphony(self, flask_client, monkeypatch):
         """AC-H2 + AC-H4: rendered HTML has <tr data-symphony-id> for each snapshot symphony."""
         client, app_module = flask_client
         fx = _load("frozen_html_with_symphonies")
@@ -185,7 +183,7 @@ class TestRenderedHtmlContainsSymphonyRows:
 
         for sym_id in fx["expected"]["symphony_ids_in_html"]:
             assert f'data-symphony-id="{sym_id}"' in html, (
-                f"Rendered HTML must contain <tr data-symphony-id=\"{sym_id}\"> "
+                f'Rendered HTML must contain <tr data-symphony-id="{sym_id}"> '
                 f"for snapshot symphony {sym_id!r}. "
                 f"HTML (first 500 chars): {html[:500]!r}"
             )
@@ -195,6 +193,7 @@ class TestRenderedHtmlContainsSymphonyRows:
 # AC-H3: analytics helpers called with trading_day=snapshot["trading_day"]
 # ===========================================================================
 
+
 class TestAnalyticsCalledWithSnapshotTradingDay:
     """
     AC-H3: get_symphony_today_change / cumulative_return / max_drawdown must be called
@@ -202,9 +201,7 @@ class TestAnalyticsCalledWithSnapshotTradingDay:
     R14 contract: analytics reads shadow_history keyed on trading_day.
     """
 
-    def test_analytics_helpers_called_with_snapshot_trading_day(
-        self, flask_client, monkeypatch
-    ):
+    def test_analytics_helpers_called_with_snapshot_trading_day(self, flask_client, monkeypatch):
         """AC-H3: each analytics helper receives trading_day equal to snapshot.trading_day."""
         client, app_module = flask_client
         fx = _load("frozen_html_with_symphonies")
@@ -221,14 +218,32 @@ class TestAnalyticsCalledWithSnapshotTradingDay:
             patch.object(app_module, "database", _make_db_mock(bot_state)),
             patch.object(app_module, "analytics") as mock_analytics,
         ):
-            mock_analytics.get_symphony_today_change.return_value = {"if_held": None, "dry_run": None}
-            mock_analytics.get_symphony_cumulative_return.return_value = {"if_held": None, "dry_run": None}
-            mock_analytics.get_symphony_max_drawdown.return_value = {"if_held": None, "dry_run": None}
+            mock_analytics.get_symphony_today_change.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
+            mock_analytics.get_symphony_cumulative_return.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
+            mock_analytics.get_symphony_max_drawdown.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
             # on-the-fly portfolio_strip recompute also calls portfolio-level helpers;
             # stub them so jsonify doesn't 500 on MagicMock serialisation
-            mock_analytics.get_portfolio_today_change.return_value = {"if_held": None, "dry_run": None}
-            mock_analytics.get_portfolio_cumulative_return.return_value = {"if_held": None, "dry_run": None}
-            mock_analytics.get_portfolio_max_drawdown.return_value = {"if_held": None, "dry_run": None}
+            mock_analytics.get_portfolio_today_change.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
+            mock_analytics.get_portfolio_cumulative_return.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
+            mock_analytics.get_portfolio_max_drawdown.return_value = {
+                "if_held": None,
+                "dry_run": None,
+            }
 
             monkeypatch.setattr(
                 app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
@@ -262,15 +277,14 @@ class TestAnalyticsCalledWithSnapshotTradingDay:
 # AC-H5: sortCol / sortDir query params honored
 # ===========================================================================
 
+
 class TestFrozenSortingHonored:
     """
     AC-H5: sortCol / sortDir query params must be passed through to table rendering,
     same as the live branch.
     """
 
-    def test_sort_params_do_not_crash_frozen_path(
-        self, flask_client, monkeypatch
-    ):
+    def test_sort_params_do_not_crash_frozen_path(self, flask_client, monkeypatch):
         """AC-H5: sortCol=status&sortDir=desc must return 200 with html key."""
         client, app_module = flask_client
         fx = _load("frozen_html_with_symphonies")
@@ -293,9 +307,7 @@ class TestFrozenSortingHonored:
             f"Keys: {list(body.keys())}"
         )
 
-    def test_default_sort_produces_html(
-        self, flask_client, monkeypatch
-    ):
+    def test_default_sort_produces_html(self, flask_client, monkeypatch):
         """AC-H5: default sort (no params) must produce html key."""
         client, app_module = flask_client
         fx = _load("frozen_html_with_symphonies")
@@ -319,14 +331,13 @@ class TestFrozenSortingHonored:
 # AC-H7: live (open) branch unchanged — html key still present
 # ===========================================================================
 
+
 class TestLiveBranchUnchanged:
     """
     AC-H7: The live (open) path must still include html. No regression.
     """
 
-    def test_open_market_html_key_still_present(
-        self, flask_client, monkeypatch
-    ):
+    def test_open_market_html_key_still_present(self, flask_client, monkeypatch):
         """AC-H7: market_state='open' → html key present (live path not regressed)."""
         client, app_module = flask_client
 
@@ -353,13 +364,14 @@ class TestLiveBranchUnchanged:
             patch.object(app_module, "dotenv_values", return_value={}),
         ):
             mock_db.load_state.return_value = dict(live_state)
-            mock_db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
+            mock_db.get_shadow_divergence.return_value = {
+                "by_symphony": {},
+                "portfolio_today": None,
+            }
             mock_db.get_triggers.return_value = []
             mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
             mock_db.read_fleet_alert.return_value = None
-            monkeypatch.setattr(
-                app_module, "get_market_state", lambda dt: "open", raising=False
-            )
+            monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open", raising=False)
 
             resp = client.get("/api/state")
 
@@ -378,14 +390,13 @@ class TestLiveBranchUnchanged:
 # AC-H8: pre_market path includes html key
 # ===========================================================================
 
+
 class TestPreMarketIncludesHtmlKey:
     """
     AC-H8: pre_market path shares the closed_frozen branch — must also return html.
     """
 
-    def test_pre_market_with_snapshot_includes_html(
-        self, flask_client, monkeypatch
-    ):
+    def test_pre_market_with_snapshot_includes_html(self, flask_client, monkeypatch):
         """AC-H8: pre_market + snapshot → html key present in response."""
         client, app_module = flask_client
         fx = _load("frozen_html_with_symphonies")
@@ -404,8 +415,7 @@ class TestPreMarketIncludesHtmlKey:
         assert resp.status_code == 200
         body = resp.get_json()
         assert "html" in body, (
-            "pre_market frozen path must include html key. "
-            f"Keys: {list(body.keys())}"
+            f"pre_market frozen path must include html key. Keys: {list(body.keys())}"
         )
         assert isinstance(body["html"], str) and body["html"], (
             f"pre_market html must be a non-empty string, got {body['html']!r}"
@@ -415,6 +425,7 @@ class TestPreMarketIncludesHtmlKey:
 # ===========================================================================
 # AC-H9: symphonies missing shadow_hwm must not crash frozen render
 # ===========================================================================
+
 
 class TestFrozenRenderWithMissingShadowHwm:
     """
@@ -427,9 +438,7 @@ class TestFrozenRenderWithMissingShadowHwm:
     worthless — this test pins the behaviour the fix introduced.
     """
 
-    def test_symphony_missing_shadow_hwm_renders_without_crash(
-        self, flask_client, monkeypatch
-    ):
+    def test_symphony_missing_shadow_hwm_renders_without_crash(self, flask_client, monkeypatch):
         """AC-H9: snapshot with shadow_hwm absent → 200, html key, symphony row present."""
         client, app_module = flask_client
         fx = _load("frozen_html_missing_shadow_hwm")
@@ -456,12 +465,10 @@ class TestFrozenRenderWithMissingShadowHwm:
             f"Keys: {list(body.keys())}"
         )
         html = body["html"]
-        assert isinstance(html, str) and html, (
-            f"html must be a non-empty string, got {html!r}"
-        )
+        assert isinstance(html, str) and html, f"html must be a non-empty string, got {html!r}"
         for sym_id in fx["expected"]["symphony_ids_in_html"]:
             assert f'data-symphony-id="{sym_id}"' in html, (
-                f"Rendered HTML must contain <tr data-symphony-id=\"{sym_id}\"> "
+                f'Rendered HTML must contain <tr data-symphony-id="{sym_id}"> '
                 f"even when shadow_hwm is absent from the snapshot. "
                 f"HTML (first 500 chars): {html[:500]!r}"
             )

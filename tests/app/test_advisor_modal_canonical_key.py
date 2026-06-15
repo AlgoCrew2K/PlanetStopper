@@ -90,19 +90,33 @@ def test_modal_queries_observations_by_normalized_name_not_hash(flask_client, ha
         captured["key"] = symphony_id
         # Only return a row when queried by the canonical name (live behaviour).
         if symphony_id == normalized:
-            return [{
-                "id": 1, "created_at": "2026-06-04T00:00:00",
-                "advisor_role": "OVERFITTING_CONSCIENCE", "subject_type": "autotune_run",
-                "subject_id": "2156", "verdict": "WATCH", "raw_response": {},
-                "is_advisory_only": 1, "spec_bundle_id": None, "symphony_id": normalized,
-            }]
+            return [
+                {
+                    "id": 1,
+                    "created_at": "2026-06-04T00:00:00",
+                    "advisor_role": "OVERFITTING_CONSCIENCE",
+                    "subject_type": "autotune_run",
+                    "subject_id": "2156",
+                    "verdict": "WATCH",
+                    "raw_response": {},
+                    "is_advisory_only": 1,
+                    "spec_bundle_id": None,
+                    "symphony_id": normalized,
+                }
+            ]
         return []
 
-    with patch.object(db_module, "load_state", return_value=bot_state), \
-         patch.object(db_module, "get_symphony_strategy",
-                      return_value={"params": {}, "locked_vars": [], "live_mode": False}), \
-         patch.object(db_module, "get_advisor_observations_for_symphony",
-                      side_effect=_capture_accessor):
+    with (
+        patch.object(db_module, "load_state", return_value=bot_state),
+        patch.object(
+            db_module,
+            "get_symphony_strategy",
+            return_value={"params": {}, "locked_vars": [], "live_mode": False},
+        ),
+        patch.object(
+            db_module, "get_advisor_observations_for_symphony", side_effect=_capture_accessor
+        ),
+    ):
         # The URL param is the COMPOSER HASH — exactly what the gear icon sends.
         resp = flask_client.get(f"/api/symphony-settings/{composer_hash}")
 
@@ -136,19 +150,31 @@ def test_modal_returns_real_observation_rows_for_a_symphony(flask_client, hash_n
 
     def _accessor(symphony_id):
         if symphony_id == normalized:
-            return [{
-                "id": 7, "created_at": "2026-06-04T00:00:00",
-                "advisor_role": "OVERFITTING_CONSCIENCE", "subject_type": "autotune_run",
-                "subject_id": "2156", "verdict": "WATCH", "raw_response": {"note": "x"},
-                "is_advisory_only": 1, "spec_bundle_id": None, "symphony_id": normalized,
-            }]
+            return [
+                {
+                    "id": 7,
+                    "created_at": "2026-06-04T00:00:00",
+                    "advisor_role": "OVERFITTING_CONSCIENCE",
+                    "subject_type": "autotune_run",
+                    "subject_id": "2156",
+                    "verdict": "WATCH",
+                    "raw_response": {"note": "x"},
+                    "is_advisory_only": 1,
+                    "spec_bundle_id": None,
+                    "symphony_id": normalized,
+                }
+            ]
         return []
 
-    with patch.object(db_module, "load_state", return_value=bot_state), \
-         patch.object(db_module, "get_symphony_strategy",
-                      return_value={"params": {}, "locked_vars": [], "live_mode": False}), \
-         patch.object(db_module, "get_advisor_observations_for_symphony",
-                      side_effect=_accessor):
+    with (
+        patch.object(db_module, "load_state", return_value=bot_state),
+        patch.object(
+            db_module,
+            "get_symphony_strategy",
+            return_value={"params": {}, "locked_vars": [], "live_mode": False},
+        ),
+        patch.object(db_module, "get_advisor_observations_for_symphony", side_effect=_accessor),
+    ):
         # URL param is the Composer HASH (production scenario via the gear icon).
         resp = flask_client.get(f"/api/symphony-settings/{composer_hash}")
 

@@ -62,10 +62,19 @@ def _html() -> str:
 def _state_one_symphony():
     return {
         "sym-x": {
-            "name": "Symphony X", "account": "ACC1", "armed": True, "tp_armed": False,
-            "para_armed": False, "triggered": False, "current_return": 1.5,
-            "current_value": 10000.0, "stop_trigger": -2.0, "mc_prob": 40.0,
-            "simple_return": 0.12, "net_deposits": 1000.0, "time_weighted_return": 0.12,
+            "name": "Symphony X",
+            "account": "ACC1",
+            "armed": True,
+            "tp_armed": False,
+            "para_armed": False,
+            "triggered": False,
+            "current_return": 1.5,
+            "current_value": 10000.0,
+            "stop_trigger": -2.0,
+            "mc_prob": 40.0,
+            "simple_return": 0.12,
+            "net_deposits": 1000.0,
+            "time_weighted_return": 0.12,
             "max_drawdown": 0.08,
         }
     }
@@ -92,6 +101,7 @@ def _analytics_with_divergence_cr(cr_bot, cr_held):
 # AC-2/AC-5 — the card cumulative alpha uses the divergence basis (cr_bot - cr_held)
 # ---------------------------------------------------------------------------
 
+
 class TestCardCumulativeAlphaUsesDivergenceBasis:
     def test_card_cr_fields_echo_divergence_basis_from_analytics(
         self, client, mock_database, monkeypatch
@@ -103,9 +113,7 @@ class TestCardCumulativeAlphaUsesDivergenceBasis:
         mock_database.load_state.return_value = _state_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
         monkeypatch.setattr(app_module, "render_template", lambda *_a, **_k: "")
-        monkeypatch.setattr(
-            app_module, "analytics", _analytics_with_divergence_cr(cr_bot, cr_held)
-        )
+        monkeypatch.setattr(app_module, "analytics", _analytics_with_divergence_cr(cr_bot, cr_held))
 
         resp = client.get("/api/state")
         assert resp.status_code == 200
@@ -132,9 +140,7 @@ class TestCardCumulativeAlphaUsesDivergenceBasis:
         mock_database.load_state.return_value = _state_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
         monkeypatch.setattr(app_module, "render_template", lambda *_a, **_k: "")
-        monkeypatch.setattr(
-            app_module, "analytics", _analytics_with_divergence_cr(cr_bot, cr_held)
-        )
+        monkeypatch.setattr(app_module, "analytics", _analytics_with_divergence_cr(cr_bot, cr_held))
 
         card = client.get("/api/state").get_json()["symphonies"][0]
         card_alpha = card["cr_bot"] - card["cr_held"]
@@ -147,6 +153,7 @@ class TestCardCumulativeAlphaUsesDivergenceBasis:
 # ---------------------------------------------------------------------------
 # AC-2 — the exit-time snapshot is disambiguated, not an unlabeled third number
 # ---------------------------------------------------------------------------
+
 
 class TestExitSnapshotIsLabeled:
     def test_template_labels_exit_snapshot_at_exit(self):

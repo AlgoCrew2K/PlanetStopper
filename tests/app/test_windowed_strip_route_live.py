@@ -45,16 +45,32 @@ def _fixture_bot_state():
     builds a non-empty symphony list) plus a phantom non-name key (which must be ignored)."""
     return {
         "sym-a": {
-            "name": "Alpha", "account": "ACC1", "current_value": 6000.0,
-            "current_return": 1.5, "simple_return": 0.12, "net_deposits": 1000.0,
-            "time_weighted_return": 0.12, "max_drawdown": 0.08,
-            "armed": True, "tp_armed": False, "para_armed": False, "triggered": False,
+            "name": "Alpha",
+            "account": "ACC1",
+            "current_value": 6000.0,
+            "current_return": 1.5,
+            "simple_return": 0.12,
+            "net_deposits": 1000.0,
+            "time_weighted_return": 0.12,
+            "max_drawdown": 0.08,
+            "armed": True,
+            "tp_armed": False,
+            "para_armed": False,
+            "triggered": False,
         },
         "sym-b": {
-            "name": "Bravo", "account": "ACC1", "current_value": 4000.0,
-            "current_return": -0.5, "simple_return": 0.08, "net_deposits": 800.0,
-            "time_weighted_return": 0.08, "max_drawdown": 0.05,
-            "armed": False, "tp_armed": False, "para_armed": False, "triggered": False,
+            "name": "Bravo",
+            "account": "ACC1",
+            "current_value": 4000.0,
+            "current_return": -0.5,
+            "simple_return": 0.08,
+            "net_deposits": 800.0,
+            "time_weighted_return": 0.08,
+            "max_drawdown": 0.05,
+            "armed": False,
+            "tp_armed": False,
+            "para_armed": False,
+            "triggered": False,
         },
         "last_market_close_snapshot": {"ts": "2026-06-04T20:00:00Z", "value": 10000.0},
     }
@@ -63,6 +79,7 @@ def _fixture_bot_state():
 # ===========================================================================
 # The function must EXIST in analytics (the literal missing-symbol the BLOCK named)
 # ===========================================================================
+
 
 class TestWindowedStripFunctionExists:
     def test_compute_windowed_portfolio_strip_is_defined(self):
@@ -85,6 +102,7 @@ class TestWindowedStripFunctionExists:
 # ===========================================================================
 # The LIVE route must 200 for every window — analytics REAL, only DB mocked
 # ===========================================================================
+
 
 class TestWindowedStripRouteLive:
     @pytest.mark.parametrize("window", _WINDOW_TOKENS)
@@ -142,6 +160,7 @@ class TestWindowedStripRouteLive:
 # (defense-in-depth: the AC-4b held line depends on get_portfolio_bot_and_held_daily_returns,
 # the same unwired-function class of bug; verify it is defined + the route 200s live).
 # ===========================================================================
+
 
 class TestHeroChartRouteLive:
     def test_held_series_function_is_defined(self):

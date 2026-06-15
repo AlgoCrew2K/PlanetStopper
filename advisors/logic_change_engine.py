@@ -342,6 +342,7 @@ def _has_composer_key() -> bool:
     """Return True iff Composer API credentials are configured."""
     try:
         from alpha_bot_execution import COMPOSER_KEY_ID, COMPOSER_SECRET  # noqa: PLC0415
+
         return bool(COMPOSER_KEY_ID and COMPOSER_SECRET)
     except Exception:
         return False
@@ -429,11 +430,13 @@ def extract_numeric_params(raw_value: dict) -> list:
                     # L1: a CURRENT numeric value of 0 or 1 does NOT make a param a
                     # flag — it is still a tweakable continuous parameter. Only genuine
                     # booleans (excluded above) are flags. Surface all finite numerics.
-                    results.append({
-                        "node_path": path,
-                        "param_key": key,
-                        "value": val,
-                    })
+                    results.append(
+                        {
+                            "node_path": path,
+                            "param_key": key,
+                            "value": val,
+                        }
+                    )
                 elif isinstance(val, (dict, list)):
                     _walk(val, child_path)
         elif isinstance(node, list):
@@ -615,16 +618,18 @@ def generate_objective_directed_candidates(
                 new_val = round(old_val * _REDUCE_DRAWDOWN_TIGHTEN_FACTOR, 6)
             if new_val == old_val:
                 continue
-            tweaks.append(LogicTweak(
-                node_path=param["node_path"],
-                param_key=param["param_key"],
-                old_value=old_val,
-                new_value=new_val,
-                node_description=(
-                    f"{param['param_key']}={old_val} at path "
-                    f"[{', '.join(str(s) for s in param['node_path'])}]"
-                ),
-            ))
+            tweaks.append(
+                LogicTweak(
+                    node_path=param["node_path"],
+                    param_key=param["param_key"],
+                    old_value=old_val,
+                    new_value=new_val,
+                    node_description=(
+                        f"{param['param_key']}={old_val} at path "
+                        f"[{', '.join(str(s) for s in param['node_path'])}]"
+                    ),
+                )
+            )
 
     # -------------------------------------------------------------------
     # lift_risk_adjusted: loosen signal entry thresholds by _LIFT_RISK_ADJUSTED_LOOSEN_FACTOR.
@@ -642,16 +647,18 @@ def generate_objective_directed_candidates(
                 new_val = round(old_val * _LIFT_RISK_ADJUSTED_LOOSEN_FACTOR, 6)
             if new_val == old_val:
                 continue
-            tweaks.append(LogicTweak(
-                node_path=param["node_path"],
-                param_key=param["param_key"],
-                old_value=old_val,
-                new_value=new_val,
-                node_description=(
-                    f"{param['param_key']}={old_val} at path "
-                    f"[{', '.join(str(s) for s in param['node_path'])}]"
-                ),
-            ))
+            tweaks.append(
+                LogicTweak(
+                    node_path=param["node_path"],
+                    param_key=param["param_key"],
+                    old_value=old_val,
+                    new_value=new_val,
+                    node_description=(
+                        f"{param['param_key']}={old_val} at path "
+                        f"[{', '.join(str(s) for s in param['node_path'])}]"
+                    ),
+                )
+            )
 
     # -------------------------------------------------------------------
     # reduce_turnover: lengthen lookback windows by _REDUCE_TURNOVER_LENGTHEN_FACTOR.
@@ -669,16 +676,18 @@ def generate_objective_directed_candidates(
                 new_val = round(old_val * _REDUCE_TURNOVER_LENGTHEN_FACTOR, 6)
             if new_val == old_val:
                 continue
-            tweaks.append(LogicTweak(
-                node_path=param["node_path"],
-                param_key=param["param_key"],
-                old_value=old_val,
-                new_value=new_val,
-                node_description=(
-                    f"{param['param_key']}={old_val} at path "
-                    f"[{', '.join(str(s) for s in param['node_path'])}]"
-                ),
-            ))
+            tweaks.append(
+                LogicTweak(
+                    node_path=param["node_path"],
+                    param_key=param["param_key"],
+                    old_value=old_val,
+                    new_value=new_val,
+                    node_description=(
+                        f"{param['param_key']}={old_val} at path "
+                        f"[{', '.join(str(s) for s in param['node_path'])}]"
+                    ),
+                )
+            )
 
     # -------------------------------------------------------------------
     # improve_momentum_timing: shorten lookback by _IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR.
@@ -695,16 +704,18 @@ def generate_objective_directed_candidates(
                 new_val = round(old_val * _IMPROVE_MOMENTUM_TIMING_SHORTEN_FACTOR, 6)
             if new_val == old_val:
                 continue
-            tweaks.append(LogicTweak(
-                node_path=param["node_path"],
-                param_key=param["param_key"],
-                old_value=old_val,
-                new_value=new_val,
-                node_description=(
-                    f"{param['param_key']}={old_val} at path "
-                    f"[{', '.join(str(s) for s in param['node_path'])}]"
-                ),
-            ))
+            tweaks.append(
+                LogicTweak(
+                    node_path=param["node_path"],
+                    param_key=param["param_key"],
+                    old_value=old_val,
+                    new_value=new_val,
+                    node_description=(
+                        f"{param['param_key']}={old_val} at path "
+                        f"[{', '.join(str(s) for s in param['node_path'])}]"
+                    ),
+                )
+            )
 
     # -------------------------------------------------------------------
     # reduce_whipsaw: lengthen lookback by _REDUCE_WHIPSAW_LENGTHEN_FACTOR.
@@ -721,16 +732,18 @@ def generate_objective_directed_candidates(
                 new_val = round(old_val * _REDUCE_WHIPSAW_LENGTHEN_FACTOR, 6)
             if new_val == old_val:
                 continue
-            tweaks.append(LogicTweak(
-                node_path=param["node_path"],
-                param_key=param["param_key"],
-                old_value=old_val,
-                new_value=new_val,
-                node_description=(
-                    f"{param['param_key']}={old_val} at path "
-                    f"[{', '.join(str(s) for s in param['node_path'])}]"
-                ),
-            ))
+            tweaks.append(
+                LogicTweak(
+                    node_path=param["node_path"],
+                    param_key=param["param_key"],
+                    old_value=old_val,
+                    new_value=new_val,
+                    node_description=(
+                        f"{param['param_key']}={old_val} at path "
+                        f"[{', '.join(str(s) for s in param['node_path'])}]"
+                    ),
+                )
+            )
 
     # -------------------------------------------------------------------
     # Unknown objective: return empty (refuse to produce unguided candidates).
@@ -960,7 +973,9 @@ def _evaluate_single_variant(
 # ---------------------------------------------------------------------------
 
 
-def _parse_change_description_to_tweak(raw_value: dict, change_description: str) -> Optional[LogicTweak]:
+def _parse_change_description_to_tweak(
+    raw_value: dict, change_description: str
+) -> Optional[LogicTweak]:
     """Parse a plain-text change description into a ``LogicTweak``.
 
     Attempts to find a numeric parameter in the tree that matches the description
@@ -1028,7 +1043,9 @@ def _parse_change_description_to_tweak(raw_value: dict, change_description: str)
         for param in numeric_params:
             val = param["value"]
             if abs(val - described_old_val) < 1e-9 and param["param_key"] in preferred_keys:
-                new_val_typed = int(described_new_val) if isinstance(val, int) else described_new_val
+                new_val_typed = (
+                    int(described_new_val) if isinstance(val, int) else described_new_val
+                )
                 old_val_typed = int(val) if isinstance(val, int) else val
                 return LogicTweak(
                     node_path=param["node_path"],
@@ -1046,7 +1063,9 @@ def _parse_change_description_to_tweak(raw_value: dict, change_description: str)
         for param in numeric_params:
             val = param["value"]
             if abs(val - described_old_val) < 1e-9:
-                new_val_typed = int(described_new_val) if isinstance(val, int) else described_new_val
+                new_val_typed = (
+                    int(described_new_val) if isinstance(val, int) else described_new_val
+                )
                 old_val_typed = int(val) if isinstance(val, int) else val
                 return LogicTweak(
                     node_path=param["node_path"],
@@ -1185,11 +1204,15 @@ def propose_operator_logic_change(
             objective=objective,
         )
 
-    symphony_name = (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
+    symphony_name = (
+        (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
+    )
 
     # AC-X4: check API key before any backtest call.
     if not _has_composer_key():
-        logger.info("propose_operator_logic_change: no Composer API key — returning no_api_key=True")
+        logger.info(
+            "propose_operator_logic_change: no Composer API key — returning no_api_key=True"
+        )
         return LogicChangeRunResult(
             gate_batch=_empty_gate_batch(),
             no_api_key=True,
@@ -1348,7 +1371,9 @@ def suggest_logic_changes(
         ``LogicChangeRunResult`` — always returned, never raises.
         Zero survivors is a valid outcome.
     """
-    symphony_name = (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
+    symphony_name = (
+        (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
+    )
 
     # Detect absent API key early (AC-X4).
     if not _has_composer_key():

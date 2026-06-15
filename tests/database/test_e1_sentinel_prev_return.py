@@ -45,6 +45,7 @@ def _load(relative_path: str) -> dict:
 # WITHOUT importing the full execution module (avoids live-I/O imports).
 # ---------------------------------------------------------------------------
 
+
 def _compute_velocity_with_sentinel(
     prev_return: Optional[float],
     current_return: float,
@@ -90,6 +91,7 @@ def _make_symphony_state_with_prev_return(prev_return_value) -> dict:
 # Test 1: new-day reset sets prev_return to None
 # ---------------------------------------------------------------------------
 
+
 def test_new_day_reset_sets_prev_return_to_none():
     """
     After wipe_transient_state, prev_return must be None for every symphony entry.
@@ -119,6 +121,7 @@ def test_new_day_reset_sets_prev_return_to_none():
 # ---------------------------------------------------------------------------
 # Test 2: cycle-1 velocity is zero when prev_return is None
 # ---------------------------------------------------------------------------
+
 
 def test_cycle_1_velocity_is_zero_after_new_day_reset():
     """
@@ -153,6 +156,7 @@ def test_cycle_1_velocity_is_zero_after_new_day_reset():
 # Test 3: opening +2% gap does NOT auto-PARA-ARM on cycle-1
 # ---------------------------------------------------------------------------
 
+
 def test_opening_gap_2pct_does_not_auto_para_arm_cycle_1():
     """
     A symphony opening at +2.0% (the typical PARABOLIC_VELOCITY_THRESHOLD) on a
@@ -180,14 +184,14 @@ def test_opening_gap_2pct_does_not_auto_para_arm_cycle_1():
     )
     assert velocity == pytest.approx(exp["velocity"], abs=1e-9), (
         # tolerance: float subtraction of equal values; conceptually exactly 0
-        f"cycle-1 velocity must be 0.0 with sentinel; got {velocity!r}. "
-        f"Fixture: {fx['name']}"
+        f"cycle-1 velocity must be 0.0 with sentinel; got {velocity!r}. Fixture: {fx['name']}"
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 4: PARA-ARM can fire on cycle-2 when real intraday velocity is high
 # ---------------------------------------------------------------------------
+
 
 def test_para_arm_can_fire_cycle_2_when_real_velocity_high():
     """
@@ -210,8 +214,7 @@ def test_para_arm_can_fire_cycle_2_when_real_velocity_high():
 
     assert velocity == pytest.approx(exp["velocity"], abs=1e-9), (
         # tolerance: float subtraction with known operands; 4.0 - 2.0 = 2.0 exactly
-        f"cycle-2 velocity must equal {exp['velocity']}; got {velocity!r}. "
-        f"Fixture: {fx['name']}"
+        f"cycle-2 velocity must equal {exp['velocity']}; got {velocity!r}. Fixture: {fx['name']}"
     )
     assert should_arm is exp["should_arm"], (
         f"cycle-2 should_arm must be {exp['should_arm']} when velocity >= threshold; "
@@ -222,6 +225,7 @@ def test_para_arm_can_fire_cycle_2_when_real_velocity_high():
 # ---------------------------------------------------------------------------
 # Test 5: autotuner replay mirrors sentinel — cycle-1 velocity = 0
 # ---------------------------------------------------------------------------
+
 
 def test_autotuner_replay_mirrors_sentinel_cycle1_velocity_zero():
     """
@@ -262,8 +266,7 @@ def test_autotuner_replay_mirrors_sentinel_cycle1_velocity_zero():
 
     assert velocity == pytest.approx(exp["velocity"], abs=1e-9), (
         # tolerance: subtraction of identical floats; must be 0
-        f"autotuner replay cycle-1 velocity must be 0.0; got {velocity!r}. "
-        f"Fixture: {fx['name']}"
+        f"autotuner replay cycle-1 velocity must be 0.0; got {velocity!r}. Fixture: {fx['name']}"
     )
     assert should_arm is exp["should_arm"], (
         f"autotuner replay cycle-1 should_arm must be {exp['should_arm']}; got {should_arm!r}. "
@@ -275,6 +278,7 @@ def test_autotuner_replay_mirrors_sentinel_cycle1_velocity_zero():
 # Test 6: passing None directly to compute_para_arm_decision raises TypeError
 # (documents WHY the sentinel guard must live in the caller, not math_engine)
 # ---------------------------------------------------------------------------
+
 
 def test_compute_para_arm_decision_raises_on_none_prev_return():
     """

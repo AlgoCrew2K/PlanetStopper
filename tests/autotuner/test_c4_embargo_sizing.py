@@ -42,6 +42,7 @@ _AUTOTUNER_SRC = _WORKTREE_ROOT / "autotuner.py"
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -53,13 +54,10 @@ def _embargo_comment_block() -> str:
     """
     lines = _AUTOTUNER_SRC.read_text(encoding="utf-8").splitlines()
     assign_idx = next(
-        (i for i, ln in enumerate(lines)
-         if re.match(r"\s*EMBARGO_DAYS\s*=", ln)),
+        (i for i, ln in enumerate(lines) if re.match(r"\s*EMBARGO_DAYS\s*=", ln)),
         None,
     )
-    assert assign_idx is not None, (
-        "EMBARGO_DAYS assignment not found in autotuner.py."
-    )
+    assert assign_idx is not None, "EMBARGO_DAYS assignment not found in autotuner.py."
 
     # Walk upward over the contiguous comment block.
     start = assign_idx
@@ -84,13 +82,10 @@ def test_embargo_days_is_a_positive_integer():
     """
     autotuner = _import_autotuner()
 
-    assert hasattr(autotuner, "EMBARGO_DAYS"), (
-        "autotuner.py must define EMBARGO_DAYS."
-    )
+    assert hasattr(autotuner, "EMBARGO_DAYS"), "autotuner.py must define EMBARGO_DAYS."
     value = autotuner.EMBARGO_DAYS
     assert isinstance(value, int) and not isinstance(value, bool), (
-        f"EMBARGO_DAYS must be an int trading-day count; got "
-        f"{type(value).__name__} ({value!r})."
+        f"EMBARGO_DAYS must be an int trading-day count; got {type(value).__name__} ({value!r})."
     )
     assert value >= 1, (
         f"EMBARGO_DAYS must be >= 1 trading day; got {value!r}. "
@@ -127,15 +122,25 @@ def test_embargo_comment_ties_value_to_an_estimated_horizon():
     block_lc = block.lower()
 
     concept_terms = [
-        "serial dependence", "serial-dependence", "autocorrelation",
-        "acf", "serial correlation",
+        "serial dependence",
+        "serial-dependence",
+        "autocorrelation",
+        "acf",
+        "serial correlation",
     ]
     estimation_terms = [
-        "measured", "estimated", "estimate", "empirical", "empirically",
-        "vindicat",          # "the 1-day embargo is vindicated"
-        "horizon of",        # "...horizon of 2 days"
-        "decays", "decay into", "lag at which",
-        "sized to", "sized against",
+        "measured",
+        "estimated",
+        "estimate",
+        "empirical",
+        "empirically",
+        "vindicat",  # "the 1-day embargo is vindicated"
+        "horizon of",  # "...horizon of 2 days"
+        "decays",
+        "decay into",
+        "lag at which",
+        "sized to",
+        "sized against",
     ]
 
     has_concept = any(t in block_lc for t in concept_terms)
@@ -182,9 +187,7 @@ def test_embargo_comment_keeps_the_lopez_de_prado_citation():
     """
     block = _embargo_comment_block()
 
-    has_ldp = bool(
-        re.search(r"L[óo]pez de Prado", block) or "Lopez de Prado" in block
-    )
+    has_ldp = bool(re.search(r"L[óo]pez de Prado", block) or "Lopez de Prado" in block)
     assert has_ldp and "2018" in block, (
         "The EMBARGO_DAYS comment must keep the López de Prado 2018 citation "
         "after the AC-9 rewrite. The embargo methodology source must not be lost.\n"

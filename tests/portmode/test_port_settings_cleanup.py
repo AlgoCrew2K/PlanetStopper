@@ -38,6 +38,7 @@ import pytest
 # AX-3: rebase_port_state_on_composition_change must be REMOVED
 # ---------------------------------------------------------------------------
 
+
 class TestRebasePortStateOnCompositionChangeRemoved:
     """AX-3: rebase_port_state_on_composition_change no longer exported from database.
 
@@ -49,6 +50,7 @@ class TestRebasePortStateOnCompositionChangeRemoved:
     def test_rebase_helper_absent_from_database_module(self):
         """database must not expose rebase_port_state_on_composition_change."""
         import database
+
         importlib.reload(database)
         assert not hasattr(database, "rebase_port_state_on_composition_change"), (
             "AX-3: rebase_port_state_on_composition_change was a SITE-A2-only helper; "
@@ -58,6 +60,7 @@ class TestRebasePortStateOnCompositionChangeRemoved:
     def test_rebase_helper_not_importable_by_name(self):
         """Importing the removed helper by name must raise ImportError or AttributeError."""
         import database
+
         with pytest.raises((ImportError, AttributeError)):
             # This line must fail — the function must not be reachable
             _ = database.rebase_port_state_on_composition_change
@@ -66,6 +69,7 @@ class TestRebasePortStateOnCompositionChangeRemoved:
 # ---------------------------------------------------------------------------
 # AX-3: new_day_reset_port_state must be REMOVED
 # ---------------------------------------------------------------------------
+
 
 class TestNewDayResetPortStateRemoved:
     """AX-3: new_day_reset_port_state no longer exported from database.
@@ -78,6 +82,7 @@ class TestNewDayResetPortStateRemoved:
     def test_new_day_reset_absent_from_database_module(self):
         """database must not expose new_day_reset_port_state."""
         import database
+
         importlib.reload(database)
         assert not hasattr(database, "new_day_reset_port_state"), (
             "AX-3: new_day_reset_port_state has no live callers after port dispatch removal; "
@@ -87,6 +92,7 @@ class TestNewDayResetPortStateRemoved:
     def test_new_day_reset_not_importable_by_name(self):
         """Importing the removed helper by name must raise ImportError or AttributeError."""
         import database
+
         with pytest.raises((ImportError, AttributeError)):
             _ = database.new_day_reset_port_state
 
@@ -95,11 +101,13 @@ class TestNewDayResetPortStateRemoved:
 # AX-3: display-path helpers must NOT be removed
 # ---------------------------------------------------------------------------
 
+
 class TestPortStateDisplayHelpersPreserved:
     """AX-3: read_port_state and get_all_port_states are display-path helpers; must stay."""
 
     def test_read_port_state_still_importable(self):
         import database
+
         assert hasattr(database, "read_port_state"), (
             "AX-3: read_port_state supports dashboard display (SITE-D4); must not be removed"
         )
@@ -107,6 +115,7 @@ class TestPortStateDisplayHelpersPreserved:
 
     def test_get_all_port_states_still_importable(self):
         import database
+
         assert hasattr(database, "get_all_port_states"), (
             "AX-3: get_all_port_states supports dashboard display (SITE-D4); must not be removed"
         )
@@ -115,12 +124,14 @@ class TestPortStateDisplayHelpersPreserved:
     def test_write_port_state_still_importable(self):
         """write_port_state may still be needed by display writes; preserved until grep confirms dead."""
         import database
+
         assert hasattr(database, "write_port_state"), (
             "AX-3: write_port_state retained pending final grep — do not remove until confirmed dead"
         )
 
     def test_clear_port_state_still_importable(self):
         import database
+
         assert hasattr(database, "clear_port_state"), (
             "AX-3: clear_port_state retained pending final grep — do not remove until confirmed dead"
         )
@@ -129,6 +140,7 @@ class TestPortStateDisplayHelpersPreserved:
 # ---------------------------------------------------------------------------
 # AX-1 (Option B): save_settings writes EXIT_AUTHORITY to .env
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def ax1_client():
@@ -145,6 +157,7 @@ def ax1_client():
     os.environ["EXIT_AUTHORITY"] = "per_symphony"
 
     import database
+
     _old_level = logging.getLogger().level
     logging.getLogger().setLevel(logging.CRITICAL)
     try:
@@ -153,6 +166,7 @@ def ax1_client():
         logging.getLogger().setLevel(_old_level)
 
     import app as app_module
+
     app_module.ENV_FILE_PATH = env_path
     app_module.app.config["TESTING"] = True
 
@@ -230,9 +244,7 @@ class TestAX1SaveSettingsWritesExitAuthority:
         Wave 2 removed the engine consumption. This test guards against accidental
         re-introduction by statically scanning the source file for the import.
         """
-        worktree_root = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
+        worktree_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         source_path = os.path.join(worktree_root, "alpha_bot_execution.py")
         with open(source_path, encoding="utf-8") as fh:
             source = fh.read()
@@ -258,9 +270,7 @@ class TestAX1SaveSettingsWritesExitAuthority:
 
     def test_engine_does_not_call_get_exit_authority_at_runtime(self):
         """AX-1 complementary check: get_exit_authority call absent from execution source."""
-        worktree_root = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
+        worktree_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         source_path = os.path.join(worktree_root, "alpha_bot_execution.py")
         with open(source_path, encoding="utf-8") as fh:
             source = fh.read()
@@ -286,6 +296,7 @@ class TestAX1SaveSettingsWritesExitAuthority:
 # AX-2: badge helpers remain importable and correct
 # ---------------------------------------------------------------------------
 
+
 class TestAX2BadgeHelpersPreserved:
     """AX-2: display helpers in engine/exit_authority.py must survive this cycle.
 
@@ -295,12 +306,14 @@ class TestAX2BadgeHelpersPreserved:
 
     def test_get_exit_authority_badge_context_importable(self):
         from engine.exit_authority import get_exit_authority_badge_context
+
         assert callable(get_exit_authority_badge_context), (
             "AX-2: get_exit_authority_badge_context must remain importable (KEEP-DISPLAY)"
         )
 
     def test_build_restart_notice_context_importable(self):
         from engine.exit_authority import build_restart_notice_context
+
         assert callable(build_restart_notice_context), (
             "AX-2: build_restart_notice_context must remain importable (KEEP-DISPLAY)"
         )
@@ -309,16 +322,16 @@ class TestAX2BadgeHelpersPreserved:
         """Badge context must include is_degraded, label, color, authority."""
         monkeypatch.setenv("EXIT_AUTHORITY", "per_symphony")
         from engine.exit_authority import get_exit_authority_badge_context
+
         ctx = get_exit_authority_badge_context()
         for key in ("is_degraded", "label", "color", "authority"):
-            assert key in ctx, (
-                f"AX-2: get_exit_authority_badge_context must return key '{key}'"
-            )
+            assert key in ctx, f"AX-2: get_exit_authority_badge_context must return key '{key}'"
 
     def test_badge_context_per_symphony_not_degraded(self, monkeypatch):
         """per_symphony is a recognized value — badge must not be degraded."""
         monkeypatch.setenv("EXIT_AUTHORITY", "per_symphony")
         from engine.exit_authority import get_exit_authority_badge_context
+
         ctx = get_exit_authority_badge_context()
         assert ctx["is_degraded"] is False, (
             "AX-2: per_symphony is valid; badge must not show degraded state"
@@ -328,6 +341,7 @@ class TestAX2BadgeHelpersPreserved:
         """Unrecognized EXIT_AUTHORITY value must produce a degraded badge (AC-P2.12.4)."""
         monkeypatch.setenv("EXIT_AUTHORITY", "garbage_value")
         from engine.exit_authority import get_exit_authority_badge_context
+
         ctx = get_exit_authority_badge_context()
         assert ctx["is_degraded"] is True, (
             "AX-2 AC-P2.12.4: unrecognized EXIT_AUTHORITY must produce degraded badge"
@@ -336,6 +350,7 @@ class TestAX2BadgeHelpersPreserved:
     def test_restart_notice_required_when_toggle_changed_after_daemon_start(self):
         """Toggle changed after daemon start -> restart_required=True."""
         from engine.exit_authority import build_restart_notice_context
+
         ctx = build_restart_notice_context(
             toggle_changed_at="2024-11-01T10:05:00Z",
             daemon_started_at="2024-11-01T09:00:00Z",
@@ -347,6 +362,7 @@ class TestAX2BadgeHelpersPreserved:
     def test_restart_notice_clears_after_restart(self):
         """Daemon restarted after toggle -> restart_required=False."""
         from engine.exit_authority import build_restart_notice_context
+
         ctx = build_restart_notice_context(
             toggle_changed_at="2024-11-01T10:05:00Z",
             daemon_started_at="2024-11-01T10:10:00Z",
@@ -361,9 +377,7 @@ class TestAX2BadgeHelpersPreserved:
 
         The badge helpers are display-only in app.py; the engine must not call them.
         """
-        worktree_root = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
+        worktree_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         source_path = os.path.join(worktree_root, "alpha_bot_execution.py")
         with open(source_path, encoding="utf-8") as fh:
             source = fh.read()
@@ -387,6 +401,7 @@ class TestAX2BadgeHelpersPreserved:
 # ---------------------------------------------------------------------------
 # Regression: settings page renders without exception
 # ---------------------------------------------------------------------------
+
 
 class TestSettingsPageNoRegression:
     """AX-1 UI: settings GET still works after this cycle's changes."""

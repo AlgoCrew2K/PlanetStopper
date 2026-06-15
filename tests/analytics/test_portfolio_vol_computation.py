@@ -51,6 +51,7 @@ _MIN_OBS = 2
 # Formula-derivation helpers (for cross-checking, NOT as the expected value)
 # ---------------------------------------------------------------------------
 
+
 def _annualized_vol_from_pct_series(returns_pct: list[float]) -> float | None:
     """
     Formula: sample_std(returns_frac, ddof=1) * sqrt(252).
@@ -87,6 +88,7 @@ def _naive_average_vol(sym_a_pct: list[float], sym_b_pct: list[float]) -> float 
 # Test 1: analytics.py must expose compute_portfolio_annualized_vol function
 # ---------------------------------------------------------------------------
 
+
 def test_analytics_exposes_compute_portfolio_annualized_vol():
     """
     analytics.py must expose a function named compute_portfolio_annualized_vol
@@ -113,6 +115,7 @@ def test_analytics_exposes_compute_portfolio_annualized_vol():
 # ---------------------------------------------------------------------------
 # Test 2: portfolio vol is a positive finite fraction-scale float
 # ---------------------------------------------------------------------------
+
 
 def test_compute_portfolio_annualized_vol_is_positive_finite_fraction_scale():
     """
@@ -162,6 +165,7 @@ def test_compute_portfolio_annualized_vol_is_positive_finite_fraction_scale():
 # Test 3: golden fixture — portfolio-series vol is formula-consistent
 # ---------------------------------------------------------------------------
 
+
 def test_compute_portfolio_annualized_vol_consistent_with_formula():
     """
     compute_portfolio_annualized_vol result must be consistent with
@@ -207,6 +211,7 @@ def test_compute_portfolio_annualized_vol_consistent_with_formula():
 # Test 4: GOLDEN FIXTURE — portfolio-series vol differs from naive average
 #         (the key adversarial test for Phase 2b)
 # ---------------------------------------------------------------------------
+
 
 def test_portfolio_series_vol_differs_from_naive_per_symphony_average():
     """
@@ -260,17 +265,14 @@ def test_portfolio_series_vol_differs_from_naive_per_symphony_average():
     )
 
     # Additional sanity: both values must be positive finite floats.
-    assert portfolio_vol > 0.0, (
-        f"portfolio_vol must be positive; got {portfolio_vol!r}"
-    )
-    assert naive_avg > 0.0, (
-        f"naive_avg must be positive; got {naive_avg!r}"
-    )
+    assert portfolio_vol > 0.0, f"portfolio_vol must be positive; got {portfolio_vol!r}"
+    assert naive_avg > 0.0, f"naive_avg must be positive; got {naive_avg!r}"
 
 
 # ---------------------------------------------------------------------------
 # Test 5: None when fewer than 2 observations
 # ---------------------------------------------------------------------------
+
 
 def test_compute_portfolio_annualized_vol_none_for_insufficient_data():
     """
@@ -293,6 +295,7 @@ def test_compute_portfolio_annualized_vol_none_for_insufficient_data():
 # Test 6: single-symphony portfolio — vol equals that symphony's individual vol
 # ---------------------------------------------------------------------------
 
+
 def test_portfolio_vol_equals_single_symphony_vol_for_one_symphony():
     """
     When the portfolio contains only one symphony, the portfolio combined
@@ -305,8 +308,16 @@ def test_portfolio_vol_equals_single_symphony_vol_for_one_symphony():
     import analytics
 
     single_sym_returns = [
-        0.10, -0.15, 0.20, -0.10, 0.15,
-        0.12, -0.18, 0.22, -0.12, 0.18,
+        0.10,
+        -0.15,
+        0.20,
+        -0.10,
+        0.15,
+        0.12,
+        -0.18,
+        0.22,
+        -0.12,
+        0.18,
     ]
 
     # When portfolio combined series equals single symphony series, both methods agree.
@@ -332,6 +343,7 @@ def test_portfolio_vol_equals_single_symphony_vol_for_one_symphony():
 # Test 7: meta.portfolio has vol_bot and vol_held keys after Phase 2b
 # ---------------------------------------------------------------------------
 
+
 def test_build_meta_portfolio_includes_vol_bot_and_vol_held():
     """
     _build_meta must populate meta.portfolio with vol_bot and vol_held keys
@@ -355,13 +367,13 @@ def test_build_meta_portfolio_includes_vol_bot_and_vol_held():
     # Inject a portfolio_strip carrying the Phase 2b vol keys.
     # These are fraction-scale values — the implementer must NOT hardcode them.
     stub_portfolio_strip = {
-        "today_change":     {"if_held": 0.5, "dry_run": 0.6},
+        "today_change": {"if_held": 0.5, "dry_run": 0.6},
         "cumulative_return": {"if_held": 10.0, "dry_run": 12.0},
-        "max_drawdown":     {"if_held": 3.1, "dry_run": 2.5},
-        "vol_bot":  0.031,   # fraction-scale; placeholder shape, not a real value
-        "vol_held": 0.045,   # fraction-scale; placeholder shape, not a real value
+        "max_drawdown": {"if_held": 3.1, "dry_run": 2.5},
+        "vol_bot": 0.031,  # fraction-scale; placeholder shape, not a real value
+        "vol_held": 0.045,  # fraction-scale; placeholder shape, not a real value
         "hist_dates": ["2026-01-01"] * 35,  # >= 30 to avoid insufficient_history flag
-        "hist_bot":  [0.0] * 35,
+        "hist_bot": [0.0] * 35,
         "hist_held": [0.0] * 35,
         "hist_source": "shadow_history",
         "data_as_of": "09:30 ET",
@@ -401,6 +413,7 @@ def test_build_meta_portfolio_includes_vol_bot_and_vol_held():
 # ---------------------------------------------------------------------------
 # Test 8: _compute_portfolio_strip returns vol_bot and vol_held
 # ---------------------------------------------------------------------------
+
 
 def test_compute_portfolio_strip_includes_vol_bot_and_vol_held():
     """
@@ -456,6 +469,7 @@ def test_compute_portfolio_strip_includes_vol_bot_and_vol_held():
 # Test 9: vol inversion — bot WINS when vol_bot <= vol_held
 # ---------------------------------------------------------------------------
 
+
 def test_vol_inversion_lower_vol_is_bot_win():
     """
     For the Ann. Vol hero row, the winner determination is INVERTED vs the
@@ -483,10 +497,13 @@ def test_vol_inversion_lower_vol_is_bot_win():
     # These are fraction-scale values in the shape expected from _build_meta.
     # Exact values are irrelevant — only the BOT CALMER direction matters.
     stub_portfolio = {
-        "tc": 0.5, "tc_if_held": 0.4,
-        "cr": 10.0, "cr_if_held": 9.0,
-        "mdd": 2.5, "mdd_if_held": 3.1,
-        "vol_bot": 0.028,   # fraction-scale; bot is calmer
+        "tc": 0.5,
+        "tc_if_held": 0.4,
+        "cr": 10.0,
+        "cr_if_held": 9.0,
+        "mdd": 2.5,
+        "mdd_if_held": 3.1,
+        "vol_bot": 0.028,  # fraction-scale; bot is calmer
         "vol_held": 0.042,  # fraction-scale; held has higher vol
         "hist_dates": ["2026-01-01"] * 35,
         "hist_bot": [0.0] * 35,
@@ -515,13 +532,17 @@ def test_vol_inversion_lower_vol_is_bot_win():
 
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
-        with patch.object(app_module, "get_api_state_dict", return_value={
-            "bot_state": {},
-            "is_locked": False,
-            "port_state": {},
-            "exit_authority": {},
-            "daemon_started_at": None,
-        }):
+        with patch.object(
+            app_module,
+            "get_api_state_dict",
+            return_value={
+                "bot_state": {},
+                "is_locked": False,
+                "port_state": {},
+                "exit_authority": {},
+                "daemon_started_at": None,
+            },
+        ):
             with patch.object(app_module, "_build_meta", return_value=stub_meta):
                 html = client.get("/").data.decode("utf-8")
 
@@ -540,6 +561,7 @@ def test_vol_inversion_lower_vol_is_bot_win():
     # (The implementer chooses the format; we assert it's not the placeholder '&mdash;'
     # for BOTH elements simultaneously when real data is available.)
     import re
+
     vol_bot_match = re.search(
         r'data-testid="comp-vol-bot-text"[^>]*>([^<]+)<',
         html,
@@ -551,11 +573,7 @@ def test_vol_inversion_lower_vol_is_bot_win():
     # The text should NOT still be the stub placeholder when vol data is wired.
     # Check for both the unicode em-dash '—' and the HTML entity '&mdash;'
     # (Flask test client returns raw HTML, not decoded entities).
-    is_stub = (
-        "&mdash;" in vol_bot_text
-        or "—" in vol_bot_text
-        or "---" in vol_bot_text
-    )
+    is_stub = "&mdash;" in vol_bot_text or "—" in vol_bot_text or "---" in vol_bot_text
     assert not is_stub, (
         f"comp-vol-bot-text still shows stub placeholder '{vol_bot_text}' when "
         f"meta.portfolio.vol_bot={stub_portfolio['vol_bot']!r} is provided. "
@@ -566,6 +584,7 @@ def test_vol_inversion_lower_vol_is_bot_win():
 # ---------------------------------------------------------------------------
 # Test 10: vol bar inversion — bot bar is WIDER when bot vol < held vol
 # ---------------------------------------------------------------------------
+
 
 def test_vol_bar_width_is_wider_for_lower_vol_side():
     """
@@ -593,13 +612,16 @@ def test_vol_bar_width_is_wider_for_lower_vol_side():
     import re
 
     stub_portfolio = {
-        "tc": 0.5, "tc_if_held": 0.4,
-        "cr": 10.0, "cr_if_held": 9.0,
-        "mdd": 2.5, "mdd_if_held": 3.1,
-        "vol_bot": 0.028,   # bot is calmer — bot WINS in vol comparison
+        "tc": 0.5,
+        "tc_if_held": 0.4,
+        "cr": 10.0,
+        "cr_if_held": 9.0,
+        "mdd": 2.5,
+        "mdd_if_held": 3.1,
+        "vol_bot": 0.028,  # bot is calmer — bot WINS in vol comparison
         "vol_held": 0.042,  # held has higher vol — held LOSES in vol comparison
         "hist_dates": ["2026-01-01"] * 35,
-        "hist_bot":  [0.0] * 35,
+        "hist_bot": [0.0] * 35,
         "hist_held": [0.0] * 35,
         "hist_source": "shadow_history",
         "data_as_of": "09:30 ET",
@@ -611,7 +633,9 @@ def test_vol_bar_width_is_wider_for_lower_vol_side():
     stub_meta = {
         "mode": "DRY RUN",
         "system_online": True,
-        "tracked": 0, "armed": 0, "triggered": 0,
+        "tracked": 0,
+        "armed": 0,
+        "triggered": 0,
         "next_run": "00:00",
         "account": {"label": "", "uuid_short": ""},
         "market_state": "closed",
@@ -623,13 +647,17 @@ def test_vol_bar_width_is_wider_for_lower_vol_side():
 
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
-        with patch.object(app_module, "get_api_state_dict", return_value={
-            "bot_state": {},
-            "is_locked": False,
-            "port_state": {},
-            "exit_authority": {},
-            "daemon_started_at": None,
-        }):
+        with patch.object(
+            app_module,
+            "get_api_state_dict",
+            return_value={
+                "bot_state": {},
+                "is_locked": False,
+                "port_state": {},
+                "exit_authority": {},
+                "daemon_started_at": None,
+            },
+        ):
             with patch.object(app_module, "_build_meta", return_value=stub_meta):
                 html = client.get("/").data.decode("utf-8")
 

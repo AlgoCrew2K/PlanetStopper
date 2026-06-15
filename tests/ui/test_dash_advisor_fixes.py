@@ -36,10 +36,12 @@ if str(_REPO_ROOT) not in sys.path:
 # Shared Flask test client
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def client():
     """Flask test client; database + analytics mocked out so no live DB needed."""
     import app as _app
+
     _app.app.config["TESTING"] = True
     with _app.app.test_client() as c:
         yield c
@@ -48,6 +50,7 @@ def client():
 # ---------------------------------------------------------------------------
 # AC-1 — /ai-advisor landing page must contain the capability nav
 # ---------------------------------------------------------------------------
+
 
 class TestAC1AdvisorCapabilityNav:
     """GET /ai-advisor must render the cap-nav block with all four sub-route links.
@@ -64,7 +67,7 @@ class TestAC1AdvisorCapabilityNav:
         html = resp.data.decode("utf-8")
         assert 'class="cap-nav"' in html or "cap-nav" in html, (
             "GET /ai-advisor is missing the capability nav block "
-            "(<nav class=\"cap-nav\">). Users cannot navigate to any sub-page."
+            '(<nav class="cap-nav">). Users cannot navigate to any sub-page.'
         )
 
     def test_ai_advisor_landing_has_correlations_tab_button(self, client):
@@ -113,8 +116,7 @@ class TestAC1AdvisorCapabilityNav:
         resp = client.get("/ai-advisor")
         html = resp.data.decode("utf-8")
         assert 'data-testid="tab-chat"' in html, (
-            "GET /ai-advisor is missing the Chat tab button "
-            "(data-testid='tab-chat') — AC2."
+            "GET /ai-advisor is missing the Chat tab button (data-testid='tab-chat') — AC2."
         )
 
     def test_ai_advisor_landing_has_all_four_data_testids(self, client):
@@ -149,7 +151,7 @@ class TestAC1AdvisorCapabilityNav:
         html = resp.data.decode("utf-8")
         # In-place tab pattern: aria-selected replaces aria-current for button tabs.
         assert 'aria-selected="true"' in html, (
-            "GET /ai-advisor cap-nav has no aria-selected=\"true\" attribute. "
+            'GET /ai-advisor cap-nav has no aria-selected="true" attribute. '
             "The active Overview tab must carry aria-selected='true' for ARIA a11y — AC2."
         )
 
@@ -157,6 +159,7 @@ class TestAC1AdvisorCapabilityNav:
 # ---------------------------------------------------------------------------
 # AC-2 — Advisor card button overflow (unit-level CSS contract)
 # ---------------------------------------------------------------------------
+
 
 class TestAC2AdvisorCardButtonOverflow:
     """Advisor card action buttons must not overflow card bounds at 1440/1024/768.
@@ -240,6 +243,7 @@ class TestAC2AdvisorCardButtonOverflow:
 # AC-3a — index.js reads sym.symphony_vol (not sym.volatility / sym.vol)
 # ---------------------------------------------------------------------------
 
+
 class TestAC3aVolFieldName:
     """The detail-panel vol row must read sym.symphony_vol.
 
@@ -318,6 +322,7 @@ class TestAC3aVolFieldName:
 # AC-3b — table_partial MDD column must NOT multiply by 100
 # ---------------------------------------------------------------------------
 
+
 class TestAC3bMddColumnNotInflated:
     """table_partial.html MDD column must render percent-scale values directly.
 
@@ -377,6 +382,7 @@ class TestAC3bMddColumnNotInflated:
 
         with _app.app.app_context():
             from flask import render_template as _render
+
             return _render(
                 "table_partial.html",
                 accounts_map=accounts_map,
@@ -438,6 +444,7 @@ class TestAC3bMddColumnNotInflated:
 # ---------------------------------------------------------------------------
 # AC-4 — "Chat about this" button on acceptable suggestion cards
 # ---------------------------------------------------------------------------
+
 
 class TestAC4ChatAboutThisButton:
     """Every ACCEPTABLE suggestion card must render a visible "Chat about this" button.
@@ -612,10 +619,7 @@ class TestAC4ChatAboutThisButton:
         primary CTA fails AC-4.
         """
         src = self._read_asset_swaps_js()
-        has_old_discuss_only = (
-            "Discuss this" in src
-            and not re.search(r"[Cc]hat about this", src)
-        )
+        has_old_discuss_only = "Discuss this" in src and not re.search(r"[Cc]hat about this", src)
         assert not has_old_discuss_only, (
             "ai_advisor_asset_swaps.js still renders 'Discuss this' as the sole CTA "
             "without a 'Chat about this' button. Replace or supplement it per AC-4."
@@ -625,10 +629,7 @@ class TestAC4ChatAboutThisButton:
         """The old de-emphasized 'Discuss this' anchor must not remain as the
         sole call-to-action in ai_advisor_logic_changes.js."""
         src = self._read_logic_changes_js()
-        has_old_discuss_only = (
-            "Discuss this" in src
-            and not re.search(r"[Cc]hat about this", src)
-        )
+        has_old_discuss_only = "Discuss this" in src and not re.search(r"[Cc]hat about this", src)
         assert not has_old_discuss_only, (
             "ai_advisor_logic_changes.js still renders 'Discuss this' as the sole CTA "
             "without a 'Chat about this' button. Replace or supplement it per AC-4."
@@ -638,6 +639,7 @@ class TestAC4ChatAboutThisButton:
 # ---------------------------------------------------------------------------
 # node --check — static JS syntax guard
 # ---------------------------------------------------------------------------
+
 
 class TestNodeSyntaxCheck:
     """Any static/*.js file touched by this cycle must have zero Node.js syntax errors.

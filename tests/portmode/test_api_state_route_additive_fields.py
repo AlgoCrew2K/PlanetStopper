@@ -29,6 +29,7 @@ def flask_client():
     os.environ["DB_PATH"] = path
     os.environ.setdefault("EXIT_AUTHORITY", "per_symphony")
     import database
+
     _old_level = logging.getLogger().level
     logging.getLogger().setLevel(logging.CRITICAL)
     try:
@@ -36,6 +37,7 @@ def flask_client():
     finally:
         logging.getLogger().setLevel(_old_level)
     import app as app_module
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
         yield client

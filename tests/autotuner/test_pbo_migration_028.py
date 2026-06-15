@@ -38,16 +38,19 @@ _MIGRATION_FILE = "028_autotune_runs_pbo.sql"
 
 def _import_database():
     import sys
+
     repo = str(_WORKTREE_ROOT)
     if repo not in sys.path:
         sys.path.insert(0, repo)
     import database
+
     return database
 
 
 # ---------------------------------------------------------------------------
 # Migration file existence and content
 # ---------------------------------------------------------------------------
+
 
 class TestMigration028Existence:
     """migrations/028_autotune_runs_pbo.sql must exist and be well-formed."""
@@ -66,9 +69,7 @@ class TestMigration028Existence:
         if not path.exists():
             pytest.skip("Migration file missing — tested in test_migration_file_exists")
         sql = path.read_text(encoding="utf-8")
-        assert "pbo" in sql.lower(), (
-            f"{_MIGRATION_FILE} must reference a 'pbo' column"
-        )
+        assert "pbo" in sql.lower(), f"{_MIGRATION_FILE} must reference a 'pbo' column"
         assert "real" in sql.lower() or "REAL" in sql, (
             f"{_MIGRATION_FILE} pbo column must be REAL type"
         )
@@ -81,6 +82,7 @@ class TestMigration028Existence:
         allows comments that explain WHY the metric was dropped without false-positiving.
         """
         import re
+
         path = _MIGRATIONS_DIR / _MIGRATION_FILE
         if not path.exists():
             pytest.skip("Migration file missing")
@@ -88,7 +90,7 @@ class TestMigration028Existence:
         # Match an actual column definition: ADD COLUMN dsr ... or a column named dsr
         # followed by a SQL type keyword.  Case-insensitive.
         col_def_pattern = re.compile(
-            r"add\s+column\s+dsr\b"          # ADD COLUMN dsr ...
+            r"add\s+column\s+dsr\b"  # ADD COLUMN dsr ...
             r"|"
             r"\bdsr\s+(?:real|integer|text|blob|numeric)\b",  # dsr REAL / dsr INTEGER etc.
             re.IGNORECASE,
@@ -118,15 +120,14 @@ class TestMigration028Existence:
 # _MIGRATION_FILES list registration
 # ---------------------------------------------------------------------------
 
+
 class TestMigrationListRegistration:
     """database.py _MIGRATION_FILES must include '028_autotune_runs_pbo.sql'."""
 
     def test_migration_028_in_migration_files_list(self):
         """_MIGRATION_FILES must contain '028_autotune_runs_pbo.sql'."""
         db = _import_database()
-        assert hasattr(db, "_MIGRATION_FILES"), (
-            "database module must expose _MIGRATION_FILES list"
-        )
+        assert hasattr(db, "_MIGRATION_FILES"), "database module must expose _MIGRATION_FILES list"
         assert _MIGRATION_FILE in db._MIGRATION_FILES, (
             f"database._MIGRATION_FILES must include '{_MIGRATION_FILE}' "
             f"(current list has {len(db._MIGRATION_FILES)} entries)"
@@ -149,12 +150,15 @@ class TestMigrationListRegistration:
 
         # Must not appear after a higher-numbered migration.
         import re
+
         _num = re.compile(r"^0*(\d+)_")
         violations = []
         for i, name in enumerate(mf):
             m = _num.match(name)
             if m and int(m.group(1)) > 28 and i < idx_028:
-                violations.append(f"{name!r} (index {i}) is higher-numbered but appears before 028 (index {idx_028})")
+                violations.append(
+                    f"{name!r} (index {i}) is higher-numbered but appears before 028 (index {idx_028})"
+                )
         assert not violations, (
             f"028_autotune_runs_pbo.sql appears after a higher-numbered migration — "
             f"ordering violation: {violations}"
@@ -164,12 +168,8 @@ class TestMigrationListRegistration:
         """028 must appear after 027 in _MIGRATION_FILES (no out-of-order placement)."""
         db = _import_database()
         mf = db._MIGRATION_FILES
-        idx_027 = next(
-            (i for i, f in enumerate(mf) if "027" in f), None
-        )
-        idx_028 = next(
-            (i for i, f in enumerate(mf) if "028" in f), None
-        )
+        idx_027 = next((i for i, f in enumerate(mf) if "027" in f), None)
+        idx_028 = next((i for i, f in enumerate(mf) if "028" in f), None)
         assert idx_027 is not None, "migration 027 must be in _MIGRATION_FILES"
         assert idx_028 is not None, "migration 028 must be in _MIGRATION_FILES"
         assert idx_028 > idx_027, (
@@ -181,6 +181,7 @@ class TestMigrationListRegistration:
 # ---------------------------------------------------------------------------
 # Idempotency + pbo column present after run_migrations
 # ---------------------------------------------------------------------------
+
 
 class TestMigration028Idempotency:
     """run_migrations() must add the pbo column; running it twice must not raise."""
@@ -197,13 +198,11 @@ class TestMigration028Idempotency:
         try:
             os.environ["DB_PATH"] = tmp_path
             import importlib
+
             importlib.reload(db)
             db.run_migrations()
             conn = db.get_connection()
-            cols = [
-                row[1]
-                for row in conn.execute("PRAGMA table_info(autotune_runs)").fetchall()
-            ]
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(autotune_runs)").fetchall()]
             conn.close()
             assert "pbo" in cols, (
                 f"autotune_runs must have a 'pbo' column after run_migrations(). "
@@ -228,6 +227,7 @@ class TestMigration028Idempotency:
 # ---------------------------------------------------------------------------
 # Existing rows read NULL for pbo
 # ---------------------------------------------------------------------------
+
 
 class TestMigration028ExistingRowsNullable:
     """Pre-existing autotune_runs rows must read NULL for pbo after migration."""
@@ -293,6 +293,7 @@ class TestMigration028ExistingRowsNullable:
 # save_autotune_run: pbo kwarg round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestSaveAutotuneRunPboRoundTrip:
     """save_autotune_run must accept pbo kwarg and persist it to autotune_runs.pbo."""
 
@@ -300,14 +301,11 @@ class TestSaveAutotuneRunPboRoundTrip:
         """save_autotune_run must have a 'pbo' parameter defaulting to None."""
         db = _import_database()
         import inspect
+
         sig = inspect.signature(db.save_autotune_run)
-        assert "pbo" in sig.parameters, (
-            "save_autotune_run must have a 'pbo' parameter"
-        )
+        assert "pbo" in sig.parameters, "save_autotune_run must have a 'pbo' parameter"
         param = sig.parameters["pbo"]
-        assert param.default is None, (
-            f"pbo parameter must default to None, got {param.default!r}"
-        )
+        assert param.default is None, f"pbo parameter must default to None, got {param.default!r}"
 
     def test_pbo_value_persisted_and_round_trips(self):
         """A pbo float written via save_autotune_run must be readable back as a positive float."""
@@ -317,6 +315,7 @@ class TestSaveAutotuneRunPboRoundTrip:
         try:
             os.environ["DB_PATH"] = tmp_path
             import importlib
+
             importlib.reload(db)
             db.run_migrations()
 
@@ -335,9 +334,7 @@ class TestSaveAutotuneRunPboRoundTrip:
             )
 
             conn = db.get_connection()
-            row = conn.execute(
-                "SELECT pbo FROM autotune_runs WHERE id = ?", (row_id,)
-            ).fetchone()
+            row = conn.execute("SELECT pbo FROM autotune_runs WHERE id = ?", (row_id,)).fetchone()
             conn.close()
             assert row is not None, f"Row id={row_id} not found in autotune_runs"
             pbo_persisted = row[0]
@@ -346,9 +343,7 @@ class TestSaveAutotuneRunPboRoundTrip:
                 f"pbo must be stored as REAL (float), got type {type(pbo_persisted)}"
             )
             # Format/shape assertion — not a hardcoded producer value.
-            assert 0.0 < pbo_persisted < 1.0, (
-                f"pbo={pbo_persisted} must be in (0, 1)"
-            )
+            assert 0.0 < pbo_persisted < 1.0, f"pbo={pbo_persisted} must be in (0, 1)"
         finally:
             os.environ.pop("DB_PATH", None)
             try:
@@ -364,6 +359,7 @@ class TestSaveAutotuneRunPboRoundTrip:
         try:
             os.environ["DB_PATH"] = tmp_path
             import importlib
+
             importlib.reload(db)
             db.run_migrations()
 
@@ -378,14 +374,10 @@ class TestSaveAutotuneRunPboRoundTrip:
                 pbo=None,
             )
             conn = db.get_connection()
-            row = conn.execute(
-                "SELECT pbo FROM autotune_runs WHERE id = ?", (row_id,)
-            ).fetchone()
+            row = conn.execute("SELECT pbo FROM autotune_runs WHERE id = ?", (row_id,)).fetchone()
             conn.close()
             assert row is not None
-            assert row[0] is None, (
-                f"pbo=None must persist as SQL NULL, got {row[0]!r}"
-            )
+            assert row[0] is None, f"pbo=None must persist as SQL NULL, got {row[0]!r}"
         finally:
             os.environ.pop("DB_PATH", None)
             try:
@@ -398,6 +390,7 @@ class TestSaveAutotuneRunPboRoundTrip:
 # DSR dropped entirely: must not appear in migration, schema, or save_autotune_run
 # ---------------------------------------------------------------------------
 
+
 class TestDsrDroppedEntirely:
     """DSR is dropped from this cycle — no dsr column, no dsr param, no dsr tests."""
 
@@ -409,6 +402,7 @@ class TestDsrDroppedEntirely:
         """
         db = _import_database()
         import inspect
+
         sig = inspect.signature(db.save_autotune_run)
         assert "dsr" not in sig.parameters, (
             "save_autotune_run must NOT accept a 'dsr' parameter — "
@@ -419,8 +413,7 @@ class TestDsrDroppedEntirely:
         """autotuner.py must NOT compute dsr values (dropped from this cycle)."""
         src = (_WORKTREE_ROOT / "autotuner.py").read_text(encoding="utf-8")
         assert "compute_dsr" not in src, (
-            "autotuner.py must not call compute_dsr — "
-            "DSR was dropped entirely from this cycle."
+            "autotuner.py must not call compute_dsr — DSR was dropped entirely from this cycle."
         )
         assert "compute_deflated_sharpe" not in src, (
             "autotuner.py must not call compute_deflated_sharpe_ratio — "

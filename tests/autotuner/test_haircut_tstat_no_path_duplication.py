@@ -46,6 +46,7 @@ compares two live-persisted lengths against each other, not a literal.
 
 Fixture: tests/fixtures/math/haircut_tstat_no_path_duplication.json
 """
+
 from __future__ import annotations
 
 import json
@@ -72,12 +73,16 @@ def c2b_fixture() -> dict:
 
 def _make_trial(returns_pct, value=0.5):
     """Minimal fake Optuna trial: daily_returns in raw percent (T5 provenance)."""
-    return type("FakeTrial", (), {
-        "value": value,
-        "user_attrs": {"daily_returns": returns_pct},
-        "params": {"TRIGGER_THRESHOLD_PCT": 10.0},
-        "number": 0,
-    })()
+    return type(
+        "FakeTrial",
+        (),
+        {
+            "value": value,
+            "user_attrs": {"daily_returns": returns_pct},
+            "params": {"TRIGGER_THRESHOLD_PCT": 10.0},
+            "number": 0,
+        },
+    )()
 
 
 # ===========================================================================
@@ -202,9 +207,12 @@ class TestPersistedDailyReturnsNotPathInflated:
         mock_trial.set_user_attr.side_effect = lambda n, v: captured.__setitem__(n, v)
 
         params = {
-            "TAKE_PROFIT_MC_PCT": 0.5, "VWAP_CROSS_HWM_PCT": 0.5,
-            "VWAP_BLEED_MULTIPLIER": 0.5, "VWAP_BLEED_TICKS": 2,
-            "PARABOLIC_VELOCITY_THRESHOLD": 0.5, "MAX_PARABOLIC_SQUEEZE": 0.5,
+            "TAKE_PROFIT_MC_PCT": 0.5,
+            "VWAP_CROSS_HWM_PCT": 0.5,
+            "VWAP_BLEED_MULTIPLIER": 0.5,
+            "VWAP_BLEED_TICKS": 2,
+            "PARABOLIC_VELOCITY_THRESHOLD": 0.5,
+            "MAX_PARABOLIC_SQUEEZE": 0.5,
         }
         mock_study = MagicMock()
         mock_study.best_value = -0.1
@@ -218,28 +226,28 @@ class TestPersistedDailyReturnsNotPathInflated:
         bot_state = {sid: {"name": "TestSymphony", "is_live": False}}
         strat_data = {"locked_vars": [], "params": dict(params)}
         history = {
-            sid: {
-                f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}": [{"return": 0.5}]
-                for i in range(90)
-            }
+            sid: {f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}": [{"return": 0.5}] for i in range(90)}
         }
 
-        with patch("autotuner.database") as mock_db, \
-             patch("autotuner._collect_sim_returns", return_value=per_path_pct), \
-             patch("autotuner._collect_sim_returns_dated",
-                   return_value=[tuple(p) for p in dated_returns]), \
-             patch("autotuner.compute_sortino_ratio", return_value=1.0), \
-             patch("autotuner.optuna") as mock_optuna, \
-             patch("autotuner._apply_optuna_archive_migration_if_needed"), \
-             patch("autotuner.validate_nn1_compliance", return_value=(True, [])), \
-             patch("autotuner.validate_search_space_nn1"), \
-             patch("autotuner.calculate_historical_deviation", return_value={}), \
-             patch("autotuner.synthetic_history.generate_synthetic_history",
-                   return_value=history), \
-             patch("autotuner.synthetic_history.HistoryShortfallError", Exception):
-
+        with (
+            patch("autotuner.database") as mock_db,
+            patch("autotuner._collect_sim_returns", return_value=per_path_pct),
+            patch(
+                "autotuner._collect_sim_returns_dated",
+                return_value=[tuple(p) for p in dated_returns],
+            ),
+            patch("autotuner.compute_sortino_ratio", return_value=1.0),
+            patch("autotuner.optuna") as mock_optuna,
+            patch("autotuner._apply_optuna_archive_migration_if_needed"),
+            patch("autotuner.validate_nn1_compliance", return_value=(True, [])),
+            patch("autotuner.validate_search_space_nn1"),
+            patch("autotuner.calculate_historical_deviation", return_value={}),
+            patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
+            patch("autotuner.synthetic_history.HistoryShortfallError", Exception),
+        ):
             mock_db.get_spec_bundle_by_id.return_value = {
-                "bundle_hash": "fakehash123", "frozen_at": "2026-05-26T00:00:00Z",
+                "bundle_hash": "fakehash123",
+                "frozen_at": "2026-05-26T00:00:00Z",
             }
             mock_db.get_spec_facets_for_bundle.return_value = crra_facets
             mock_db.get_symphony_strategy.return_value = strat_data
@@ -258,8 +266,11 @@ class TestPersistedDailyReturnsNotPathInflated:
             mock_optuna.pruners.NopPruner.return_value = MagicMock()
 
             autotuner.run_autotuner(
-                bot_state, "2026-05-26", ["acc123"],
-                is_forced=True, spec_bundle_id=1,
+                bot_state,
+                "2026-05-26",
+                ["acc123"],
+                is_forced=True,
+                spec_bundle_id=1,
             )
 
         return captured

@@ -61,6 +61,7 @@ def captured_set_key_calls(monkeypatch):
 def _stub_database(monkeypatch):
     """Minimal database stub so save_settings can call save_symphony_strategy."""
     from unittest.mock import MagicMock
+
     db_mock = MagicMock()
     db_mock.save_symphony_strategy.return_value = None
     monkeypatch.setattr(app_module, "database", db_mock)
@@ -72,9 +73,7 @@ def _stub_database(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_post_settings_rejects_live_execution_true(
-    client, captured_set_key_calls, _stub_database
-):
+def test_post_settings_rejects_live_execution_true(client, captured_set_key_calls, _stub_database):
     """Attempting to set LIVE_EXECUTION=True via POST /api/settings must be
     rejected.  The route must return a non-200 status OR return status=error;
     the key must NOT be passed to set_key with value 'True'.
@@ -97,9 +96,7 @@ def test_post_settings_rejects_live_execution_true(
     body = resp.get_json()
     is_rejected_status = resp.status_code in (400, 403, 422)
     is_error_body = (
-        isinstance(body, dict)
-        and body.get("status") == "error"
-        and resp.status_code != 500
+        isinstance(body, dict) and body.get("status") == "error" and resp.status_code != 500
     )
     assert is_rejected_status or is_error_body, (
         f"POST /api/settings with LIVE_EXECUTION=True must be rejected; "
@@ -110,7 +107,8 @@ def test_post_settings_rejects_live_execution_true(
     # Belt-and-suspenders: even if the route returned an error body, the key
     # must NOT have reached set_key.
     live_exec_writes = [
-        (k, v) for (k, v) in captured_set_key_calls
+        (k, v)
+        for (k, v) in captured_set_key_calls
         if k == "LIVE_EXECUTION" and v.strip().lower() in ("true", "1", "yes")
     ]
     assert not live_exec_writes, (
@@ -156,14 +154,17 @@ def test_post_settings_rejects_live_execution_false_too(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bypass_key", [
-    "live_execution",           # lower-case
-    "Live_Execution",           # mixed-case
-    "LIVE_EXECUTION ",          # trailing space
-    " LIVE_EXECUTION",          # leading space
-    "\tLIVE_EXECUTION",         # tab prefix
-    "LIVE_EXECUTION\n",         # newline suffix
-])
+@pytest.mark.parametrize(
+    "bypass_key",
+    [
+        "live_execution",  # lower-case
+        "Live_Execution",  # mixed-case
+        "LIVE_EXECUTION ",  # trailing space
+        " LIVE_EXECUTION",  # leading space
+        "\tLIVE_EXECUTION",  # tab prefix
+        "LIVE_EXECUTION\n",  # newline suffix
+    ],
+)
 def test_post_settings_rejects_live_execution_casing_and_whitespace_bypasses(
     bypass_key, client, captured_set_key_calls, _stub_database
 ):
@@ -188,7 +189,8 @@ def test_post_settings_rejects_live_execution_casing_and_whitespace_bypasses(
 
     # The bypass key must not reach set_key at all.
     dangerous_writes = [
-        (k, v) for (k, v) in captured_set_key_calls
+        (k, v)
+        for (k, v) in captured_set_key_calls
         if k.strip().upper() == "LIVE_EXECUTION" and v.strip().lower() in ("true", "1", "yes")
     ]
     assert not dangerous_writes, (
@@ -204,13 +206,16 @@ def test_post_settings_rejects_live_execution_casing_and_whitespace_bypasses(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("credential_key", [
-    "COMPOSER_KEY_ID",
-    "COMPOSER_SECRET",
-    "ALPACA_KEY",
-    "ALPACA_SECRET",
-    "DISCORD_WEBHOOK_URL",
-])
+@pytest.mark.parametrize(
+    "credential_key",
+    [
+        "COMPOSER_KEY_ID",
+        "COMPOSER_SECRET",
+        "ALPACA_KEY",
+        "ALPACA_SECRET",
+        "DISCORD_WEBHOOK_URL",
+    ],
+)
 def test_post_settings_rejects_credential_key_writes(
     credential_key, client, captured_set_key_calls, _stub_database
 ):
@@ -235,9 +240,7 @@ def test_post_settings_rejects_credential_key_writes(
     # The route must reject credential keys — HTTP 400 or status=error.
     is_rejected_status = resp.status_code == 400
     is_error_body = (
-        isinstance(body, dict)
-        and body.get("status") == "error"
-        and resp.status_code != 500
+        isinstance(body, dict) and body.get("status") == "error" and resp.status_code != 500
     )
     assert is_rejected_status or is_error_body, (
         f"POST /api/settings with credential key {credential_key!r} must be rejected. "
@@ -259,16 +262,19 @@ def test_post_settings_rejects_credential_key_writes(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("arbitrary_key", [
-    "ARBITRARY_UNKNOWN_KEY",
-    "INJECTED_KEY",
-    "PYTHONPATH",
-    "PATH",
-    "FLASK_ENV",
-    "DEBUG",
-    "SECRET_KEY",
-    "_exit_authority_changed_at",   # internal timestamp key — not operator-settable
-])
+@pytest.mark.parametrize(
+    "arbitrary_key",
+    [
+        "ARBITRARY_UNKNOWN_KEY",
+        "INJECTED_KEY",
+        "PYTHONPATH",
+        "PATH",
+        "FLASK_ENV",
+        "DEBUG",
+        "SECRET_KEY",
+        "_exit_authority_changed_at",  # internal timestamp key — not operator-settable
+    ],
+)
 def test_post_settings_rejects_arbitrary_non_allowlisted_keys(
     arbitrary_key, client, captured_set_key_calls, _stub_database
 ):
@@ -293,10 +299,7 @@ def test_post_settings_rejects_arbitrary_non_allowlisted_keys(
     }
     resp = client.post("/api/settings", json=payload)
 
-    arbitrary_writes = [
-        (k, v) for (k, v) in captured_set_key_calls
-        if k == arbitrary_key
-    ]
+    arbitrary_writes = [(k, v) for (k, v) in captured_set_key_calls if k == arbitrary_key]
     assert not arbitrary_writes, (
         f"Arbitrary key {arbitrary_key!r} reached set_key — no allowlist is enforced. "
         f"POST /api/settings must only write keys in the explicit allowlist. "
@@ -321,7 +324,8 @@ def test_settings_allowlist_exists_as_module_symbol():
     name contains "ALLOWLIST" and "SETTINGS" (case-insensitive).
     """
     allowlist_attrs = [
-        name for name in dir(app_module)
+        name
+        for name in dir(app_module)
         if "allowlist" in name.lower() and "setting" in name.lower()
     ]
     assert allowlist_attrs, (
@@ -352,7 +356,8 @@ def test_settings_allowlist_covers_all_algo_param_keys():
     This test pins that the allowlist is a superset of _ALGO_PARAM_META.
     """
     allowlist_attrs = [
-        name for name in dir(app_module)
+        name
+        for name in dir(app_module)
         if "allowlist" in name.lower() and "setting" in name.lower()
     ]
     assert allowlist_attrs, (
@@ -383,7 +388,8 @@ def test_settings_allowlist_covers_operator_configurable_globals():
     page silently loses functionality.
     """
     allowlist_attrs = [
-        name for name in dir(app_module)
+        name
+        for name in dir(app_module)
         if "allowlist" in name.lower() and "setting" in name.lower()
     ]
     assert allowlist_attrs, "Cannot check — no allowlist found. See RED-10."

@@ -212,9 +212,7 @@ class TestResolveBotStateKey:
         """Empty bot_state — resolver must return None without raising."""
         result = self._call_resolver({}, "SOME_COMPOSER_ID_XYZ", "Any Symphony Name")
 
-        assert result is None, (
-            f"empty bot_state: resolver must return None; got {result!r}"
-        )
+        assert result is None, f"empty bot_state: resolver must return None; got {result!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -259,9 +257,11 @@ class TestPersistComposerFieldsIdDrift:
                 f"(Composer ID {composer_id!r} matched via 12-char prefix). "
                 f"Currently a silent no-op — fix: implement prefix fallback."
             )
-            assert bot_state[stored_key][field] == pytest.approx(
-                sym.get(field), abs=1e-9
-            ) if isinstance(sym.get(field), float) else bot_state[stored_key][field] == sym.get(field), (
+            assert (
+                bot_state[stored_key][field] == pytest.approx(sym.get(field), abs=1e-9)
+                if isinstance(sym.get(field), float)
+                else bot_state[stored_key][field] == sym.get(field)
+            ), (
                 f"prefix match: {field!r} value mismatch. "
                 f"expected {sym.get(field)!r}, got {bot_state[stored_key][field]!r}."
             )
@@ -333,9 +333,7 @@ class TestPersistComposerFieldsIdDrift:
 
         # Call persist for each symphony as the engine would
         for sym in _RECONCILE_SYMS:
-            alpha_bot_execution._persist_composer_fields_to_bot_state(
-                bot_state, sym["id"], sym
-            )
+            alpha_bot_execution._persist_composer_fields_to_bot_state(bot_state, sym["id"], sym)
 
         # Every stored key must now have all four fields
         for sym in _RECONCILE_SYMS:
@@ -428,9 +426,7 @@ class TestAdversarialIdMatching:
         }
 
         for sym in (sym_a, sym_b, sym_c):
-            alpha_bot_execution._persist_composer_fields_to_bot_state(
-                bot_state, sym["id"], sym
-            )
+            alpha_bot_execution._persist_composer_fields_to_bot_state(bot_state, sym["id"], sym)
 
         # Each stored key must have the fields from ITS OWN symphony, not any other
         for sym, key in ((sym_a, key_a), (sym_b, key_b), (sym_c, key_c)):

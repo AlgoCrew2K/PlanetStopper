@@ -170,14 +170,11 @@ def test_chart_route_passes_both_keys_through_every_row(client, mock_database):
             "preserved exactly (None gap vs 0.0 locked)."
         )
         assert row["vwap"] == expected_vwap[i], (
-            f"row {i} 'vwap' mismatch: expected {expected_vwap[i]!r}, "
-            f"got {row['vwap']!r}."
+            f"row {i} 'vwap' mismatch: expected {expected_vwap[i]!r}, got {row['vwap']!r}."
         )
 
 
-def test_chart_route_passes_overlay_keys_through_when_held_data_merged(
-    client, mock_database
-):
+def test_chart_route_passes_overlay_keys_through_when_held_data_merged(client, mock_database):
     """When shadow_history supplies an intraday ``held`` map, the route merges
     it into each chart_history row via a dict spread. The overlay keys must
     survive that merge — a spread that rebuilt rows from a fixed key list

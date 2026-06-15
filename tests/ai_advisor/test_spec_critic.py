@@ -81,10 +81,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parents[1]
-    / "fixtures"
-    / "math"
-    / "spec_critic_indicators.json"
+    pathlib.Path(__file__).parents[1] / "fixtures" / "math" / "spec_critic_indicators.json"
 )
 
 
@@ -153,6 +150,7 @@ def _scenario(name: str) -> tuple[str, list[dict]]:
 # Fixture-level coherence test
 # ---------------------------------------------------------------------------
 
+
 def test_spec_critic_fixture_is_structurally_complete():
     """Fixture must be loadable and contain all required top-level and scenario keys.
 
@@ -178,7 +176,9 @@ def test_spec_critic_fixture_is_structurally_complete():
         "valid_verdicts must be exactly {CLEAR, WATCH, BREACH}"
     )
     assert set(fixture["phase1_required_facets"]) == {
-        "gamma", "utility_family", "wealth_argument"
+        "gamma",
+        "utility_family",
+        "wealth_argument",
     }, "phase1_required_facets must be exactly the three canonical Phase-1 facets"
 
     required_scenarios = {
@@ -198,6 +198,7 @@ def test_spec_critic_fixture_is_structurally_complete():
 # ---------------------------------------------------------------------------
 # T1 — Pure-function contract: module importable and function exists
 # ---------------------------------------------------------------------------
+
 
 def test_spec_critic_module_is_importable():
     """advisors/spec_critic.py must be importable once the implementer creates it.
@@ -222,6 +223,7 @@ def test_compute_spec_critic_observation_exists():
         "The function must exist per the dispatch brief contract."
     )
     import inspect
+
     assert callable(mod.compute_spec_critic_observation), (
         "compute_spec_critic_observation must be callable"
     )
@@ -240,16 +242,14 @@ def test_run_spec_critic_exists():
 # T2 — Return dict structure on the honest path
 # ---------------------------------------------------------------------------
 
+
 def test_pure_function_returns_dict_on_honest_path():
     """compute_spec_critic_observation must return a dict on the CLEAR path."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("honest_complete_fresh_clear")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert isinstance(result, dict), (
-        "compute_spec_critic_observation must return a dict; "
-        f"got {type(result).__name__!r}"
+        f"compute_spec_critic_observation must return a dict; got {type(result).__name__!r}"
     )
 
 
@@ -257,9 +257,7 @@ def test_return_dict_has_all_required_keys():
     """The returned dict must carry every required AdvisorObservation key."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("honest_complete_fresh_clear")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     required = {
         "advisor_role",
         "subject_type",
@@ -269,18 +267,14 @@ def test_return_dict_has_all_required_keys():
         "is_advisory_only",
     }
     missing = required - set(result.keys())
-    assert not missing, (
-        f"compute_spec_critic_observation result missing keys: {missing}"
-    )
+    assert not missing, f"compute_spec_critic_observation result missing keys: {missing}"
 
 
 def test_advisor_role_is_spec_critic():
     """advisor_role must be exactly 'SPEC_CRITIC'."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("honest_complete_fresh_clear")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["advisor_role"] == "SPEC_CRITIC", (
         f"advisor_role must be 'SPEC_CRITIC', got {result['advisor_role']!r}"
     )
@@ -290,9 +284,7 @@ def test_subject_type_is_spec_bundle():
     """subject_type must be 'spec_bundle'."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("honest_complete_fresh_clear")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["subject_type"] == "spec_bundle", (
         f"subject_type must be 'spec_bundle', got {result['subject_type']!r}"
     )
@@ -302,9 +294,7 @@ def test_subject_id_equals_bundle_hash():
     """subject_id must be the bundle hash (spec_bundle_id argument)."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("honest_complete_fresh_clear")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["subject_id"] == bundle_id, (
         f"subject_id must equal the spec_bundle_id argument {bundle_id!r}; "
         f"got {result['subject_id']!r}"
@@ -315,9 +305,7 @@ def test_is_advisory_only_is_1():
     """is_advisory_only must always be 1 — the Spec Critic never moves money."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("honest_complete_fresh_clear")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["is_advisory_only"] == 1, (
         f"is_advisory_only must be 1, got {result['is_advisory_only']!r}"
     )
@@ -334,12 +322,9 @@ def test_verdict_is_one_of_valid_set():
         "phase2_facet_lambda_breach",
     ):
         bundle_id, facets = _scenario(scenario_name)
-        result = mod.compute_spec_critic_observation(
-            bundle_id, facets, _now=_REFERENCE_NOW
-        )
+        result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
         assert result["verdict"] in valid_verdicts, (
-            f"scenario {scenario_name!r}: verdict {result['verdict']!r} "
-            f"not in {valid_verdicts}"
+            f"scenario {scenario_name!r}: verdict {result['verdict']!r} not in {valid_verdicts}"
         )
 
 
@@ -354,9 +339,7 @@ def test_raw_response_is_dict():
         "phase2_facet_lambda_breach",
     ):
         bundle_id, facets = _scenario(scenario_name)
-        result = mod.compute_spec_critic_observation(
-            bundle_id, facets, _now=_REFERENCE_NOW
-        )
+        result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
         assert isinstance(result["raw_response"], dict), (
             f"scenario {scenario_name!r}: raw_response must be a dict; "
             f"got {type(result['raw_response']).__name__!r}"
@@ -366,14 +349,13 @@ def test_raw_response_is_dict():
         try:
             json.dumps(result["raw_response"])
         except (TypeError, ValueError) as exc:
-            pytest.fail(
-                f"scenario {scenario_name!r}: raw_response is not JSON-serialisable: {exc}"
-            )
+            pytest.fail(f"scenario {scenario_name!r}: raw_response is not JSON-serialisable: {exc}")
 
 
 # ---------------------------------------------------------------------------
 # T3 — Indicator 1: honest complete bundle returns CLEAR
 # ---------------------------------------------------------------------------
+
 
 def test_honest_complete_fresh_bundle_returns_clear():
     """Complete Phase-1 bundle (all 3 THEORY facets, fresh) must return CLEAR.
@@ -382,12 +364,9 @@ def test_honest_complete_fresh_bundle_returns_clear():
     """
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("honest_complete_fresh_clear")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["verdict"] == "CLEAR", (
-        f"Complete all-THEORY fresh bundle returned verdict={result['verdict']!r}; "
-        "expected CLEAR"
+        f"Complete all-THEORY fresh bundle returned verdict={result['verdict']!r}; expected CLEAR"
     )
 
 
@@ -399,23 +378,19 @@ def test_clear_raw_response_notes_all_facets_present():
     """
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("honest_complete_fresh_clear")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     rr = result["raw_response"]
     # Assert shape / content keywords — not exact string matching.
     raw_str = json.dumps(rr).lower()
     assert any(
-        kw in raw_str
-        for kw in ("all 3", "3 facets", "all three", "facets present", "complete")
-    ), (
-        f"CLEAR raw_response does not mention facet completeness; raw_response={rr!r}"
-    )
+        kw in raw_str for kw in ("all 3", "3 facets", "all three", "facets present", "complete")
+    ), f"CLEAR raw_response does not mention facet completeness; raw_response={rr!r}"
 
 
 # ---------------------------------------------------------------------------
 # T4 — Indicator 1: missing facets → BREACH
 # ---------------------------------------------------------------------------
+
 
 def test_missing_gamma_returns_breach():
     """Indicator 1: bundle without gamma must return BREACH.
@@ -424,9 +399,7 @@ def test_missing_gamma_returns_breach():
     """
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("missing_gamma_breach")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["verdict"] == "BREACH", (
         f"Bundle missing gamma returned verdict={result['verdict']!r}; expected BREACH"
     )
@@ -436,9 +409,7 @@ def test_missing_gamma_raw_response_names_the_gap():
     """Indicator 1: raw_response must name 'gamma' as a missing facet."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("missing_gamma_breach")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     raw_str = json.dumps(result["raw_response"]).lower()
     assert "gamma" in raw_str, (
         f"BREACH raw_response does not name the missing facet 'gamma'; "
@@ -450,9 +421,7 @@ def test_missing_utility_family_returns_breach():
     """Indicator 1: bundle without utility_family must return BREACH."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("missing_utility_family_breach")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["verdict"] == "BREACH", (
         f"Bundle missing utility_family returned verdict={result['verdict']!r}; expected BREACH"
     )
@@ -462,9 +431,7 @@ def test_missing_wealth_argument_returns_breach():
     """Indicator 1: bundle without wealth_argument must return BREACH."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("missing_wealth_argument_breach")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["verdict"] == "BREACH", (
         f"Bundle missing wealth_argument returned verdict={result['verdict']!r}; expected BREACH"
     )
@@ -478,9 +445,7 @@ def test_empty_facets_returns_breach_on_all_missing():
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("empty_facets_breach")
     assert facets == [], "fixture scenario must have empty facets list"
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["verdict"] == "BREACH", (
         f"Empty facets list returned verdict={result['verdict']!r}; expected BREACH"
     )
@@ -496,6 +461,7 @@ def test_empty_facets_returns_breach_on_all_missing():
 # T5 — Indicator 2: unrecognized freeze_discipline → BREACH
 # ---------------------------------------------------------------------------
 
+
 def test_unrecognized_freeze_discipline_returns_breach():
     """Indicator 2: any facet with discipline outside NN1_HONEST_DISCIPLINES ∪ {BACKTEST_SELECTION}
     must return BREACH — defense-in-depth against unknown values.
@@ -504,9 +470,7 @@ def test_unrecognized_freeze_discipline_returns_breach():
     """
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("unrecognized_discipline_breach")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["verdict"] == "BREACH", (
         f"Unrecognized freeze_discipline returned verdict={result['verdict']!r}; "
         "expected BREACH (defense-in-depth)"
@@ -517,9 +481,7 @@ def test_unrecognized_discipline_raw_response_names_the_offending_facet():
     """Indicator 2: raw_response must identify the facet with the unrecognized discipline."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("unrecognized_discipline_breach")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     raw_str = json.dumps(result["raw_response"]).lower()
     # The offending facet is 'gamma' per the fixture.
     assert "gamma" in raw_str, (
@@ -570,6 +532,7 @@ def test_backtest_selection_discipline_triggers_breach():
 # T6 — Indicator 3: stale frozen_at → WATCH
 # ---------------------------------------------------------------------------
 
+
 def test_stale_frozen_at_returns_watch():
     """Indicator 3: facets frozen > 90 days ago must return WATCH (advisory, non-blocking).
 
@@ -577,9 +540,7 @@ def test_stale_frozen_at_returns_watch():
     """
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("stale_frozen_at_watch")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["verdict"] == "WATCH", (
         f"Stale bundle (frozen 91 days ago) returned verdict={result['verdict']!r}; "
         "expected WATCH — stale frozen_at is advisory, not a hard block"
@@ -595,9 +556,7 @@ def test_frozen_at_exactly_90_days_is_watch():
     """
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("frozen_at_exactly_90_days_watch")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["verdict"] == "WATCH", (
         f"frozen_at exactly 90 days ago returned verdict={result['verdict']!r}; "
         "expected WATCH — inclusive boundary: >=90 days is WATCH per dispatch brief"
@@ -611,9 +570,7 @@ def test_stale_watch_is_advisory_only():
     """
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("stale_frozen_at_watch")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["is_advisory_only"] == 1, (
         f"Stale WATCH is_advisory_only={result['is_advisory_only']!r}; "
         "expected 1 — stale frozen_at does not block the run"
@@ -624,14 +581,9 @@ def test_stale_raw_response_mentions_spec_age():
     """Indicator 3: raw_response must mention the spec age concern."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("stale_frozen_at_watch")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     raw_str = json.dumps(result["raw_response"]).lower()
-    assert any(
-        kw in raw_str
-        for kw in ("stale", "age", "days", "frozen_at", "90")
-    ), (
+    assert any(kw in raw_str for kw in ("stale", "age", "days", "frozen_at", "90")), (
         f"Stale WATCH raw_response does not mention spec age; "
         f"raw_response={result['raw_response']!r}"
     )
@@ -641,6 +593,7 @@ def test_stale_raw_response_mentions_spec_age():
 # T7 — Indicator 4: Phase-2 facets seeded prematurely → BREACH
 # ---------------------------------------------------------------------------
 
+
 def test_phase2_facet_lambda_returns_breach():
     """Indicator 4: 'lambda' in spec_facets must return BREACH ('phase scope leak').
 
@@ -649,9 +602,7 @@ def test_phase2_facet_lambda_returns_breach():
     """
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("phase2_facet_lambda_breach")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["verdict"] == "BREACH", (
         f"Bundle with 'lambda' facet returned verdict={result['verdict']!r}; "
         "expected BREACH — Phase-2 facet seeded prematurely must be rejected"
@@ -662,17 +613,14 @@ def test_phase2_facet_lambda_raw_response_names_scope_leak():
     """Indicator 4: raw_response must name the Phase-2 facet and 'phase scope leak'."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("phase2_facet_lambda_breach")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     raw_str = json.dumps(result["raw_response"]).lower()
     assert "lambda" in raw_str, (
         f"Indicator 4 BREACH raw_response does not name the Phase-2 facet 'lambda'; "
         f"raw_response={result['raw_response']!r}"
     )
     assert any(
-        kw in raw_str
-        for kw in ("phase", "scope", "leak", "premature", "phase-2", "phase 2")
+        kw in raw_str for kw in ("phase", "scope", "leak", "premature", "phase-2", "phase 2")
     ), (
         f"Indicator 4 BREACH raw_response does not mention phase scope concern; "
         f"raw_response={result['raw_response']!r}"
@@ -686,9 +634,7 @@ def test_phase2_facet_hysteresis_threshold_returns_breach():
     """
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("phase2_facet_hysteresis_breach")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     assert result["verdict"] == "BREACH", (
         f"Bundle with 'hysteresis-threshold' facet returned verdict={result['verdict']!r}; "
         "expected BREACH — Phase-2 facet 'hysteresis-threshold' must be rejected"
@@ -699,9 +645,7 @@ def test_phase2_facet_hysteresis_raw_response_names_the_facet():
     """Indicator 4: raw_response must identify 'hysteresis-threshold' as the offender."""
     mod = _import_spec_critic()
     bundle_id, facets = _scenario("phase2_facet_hysteresis_breach")
-    result = mod.compute_spec_critic_observation(
-        bundle_id, facets, _now=_REFERENCE_NOW
-    )
+    result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
     raw_str = json.dumps(result["raw_response"]).lower()
     assert "hysteresis" in raw_str, (
         f"Indicator 4 BREACH raw_response does not name 'hysteresis-threshold'; "
@@ -713,6 +657,7 @@ def test_phase2_facet_hysteresis_raw_response_names_the_facet():
 # T8 — Wall integrity: spec_critic must not call get_connection / get_ro_connection
 # ---------------------------------------------------------------------------
 
+
 def test_spec_critic_module_does_not_import_get_connection_directly():
     """advisors/spec_critic.py must not call get_connection or get_ro_connection.
 
@@ -722,11 +667,7 @@ def test_spec_critic_module_does_not_import_get_connection_directly():
 
     Static inspection: reads the module source and checks for the forbidden calls.
     """
-    spec_critic_path = (
-        pathlib.Path(__file__).parents[2]
-        / "advisors"
-        / "spec_critic.py"
-    )
+    spec_critic_path = pathlib.Path(__file__).parents[2] / "advisors" / "spec_critic.py"
     if not spec_critic_path.exists():
         pytest.fail(
             f"advisors/spec_critic.py not found at {spec_critic_path}. "
@@ -744,6 +685,7 @@ def test_spec_critic_module_does_not_import_get_connection_directly():
 # ---------------------------------------------------------------------------
 # T9 — Read-only contract: run_spec_critic writes only to advisor_observations
 # ---------------------------------------------------------------------------
+
 
 def test_run_spec_critic_calls_insert_advisor_observation():
     """run_spec_critic must persist the observation via insert_advisor_observation.
@@ -791,6 +733,7 @@ def test_run_spec_critic_returns_integer_row_id():
 # T10 — Phase-2 deferral: Spec Critic does not compute Regime Narrator observations
 # ---------------------------------------------------------------------------
 
+
 def test_spec_critic_does_not_produce_regime_narrator_role():
     """Spec Critic must never produce observations with advisor_role='REGIME_NARRATOR'.
 
@@ -805,9 +748,7 @@ def test_spec_critic_does_not_produce_regime_narrator_role():
         "phase2_facet_lambda_breach",
     ):
         bundle_id, facets = _scenario(scenario_name)
-        result = mod.compute_spec_critic_observation(
-            bundle_id, facets, _now=_REFERENCE_NOW
-        )
+        result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
         assert result["advisor_role"] != "REGIME_NARRATOR", (
             f"scenario {scenario_name!r}: Spec Critic produced advisor_role='REGIME_NARRATOR'. "
             "Phase-2 deferral: Spec Critic is Phase-1 only and must not compute Regime Narrator observations."
@@ -817,6 +758,7 @@ def test_spec_critic_does_not_produce_regime_narrator_role():
 # ---------------------------------------------------------------------------
 # T11 — is_advisory_only is always 1 across all paths
 # ---------------------------------------------------------------------------
+
 
 def test_is_advisory_only_is_always_1_across_all_verdict_paths():
     """is_advisory_only must be 1 on CLEAR, WATCH, and BREACH paths.
@@ -833,9 +775,7 @@ def test_is_advisory_only_is_always_1_across_all_verdict_paths():
     }
     for scenario_name, expected_verdict in scenario_to_expected_verdict.items():
         bundle_id, facets = _scenario(scenario_name)
-        result = mod.compute_spec_critic_observation(
-            bundle_id, facets, _now=_REFERENCE_NOW
-        )
+        result = mod.compute_spec_critic_observation(bundle_id, facets, _now=_REFERENCE_NOW)
         # Confirm we're actually testing the expected verdict path.
         assert result["verdict"] == expected_verdict, (
             f"scenario {scenario_name!r}: expected verdict {expected_verdict!r}, "
@@ -851,6 +791,7 @@ def test_is_advisory_only_is_always_1_across_all_verdict_paths():
 # ---------------------------------------------------------------------------
 # T12 — Indicator precedence: BREACH wins over WATCH when both indicators fire
 # ---------------------------------------------------------------------------
+
 
 def test_breach_wins_over_watch_when_stale_and_missing_facet():
     """When both I-1 (missing facet → BREACH) and I-3 (stale → WATCH) fire,
@@ -887,6 +828,7 @@ def test_breach_wins_over_watch_when_stale_and_missing_facet():
 # ---------------------------------------------------------------------------
 # T13 — bundle_hash not in spec_bundles → handled error, not silent no-op
 # ---------------------------------------------------------------------------
+
 
 def test_unknown_bundle_hash_does_not_silently_no_op():
     """When spec_bundle_id does not match any row in spec_bundles, the function

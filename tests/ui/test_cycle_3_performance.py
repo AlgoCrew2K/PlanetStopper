@@ -57,7 +57,9 @@ _PERF_AGGREGATE_PAYLOAD = {
     "insufficient_history": False,
 }
 
-_PERF_AGGREGATE_INSUFFICIENT = dict(_PERF_AGGREGATE_PAYLOAD, insufficient_history=True, observation_count=10)
+_PERF_AGGREGATE_INSUFFICIENT = dict(
+    _PERF_AGGREGATE_PAYLOAD, insufficient_history=True, observation_count=10
+)
 
 _PERF_SYMPHONY_PAYLOAD = dict(
     _PERF_AGGREGATE_PAYLOAD,
@@ -79,13 +81,25 @@ def _patch_analytics(history=None, aggregate=None, symphony=None, symphonies=Non
 
     @contextlib.contextmanager
     def _ctx():
-        with patch.object(app_module.analytics, "get_history_with_cache_invalidation", return_value=history):
-            with patch.object(app_module.analytics, "compute_aggregate_returns", return_value=aggregate):
-                with patch.object(app_module.analytics, "compute_per_symphony_returns", return_value=symphony):
-                    with patch.object(app_module.analytics, "compute_quantstats_metrics",
-                                      side_effect=[_LIVE_METRICS, _SHADOW_METRICS]):
-                        with patch.object(app_module.analytics, "list_available_symphonies",
-                                          return_value=symphonies):
+        with patch.object(
+            app_module.analytics, "get_history_with_cache_invalidation", return_value=history
+        ):
+            with patch.object(
+                app_module.analytics, "compute_aggregate_returns", return_value=aggregate
+            ):
+                with patch.object(
+                    app_module.analytics, "compute_per_symphony_returns", return_value=symphony
+                ):
+                    with patch.object(
+                        app_module.analytics,
+                        "compute_quantstats_metrics",
+                        side_effect=[_LIVE_METRICS, _SHADOW_METRICS],
+                    ):
+                        with patch.object(
+                            app_module.analytics,
+                            "list_available_symphonies",
+                            return_value=symphonies,
+                        ):
                             yield
 
     return _ctx()
@@ -149,7 +163,7 @@ def test_performance_page_has_page_landmark(perf_client):
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="performance-page"' in html, (
         "performance.html must render a root element with "
-        "data-testid=\"performance-page\". "
+        'data-testid="performance-page". '
         "Design: Performance component root div."
     )
 
@@ -181,7 +195,7 @@ def test_performance_has_scope_control(perf_client):
     """Rendered HTML must contain data-testid=\"scope-control\"."""
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="scope-control"' in html, (
-        "performance.html must render data-testid=\"scope-control\" — "
+        'performance.html must render data-testid="scope-control" — '
         "the Aggregate / Per-symphony segmented control. "
         "Design: SegControl with SCOPES options in Performance() right-header."
     )
@@ -209,7 +223,7 @@ def test_performance_has_window_control(perf_client):
     """Rendered HTML must contain data-testid=\"window-control\"."""
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="window-control"' in html, (
-        "performance.html must render data-testid=\"window-control\" — "
+        'performance.html must render data-testid="window-control" — '
         "the time-window segmented control. "
         "Design: SegControl with WINDOWS options in Performance() right-header."
     )
@@ -229,7 +243,7 @@ def test_performance_has_symphony_picker(perf_client):
     """Rendered HTML must contain data-testid=\"symphony-picker\"."""
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="symphony-picker"' in html, (
-        "performance.html must render data-testid=\"symphony-picker\" — "
+        'performance.html must render data-testid="symphony-picker" — '
         "the per-symphony dropdown (initially hidden). "
         "Design: window.Select shown when scope==='symphony'."
     )
@@ -244,7 +258,7 @@ def test_performance_has_headline_strip(perf_client):
     """Rendered HTML must contain data-testid=\"headline-strip\"."""
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="headline-strip"' in html, (
-        "performance.html must render data-testid=\"headline-strip\" — "
+        'performance.html must render data-testid="headline-strip" — '
         "the 4-cell stat strip below the controls. "
         "Design: Headline component with 4 Stat cells."
     )
@@ -254,7 +268,7 @@ def test_performance_headline_has_guard_alpha_stat(perf_client):
     """Headline strip must contain data-testid=\"guard-alpha-stat\"."""
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="guard-alpha-stat"' in html, (
-        "Headline strip must contain data-testid=\"guard-alpha-stat\" — "
+        'Headline strip must contain data-testid="guard-alpha-stat" — '
         "the large cumulative guard-alpha figure. "
         "Design: Stat with k='Cumulative guard α', big=true."
     )
@@ -269,7 +283,7 @@ def test_performance_headline_has_sharpe_delta_stat(perf_client):
     """
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="sharpe-delta-stat"' in html, (
-        "Phase 2 headline strip must contain data-testid=\"sharpe-delta-stat\". "
+        'Phase 2 headline strip must contain data-testid="sharpe-delta-stat". '
         "Source: ux-design-deliverable.md §Change 1 — "
         "Guard Alpha | Sharpe Delta | MDD Reduction | Sortino Delta."
     )
@@ -284,7 +298,7 @@ def test_performance_headline_has_mdd_reduction_stat(perf_client):
     """
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="mdd-reduction-stat"' in html, (
-        "Phase 2 headline strip must contain data-testid=\"mdd-reduction-stat\". "
+        'Phase 2 headline strip must contain data-testid="mdd-reduction-stat". '
         "Source: ux-design-deliverable.md §Change 1."
     )
 
@@ -299,7 +313,7 @@ def test_performance_headline_has_obs_caption_not_stat(perf_client):
     """
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="obs-caption"' in html, (
-        "Phase 2: observation count must move to data-testid=\"obs-caption\" element "
+        'Phase 2: observation count must move to data-testid="obs-caption" element '
         "(outside the headline strip). "
         "Source: ux-design-deliverable.md §Change 1."
     )
@@ -314,7 +328,7 @@ def test_performance_has_chart_block(perf_client):
     """Rendered HTML must contain data-testid=\"perf-chart-block\"."""
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="perf-chart-block"' in html, (
-        "performance.html must render data-testid=\"perf-chart-block\" "
+        'performance.html must render data-testid="perf-chart-block" '
         "wrapping the cumulative-returns chart. "
         "Design: ChartBlock component."
     )
@@ -333,7 +347,7 @@ def test_performance_chart_has_legend(perf_client):
     """Chart block must contain data-testid=\"perf-chart-legend\"."""
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="perf-chart-legend"' in html, (
-        "Chart block must contain data-testid=\"perf-chart-legend\" — "
+        'Chart block must contain data-testid="perf-chart-legend" — '
         "the legend strip above the chart. "
         "Design: Legend strip in ChartBlock with 'Planet Stopper-exited' + 'Live (if held)'."
     )
@@ -366,7 +380,7 @@ def test_performance_has_metrics_table(perf_client):
     """Rendered HTML must contain data-testid=\"metrics-table\"."""
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="metrics-table"' in html, (
-        "performance.html must render data-testid=\"metrics-table\" — "
+        'performance.html must render data-testid="metrics-table" — '
         "the Risk Metrics section. "
         "Design: MetricsTable component."
     )
@@ -433,7 +447,7 @@ def test_performance_metrics_table_primary_rows_highlighted(perf_client):
     # Primary metrics per design: total_return, sharpe, max_drawdown
     assert 'data-primary="true"' in html or 'data-testid="metric-row-primary"' in html, (
         "Primary metric rows (total_return, sharpe, max_drawdown) must be visually "
-        "distinguished — use data-primary=\"true\" or data-testid=\"metric-row-primary\". "
+        'distinguished — use data-primary="true" or data-testid="metric-row-primary". '
         "Design: m.primary rows have larger font + padding."
     )
 
@@ -447,7 +461,7 @@ def test_performance_has_insufficient_banner_element(perf_client):
     """Rendered HTML must contain data-testid=\"insufficient-banner\"."""
     html = perf_client.get("/performance").data.decode("utf-8")
     assert 'data-testid="insufficient-banner"' in html, (
-        "performance.html must render data-testid=\"insufficient-banner\". "
+        'performance.html must render data-testid="insufficient-banner". '
         "The banner is shown/hidden client-side based on API response. "
         "Design: InsufficientBanner shown when payload.insufficient_history=true."
     )
@@ -475,7 +489,7 @@ def test_performance_html_no_tailwind_cdn(perf_client):
     assert "cdn.tailwindcss.com" not in html, (
         "performance.html must not load the Tailwind CDN. "
         "Use --studio-* CSS custom properties instead. "
-        "Remove: <script src=\"https://cdn.tailwindcss.com\"></script>"
+        'Remove: <script src="https://cdn.tailwindcss.com"></script>'
     )
 
 
@@ -504,7 +518,9 @@ def test_performance_js_no_bare_hex_chartjs_colors():
     stripped = re.sub(r"getPropertyValue\([^)]*\)", "", stripped)
     # Hex colors in bare string literals in chart config are violations
     # Allow last-resort fallback vars but flag raw dataset borderColor:'#hex' patterns
-    bare = re.findall(r"""(?:borderColor|backgroundColor)\s*:\s*['"]#[0-9a-fA-F]{3,8}['"]""", stripped)
+    bare = re.findall(
+        r"""(?:borderColor|backgroundColor)\s*:\s*['"]#[0-9a-fA-F]{3,8}['"]""", stripped
+    )
     assert bare == [], (
         f"performance.js hardcodes Chart.js dataset hex colours: {bare}. "
         "Use CSS var reads via getComputedStyle for dataset colours."
@@ -528,8 +544,14 @@ def test_api_performance_has_required_keys(perf_client):
         resp = perf_client.get("/api/performance?scope=aggregate&days=60")
     body = resp.get_json()
     required_keys = {
-        "scope", "dates", "live_returns", "shadow_returns",
-        "live_metrics", "shadow_metrics", "observation_count", "insufficient_history",
+        "scope",
+        "dates",
+        "live_returns",
+        "shadow_returns",
+        "live_metrics",
+        "shadow_metrics",
+        "observation_count",
+        "insufficient_history",
     }
     missing = required_keys - set(body.keys())
     assert not missing, (
@@ -544,13 +566,17 @@ def test_api_performance_live_metrics_has_all_seven_keys(perf_client):
         resp = perf_client.get("/api/performance?scope=aggregate&days=60")
     body = resp.get_json()
     required_metric_keys = {
-        "total_return", "annualized_return", "sharpe", "sortino",
-        "max_drawdown", "calmar", "win_rate",
+        "total_return",
+        "annualized_return",
+        "sharpe",
+        "sortino",
+        "max_drawdown",
+        "calmar",
+        "win_rate",
     }
     missing = required_metric_keys - set(body["live_metrics"].keys())
     assert not missing, (
-        f"live_metrics missing keys: {missing}. "
-        "Design METRICS list defines these 7 keys."
+        f"live_metrics missing keys: {missing}. Design METRICS list defines these 7 keys."
     )
 
 
@@ -560,13 +586,17 @@ def test_api_performance_shadow_metrics_has_all_seven_keys(perf_client):
         resp = perf_client.get("/api/performance?scope=aggregate&days=60")
     body = resp.get_json()
     required_metric_keys = {
-        "total_return", "annualized_return", "sharpe", "sortino",
-        "max_drawdown", "calmar", "win_rate",
+        "total_return",
+        "annualized_return",
+        "sharpe",
+        "sortino",
+        "max_drawdown",
+        "calmar",
+        "win_rate",
     }
     missing = required_metric_keys - set(body["shadow_metrics"].keys())
     assert not missing, (
-        f"shadow_metrics missing keys: {missing}. "
-        "Design METRICS list defines these 7 keys."
+        f"shadow_metrics missing keys: {missing}. Design METRICS list defines these 7 keys."
     )
 
 
@@ -614,9 +644,7 @@ def test_api_performance_symphony_scope_without_id_returns_400(perf_client):
 def test_api_performance_symphony_scope_with_id_returns_200(perf_client):
     """GET /api/performance?scope=symphony&symphony_id=x must return 200."""
     with _patch_analytics():
-        resp = perf_client.get(
-            "/api/performance?scope=symphony&days=60&symphony_id=sym_paragons"
-        )
+        resp = perf_client.get("/api/performance?scope=symphony&days=60&symphony_id=sym_paragons")
     assert resp.status_code == 200
 
 
@@ -741,7 +769,9 @@ def test_performance_js_chart_has_divergence_fill():
     stripped = re.sub(r"//[^\n]*", "", content)
     # Check no 'fill: false' appears without a compensating 'fill: true' or fill: '+N'/'-N'
     fill_false_count = len(re.findall(r"\bfill\s*:\s*false\b", stripped))
-    fill_truthy_count = len(re.findall(r"""\bfill\s*:\s*(?:true|['"][+-]\d+['"]|\d+)\b""", stripped))
+    fill_truthy_count = len(
+        re.findall(r"""\bfill\s*:\s*(?:true|['"][+-]\d+['"]|\d+)\b""", stripped)
+    )
     assert fill_truthy_count >= 1, (
         f"performance.js has {fill_false_count} fill:false and {fill_truthy_count} truthy fill. "
         "At least one Chart.js dataset must have a truthy fill value to render the "
@@ -795,13 +825,10 @@ def test_performance_js_headline_stats_color_coded():
         content,
         re.DOTALL,
     )
-    assert fn_match is not None, (
-        "renderHeadlineStats function not found in performance.js."
-    )
+    assert fn_match is not None, "renderHeadlineStats function not found in performance.js."
     fn_body = fn_match.group(1)
-    has_color_assignment = (
-        "style.color" in fn_body
-        and ("studio-pos" in fn_body or "studio-neg" in fn_body)
+    has_color_assignment = "style.color" in fn_body and (
+        "studio-pos" in fn_body or "studio-neg" in fn_body
     )
     assert has_color_assignment, (
         "renderHeadlineStats must assign style.color using --studio-pos / --studio-neg "

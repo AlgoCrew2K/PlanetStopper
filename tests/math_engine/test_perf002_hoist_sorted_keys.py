@@ -93,10 +93,7 @@ import pytest
 import math_engine
 
 FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "perf002_hoist_sorted_keys"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "perf002_hoist_sorted_keys"
 )
 
 
@@ -123,10 +120,7 @@ def _expand_scenario(scenario: dict[str, Any]) -> dict[str, dict[str, dict[str, 
     """Build a historical_data dict from a curated scenario spec. Mirrors
     the helper used by the PERF-001 test file (intentional duplication so the
     two test files are independently runnable)."""
-    minimum_raw_days = (
-        math_engine.MC_MIN_HISTORY_DAYS
-        + (math_engine.MC_VOL_WINDOW_DAYS - 1)
-    )
+    minimum_raw_days = math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
     num_days = minimum_raw_days + scenario["raw_day_offset_from_minimum"]
     kind = scenario["kind"]
     history: dict = {}
@@ -238,9 +232,7 @@ def test_sorted_dates_helper_exists_and_is_callable() -> None:
         "that returns sorted(historical_data.keys()) with per-call-chain "
         "memoisation keyed by id(historical_data)."
     )
-    assert callable(math_engine._sorted_dates), (
-        "math_engine._sorted_dates is not callable."
-    )
+    assert callable(math_engine._sorted_dates), "math_engine._sorted_dates is not callable."
 
 
 # ---------------------------------------------------------------------------
@@ -312,9 +304,7 @@ def test_sorted_dates_caches_by_identity_on_repeated_calls() -> None:
     with patch.object(math_engine, "sorted", _spy_sorted, create=True):
         second = math_engine._sorted_dates(history)
 
-    assert second == first, (
-        "Cached return value diverges from primed value — cache is corrupt."
-    )
+    assert second == first, "Cached return value diverges from primed value — cache is corrupt."
     assert call_count["n"] == 0, (
         f"_sorted_dates invoked the `sorted` builtin {call_count['n']} time(s) "
         f"on a repeat call with the same dict object. The cache must be "
@@ -594,7 +584,9 @@ def test_run_monte_carlo_output_identical_with_and_without_cache(
 
     # Run 1: production helper (cached).
     out_production = math_engine.run_monte_carlo(
-        holdings, history, spy_today_return,
+        holdings,
+        history,
+        spy_today_return,
         simulation_paths=fixture["simulation_paths"],
         neighbor_k=fixture["neighbor_k"],
         seed=fixture["seed"],
@@ -604,11 +596,11 @@ def test_run_monte_carlo_output_identical_with_and_without_cache(
     # cannot poison the comparison (id-keyed caches stay scoped to the
     # original dict object).
     history_fresh = _expand_scenario(_get_scenario(scenario_id))
-    monkeypatch.setattr(
-        math_engine, "_sorted_dates", _make_uncached_reference()
-    )
+    monkeypatch.setattr(math_engine, "_sorted_dates", _make_uncached_reference())
     out_reference = math_engine.run_monte_carlo(
-        holdings, history_fresh, spy_today_return,
+        holdings,
+        history_fresh,
+        spy_today_return,
         simulation_paths=fixture["simulation_paths"],
         neighbor_k=fixture["neighbor_k"],
         seed=fixture["seed"],
@@ -659,9 +651,7 @@ def test_compute_portfolio_cvar_output_identical_with_and_without_cache(
     )
 
     history_fresh = _expand_scenario(_get_scenario(scenario_id))
-    monkeypatch.setattr(
-        math_engine, "_sorted_dates", _make_uncached_reference()
-    )
+    monkeypatch.setattr(math_engine, "_sorted_dates", _make_uncached_reference())
     out_reference = math_engine.compute_portfolio_cvar(
         cycle_id="perf002-test",
         holdings=holdings,
@@ -699,28 +689,22 @@ def test_compute_regime_match_quality_output_identical_with_and_without_cache(
     spy_today_return = fixture["spy_today_return"]
 
     out_production = math_engine.compute_regime_match_quality(
-        historical_data=history, spy_today_return=spy_today_return,
+        historical_data=history,
+        spy_today_return=spy_today_return,
     )
 
     history_fresh = _expand_scenario(_get_scenario(scenario_id))
-    monkeypatch.setattr(
-        math_engine, "_sorted_dates", _make_uncached_reference()
-    )
+    monkeypatch.setattr(math_engine, "_sorted_dates", _make_uncached_reference())
     out_reference = math_engine.compute_regime_match_quality(
-        historical_data=history_fresh, spy_today_return=spy_today_return,
+        historical_data=history_fresh,
+        spy_today_return=spy_today_return,
     )
 
-    assert (
-        (out_production.mean_sq_mahalanobis is None)
-        == (out_reference.mean_sq_mahalanobis is None)
-    ), (
-        f"[{scenario_id}] mean_sq_mahalanobis None-ness diverges."
-    )
+    assert (out_production.mean_sq_mahalanobis is None) == (
+        out_reference.mean_sq_mahalanobis is None
+    ), f"[{scenario_id}] mean_sq_mahalanobis None-ness diverges."
     if out_production.mean_sq_mahalanobis is not None:
-        assert (
-            out_production.mean_sq_mahalanobis
-            == out_reference.mean_sq_mahalanobis
-        )
+        assert out_production.mean_sq_mahalanobis == out_reference.mean_sq_mahalanobis
     assert out_production.is_unprecedented == out_reference.is_unprecedented
 
 
@@ -737,14 +721,11 @@ def test_calculate_20d_vol_output_identical_with_and_without_cache(
     out_production = math_engine.calculate_20d_vol(holdings, history)
 
     history_fresh = _expand_scenario(_get_scenario(scenario_id))
-    monkeypatch.setattr(
-        math_engine, "_sorted_dates", _make_uncached_reference()
-    )
+    monkeypatch.setattr(math_engine, "_sorted_dates", _make_uncached_reference())
     out_reference = math_engine.calculate_20d_vol(holdings, history_fresh)
 
     assert out_production == out_reference, (
-        f"[{scenario_id}] calculate_20d_vol diverges: "
-        f"{out_production!r} vs {out_reference!r}."
+        f"[{scenario_id}] calculate_20d_vol diverges: {out_production!r} vs {out_reference!r}."
     )
 
 
@@ -761,14 +742,11 @@ def test_calculate_14d_atr_pct_output_identical_with_and_without_cache(
     out_production = math_engine.calculate_14d_atr_pct(holdings, history)
 
     history_fresh = _expand_scenario(_get_scenario(scenario_id))
-    monkeypatch.setattr(
-        math_engine, "_sorted_dates", _make_uncached_reference()
-    )
+    monkeypatch.setattr(math_engine, "_sorted_dates", _make_uncached_reference())
     out_reference = math_engine.calculate_14d_atr_pct(holdings, history_fresh)
 
     assert out_production == out_reference, (
-        f"[{scenario_id}] calculate_14d_atr_pct diverges: "
-        f"{out_production!r} vs {out_reference!r}."
+        f"[{scenario_id}] calculate_14d_atr_pct diverges: {out_production!r} vs {out_reference!r}."
     )
 
 
@@ -782,9 +760,7 @@ def test_run_monte_carlo_returns_sentinel_one_below_eligible_boundary_after_hois
     minimum_raw_days - 1, run_monte_carlo must return
     MC_INSUFFICIENT_HISTORY_SENTINEL. The hoist must not shift this
     boundary by one (e.g. by an off-by-one in a cached len(valid_dates))."""
-    minimum_raw_days = (
-        math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
-    )
+    minimum_raw_days = math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
     history = {}
     for i in range(minimum_raw_days - 1):
         history[_date_key(i)] = {
@@ -810,9 +786,7 @@ def test_run_monte_carlo_returns_sentinel_one_below_eligible_boundary_after_hois
 def test_run_monte_carlo_returns_float_at_eligible_boundary_after_hoist() -> None:
     """Twin of the above; pins the inclusive lower bound. At exactly
     minimum_raw_days the function must NOT return the sentinel."""
-    minimum_raw_days = (
-        math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
-    )
+    minimum_raw_days = math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
     history = {}
     for i in range(minimum_raw_days):
         sign = 1 if i % 2 == 0 else -1
@@ -840,9 +814,7 @@ def test_compute_portfolio_cvar_insufficient_branch_boundary_after_hoist() -> No
     """Per [[project_cvar_divergence_validation_wall]]: the
     CVaR-insufficient branch must fire at exactly the same boundary as
     run_monte_carlo. The hoist must not shift it."""
-    minimum_raw_days = (
-        math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
-    )
+    minimum_raw_days = math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
     history = {}
     for i in range(minimum_raw_days - 1):
         history[_date_key(i)] = {
@@ -1014,4 +986,3 @@ def test_sorted_dates_cache_still_caches_within_one_cycle_after_bounding() -> No
         f"cache must be >= 8 so a normal cycle (5 consumers + buffer) "
         f"keeps every cycle dict's entry hot."
     )
-

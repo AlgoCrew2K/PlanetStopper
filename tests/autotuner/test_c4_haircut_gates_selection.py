@@ -42,6 +42,7 @@ _RETURN_SERIES_ATTR = "daily_returns"
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
@@ -57,8 +58,7 @@ def _default_params() -> dict:
     }
 
 
-def _make_trial(sortino_value: float, params: dict,
-                return_series: list[float]) -> MagicMock:
+def _make_trial(sortino_value: float, params: dict, return_series: list[float]) -> MagicMock:
     t = MagicMock()
     t.value = sortino_value
     t.params = params.copy()
@@ -126,17 +126,32 @@ def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
     bot_state = {"sym-A": {"name": "Haircut Wiring Test", "account_uuid": "acc-1"}}
     history = {
         "sym-A": {
-            "2026-04-01": [{"return": 2.0, "mc_prob": 50.0, "vol": 1.0,
-                            "vwap_diff": -2.0, "base_atr_pct": 1.0,
-                            "valid_vwap_weight": 1.0}],
-            "2026-04-02": [{"return": 2.0, "mc_prob": 50.0, "vol": 1.0,
-                            "vwap_diff": -2.0, "base_atr_pct": 1.0,
-                            "valid_vwap_weight": 1.0}],
+            "2026-04-01": [
+                {
+                    "return": 2.0,
+                    "mc_prob": 50.0,
+                    "vol": 1.0,
+                    "vwap_diff": -2.0,
+                    "base_atr_pct": 1.0,
+                    "valid_vwap_weight": 1.0,
+                }
+            ],
+            "2026-04-02": [
+                {
+                    "return": 2.0,
+                    "mc_prob": 50.0,
+                    "vol": 1.0,
+                    "vwap_diff": -2.0,
+                    "base_atr_pct": 1.0,
+                    "valid_vwap_weight": 1.0,
+                }
+            ],
         }
     }
 
     import inspect as _inspect
     from tests.autotuner.conftest import make_phase1_theory_bundle as _make_bundle
+
     _spec_id = _make_bundle()
     _sig = _inspect.signature(autotuner.run_autotuner)
     _extra = {"spec_bundle_id": _spec_id} if "spec_bundle_id" in _sig.parameters else {}
@@ -144,12 +159,13 @@ def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
     with (
         patch("autotuner.optuna.create_study", return_value=fake_study),
         patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
-        patch("autotuner.synthetic_history.generate_synthetic_history",
-              return_value=history),
+        patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
         patch("autotuner.database.load_chart_history", return_value={}),
         patch("autotuner.database.save_chart_archive"),
-        patch("autotuner.database.get_symphony_strategy",
-              return_value={"params": params.copy(), "locked_vars": []}),
+        patch(
+            "autotuner.database.get_symphony_strategy",
+            return_value={"params": params.copy(), "locked_vars": []},
+        ),
         patch("autotuner.database.save_symphony_strategy"),
         patch("autotuner.database.DEFAULT_STRATEGY", params),
         # S3-AUDIT-001 fix: save_autotune_run now returns cursor.lastrowid; the
@@ -158,18 +174,27 @@ def test_run_autotuner_invokes_the_benjamini_hochberg_haircut():
         # rejects — pin to a positive int.
         patch("autotuner.database.save_autotune_run", return_value=1),
         patch("autotuner.benjamini_hochberg_adjust", side_effect=_spy_bhy),
-        patch("autotuner.math_engine.compute_para_arm_decision",
-              side_effect=lambda **kw: (0.0, False)),
-        patch("autotuner.math_engine.compute_time_squeeze_decay",
-              side_effect=lambda tr: (1.5, 0.5)),
-        patch("autotuner.math_engine.compute_active_trailing_stop",
-              side_effect=lambda *a, **kw: 5.0),
-        patch("autotuner.math_engine.compute_breakeven_update",
-              side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
-        patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-              side_effect=lambda *a, **kw: -10.0),
-        patch("autotuner.math_engine.compute_vwap_breakdown_update",
-              side_effect=lambda **kw: (0, 0, True, False)),
+        patch(
+            "autotuner.math_engine.compute_para_arm_decision", side_effect=lambda **kw: (0.0, False)
+        ),
+        patch(
+            "autotuner.math_engine.compute_time_squeeze_decay", side_effect=lambda tr: (1.5, 0.5)
+        ),
+        patch(
+            "autotuner.math_engine.compute_active_trailing_stop", side_effect=lambda *a, **kw: 5.0
+        ),
+        patch(
+            "autotuner.math_engine.compute_breakeven_update",
+            side_effect=lambda *a, **kw: (a[3], a[4], a[2]),
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+            side_effect=lambda *a, **kw: -10.0,
+        ),
+        patch(
+            "autotuner.math_engine.compute_vwap_breakdown_update",
+            side_effect=lambda **kw: (0, 0, True, False),
+        ),
         contextlib.redirect_stdout(io.StringIO()),
     ):
         autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_extra)
@@ -258,17 +283,32 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
         bot_state = {"sym-A": {"name": "Orientation Test", "account_uuid": "acc-1"}}
         history = {
             "sym-A": {
-                "2026-04-01": [{"return": 2.0, "mc_prob": 50.0, "vol": 1.0,
-                                "vwap_diff": -2.0, "base_atr_pct": 1.0,
-                                "valid_vwap_weight": 1.0}],
-                "2026-04-02": [{"return": 2.0, "mc_prob": 50.0, "vol": 1.0,
-                                "vwap_diff": -2.0, "base_atr_pct": 1.0,
-                                "valid_vwap_weight": 1.0}],
+                "2026-04-01": [
+                    {
+                        "return": 2.0,
+                        "mc_prob": 50.0,
+                        "vol": 1.0,
+                        "vwap_diff": -2.0,
+                        "base_atr_pct": 1.0,
+                        "valid_vwap_weight": 1.0,
+                    }
+                ],
+                "2026-04-02": [
+                    {
+                        "return": 2.0,
+                        "mc_prob": 50.0,
+                        "vol": 1.0,
+                        "vwap_diff": -2.0,
+                        "base_atr_pct": 1.0,
+                        "valid_vwap_weight": 1.0,
+                    }
+                ],
             }
         }
 
         import inspect as _inspect2
         from tests.autotuner.conftest import make_phase1_theory_bundle as _make_bundle2
+
         _spec_id2 = _make_bundle2()
         _sig2 = _inspect2.signature(autotuner.run_autotuner)
         _extra2 = {"spec_bundle_id": _spec_id2} if "spec_bundle_id" in _sig2.parameters else {}
@@ -276,12 +316,13 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
         with (
             patch("autotuner.optuna.create_study", return_value=fake_study),
             patch("autotuner.optuna.storages.RDBStorage", return_value=MagicMock()),
-            patch("autotuner.synthetic_history.generate_synthetic_history",
-                  return_value=history),
+            patch("autotuner.synthetic_history.generate_synthetic_history", return_value=history),
             patch("autotuner.database.load_chart_history", return_value={}),
             patch("autotuner.database.save_chart_archive"),
-            patch("autotuner.database.get_symphony_strategy",
-                  return_value={"params": params.copy(), "locked_vars": []}),
+            patch(
+                "autotuner.database.get_symphony_strategy",
+                return_value={"params": params.copy(), "locked_vars": []},
+            ),
             patch("autotuner.database.save_symphony_strategy"),
             patch("autotuner.database.DEFAULT_STRATEGY", params),
             # S3-AUDIT-001 fix: save_autotune_run now returns cursor.lastrowid
@@ -289,20 +330,32 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
             # The side_effect must return an int — append() returns None.
             patch(
                 "autotuner.database.save_autotune_run",
-                side_effect=lambda **kw: (captured.append(kw) or 1),
+                side_effect=lambda **kw: captured.append(kw) or 1,
             ),
-            patch("autotuner.math_engine.compute_para_arm_decision",
-                  side_effect=lambda **kw: (0.0, False)),
-            patch("autotuner.math_engine.compute_time_squeeze_decay",
-                  side_effect=lambda tr: (1.5, 0.5)),
-            patch("autotuner.math_engine.compute_active_trailing_stop",
-                  side_effect=lambda *a, **kw: 5.0),
-            patch("autotuner.math_engine.compute_breakeven_update",
-                  side_effect=lambda *a, **kw: (a[3], a[4], a[2])),
-            patch("autotuner.math_engine.compute_vwap_bleed_arm_threshold",
-                  side_effect=lambda *a, **kw: -10.0),
-            patch("autotuner.math_engine.compute_vwap_breakdown_update",
-                  side_effect=lambda **kw: (0, 0, True, False)),
+            patch(
+                "autotuner.math_engine.compute_para_arm_decision",
+                side_effect=lambda **kw: (0.0, False),
+            ),
+            patch(
+                "autotuner.math_engine.compute_time_squeeze_decay",
+                side_effect=lambda tr: (1.5, 0.5),
+            ),
+            patch(
+                "autotuner.math_engine.compute_active_trailing_stop",
+                side_effect=lambda *a, **kw: 5.0,
+            ),
+            patch(
+                "autotuner.math_engine.compute_breakeven_update",
+                side_effect=lambda *a, **kw: (a[3], a[4], a[2]),
+            ),
+            patch(
+                "autotuner.math_engine.compute_vwap_bleed_arm_threshold",
+                side_effect=lambda *a, **kw: -10.0,
+            ),
+            patch(
+                "autotuner.math_engine.compute_vwap_breakdown_update",
+                side_effect=lambda **kw: (0, 0, True, False),
+            ),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             autotuner.run_autotuner(bot_state, "2026-05-10", ["acc-1"], **_extra2)
@@ -340,8 +393,8 @@ def test_persisted_deflated_sharpe_is_higher_is_better_oriented():
     # bootstrap-based t > ~2.6. The strong fixture lands t ~= 5.0
     # (Sortino ~43.4), the weak fixture lands t ~= 3.1 (Sortino ~18.5) —
     # both clear the gate, ordering preserved, ratio test fires.
-    strong = [1.0] * 20 + [-0.1]                        # Sortino ~43.4
-    weak = [1.0] * 30 + [-0.2, -0.2]                    # Sortino ~18.5
+    strong = [1.0] * 20 + [-0.1]  # Sortino ~43.4
+    weak = [1.0] * 30 + [-0.2, -0.2]  # Sortino ~18.5
 
     strong_value = _persisted_deflated_for(strong)
     weak_value = _persisted_deflated_for(weak)

@@ -60,9 +60,7 @@ import pytest
 import math_engine
 
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "hwm_anchored_stop"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "hwm_anchored_stop"
 
 APPROX_REL = 1e-9
 APPROX_ABS = 1e-12
@@ -137,9 +135,7 @@ def test_hwm_anchored_stop_matches_derived_fixture(
         inputs = tick["inputs"]
         expected = tick["expected"]
 
-        new_hold_ticks, new_breakeven_locked, stop_trigger_level = (
-            _call_breakeven_update(inputs)
-        )
+        new_hold_ticks, new_breakeven_locked, stop_trigger_level = _call_breakeven_update(inputs)
 
         assert new_hold_ticks == expected["new_hold_ticks"], (
             f"{fixture_name} [{label}]: new_hold_ticks mismatch. "
@@ -179,8 +175,7 @@ def test_hwm_anchored_stop_moves_down_when_distance_widens() -> None:
     the new behavior directly.)
     """
     fixture = next(
-        f for n, f in FIXTURES
-        if n == "hwm_anchored_stop_distance_widens_stop_moves_down.json"
+        f for n, f in FIXTURES if n == "hwm_anchored_stop_distance_widens_stop_moves_down.json"
     )
     t1, t2 = fixture["ticks"]
     _, _, stop1 = _call_breakeven_update(t1["inputs"])
@@ -207,9 +202,7 @@ def test_hwm_anchored_stop_rises_when_hwm_advances() -> None:
       tick2: HWM 3.5 - distance 1.0 = 2.5
     Expected: stop[2] (2.5) > stop[1] (1.0), a +1.5 rise == the +1.5 HWM rise.
     """
-    fixture = next(
-        f for n, f in FIXTURES if n == "hwm_anchored_stop_rises_with_hwm.json"
-    )
+    fixture = next(f for n, f in FIXTURES if n == "hwm_anchored_stop_rises_with_hwm.json")
     t1, t2 = fixture["ticks"]
     _, _, stop1 = _call_breakeven_update(t1["inputs"])
     _, _, stop2 = _call_breakeven_update(t2["inputs"])
@@ -238,16 +231,14 @@ def test_hwm_anchored_breakeven_floor_holds_when_base_goes_negative() -> None:
     or that re-introduced a frozen-level clamp (would emit 2.5).
     """
     fixture = next(
-        f for n, f in FIXTURES
-        if n == "hwm_anchored_stop_breakeven_floor_holds_post_lock.json"
+        f for n, f in FIXTURES if n == "hwm_anchored_stop_breakeven_floor_holds_post_lock.json"
     )
     t1, t2 = fixture["ticks"]
     _, locked1, stop1 = _call_breakeven_update(t1["inputs"])
     _, locked2, stop2 = _call_breakeven_update(t2["inputs"])
 
     assert locked1 is True and locked2 is True, (
-        f"Fixture sanity: both ticks are post-lock. Got locked1={locked1}, "
-        f"locked2={locked2}."
+        f"Fixture sanity: both ticks are post-lock. Got locked1={locked1}, locked2={locked2}."
     )
     assert stop2 == pytest.approx(0.0, rel=APPROX_REL, abs=APPROX_ABS), (
         f"BREAKEVEN FLOOR VIOLATED: post-lock base went negative (-1.0) and "
@@ -258,9 +249,7 @@ def test_hwm_anchored_breakeven_floor_holds_when_base_goes_negative() -> None:
         f"tick1 {stop1} -> tick2 {stop2}. If stop2 >= stop1 a frozen-level "
         f"clamp is still present above the breakeven floor."
     )
-    assert stop2 >= 0.0, (
-        f"Post-lock stop {stop2} must never be below the 0.0 breakeven floor."
-    )
+    assert stop2 >= 0.0, f"Post-lock stop {stop2} must never be below the 0.0 breakeven floor."
 
 
 # ===========================================================================
@@ -273,9 +262,9 @@ def test_hwm_anchored_breakeven_floor_holds_when_base_goes_negative() -> None:
 # (current_return below threshold) so stop == base_stop_level directly.
 _HWM_DISTANCE_SEQUENCES: list[tuple[str, list[float], list[float]]] = [
     # HWM rises, distance constant -> stop rises monotonically
-    ("hwm_rises_distance_flat",   [1.0, 2.0, 3.0, 4.0], [1.0, 1.0, 1.0, 1.0]),
+    ("hwm_rises_distance_flat", [1.0, 2.0, 3.0, 4.0], [1.0, 1.0, 1.0, 1.0]),
     # HWM flat, distance widens -> stop FALLS each tick (the H-1 point)
-    ("hwm_flat_distance_widens",  [5.0, 5.0, 5.0, 5.0], [0.5, 1.0, 2.0, 3.5]),
+    ("hwm_flat_distance_widens", [5.0, 5.0, 5.0, 5.0], [0.5, 1.0, 2.0, 3.5]),
     # HWM flat, distance narrows -> stop rises
     ("hwm_flat_distance_narrows", [5.0, 5.0, 5.0, 5.0], [3.0, 2.0, 1.0, 0.2]),
     # both move -> stop tracks the difference exactly
@@ -365,10 +354,7 @@ def test_hwm_is_monotone_non_decreasing_within_a_position() -> None:
     for i in range(len(returns)):
         assert hwm_series[i] == pytest.approx(
             max(returns[: i + 1]), rel=APPROX_REL, abs=APPROX_ABS
-        ), (
-            f"HWM at tick {i} = {hwm_series[i]} != running max "
-            f"{max(returns[: i + 1])}."
-        )
+        ), f"HWM at tick {i} = {hwm_series[i]} != running max {max(returns[: i + 1])}."
 
 
 # ===========================================================================
@@ -440,12 +426,8 @@ def test_no_caller_threads_the_removed_legacy_kwarg() -> None:
                 continue
             func = node.func
             is_target = (
-                isinstance(func, ast.Attribute)
-                and func.attr == "compute_breakeven_update"
-            ) or (
-                isinstance(func, ast.Name)
-                and func.id == "compute_breakeven_update"
-            )
+                isinstance(func, ast.Attribute) and func.attr == "compute_breakeven_update"
+            ) or (isinstance(func, ast.Name) and func.id == "compute_breakeven_update")
             if not is_target:
                 continue
             kwarg_names = {kw.arg for kw in node.keywords}
@@ -471,7 +453,7 @@ def test_compute_breakeven_update_docstring_describes_hwm_anchored_stop() -> Non
     (trailing-stop ratchet): a trailing stop must never move DOWN ..." — the
     exact wrong claim the audit flagged. GREEN rewrites it.
     """
-    doc = (math_engine.compute_breakeven_update.__doc__ or "")
+    doc = math_engine.compute_breakeven_update.__doc__ or ""
     lowered = doc.lower()
     assert "previously_persisted_stop_level" not in lowered, (
         "compute_breakeven_update docstring still references the removed "
@@ -504,8 +486,7 @@ def test_glynn_iglehart_citation_removed_from_math_engine() -> None:
         "importance sampling, not trailing stops. AC-4 requires its removal."
     )
     assert "Iglehart" not in source, (
-        "math_engine.py still references Iglehart — remove the incorrect "
-        "Glynn & Iglehart citation."
+        "math_engine.py still references Iglehart — remove the incorrect Glynn & Iglehart citation."
     )
 
 
@@ -560,15 +541,13 @@ def test_triggered_overrides_only_the_stop_level_not_the_state_fields() -> None:
     Catches an impl that short-circuits the whole function on is_triggered
     and returns stale / zeroed state fields.
     """
-    new_hold_ticks, new_breakeven_locked, stop_level = (
-        math_engine.compute_breakeven_update(
-            current_return=1.5,
-            symphony_vol=1.0,
-            base_stop_level=0.5,
-            current_hold_ticks=4,
-            currently_breakeven_locked=False,
-            is_triggered=True,
-        )
+    new_hold_ticks, new_breakeven_locked, stop_level = math_engine.compute_breakeven_update(
+        current_return=1.5,
+        symphony_vol=1.0,
+        base_stop_level=0.5,
+        current_hold_ticks=4,
+        currently_breakeven_locked=False,
+        is_triggered=True,
     )
     assert stop_level == pytest.approx(
         math_engine.TRIGGERED_OVERRIDE_LEVEL, rel=APPROX_REL, abs=APPROX_ABS
@@ -602,7 +581,7 @@ def test_triggered_override_is_applied_last_beats_breakeven_floor() -> None:
     _, _, stop_level = math_engine.compute_breakeven_update(
         current_return=2.0,
         symphony_vol=1.0,
-        base_stop_level=3.0,           # locked branch would give 3.0
+        base_stop_level=3.0,  # locked branch would give 3.0
         current_hold_ticks=10,
         currently_breakeven_locked=True,
         is_triggered=True,

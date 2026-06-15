@@ -40,10 +40,7 @@ import database as db
 # ---------------------------------------------------------------------------
 
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parents[1]
-    / "fixtures"
-    / "math"
-    / "telemetry_helper_write_basic.json"
+    pathlib.Path(__file__).parents[1] / "fixtures" / "math" / "telemetry_helper_write_basic.json"
 )
 
 
@@ -109,19 +106,22 @@ def test_mode_passed_positionally_raises_type_error(telemetry_fixture):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad_mode", [
-    True,       # truthy bool — should not be accepted (mode is a Literal, not bool)
-    False,      # falsy bool
-    1,          # truthy int
-    0,          # falsy int
-    "Live",     # wrong casing
-    "LIVE",     # wrong casing
-    "Replay",   # wrong casing
-    "",         # empty string
-    "live ",    # trailing whitespace
-    " replay",  # leading whitespace
-    None,       # None
-])
+@pytest.mark.parametrize(
+    "bad_mode",
+    [
+        True,  # truthy bool — should not be accepted (mode is a Literal, not bool)
+        False,  # falsy bool
+        1,  # truthy int
+        0,  # falsy int
+        "Live",  # wrong casing
+        "LIVE",  # wrong casing
+        "Replay",  # wrong casing
+        "",  # empty string
+        "live ",  # trailing whitespace
+        " replay",  # leading whitespace
+        None,  # None
+    ],
+)
 def test_invalid_mode_value_raises(telemetry_fixture, bad_mode):
     """Hostile: non-literal mode values must be rejected at the call boundary.
 
@@ -148,9 +148,7 @@ def test_write_telemetry_row_exists():
         "database.write_telemetry_row does not exist. "
         "H4 plan deliverable (1) requires this function."
     )
-    assert callable(db.write_telemetry_row), (
-        "database.write_telemetry_row is not callable."
-    )
+    assert callable(db.write_telemetry_row), "database.write_telemetry_row is not callable."
 
 
 def test_mode_parameter_has_no_default():
@@ -178,11 +176,13 @@ def test_mode_parameter_is_keyword_only():
     The `*` separator in the signature is what enforces this structurally.
     """
     sig = inspect.signature(db.write_telemetry_row)
-    assert "mode" in sig.parameters, "mode parameter not found — see test_mode_parameter_has_no_default"
+    assert "mode" in sig.parameters, (
+        "mode parameter not found — see test_mode_parameter_has_no_default"
+    )
     param = sig.parameters["mode"]
     assert param.kind == inspect.Parameter.KEYWORD_ONLY, (
         f"mode must be KEYWORD_ONLY; found kind={param.kind!r}. "
-        "H4 plan: 'mode: Literal[\"live\",\"replay\"]' — after the * separator."
+        'H4 plan: \'mode: Literal["live","replay"]\' — after the * separator.'
     )
 
 
@@ -199,6 +199,7 @@ def test_function_accepts_valid_live_mode(telemetry_fixture, tmp_path, monkeypat
 
     # Create the target table
     import sqlite3
+
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
@@ -236,6 +237,7 @@ def test_function_accepts_valid_replay_mode(telemetry_fixture, tmp_path, monkeyp
     db.init_db()
 
     import sqlite3
+
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(

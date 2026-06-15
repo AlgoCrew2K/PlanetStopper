@@ -52,8 +52,9 @@ def db_path(tmp_path):
     def _get_conn():
         return sqlite3.connect(test_db, timeout=10.0)
 
-    with patch.object(db, "DB_FILE", test_db), patch.object(
-        db, "get_connection", side_effect=_get_conn
+    with (
+        patch.object(db, "DB_FILE", test_db),
+        patch.object(db, "get_connection", side_effect=_get_conn),
     ):
         db.init_db()
         yield test_db
@@ -104,8 +105,7 @@ def test_double_acquire_returns_false_immediately(db_path):
 
     second = db.acquire_lock()
     assert second is False, (
-        "acquire_lock() must return False when lock is already held "
-        "and has not yet expired"
+        "acquire_lock() must return False when lock is already held and has not yet expired"
     )
 
 

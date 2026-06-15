@@ -51,10 +51,7 @@ import database
 
 
 _FIXTURE_PATH = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math"
-    / "m3_provenance_facets.json"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math" / "m3_provenance_facets.json"
 )
 
 
@@ -104,9 +101,7 @@ def _resolve_m3_bundle_hash() -> str:
     bundle_id = fallback_fn()
     row = database.get_spec_bundle_by_id(bundle_id)
     if row is None:
-        raise RuntimeError(
-            f"Phase-1 bundle id {bundle_id} returned but no spec_bundles row found."
-        )
+        raise RuntimeError(f"Phase-1 bundle id {bundle_id} returned but no spec_bundles row found.")
     return row["bundle_hash"]
 
 
@@ -151,9 +146,7 @@ def test_m3_provenance_fixture_is_structurally_complete() -> None:
         "freeze_discipline_constraints",
         "persistence_contract",
     ):
-        assert key in fixture, (
-            f"M3 provenance fixture missing required top-level key: {key!r}"
-        )
+        assert key in fixture, f"M3 provenance fixture missing required top-level key: {key!r}"
     # The two facet specs each need name + discipline + value_must_reference.
     for facet_key in ("r1_facet", "r2_facet"):
         spec = fixture[facet_key]
@@ -163,9 +156,7 @@ def test_m3_provenance_fixture_is_structurally_complete() -> None:
             "value_must_reference",
             "intended_direction_required_substrings",
         ):
-            assert required in spec, (
-                f"M3 provenance fixture {facet_key} missing key: {required!r}"
-            )
+            assert required in spec, f"M3 provenance fixture {facet_key} missing key: {required!r}"
 
 
 # --- R1 facet persistence + content ----------------------------------------
@@ -217,9 +208,7 @@ def test_r1_facet_value_cites_derivation() -> None:
 
     bundle_hash = _resolve_m3_bundle_hash()
     facet = _get_facet_by_name(bundle_hash, spec["facet_name"])
-    assert facet is not None, (
-        f"R1 facet {spec['facet_name']!r} not persisted; cannot check value."
-    )
+    assert facet is not None, f"R1 facet {spec['facet_name']!r} not persisted; cannot check value."
 
     blob = _facet_text_blob(facet)
     for required in spec["value_must_reference"]:
@@ -251,8 +240,7 @@ def test_r1_facet_declares_intended_direction() -> None:
     bundle_hash = _resolve_m3_bundle_hash()
     facet = _get_facet_by_name(bundle_hash, spec["facet_name"])
     assert facet is not None, (
-        f"R1 facet {spec['facet_name']!r} not persisted; cannot check "
-        f"intended_direction."
+        f"R1 facet {spec['facet_name']!r} not persisted; cannot check intended_direction."
     )
 
     blob = _facet_text_blob(facet)
@@ -308,15 +296,11 @@ def test_r2_facet_value_cites_derivation() -> None:
 
     bundle_hash = _resolve_m3_bundle_hash()
     facet = _get_facet_by_name(bundle_hash, spec["facet_name"])
-    assert facet is not None, (
-        f"R2 facet {spec['facet_name']!r} not persisted; cannot check value."
-    )
+    assert facet is not None, f"R2 facet {spec['facet_name']!r} not persisted; cannot check value."
 
     blob = _facet_text_blob(facet)
     for required in spec["value_must_reference"]:
-        assert required in blob, (
-            f"R2 facet text does not reference {required!r}. Got blob:\n{blob}"
-        )
+        assert required in blob, f"R2 facet text does not reference {required!r}. Got blob:\n{blob}"
 
 
 def test_r2_facet_declares_intended_direction_byte_identical() -> None:
@@ -334,8 +318,7 @@ def test_r2_facet_declares_intended_direction_byte_identical() -> None:
     bundle_hash = _resolve_m3_bundle_hash()
     facet = _get_facet_by_name(bundle_hash, spec["facet_name"])
     assert facet is not None, (
-        f"R2 facet {spec['facet_name']!r} not persisted; cannot check "
-        f"intended_direction."
+        f"R2 facet {spec['facet_name']!r} not persisted; cannot check intended_direction."
     )
 
     blob = _facet_text_blob(facet)
@@ -406,8 +389,7 @@ def test_m3_bundle_hash_matches_persisted_facets_json() -> None:
     bundle_hash = _resolve_m3_bundle_hash()
     bundle = database.get_spec_bundle(bundle_hash)
     assert bundle is not None, (
-        f"spec_bundles row with hash {bundle_hash!r} not found after the "
-        f"M3 entry point was called."
+        f"spec_bundles row with hash {bundle_hash!r} not found after the M3 entry point was called."
     )
     facets_json = bundle.get("facets_json")
     assert facets_json is not None, (

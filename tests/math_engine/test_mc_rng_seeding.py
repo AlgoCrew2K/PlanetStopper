@@ -37,17 +37,13 @@ import pytest
 
 import math_engine
 
-FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "mc_rng_seeding"
-)
+FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "mc_rng_seeding"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_fixture(filename: str) -> dict[str, Any]:
     path = FIXTURE_DIR / filename
@@ -105,6 +101,7 @@ def _call_mc(inputs: dict[str, Any], seed: int | None) -> float:
 # 1. Signature test — run_monte_carlo must accept optional seed parameter
 # ---------------------------------------------------------------------------
 
+
 def test_run_monte_carlo_signature_has_optional_seed_parameter() -> None:
     """
     run_monte_carlo must accept seed as a keyword arg with default None.
@@ -118,14 +115,14 @@ def test_run_monte_carlo_signature_has_optional_seed_parameter() -> None:
     )
     default = sig.parameters["seed"].default
     assert default is None, (
-        f"run_monte_carlo 'seed' parameter default must be None (optional), "
-        f"got {default!r}."
+        f"run_monte_carlo 'seed' parameter default must be None (optional), got {default!r}."
     )
 
 
 # ---------------------------------------------------------------------------
 # 2. Reproducibility — same seed, same input → identical output, 100 runs
 # ---------------------------------------------------------------------------
+
 
 def test_same_seed_same_input_produces_identical_mc_prob_across_100_runs() -> None:
     """
@@ -152,17 +149,14 @@ def test_same_seed_same_input_produces_identical_mc_prob_across_100_runs() -> No
         "Seed is not fully controlling RNG state."
     )
     first = results[0]
-    assert math.isfinite(first), (
-        f"Seeded run_monte_carlo returned non-finite value {first!r}."
-    )
-    assert 0.0 <= first <= 100.0, (
-        f"mc_prob {first!r} is outside [0, 100]."
-    )
+    assert math.isfinite(first), f"Seeded run_monte_carlo returned non-finite value {first!r}."
+    assert 0.0 <= first <= 100.0, f"mc_prob {first!r} is outside [0, 100]."
 
 
 # ---------------------------------------------------------------------------
 # 3. Seed distinguishability — different seed → different output (same input)
 # ---------------------------------------------------------------------------
+
 
 def test_different_seeds_produce_different_mc_prob_for_same_input() -> None:
     """
@@ -199,6 +193,7 @@ def test_different_seeds_produce_different_mc_prob_for_same_input() -> None:
 # 4. Unseeded path — seed=None must not regress existing behaviour
 # ---------------------------------------------------------------------------
 
+
 def test_unseeded_path_seed_none_returns_finite_float_in_range() -> None:
     """
     AC-H3.1: seed=None uses the default (process) RNG — existing callers pass
@@ -223,6 +218,7 @@ def test_unseeded_path_seed_none_returns_finite_float_in_range() -> None:
 # ---------------------------------------------------------------------------
 # 5. Seed-helper signature — derive_cycle_mc_seed must exist and be callable
 # ---------------------------------------------------------------------------
+
 
 def test_derive_cycle_mc_seed_exists_in_math_engine() -> None:
     """
@@ -252,6 +248,7 @@ def test_derive_cycle_mc_seed_signature_accepts_cycle_id_string() -> None:
 # 6. Seed helper determinism — derive_cycle_mc_seed(x) == derive_cycle_mc_seed(x)
 # ---------------------------------------------------------------------------
 
+
 def test_derive_cycle_mc_seed_is_deterministic_for_same_cycle_id() -> None:
     """
     Pure function: calling derive_cycle_mc_seed with the same cycle_id twice
@@ -276,6 +273,7 @@ def test_derive_cycle_mc_seed_is_deterministic_for_same_cycle_id() -> None:
 # 7. Seed helper collision-resistance — no collisions in sample fixture IDs
 # ---------------------------------------------------------------------------
 
+
 def test_derive_cycle_mc_seed_has_no_collisions_in_fixture_sample() -> None:
     """
     derive_cycle_mc_seed must map each of the fixture's sample_cycle_ids to a
@@ -297,19 +295,14 @@ def test_derive_cycle_mc_seed_has_no_collisions_in_fixture_sample() -> None:
         f"derive_cycle_mc_seed produced {len(cycle_ids) - len(unique_seeds)} collision(s) "
         f"across {len(cycle_ids)} sample cycle_ids. "
         f"Colliding ids: "
-        + str(
-            [
-                cid
-                for cid, seed in zip(cycle_ids, seeds)
-                if seeds.count(seed) > 1
-            ]
-        )
+        + str([cid for cid, seed in zip(cycle_ids, seeds) if seeds.count(seed) > 1])
     )
 
 
 # ---------------------------------------------------------------------------
 # 8. Cross-restart determinism — two daemon starts, same cycle_id, same mc_prob
 # ---------------------------------------------------------------------------
+
 
 def test_cross_restart_same_cycle_id_produces_same_mc_prob() -> None:
     """
@@ -351,6 +344,7 @@ def test_cross_restart_same_cycle_id_produces_same_mc_prob() -> None:
 # 9. Autotuner replay determinism — replay is bit-for-bit reproducible
 # ---------------------------------------------------------------------------
 
+
 def test_autotuner_replay_with_same_cycle_id_and_trial_params_is_reproducible() -> None:
     """
     AC-H3.2: an autotuner replay call must be bit-for-bit reproducible.
@@ -384,6 +378,7 @@ def test_autotuner_replay_with_same_cycle_id_and_trial_params_is_reproducible() 
 # ---------------------------------------------------------------------------
 # 10. Global-RNG isolation — run_monte_carlo(seed=X) must NOT mutate global RNG
 # ---------------------------------------------------------------------------
+
 
 def test_seeded_run_monte_carlo_does_not_mutate_numpy_global_rng() -> None:
     """
@@ -423,6 +418,7 @@ def test_seeded_run_monte_carlo_does_not_mutate_numpy_global_rng() -> None:
 # ---------------------------------------------------------------------------
 # 11. Generator isolation — seed is plumbed via default_rng, NOT np.random.seed
 # ---------------------------------------------------------------------------
+
 
 def test_run_monte_carlo_uses_default_rng_not_global_seed() -> None:
     """

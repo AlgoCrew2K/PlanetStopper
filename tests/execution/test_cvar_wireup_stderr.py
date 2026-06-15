@@ -83,6 +83,7 @@ import math_engine
 
 try:
     from zoneinfo import ZoneInfo
+
     _ET = ZoneInfo("America/New_York")
     _FIXED_ET = datetime(2025, 5, 14, 11, 30, 0, tzinfo=_ET)
 except Exception:  # pragma: no cover
@@ -112,7 +113,11 @@ def _make_minimal_history(current_date_str: str):
     return {
         current_date_str: {
             "SPY": {
-                "c": 500.0, "daily_ret": 0.001, "high": 501.0, "low": 499.0, "close": 500.0,
+                "c": 500.0,
+                "daily_ret": 0.001,
+                "high": 501.0,
+                "low": 499.0,
+                "close": 500.0,
             }
         }
     }
@@ -143,30 +148,31 @@ def _seed_state():
 
 @pytest.fixture
 def patched_environment():
-    with patch.object(alpha_bot_execution, "database") as mock_db, \
-         patch.object(alpha_bot_execution, "reporting") as mock_reporting, \
-         patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym, \
-         patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist, \
-         patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap, \
-         patch.object(alpha_bot_execution, "get_current_et", return_value=_FIXED_ET), \
-         patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]), \
-         patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test"), \
-         patch.object(alpha_bot_execution, "ALPACA_KEY", "test"), \
-         patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-         patch.object(alpha_bot_execution.time, "sleep"), \
-         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting") as mock_reporting,
+        patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch_sym,
+        patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_fetch_hist,
+        patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_fetch_vwap,
+        patch.object(alpha_bot_execution, "get_current_et", return_value=_FIXED_ET),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [_ACCOUNT_ID]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "test"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "test"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+    ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = _seed_state()
         mock_db.load_chart_history.return_value = {
-            "date": _FIXED_ET.strftime("%Y-%m-%d"), "symphonies": {}
+            "date": _FIXED_ET.strftime("%Y-%m-%d"),
+            "symphonies": {},
         }
         mock_db.get_symphony_strategy.return_value = {"params": {}, "locked_vars": {}}
         mock_db.normalize_name.side_effect = lambda n: n.strip().lower()
         mock_db.wipe_transient_state.side_effect = lambda s: s
         mock_fetch_sym.return_value = [_make_symphony_payload()]
-        mock_fetch_hist.return_value = _make_minimal_history(
-            _FIXED_ET.strftime("%Y-%m-%d")
-        )
+        mock_fetch_hist.return_value = _make_minimal_history(_FIXED_ET.strftime("%Y-%m-%d"))
         mock_fetch_vwap.return_value = {_TICKER: {"vwap": 500.0, "last_price": 500.0}}
         yield {
             "db": mock_db,
@@ -313,9 +319,7 @@ class TestComputePortfolioCvarPopulatesStderr:
                 "return sentinel; the test wants the SUFFICIENT-DATA branch."
             )
 
-        assert hasattr(result, "stderr"), (
-            "CVaRAssessment.stderr field missing (risk-cvar BLOCK)."
-        )
+        assert hasattr(result, "stderr"), "CVaRAssessment.stderr field missing (risk-cvar BLOCK)."
         assert result.stderr is not None, (
             "compute_portfolio_cvar returned cvar_pct but stderr is None. "
             "S-3 4-part contract requires the uncertainty band when the "
@@ -324,9 +328,7 @@ class TestComputePortfolioCvarPopulatesStderr:
         assert isinstance(result.stderr, float), (
             f"stderr must be a float; got {type(result.stderr).__name__}"
         )
-        assert math.isfinite(result.stderr), (
-            f"stderr must be finite; got {result.stderr!r}"
-        )
+        assert math.isfinite(result.stderr), f"stderr must be finite; got {result.stderr!r}"
         assert result.stderr > 0.0, (
             f"stderr must be strictly positive on a non-degenerate tail; "
             f"got {result.stderr!r}. A zero stderr means the tail observations "

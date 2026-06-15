@@ -102,6 +102,7 @@ def test_save_autotune_run_returned_id_matches_inserted_row_pk():
     assert isinstance(row_id, int) and row_id > 0
 
     import os
+
     db_path = os.environ["DB_PATH"]
     conn = sqlite3.connect(db_path)
     fetched = conn.execute(
@@ -160,7 +161,7 @@ def test_autotune_runs_select_projects_id_column():
     # Strip leading "SELECT" and trailing "FROM ..." to inspect just the projection list.
     select_idx = normalised.index("select")
     from_idx = normalised.index("from")
-    projection = normalised[select_idx + len("select"):from_idx]
+    projection = normalised[select_idx + len("select") : from_idx]
     projected_columns = {p.strip() for p in projection.split(",")}
 
     assert "id" in projected_columns, (
@@ -231,8 +232,7 @@ def test_get_all_autotune_runs_carries_id_on_every_row():
 
     rows = db_module.get_all_autotune_runs(limit=10)
     assert len(rows) >= 3, (
-        f"Expected at least 3 rows in get_all_autotune_runs after 3 inserts; "
-        f"got {len(rows)}."
+        f"Expected at least 3 rows in get_all_autotune_runs after 3 inserts; got {len(rows)}."
     )
     for row in rows:
         assert "id" in row, (

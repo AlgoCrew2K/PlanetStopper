@@ -122,9 +122,7 @@ def test_request_suggestions_reads_parsed_output_from_content_block():
     fake_client = MagicMock(name="fake_anthropic_client_real_shape")
     fake_client.messages.parse.return_value = sdk_response
 
-    with patch.object(
-        ai_advisor, "_build_client", return_value=fake_client, create=True
-    ):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         response, error = ai_advisor.request_suggestions(_empty_context())
 
     assert error is None, (
@@ -165,9 +163,7 @@ def test_request_suggestions_yields_populated_suggestions_from_content_block():
     fake_client = MagicMock(name="fake_client_populated")
     fake_client.messages.parse.return_value = sdk_response
 
-    with patch.object(
-        ai_advisor, "_build_client", return_value=fake_client, create=True
-    ):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         response, error = ai_advisor.request_suggestions(_empty_context())
 
     assert error is None
@@ -200,9 +196,7 @@ def test_parsed_output_none_on_real_shape_degrades_gracefully():
     fake_client = MagicMock(name="fake_client_malformed_real")
     fake_client.messages.parse.return_value = sdk_response
 
-    with patch.object(
-        ai_advisor, "_build_client", return_value=fake_client, create=True
-    ):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         try:
             response, error = ai_advisor.request_suggestions(_empty_context())
         except Exception as exc:  # noqa: BLE001 - the whole point is no-raise
@@ -240,9 +234,7 @@ def test_no_text_blocks_in_content_degrades_gracefully():
     fake_client = MagicMock(name="fake_client_empty_content")
     fake_client.messages.parse.return_value = sdk_response
 
-    with patch.object(
-        ai_advisor, "_build_client", return_value=fake_client, create=True
-    ):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         try:
             response, error = ai_advisor.request_suggestions(_empty_context())
         except Exception as exc:  # noqa: BLE001
@@ -278,9 +270,7 @@ def test_request_suggestions_calls_messages_parse_with_documented_kwargs():
     fake_client = MagicMock(name="fake_client_call_sig")
     fake_client.messages.parse.return_value = sdk_response
 
-    with patch.object(
-        ai_advisor, "_build_client", return_value=fake_client, create=True
-    ):
+    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         ai_advisor.request_suggestions(_empty_context())
 
     # The method we expect to be called.
@@ -293,8 +283,7 @@ def test_request_suggestions_calls_messages_parse_with_documented_kwargs():
     # (the SDK signature is `*, max_tokens, messages, model, ...`).
     for required in ("model", "max_tokens", "messages", "output_format"):
         assert required in kwargs, (
-            f"messages.parse call missing required kwarg {required!r}; "
-            f"got kwargs={list(kwargs)}"
+            f"messages.parse call missing required kwarg {required!r}; got kwargs={list(kwargs)}"
         )
 
     # output_format must be the Pydantic schema class itself — passing an

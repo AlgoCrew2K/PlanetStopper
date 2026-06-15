@@ -46,9 +46,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_TTL_FIXTURE_PATH = (
-    _REPO_ROOT / "tests" / "fixtures" / "math" / "atlas_cache_ttl_boundary.json"
-)
+_TTL_FIXTURE_PATH = _REPO_ROOT / "tests" / "fixtures" / "math" / "atlas_cache_ttl_boundary.json"
 
 
 def _load_ttl_fixture() -> dict:
@@ -87,9 +85,7 @@ def _seed_row(db_path: str, collection: str, payload: object, age_seconds: int) 
     Uses the real schema expected by init_atlas_cache() so the implementer cannot
     satisfy these tests with a different schema shape.
     """
-    fetched_at = (
-        datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
-    ).isoformat()
+    fetched_at = (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat()
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
@@ -97,8 +93,7 @@ def _seed_row(db_path: str, collection: str, payload: object, age_seconds: int) 
             "(collection TEXT PRIMARY KEY, fetched_at TEXT, payload TEXT)"
         )
         conn.execute(
-            "INSERT OR REPLACE INTO atlas_cache (collection, fetched_at, payload) "
-            "VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO atlas_cache (collection, fetched_at, payload) VALUES (?, ?, ?)",
             (collection, fetched_at, json.dumps(payload)),
         )
         conn.commit()
@@ -140,9 +135,7 @@ class TestCacheHit:
         result = atlas_cache.cached_pull("community_strats", fetch, ttl_days=7)
 
         # fetch_fn must NOT have been called at all.
-        assert fetch.call_count == 0, (
-            f"Expected 0 fetch_fn calls on HIT; got {fetch.call_count}"
-        )
+        assert fetch.call_count == 0, f"Expected 0 fetch_fn calls on HIT; got {fetch.call_count}"
         # The returned value must be the cached payload, not the spy return value.
         assert result == stored_payload, (
             f"Expected cached payload {stored_payload!r}; got {result!r}"
@@ -266,9 +259,7 @@ class TestForceRefresh:
         new_payload = {"refreshed": True}
         fetch = _spy_fetch(return_value=new_payload)
 
-        result = atlas_cache.cached_pull(
-            "community_strats", fetch, ttl_days=7, force_refresh=True
-        )
+        result = atlas_cache.cached_pull("community_strats", fetch, ttl_days=7, force_refresh=True)
 
         assert fetch.call_count == 1, (
             f"force_refresh=True must call fetch_fn; got {fetch.call_count} calls"
@@ -420,9 +411,7 @@ class TestNeverRaises:
             # Must NOT raise.
             result = atlas_cache.cached_pull("some_coll", fetch, ttl_days=7)
 
-            assert result == live_payload, (
-                f"Expected live payload on write failure; got {result!r}"
-            )
+            assert result == live_payload, f"Expected live payload on write failure; got {result!r}"
         finally:
             # Restore permissions so temp dir cleanup doesn't fail.
             db_path.chmod(0o644)
@@ -625,9 +614,7 @@ class TestSecretsIsolation:
 
         mongo_uri = os.environ["MONGO_URI"]
         result_str = json.dumps(result, default=str)
-        assert mongo_uri not in result_str, (
-            f"MONGO_URI found in returned payload: {result_str!r}"
-        )
+        assert mongo_uri not in result_str, f"MONGO_URI found in returned payload: {result_str!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -661,13 +648,10 @@ class TestStructuralIsolation:
                     name_lower = name.lower()
                     for forbidden in forbidden_prefixes:
                         if name_lower.startswith(forbidden):
-                            violations.append(
-                                f"Line {node.lineno}: forbidden import '{name}'"
-                            )
+                            violations.append(f"Line {node.lineno}: forbidden import '{name}'")
 
-        assert not violations, (
-            "atlas_cache.py contains forbidden imports (AC-9):\n"
-            + "\n".join(violations)
+        assert not violations, "atlas_cache.py contains forbidden imports (AC-9):\n" + "\n".join(
+            violations
         )
 
     def test_atlas_cache_collection_primary_key_is_text(self, atlas_cache_db):

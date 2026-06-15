@@ -273,8 +273,7 @@ def load_community_strategies(
 
     # Strip the internal _sharpe key before returning.
     final_candidates = [
-        {k: v for k, v in c.items() if k != "_sharpe"}
-        for c in best_by_hash.values()
+        {k: v for k, v in c.items() if k != "_sharpe"} for c in best_by_hash.values()
     ]
 
     # Apply limit after dedup/filter.

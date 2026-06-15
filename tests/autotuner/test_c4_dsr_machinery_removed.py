@@ -48,11 +48,13 @@ _MATH_ENGINE_SRC = _WORKTREE_ROOT / "math_engine.py"
 
 def _import_autotuner():
     import autotuner
+
     return autotuner
 
 
 def _import_math_engine():
     import math_engine
+
     return math_engine
 
 
@@ -181,8 +183,7 @@ def test_cross_trial_moments_not_fed_into_a_non_normality_denominator():
         "autotuner.py computes a 3rd/4th-moment (skew/kurtosis) over "
         "`trial_values` — the cross-trial score distribution. AC-1 (audit H-5): "
         "the cross-trial moments must not feed a non-normality denominator. The "
-        "Harvey & Liu haircut has no such term. Offending:\n  "
-        + "\n  ".join(offending)
+        "Harvey & Liu haircut has no such term. Offending:\n  " + "\n  ".join(offending)
     )
 
 
@@ -196,11 +197,14 @@ def _contains(parent: ast.AST, target: ast.AST) -> bool:
 # ===========================================================================
 
 
-@pytest.mark.parametrize("obsolete_test", [
-    "test_o2_deflated_sharpe.py",
-    "test_r5_dsr_expected_max_sharpe.py",
-    "test_r6_sortino_sentinel_trim.py",
-])
+@pytest.mark.parametrize(
+    "obsolete_test",
+    [
+        "test_o2_deflated_sharpe.py",
+        "test_r5_dsr_expected_max_sharpe.py",
+        "test_r6_sortino_sentinel_trim.py",
+    ],
+)
 def test_obsolete_dsr_test_files_are_removed(obsolete_test):
     """
     D3: the test files that pin the OLD (Sharpe-DSR) behaviour must be deleted —
@@ -240,8 +244,7 @@ def test_portmode_test_no_longer_references_deleted_dsr_symbols():
         return  # file deleted — cannot reference any symbol; intent fully satisfied
 
     src = portmode_test.read_text(encoding="utf-8")
-    for symbol in ("compute_dsr_T", "compute_deflated_sharpe_ratio",
-                   "compute_expected_max_sharpe"):
+    for symbol in ("compute_dsr_T", "compute_deflated_sharpe_ratio", "compute_expected_max_sharpe"):
         assert symbol not in src, (
             f"tests/portmode/test_autotuner_portmode.py still references "
             f"`{symbol}` — a D3-deleted symbol. Remove the import and its tests."

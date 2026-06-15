@@ -126,9 +126,7 @@ def test_priority_ladder_order_preserved_under_all_regimes(
 
 @pytest.mark.parametrize("regime_label", ALL_REGIME_LABELS)
 @pytest.mark.parametrize("base_ticks", [1, 2, 3, 4, 5, 8])
-def test_adjusted_ticks_never_zero_or_negative(
-    regime_label: str | None, base_ticks: int
-) -> None:
+def test_adjusted_ticks_never_zero_or_negative(regime_label: str | None, base_ticks: int) -> None:
     """
     REQ-FS-3: a regime adjustment that returns 0 or negative would disable the
     confirmation ladder entirely (the trailing stop would fire on the very FIRST
@@ -178,15 +176,13 @@ def test_breakeven_locked_latch_preserved_under_all_regimes(
 
     # Now call compute_breakeven_update with breakeven_locked=True
     # The latch must NOT be reset by anything, including a regime-adjusted cycle
-    new_hold_ticks, new_breakeven_locked, stop_trigger_level = (
-        math_engine.compute_breakeven_update(
-            current_return=-5.0,        # below activation — would reset hold ticks
-            symphony_vol=1.0,
-            base_stop_level=-2.0,
-            current_hold_ticks=0,
-            currently_breakeven_locked=True,   # LATCHED
-            is_triggered=False,
-        )
+    new_hold_ticks, new_breakeven_locked, stop_trigger_level = math_engine.compute_breakeven_update(
+        current_return=-5.0,  # below activation — would reset hold ticks
+        symphony_vol=1.0,
+        base_stop_level=-2.0,
+        current_hold_ticks=0,
+        currently_breakeven_locked=True,  # LATCHED
+        is_triggered=False,
     )
     assert new_breakeven_locked is True, (
         f"REQ-FS-4 VIOLATED: breakeven_locked latch was reset under "
@@ -346,7 +342,9 @@ def test_regime_ticks_upper_bound_is_below_session_length() -> None:
     # The constant was already tested for existence in test_regime_ticks_bounds_constants_exist.
     # This test adds the session-length safety ceiling.
     SESSION_MINUTES = 390  # NYSE regular session: 09:30-16:00 ET
-    PRACTICAL_CEILING = 30  # at most 30 consecutive below-stop ticks = ~30 min of continuous drawdown required
+    PRACTICAL_CEILING = (
+        30  # at most 30 consecutive below-stop ticks = ~30 min of continuous drawdown required
+    )
     assert upper <= PRACTICAL_CEILING, (
         f"REGIME_TICKS_UPPER_BOUND={upper} exceeds the practical safety ceiling "
         f"of {PRACTICAL_CEILING}. A confirmation count above {PRACTICAL_CEILING} "
@@ -459,9 +457,7 @@ def test_regime_adjustment_constants_not_in_optuna_spec() -> None:
     appear inside a trial.suggest_* call in autotuner.py's AST.
     """
     autotuner_path = _WORKTREE_ROOT / "autotuner.py"
-    assert autotuner_path.exists(), (
-        f"autotuner.py not found at {autotuner_path}"
-    )
+    assert autotuner_path.exists(), f"autotuner.py not found at {autotuner_path}"
     source = autotuner_path.read_text(encoding="utf-8")
 
     # Phase 3c constant name strings that must NOT appear in suggest_* calls
@@ -489,9 +485,7 @@ def test_regime_adjustment_constants_not_in_optuna_spec() -> None:
         for arg in node.args + [kw.value for kw in node.keywords]:
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 if arg.value in phase3c_constant_names:
-                    violations.append(
-                        f"line {node.lineno}: {src_lines[node.lineno - 1].strip()}"
-                    )
+                    violations.append(f"line {node.lineno}: {src_lines[node.lineno - 1].strip()}")
 
     assert not violations, (
         f"REQ-BUDGET-2 VIOLATED: Phase 3c regime constants found in Optuna "
@@ -518,9 +512,7 @@ def test_regime_adjustment_table_docstring_cites_one_knob_budget() -> None:
     This makes the one-knob contract explicit and auditable.
     """
     fn = getattr(math_engine, "apply_regime_exit_adjustment", None)
-    assert fn is not None, (
-        "apply_regime_exit_adjustment not found in math_engine (RED state)"
-    )
+    assert fn is not None, "apply_regime_exit_adjustment not found in math_engine (RED state)"
     doc = (fn.__doc__ or "").lower()
     knob_mentioned = "exit_confirm_ticks" in doc or "n-confirm" in doc or "confirm" in doc
     budget_mentioned = "1 knob" in doc or "1-knob" in doc or "one knob" in doc or "≈1" in doc

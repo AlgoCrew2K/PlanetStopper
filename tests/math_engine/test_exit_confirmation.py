@@ -94,10 +94,7 @@ import pytest
 import math_engine
 
 FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "math_engine"
-    / "exit_confirmation"
+    pathlib.Path(__file__).parent.parent / "fixtures" / "math_engine" / "exit_confirmation"
 )
 
 
@@ -140,8 +137,7 @@ def test_exit_confirmation_matches_derived_expected(
     """
     func_name = fixture["function"]
     assert func_name == "compute_exit_confirmation", (
-        f"{fixture_name}: only compute_exit_confirmation is in scope for "
-        f"this cycle"
+        f"{fixture_name}: only compute_exit_confirmation is in scope for this cycle"
     )
 
     inputs = fixture["inputs"]
@@ -186,13 +182,13 @@ def test_exit_confirmation_matches_derived_expected(
 @pytest.mark.parametrize(
     "current_return,stop_trigger_level,prob_underperforming,current_below_stop_count,is_triggered",
     [
-        (-100.0, -1.0, 1.0, 0, False),     # would qualify if armed
-        (-100.0, -1.0, 1.0, 2, False),     # mid-count
-        (-100.0, -1.0, 1.0, 10, False),    # well above EXIT_CONFIRM_TICKS
-        (5.0, 0.0, 99.9, 0, False),         # condition would fail (no reset either)
-        (5.0, 0.0, 99.9, 7, False),         # would reset if armed
-        (0.0, 0.0, 60.0, 5, True),          # also triggered
-        (-5.0, -1.0, 30.0, 4, True),        # armed=False AND triggered=True; armed=False short-circuits
+        (-100.0, -1.0, 1.0, 0, False),  # would qualify if armed
+        (-100.0, -1.0, 1.0, 2, False),  # mid-count
+        (-100.0, -1.0, 1.0, 10, False),  # well above EXIT_CONFIRM_TICKS
+        (5.0, 0.0, 99.9, 0, False),  # condition would fail (no reset either)
+        (5.0, 0.0, 99.9, 7, False),  # would reset if armed
+        (0.0, 0.0, 60.0, 5, True),  # also triggered
+        (-5.0, -1.0, 30.0, 4, True),  # armed=False AND triggered=True; armed=False short-circuits
     ],
 )
 def test_guard_not_armed_preserves_count_and_no_hit(
@@ -239,13 +235,13 @@ def test_guard_not_armed_preserves_count_and_no_hit(
 @pytest.mark.parametrize(
     "armed,current_return,stop_trigger_level,prob_underperforming,current_below_stop_count",
     [
-        (True, -100.0, -1.0, 1.0, 0),     # condition would qualify if not triggered
-        (True, -100.0, -1.0, 1.0, 2),     # mid-count
-        (True, -100.0, -1.0, 1.0, 10),    # would hit if not triggered
-        (True, 5.0, 0.0, 99.9, 0),         # condition would fail (reset path)
-        (True, 5.0, 0.0, 99.9, 7),         # would reset if not triggered
-        (False, 0.0, 0.0, 60.0, 5),        # also not armed
-        (True, 1.0, 1.0, 1.0, 999),        # huge stale count
+        (True, -100.0, -1.0, 1.0, 0),  # condition would qualify if not triggered
+        (True, -100.0, -1.0, 1.0, 2),  # mid-count
+        (True, -100.0, -1.0, 1.0, 10),  # would hit if not triggered
+        (True, 5.0, 0.0, 99.9, 0),  # condition would fail (reset path)
+        (True, 5.0, 0.0, 99.9, 7),  # would reset if not triggered
+        (False, 0.0, 0.0, 60.0, 5),  # also not armed
+        (True, 1.0, 1.0, 1.0, 999),  # huge stale count
     ],
 )
 def test_guard_is_triggered_preserves_count_and_no_hit(
@@ -372,22 +368,22 @@ def test_count_resets_fully_to_zero_when_condition_fails(
     "armed,is_triggered,condition_met,starting_count,expected_hit",
     [
         # armed=False -> hit must be False under all sub-conditions
-        (False, False, True,  2, False),
-        (False, False, True,  10, False),
-        (False, True,  True,  2, False),
+        (False, False, True, 2, False),
+        (False, False, True, 10, False),
+        (False, True, True, 2, False),
         # is_triggered=True -> hit must be False
-        (True,  True,  True,  2, False),
-        (True,  True,  True,  10, False),
+        (True, True, True, 2, False),
+        (True, True, True, 10, False),
         # armed AND !triggered AND condition met
-        (True,  False, True,  0, False),    # 0+1=1, not >= 3
-        (True,  False, True,  1, False),    # 1+1=2, not >= 3
-        (True,  False, True,  2, True),     # 2+1=3, hit
-        (True,  False, True,  3, True),     # 3+1=4, still hit (elif >= 3)
-        (True,  False, True,  100, True),
+        (True, False, True, 0, False),  # 0+1=1, not >= 3
+        (True, False, True, 1, False),  # 1+1=2, not >= 3
+        (True, False, True, 2, True),  # 2+1=3, hit
+        (True, False, True, 3, True),  # 3+1=4, still hit (elif >= 3)
+        (True, False, True, 100, True),
         # armed AND !triggered AND condition fails -> hit False
-        (True,  False, False, 0, False),
-        (True,  False, False, 2, False),
-        (True,  False, False, 10, False),
+        (True, False, False, 0, False),
+        (True, False, False, 2, False),
+        (True, False, False, 10, False),
     ],
 )
 def test_hit_exactly_when_threshold_reached_and_guards_pass(
@@ -452,9 +448,7 @@ def test_return_type_contract_int_bool() -> None:
         prob_underperforming=90.0,
         current_below_stop_count=2,
     )
-    assert isinstance(result, tuple) and len(result) == 2, (
-        f"Expected 2-tuple, got {result!r}"
-    )
+    assert isinstance(result, tuple) and len(result) == 2, f"Expected 2-tuple, got {result!r}"
     new_count, hit = result
 
     assert type(new_count) is int, (
@@ -508,8 +502,7 @@ def test_magnitude_floor_pct_is_module_level_named_constant() -> None:
         "level constant."
     )
     assert math_engine.MAGNITUDE_FLOOR_PCT == 0.10, (
-        f"MAGNITUDE_FLOOR_PCT should be 0.10, got "
-        f"{math_engine.MAGNITUDE_FLOOR_PCT}"
+        f"MAGNITUDE_FLOOR_PCT should be 0.10, got {math_engine.MAGNITUDE_FLOOR_PCT}"
     )
 
 
@@ -582,17 +575,14 @@ def test_no_unnamed_magic_numbers_in_exit_confirmation_path() -> None:
     # domain meaning in this function). Python hashes int 0 and float 0.0
     # as the same key.
     STRUCTURAL = {
-        0,    # universal zero (reset value)
-        1,    # increment +1
-        -1,   # unlikely but harmless
+        0,  # universal zero (reset value)
+        1,  # increment +1
+        -1,  # unlikely but harmless
     }
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_exit_confirmation"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_exit_confirmation":
             target = node
             break
     assert target is not None, (
@@ -663,15 +653,11 @@ def test_domain_constants_are_named_not_bare_literals_in_function_body() -> None
 
     target: ast.FunctionDef | None = None
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.FunctionDef)
-            and node.name == "compute_exit_confirmation"
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name == "compute_exit_confirmation":
             target = node
             break
     assert target is not None, (
-        "compute_exit_confirmation not found in math_engine.py "
-        "(expected RED state)"
+        "compute_exit_confirmation not found in math_engine.py (expected RED state)"
     )
 
     forbidden_values = {0.10, 60.0, 3}

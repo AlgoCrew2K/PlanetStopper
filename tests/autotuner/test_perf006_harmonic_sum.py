@@ -79,6 +79,7 @@ References
 * ``tests/fixtures/math/bhy_byte_identical_pin.json`` (c_n pin values)
 * Harvey & Liu 2015, DOI 10.3905/jpm.2015.42.1.013
 """
+
 from __future__ import annotations
 
 import ast
@@ -94,9 +95,7 @@ import autotuner
 
 
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
-_BHY_FIXTURE_PATH = (
-    _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "bhy_byte_identical_pin.json"
-)
+_BHY_FIXTURE_PATH = _WORKTREE_ROOT / "tests" / "fixtures" / "math" / "bhy_byte_identical_pin.json"
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +173,7 @@ def _find_function_def(tree: ast.Module, names: tuple[str, ...]) -> ast.Function
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name in names:
             return node
-    pytest.fail(
-        f"AST: no FunctionDef matching any of {names!r} found in autotuner.py"
-    )
+    pytest.fail(f"AST: no FunctionDef matching any of {names!r} found in autotuner.py")
 
 
 def test_yekutieli_helper_has_functools_cache_decorator():
@@ -252,12 +249,10 @@ def test_yekutieli_helper_cache_reuses_across_calls():
     after = helper.cache_info()
 
     assert v1 == v2, (
-        f"Cached helper returned different values for the same n={n}: "
-        f"v1={v1!r}, v2={v2!r}"
+        f"Cached helper returned different values for the same n={n}: v1={v1!r}, v2={v2!r}"
     )
     assert mid.misses - before.misses == 1, (
-        f"First call must be a miss; got misses delta "
-        f"{mid.misses - before.misses}"
+        f"First call must be a miss; got misses delta {mid.misses - before.misses}"
     )
     assert after.hits - mid.hits == 1, (
         f"Second call with the same n must be a hit; got hits delta "
@@ -342,8 +337,7 @@ def test_benjamini_hochberg_adjust_byte_identical_after_cache(bhy_fixture):
     actual = autotuner.benjamini_hochberg_adjust(p_values)
 
     assert len(actual) == len(expected), (
-        f"BHY output length mismatch: got {len(actual)} adjusted values, "
-        f"expected {len(expected)}"
+        f"BHY output length mismatch: got {len(actual)} adjusted values, expected {len(expected)}"
     )
     for i, (a, e) in enumerate(zip(actual, expected)):
         assert a == pytest.approx(e, abs=1e-15), (
@@ -419,9 +413,11 @@ def test_benjamini_hochberg_adjust_does_not_inline_harmonic_sum():
             ):
                 # Check the generator iterates over range(1, ..., n+1)
                 for gen in node.generators:
-                    if isinstance(gen.iter, ast.Call) and isinstance(
-                        gen.iter.func, ast.Name
-                    ) and gen.iter.func.id == "range":
+                    if (
+                        isinstance(gen.iter, ast.Call)
+                        and isinstance(gen.iter.func, ast.Name)
+                        and gen.iter.func.id == "range"
+                    ):
                         found_inline_sum = True
                         break
         if found_inline_sum:
@@ -459,9 +455,7 @@ def test_benjamini_hochberg_module_does_not_use_log_for_c_n():
     # Unwrap lru_cache to get the underlying function source.
     underlying = getattr(helper, "__wrapped__", helper)
     helper_src = inspect.getsource(underlying)
-    assert "math.log" not in helper_src and not re.search(
-        r"(?<!math\.)\blog\s*\(", helper_src
-    ), (
+    assert "math.log" not in helper_src and not re.search(r"(?<!math\.)\blog\s*\(", helper_src), (
         "Cached helper source contains math.log / log( — c(N) must be "
         "computed as an exact harmonic sum, never as a log "
         "approximation."

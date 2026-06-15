@@ -29,6 +29,7 @@ No producer-computed dollar/rate/percent values are asserted. All numeric
 expectations are derived from named autotuner constants (VALIDATION_RATIO,
 PURGE_DAYS, EMBARGO_DAYS) applied to the new history_length = 250.
 """
+
 from __future__ import annotations
 
 import ast as _ast
@@ -114,10 +115,7 @@ class TestOOSConstantReferencesSharedWindow:
             if not isinstance(node, _ast.Assign):
                 continue
             for tgt in node.targets:
-                if (
-                    isinstance(tgt, _ast.Name)
-                    and tgt.id == "_OOS_USABLE_VALIDATION_DAYS_EXPECTED"
-                ):
+                if isinstance(tgt, _ast.Name) and tgt.id == "_OOS_USABLE_VALIDATION_DAYS_EXPECTED":
                     rhs = node.value
                     for sub in _ast.walk(rhs):
                         if isinstance(sub, _ast.Constant) and sub.value == 125:
@@ -152,10 +150,7 @@ class TestOOSConstantReferencesSharedWindow:
             if not isinstance(node, _ast.Assign):
                 continue
             for tgt in node.targets:
-                if (
-                    isinstance(tgt, _ast.Name)
-                    and tgt.id == "_OOS_USABLE_VALIDATION_DAYS_EXPECTED"
-                ):
+                if isinstance(tgt, _ast.Name) and tgt.id == "_OOS_USABLE_VALIDATION_DAYS_EXPECTED":
                     rhs = node.value
                     # Check for Attribute access on synthetic_history.
                     for sub in _ast.walk(rhs):
@@ -190,6 +185,7 @@ class TestOOSConstantReferencesSharedWindow:
         the derivation — no magic numbers.
         """
         import autotuner
+
         # Derive expected value from autotuner's own ratio + purge/embargo
         # constants applied to the new history_length.
         derived = (
@@ -371,6 +367,7 @@ class TestNoStale125InAutotuner:
         """
         import autotuner
         import re
+
         doc = autotuner.run_autotuner.__doc__ or ""
         # Find every bare '125' (word-boundary) that appears before 'day'
         # (the '125' in citations like 'beyond 125 days' or '125-day' is the
@@ -397,6 +394,7 @@ class TestNoStale125InAutotuner:
         'no 125' test but fails here.
         """
         import autotuner
+
         doc = autotuner.run_autotuner.__doc__ or ""
         assert "250" in doc, (
             "run_autotuner docstring does not mention '250'. After Phase-1 "

@@ -117,9 +117,7 @@ FIXTURES = _load_fixtures()
     FIXTURES,
     ids=[name for name, _ in FIXTURES],
 )
-def test_para_arm_matches_derived_expected(
-    fixture_name: str, fixture: dict[str, Any]
-) -> None:
+def test_para_arm_matches_derived_expected(fixture_name: str, fixture: dict[str, Any]) -> None:
     """
     Every fixture's expected (velocity, should_arm) is DERIVED BY HAND in the
     fixture's 'derivation' field. This test asserts compute_para_arm_decision
@@ -140,9 +138,7 @@ def test_para_arm_matches_derived_expected(
         currently_armed=inputs["currently_armed"],
     )
 
-    assert velocity == pytest.approx(
-        expected["velocity"], rel=APPROX_REL, abs=APPROX_ABS
-    ), (
+    assert velocity == pytest.approx(expected["velocity"], rel=APPROX_REL, abs=APPROX_ABS), (
         f"Fixture {fixture_name}: expected velocity {expected['velocity']} "
         f"(derivation: {fixture['derivation']}), got {velocity}"
     )
@@ -187,9 +183,7 @@ def test_velocity_is_identically_current_minus_prev(
         currently_armed=False,
     )
     expected_velocity = current_return - prev_return
-    assert velocity == pytest.approx(
-        expected_velocity, rel=APPROX_REL, abs=APPROX_ABS
-    ), (
+    assert velocity == pytest.approx(expected_velocity, rel=APPROX_REL, abs=APPROX_ABS), (
         f"velocity not equal to current_return - prev_return: "
         f"current={current_return}, prev={prev_return}, "
         f"expected={expected_velocity}, got={velocity}"
@@ -236,9 +230,7 @@ def test_should_arm_iff_velocity_geq_threshold_and_not_armed(
             currently_armed=currently_armed,
         )
         # Velocity must be identical regardless of arm state.
-        assert velocity == pytest.approx(
-            velocity_expected, rel=APPROX_REL, abs=APPROX_ABS
-        ), (
+        assert velocity == pytest.approx(velocity_expected, rel=APPROX_REL, abs=APPROX_ABS), (
             f"velocity changed with currently_armed={currently_armed}: "
             f"expected {velocity_expected}, got {velocity}"
         )

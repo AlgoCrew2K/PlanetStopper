@@ -150,10 +150,7 @@ def _is_bare_exception_handler(handler: ast.ExceptHandler) -> bool:
     if isinstance(exc_type, ast.Name) and exc_type.id == "Exception":
         return True
     if isinstance(exc_type, ast.Tuple):
-        return any(
-            isinstance(elt, ast.Name) and elt.id == "Exception"
-            for elt in exc_type.elts
-        )
+        return any(isinstance(elt, ast.Name) and elt.id == "Exception" for elt in exc_type.elts)
     return False
 
 
@@ -452,11 +449,7 @@ def _handlers_in_function(source: str, function_name: str) -> list[ast.ExceptHan
         "commit; if it was renamed or deleted the reviewer's analysis "
         "must be re-opened before narrowing the test."
     )
-    return [
-        node
-        for node in ast.walk(target_func)
-        if isinstance(node, ast.ExceptHandler)
-    ]
+    return [node for node in ast.walk(target_func) if isinstance(node, ast.ExceptHandler)]
 
 
 # ---------------------------------------------------------------------------
@@ -597,9 +590,7 @@ def test_get_current_et_except_includes_KeyError_for_ZoneInfoNotFoundError():
 #   Exception         — over-broad but technically covers it; listed only
 #                       so the helper is exhaustive; the broad-except tests
 #                       above already forbid this form.
-_JSON_COVERING_NAMES: frozenset[str] = frozenset(
-    {"ValueError", "JSONDecodeError", "Exception"}
-)
+_JSON_COVERING_NAMES: frozenset[str] = frozenset({"ValueError", "JSONDecodeError", "Exception"})
 
 
 def _response_json_calls_in_function(
@@ -674,9 +665,7 @@ def _call_is_inside_try(
         # Check whether target_call lives inside this Try's body/orelse/
         # finalbody subtrees (i.e., under protection of its handlers).
         call_found_in_protected_body = any(
-            sub is target_call
-            for stmt in node.body
-            for sub in ast.walk(stmt)
+            sub is target_call for stmt in node.body for sub in ast.walk(stmt)
         )
         if not call_found_in_protected_body:
             continue

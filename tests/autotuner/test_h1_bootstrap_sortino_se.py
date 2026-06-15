@@ -58,37 +58,95 @@ import autotuner
 _FIXTURE_SEED = 20260522
 
 _RETURN_SERIES_BASIC: tuple[float, ...] = (
-    0.012, -0.005, 0.008, 0.003, -0.011, 0.006,
-    0.001, 0.015, -0.002, 0.009, 0.004, -0.007,
+    0.012,
+    -0.005,
+    0.008,
+    0.003,
+    -0.011,
+    0.006,
+    0.001,
+    0.015,
+    -0.002,
+    0.009,
+    0.004,
+    -0.007,
 )
 _BASIC_SORTINO = 0.675300044982798
-_BASIC_SE      = 1.666246779934804
-_BASIC_TSTAT   = 0.4052821305432445
-_BASIC_WALD    = 2.339307976527509      # mutation-guard separation reference
+_BASIC_SE = 1.666246779934804
+_BASIC_TSTAT = 0.4052821305432445
+_BASIC_WALD = 2.339307976527509  # mutation-guard separation reference
 
 _RETURN_SERIES_POSITIVE_SORTINO: tuple[float, ...] = (
-    0.020, 0.015, 0.018, -0.005, 0.022, 0.012, 0.019, -0.003,
-    0.025, 0.014, 0.017, 0.011, -0.006, 0.020, 0.013, 0.016,
-    0.024, 0.018, 0.012, 0.021,
+    0.020,
+    0.015,
+    0.018,
+    -0.005,
+    0.022,
+    0.012,
+    0.019,
+    -0.003,
+    0.025,
+    0.014,
+    0.017,
+    0.011,
+    -0.006,
+    0.020,
+    0.013,
+    0.016,
+    0.024,
+    0.018,
+    0.012,
+    0.021,
 )
 _POSITIVE_SORTINO_T = 1.6473041744598693
 
 _RETURN_SERIES_NEGATIVE_SORTINO: tuple[float, ...] = (
-    -0.010, -0.015, -0.008, -0.012, -0.005, -0.020, -0.011,
-    -0.007, -0.014, -0.009, -0.013, -0.006, -0.018, -0.016, -0.010,
+    -0.010,
+    -0.015,
+    -0.008,
+    -0.012,
+    -0.005,
+    -0.020,
+    -0.011,
+    -0.007,
+    -0.014,
+    -0.009,
+    -0.013,
+    -0.006,
+    -0.018,
+    -0.016,
+    -0.010,
 )
 _NEGATIVE_SORTINO_T = -59.48057334660955
 
 _RETURN_SERIES_NULL_SORTINO: tuple[float, ...] = (
-    0.010, -0.010, 0.008, -0.008, 0.012, -0.012, 0.005, -0.005,
-    0.015, -0.015, 0.007, -0.007, 0.011, -0.011, 0.009, -0.009,
-    0.013, -0.013, 0.006, -0.006,
+    0.010,
+    -0.010,
+    0.008,
+    -0.008,
+    0.012,
+    -0.012,
+    0.005,
+    -0.005,
+    0.015,
+    -0.015,
+    0.007,
+    -0.007,
+    0.011,
+    -0.011,
+    0.009,
+    -0.009,
+    0.013,
+    -0.013,
+    0.006,
+    -0.006,
 )
 _NULL_SORTINO_T = 0.0
 
 _RETURN_SERIES_SENTINEL_RICH: tuple[float, ...] = (
     *([0.0] * 28),
-    0.001, 0.002,
+    0.001,
+    0.002,
 )
 
 
@@ -109,8 +167,7 @@ class TestBootstrapConstants:
         )
         assert isinstance(autotuner._BOOTSTRAP_RESAMPLES, int)
         assert autotuner._BOOTSTRAP_RESAMPLES == 2000, (
-            f"_BOOTSTRAP_RESAMPLES must equal 2000; got "
-            f"{autotuner._BOOTSTRAP_RESAMPLES}."
+            f"_BOOTSTRAP_RESAMPLES must equal 2000; got {autotuner._BOOTSTRAP_RESAMPLES}."
         )
 
     def test_bootstrap_min_t_constant_named(self):
@@ -120,16 +177,14 @@ class TestBootstrapConstants:
         )
         assert isinstance(autotuner._BOOTSTRAP_MIN_T, int)
         assert autotuner._BOOTSTRAP_MIN_T >= 5, (
-            f"_BOOTSTRAP_MIN_T must be >= 5; got "
-            f"{autotuner._BOOTSTRAP_MIN_T}."
+            f"_BOOTSTRAP_MIN_T must be >= 5; got {autotuner._BOOTSTRAP_MIN_T}."
         )
 
     def test_bootstrap_min_valid_resamples_constant_named(self):
         """_BOOTSTRAP_MIN_VALID_RESAMPLES — floor on non-sentinel
         resampled Sortinos."""
         assert hasattr(autotuner, "_BOOTSTRAP_MIN_VALID_RESAMPLES"), (
-            "autotuner._BOOTSTRAP_MIN_VALID_RESAMPLES must be a named "
-            "constant."
+            "autotuner._BOOTSTRAP_MIN_VALID_RESAMPLES must be a named constant."
         )
         assert isinstance(autotuner._BOOTSTRAP_MIN_VALID_RESAMPLES, int)
         assert autotuner._BOOTSTRAP_MIN_VALID_RESAMPLES >= 50, (
@@ -209,18 +264,13 @@ class TestBootstrapSortinoSeHelper:
         """T < _BOOTSTRAP_MIN_T -> SE = None."""
         helper = _resolve_se_helper()
         result = helper([0.01, -0.005, 0.008, 0.002], seed=1)  # T=4
-        assert result is None, (
-            f"Small-T (T=4): helper must return None. Got {result!r}."
-        )
+        assert result is None, f"Small-T (T=4): helper must return None. Got {result!r}."
 
     def test_helper_returns_none_for_zero_variance_series(self):
         """Constant series -> SE = None."""
         helper = _resolve_se_helper()
         result = helper([0.01] * 30, seed=1)
-        assert result is None, (
-            f"Zero-variance series: helper must return None. Got "
-            f"{result!r}."
-        )
+        assert result is None, f"Zero-variance series: helper must return None. Got {result!r}."
 
     def test_helper_returns_none_for_sentinel_rich_series(self):
         """28 zeros + 2 small positives: most resamples land all-non-
@@ -228,9 +278,7 @@ class TestBootstrapSortinoSeHelper:
         non-sentinel Sortinos -> SE = None."""
         helper = _resolve_se_helper()
         result = helper(list(_RETURN_SERIES_SENTINEL_RICH), seed=_FIXTURE_SEED)
-        assert result is None, (
-            f"Sentinel-rich series must return SE=None. Got {result!r}."
-        )
+        assert result is None, f"Sentinel-rich series must return SE=None. Got {result!r}."
 
     def test_helper_is_nonnegative_on_arbitrary_input(self):
         """SE >= 0 when not None (it's a stdev)."""
@@ -245,8 +293,7 @@ class TestBootstrapSortinoSeHelper:
             if se is None:
                 continue
             assert math.isfinite(se) and se >= 0.0, (
-                f"Series '{label}': SE must be finite and >= 0; got "
-                f"{se!r}."
+                f"Series '{label}': SE must be finite and >= 0; got {se!r}."
             )
 
 
@@ -339,8 +386,7 @@ class TestSortinoTstatSignAndDirection:
     def test_null_sortino_series_produces_tstat_zero(self):
         result = _resolve_tstat(list(_RETURN_SERIES_NULL_SORTINO))
         assert result == pytest.approx(_NULL_SORTINO_T, abs=0.0), (
-            f"NULL_SORTINO t-stat oracle mismatch: expected "
-            f"{_NULL_SORTINO_T!r}; got {result!r}."
+            f"NULL_SORTINO t-stat oracle mismatch: expected {_NULL_SORTINO_T!r}; got {result!r}."
         )
 
 
@@ -354,21 +400,15 @@ class TestSeUnavailableProducesZeroTstat:
 
     def test_zero_variance_series_produces_zero_tstat(self):
         result = _resolve_tstat([0.01] * 30)
-        assert result == 0.0, (
-            f"Zero-variance series: tstat must be 0.0. Got {result!r}."
-        )
+        assert result == 0.0, f"Zero-variance series: tstat must be 0.0. Got {result!r}."
 
     def test_small_T_series_produces_zero_tstat(self):
         result = _resolve_tstat([0.01, -0.005, 0.008, 0.002])
-        assert result == 0.0, (
-            f"Small-T: tstat must be 0.0. Got {result!r}."
-        )
+        assert result == 0.0, f"Small-T: tstat must be 0.0. Got {result!r}."
 
     def test_sentinel_rich_series_produces_zero_tstat(self):
         result = _resolve_tstat(list(_RETURN_SERIES_SENTINEL_RICH))
-        assert result == 0.0, (
-            f"Sentinel-rich: tstat must be 0.0. Got {result!r}."
-        )
+        assert result == 0.0, f"Sentinel-rich: tstat must be 0.0. Got {result!r}."
 
     def test_compute_haircut_pvalue_of_zero_is_half(self):
         """Downstream invariant: p(t=0) = 0.5; trial fails FDR gate."""
@@ -412,8 +452,7 @@ class TestHaircutSelectPassesReturnsAndSeed:
             "fold context, not wallclock."
         )
         assert r1[2] == r2[2], (
-            f"AC-1: _haircut_select non-deterministic t-stat ({r1[2]!r} "
-            f"vs {r2[2]!r})."
+            f"AC-1: _haircut_select non-deterministic t-stat ({r1[2]!r} vs {r2[2]!r})."
         )
 
 
@@ -449,10 +488,7 @@ class TestH0CalibrationProperty:
             p_values.append(p)
         sorted_p = sorted(p_values)
         n = len(sorted_p)
-        ks = max(
-            max(abs((i + 1) / n - p), abs(i / n - p))
-            for i, p in enumerate(sorted_p)
-        )
+        ks = max(max(abs((i + 1) / n - p), abs(i / n - p)) for i, p in enumerate(sorted_p))
         assert ks < 0.15, (
             f"AC-1 / RM-H1 CALIBRATION VIOLATED: KS distance to U[0,1] = "
             f"{ks:.4f}; threshold < 0.15 (per risk-engine F3 — 0.10 is "
@@ -472,6 +508,7 @@ class TestNoWaldSurvivalInTstatPath:
 
     def test_no_wald_scaling_in_compute_sortino_tstat_source(self):
         import inspect
+
         src = inspect.getsource(autotuner.compute_sortino_tstat)
         pattern = re.compile(
             r"sortino\s*\*\s*(math\.)?sqrt\s*\(\s*T\s*\)",
@@ -487,10 +524,8 @@ class TestNoWaldSurvivalInTstatPath:
     def test_docstring_describes_bootstrap_not_metric_neutral(self):
         doc = (autotuner.compute_sortino_tstat.__doc__ or "").lower()
         assert "bootstrap" in doc, (
-            f"compute_sortino_tstat docstring must describe the bootstrap. "
-            f"Got: {doc!r}"
+            f"compute_sortino_tstat docstring must describe the bootstrap. Got: {doc!r}"
         )
         assert "metric-neutral" not in doc, (
-            f"compute_sortino_tstat docstring must NOT contain "
-            f"'metric-neutral'. Got: {doc!r}"
+            f"compute_sortino_tstat docstring must NOT contain 'metric-neutral'. Got: {doc!r}"
         )

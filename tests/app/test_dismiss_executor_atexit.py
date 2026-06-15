@@ -47,8 +47,7 @@ def _reload_app_with_spy():
 
     sys.modules.pop("app", None)
     try:
-        with patch("atexit.register", side_effect=_spy), \
-             patch("database.init_db"):
+        with patch("atexit.register", side_effect=_spy), patch("database.init_db"):
             fresh_app = importlib.import_module("app")
     finally:
         # Restore the original module so other tests are not affected.

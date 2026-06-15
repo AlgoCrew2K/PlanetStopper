@@ -49,6 +49,7 @@ import math_engine
 # History builder for property tests
 # ---------------------------------------------------------------------------
 
+
 def _date_key(i: int) -> str:
     base_day = 1 + i
     month = 1 + (base_day - 1) // 28
@@ -70,9 +71,7 @@ def _build_history(
 
 
 # Realistic daily-return scale — SPY returns rarely exceed +/-15% in a day.
-_daily_return = st.floats(
-    min_value=-0.15, max_value=0.15, allow_nan=False, allow_infinity=False
-)
+_daily_return = st.floats(min_value=-0.15, max_value=0.15, allow_nan=False, allow_infinity=False)
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +81,8 @@ _daily_return = st.floats(
 # Minimum raw history days for an ELIGIBLE-sufficient pool (team-lead Ruling 2):
 # the sufficiency guard counts days remaining after the early-window exclusion,
 # so raw history must be >= MC_MIN_HISTORY_DAYS + (MC_VOL_WINDOW_DAYS - 1).
-_MIN_ELIGIBLE_SUFFICIENT_RAW_DAYS = (
-    math_engine.MC_MIN_HISTORY_DAYS + (math_engine.MC_VOL_WINDOW_DAYS - 1)
+_MIN_ELIGIBLE_SUFFICIENT_RAW_DAYS = math_engine.MC_MIN_HISTORY_DAYS + (
+    math_engine.MC_VOL_WINDOW_DAYS - 1
 )
 
 
@@ -97,9 +96,7 @@ _MIN_ELIGIBLE_SUFFICIENT_RAW_DAYS = (
     holding_offset=st.floats(
         min_value=-0.05, max_value=0.05, allow_nan=False, allow_infinity=False
     ),
-    spy_today=st.floats(
-        min_value=-15.0, max_value=15.0, allow_nan=False, allow_infinity=False
-    ),
+    spy_today=st.floats(min_value=-15.0, max_value=15.0, allow_nan=False, allow_infinity=False),
     # Seed range spans the full post-AC-3 64-bit space so the property also
     # exercises seeds > 2**31 (the pre-fix modulus) — the widened seed must not
     # break run_monte_carlo's RNG path.
@@ -168,14 +165,13 @@ def test_run_monte_carlo_output_is_bounded_probability_or_sentinel(
 # AC-2 — the insufficient sentinel never vetoes the protective stop
 # ---------------------------------------------------------------------------
 
+
 @settings(max_examples=150, deadline=None)
 @given(
     stop_trigger_level=st.floats(
         min_value=-20.0, max_value=20.0, allow_nan=False, allow_infinity=False
     ),
-    extra_drop=st.floats(
-        min_value=0.0, max_value=30.0, allow_nan=False, allow_infinity=False
-    ),
+    extra_drop=st.floats(min_value=0.0, max_value=30.0, allow_nan=False, allow_infinity=False),
     starting_count=st.integers(min_value=0, max_value=10),
 )
 def test_insufficient_sentinel_never_vetoes_protective_stop(
@@ -198,9 +194,7 @@ def test_insufficient_sentinel_never_vetoes_protective_stop(
     """
     # current_return is strictly below the magnitude floor so the magnitude
     # gate is unambiguously satisfied.
-    current_return = (
-        stop_trigger_level - math_engine.MAGNITUDE_FLOOR_PCT - extra_drop - 0.01
-    )
+    current_return = stop_trigger_level - math_engine.MAGNITUDE_FLOOR_PCT - extra_drop - 0.01
 
     count = starting_count
     hit = False
@@ -234,12 +228,8 @@ def test_insufficient_sentinel_never_vetoes_protective_stop(
     stop_trigger_level=st.floats(
         min_value=-20.0, max_value=20.0, allow_nan=False, allow_infinity=False
     ),
-    extra_drop=st.floats(
-        min_value=0.0, max_value=30.0, allow_nan=False, allow_infinity=False
-    ),
-    low_prob=st.floats(
-        min_value=0.0, max_value=59.999, allow_nan=False, allow_infinity=False
-    ),
+    extra_drop=st.floats(min_value=0.0, max_value=30.0, allow_nan=False, allow_infinity=False),
+    low_prob=st.floats(min_value=0.0, max_value=59.999, allow_nan=False, allow_infinity=False),
     starting_count=st.integers(min_value=0, max_value=10),
 )
 def test_low_underperformance_suppresses_exit_after_sentinel_bypass(
@@ -264,9 +254,7 @@ def test_low_underperformance_suppresses_exit_after_sentinel_bypass(
     None sentinel's fail-open) lets the magnitude condition through.
     """
     assume(low_prob < math_engine.MC_BREAKDOWN_THRESHOLD)
-    current_return = (
-        stop_trigger_level - math_engine.MAGNITUDE_FLOOR_PCT - extra_drop - 0.01
-    )
+    current_return = stop_trigger_level - math_engine.MAGNITUDE_FLOOR_PCT - extra_drop - 0.01
 
     new_count, hit = math_engine.compute_exit_confirmation(
         armed=True,
@@ -296,6 +284,7 @@ def test_low_underperformance_suppresses_exit_after_sentinel_bypass(
 # AC-3 — derive_cycle_mc_seed is deterministic and total
 # ---------------------------------------------------------------------------
 
+
 @settings(max_examples=200, deadline=None)
 @given(
     cycle_id=st.text(
@@ -318,8 +307,7 @@ def test_derive_cycle_mc_seed_is_deterministic_and_total(cycle_id: str) -> None:
         f"{seed_b!r}. It must be deterministic."
     )
     assert isinstance(seed_a, int), (
-        f"derive_cycle_mc_seed('{cycle_id}') returned "
-        f"{type(seed_a).__name__}, expected int."
+        f"derive_cycle_mc_seed('{cycle_id}') returned {type(seed_a).__name__}, expected int."
     )
     assert seed_a >= 0, (
         f"derive_cycle_mc_seed('{cycle_id}') returned a negative seed "

@@ -45,6 +45,7 @@ import advisors.lens_options_proxy  # noqa: F401
 # Fixtures — proxy return shapes (from spec, never hardcoded computed values)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def proxy_success_result() -> dict:
     """A well-formed _fetch_options_proxy success result matching the module docstring."""
@@ -88,6 +89,7 @@ def proxy_key_missing_result() -> dict:
 # AC-9a: Success path — shape, payload keys, one source
 # ---------------------------------------------------------------------------
 
+
 class TestDerivativesSectionSuccessPath:
     """AC-9a: proxy available=True → correct output shape + payload fields + 1 source."""
 
@@ -104,9 +106,7 @@ class TestDerivativesSectionSuccessPath:
         ):
             block = ai_advisor._build_derivatives_section()
 
-        assert isinstance(block, dict), (
-            "_build_derivatives_section must return a dict"
-        )
+        assert isinstance(block, dict), "_build_derivatives_section must return a dict"
 
     def test_success_path_lens_key_is_derivatives(self, proxy_success_result):
         """block['lens'] == 'derivatives' on success path.
@@ -164,9 +164,7 @@ class TestDerivativesSectionSuccessPath:
             "Precondition: available must be True for payload assertions"
         )
         payload = block.get("payload")
-        assert isinstance(payload, dict), (
-            f"payload must be a dict, got {type(payload)}"
-        )
+        assert isinstance(payload, dict), f"payload must be a dict, got {type(payload)}"
         for key in ("vix_level", "vix_term_structure", "risk_read", "as_of_date"):
             assert key in payload, (
                 f"payload must carry key '{key}' (per AC-2 contract). "
@@ -191,9 +189,7 @@ class TestDerivativesSectionSuccessPath:
         assert isinstance(vix_level, (int, float)), (
             f"payload.vix_level must be a numeric type, got {type(vix_level)}"
         )
-        assert vix_level > 0, (
-            f"payload.vix_level must be positive, got {vix_level!r}"
-        )
+        assert vix_level > 0, f"payload.vix_level must be positive, got {vix_level!r}"
 
     def test_success_path_vix_term_structure_is_dict(self, proxy_success_result):
         """payload.vix_term_structure is a dict.
@@ -210,9 +206,7 @@ class TestDerivativesSectionSuccessPath:
 
         assert block.get("available") is True, "precondition"
         vts = block["payload"].get("vix_term_structure")
-        assert isinstance(vts, dict), (
-            f"payload.vix_term_structure must be a dict, got {type(vts)}"
-        )
+        assert isinstance(vts, dict), f"payload.vix_term_structure must be a dict, got {type(vts)}"
 
     def test_success_path_risk_read_is_string(self, proxy_success_result):
         """payload.risk_read is a non-empty string.
@@ -248,9 +242,7 @@ class TestDerivativesSectionSuccessPath:
 
         assert block.get("available") is True, "precondition"
         sources = block.get("sources", [])
-        assert isinstance(sources, list), (
-            f"sources must be a list, got {type(sources)}"
-        )
+        assert isinstance(sources, list), f"sources must be a list, got {type(sources)}"
         assert len(sources) == 1, (
             f"sources must have exactly 1 entry on success path (one VIXCLS citation), "
             f"got {len(sources)}: {sources!r}"
@@ -295,8 +287,7 @@ class TestDerivativesSectionSuccessPath:
         sources = block.get("sources", [])
         assert len(sources) == 1, "precondition"
         assert sources[0].get("lens") == "derivatives", (
-            f"source citation 'lens' must be 'derivatives', "
-            f"got {sources[0].get('lens')!r}"
+            f"source citation 'lens' must be 'derivatives', got {sources[0].get('lens')!r}"
         )
 
     def test_success_path_source_url_is_fred_vixcls(self, proxy_success_result):
@@ -321,9 +312,7 @@ class TestDerivativesSectionSuccessPath:
             f"AC-3 requires: url='https://fred.stlouisfed.org/series/VIXCLS'"
         )
 
-    def test_success_path_as_of_date_propagated_to_source_published(
-        self, proxy_success_result
-    ):
+    def test_success_path_as_of_date_propagated_to_source_published(self, proxy_success_result):
         """The source 'published' field equals proxy as_of_date (AC-3).
 
         FAILS on the stub.
@@ -342,14 +331,14 @@ class TestDerivativesSectionSuccessPath:
         as_of = proxy_success_result["as_of_date"]
         published = sources[0].get("published", "")
         assert published == as_of, (
-            f"source 'published' must equal proxy as_of_date={as_of!r}, "
-            f"got {published!r}"
+            f"source 'published' must equal proxy as_of_date={as_of!r}, got {published!r}"
         )
 
 
 # ---------------------------------------------------------------------------
 # AC-9b: Failure path — reason propagation, payload=None, sources=[]
 # ---------------------------------------------------------------------------
+
 
 class TestDerivativesSectionFailurePath:
     """AC-9b: proxy available=False + reason → correct output shape with reason propagated."""
@@ -467,6 +456,7 @@ class TestDerivativesSectionFailurePath:
 # AC-9c: build_citation called with correct args on success path
 # ---------------------------------------------------------------------------
 
+
 class TestDerivativesSectionBuildCitationArgs:
     """AC-9c: build_citation is called with exactly the right dict on success path."""
 
@@ -562,8 +552,7 @@ class TestDerivativesSectionBuildCitationArgs:
         assert mock_bc.called, "precondition: build_citation must be called"
         citation_arg = mock_bc.call_args[0][0]
         assert citation_arg.get("lens") == "derivatives", (
-            f"build_citation lens must be 'derivatives', "
-            f"got {citation_arg.get('lens')!r}"
+            f"build_citation lens must be 'derivatives', got {citation_arg.get('lens')!r}"
         )
 
     def test_build_citation_none_result_yields_empty_sources(self, proxy_success_result):
@@ -592,14 +581,14 @@ class TestDerivativesSectionBuildCitationArgs:
             "FAILING because stub returns available=False."
         )
         assert block.get("sources") == [], (
-            f"When build_citation returns None, sources must be []. "
-            f"Got {block.get('sources')!r}"
+            f"When build_citation returns None, sources must be []. Got {block.get('sources')!r}"
         )
 
 
 # ---------------------------------------------------------------------------
 # AC-9d: Lazy import — advisors.lens_options_proxy NOT imported at module load
 # ---------------------------------------------------------------------------
+
 
 class TestDerivativesSectionLazyImport:
     """AC-9d: The lazy import does NOT fire at module import time."""
@@ -634,6 +623,7 @@ class TestDerivativesSectionLazyImport:
         try:
             # Import ai_advisor fresh — must NOT pull in lens_options_proxy
             import ai_advisor  # noqa: F401 (re-import)
+
             assert proxy_key not in sys.modules, (
                 f"advisors.lens_options_proxy was imported at ai_advisor module "
                 f"load time — CC-2 violation. The import must be lazy (inside "
@@ -675,9 +665,7 @@ class TestDerivativesSectionLazyImport:
                 derivatives_fn = node
                 break
 
-        assert derivatives_fn is not None, (
-            "_build_derivatives_section not found in ai_advisor.py"
-        )
+        assert derivatives_fn is not None, "_build_derivatives_section not found in ai_advisor.py"
 
         # Look for an import of lens_options_proxy inside the function body
         def _has_lazy_import(fn_node: ast.FunctionDef) -> bool:
@@ -685,14 +673,13 @@ class TestDerivativesSectionLazyImport:
             for node in ast.walk(fn_node):
                 if isinstance(node, ast.ImportFrom):
                     # from advisors import lens_options_proxy ...
-                    if (node.module == "advisors" and
-                            any(alias.name == "lens_options_proxy"
-                                for alias in node.names)):
+                    if node.module == "advisors" and any(
+                        alias.name == "lens_options_proxy" for alias in node.names
+                    ):
                         return True
                 elif isinstance(node, ast.Import):
                     # import advisors.lens_options_proxy
-                    if any("lens_options_proxy" in alias.name
-                           for alias in node.names):
+                    if any("lens_options_proxy" in alias.name for alias in node.names):
                         return True
             return False
 
@@ -710,7 +697,7 @@ class TestDerivativesSectionLazyImport:
         module_level_imports_lens_proxy = False
         for node in tree.body:
             if isinstance(node, ast.ImportFrom):
-                if (node.module and "lens_options_proxy" in node.module):
+                if node.module and "lens_options_proxy" in node.module:
                     module_level_imports_lens_proxy = True
             elif isinstance(node, ast.Import):
                 if any("lens_options_proxy" in alias.name for alias in node.names):
@@ -725,6 +712,7 @@ class TestDerivativesSectionLazyImport:
 # ---------------------------------------------------------------------------
 # AC-9e: Missing FRED_API_KEY — proxy returns available=False, section propagates
 # ---------------------------------------------------------------------------
+
 
 class TestDerivativesSectionMissingFredKey:
     """AC-9e: Missing FRED_API_KEY → proxy returns available=False → section propagates."""
@@ -786,9 +774,7 @@ class TestDerivativesSectionMissingFredKey:
             # Must not raise
             block = ai_advisor._build_derivatives_section()
 
-        assert isinstance(block, dict), (
-            "_build_derivatives_section must return a dict, not raise"
-        )
+        assert isinstance(block, dict), "_build_derivatives_section must return a dict, not raise"
         assert block.get("available") is False, (
             "With FRED_API_KEY absent, section must return available=False"
         )
@@ -829,12 +815,11 @@ class TestDerivativesSectionMissingFredKey:
 # Edge case: empty as_of_date → build_citation returns None → sources=[]
 # ---------------------------------------------------------------------------
 
+
 class TestDerivativesSectionEdgeCases:
     """Edge cases from the feature plan."""
 
-    def test_empty_as_of_date_yields_empty_sources_but_available_true(
-        self, proxy_success_result
-    ):
+    def test_empty_as_of_date_yields_empty_sources_but_available_true(self, proxy_success_result):
         """When as_of_date is empty, build_citation returns None → sources=[].
 
         The section must still return available=True (data was fetched OK).
@@ -864,9 +849,7 @@ class TestDerivativesSectionEdgeCases:
             f"Got {block.get('sources')!r}"
         )
 
-    def test_missing_vix_term_structure_in_proxy_result_does_not_raise(
-        self, proxy_success_result
-    ):
+    def test_missing_vix_term_structure_in_proxy_result_does_not_raise(self, proxy_success_result):
         """When vix_term_structure is missing from proxy result, payload carries None.
 
         Defensive: the section must not raise AttributeError or KeyError if the
@@ -875,8 +858,7 @@ class TestDerivativesSectionEdgeCases:
         """
         import ai_advisor
 
-        result_no_vts = {k: v for k, v in proxy_success_result.items()
-                        if k != "vix_term_structure"}
+        result_no_vts = {k: v for k, v in proxy_success_result.items() if k != "vix_term_structure"}
 
         with patch(
             "advisors.lens_options_proxy._fetch_options_proxy",
@@ -900,6 +882,7 @@ class TestDerivativesSectionEdgeCases:
 # ---------------------------------------------------------------------------
 # Call-site guard: assemble_advisor_context wraps _build_derivatives_section
 # ---------------------------------------------------------------------------
+
 
 class TestAssembleAdvisorContextCallSiteGuard:
     """The call-site at ai_advisor.py:1208 must be inside a try/except.
@@ -954,9 +937,11 @@ class TestAssembleAdvisorContextCallSiteGuard:
             """Yield (call_node, ancestor_types) for every Call in fn_node."""
             # Use parent-tracking traversal
             for node in ast.walk(fn_node):
-                if (isinstance(node, ast.Call) and
-                        isinstance(node.func, ast.Name) and
-                        node.func.id == "_build_derivatives_section"):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "_build_derivatives_section"
+                ):
                     yield node
 
         derivatives_calls = list(_collect_call_ancestors(assemble_fn))
@@ -1056,8 +1041,10 @@ _EXCEPTION_CLASSES = [
 
 def _make_raising_proxy(exc_class: type, secret: str = _FAKE_SECRET):
     """Return a callable that raises exc_class with a message containing secret."""
+
     def _raise():
         raise exc_class(f"Request failed: {secret}")
+
     return _raise
 
 
@@ -1118,8 +1105,7 @@ class TestDerivativesSectionExceptionIsolation:
         )
         # D-1: reason must be the bare class name
         assert reason == exc_class.__name__, (
-            f"reason must equal type(exc).__name__ == {exc_class.__name__!r}, "
-            f"got {reason!r}"
+            f"reason must equal type(exc).__name__ == {exc_class.__name__!r}, got {reason!r}"
         )
 
     @pytest.mark.parametrize("exc_class", _EXCEPTION_CLASSES)
@@ -1134,9 +1120,7 @@ class TestDerivativesSectionExceptionIsolation:
             result = ai_advisor._build_derivatives_section()
 
         reason = result.get("reason", "")
-        assert _FAKE_SECRET not in reason, (
-            f"Secret string leaked into reason: {reason!r}"
-        )
+        assert _FAKE_SECRET not in reason, f"Secret string leaked into reason: {reason!r}"
 
     @pytest.mark.parametrize("exc_class", _EXCEPTION_CLASSES)
     def test_returned_shape_matches_honest_unavailable_contract(self, exc_class):

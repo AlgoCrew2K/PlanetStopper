@@ -66,8 +66,7 @@ def test_alpha_bot_execution_does_not_import_regime_classifier() -> None:
     """
     src_path = _WORKTREE_ROOT / "alpha_bot_execution.py"
     assert src_path.exists(), (
-        f"alpha_bot_execution.py not found at {src_path}; cannot perform "
-        f"structural import check"
+        f"alpha_bot_execution.py not found at {src_path}; cannot perform structural import check"
     )
     source = src_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -77,15 +76,11 @@ def test_alpha_bot_execution_does_not_import_regime_classifier() -> None:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if "regime_classifier" in alias.name:
-                    bad_imports.append(
-                        f"line {node.lineno}: import {alias.name}"
-                    )
+                    bad_imports.append(f"line {node.lineno}: import {alias.name}")
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if "regime_classifier" in module:
-                bad_imports.append(
-                    f"line {node.lineno}: from {module} import ..."
-                )
+                bad_imports.append(f"line {node.lineno}: from {module} import ...")
 
     assert not bad_imports, (
         "alpha_bot_execution.py MUST NOT import regime_classifier (hard "
@@ -110,9 +105,7 @@ def test_math_engine_does_not_import_regime_classifier() -> None:
     math_engine is imported.
     """
     src_path = _WORKTREE_ROOT / "math_engine.py"
-    assert src_path.exists(), (
-        f"math_engine.py not found at {src_path}"
-    )
+    assert src_path.exists(), f"math_engine.py not found at {src_path}"
     source = src_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
@@ -121,19 +114,14 @@ def test_math_engine_does_not_import_regime_classifier() -> None:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if "regime_classifier" in alias.name:
-                    bad_imports.append(
-                        f"line {node.lineno}: import {alias.name}"
-                    )
+                    bad_imports.append(f"line {node.lineno}: import {alias.name}")
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if "regime_classifier" in module:
-                bad_imports.append(
-                    f"line {node.lineno}: from {module} import ..."
-                )
+                bad_imports.append(f"line {node.lineno}: from {module} import ...")
 
-    assert not bad_imports, (
-        "math_engine.py MUST NOT import regime_classifier. "
-        "Found: " + ", ".join(bad_imports)
+    assert not bad_imports, "math_engine.py MUST NOT import regime_classifier. Found: " + ", ".join(
+        bad_imports
     )
 
 
@@ -172,9 +160,7 @@ def test_save_regime_label_function_exists() -> None:
         "persists a (symphony_id, label, as_of_date) row so the execution "
         "path can read it back via get_cached_regime_label."
     )
-    assert callable(database.save_regime_label), (
-        "database.save_regime_label is not callable"
-    )
+    assert callable(database.save_regime_label), "database.save_regime_label is not callable"
 
 
 # ---------------------------------------------------------------------------
@@ -182,9 +168,7 @@ def test_save_regime_label_function_exists() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_cached_regime_label_returns_none_when_absent(
-    tmp_path, monkeypatch
-) -> None:
+def test_get_cached_regime_label_returns_none_when_absent(tmp_path, monkeypatch) -> None:
     """
     When no label has been saved for a symphony_id, get_cached_regime_label
     must return None (safe default — unknown regime -> no adjustment).
@@ -258,9 +242,7 @@ def test_labels_isolated_per_symphony_id() -> None:
     assert result_b == "mean-reverting", (
         f"symphony-B label mismatch: expected 'mean-reverting', got {result_b!r}"
     )
-    assert result_c is None, (
-        f"symphony-C (never saved) must return None, got {result_c!r}"
-    )
+    assert result_c is None, f"symphony-C (never saved) must return None, got {result_c!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -313,9 +295,7 @@ def test_stale_label_returns_none_when_cutoff_specified() -> None:
     symphony_id = "test-stale-symphony"
     database.save_regime_label(symphony_id, "trending", "2020-01-01")
 
-    result = database.get_cached_regime_label(
-        symphony_id, staleness_cutoff_days=1
-    )
+    result = database.get_cached_regime_label(symphony_id, staleness_cutoff_days=1)
     assert result is None, (
         f"Expected None for a stale label (as_of_date=2020-01-01, cutoff=1 day), "
         f"got {result!r}. Stale labels must be treated as absent."
@@ -332,15 +312,13 @@ def test_fresh_label_not_stale_when_within_cutoff() -> None:
     """
     symphony_id = "test-fresh-symphony"
     import datetime
+
     today = datetime.date.today().isoformat()
     database.save_regime_label(symphony_id, "high-vol", today)
 
-    result = database.get_cached_regime_label(
-        symphony_id, staleness_cutoff_days=7
-    )
+    result = database.get_cached_regime_label(symphony_id, staleness_cutoff_days=7)
     assert result == "high-vol", (
-        f"A fresh label (as_of_date={today}, cutoff=7 days) must be returned. "
-        f"Got {result!r}."
+        f"A fresh label (as_of_date={today}, cutoff=7 days) must be returned. Got {result!r}."
     )
 
 
@@ -358,12 +336,11 @@ def test_zero_staleness_cutoff_returns_none() -> None:
     """
     symphony_id = "test-zero-cutoff"
     import datetime
+
     today = datetime.date.today().isoformat()
     database.save_regime_label(symphony_id, "trending", today)
 
-    result = database.get_cached_regime_label(
-        symphony_id, staleness_cutoff_days=0
-    )
+    result = database.get_cached_regime_label(symphony_id, staleness_cutoff_days=0)
     assert result is None, (
         f"staleness_cutoff_days=0 must always return None (all labels are "
         f"stale by definition), got {result!r}."

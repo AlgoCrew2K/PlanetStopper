@@ -30,15 +30,8 @@ import pytest
 import autotuner
 
 
-_FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "autotuner"
-    / "replay_parity"
-)
-_AUTOTUNER_TREE = ast.parse(
-    pathlib.Path(autotuner.__file__).read_text(encoding="utf-8")
-)
+_FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "autotuner" / "replay_parity"
+_AUTOTUNER_TREE = ast.parse(pathlib.Path(autotuner.__file__).read_text(encoding="utf-8"))
 
 
 @pytest.fixture(autouse=True)
@@ -61,9 +54,7 @@ def _pin_execution_start_time_to_session_open(monkeypatch):
     suite (tests/autotuner/test_n3_replay_grace_execution_start_time.py)
     independently exercises the NON-default-EXECUTION_START_TIME case.
     """
-    monkeypatch.setattr(
-        "alpha_bot_execution.EXECUTION_START_TIME", "09:30", raising=False
-    )
+    monkeypatch.setattr("alpha_bot_execution.EXECUTION_START_TIME", "09:30", raising=False)
 
 
 def _load_fixture(name: str) -> dict:
@@ -89,9 +80,7 @@ def _replay_seq(ticks: list[dict], params: dict, grace_minutes: int) -> list[dic
             "autotuner.replay_exit_sequence missing — required for AC-2/AC-6 "
             "exit-decision parity tests."
         )
-    return autotuner.replay_exit_sequence(
-        ticks, params, grace_minutes=grace_minutes
-    )
+    return autotuner.replay_exit_sequence(ticks, params, grace_minutes=grace_minutes)
 
 
 # ===========================================================================
@@ -152,8 +141,7 @@ def test_replay_allows_vwap_exit_after_grace_window() -> None:
         "VWAP exit system outright."
     )
     assert "VWAP" in exits[0]["exit_reason"], (
-        f"Expected a VWAP-family exit with no grace; got "
-        f"{exits[0]['exit_reason']!r}."
+        f"Expected a VWAP-family exit with no grace; got {exits[0]['exit_reason']!r}."
     )
 
 
@@ -193,12 +181,26 @@ def test_replay_grace_suppresses_flags_not_counters() -> None:
     # current_return < safe_hwm, with negative vwap_diff + full weight so the
     # VWAP gate passes. The HWM is set on tick 0 and the return stays below it.
     ticks = [
-        {"time": "09:30", "return": 5.0, "mc_prob": 50.0, "vol": 0.5,
-         "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+        {
+            "time": "09:30",
+            "return": 5.0,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": -2.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 1.0,
+        },
     ]
     ticks += [
-        {"time": f"09:{31 + i:02d}", "return": 2.0, "mc_prob": 50.0, "vol": 0.5,
-         "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0}
+        {
+            "time": f"09:{31 + i:02d}",
+            "return": 2.0,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": -2.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 1.0,
+        }
         for i in range(9)
     ]
 
@@ -220,9 +222,7 @@ def test_replay_grace_suppresses_flags_not_counters() -> None:
         f"reset the counter during grace instead of just the flag; an exit "
         f"earlier means the grace suppression is missing."
     )
-    assert "VWAP" in exit_reason, (
-        f"Expected a VWAP-family exit; got {exit_reason!r}."
-    )
+    assert "VWAP" in exit_reason, f"Expected a VWAP-family exit; got {exit_reason!r}."
 
 
 def test_replay_grace_suppresses_both_vwap_signals() -> None:
@@ -238,7 +238,7 @@ def test_replay_grace_suppresses_both_vwap_signals() -> None:
     RED: pre-fix the replay fires a VWAP Bleed Cut inside grace.
     """
     params = _default_params()
-    params["VWAP_BLEED_TICKS"] = 3   # bleed confirms after 3 ticks
+    params["VWAP_BLEED_TICKS"] = 3  # bleed confirms after 3 ticks
     grace_minutes = 15
 
     # Sustained deep bleed from tick 0: return far negative so it is at/below
@@ -246,8 +246,13 @@ def test_replay_grace_suppresses_both_vwap_signals() -> None:
     # passes; HWM low so System A (breakdown) does not also fire — isolating
     # the bleed signal.
     bleed_tick = {
-        "time": "09:30", "return": -8.0, "mc_prob": 50.0, "vol": 0.5,
-        "vwap_diff": -3.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0,
+        "time": "09:30",
+        "return": -8.0,
+        "mc_prob": 50.0,
+        "vol": 0.5,
+        "vwap_diff": -3.0,
+        "base_atr_pct": 0.5,
+        "valid_vwap_weight": 1.0,
     }
     ticks = [dict(bleed_tick, time=f"09:{30 + i:02d}") for i in range(10)]
 
@@ -414,12 +419,26 @@ def test_replay_grace_gate_tracks_retuned_production_constant(
     # A VWAP breakdown holding every tick from tick 0: tick 0 banks the HWM,
     # subsequent ticks sit below it with negative vwap_diff + full weight.
     ticks = [
-        {"time": "09:30", "return": 5.0, "mc_prob": 50.0, "vol": 0.5,
-         "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0},
+        {
+            "time": "09:30",
+            "return": 5.0,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": -2.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 1.0,
+        },
     ]
     ticks += [
-        {"time": f"09:{31 + i:02d}", "return": 2.0, "mc_prob": 50.0, "vol": 0.5,
-         "vwap_diff": -2.0, "base_atr_pct": 0.5, "valid_vwap_weight": 1.0}
+        {
+            "time": f"09:{31 + i:02d}",
+            "return": 2.0,
+            "mc_prob": 50.0,
+            "vol": 0.5,
+            "vwap_diff": -2.0,
+            "base_atr_pct": 0.5,
+            "valid_vwap_weight": 1.0,
+        }
         for i in range(20)
     ]
     history = {"sym-A": {"2026-04-06": ticks}}
@@ -428,9 +447,7 @@ def test_replay_grace_gate_tracks_retuned_production_constant(
         """True iff run_simulation's replay fires an exit on this day."""
         # run_simulation returns -total_guard_alpha; a day that triggers an
         # exit contributes a non-zero term, a no-exit day contributes 0.0.
-        return autotuner.run_simulation(
-            params, history, ["sym-A"], "2026-05-10", {}
-        ) != 0.0
+        return autotuner.run_simulation(params, history, ["sym-A"], "2026-05-10", {}) != 0.0
 
     # Production grace = 0: the early VWAP breakdown is NOT suppressed.
     monkeypatch.setattr(alpha_bot_execution, "VWAP_OPEN_WINDOW_GRACE_MINUTES", 0)

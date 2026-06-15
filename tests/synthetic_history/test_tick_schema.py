@@ -197,9 +197,7 @@ def test_cache_filename_includes_schema_version_marker(synth_source: str) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_valid_alloc_is_not_silently_discarded(
-    synth_tree: ast.Module, synth_source: str
-) -> None:
+def test_valid_alloc_is_not_silently_discarded(synth_tree: ast.Module, synth_source: str) -> None:
     """The per-tick coverage fraction (today named ``valid_alloc`` and
     accumulated in the holdings inner loop at line 230) must be surfaced into
     the tick dict — not dropped at the end of the loop.
@@ -244,9 +242,7 @@ def test_valid_alloc_is_not_silently_discarded(
             "a 'valid_vwap_weight' entry — cannot verify provenance."
         )
 
-        referenced_names = {
-            n.id for n in ast.walk(value_expr) if isinstance(n, ast.Name)
-        }
+        referenced_names = {n.id for n in ast.walk(value_expr) if isinstance(n, ast.Name)}
         assert PRODUCER_NAMES & referenced_names, (
             f"tick dict at line {getattr(node, 'lineno', '?')} sets "
             "'valid_vwap_weight' to an expression that does not reference any "

@@ -179,9 +179,7 @@ class TestApiStateIncludesSymphonies:
 
         resp = client.get("/api/state")
         body = resp.get_json()
-        assert len(body["symphonies"]) == 2, (
-            f"expected 2 symphonies; got {len(body['symphonies'])}"
-        )
+        assert len(body["symphonies"]) == 2, f"expected 2 symphonies; got {len(body['symphonies'])}"
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +193,16 @@ class TestSymphonyDictFields:
     cr_bot, cr_held, mdd_bot, mdd_held.
     """
 
-    _REQUIRED_FIELDS = ("id", "status", "tc_bot", "tc_held", "cr_bot", "cr_held", "mdd_bot", "mdd_held")
+    _REQUIRED_FIELDS = (
+        "id",
+        "status",
+        "tc_bot",
+        "tc_held",
+        "cr_bot",
+        "cr_held",
+        "mdd_bot",
+        "mdd_held",
+    )
 
     def _get_symphonies(self, client, mock_database, monkeypatch, state=None):
         mock_database.load_state.return_value = (
@@ -243,9 +250,7 @@ class TestSymphonyDictFields:
         syms = self._get_symphonies(client, mock_database, monkeypatch, state=state)
         trig = next((s for s in syms if s["id"] == "sym-trig"), None)
         assert trig is not None, "sym-trig not found in symphonies"
-        assert trig["status"] == "triggered", (
-            f"expected status='triggered'; got '{trig['status']}'"
-        )
+        assert trig["status"] == "triggered", f"expected status='triggered'; got '{trig['status']}'"
 
     def test_each_symphony_has_tc_fields(self, client, mock_database, monkeypatch):
         syms = self._get_symphonies(client, mock_database, monkeypatch)
@@ -312,7 +317,8 @@ class TestSymphonyValuesFromAnalytics:
 
         analytics_mock = _default_analytics_mock()
         analytics_mock.get_symphony_cumulative_return.return_value = {
-            "if_held": 42.0, "dry_run": 40.0
+            "if_held": 42.0,
+            "dry_run": 40.0,
         }
         monkeypatch.setattr(app_module, "analytics", analytics_mock)
 
@@ -332,9 +338,7 @@ class TestSymphonyValuesFromAnalytics:
         monkeypatch.setattr(app_module, "render_template", lambda *_a, **_k: "")
 
         analytics_mock = _default_analytics_mock()
-        analytics_mock.get_symphony_max_drawdown.return_value = {
-            "if_held": 7.77, "dry_run": 8.88
-        }
+        analytics_mock.get_symphony_max_drawdown.return_value = {"if_held": 7.77, "dry_run": 8.88}
         monkeypatch.setattr(app_module, "analytics", analytics_mock)
 
         resp = client.get("/api/state")

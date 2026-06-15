@@ -38,12 +38,7 @@ import pytest
 # Fixture paths
 # ---------------------------------------------------------------------------
 
-FIXTURES_ROOT = (
-    pathlib.Path(__file__).parent.parent
-    / "fixtures"
-    / "calibration"
-    / "locked_vars"
-)
+FIXTURES_ROOT = pathlib.Path(__file__).parent.parent / "fixtures" / "calibration" / "locked_vars"
 AUTOTUNER_SRC = pathlib.Path(__file__).parent.parent.parent / "autotuner.py"
 AI_ADVISOR_SRC = pathlib.Path(__file__).parent.parent.parent / "ai_advisor.py"
 DATABASE_SRC = pathlib.Path(__file__).parent.parent.parent / "database.py"
@@ -52,6 +47,7 @@ DATABASE_SRC = pathlib.Path(__file__).parent.parent.parent / "database.py"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_fixture(name: str) -> dict:
     return json.loads((FIXTURES_ROOT / name).read_text())
@@ -113,6 +109,7 @@ def _live_locked_vars() -> list[str]:
     """Import database at runtime and return DEFAULT_LOCKED_VARS."""
     import importlib
     import sys
+
     # database has no heavy side effects on import; safe to import directly.
     if "database" in sys.modules:
         db = sys.modules["database"]
@@ -135,6 +132,7 @@ def _non_locked_var_names_from_fixture() -> list[str]:
 # ---------------------------------------------------------------------------
 # Class 1: Single source of truth — DEFAULT_LOCKED_VARS lives ONLY in database.py
 # ---------------------------------------------------------------------------
+
 
 class TestSingleSourceOfTruth:
     """
@@ -198,6 +196,7 @@ class TestSingleSourceOfTruth:
 # Class 2: Optuna search space — locked vars must be absent
 # ---------------------------------------------------------------------------
 
+
 class TestOptunaSearchSpaceExcludesLockedVars:
     """
     OPTUNA_SEARCH_SPACE_KEYS (the set Optuna uses as a validation contract)
@@ -211,6 +210,7 @@ class TestOptunaSearchSpaceExcludesLockedVars:
         RED: currently it does (autotuner.py:20-24).
         """
         import sys
+
         # Importing autotuner has optuna side effects — read via AST instead.
         src = _autotuner_source()
         tree = _parse_ast(src)
@@ -240,7 +240,9 @@ class TestOptunaSearchSpaceExcludesLockedVars:
         tree = _parse_ast(src)
         assignments = _find_module_assignments(tree)
 
-        members = _extract_frozenset_strings(assignments.get("OPTUNA_SEARCH_SPACE_KEYS", ast.Constant(value=None)))
+        members = _extract_frozenset_strings(
+            assignments.get("OPTUNA_SEARCH_SPACE_KEYS", ast.Constant(value=None))
+        )
         if members is None:
             pytest.skip("OPTUNA_SEARCH_SPACE_KEYS not parseable as frozenset literal")
 
@@ -259,7 +261,9 @@ class TestOptunaSearchSpaceExcludesLockedVars:
         tree = _parse_ast(src)
         assignments = _find_module_assignments(tree)
 
-        members = _extract_frozenset_strings(assignments.get("OPTUNA_SEARCH_SPACE_KEYS", ast.Constant(value=None)))
+        members = _extract_frozenset_strings(
+            assignments.get("OPTUNA_SEARCH_SPACE_KEYS", ast.Constant(value=None))
+        )
         if members is None:
             pytest.skip("OPTUNA_SEARCH_SPACE_KEYS not parseable as frozenset literal")
 
@@ -320,6 +324,7 @@ class TestOptunaSearchSpaceExcludesLockedVars:
 # ---------------------------------------------------------------------------
 # Class 3: AI advisor locked-var gate — structural hard filter required
 # ---------------------------------------------------------------------------
+
 
 class TestAIAdvisorRejectsLockedVarSuggestions:
     """
@@ -470,13 +475,15 @@ class TestAIAdvisorRejectsLockedVarSuggestions:
             re.search(r"def\s+enforce_locked_vars_filter|def\s+filter_locked_suggestions", src)
         )
         has_locked_var_check_in_allowlist = bool(
-            re.search(r"locked_vars.*suggest|suggest.*locked_vars|DEFAULT_LOCKED_VARS.*suggest", src, re.DOTALL)
+            re.search(
+                r"locked_vars.*suggest|suggest.*locked_vars|DEFAULT_LOCKED_VARS.*suggest",
+                src,
+                re.DOTALL,
+            )
         )
 
         structural_gate_present = (
-            has_locked_var_import
-            or has_locked_var_filter_fn
-            or has_locked_var_check_in_allowlist
+            has_locked_var_import or has_locked_var_filter_fn or has_locked_var_check_in_allowlist
         )
 
         assert structural_gate_present, (
@@ -492,6 +499,7 @@ class TestAIAdvisorRejectsLockedVarSuggestions:
 # ---------------------------------------------------------------------------
 # Class 4: Determinism — same locked vars + same fixture → same filter result
 # ---------------------------------------------------------------------------
+
 
 class TestLockedVarFilterDeterminism:
     """
@@ -592,6 +600,7 @@ class TestLockedVarFilterDeterminism:
 # ---------------------------------------------------------------------------
 # Class 5: app.py accept route — locked-var write path must be gated
 # ---------------------------------------------------------------------------
+
 
 class TestAppAcceptRouteRejectsLockedVars:
     """

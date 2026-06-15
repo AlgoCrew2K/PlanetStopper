@@ -96,10 +96,10 @@ def _post_trigger_state() -> dict:
         "stop_trigger": 2.5,
         "mc_history": [52.0, 47.0, 39.0],
         "current_holdings": [{"ticker": "SPY", "allocation": 1.0}],
-        "current_value": 0.0,        # Composer rotated the symphony OUT
+        "current_value": 0.0,  # Composer rotated the symphony OUT
         "current_return": 0.0,
         "position_epoch": "old-epoch-pre-rotation",
-        "last_holdings_positive": True,   # prior cycle had positive holdings
+        "last_holdings_positive": True,  # prior cycle had positive holdings
     }
 
 
@@ -118,17 +118,17 @@ def _untriggered_rotated_out_state() -> dict:
         "armed": True,
         "tp_armed": False,
         "para_armed": True,
-        "triggered": False,                  # never triggered
-        "breakeven_locked": True,            # MUST clear on re-entry
-        "hwm_hold_ticks": 11,                # MUST clear
+        "triggered": False,  # never triggered
+        "breakeven_locked": True,  # MUST clear on re-entry
+        "hwm_hold_ticks": 11,  # MUST clear
         "below_stop_count": 2,
         "above_tp_count": 0,
         "vwap_ticks": 1,
         "vwap_bleed_ticks": 0,
-        "stop_trigger": 3.6,                 # MUST clear
+        "stop_trigger": 3.6,  # MUST clear
         "mc_history": [],
         "current_holdings": [{"ticker": "QQQ", "allocation": 1.0}],
-        "current_value": 0.0,                # rotated out by Composer
+        "current_value": 0.0,  # rotated out by Composer
         "current_return": 0.0,
         "position_epoch": "old-epoch-case2",
         "last_holdings_positive": True,
@@ -222,10 +222,7 @@ def _resolve_detector():
         for name in candidate_names:
             if hasattr(module, name):
                 return getattr(module, name)
-    pytest.fail(
-        "Transition detector not exposed; see "
-        "TestHoldingsTransitionDetectionHelperExists."
-    )
+    pytest.fail("Transition detector not exposed; see TestHoldingsTransitionDetectionHelperExists.")
 
 
 class TestTransitionDetectorContract:
@@ -255,9 +252,7 @@ class TestTransitionDetectorContract:
                     "Detector must accept either kwargs (previous_state, "
                     "current_holdings_positive) or two positional args."
                 )
-        assert result is True, (
-            f"Zero -> positive transition must return True; got {result!r}."
-        )
+        assert result is True, f"Zero -> positive transition must return True; got {result!r}."
 
     def test_no_transition_when_holdings_stay_positive(self):
         """Mid-position rebalance: holdings positive in both cycles. Must
@@ -288,8 +283,7 @@ class TestTransitionDetectorContract:
         except TypeError:
             result = detector({"last_holdings_positive": False}, False)
         assert result is False, (
-            f"Zero -> zero (still rotated out): must return False; got "
-            f"{result!r}."
+            f"Zero -> zero (still rotated out): must return False; got {result!r}."
         )
 
     def test_detector_handles_missing_last_holdings_marker(self):
@@ -333,12 +327,16 @@ def _build_fake_et(hour: int, minute: int, *, day: int = 21) -> datetime:
     """Build an ET datetime at 2026-05-DAY. Used for the time-of-day axis."""
     try:
         from zoneinfo import ZoneInfo
-        return datetime(
-            2026, 5, day, hour, minute, 0, tzinfo=ZoneInfo("America/New_York")
-        )
+
+        return datetime(2026, 5, day, hour, minute, 0, tzinfo=ZoneInfo("America/New_York"))
     except Exception:  # pragma: no cover - timezone library fallback
         return datetime(
-            2026, 5, day, hour, minute, 0,
+            2026,
+            5,
+            day,
+            hour,
+            minute,
+            0,
             tzinfo=timezone(timedelta(hours=-4)),
         )
 
@@ -354,28 +352,38 @@ def _run_one_cycle(bot_state, symphonies, *, current_et, **extra_patches):
     import alpha_bot_execution
 
     s_id = next(
-        (k for k in bot_state.keys()
-         if k not in ("date", "last_execution_mode", "last_market_close_snapshot",
-                      "last_successful_cycle_at", "post_mortem_run")),
+        (
+            k
+            for k in bot_state.keys()
+            if k
+            not in (
+                "date",
+                "last_execution_mode",
+                "last_market_close_snapshot",
+                "last_successful_cycle_at",
+                "post_mortem_run",
+            )
+        ),
         None,
     )
     account = bot_state[s_id]["account"] if s_id else "acct-test"
 
     chart_history = {"date": bot_state.get("date"), "symphonies": {}}
 
-    with patch.object(alpha_bot_execution, "database") as mock_db, \
-         patch.object(alpha_bot_execution, "reporting"), \
-         patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch, \
-         patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_hist, \
-         patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_vwap, \
-         patch.object(alpha_bot_execution, "get_current_et", return_value=current_et), \
-         patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [account]), \
-         patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "k"), \
-         patch.object(alpha_bot_execution, "ALPACA_KEY", "k"), \
-         patch.object(alpha_bot_execution, "LIVE_EXECUTION", False), \
-         patch.object(alpha_bot_execution.time, "sleep"), \
-         patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]):
-
+    with (
+        patch.object(alpha_bot_execution, "database") as mock_db,
+        patch.object(alpha_bot_execution, "reporting"),
+        patch.object(alpha_bot_execution, "fetch_symphony_stats") as mock_fetch,
+        patch.object(alpha_bot_execution, "fetch_alpaca_history") as mock_hist,
+        patch.object(alpha_bot_execution, "fetch_intraday_vwaps") as mock_vwap,
+        patch.object(alpha_bot_execution, "get_current_et", return_value=current_et),
+        patch.object(alpha_bot_execution, "ACCOUNT_UUIDS", [account]),
+        patch.object(alpha_bot_execution, "COMPOSER_KEY_ID", "k"),
+        patch.object(alpha_bot_execution, "ALPACA_KEY", "k"),
+        patch.object(alpha_bot_execution, "LIVE_EXECUTION", False),
+        patch.object(alpha_bot_execution.time, "sleep"),
+        patch.object(alpha_bot_execution.sys, "argv", ["alpha_bot_execution.py"]),
+    ):
         mock_db.acquire_lock.return_value = True
         mock_db.load_state.return_value = bot_state
         mock_db.load_chart_history.return_value = chart_history
@@ -422,14 +430,11 @@ def _run_one_cycle(bot_state, symphonies, *, current_et, **extra_patches):
         hist_day = current_et.strftime("%Y-%m-%d")
         mock_hist.return_value = {
             hist_day: {
-                t: {"c": 100.0, "daily_ret": 0.001,
-                    "high": 101.0, "low": 99.0, "close": 100.0}
+                t: {"c": 100.0, "daily_ret": 0.001, "high": 101.0, "low": 99.0, "close": 100.0}
                 for t in all_tickers
             }
         }
-        mock_vwap.return_value = {
-            t: {"vwap": 100.0, "last_price": 100.0} for t in all_tickers
-        }
+        mock_vwap.return_value = {t: {"vwap": 100.0, "last_price": 100.0} for t in all_tickers}
 
         for key, value in extra_patches.items():
             patcher = patch.object(alpha_bot_execution, key, value)
@@ -445,9 +450,7 @@ def _run_one_cycle(bot_state, symphonies, *, current_et, **extra_patches):
         return save_calls[-1].args[0]
 
 
-def _make_composer_payload(
-    s_id: str, *, name: str, holdings_positive: bool, current_value: float
-):
+def _make_composer_payload(s_id: str, *, name: str, holdings_positive: bool, current_value: float):
     """Build a Composer fetch_symphony_stats payload entry."""
     return {
         "id": s_id,
@@ -455,9 +458,7 @@ def _make_composer_payload(
         "last_percent_change": 0.0,
         "current_value": current_value,
         "value": current_value,
-        "holdings": (
-            [{"ticker": "SPY", "allocation": 1.0}] if holdings_positive else []
-        ),
+        "holdings": ([{"ticker": "SPY", "allocation": 1.0}] if holdings_positive else []),
     }
 
 
@@ -493,8 +494,10 @@ class TestE1AlphaBotExitThenComposerRebuy:
         et = _build_fake_et(13, 0)
         symphonies = [
             _make_composer_payload(
-                s_id, name="RotationSym",
-                holdings_positive=True, current_value=10_000.0,
+                s_id,
+                name="RotationSym",
+                holdings_positive=True,
+                current_value=10_000.0,
             )
         ]
 
@@ -516,8 +519,7 @@ class TestE1AlphaBotExitThenComposerRebuy:
         # Int counters must zero.
         for f in _TRANSIENT_INT_ZERO_FIELDS:
             assert sym.get(f, 0) == 0, (
-                f"AC-2 / E-1 VIOLATED: '{f}' was not reset on intraday "
-                f"rebuy (got {sym.get(f)!r})."
+                f"AC-2 / E-1 VIOLATED: '{f}' was not reset on intraday rebuy (got {sym.get(f)!r})."
             )
         # stop_trigger must NOT carry the prior position's stale floor (2.5).
         # The AC-2 reset nulls stop_trigger; the action phase may then
@@ -553,8 +555,7 @@ class TestE1AlphaBotExitThenComposerRebuy:
         # Fresh epoch.
         new_epoch = sym.get("position_epoch")
         assert new_epoch is not None, (
-            "AC-2 / E-1 VIOLATED: position_epoch must be present on the "
-            "reset state."
+            "AC-2 / E-1 VIOLATED: position_epoch must be present on the reset state."
         )
         assert new_epoch != old_epoch, (
             "AC-2 / E-1 VIOLATED: position_epoch was NOT re-minted on "
@@ -588,8 +589,10 @@ class TestCase2UntriggeredComposerRotation:
         et = _build_fake_et(14, 30)
         symphonies = [
             _make_composer_payload(
-                s_id, name="Case2Sym",
-                holdings_positive=True, current_value=10_000.0,
+                s_id,
+                name="Case2Sym",
+                holdings_positive=True,
+                current_value=10_000.0,
             )
         ]
 
@@ -657,7 +660,7 @@ class TestCarriedPositionAcrossDayNoDoubleReset:
         prior_day_state = {
             "name": "CarrySym",
             "account": "acct-carry-001",
-            "high_water_mark": -999.0,        # placeholder; wipe will reset
+            "high_water_mark": -999.0,  # placeholder; wipe will reset
             "shadow_hwm": -999.0,
             "prev_return": None,
             "armed": False,
@@ -678,16 +681,18 @@ class TestCarriedPositionAcrossDayNoDoubleReset:
             "last_holdings_positive": True,
         }
         bot_state = {
-            "date": "2026-05-20",                 # yesterday
+            "date": "2026-05-20",  # yesterday
             "last_execution_mode": False,
             s_id: prior_day_state,
         }
 
-        et = _build_fake_et(10, 30, day=21)        # new day
+        et = _build_fake_et(10, 30, day=21)  # new day
         symphonies = [
             _make_composer_payload(
-                s_id, name="CarrySym",
-                holdings_positive=True, current_value=10_050.0,
+                s_id,
+                name="CarrySym",
+                holdings_positive=True,
+                current_value=10_050.0,
             )
         ]
 
@@ -702,9 +707,7 @@ class TestCarriedPositionAcrossDayNoDoubleReset:
         # triggered, so the prior epoch should SURVIVE the daily wipe).
         # Either way, the intraday detection must NOT mint AGAIN on top.
         epoch_after_cycle = sym.get("position_epoch")
-        assert epoch_after_cycle is not None, (
-            "Carried position must retain a position_epoch."
-        )
+        assert epoch_after_cycle is not None, "Carried position must retain a position_epoch."
         # Specifically: the epoch should be the one wipe_transient_state
         # left in place — NOT a new one minted by the intraday detection.
         # The wipe_transient_state conditional preserves the prior epoch
@@ -832,8 +835,10 @@ class TestNoRebuyMidDayDoesNotResetMidCycle:
         et = _build_fake_et(13, 15)
         symphonies = [
             _make_composer_payload(
-                s_id, name="NoRebuySym",
-                holdings_positive=False, current_value=0.0,
+                s_id,
+                name="NoRebuySym",
+                holdings_positive=False,
+                current_value=0.0,
             )
         ]
         final_state = _run_one_cycle(bot_state, symphonies, current_et=et)
@@ -880,8 +885,10 @@ class TestLastHoldingsPositiveBookkeeping:
         et = _build_fake_et(14, 30)
         symphonies = [
             _make_composer_payload(
-                s_id, name="RotationSym",
-                holdings_positive=True, current_value=10_000.0,
+                s_id,
+                name="RotationSym",
+                holdings_positive=True,
+                current_value=10_000.0,
             )
         ]
         final_state = _run_one_cycle(bot_state, symphonies, current_et=et)
@@ -929,8 +936,10 @@ class TestLastHoldingsPositiveBookkeeping:
         et = _build_fake_et(15, 0)
         symphonies = [
             _make_composer_payload(
-                s_id, name="BookkeepingSym",
-                holdings_positive=False, current_value=0.0,
+                s_id,
+                name="BookkeepingSym",
+                holdings_positive=False,
+                current_value=0.0,
             )
         ]
         final_state = _run_one_cycle(bot_state, symphonies, current_et=et)
@@ -1026,14 +1035,13 @@ class TestB1ClusterSixCrossInvariantFiveDayCarry:
             et = _build_fake_et(11, 0, day=22 + day_offset)
             symphonies = [
                 _make_composer_payload(
-                    s_id, name="FiveDayCarrySym",
+                    s_id,
+                    name="FiveDayCarrySym",
                     holdings_positive=True,
                     current_value=10_000.0 + 100.0 * day_offset,
                 )
             ]
-            final_state = _run_one_cycle(
-                bot_state, symphonies, current_et=et
-            )
+            final_state = _run_one_cycle(bot_state, symphonies, current_et=et)
             sym = final_state[s_id]
             epochs_seen.append(sym.get("position_epoch"))
             # Carry the post-cycle state into the next day's bot_state —
@@ -1184,6 +1192,7 @@ class TestB3StrictPositivitySemantics:
         """Find the predicate the engine uses to decide holdings_positive.
         Acceptable names; implementer's choice."""
         import alpha_bot_execution
+
         for name in (
             "has_positive_holdings",
             "holdings_positive",
@@ -1206,16 +1215,16 @@ class TestB3StrictPositivitySemantics:
         [
             ([], False),
             ([{"ticker": "X", "amount": 1.0}], True),
-            ([{"ticker": "X", "amount": 0.5}], True),         # partial fill
-            ([{"ticker": "X", "amount": 0.0}], False),        # zero-quantity stub
-            ([{"ticker": "X", "amount": 0.0},
-              {"ticker": "Y", "amount": 1.0}], True),          # any positive
-            ([{"ticker": "X", "amount": -1.0}], False),       # negative-quantity stub
+            ([{"ticker": "X", "amount": 0.5}], True),  # partial fill
+            ([{"ticker": "X", "amount": 0.0}], False),  # zero-quantity stub
+            (
+                [{"ticker": "X", "amount": 0.0}, {"ticker": "Y", "amount": 1.0}],
+                True,
+            ),  # any positive
+            ([{"ticker": "X", "amount": -1.0}], False),  # negative-quantity stub
         ],
     )
-    def test_positivity_predicate_matches_strict_semantic(
-        self, holdings, expected
-    ):
+    def test_positivity_predicate_matches_strict_semantic(self, holdings, expected):
         """Pin: len > 0 AND any(amount > 0)."""
         predicate = self._resolve_positivity()
         try:
@@ -1250,8 +1259,10 @@ class TestB4ResetPathHasNoBrokerSideEffects:
         et = _build_fake_et(13, 0)
         symphonies = [
             _make_composer_payload(
-                s_id, name="RotationSym",
-                holdings_positive=True, current_value=10_000.0,
+                s_id,
+                name="RotationSym",
+                holdings_positive=True,
+                current_value=10_000.0,
             )
         ]
 
@@ -1324,7 +1335,7 @@ class TestB5TriggeredThisCycleSafety:
             "armed": True,
             "tp_armed": False,
             "para_armed": True,
-            "triggered": True,             # set by THIS cycle's math
+            "triggered": True,  # set by THIS cycle's math
             "triggered_reason": "Trailing Stop",
             "triggered_at_return": 3.8,
             "triggered_at_hwm": 4.5,
@@ -1353,8 +1364,10 @@ class TestB5TriggeredThisCycleSafety:
         # Composer hasn't reacted yet — symphony still shows holdings.
         symphonies = [
             _make_composer_payload(
-                s_id, name="TriggerThisCycleSym",
-                holdings_positive=True, current_value=10_000.0,
+                s_id,
+                name="TriggerThisCycleSym",
+                holdings_positive=True,
+                current_value=10_000.0,
             )
         ]
         final_state = _run_one_cycle(bot_state, symphonies, current_et=et)

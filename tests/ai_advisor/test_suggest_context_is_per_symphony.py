@@ -57,6 +57,7 @@ def _autotune_run_for(symphony_id: str) -> dict:
 def per_symphony_seams():
     """Patch the three per-symphony data seams so each symphony_id yields its OWN
     distinct data — proving the context is grounded per symphony."""
+
     def _latest_run(symphony_id):
         return _autotune_run_for(symphony_id)
 
@@ -90,12 +91,19 @@ def test_assemble_context_threads_symphony_id_into_per_symphony_lookups(per_symp
     (returning a shared blob) would fail here.
     """
     with (
-        patch.object(ai_advisor.database, "get_latest_autotune_run",
-                     side_effect=lambda sid: _autotune_run_for(sid)) as spy_run,
-        patch.object(ai_advisor.symphony_logic, "get_condensed_logic",
-                     side_effect=lambda sid, use_cache=True: {"symphony_id": sid}) as spy_logic,
-        patch.object(ai_advisor, "_read_current_strategy",
-                     side_effect=lambda sid: ({}, [])) as spy_strategy,
+        patch.object(
+            ai_advisor.database,
+            "get_latest_autotune_run",
+            side_effect=lambda sid: _autotune_run_for(sid),
+        ) as spy_run,
+        patch.object(
+            ai_advisor.symphony_logic,
+            "get_condensed_logic",
+            side_effect=lambda sid, use_cache=True: {"symphony_id": sid},
+        ) as spy_logic,
+        patch.object(
+            ai_advisor, "_read_current_strategy", side_effect=lambda sid: ({}, [])
+        ) as spy_strategy,
     ):
         ai_advisor.assemble_advisor_context(scope="symphony", symphony_id=_SYM_A)
 
