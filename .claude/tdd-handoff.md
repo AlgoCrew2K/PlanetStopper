@@ -1,7 +1,7 @@
 # TDD Handoff — lens-data-gdelt-sentiment
 Plan: feature-plans/lens-data-gdelt-sentiment.md
 Branch: feat/lens-gdelt-tone
-Phase: green
+Phase: done
 
 ## Test Files
 - tests/ai_advisor/test_lens_gdelt.py (RED — comprehensive coverage)
@@ -16,11 +16,11 @@ N/A — backend-only feature, no UI surface (feature plan §Design-System Mappin
 ## A/C Coverage Matrix
 | A/C ID | Description | Test File | Test Name(s) | Status |
 |--------|-------------|-----------|--------------|--------|
-| AC-1 | `_fetch_gdelt_sentiment(universe)` exists in `advisors/lens_gdelt.py`; returns documented shape | test_lens_gdelt.py | `test_producer_function_exists_and_is_callable`, `test_returns_all_required_keys_on_success`, `test_per_ticker_is_always_none_in_v1`, `test_source_field_is_non_empty_string` | RED |
-| AC-2 | Honest-availability: unavailable marker on fetch failure, no fabricated tone | test_lens_gdelt.py | `test_network_timeout_returns_unavailable_with_exc_class_reason`, `test_json_decode_error_returns_unavailable`, `test_empty_timeline_returns_no_tone_data_unavailable`, `test_empty_data_array_returns_no_tone_data_unavailable`, `test_no_numeric_values_in_data_returns_no_tone_data_unavailable`, `test_fabrication_forbidden_no_default_tone_on_empty`, `test_tone_none_implies_available_false_on_timeout`, `test_tone_none_implies_available_false_on_empty_data`, `test_available_true_implies_tone_is_float` | RED |
-| AC-3 | Fixtures captured-from-producer or schema-derived-with-validator; tests assert shape/format, never hardcoded tone | test_lens_gdelt.py | `test_timelinetone_fixture_schema_is_valid`, `test_artlist_fixture_schema_is_valid`, `test_tone_normalized_in_minus1_to_1_range`, `test_tone_is_float_not_hardcoded_sentinel` | RED |
-| AC-4 | Off-execution-path; bounded retry MAX_ATTEMPTS=3, BACKOFF_BASE_S>=5.0; no infinite loop | test_lens_gdelt.py | `test_bounded_retry_exhausts_after_max_attempts_on_429`, `test_retry_count_does_not_exceed_max_attempts`, `test_backoff_base_constant_is_at_least_five_seconds`, `test_retry_only_on_429_not_on_success_with_empty_data`, `test_backoff_cap_constant_exists_and_is_positive` | RED |
-| AC-5 | GDELT API contract pinned (.claude/gdelt-contract.md exists with endpoint/field semantics) | test_lens_gdelt.py | `test_contract_document_exists_and_names_timelinetone_endpoint`, `test_tone_extracted_from_nested_data_field_not_series_wrapper` | RED |
+| AC-1 | `_fetch_gdelt_sentiment(universe)` exists in `advisors/lens_gdelt.py`; returns documented shape | test_lens_gdelt.py | `test_producer_function_exists_and_is_callable`, `test_returns_all_required_keys_on_success`, `test_per_ticker_is_always_none_in_v1`, `test_source_field_is_non_empty_string` | GREEN |
+| AC-2 | Honest-availability: unavailable marker on fetch failure, no fabricated tone | test_lens_gdelt.py | `test_network_timeout_returns_unavailable_with_exc_class_reason`, `test_json_decode_error_returns_unavailable`, `test_empty_timeline_returns_no_tone_data_unavailable`, `test_empty_data_array_returns_no_tone_data_unavailable`, `test_no_numeric_values_in_data_returns_no_tone_data_unavailable`, `test_fabrication_forbidden_no_default_tone_on_empty`, `test_tone_none_implies_available_false_on_timeout`, `test_tone_none_implies_available_false_on_empty_data`, `test_available_true_implies_tone_is_float` | GREEN |
+| AC-3 | Fixtures captured-from-producer or schema-derived-with-validator; tests assert shape/format, never hardcoded tone | test_lens_gdelt.py | `test_timelinetone_fixture_schema_is_valid`, `test_artlist_fixture_schema_is_valid`, `test_tone_normalized_in_minus1_to_1_range`, `test_tone_is_float_not_hardcoded_sentinel` | GREEN |
+| AC-4 | Off-execution-path; bounded retry MAX_ATTEMPTS=4, BACKOFF_BASE_S>=20.0; no infinite loop; inter-request sleep 6.0s | test_lens_gdelt.py | `test_bounded_retry_exhausts_after_max_attempts_on_429`, `test_retry_count_does_not_exceed_max_attempts`, `test_backoff_base_constant_is_at_least_twenty_seconds`, `test_max_attempts_constant_equals_four`, `test_backoff_cap_constant_exists_and_is_positive`, `test_inter_request_constant_exists_and_equals_six_seconds`, `test_retry_only_on_429_not_on_success_with_empty_data`, `test_inter_request_sleep_is_called_between_tone_and_artlist_gets` | GREEN |
+| AC-5 | GDELT API contract pinned (.claude/gdelt-contract.md exists with endpoint/field semantics) | test_lens_gdelt.py | `test_contract_document_exists_and_names_timelinetone_endpoint`, `test_tone_extracted_from_nested_data_field_not_series_wrapper` | GREEN |
 
 ## Import Stubs Created
 - `advisors/lens_gdelt.py` — stub only; exports `_fetch_gdelt_sentiment` raising NotImplementedError and module-level constants at their specified values. Contains NO business logic.
@@ -74,3 +74,6 @@ None.
 - [2026-06-15] test-writer: RED complete — 35 failing (non-live) / 9 passing / 2 live-deselected. Stub at advisors/lens_gdelt.py. Fixtures at tests/fixtures/math/gdelt_timelinetone_response.json + gdelt_artlist_response.json.
 - [2026-06-15] test-writer: AMENDMENT 1 applied (eb1e0c8) — corrected backoff constants per PM spec correction. RED state unchanged. Test run protocol corrected: always pass -m "not live and not slow and not perf" alongside -o "addopts=".
 - [2026-06-15] implementer: GREEN complete — 46/46 tests passing (incl. 2 live tests). 0 test bugs documented. Typecheck N/A (no separate type-check step). Lint pending commit.
+- [2026-06-15] test-writer: review-round gaps found — Gap 1: inter-request sleep never called (defined but unused); Gap 2: non-429 HTTP errors returned 'HTTPError' instead of named label 'gdelt_fetch_failed'. Added 3 RED tests in TestReviewRoundGaps class (commit bfc7b44).
+- [2026-06-15] test-writer: confirmed both gaps already fixed in implementer's 71c917b. Re-ran suite; Hypothesis deadline failure found (time.sleep(6.0) fires during property test). Fixed: patch time.sleep + deadline=None in both property tests (commit 21181ba).
+- [2026-06-15] test-writer: FULL GREEN — 47 passed / 0 failed / 2 deselected (live). Phase: done. Notifying reviewer and doc-writer.
