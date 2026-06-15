@@ -1,63 +1,123 @@
-# TDD Handoff — propose-strategies-community-wiring
-Plan: feature-plans/propose-strategies-community-wiring.md
-Branch: team/propose-strategies-wiring
+# TDD Handoff — derivatives-section-wiring
+Plan: feature-plans/derivatives-section-wiring.md
+Branch: feat/derivatives-section-wiring
 Phase: red
+HEAD SHA: 7ce9130
 
 ## Test Files
-- tests/advisors/test_community_strats_wiring.py — 39 tests (38 failing RED, 1 GREEN invariant guard)
-
-## Fixture Files
-None — trees built inline via symphony_schema constructors; community_result dicts built by _make_community_result() helper in the test file.
-
-## A/C Coverage Matrix
-| A/C ID | Description | Test File | Test Name(s) | Status |
-|--------|-------------|-----------|--------------|--------|
-| AC-1 | adapter maps community docs → CandidateInfo; candidate_id=sid, template_id="community", tree carried, params has sid+name+composition_hash; metrics={}; backtest_error=None | test_community_strats_wiring.py | test_community_candidate_infos_exists_on_module, test_adapter_returns_list, test_adapter_candidate_id_is_sid, test_adapter_template_id_is_community, test_adapter_tree_carried_through, test_adapter_params_contains_sid, test_adapter_params_contains_name, test_adapter_params_contains_composition_hash, test_adapter_metrics_empty_dict_pre_backtest, test_adapter_backtest_error_is_none_pre_backtest, test_adapter_count_matches_candidates_list | RED |
-| AC-1 (empty) | available=False → []; empty candidates list → [] | test_community_strats_wiring.py | test_adapter_available_false_returns_empty_list, test_adapter_empty_candidates_list_returns_empty_list | RED |
-| AC-2 | evaluate_candidate_batch receives template + community candidates together (FULL batch); called exactly once | test_community_strats_wiring.py | test_gate_input_includes_community_candidate_ids, test_gate_input_includes_template_candidates_when_community_present, test_gate_is_called_exactly_once | RED |
-| AC-3 | MAX_COMMUNITY_CANDIDATES_PER_RUN exists as named int constant; adapter caps at max_candidates; propose_strategies enforces the cap | test_community_strats_wiring.py | test_max_community_candidates_per_run_exists, test_max_community_candidates_per_run_is_positive_int, test_adapter_caps_at_max_candidates, test_adapter_cap_is_deterministic_takes_first, test_adapter_max_candidates_uses_module_constant_as_default, test_community_candidates_exceeding_cap_are_truncated_in_batch | RED |
-| AC-4 | backtest exception → backtest_error set; failed candidate excluded from gate; other candidates unaffected; all-fail → run completes | test_community_strats_wiring.py | test_community_backtest_error_sets_backtest_error_field, test_community_backtest_error_candidate_excluded_from_gate, test_one_bad_community_candidate_does_not_block_template_candidates, test_all_community_backtest_failures_run_completes | RED |
-| AC-5 | persisted observation for surviving community candidate has template_id="community" + sid in params + subject_id=sid | test_community_strats_wiring.py | test_persisted_observation_has_template_id_community, test_persisted_observation_raw_response_contains_sid, test_persisted_subject_id_is_sid | RED |
-| AC-6 | community_candidates=None and =[] → no regression; gate batch size identical; community_candidates is keyword-only | test_community_strats_wiring.py | test_propose_strategies_accepts_community_candidates_none, test_propose_strategies_accepts_community_candidates_empty_list, test_gate_batch_size_same_for_none_and_empty_list, test_community_candidates_kwarg_is_keyword_only | RED |
-| AC-7 | adapter never raises on malformed input; propose_strategies never raises on community failures; returns ProposalRun on catastrophic failure; no LIVE_EXECUTION import; advisory-only | test_community_strats_wiring.py | test_community_candidate_infos_never_raises_on_malformed_result, test_propose_strategies_never_raises_on_community_exception, test_propose_strategies_returns_proposal_run_on_community_failures, test_strategy_builder_engine_does_not_import_live_execution_at_module_level (GREEN invariant), test_community_candidate_infos_does_not_call_live_execution, test_propose_strategies_with_community_candidates_returns_proposal_run_type | RED (38 failing) + 1 GREEN invariant |
-
-## Import Stubs Created
-None needed — `advisors/strategy_builder_engine.py` already exists. The new symbols (`community_candidate_infos`, `MAX_COMMUNITY_CANDIDATES_PER_RUN`, `community_candidates` kwarg on `propose_strategies`) are simply absent, causing AttributeError / TypeError failures — the correct RED signal.
-
-## Questions for User
-None. The AC matrix is fully specified; the adapter contract is recovered from pre-rip c1bf5dc.
+- tests/test_derivatives_section.py
 
 ## RED Run Result
-- 38 failed on missing symbols (AttributeError on `community_candidate_infos` / `MAX_COMMUNITY_CANDIDATES_PER_RUN`; TypeError on unknown `community_candidates` kwarg in `propose_strategies`)
-- 1 passed: `test_strategy_builder_engine_does_not_import_live_execution_at_module_level` — architectural invariant guard; correctly GREEN before and after implementation (module must never export LIVE_EXECUTION)
-- 0 skipped
-- No syntax errors, no import errors, no test infrastructure failures
+```
+============================= test session starts =============================
+platform win32 -- Python 3.12.7, pytest-8.4.2, pluggy-1.6.0
+2 workers [9 items]
 
-## Status Log
-- [2026-06-14] test-writer: Starting RED phase for propose-strategies-community-wiring (AC-1..AC-7)
-- [2026-06-14] test-writer: RED complete — 39 tests (38 failing on missing symbols, 1 GREEN architectural invariant guard). No stubs needed. Committed RED on team/propose-strategies-wiring.
+PASSED  tests/test_derivatives_section.py::test_lazy_import_not_at_module_load
+FAILED  tests/test_derivatives_section.py::test_success_path_shape
+FAILED  tests/test_derivatives_section.py::test_success_path_payload_keys
+FAILED  tests/test_derivatives_section.py::test_success_path_one_source
+FAILED  tests/test_derivatives_section.py::test_success_path_citation_args
+FAILED  tests/test_derivatives_section.py::test_failure_path_shape
+FAILED  tests/test_derivatives_section.py::test_failure_path_reason_propagated
+FAILED  tests/test_derivatives_section.py::test_missing_fred_key_propagated
+FAILED  tests/test_derivatives_section.py::test_empty_as_of_date_yields_no_sources_but_still_available
 
-## Implementation Notes for Implementer
-### What to add to advisors/strategy_builder_engine.py
+8 failed, 1 passed
+```
 
-1. `MAX_COMMUNITY_CANDIDATES_PER_RUN: int = <N>` at module level (alongside `MAX_CANDIDATES_PER_RUN`). Choose a reasonable positive integer cap.
+All 8 failures are against the stub in ai_advisor.py lines 522-556, which
+unconditionally returns available=False without calling the proxy.
+test_failure_path_shape now also fails correctly because it asserts
+mock_proxy.called (the stub never invokes the proxy at all, even on the failure
+path). test_lazy_import_not_at_module_load passes because the stub does not
+import advisors.lens_options_proxy at module level — that invariant must
+continue to hold after implementation.
 
-2. `community_candidate_infos(community_result, *, max_candidates) -> list[CandidateInfo]` function:
-   - Returns `[]` when `community_result.get("available") is False` or `candidates` is empty/None
-   - Maps each candidate dict `{sid, name, tree, tickers, oos_metrics, composition_hash}` to:
-     `CandidateInfo(candidate_id=sid, tree=tree, template_id="community", params={"sid": sid, "name": name, "composition_hash": composition_hash}, metrics={}, backtest_error=None, data_warnings=[])`
-   - Truncates to `max_candidates` (deterministic: first N items)
-   - Never raises — wrap in try/except, return [] on any failure
+The `_ensure_proxy_module` fixture is non-autouse (opt-in via parameter).
+The CC-2 test does NOT request it so it sees the genuine sys.modules state.
+All other tests request it to ensure the proxy module is resolvable regardless
+of whether advisors/lens_options_proxy.py is on the branch.
 
-3. `community_candidates: list[CandidateInfo] | None = None` as a keyword-only parameter on `propose_strategies` (after the `*` — it's already keyword-only for `incumbent_oos_alpha`/`default_oos_alpha`):
-   - After `candidate_infos = _generate_candidate_trees(objective, universe)`, extend with the (capped) community candidates: `if community_candidates: candidate_infos.extend(community_candidates[:MAX_COMMUNITY_CANDIDATES_PER_RUN])`
-   - The existing backtest loop, gate call, and persistence path are UNCHANGED — community candidates flow through the same code
-   - Per-candidate try/except already exists in the backtest loop — community candidates get the same failure isolation automatically
+## Call-site check (ai_advisor.py ~line 1208)
+NO — `_build_derivatives_section()` is called at line 1186 inside the `context:
+dict = {...}` dict literal within `assemble_advisor_context` (function body spans
+lines 1087-1190). There is NO try/except wrapping the lens section calls. The
+only guard in the function is a `raise ValueError` at lines 1134-1137 for missing
+`symphony_id` when `scope == "symphony"`. The lens calls are bare dict values
+with no exception isolation at the call site.
 
-### Key invariants the tests enforce (implementer must NOT break)
-- `evaluate_candidate_batch` called exactly once per run
-- Gate input = FULL combined batch (template + community); screens never applied to gate input
-- `template_id="community"` must propagate from CandidateInfo into raw_response on persist
-- `params["sid"]` must equal the community candidate's `candidate_id`
-- `community_candidates=None` and `community_candidates=[]` must be identical in behavior
-- `community_candidates` must be keyword-only (no positional use)
+## What implementer must do
+Replace _build_derivatives_section in ai_advisor.py (lines 522-556) with:
+
+    def _build_derivatives_section(_data: object = None) -> dict:
+        """Derivatives / volatility lens block — FRED VIXCLS + VXVCLS producer.
+
+        Fetches VIX spot (VIXCLS) and 3-month VIX (VXVCLS) from FRED via the
+        options-proxy lens producer.  Requires FRED_API_KEY in env; returns
+        available=False with the proxy reason when the key is absent, FRED is
+        down, or data is unavailable.
+
+        Lazy-imports advisors.lens_options_proxy inside the function body (CC-2
+        boundary) — never at module level.  D-1: reason is always
+        type(exc).__name__ only (enforced by the proxy; this function propagates
+        verbatim).
+
+        Args:
+            _data: unused; reserved for caller pre-injection.
+
+        Returns:
+            Lens block dict: {lens, available, payload, sources} on success;
+            {lens, available, reason, payload, sources} on failure.
+        """
+        _lens = "derivatives"
+        from advisors import lens_options_proxy as _proxy_mod  # CC-2: lazy import
+        result = _proxy_mod._fetch_options_proxy()
+
+        if not result.get("available"):
+            return {
+                "lens": _lens,
+                "available": False,
+                "reason": result.get("reason", "unavailable"),
+                "payload": None,
+                "sources": [],
+            }
+
+        as_of = result.get("as_of_date", "")
+        citation = build_citation({
+            "title": "VIXCLS / VXVCLS (CBOE Vol Index)",
+            "url": "https://fred.stlouisfed.org/series/VIXCLS",
+            "published": as_of,
+            "lens": _lens,
+        })
+        sources = [citation] if citation is not None else []
+
+        logger.info(
+            "Derivatives lens: vix=%.2f regime=%s risk_read=%s as_of=%s",
+            result.get("vix_level", 0),
+            result.get("vix_term_structure", {}).get("regime", "unknown"),
+            result.get("risk_read", "unknown"),
+            as_of,
+        )
+
+        return {
+            "lens": _lens,
+            "available": True,
+            "payload": {
+                "vix_level": result.get("vix_level"),
+                "vix_term_structure": result.get("vix_term_structure"),
+                "risk_read": result.get("risk_read"),
+                "as_of_date": as_of,
+            },
+            "sources": sources,
+        }
+
+## AC Coverage
+- AC-1 (CC-2 lazy import): test_lazy_import_not_at_module_load
+- AC-2 (success shape): test_success_path_shape, test_success_path_payload_keys
+- AC-2 (one source): test_success_path_one_source
+- AC-3 (citation args): test_success_path_citation_args
+- AC-4 (failure shape + proxy called): test_failure_path_shape
+- AC-4 (reason propagated): test_failure_path_reason_propagated
+- AC-9e (KeyError propagated): test_missing_fred_key_propagated
+- edge (empty as_of_date): test_empty_as_of_date_yields_no_sources_but_still_available
