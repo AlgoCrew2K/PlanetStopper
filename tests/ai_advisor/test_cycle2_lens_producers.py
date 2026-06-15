@@ -854,6 +854,61 @@ class TestPhase2GdeltToneWiring:
                 f"The Phase 1 producer must be importable for Phase 2 wiring."
             ) from exc
 
+    def test_combined_path_tone_score_propagates_alongside_artlist_sources(
+        self, gdelt_shape_fixture: dict
+    ):
+        """Combined path: both tone AND artlist succeed — tone_score must propagate.
+
+        This is the reviewer gap (Phase 2 APPROVE condition): none of the
+        existing property tests mock _fetch_gdelt_sentiment, so they silently
+        exercise only the artlist-only path and cannot catch a regression where
+        tone_score is dropped while artlist citations are still emitted.
+
+        Contract (combined path):
+          - available=True
+          - payload['tone_score'] == value returned by tone producer (not None)
+          - len(sources) == number of articles in fixture
+
+        FAILS if tone_score is None or absent when tone producer returned
+        available=True alongside a successful artlist fetch.
+        """
+        import ai_advisor
+
+        fixture_articles = gdelt_shape_fixture["gdelt_artlist_shape"]["articles"]
+        mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+        # Arbitrary in-range tone value — not hardcoded to a producer constant
+        expected_tone = 0.33
+        tone_result = _make_tone_result(available=True, tone=expected_tone)
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
+            block = ai_advisor._build_sentiment_section()
+
+        assert block.get("available") is True, (
+            f"Combined path (tone ok + artlist ok) must return available=True. "
+            f"Got: {block!r}"
+        )
+        payload = block.get("payload") or {}
+        tone_score = payload.get("tone_score")
+        assert isinstance(tone_score, float) and tone_score == pytest.approx(
+            expected_tone, abs=1e-9
+        ), (
+            # abs=1e-9: tone_score passes through without arithmetic; exact equality
+            # is expected. pytest.approx used defensively for float identity.
+            f"payload['tone_score'] must equal the tone producer's value "
+            f"({expected_tone}) when both signals succeed. "
+            f"Got tone_score={tone_score!r}. "
+            f"A regression here means tone_score is being dropped or overwritten "
+            f"while artlist citations are still emitted."
+        )
+        sources = block.get("sources", [])
+        assert len(sources) == len(fixture_articles), (
+            f"Combined path must emit one source per fixture article. "
+            f"Expected {len(fixture_articles)}, got {len(sources)}."
+        )
+
 
 # ---------------------------------------------------------------------------
 # 2. SEC EDGAR fundamentals producer
@@ -1422,14 +1477,22 @@ def test_gdelt_tone_aggregate_is_not_presented_as_clickable_source(
     A 'tone_score' value in the payload is fine as a derived signal; it must
     NOT be wrapped into a source with a fabricated URL.
 
+    Phase 2: also mocks _fetch_gdelt_sentiment so the lazy import does not
+    silently return unavailable (which would trigger pytest.skip, masking the
+    assertion below on every run post-Phase-2 wiring).
+
     FAILS if the producer creates a source entry for the aggregate tone score
     instead of (or in addition to) per-article sources.
     """
     import ai_advisor
 
     mock_resp = _make_mock_response(gdelt_shape_fixture["gdelt_artlist_shape"])
+    tone_result = _make_tone_result(available=True, tone=0.05)
 
-    with patch("requests.get", return_value=mock_resp):
+    with (
+        patch("requests.get", return_value=mock_resp),
+        patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+    ):
         block = ai_advisor._build_sentiment_section()
 
     if not block.get("available"):
@@ -1493,12 +1556,21 @@ def test_fred_series_values_are_not_wrapped_as_clickable_sources(
 if _HYPOTHESIS_AVAILABLE:
 
     @given(article_count=st.integers(min_value=0, max_value=50))
-    @settings(max_examples=30)
+    @settings(max_examples=30, deadline=None)
     def test_gdelt_sources_count_equals_article_count(article_count: int):
         """PROPERTY: len(sources) == article_count for any non-negative count.
 
         The GDELT producer must produce exactly one source per article.
         This invariant must hold for any article count from 0 to 50.
+
+        Phase 2: also mocks _fetch_gdelt_sentiment with available=True so the
+        combined path (tone + artlist both succeed) is exercised. Without this
+        mock, the lazy import fires the live producer against the artlist-mock,
+        gets no "timeline" key, returns unavailable, and the test silently only
+        exercises the artlist-only path.
+
+        deadline=None: _make_tone_result helper + mock setup must not be subject
+        to the 200ms hypothesis deadline.
         """
         import ai_advisor
 
@@ -1514,8 +1586,13 @@ if _HYPOTHESIS_AVAILABLE:
             for i in range(article_count)
         ]
         mock_resp = _make_mock_response({"articles": articles})
+        # tone available=True so we exercise combined path, not artlist-only path
+        tone_result = _make_tone_result(available=True, tone=0.10)
 
-        with patch("requests.get", return_value=mock_resp):
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("advisors.lens_gdelt._fetch_gdelt_sentiment", return_value=tone_result),
+        ):
             block = ai_advisor._build_sentiment_section()
 
         if block.get("available") is True:
@@ -1524,6 +1601,12 @@ if _HYPOTHESIS_AVAILABLE:
                 f"PROPERTY VIOLATION: article_count={article_count} but "
                 f"len(sources)={len(sources)}. "
                 f"Each GDELT article must produce exactly one citation source."
+            )
+            # Combined path: tone_score must be the value from the tone producer
+            payload = block.get("payload", {})
+            assert payload.get("tone_score") is not None, (
+                f"PROPERTY VIOLATION: combined path (tone available=True, artlist ok) "
+                f"must carry a non-None tone_score in payload. Got payload={payload!r}"
             )
 
     @given(st.booleans())
