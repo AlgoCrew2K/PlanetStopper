@@ -454,14 +454,11 @@ def _build_technicals_section(_data: object = None) -> dict:
 def _build_sentiment_section(_data: object = None) -> dict:
     """Sentiment / news lens block — GDELT 2.0 DOC API producer (Cycle 2).
 
-    Fetches recent finance-related articles from GDELT, maps each to a
-    citation source {title, url, published, lens} via build_citation, and
-    returns a payload carrying article_count and tone summary.
+    Fetches tone from the GDELT timelinetone endpoint (via lens_gdelt producer)
+    and article citations from the artlist endpoint.  Per-source isolation:
+    either signal can succeed independently; available=False only when both fail.
 
-    GDELT is key-less; no env-var gate.  An empty article list is a valid
-    successful fetch (available=True, empty sources).  Any network/HTTP error
-    degrades to available=False with the exception class name as reason only
-    (D-1: never str(exc), which may contain hosts or partial credentials).
+    GDELT is key-less; no env-var gate.  D-1: reason is type(exc).__name__ only.
 
     Args:
         _data: unused; reserved for caller pre-injection (test-mockable hook).
@@ -471,21 +468,50 @@ def _build_sentiment_section(_data: object = None) -> dict:
         payload (on True), sources (on True).
     """
     _lens = "sentiment"
+
+    # --- Tone signal (CC-2: lazy import inside function body) ---
+    from advisors import lens_gdelt  # noqa: PLC0415
+
+    try:
+        tone_result = lens_gdelt._fetch_gdelt_sentiment([])
+    except Exception as exc:
+        # Defense-in-depth: the producer itself never raises, but guard anyway.
+        tone_result = {
+            "available": False,
+            "tone": None,
+            "reason": type(exc).__name__,  # D-1: never str(exc)
+        }
+
+    tone_score = tone_result["tone"] if tone_result.get("available") else None
+    tone_available = bool(tone_result.get("available"))
+
+    # --- Artlist citations (best-effort) ---
+    articles: list = []
+    artlist_available = False
+    artlist_reason: str | None = None
     try:
         resp = _fetch_with_backoff(_GDELT_ARTLIST_URL)
         resp.raise_for_status()
         data = resp.json()
+        articles = data.get("articles") or []
+        artlist_available = True
     except Exception as exc:
-        logger.debug("GDELT fetch failed: %s", exc)
+        artlist_reason = type(exc).__name__  # D-1: never str(exc)
+        logger.debug("GDELT artlist fetch failed: %s", artlist_reason)
+
+    # --- Per-source isolation ---
+    # available=True if either tone OR artlist gave us something.
+    # available=False only when both fail.
+    if not tone_available and not artlist_available:
+        reason = artlist_reason or tone_result.get("reason") or "gdelt_fetch_failed"
         return {
             "lens": _lens,
             "available": False,
-            "reason": f"{type(exc).__name__} fetching GDELT sentiment feed",
+            "reason": reason,
             "payload": None,
             "sources": [],
         }
 
-    articles = data.get("articles") or []
     sources = []
     for article in articles:
         url = article.get("url", "")
@@ -502,14 +528,19 @@ def _build_sentiment_section(_data: object = None) -> dict:
         if citation is not None:
             sources.append(citation)
 
-    logger.info("GDELT sentiment: %d articles, %d valid citations", len(articles), len(sources))
+    logger.info(
+        "GDELT sentiment: tone=%s articles=%d citations=%d",
+        tone_score,
+        len(articles),
+        len(sources),
+    )
     return {
         "lens": _lens,
         "available": True,
         "payload": {
             "article_count": len(articles),
-            "tone_summary": None,  # aggregate tone from GDELT tone-endpoint; not fetched this cycle
-            "tone_score": None,
+            "tone_summary": None,
+            "tone_score": tone_score,
         },
         "sources": sources,
     }
