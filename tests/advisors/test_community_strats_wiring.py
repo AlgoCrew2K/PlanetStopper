@@ -123,19 +123,24 @@ def _make_gated_batch_with_survivors(candidate_ids: list[str]):
     """Return a GatedBatch where every listed candidate_id is a survivor.
 
     Constructs minimal CandidateGateResult objects with ADOPT_CANDIDATE verdicts.
+
+    AcceptanceVerdict schema (acceptance_gate.py:111-135):
+      vetoes_passed: bool
+      panel_score: float | None  (None only when vetoes failed — use a positive float here)
+      panel_breakdown: dict
+      decision: str  (one of DECISION_ADOPT_CANDIDATE / DECISION_KEEP_INCUMBENT / DECISION_REJECT_VETO_FAILED)
     """
     from advisors.backtest_gate_engine import GatedBatch, CandidateGateResult, HARVEY_LIU_FDR_Q
-    from acceptance_gate import AcceptanceVerdict
+    from acceptance_gate import AcceptanceVerdict, DECISION_ADOPT_CANDIDATE
 
     results = []
     survivors = []
     for cid in candidate_ids:
         verdict = AcceptanceVerdict(
-            decision="ADOPT_CANDIDATE",
-            winner_trial_is_none=False,
-            nn1_compliant=True,
-            purge_integrity_ok=True,
-            pbo_veto=False,
+            vetoes_passed=True,
+            panel_score=1.0,
+            panel_breakdown={},
+            decision=DECISION_ADOPT_CANDIDATE,
         )
         r = CandidateGateResult(
             candidate_id=cid,
